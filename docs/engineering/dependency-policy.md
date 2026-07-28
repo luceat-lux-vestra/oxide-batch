@@ -1,6 +1,6 @@
 # Dependency and License Policy
 
-**State:** Proposed
+**State:** Accepted
 
 ## Admission
 

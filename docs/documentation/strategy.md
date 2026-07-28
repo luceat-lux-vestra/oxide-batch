@@ -1,6 +1,6 @@
 # Documentation Strategy
 
-**State:** Proposed
+**State:** Accepted
 
 Documentation is a versioned product artifact and part of the release gate.
 

@@ -1,6 +1,6 @@
 # System Context and Deployment Boundaries
 
-**State:** Proposed
+**State:** Accepted
 
 ## Context
 

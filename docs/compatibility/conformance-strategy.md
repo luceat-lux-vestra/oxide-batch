@@ -1,6 +1,6 @@
 # Conformance Strategy
 
-**State:** Proposed
+**State:** Accepted
 
 Conformance tests support specific documented compatibility claims. They do not
 attempt to reproduce Spring Batch implementation internals.

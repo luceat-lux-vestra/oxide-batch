@@ -1,6 +1,6 @@
 # Development and Decision Process
 
-**State:** Proposed
+**State:** Accepted
 
 ## Work item flow
 

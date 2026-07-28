@@ -1,6 +1,6 @@
 # Representative Use Cases
 
-**State:** Proposed
+**State:** Accepted
 
 These use cases prevent the API from being optimized for one demonstration job.
 Each milestone chooses a subset as acceptance workloads.

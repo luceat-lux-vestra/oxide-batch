@@ -74,6 +74,8 @@ approved before implementation depending on them begins.
 | --- | --- |
 | Accepted | Approved and binding until superseded |
 | Proposed | Concrete recommendation awaiting approval |
+| Active | Accepted living register whose entries may have different states |
+| Template | Approved structure with release- or issue-specific content pending |
 | Draft | Incomplete exploration, not an implementation contract |
 | Superseded | Replaced by a newer named document or ADR |
 

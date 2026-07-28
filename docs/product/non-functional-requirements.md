@@ -1,6 +1,6 @@
 # Non-Functional Requirements
 
-**State:** Proposed
+**State:** Accepted
 
 NFRs are framework-level requirements. End-to-end service levels also depend on
 the user job, database, infrastructure, and external systems.

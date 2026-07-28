@@ -1,6 +1,6 @@
 # Severity and Response Objectives
 
-**State:** Proposed
+**State:** Accepted
 
 These are maintainer response objectives, not a commercial SLA. A single
 maintainer may not always meet them; missed objectives are reviewed rather than

@@ -1,6 +1,6 @@
 # Rust API Design Guidelines
 
-**State:** Proposed
+**State:** Accepted
 
 The [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/) are the
 default reference. OxideBatch adds the following framework-specific rules.

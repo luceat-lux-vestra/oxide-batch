@@ -1,6 +1,6 @@
 # Engineering Standards
 
-**State:** Proposed
+**State:** Accepted
 
 ## Rust and API design
 

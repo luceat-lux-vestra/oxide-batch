@@ -1,6 +1,6 @@
 # Project Risk Register
 
-**State:** Proposed
+**State:** Accepted
 
 Scale: likelihood and impact are Low, Medium, or High. Owners are roles until
 additional maintainers join.

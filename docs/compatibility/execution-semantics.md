@@ -1,8 +1,6 @@
 # Execution, Restart, and Transaction Semantics
 
-**State:** Proposed
-
-**Decision needed:** approve invariants before runtime implementation
+**State:** Accepted
 
 This document defines the minimum correctness contract. Precise Rust APIs and
 database tables are implementation details unless separately documented.

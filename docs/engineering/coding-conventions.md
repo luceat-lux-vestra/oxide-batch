@@ -1,6 +1,6 @@
 # Coding Conventions
 
-**State:** Proposed
+**State:** Accepted
 
 `rustfmt` is authoritative for layout. These conventions govern structure and
 meaning that formatting cannot decide.

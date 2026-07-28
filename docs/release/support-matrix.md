@@ -1,6 +1,6 @@
 # Support Matrix
 
-**State:** Proposed template
+**State:** Template
 
 The matrix becomes binding only for released runtime versions. “Builds” and
 “supported” are not synonyms: supported combinations receive automated tests

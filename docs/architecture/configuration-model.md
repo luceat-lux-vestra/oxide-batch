@@ -1,6 +1,6 @@
 # Configuration Model
 
-**State:** Proposed
+**State:** Accepted
 
 OxideBatch is primarily a library. Application code owns configuration assembly;
 the framework provides typed configuration values and validation. A CLI may add

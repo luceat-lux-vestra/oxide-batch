@@ -1,6 +1,6 @@
 # Runtime Implementation Kickoff Gate
 
-**State:** Proposed
+**State:** Accepted
 
 This is the final M0 sign-off. “Document exists” is not sufficient; the
 decision, enforcement, and evidence columns must agree.

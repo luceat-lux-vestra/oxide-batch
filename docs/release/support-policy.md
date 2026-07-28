@@ -1,6 +1,6 @@
 # Release, Schema, and Support Policy
 
-**State:** Proposed
+**State:** Accepted
 
 ## Versioning
 

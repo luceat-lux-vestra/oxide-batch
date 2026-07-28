@@ -1,6 +1,6 @@
 # Maintainer Continuity and Access
 
-**State:** Proposed
+**State:** Accepted
 
 The project currently has one maintainer. Continuity controls reduce accidental
 loss of the repository or release path without publishing secret recovery

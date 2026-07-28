@@ -1,6 +1,6 @@
 # Persistence and Migration Operations
 
-**State:** Proposed
+**State:** Accepted
 
 ## Ownership model
 

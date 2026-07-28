@@ -1,6 +1,6 @@
 # Delivery Roadmap
 
-**State:** Proposed
+**State:** Accepted
 
 **Last reviewed:** 2026-07-29
 

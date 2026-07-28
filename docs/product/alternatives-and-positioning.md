@@ -1,6 +1,6 @@
 # Alternatives and Positioning
 
-**State:** Proposed
+**State:** Accepted
 
 OxideBatch should be chosen for its execution semantics, not because every
 scheduled or durable workload needs a new framework.

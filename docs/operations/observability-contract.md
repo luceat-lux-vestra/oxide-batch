@@ -1,6 +1,6 @@
 # Observability Contract
 
-**State:** Proposed
+**State:** Accepted
 
 Observability describes execution; it is never the source of truth for
 correctness. Durable metadata remains authoritative.

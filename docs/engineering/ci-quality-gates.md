@@ -1,6 +1,6 @@
 # CI and Quality Gates
 
-**State:** Proposed
+**State:** Accepted
 
 Checks are layered so ordinary pull requests receive fast feedback while
 expensive and probabilistic checks run on a schedule or release candidate.

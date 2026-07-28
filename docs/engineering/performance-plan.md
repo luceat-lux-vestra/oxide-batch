@@ -1,6 +1,6 @@
 # Performance and Capacity Plan
 
-**State:** Proposed
+**State:** Accepted
 
 Performance work begins with reproducible workloads and correctness checks. A
 faster result that changes checkpoint, ordering, or delivery behavior is invalid.

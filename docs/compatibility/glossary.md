@@ -1,6 +1,6 @@
 # Domain Glossary
 
-**State:** Proposed
+**State:** Accepted
 
 | Term | OxideBatch meaning |
 | --- | --- |

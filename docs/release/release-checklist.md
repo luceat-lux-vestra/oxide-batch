@@ -1,6 +1,6 @@
 # Release Checklist
 
-**State:** Proposed
+**State:** Accepted
 
 This checklist supplements the automated release workflow. Multi-crate steps
 apply only after additional public crates are approved.

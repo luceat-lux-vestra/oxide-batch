@@ -1,6 +1,6 @@
 # Test Strategy
 
-**State:** Proposed
+**State:** Accepted
 
 Correctness is demonstrated at several boundaries. Coverage percentage alone is
 not an acceptance criterion.

@@ -1,6 +1,6 @@
 # Development Environment
 
-**State:** Proposed
+**State:** Accepted
 
 ## Required tools
 

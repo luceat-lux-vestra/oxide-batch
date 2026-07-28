@@ -1,6 +1,6 @@
 # Project Preparation Master Plan
 
-**State:** Proposed
+**State:** Accepted
 
 This is the authoritative checklist for work that must be considered before
 OxideBatch runtime implementation starts. The delivery roadmap describes

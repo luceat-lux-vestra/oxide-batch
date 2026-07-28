@@ -1,8 +1,6 @@
 # Product Vision and Scope
 
-**State:** Proposed
-
-**Decision needed:** approve before M1
+**State:** Accepted
 
 ## Vision
 
