@@ -13,6 +13,24 @@ is complete only when all of its exit criteria are demonstrated.
 **Outcome:** implementation can begin without unresolved product, correctness,
 or ownership assumptions.
 
+M0 is executed through ten readiness workstreams:
+
+1. identity, ownership, and repository;
+2. product charter and requirements;
+3. compatibility and domain contract;
+4. architecture and technology;
+5. developer experience and coding system;
+6. verification and quality engineering;
+7. CI, security, and supply chain;
+8. data, operations, and observability;
+9. release, support, and documentation;
+10. governance, planning, and risk.
+
+The authoritative item-by-item status is maintained in the
+[project preparation master plan](project/preparation-master-plan.md). Runtime
+work starts only after the [kickoff gate](project/kickoff-gate.md) is signed
+off.
+
 Scope:
 
 - approve product vision, target users, scope, and non-goals;

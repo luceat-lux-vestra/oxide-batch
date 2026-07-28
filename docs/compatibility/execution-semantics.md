@@ -92,6 +92,28 @@ adapter. The selected guarantee is visible in configuration and diagnostics.
 - retry does not weaken the chunk transaction boundary;
 - backoff is cancellable and testable with an injected clock.
 
+## Listener ordering
+
+The proposed lifecycle order is:
+
+1. persist creation/starting state;
+2. invoke the corresponding before-listener;
+3. persist started state before user work;
+4. execute user work and determine its provisional outcome;
+5. invoke the corresponding after-listener;
+6. persist the final status and exit status.
+
+Step listeners nest inside job listeners; chunk/read/process/write listeners
+nest inside the step. Multiple listeners run in registration order for before
+events and reverse registration order for after events.
+
+A before-listener failure prevents the associated user body and fails the
+execution. An after-listener failure cannot roll back already committed earlier
+chunks; it changes the enclosing execution outcome according to a typed listener
+failure rule and retains the original outcome as diagnostic context. Panic is
+captured at the same boundary as an error. Exact Spring Batch differences must
+be recorded in the conformance matrix before this proposal is accepted.
+
 ## Cancellation, panic, and crash
 
 - stop requests are cooperative and durable;
