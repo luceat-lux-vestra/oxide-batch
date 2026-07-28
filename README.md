@@ -28,6 +28,7 @@ support commitments are clear.
 ```text
 crates/
 └── oxide-batch/    Public facade crate
+xtask/              Repository development commands (not published)
 ```
 
 See [crate publishing policy](docs/governance/crate-publishing.md) for the
