@@ -26,10 +26,18 @@
 //!
 //! Parameter values are sensitive by default. Their [`Debug`](std::fmt::Debug)
 //! representations expose the value kind, but not the underlying value.
+//!
+//! Repository operations run inside an explicit [`RepositoryUnitOfWork`].
+//! Time and identifiers are injected into the reference
+//! [`InMemoryJobRepository`], so tests do not depend on wall-clock time or
+//! process-global identifier state. A unit of work publishes changes only
+//! after [`RepositoryUnitOfWork::commit`] succeeds; dropping it rolls back its
+//! staged metadata.
 
 #![forbid(unsafe_code)]
 
 mod domain;
+mod repository;
 
 pub use domain::{
     BatchStatus, DomainError, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps,
@@ -38,6 +46,10 @@ pub use domain::{
     JobName, JobParameter, JobParameters, LifecycleError, LifecycleTransition, NameKind,
     ParameterName, ParameterRole, ParameterValue, ParameterValueKind, StepExecution,
     StepExecutionId, StepName,
+};
+pub use repository::{
+    BoxFuture, Clock, IdGenerationError, IdGenerator, InMemoryJobRepository, JobInstanceSelection,
+    JobRepository, RepositoryError, RepositoryUnitOfWork, SequentialIdGenerator, SystemClock,
 };
 
 /// The version of the `OxideBatch` facade crate.

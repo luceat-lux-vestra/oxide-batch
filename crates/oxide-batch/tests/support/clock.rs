@@ -3,6 +3,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
 
+use oxide_batch::Clock;
+
 /// A cloneable clock advanced explicitly by a test.
 #[derive(Clone, Debug)]
 pub struct ManualClock {
@@ -42,6 +44,12 @@ impl ManualClock {
             .ok_or(ManualClockError::Overflow)?;
         *current = advanced;
         Ok(advanced)
+    }
+}
+
+impl Clock for ManualClock {
+    fn now(&self) -> SystemTime {
+        Self::now(self)
     }
 }
 
