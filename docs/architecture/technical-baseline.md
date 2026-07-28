@@ -1,6 +1,7 @@
 # Technical Baseline
 
-**State:** Proposed  
+**State:** Proposed
+
 **Decision needed:** approve after the named architecture spikes
 
 Exact dependency versions are selected and locked when a crate is introduced.

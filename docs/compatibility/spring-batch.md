@@ -1,6 +1,7 @@
 # Spring Batch Compatibility Contract
 
-**State:** Proposed  
+**State:** Proposed
+
 **Decision needed:** reference baseline and compatibility levels
 
 ## Reference baseline

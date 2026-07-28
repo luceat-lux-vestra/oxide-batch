@@ -1,6 +1,7 @@
 # M0 Decision Register
 
-**State:** Proposed  
+**State:** Proposed
+
 **Owner:** project owner
 
 The repository foundation is operational. The following product and

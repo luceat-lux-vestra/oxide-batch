@@ -1,6 +1,7 @@
 # Delivery Roadmap
 
-**State:** Proposed  
+**State:** Proposed
+
 **Last reviewed:** 2026-07-29
 
 The milestones are capability gates, not calendar promises. Work may move

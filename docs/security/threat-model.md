@@ -1,6 +1,7 @@
 # Security and Supply-Chain Baseline
 
-**State:** Proposed  
+**State:** Proposed
+
 **Scope:** framework, release pipeline, metadata repository, and operator tools
 
 ## Protected assets

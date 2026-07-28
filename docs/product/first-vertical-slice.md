@@ -1,6 +1,7 @@
 # First Vertical Slice
 
-**State:** Proposed  
+**State:** Proposed
+
 **Target milestone:** M1 design, M2 durable implementation
 
 ## Scenario

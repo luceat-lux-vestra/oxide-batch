@@ -1,6 +1,7 @@
 # Architecture Overview
 
-**State:** Proposed  
+**State:** Proposed
+
 **Decision needed:** approve dependency direction before adding workspace crates
 
 ## Dependency rule
