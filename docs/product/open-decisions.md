@@ -13,10 +13,10 @@ as pending still require the named spike evidence before M0 can close.
 | D-001 | Workspace and facade strategy | One workspace, public `oxide-batch` facade, internal crates private by default | Accepted in ADR-0001 |
 | D-002 | Compatibility baseline | Spring Batch 6.0 semantics; selected behavioral and operational compatibility | Accepted 2026-07-29 |
 | D-003 | 1.0 scope | Single-host runtime, PostgreSQL, tasklet/chunk, restart, flow, fault tolerance, CLI/telemetry | Accepted 2026-07-29 |
-| D-004 | Public execution model | Async-first Tokio, no hidden global runtime | Spike direction approved; final decision pending evidence |
-| D-005 | Durable repository | PostgreSQL via SQLx; OxideBatch-owned versioned schema | Spike direction approved; final decision pending evidence |
-| D-006 | Delivery guarantee | Atomic exactly-once checkpoint with enlisted PostgreSQL writes; otherwise explicit at-least-once | Contract accepted; implementation validation pending |
-| D-007 | Execution-context format | Bounded, versioned JSON initially | Spike direction approved; final decision pending evidence |
+| D-004 | Public execution model | Async-first Tokio, no hidden global runtime | Accepted in ADR-0002; spike 0001 passed 2026-07-29 |
+| D-005 | Durable repository | PostgreSQL via SQLx; OxideBatch-owned versioned schema | Accepted in ADR-0003; spike 0002 passed 2026-07-29 |
+| D-006 | Delivery guarantee | Atomic exactly-once checkpoint with enlisted PostgreSQL writes; otherwise explicit at-least-once | Accepted; transaction/crash matrix passed in spike 0002 |
+| D-007 | Execution-context format | Bounded, versioned JSON initially | Accepted; backward-read fixtures passed in spike 0003 |
 | D-008 | Rust baseline and MSRV | Stable 1.97.1 for development/releases; MSRV 1.95; no beta/nightly CI | Accepted 2026-07-29 |
 | D-009 | Pre-1.0 support | Latest release line only | Accepted 2026-07-29 |
 | D-010 | Stable support | Current minor plus critical fixes for previous minor for six months | Approved deferral; final decision at M5 |
@@ -36,3 +36,17 @@ silently approve it.
 - D-005/D-006: PostgreSQL locking, atomic checkpoint, crash matrix, and
   disconnect behavior;
 - D-007: backward read and upgrade behavior for persisted contexts.
+
+## M0 architecture resolution record
+
+On 2026-07-29:
+
+- [spike 0001](../architecture/spikes/0001-async-public-traits.md)
+  resolved D-004 and supplied the execution evidence for ADR-0002;
+- [spike 0002](../architecture/spikes/0002-postgres-transactions-and-recovery.md)
+  resolved D-005 and D-006 and supplied the evidence for ADR-0003;
+- [spike 0003](../architecture/spikes/0003-execution-context-evolution.md)
+  resolved D-007.
+
+The remaining entries in this register are accepted or explicitly deferred to
+their named later gate.

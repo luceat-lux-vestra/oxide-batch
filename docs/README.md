@@ -36,6 +36,7 @@ approved before implementation depending on them begins.
 - [Configuration model](architecture/configuration-model.md)
 - [Rust API design guidelines](api/design-guidelines.md)
 - [Architecture spike template](architecture/spike-template.md)
+- [Completed architecture spike evidence](architecture/spikes/README.md)
 - [Architecture decision records](architecture/decisions/README.md)
 
 ## Engineering and quality

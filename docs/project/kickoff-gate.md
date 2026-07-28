@@ -16,13 +16,13 @@ decision, enforcement, and evidence columns must agree.
 
 ## Architecture sign-off
 
-- [ ] System/deployment boundaries and dependency direction are accepted.
-- [ ] Async execution ADR has passing spike evidence.
-- [ ] PostgreSQL metadata ADR has passing transaction/locking evidence.
-- [ ] Execution-context evolution has passing fixtures.
-- [ ] Error, configuration, feature, cancellation, panic, and blocking contracts
+- [x] System/deployment boundaries and dependency direction are accepted.
+- [x] Async execution ADR has passing spike evidence.
+- [x] PostgreSQL metadata ADR has passing transaction/locking evidence.
+- [x] Execution-context evolution has passing fixtures.
+- [x] Error, configuration, feature, cancellation, panic, and blocking contracts
       are decided for M1.
-- [ ] Deferred distributed/plugin/service work is outside the M1 API.
+- [x] Deferred distributed/plugin/service work is outside the M1 API.
 
 ## Engineering sign-off
 

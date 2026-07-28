@@ -1,0 +1,11 @@
+{
+  "format": "oxide-batch.execution-context",
+  "format_version": 1,
+  "schema": "inventory-import",
+  "schema_version": 2,
+  "payload": {
+    "cursor": 43,
+    "source_checksum": "sha256:fixture",
+    "future_hint": "retain-me"
+  }
+}

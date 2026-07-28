@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/oxide-batch", "xtask"]
+members = ["crates/oxide-batch", "spikes/m0-architecture", "xtask"]
 resolver = "3"
 
 [workspace.package]

@@ -1,9 +1,10 @@
 # Technology Evaluation
 
-**State:** Proposed
+**State:** Accepted
 
-Selection is provisional until the required spike passes. Exact versions and
-features are recorded in Cargo manifests and lockfile when introduced.
+The runtime, PostgreSQL, and durable-context selections were accepted after the
+M0 spikes. Exact versions and features are recorded in Cargo manifests and the
+lockfile when introduced.
 
 ## Candidate version snapshot
 
