@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- M0 implementation-readiness plan, M0–M5 roadmap, decision records, and
+  product, compatibility, architecture, engineering, security, operations, and
+  release policy set.
+- Dedicated MSRV and supply-chain CI checks.
+- Repository `cargo xtask` commands for development checks and package
+  verification.
+
 ## [0.1.0-alpha.1] - 2026-07-29
 
 ### Added
