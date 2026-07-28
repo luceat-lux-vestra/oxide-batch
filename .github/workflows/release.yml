@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: release
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Verify release tag
+        run: |
+          package_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "oxide-batch") | .version')"
+          test "v${package_version}" = "${GITHUB_REF_NAME}"
+
+      - name: Verify package
+        run: cargo publish -p oxide-batch --locked --dry-run
+
+      - name: Authenticate to crates.io
+        id: crates-io-auth
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
+        run: cargo publish -p oxide-batch --locked
+

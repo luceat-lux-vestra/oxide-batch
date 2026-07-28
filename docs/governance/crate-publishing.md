@@ -48,5 +48,16 @@ internal or use another name without changing the public `oxide-batch` facade.
 
 The initial version is `0.1.0-alpha.1`. It clearly communicates that OxideBatch
 is pre-release while providing real, buildable package metadata and
-documentation. Publishing requires a crates.io account with a verified email
-and an API token or an approved trusted-publishing workflow.
+documentation. The version was published manually to establish crates.io
+ownership.
+
+All subsequent releases use crates.io Trusted Publishing. The trusted publisher
+is bound to:
+
+- GitHub owner: `luceat-lux-vestra`
+- Repository: `oxide-batch`
+- Workflow: `release.yml`
+- Environment: `release`
+
+The release workflow exchanges GitHub's OIDC identity for a short-lived
+crates.io token. Long-lived crates.io tokens must not be stored in GitHub.
