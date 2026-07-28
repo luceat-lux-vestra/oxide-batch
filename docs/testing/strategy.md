@@ -25,7 +25,7 @@ failure.
 
 ## M1 harness and fixture layout
 
-M1 test support will live under `crates/oxide-batch/tests/support/` and provide
+M1 test support lives under `crates/oxide-batch/tests/support/` and provides
 manual clocks, deterministic ID sequences, seeded randomness, controllable
 backoff, event capture, and repository contract helpers. Shared behavior is
 organized by boundary:
@@ -35,6 +35,11 @@ organized by boundary:
 - `tests/property/` for lifecycle and identity invariants;
 - `tests/ui/` for compile-fail public API guarantees;
 - `tests/fixtures/<scenario-id>/` for versioned, reviewable data.
+
+Conformance reports include the matrix row ID, executable scenario name,
+reproduction seed, and insertion-ordered normalized events. Repository
+implementations use test-owned adapters to run the same contract cases without
+making the harness part of the production API.
 
 Fixture directories use the stable scenario ID, contain no secrets or copied
 third-party implementation material, and include provenance when derived from

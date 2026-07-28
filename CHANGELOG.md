@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Facade-owned M1 domain types for job and step names, opaque execution
   identifiers, typed identifying parameters, canonical job-instance keys,
   lifecycle metadata, counters, exit statuses, and redacted failure summaries.
+- Deterministic M1 integration-test support for clocks, IDs, randomness,
+  backoff, bounded waits, event diagnostics, fixture provenance, redaction
+  sentinels, conformance IDs, and reusable repository contracts.
 - M0 implementation-readiness plan, M0–M5 roadmap, decision records, and
   product, compatibility, architecture, engineering, security, operations, and
   release policy set.
