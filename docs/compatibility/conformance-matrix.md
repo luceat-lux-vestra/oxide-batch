@@ -8,7 +8,7 @@ released OxideBatch version.
 | ID | Capability | Spring reference | Target level | OxideBatch version | Scenario | Status | Known difference |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | VS-LAUNCH-001 | First launch creates the execution graph | Job domain | Behavioral | — | `first_launch_creates_execution_graph` | Planned M1 | Canonical Rust types |
-| JOB-INSTANCE-001 | Identifying parameters select job instance | Job domain/configuration | Behavioral | — | `job_instance_same_identifying_parameters` | Planned M1 | Canonical Rust types |
+| JOB-INSTANCE-001 | Identifying parameters select job instance | Job domain/configuration | Behavioral | Unreleased | `job_instance_same_identifying_parameters` | Implemented | Canonical Rust types |
 | JOB-EXEC-001 | Restart creates a new execution for same instance | Job restartability | Behavioral | — | `restart_creates_new_execution` | Planned M1 | API differs |
 | JOB-COMPLETE-001 | Completed instance rejects repeat launch | Job restartability | Behavioral | — | `completed_instance_rejects_launch` | Planned M1 | Error type differs |
 | STEP-STATUS-001 | Batch status and exit status are distinct | Step domain | Semantic | — | `exit_status_does_not_forge_batch_status` | Planned M1 | — |

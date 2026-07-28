@@ -7,8 +7,8 @@ OxideBatch is an enterprise-ready batch processing framework for Rust, inspired
 by Spring Batch and designed around idiomatic Rust.
 
 > [!IMPORTANT]
-> OxideBatch is in its foundation phase. No production-ready runtime API has
-> been released yet.
+> OxideBatch is implementing its M1 executable kernel. Domain APIs are under
+> active pre-release development; no production-ready runtime has been released.
 
 ## Project goals
 
@@ -38,12 +38,13 @@ planned multi-crate strategy.
 
 ## Status
 
-The current milestone is **M0 — Foundation**: governance, compatibility scope,
-architecture decisions, and engineering quality gates.
+**M0 — Foundation** is complete. The current milestone is **M1 — Executable
+Kernel**: facade-owned domain types, deterministic lifecycle behavior, tasklet
+execution, an in-memory repository, and initial conformance evidence.
 
 Start with the [documentation index](docs/README.md) and
-[M0–M5 delivery roadmap](docs/roadmap.md). Proposed decisions are intentionally
-marked and must be approved before implementation depends on them.
+[M0–M5 delivery roadmap](docs/roadmap.md). Accepted decisions and deferred
+later-milestone gates are recorded before implementation depends on them.
 
 ## Contributing
 
