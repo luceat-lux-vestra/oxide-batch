@@ -30,8 +30,19 @@ untrusted artifacts, access release credentials, or affect generated outputs.
 
 ## Version and feature rules
 
-- Use compatible bounded Cargo requirements and commit `Cargo.lock`.
-- Avoid wildcard requirements and unpublished Git dependencies in releases.
+- At introduction, evaluate the latest stable crate release compatible with the
+  project MSRV. Do not select an older release without a recorded compatibility,
+  regression, maintenance, or licensing reason.
+- Use a concrete default/caret Cargo requirement such as `"1.53.1"` or
+  `"0.9.0"`. This names the tested lower bound while allowing SemVer-compatible
+  updates.
+- Do not use `latest`, bare `*`, wildcard, or open-ended comparison
+  requirements.
+- Commit `Cargo.lock`; CI and release commands use `--locked` where dependency
+  resolution must be reproducible.
+- Use exact `=version` only for a documented reason, such as coordinated
+  published workspace crates or a pre-release compatibility constraint.
+- Avoid unpublished Git dependencies in releases.
 - Disable dependency default features when they add unnecessary capability, not
   as a ritual that creates an untested configuration.
 - Centralize shared workspace dependencies after the second real consumer.
@@ -39,6 +50,11 @@ untrusted artifacts, access release credentials, or affect generated outputs.
   an exception explains why.
 - Test the lowest supported Rust toolchain; do not assume the pinned development
   toolchain proves MSRV.
+
+`cargo add` is the default addition mechanism because it selects a current
+MSRV-compatible release and writes a concrete requirement. The pull request
+records the version/features actually evaluated. The lockfile is updated
+deliberately through reviewed dependency pull requests.
 
 ## License and source rules
 

@@ -5,12 +5,13 @@
 **Decision needed:** approve after the named architecture spikes
 
 Exact dependency versions are selected and locked when a crate is introduced.
-This document chooses roles and constraints, not an evergreen list of “latest”
-versions.
+The project starts from the latest stable release compatible with the accepted
+MSRV, then records a concrete Cargo SemVer requirement and lockfile resolution.
+Floating `latest`, wildcard, and unbounded requirements are not used.
 
 | Concern | Proposed choice | Constraint or rationale |
 | --- | --- | --- |
-| Language | Rust 2024 edition, MSRV 1.95 | Already configured; MSRV tested in CI before M1 |
+| Language | Rust 2024; stable 1.97.1 development/release; MSRV 1.95 | Accepted; stable-only required CI |
 | Async runtime | Tokio 1.x | Mature I/O, scheduling, cancellation primitives; isolate from core |
 | Database | PostgreSQL first | Strong transactional and locking behavior; only 1.0 repository |
 | SQL access | SQLx with Tokio and Rustls features | Async PostgreSQL, compile-time/query tooling, migrations |

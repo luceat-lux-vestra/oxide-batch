@@ -25,8 +25,15 @@ documentation, provenance, and installation are verified.
 
 ## MSRV
 
-The current MSRV is Rust 1.95. CI must test it before M1 completes. Raising MSRV
-requires a release note and may occur:
+The accepted toolchain baseline is:
+
+- development, normal CI, and releases use pinned stable Rust 1.97.1;
+- the minimum supported Rust version is stable Rust 1.95;
+- beta/nightly compatibility CI is not part of the supported test matrix;
+- public crates do not require unstable language or Cargo features.
+
+Required CI tests the workspace on the MSRV. Raising MSRV requires a release
+note and may occur:
 
 - in any pre-1.0 minor release;
 - in a stable minor release only with documented justification and notice;

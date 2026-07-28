@@ -5,6 +5,34 @@
 Selection is provisional until the required spike passes. Exact versions and
 features are recorded in Cargo manifests and lockfile when introduced.
 
+## Candidate version snapshot
+
+Checked against crates.io metadata on 2026-07-29. These are the latest stable
+releases evaluated today, not dependencies already approved or added. Refresh
+the snapshot immediately before each dependency-admission pull request.
+
+| Candidate | Stable version | Declared MSRV |
+| --- | --- | --- |
+| Tokio | 1.53.1 | 1.71 |
+| SQLx | 0.9.0 | 1.94 |
+| Serde | 1.0.229 | 1.56 |
+| serde_json | 1.0.151 | 1.71 |
+| uuid | 1.24.0 | 1.85 |
+| time | 0.3.54 | 1.88 |
+| thiserror | 2.0.19 | 1.71 |
+| tracing | 0.1.44 | 1.65 |
+| OpenTelemetry API | 0.32.0 | 1.75 |
+| OpenTelemetry SDK | 0.32.1 | 1.75 |
+| Clap | 4.6.4 | 1.85 |
+| Testcontainers | 0.27.3 | 1.88 |
+| Proptest | 1.11.0 | 1.85 |
+| Criterion | 0.8.2 | 1.86 |
+| secrecy | 0.10.3 | 1.60 |
+
+All listed candidates fit the accepted Rust 1.95 MSRV. A listed version is not
+permission to add the dependency: the owning ADR/issue, required features,
+license, transitive graph, and public API impact still need review.
+
 ## Evaluation criteria
 
 In descending importance:

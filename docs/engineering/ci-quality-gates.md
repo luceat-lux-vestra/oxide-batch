@@ -24,11 +24,18 @@ expensive and probabilistic checks run on a schedule or release candidate.
 Required check names remain stable because rulesets bind to names. A workflow
 refactor must not create a skipped required job that appears successful.
 
+## Rust channels
+
+- stable Rust 1.97.1 is the pinned development, normal CI, and release toolchain;
+- stable Rust 1.95 is the MSRV required check;
+- beta/nightly compatibility jobs are not run;
+- nightly-only language features are not allowed in public or production code;
+- a future nightly-only analysis tool requires a separate decision and is not
+  implied by this plan.
+
 ## Scheduled/deep checks
 
-- Miri for suitable unsafe-free core tests and undefined-behavior detection;
 - Loom or deterministic concurrency-model tests for synchronization primitives;
-- fuzz smoke tests for parsers, canonicalization, and serialized context;
 - full feature powerset and dependency-minimal/version checks where supported;
 - ignored, slow, crash, migration, soak, and leak tests;
 - advisory refresh independent of dependency-change pull requests.

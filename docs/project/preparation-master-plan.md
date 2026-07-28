@@ -88,7 +88,7 @@ Status vocabulary:
 
 | Deliverable | Status | Evidence or remaining action |
 | --- | --- | --- |
-| Toolchain, edition, and MSRV | Draft | Toolchain pinned; MSRV declared but not tested |
+| Toolchain, edition, and MSRV | Done | Stable 1.97.1; MSRV 1.95; both required CI |
 | Local prerequisite and setup guide | Draft | Development environment document |
 | One-command bootstrap/check/test workflow | Done | `cargo xtask doctor/check/package` |
 | Local PostgreSQL test environment | Deferred | Required before PostgreSQL spike/M2 |
@@ -139,7 +139,7 @@ Status vocabulary:
 | Code coverage artifact and trend | Deferred | Add after executable code exists |
 | SemVer API compatibility check | Deferred | Required once a public runtime API is released |
 | Documentation link/example validation | Deferred | Add with first substantive user docs |
-| Scheduled nightly/deep test workflow | Deferred | Add with relevant M1/M2 code |
+| Scheduled deep test workflow | Deferred | Stable-only checks when relevant; no beta/nightly CI |
 | SBOM generation | Deferred | Select and add before first beta |
 | Artifact attestations/provenance | Deferred | Required before first stable release |
 | Reproducible package-content verification | Draft | Dry run exists; record package manifest/checksum |

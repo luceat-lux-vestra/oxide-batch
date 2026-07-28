@@ -16,7 +16,7 @@ architecture choices still need approval or evidence before M0 can close.
 | D-005 | Durable repository | PostgreSQL via SQLx; OxideBatch-owned versioned schema | Awaiting spike and approval |
 | D-006 | Delivery guarantee | Atomic exactly-once checkpoint with enlisted PostgreSQL writes; otherwise explicit at-least-once | Awaiting spike and approval |
 | D-007 | Execution-context format | Bounded, versioned JSON initially | Awaiting evolution spike |
-| D-008 | MSRV | Rust 1.95, tested in CI | Configured; CI gate pending |
+| D-008 | Rust baseline and MSRV | Stable 1.97.1 for development/releases; MSRV 1.95; no beta/nightly CI | Accepted 2026-07-29 |
 | D-009 | Pre-1.0 support | Latest release line only | Awaiting approval |
 | D-010 | Stable support | Current minor plus critical fixes for previous minor for six months | Defer final approval to M5 |
 | D-011 | Schema rollback | Backup/restore by default; downgrade only when explicitly shipped | Awaiting approval |
