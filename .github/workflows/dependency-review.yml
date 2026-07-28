@@ -20,3 +20,7 @@ jobs:
           fail-on-severity: moderate
           license-check: true
           allow-licenses: Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MIT, Unicode-3.0, Zlib
+          # The crate ships canonical MIT and Apache-2.0 license files but its
+          # manifest uses the legacy non-SPDX spelling `MIT/Apache-2.0`.
+          # cargo-deny remains the authoritative full-graph license check.
+          allow-dependencies-licenses: pkg:cargo/unicode-properties@0.1.4
