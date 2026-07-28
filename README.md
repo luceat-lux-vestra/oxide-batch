@@ -28,6 +28,7 @@ support commitments are clear.
 ```text
 crates/
 └── oxide-batch/    Public facade crate
+xtask/              Repository development commands (not published)
 ```
 
 See [crate publishing policy](docs/governance/crate-publishing.md) for the
@@ -37,6 +38,10 @@ planned multi-crate strategy.
 
 The current milestone is **M0 — Foundation**: governance, compatibility scope,
 architecture decisions, and engineering quality gates.
+
+Start with the [documentation index](docs/README.md) and
+[M0–M5 delivery roadmap](docs/roadmap.md). Proposed decisions are intentionally
+marked and must be approved before implementation depends on them.
 
 ## Contributing
 

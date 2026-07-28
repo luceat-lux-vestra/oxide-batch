@@ -9,6 +9,11 @@ Thank you for helping build OxideBatch.
 - Report security vulnerabilities privately as described in `SECURITY.md`.
 - Significant behavior, compatibility, persistence, or public API changes
   require an RFC or architecture decision record before implementation.
+- Read the
+  [development and decision process](docs/project/development-process.md) for
+  definition-of-ready, definition-of-done, RFC, and review requirements.
+- Follow the [coding conventions](docs/engineering/coding-conventions.md) and
+  [Rust API design guidelines](docs/api/design-guidelines.md).
 
 ## Development workflow
 
