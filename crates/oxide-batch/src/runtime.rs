@@ -2,7 +2,7 @@
 
 use std::error::Error;
 use std::fmt;
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU64, NonZeroUsize};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,9 +11,12 @@ use futures_util::FutureExt;
 use tokio::sync::{Notify, Semaphore};
 
 use crate::{
-    BatchStatus, BoxFuture, Clock, ExitStatus, FailureCategory, FailureSummary, IdGenerator,
-    JobExecution, JobExecutionId, JobInstance, JobInstanceKey, JobName, JobParameters,
-    JobRepository, LifecycleTransition, RepositoryError, StepExecution, StepExecutionId, StepName,
+    BatchStatus, BoxFuture, Clock, ExecutionAttempt, ExecutionCorrelation, ExitStatus,
+    FailureCategory, FailureSummary, IdGenerator, JobExecution, JobExecutionId,
+    JobExecutionListener, JobInstance, JobInstanceKey, JobName, JobParameters, JobRepository,
+    LifecycleEvent, LifecycleEventKind, LifecycleEventSink, LifecycleTransition, ListenerContext,
+    ListenerFailure, ListenerFailureKind, ListenerPhase, RepositoryError, StepExecution,
+    StepExecutionId, StepExecutionListener, StepName,
 };
 
 /// A dynamically dispatched, single-invocation asynchronous step body.
@@ -69,13 +72,25 @@ pub trait BlockingTasklet: Send + Sync + 'static {
 pub struct TaskletStep {
     name: StepName,
     tasklet: Arc<dyn Tasklet>,
+    listeners: Vec<Arc<dyn StepExecutionListener>>,
 }
 
 impl TaskletStep {
     /// Constructs a step from its validated name and async body.
     #[must_use]
     pub fn new(name: StepName, tasklet: Arc<dyn Tasklet>) -> Self {
-        Self { name, tasklet }
+        Self {
+            name,
+            tasklet,
+            listeners: Vec::new(),
+        }
+    }
+
+    /// Registers a step listener in deterministic before-order.
+    #[must_use]
+    pub fn with_listener(mut self, listener: Arc<dyn StepExecutionListener>) -> Self {
+        self.listeners.push(listener);
+        self
     }
 
     /// Borrows the step name.
@@ -90,22 +105,45 @@ impl fmt::Debug for TaskletStep {
         formatter
             .debug_struct("TaskletStep")
             .field("name", &self.name)
+            .field("listener_count", &self.listeners.len())
             .finish_non_exhaustive()
     }
 }
 
 /// A validated single-step job definition.
-#[derive(Debug)]
 pub struct TaskletJob {
     name: JobName,
     step: TaskletStep,
+    listeners: Vec<Arc<dyn JobExecutionListener>>,
+}
+
+impl fmt::Debug for TaskletJob {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TaskletJob")
+            .field("name", &self.name)
+            .field("step", &self.step)
+            .field("listener_count", &self.listeners.len())
+            .finish()
+    }
 }
 
 impl TaskletJob {
     /// Constructs a single-step job.
     #[must_use]
     pub const fn new(name: JobName, step: TaskletStep) -> Self {
-        Self { name, step }
+        Self {
+            name,
+            step,
+            listeners: Vec::new(),
+        }
+    }
+
+    /// Registers a job listener in deterministic before-order.
+    #[must_use]
+    pub fn with_listener(mut self, listener: Arc<dyn JobExecutionListener>) -> Self {
+        self.listeners.push(listener);
+        self
     }
 
     /// Borrows the job name.
@@ -253,6 +291,13 @@ impl TaskletError {
         }
     }
 
+    /// Classifies an arbitrary user error without retaining its payload.
+    #[must_use]
+    pub fn from_error(error: impl Error + Send + Sync + 'static) -> Self {
+        drop(error);
+        Self::new()
+    }
+
     const fn panic() -> Self {
         Self {
             kind: TaskletErrorKind::Panic,
@@ -355,6 +400,10 @@ pub enum TaskletFailure {
     Error,
     /// The tasklet panicked before or while its future was polled.
     Panic,
+    /// A listener returned a classified error.
+    ListenerError,
+    /// A listener panicked at its framework boundary.
+    ListenerPanic,
 }
 
 /// The stable execution result captured by a launch.
@@ -376,6 +425,9 @@ pub struct LaunchReport {
     job_execution: JobExecution,
     step_execution: StepExecution,
     outcome: TaskletExecutionOutcome,
+    original_outcome: Option<TaskletExecutionOutcome>,
+    original_failure: Option<FailureSummary>,
+    listener_failures: Vec<ListenerFailure>,
 }
 
 impl LaunchReport {
@@ -401,6 +453,26 @@ impl LaunchReport {
     #[must_use]
     pub const fn outcome(&self) -> TaskletExecutionOutcome {
         self.outcome
+    }
+
+    /// Returns the provisional tasklet or nested-listener outcome retained
+    /// when an after-listener changed the enclosing result.
+    #[must_use]
+    pub const fn original_outcome(&self) -> Option<TaskletExecutionOutcome> {
+        self.original_outcome
+    }
+
+    /// Returns the original redacted tasklet failure retained when a listener
+    /// changed the final outcome.
+    #[must_use]
+    pub const fn original_failure(&self) -> Option<FailureSummary> {
+        self.original_failure
+    }
+
+    /// Borrows listener failures in callback execution order.
+    #[must_use]
+    pub fn listener_failures(&self) -> &[ListenerFailure] {
+        &self.listener_failures
     }
 }
 
@@ -444,6 +516,7 @@ pub struct JobLauncher<'a> {
     repository: &'a dyn JobRepository,
     clock: &'a dyn Clock,
     ids: &'a dyn IdGenerator,
+    event_sink: Option<&'a dyn LifecycleEventSink>,
 }
 
 impl<'a> JobLauncher<'a> {
@@ -458,7 +531,15 @@ impl<'a> JobLauncher<'a> {
             repository,
             clock,
             ids,
+            event_sink: None,
         }
+    }
+
+    /// Attaches a non-authoritative lifecycle-event sink.
+    #[must_use]
+    pub const fn with_event_sink(mut self, event_sink: &'a dyn LifecycleEventSink) -> Self {
+        self.event_sink = Some(event_sink);
+        self
     }
 
     /// Creates and executes one launch or restart attempt.
@@ -474,6 +555,10 @@ impl<'a> JobLauncher<'a> {
     /// Returns [`LaunchError`] when a repository operation, lifecycle update,
     /// or commit fails. A tasklet error or panic is instead persisted as a
     /// failed execution and returned in [`LaunchReport`].
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the launch method keeps the listener nesting and commit order visible"
+    )]
     pub async fn launch(
         &self,
         job: &TaskletJob,
@@ -481,41 +566,126 @@ impl<'a> JobLauncher<'a> {
         stop: &StopToken,
     ) -> Result<LaunchReport, LaunchError> {
         let key = JobInstanceKey::new(job.name.clone(), parameters);
-        let (instance, job_execution, step_execution) =
-            self.create_execution_graph(&key, job.step.name()).await?;
+        let graph = self.create_execution_graph(&key, job.step.name()).await?;
+        self.emit_event(LifecycleEventKind::LaunchAccepted, &graph.correlation, None);
+        self.emit_event(LifecycleEventKind::JobStarting, &graph.correlation, None);
+        self.emit_event(LifecycleEventKind::StepStarting, &graph.correlation, None);
 
         if stop.is_stop_requested() {
             let (job_execution, step_execution) = self
-                .finish_stopped(&job_execution, &step_execution, true)
+                .stop_graph(
+                    &graph.job_execution,
+                    &graph.step_execution,
+                    &graph.correlation,
+                )
                 .await?;
             return Ok(LaunchReport {
-                instance,
+                instance: graph.instance,
                 job_execution,
                 step_execution,
                 outcome: TaskletExecutionOutcome::Stopped(StopTiming::BeforeStart),
+                original_outcome: None,
+                original_failure: None,
+                listener_failures: Vec::new(),
             });
         }
 
-        let (started_job, started_step) = self.start(&job_execution, &step_execution).await?;
-        if stop.is_stop_requested() {
-            let (job_execution, step_execution) = self
-                .finish_stopped(&started_job, &started_step, false)
+        let context = ListenerContext::new(&graph.correlation, parameters, stop);
+        if let Some(failure) = self.run_before_job(&job.listeners, context).await? {
+            let outcome = listener_failure_outcome(failure.kind());
+            let step_execution = self
+                .finish_step(
+                    &graph.step_execution,
+                    outcome,
+                    Some(failure.summary()),
+                    &graph.correlation,
+                )
+                .await?;
+            let job_execution = self
+                .finish_job(
+                    &graph.job_execution,
+                    outcome,
+                    Some(failure.summary()),
+                    &graph.correlation,
+                )
                 .await?;
             return Ok(LaunchReport {
-                instance,
+                instance: graph.instance,
+                job_execution,
+                step_execution,
+                outcome,
+                original_outcome: None,
+                original_failure: None,
+                listener_failures: vec![failure],
+            });
+        }
+
+        let started_job = self
+            .start_job(&graph.job_execution, &graph.correlation)
+            .await?;
+        if stop.is_stop_requested() {
+            let (job_execution, step_execution) = self
+                .stop_graph(&started_job, &graph.step_execution, &graph.correlation)
+                .await?;
+            return Ok(LaunchReport {
+                instance: graph.instance,
                 job_execution,
                 step_execution,
                 outcome: TaskletExecutionOutcome::Stopped(StopTiming::BeforeStart),
+                original_outcome: None,
+                original_failure: None,
+                listener_failures: Vec::new(),
             });
         }
-        let context = TaskletContext {
+
+        if let Some(failure) = self.run_before_step(&job.step.listeners, context).await? {
+            let outcome = listener_failure_outcome(failure.kind());
+            let step_execution = self
+                .finish_step(
+                    &graph.step_execution,
+                    outcome,
+                    Some(failure.summary()),
+                    &graph.correlation,
+                )
+                .await?;
+            let mut listener_failures = vec![failure];
+            let mut original_outcome = None;
+            let after_job_failures = self.run_after_job(&job.listeners, context, outcome).await?;
+            if !after_job_failures.is_empty() {
+                original_outcome = Some(outcome);
+                listener_failures.extend(after_job_failures);
+            }
+            let final_outcome = listener_failure_outcome(listener_failures[0].kind());
+            let job_execution = self
+                .finish_job(
+                    &started_job,
+                    final_outcome,
+                    Some(listener_failures[0].summary()),
+                    &graph.correlation,
+                )
+                .await?;
+            return Ok(LaunchReport {
+                instance: graph.instance,
+                job_execution,
+                step_execution,
+                outcome: final_outcome,
+                original_outcome,
+                original_failure: None,
+                listener_failures,
+            });
+        }
+
+        let started_step = self
+            .start_step(&graph.step_execution, &graph.correlation)
+            .await?;
+        let tasklet_context = TaskletContext {
             parameters,
             job_execution_id: started_job.id(),
             step_execution_id: started_step.id(),
             stop,
         };
-        let invocation = invoke_tasklet(job.step.tasklet.as_ref(), context).await;
-        let outcome = match invocation {
+        let invocation = invoke_tasklet(job.step.tasklet.as_ref(), tasklet_context).await;
+        let provisional_outcome = match invocation {
             Ok(TaskletOutcome::Completed) if !stop.is_stop_requested() => {
                 TaskletExecutionOutcome::Completed
             }
@@ -527,14 +697,58 @@ impl<'a> JobLauncher<'a> {
             }
             Err(failure) => TaskletExecutionOutcome::Failed(failure),
         };
-        let (job_execution, step_execution) =
-            self.finish(&started_job, &started_step, outcome).await?;
+        let tasklet_failure = if matches!(
+            provisional_outcome,
+            TaskletExecutionOutcome::Failed(TaskletFailure::Error | TaskletFailure::Panic)
+        ) {
+            Some(self.next_failure_summary()?)
+        } else {
+            None
+        };
+
+        let mut outcome = provisional_outcome;
+        let mut original_outcome = None;
+        let mut listener_failures = self
+            .run_after_step(&job.step.listeners, context, outcome)
+            .await?;
+        if let Some(failure) = listener_failures.first() {
+            original_outcome = Some(outcome);
+            outcome = listener_failure_outcome(failure.kind());
+        }
+        let step_failure = listener_failures
+            .first()
+            .map(|failure| failure.summary())
+            .or(tasklet_failure);
+        let step_execution = self
+            .finish_step(&started_step, outcome, step_failure, &graph.correlation)
+            .await?;
+
+        let after_job_failures = self.run_after_job(&job.listeners, context, outcome).await?;
+        if !after_job_failures.is_empty() {
+            if original_outcome.is_none() {
+                original_outcome = Some(outcome);
+            }
+            if listener_failures.is_empty() {
+                outcome = listener_failure_outcome(after_job_failures[0].kind());
+            }
+            listener_failures.extend(after_job_failures);
+        }
+        let job_failure = listener_failures
+            .first()
+            .map(|failure| failure.summary())
+            .or(tasklet_failure);
+        let job_execution = self
+            .finish_job(&started_job, outcome, job_failure, &graph.correlation)
+            .await?;
 
         Ok(LaunchReport {
-            instance,
+            instance: graph.instance,
             job_execution,
             step_execution,
             outcome,
+            original_outcome,
+            original_failure: original_outcome.and(tasklet_failure),
+            listener_failures,
         })
     }
 
@@ -542,7 +756,7 @@ impl<'a> JobLauncher<'a> {
         &self,
         key: &JobInstanceKey,
         step_name: &StepName,
-    ) -> Result<(JobInstance, JobExecution, StepExecution), LaunchError> {
+    ) -> Result<CreatedExecutionGraph, LaunchError> {
         let mut unit = self.repository.begin().await?;
         let instance = unit
             .select_or_create_job_instance(key)
@@ -553,15 +767,35 @@ impl<'a> JobLauncher<'a> {
         let step_execution = unit
             .create_step_execution(job_execution.id(), step_name)
             .await?;
+        let attempt_count = unit.job_executions(instance.id()).await?.len();
+        let attempt = u64::try_from(attempt_count)
+            .ok()
+            .and_then(NonZeroU64::new)
+            .map(ExecutionAttempt::new)
+            .ok_or(RepositoryError::Unavailable)?;
         unit.commit().await?;
-        Ok((instance, job_execution, step_execution))
+        let correlation = ExecutionCorrelation::new(
+            key.job_name().clone(),
+            instance.id(),
+            job_execution.id(),
+            attempt,
+            step_name.clone(),
+            step_execution.id(),
+            attempt,
+        );
+        Ok(CreatedExecutionGraph {
+            instance,
+            job_execution,
+            step_execution,
+            correlation,
+        })
     }
 
-    async fn start(
+    async fn start_job(
         &self,
         job: &JobExecution,
-        step: &StepExecution,
-    ) -> Result<(JobExecution, StepExecution), LaunchError> {
+        correlation: &ExecutionCorrelation,
+    ) -> Result<JobExecution, LaunchError> {
         let now = self.clock.now();
         let mut unit = self.repository.begin().await?;
         let started_job = unit
@@ -571,6 +805,18 @@ impl<'a> JobLauncher<'a> {
                 LifecycleTransition::new(BatchStatus::Started, now),
             )
             .await?;
+        unit.commit().await?;
+        self.emit_event(LifecycleEventKind::JobStarted, correlation, None);
+        Ok(started_job)
+    }
+
+    async fn start_step(
+        &self,
+        step: &StepExecution,
+        correlation: &ExecutionCorrelation,
+    ) -> Result<StepExecution, LaunchError> {
+        let now = self.clock.now();
+        let mut unit = self.repository.begin().await?;
         let started_step = unit
             .transition_step_execution(
                 step.id(),
@@ -579,129 +825,335 @@ impl<'a> JobLauncher<'a> {
             )
             .await?;
         unit.commit().await?;
-        Ok((started_job, started_step))
+        self.emit_event(LifecycleEventKind::StepStarted, correlation, None);
+        Ok(started_step)
     }
 
-    async fn finish(
+    async fn finish_job(
         &self,
         job: &JobExecution,
-        step: &StepExecution,
         outcome: TaskletExecutionOutcome,
-    ) -> Result<(JobExecution, StepExecution), LaunchError> {
-        match outcome {
-            TaskletExecutionOutcome::Completed => {
-                self.finish_known(
-                    job,
-                    step,
-                    BatchStatus::Completed,
-                    ExitStatus::completed(),
-                    None,
-                )
-                .await
-            }
-            TaskletExecutionOutcome::Stopped(_) => self.finish_stopped(job, step, false).await,
-            TaskletExecutionOutcome::Failed(_) => {
-                let summary = FailureSummary::new(
-                    FailureCategory::UserComponent,
-                    self.ids
-                        .next_failure_id()
-                        .map_err(RepositoryError::Identifier)?,
-                );
-                self.finish_known(
-                    job,
-                    step,
-                    BatchStatus::Failed,
-                    ExitStatus::failed(),
-                    Some(summary),
-                )
-                .await
-            }
-        }
-    }
-
-    async fn finish_stopped(
-        &self,
-        job: &JobExecution,
-        step: &StepExecution,
-        requires_stopping: bool,
-    ) -> Result<(JobExecution, StepExecution), LaunchError> {
-        let now = self.clock.now();
-        let mut unit = self.repository.begin().await?;
-        let (job, step) = if requires_stopping {
-            let stopping_job = unit
-                .transition_job_execution(
-                    job.id(),
-                    job.version(),
-                    LifecycleTransition::new(BatchStatus::Stopping, now),
-                )
-                .await?;
-            let stopping_step = unit
-                .transition_step_execution(
-                    step.id(),
-                    step.version(),
-                    LifecycleTransition::new(BatchStatus::Stopping, now),
-                )
-                .await?;
-            (stopping_job, stopping_step)
-        } else {
-            (job.clone(), step.clone())
-        };
-        let stopped_job = unit
-            .enrich_job_exit_status(job.id(), job.version(), &ExitStatus::stopped())
-            .await?;
-        let stopped_step = unit
-            .enrich_step_exit_status(step.id(), step.version(), &ExitStatus::stopped())
-            .await?;
-        let stopped_job = unit
-            .transition_job_execution(
-                stopped_job.id(),
-                stopped_job.version(),
-                LifecycleTransition::new(BatchStatus::Stopped, now),
-            )
-            .await?;
-        let stopped_step = unit
-            .transition_step_execution(
-                stopped_step.id(),
-                stopped_step.version(),
-                LifecycleTransition::new(BatchStatus::Stopped, now),
-            )
-            .await?;
-        unit.commit().await?;
-        Ok((stopped_job, stopped_step))
-    }
-
-    async fn finish_known(
-        &self,
-        job: &JobExecution,
-        step: &StepExecution,
-        status: BatchStatus,
-        exit_status: ExitStatus,
         failure: Option<FailureSummary>,
-    ) -> Result<(JobExecution, StepExecution), LaunchError> {
+        correlation: &ExecutionCorrelation,
+    ) -> Result<JobExecution, LaunchError> {
+        let (status, exit_status) = final_status(outcome);
         let now = self.clock.now();
         let mut unit = self.repository.begin().await?;
         let job = unit
             .enrich_job_exit_status(job.id(), job.version(), &exit_status)
             .await?;
+        let transition = transition_for_outcome(status, now, failure)?;
+        let job = unit
+            .transition_job_execution(job.id(), job.version(), transition)
+            .await?;
+        unit.commit().await?;
+        self.emit_final_event(true, outcome, correlation, failure);
+        Ok(job)
+    }
+
+    async fn finish_step(
+        &self,
+        step: &StepExecution,
+        outcome: TaskletExecutionOutcome,
+        failure: Option<FailureSummary>,
+        correlation: &ExecutionCorrelation,
+    ) -> Result<StepExecution, LaunchError> {
+        let (status, exit_status) = final_status(outcome);
+        let now = self.clock.now();
+        let mut unit = self.repository.begin().await?;
         let step = unit
             .enrich_step_exit_status(step.id(), step.version(), &exit_status)
             .await?;
-        let job_transition = failure.map_or_else(
-            || LifecycleTransition::new(status, now),
-            |summary| LifecycleTransition::failed(now, summary),
-        );
-        let step_transition = failure.map_or_else(
-            || LifecycleTransition::new(status, now),
-            |summary| LifecycleTransition::failed(now, summary),
-        );
-        let job = unit
-            .transition_job_execution(job.id(), job.version(), job_transition)
-            .await?;
+        let transition = transition_for_outcome(status, now, failure)?;
         let step = unit
-            .transition_step_execution(step.id(), step.version(), step_transition)
+            .transition_step_execution(step.id(), step.version(), transition)
             .await?;
         unit.commit().await?;
+        self.emit_final_event(false, outcome, correlation, failure);
+        Ok(step)
+    }
+
+    async fn stop_graph(
+        &self,
+        job: &JobExecution,
+        step: &StepExecution,
+        correlation: &ExecutionCorrelation,
+    ) -> Result<(JobExecution, StepExecution), LaunchError> {
+        let stopping_job = self.mark_job_stopping(job, correlation).await?;
+        let stopping_step = self.mark_step_stopping(step, correlation).await?;
+        let outcome = TaskletExecutionOutcome::Stopped(StopTiming::BeforeStart);
+        let step = self
+            .finish_step(&stopping_step, outcome, None, correlation)
+            .await?;
+        let job = self
+            .finish_job(&stopping_job, outcome, None, correlation)
+            .await?;
         Ok((job, step))
+    }
+
+    async fn mark_job_stopping(
+        &self,
+        job: &JobExecution,
+        correlation: &ExecutionCorrelation,
+    ) -> Result<JobExecution, LaunchError> {
+        let mut unit = self.repository.begin().await?;
+        let job = unit
+            .transition_job_execution(
+                job.id(),
+                job.version(),
+                LifecycleTransition::new(BatchStatus::Stopping, self.clock.now()),
+            )
+            .await?;
+        unit.commit().await?;
+        self.emit_event(LifecycleEventKind::JobStopping, correlation, None);
+        Ok(job)
+    }
+
+    async fn mark_step_stopping(
+        &self,
+        step: &StepExecution,
+        correlation: &ExecutionCorrelation,
+    ) -> Result<StepExecution, LaunchError> {
+        let mut unit = self.repository.begin().await?;
+        let step = unit
+            .transition_step_execution(
+                step.id(),
+                step.version(),
+                LifecycleTransition::new(BatchStatus::Stopping, self.clock.now()),
+            )
+            .await?;
+        unit.commit().await?;
+        self.emit_event(LifecycleEventKind::StepStopping, correlation, None);
+        Ok(step)
+    }
+
+    async fn run_before_job(
+        &self,
+        listeners: &[Arc<dyn JobExecutionListener>],
+        context: ListenerContext<'_>,
+    ) -> Result<Option<ListenerFailure>, LaunchError> {
+        for (index, listener) in listeners.iter().enumerate() {
+            if let Err(kind) = invoke_before_job(listener.as_ref(), context).await {
+                return self
+                    .listener_failure(ListenerPhase::BeforeJob, index, kind, context)
+                    .map(Some);
+            }
+        }
+        Ok(None)
+    }
+
+    async fn run_before_step(
+        &self,
+        listeners: &[Arc<dyn StepExecutionListener>],
+        context: ListenerContext<'_>,
+    ) -> Result<Option<ListenerFailure>, LaunchError> {
+        for (index, listener) in listeners.iter().enumerate() {
+            if let Err(kind) = invoke_before_step(listener.as_ref(), context).await {
+                return self
+                    .listener_failure(ListenerPhase::BeforeStep, index, kind, context)
+                    .map(Some);
+            }
+        }
+        Ok(None)
+    }
+
+    async fn run_after_job(
+        &self,
+        listeners: &[Arc<dyn JobExecutionListener>],
+        context: ListenerContext<'_>,
+        outcome: TaskletExecutionOutcome,
+    ) -> Result<Vec<ListenerFailure>, LaunchError> {
+        let mut failures = Vec::new();
+        for (index, listener) in listeners.iter().enumerate().rev() {
+            if let Err(kind) = invoke_after_job(listener.as_ref(), context, outcome).await {
+                failures.push(self.listener_failure(
+                    ListenerPhase::AfterJob,
+                    index,
+                    kind,
+                    context,
+                )?);
+            }
+        }
+        Ok(failures)
+    }
+
+    async fn run_after_step(
+        &self,
+        listeners: &[Arc<dyn StepExecutionListener>],
+        context: ListenerContext<'_>,
+        outcome: TaskletExecutionOutcome,
+    ) -> Result<Vec<ListenerFailure>, LaunchError> {
+        let mut failures = Vec::new();
+        for (index, listener) in listeners.iter().enumerate().rev() {
+            if let Err(kind) = invoke_after_step(listener.as_ref(), context, outcome).await {
+                failures.push(self.listener_failure(
+                    ListenerPhase::AfterStep,
+                    index,
+                    kind,
+                    context,
+                )?);
+            }
+        }
+        Ok(failures)
+    }
+
+    fn listener_failure(
+        &self,
+        phase: ListenerPhase,
+        registration_index: usize,
+        kind: ListenerFailureKind,
+        context: ListenerContext<'_>,
+    ) -> Result<ListenerFailure, LaunchError> {
+        let summary = self.next_failure_summary()?;
+        let event_kind = match phase {
+            ListenerPhase::BeforeJob => LifecycleEventKind::JobBeforeListenerFailed,
+            ListenerPhase::BeforeStep => LifecycleEventKind::StepBeforeListenerFailed,
+            ListenerPhase::AfterStep => LifecycleEventKind::StepAfterListenerFailed,
+            ListenerPhase::AfterJob => LifecycleEventKind::JobAfterListenerFailed,
+        };
+        self.emit_event(event_kind, context.correlation(), Some(summary));
+        Ok(ListenerFailure::new(
+            phase,
+            registration_index,
+            kind,
+            summary,
+        ))
+    }
+
+    fn next_failure_summary(&self) -> Result<FailureSummary, LaunchError> {
+        Ok(FailureSummary::new(
+            FailureCategory::UserComponent,
+            self.ids
+                .next_failure_id()
+                .map_err(RepositoryError::Identifier)?,
+        ))
+    }
+
+    fn emit_final_event(
+        &self,
+        job: bool,
+        outcome: TaskletExecutionOutcome,
+        correlation: &ExecutionCorrelation,
+        failure: Option<FailureSummary>,
+    ) {
+        let kind = match (job, outcome) {
+            (true, TaskletExecutionOutcome::Completed) => LifecycleEventKind::JobCompleted,
+            (false, TaskletExecutionOutcome::Completed) => LifecycleEventKind::StepCompleted,
+            (true, TaskletExecutionOutcome::Stopped(_)) => LifecycleEventKind::JobStopped,
+            (false, TaskletExecutionOutcome::Stopped(_)) => LifecycleEventKind::StepStopped,
+            (true, TaskletExecutionOutcome::Failed(_)) => LifecycleEventKind::JobFailed,
+            (false, TaskletExecutionOutcome::Failed(_)) => LifecycleEventKind::StepFailed,
+        };
+        self.emit_event(kind, correlation, failure);
+    }
+
+    fn emit_event(
+        &self,
+        kind: LifecycleEventKind,
+        correlation: &ExecutionCorrelation,
+        failure: Option<FailureSummary>,
+    ) {
+        let Some(sink) = self.event_sink else {
+            return;
+        };
+        let event = failure.map_or_else(
+            || LifecycleEvent::new(kind, correlation.clone()),
+            |summary| LifecycleEvent::failed(kind, correlation.clone(), summary),
+        );
+        let _ = catch_unwind(AssertUnwindSafe(|| sink.emit(&event)));
+    }
+}
+
+struct CreatedExecutionGraph {
+    instance: JobInstance,
+    job_execution: JobExecution,
+    step_execution: StepExecution,
+    correlation: ExecutionCorrelation,
+}
+
+fn final_status(outcome: TaskletExecutionOutcome) -> (BatchStatus, ExitStatus) {
+    match outcome {
+        TaskletExecutionOutcome::Completed => (BatchStatus::Completed, ExitStatus::completed()),
+        TaskletExecutionOutcome::Stopped(_) => (BatchStatus::Stopped, ExitStatus::stopped()),
+        TaskletExecutionOutcome::Failed(_) => (BatchStatus::Failed, ExitStatus::failed()),
+    }
+}
+
+fn transition_for_outcome(
+    status: BatchStatus,
+    transitioned_at: std::time::SystemTime,
+    failure: Option<FailureSummary>,
+) -> Result<LifecycleTransition, LaunchError> {
+    if matches!(status, BatchStatus::Failed) {
+        let summary = failure.ok_or(RepositoryError::Unavailable)?;
+        Ok(LifecycleTransition::failed(transitioned_at, summary))
+    } else {
+        Ok(LifecycleTransition::new(status, transitioned_at))
+    }
+}
+
+const fn listener_failure_outcome(kind: ListenerFailureKind) -> TaskletExecutionOutcome {
+    match kind {
+        ListenerFailureKind::Error => {
+            TaskletExecutionOutcome::Failed(TaskletFailure::ListenerError)
+        }
+        ListenerFailureKind::Panic => {
+            TaskletExecutionOutcome::Failed(TaskletFailure::ListenerPanic)
+        }
+    }
+}
+
+async fn invoke_before_job(
+    listener: &dyn JobExecutionListener,
+    context: ListenerContext<'_>,
+) -> Result<(), ListenerFailureKind> {
+    let future = catch_unwind(AssertUnwindSafe(|| listener.before_job(context)))
+        .map_err(|_| ListenerFailureKind::Panic)?;
+    match AssertUnwindSafe(future).catch_unwind().await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(_)) => Err(ListenerFailureKind::Error),
+        Err(_) => Err(ListenerFailureKind::Panic),
+    }
+}
+
+async fn invoke_after_job(
+    listener: &dyn JobExecutionListener,
+    context: ListenerContext<'_>,
+    outcome: TaskletExecutionOutcome,
+) -> Result<(), ListenerFailureKind> {
+    let future = catch_unwind(AssertUnwindSafe(|| listener.after_job(context, outcome)))
+        .map_err(|_| ListenerFailureKind::Panic)?;
+    match AssertUnwindSafe(future).catch_unwind().await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(_)) => Err(ListenerFailureKind::Error),
+        Err(_) => Err(ListenerFailureKind::Panic),
+    }
+}
+
+async fn invoke_before_step(
+    listener: &dyn StepExecutionListener,
+    context: ListenerContext<'_>,
+) -> Result<(), ListenerFailureKind> {
+    let future = catch_unwind(AssertUnwindSafe(|| listener.before_step(context)))
+        .map_err(|_| ListenerFailureKind::Panic)?;
+    match AssertUnwindSafe(future).catch_unwind().await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(_)) => Err(ListenerFailureKind::Error),
+        Err(_) => Err(ListenerFailureKind::Panic),
+    }
+}
+
+async fn invoke_after_step(
+    listener: &dyn StepExecutionListener,
+    context: ListenerContext<'_>,
+    outcome: TaskletExecutionOutcome,
+) -> Result<(), ListenerFailureKind> {
+    let future = catch_unwind(AssertUnwindSafe(|| listener.after_step(context, outcome)))
+        .map_err(|_| ListenerFailureKind::Panic)?;
+    match AssertUnwindSafe(future).catch_unwind().await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(_)) => Err(ListenerFailureKind::Error),
+        Err(_) => Err(ListenerFailureKind::Panic),
     }
 }
 

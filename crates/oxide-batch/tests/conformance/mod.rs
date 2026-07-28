@@ -14,6 +14,26 @@ pub const MATRIX_SCENARIOS: &[(&str, &str)] = &[
     ),
     ("JOB-EXEC-001", "restart_creates_new_execution"),
     ("JOB-COMPLETE-001", "completed_instance_rejects_launch"),
+    (
+        "TASKLET-001",
+        "successful_launch_borrows_context_and_persists_final_graph",
+    ),
+    (
+        "TASKLET-STOP-001",
+        "cooperative_stop_during_async_work_is_persisted",
+    ),
+    (
+        "TASKLET-PANIC-001",
+        "tasklet_panic_is_classified_and_runtime_remains_usable",
+    ),
+    (
+        "LISTENER-ORDER-001",
+        "listeners_nest_and_reverse_after_order",
+    ),
+    (
+        "LISTENER-FAIL-001",
+        "after_listener_failure_retains_original_outcome_and_work",
+    ),
     ("STEP-STATUS-001", "exit_status_does_not_forge_batch_status"),
     ("CHUNK-COMMIT-001", "committed_chunk_advances_checkpoint"),
     ("CHUNK-ROLLBACK-001", "rolled_back_chunk_replays"),

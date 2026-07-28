@@ -38,6 +38,30 @@ The initial catalog includes:
 Each event defines severity, safe fields, emission timing relative to commit,
 and whether duplicate emission is possible after crash.
 
+### M1 executable-kernel events
+
+The M1 launcher emits `launch.accepted`, job/step `starting`, `started`,
+`stopping`, `stopped`, `failed`, and `completed`, plus typed listener-failure
+events. Lifecycle state events are emitted after the corresponding in-memory
+repository commit. Listener-failure events are emitted after classification and
+before the enclosing final-state commit. Event delivery is best effort; sink
+failure or panic cannot change execution metadata or outcome.
+
+Every M1 event carries validated job and step names, opaque instance/job/step
+execution IDs, and nonzero job/step attempt ordinals. Failure events may add
+only the framework-owned failure category and opaque failure ID.
+
+The stable diagnostic projections are:
+
+- formatted event/log output: event name, severity, bounded correlation,
+  lifecycle status, and optional redacted failure summary;
+- span fields: the same reviewed correlation and outcome fields;
+- metric-label candidates: event name, component, and lifecycle status only.
+
+Parameters, contexts, records, credentials, user error text, identifiers, and
+job/step names are excluded from metric labels. Exporter integration remains an
+M4 concern.
+
 ## Logs
 
 - Logs use stable event names plus human-readable messages.

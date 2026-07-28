@@ -44,6 +44,12 @@ Redaction tests capture structured events, formatted logs, error chains, span
 fields, and metric labels at the framework boundary. New diagnostic fields are
 deny-by-default until their allowed form and sentinel test are reviewed.
 
+The M1 executable-kernel scenarios `inspection_redacts_record_contents` and
+`telemetry_correlates_execution` exercise these sinks with a sentinel embedded
+in parameters and arbitrary user errors. Tasklet and listener error
+constructors classify and discard arbitrary source payloads; execution
+inspection retains only framework-owned categories and opaque failure IDs.
+
 ## Dependency policy
 
 - commit `Cargo.lock` for the workspace;
