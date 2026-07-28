@@ -10,6 +10,8 @@ is complete only when all of its exit criteria are demonstrated.
 
 ## M0 — Foundation
 
+**Status:** Complete (2026-07-29)
+
 **Outcome:** implementation can begin without unresolved product, correctness,
 or ownership assumptions.
 
@@ -50,6 +52,8 @@ Exit criteria:
 No production runtime implementation belongs in M0.
 
 ## M1 — Executable Kernel
+
+**Status:** Authorized
 
 **Outcome:** a user can define and run a single-process, single-step job against
 an in-memory repository with deterministic lifecycle events.

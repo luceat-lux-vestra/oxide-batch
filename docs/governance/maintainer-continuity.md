@@ -2,6 +2,10 @@
 
 **State:** Accepted
 
+**Last reviewed:** 2026-07-29
+
+**Pre-runtime-release owner:** release owner
+
 The project currently has one maintainer. Continuity controls reduce accidental
 loss of the repository or release path without publishing secret recovery
 material.

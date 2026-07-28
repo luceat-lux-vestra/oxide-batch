@@ -30,6 +30,20 @@ The framework documents encryption as a deployment responsibility until an
 approved encryption-at-rest design exists. Serialized contexts have size and
 depth limits and an explicit format version.
 
+## Testable disclosure rules
+
+| Source | Allowed diagnostic form | Forbidden form | Required assertion |
+| --- | --- | --- | --- |
+| Identifying job parameter | Name plus typed/redacted presence when explicitly allowlisted | Raw value by default | Captured logs, events, errors, and spans do not contain a sentinel secret |
+| Non-identifying parameter or execution context | Field count, byte size, schema version, and bounded internal key names | Serialized document or raw values | Snapshot/event tests expose only approved structural metadata |
+| Business record and user error payload | Framework-owned category, component boundary, and opaque failure ID | Record body, query parameter, or arbitrary `Display`/`Debug` output | Failure tests search every diagnostic sink for sentinel record content |
+| Database/exporter credential | Endpoint class and redacted source | URI user info, password, token, or environment value | Configuration-error tests prove credentials are absent |
+| Metric labels | Bounded framework status, component kind, and stable internal identifiers | User-controlled parameters, context keys/values, record data, or error text | Cardinality tests reject unbounded/user-controlled label values |
+
+Redaction tests capture structured events, formatted logs, error chains, span
+fields, and metric labels at the framework boundary. New diagnostic fields are
+deny-by-default until their allowed form and sentinel test are reviewed.
+
 ## Dependency policy
 
 - commit `Cargo.lock` for the workspace;

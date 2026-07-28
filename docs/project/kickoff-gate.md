@@ -7,12 +7,12 @@ decision, enforcement, and evidence columns must agree.
 
 ## Product and compatibility sign-off
 
-- [ ] Product vision, users, use cases, 1.0 scope, and non-goals are accepted.
-- [ ] Spring Batch reference line and compatibility levels are accepted.
-- [ ] Glossary, lifecycle, identity, restart, status, and transaction semantics
+- [x] Product vision, users, use cases, 1.0 scope, and non-goals are accepted.
+- [x] Spring Batch reference line and compatibility levels are accepted.
+- [x] Glossary, lifecycle, identity, restart, status, and transaction semantics
       are accepted.
-- [ ] Initial conformance rows and scenario names are reviewed.
-- [ ] Public compatibility wording has no unsupported claim.
+- [x] Initial conformance rows and scenario names are reviewed.
+- [x] Public compatibility wording has no unsupported claim.
 
 ## Architecture sign-off
 
@@ -26,38 +26,43 @@ decision, enforcement, and evidence columns must agree.
 
 ## Engineering sign-off
 
-- [ ] Development bootstrap and required local commands are reproducible.
-- [ ] Coding/API conventions and definition of done are accepted.
-- [ ] MSRV CI passes on the declared version.
-- [ ] Dependency/license/advisory CI and exception policy are active.
-- [ ] M1 test layers, naming, deterministic utilities, and fixture policy exist.
-- [ ] Supported M1 platform matrix is explicit.
+- [x] Development bootstrap and required local commands are reproducible.
+- [x] Coding/API conventions and definition of done are accepted.
+- [x] MSRV CI passes on the declared version.
+- [x] Dependency/license/advisory CI and exception policy are active.
+- [x] M1 test layers, naming, deterministic utility contracts, and fixture
+      policy are defined.
+- [x] Supported M1 platform matrix is explicit.
 
 ## Security and operations sign-off
 
-- [ ] Threat model and risk register have no unowned High-impact risk.
-- [ ] Parameter/context/error/telemetry redaction rules are testable.
-- [ ] Release access and maintainer recovery inventory is current.
-- [ ] PostgreSQL credentials/roles and test database safety are documented.
-- [ ] Recovery/destructive operations are out of M1 or have guarded semantics.
+- [x] Threat model and risk register have no unowned High-impact risk.
+- [x] Parameter/context/error/telemetry redaction rules are testable.
+- [x] Release access and maintainer recovery inventory is current.
+- [x] PostgreSQL credentials/roles and test database safety are documented.
+- [x] Recovery/destructive operations are out of M1 or have guarded semantics.
 
 ## First slice sign-off
 
-- [ ] Each vertical-slice criterion maps to a named test.
-- [ ] Failure points state expected metadata, replay, counters, and operator
+- [x] Each vertical-slice criterion maps to a named test.
+- [x] Failure points state expected metadata, replay, counters, and operator
       action.
-- [ ] M1 implements only the in-memory/kernel portion without weakening the M2
+- [x] M1 implements only the in-memory/kernel portion without weakening the M2
       durable contract.
-- [ ] Benchmark and diagnostic hooks needed to evaluate the architecture are
+- [x] Benchmark and diagnostic hooks needed to evaluate the architecture are
       identified.
 
 ## Approval record
 
-Record in the M0 tracking issue:
+| Field | Record |
+| --- | --- |
+| Decision owner and date | Project owner, 2026-07-29 |
+| Foundation revision | `4139dff` (`docs(governance): define foundation and M0-M5 roadmap`) |
+| Architecture revision | `ca6e36a` (merged PR #20 with accepted ADR-0002/0003 and spikes) |
+| Spike evidence | Spikes 0001 async traits, 0002 PostgreSQL transactions/recovery, and 0003 execution-context evolution |
+| Deferred ownership | Named by role and later gate in the preparation master plan |
+| Residual risks | R-003 delivery assumptions, R-007 user-code isolation, R-010 telemetry disclosure, R-013 single-maintainer continuity, and R-017 public dependency leakage remain active with mitigations |
+| First authorized M1 work | GitHub issue #9, to be split into definition-ready implementation issues |
 
-- decision owner and date;
-- accepted document revisions/commit;
-- spike evidence links;
-- deferred items with milestone and owner;
-- residual risks;
-- first M1 issue authorized for implementation.
+This record closes M0 and authorizes M1 implementation. Deferred work does not
+become part of M1 unless its named gate or an accepted RFC promotes it.

@@ -2,6 +2,8 @@
 
 **State:** Accepted
 
+**M0 status:** Complete as of 2026-07-29
+
 This is the authoritative checklist for work that must be considered before
 OxideBatch runtime implementation starts. The delivery roadmap describes
 capabilities; this plan describes project readiness.
@@ -21,7 +23,7 @@ Status vocabulary:
 | Public GitHub repository and Apache-2.0 license | Done | `LICENSE`, `NOTICE`, repository settings |
 | crates.io ownership and trusted publishing | Done | `oxide-batch` alpha release and OIDC workflow |
 | Trunk-based branching and PR-only changes | Done | Repository policy and main ruleset |
-| Required CI checks and squash merge | Done | `quality`, `dependency-review` |
+| Required CI checks and squash merge | Done | `quality`, `dependency-review`, `msrv`, and `supply-chain` |
 | CODEOWNERS and maintainer bypass rule | Done | `.github/CODEOWNERS`, repository policy |
 | Issue forms, PR template, labels, and Discussions | Done | `.github`, GitHub settings |
 | Secret scanning, push protection, private reporting | Done | GitHub security settings |
@@ -33,42 +35,42 @@ Status vocabulary:
 
 | Deliverable | Status | Evidence or remaining action |
 | --- | --- | --- |
-| Vision, target users, and jobs-to-be-done | Draft | Product vision document |
-| 1.0 scope and explicit non-goals | Draft | Product vision and roadmap |
-| Representative use-case catalog | Draft | Eight named reference use cases |
-| Functional capability map | Draft | Roadmap and use-case milestone coverage |
-| Non-functional requirements | Draft | NFR document; numeric budgets need approval/evidence |
-| Supported deployment archetypes | Draft | One-shot, resident worker, containerized job |
-| Configuration and secret ownership boundaries | Draft | Configuration model and system context |
-| Success metrics and adoption signals | Draft | Initial success measures; numeric adoption targets later |
-| Competitive/alternative analysis | Draft | Build/use alternatives and positioning constraints |
-| 1.0 exclusion and scope-change procedure | Draft | RFC process and roadmap |
+| Vision, target users, and jobs-to-be-done | Done | Accepted product vision |
+| 1.0 scope and explicit non-goals | Done | Accepted product vision and roadmap |
+| Representative use-case catalog | Done | Eight accepted reference use cases |
+| Functional capability map | Done | Accepted roadmap and use-case milestone coverage |
+| Non-functional requirements | Done | Accepted NFR priorities; milestone-specific budgets require implementation evidence |
+| Supported deployment archetypes | Done | One-shot, resident worker, and containerized job boundaries |
+| Configuration and secret ownership boundaries | Done | Accepted configuration model and system context |
+| Success metrics and adoption signals | Done | Initial measures accepted; numeric adoption targets are release-planning inputs |
+| Competitive/alternative analysis | Done | Accepted build/use alternatives and positioning constraints |
+| 1.0 exclusion and scope-change procedure | Done | Accepted RFC process and roadmap |
 
 ## M0.3 — Compatibility and domain contract
 
 | Deliverable | Status | Evidence or remaining action |
 | --- | --- | --- |
-| Normative Spring Batch reference line | Draft | Proposed Spring Batch 6.0 |
-| Compatibility vocabulary and claim rules | Draft | Semantic, behavioral, operational, schema, API |
-| Core glossary | Draft | Standalone domain glossary |
-| Job/step lifecycle state machines | Draft | Validate all failure/listener transitions |
-| Job-instance parameter identity rules | Draft | Define canonical encoding and hashing |
-| Batch status versus exit status | Draft | Compatibility contract |
-| Restart, stop, abandon, and recovery semantics | Draft | Execution semantics |
-| Chunk/checkpoint transaction contract | Draft | Validate through PostgreSQL spike |
-| Retry, skip, rollback, and backoff contract | Draft | Complete before M3 |
-| Listener ordering and failure behavior | Draft | Proposed nesting/order and failure rule |
+| Normative Spring Batch reference line | Done | Spring Batch 6.0 accepted |
+| Compatibility vocabulary and claim rules | Done | Semantic, behavioral, operational, schema, and API rules accepted |
+| Core glossary | Done | Accepted domain glossary |
+| Job/step lifecycle state machines | Done | Accepted lifecycle and failure/listener transitions |
+| Job-instance parameter identity rules | Done | Canonical typed-value identity contract accepted; encoding is an M1 implementation detail |
+| Batch status versus exit status | Done | Accepted compatibility contract |
+| Restart, stop, abandon, and recovery semantics | Done | Accepted execution semantics |
+| Chunk/checkpoint transaction contract | Done | Accepted contract with PostgreSQL spike evidence |
+| Retry, skip, rollback, and backoff contract | Done | Policy boundary accepted; implementation belongs to M3 |
+| Listener ordering and failure behavior | Done | Accepted nesting, ordering, and typed failure rule |
 | Job-definition versioning and restart compatibility | Deferred | Required before M2 |
-| Compatibility matrix format and initial scenarios | Draft | Initial planned conformance rows |
-| Spring Batch reference test harness strategy | Draft | Clean-room pinned reference runner |
-| Metadata import/interoperability position | Draft | No shared live schema; import deferred |
+| Compatibility matrix format and initial scenarios | Done | Reviewed M1–M4 conformance rows and stable scenario IDs |
+| Spring Batch reference test harness strategy | Done | Accepted clean-room pinned reference runner |
+| Metadata import/interoperability position | Done | No shared live schema; import is outside the 1.0 promise |
 
 ## M0.4 — Architecture and technology
 
 | Deliverable | Status | Evidence or remaining action |
 | --- | --- | --- |
-| System context and deployment diagrams | Draft | Context and initial deployment archetypes |
-| Crate/module boundaries and dependency direction | Draft | Architecture overview and ADR-0001 |
+| System context and deployment diagrams | Done | Accepted context and deployment archetypes |
+| Crate/module boundaries and dependency direction | Done | Accepted architecture overview and ADR-0001 |
 | Public facade and publication boundaries | Done | ADR-0001 and crate policy |
 | Async/sync execution model | Done | Accepted ADR-0002 and spike 0001 |
 | Blocking and CPU-bound work isolation | Done | Bounded adapter and late-stop contract in spike 0001 |
@@ -77,10 +79,10 @@ Status vocabulary:
 | PostgreSQL/SQLx selection | Done | Accepted ADR-0003 and PostgreSQL 18.4 evidence |
 | Metadata logical and physical model | Deferred | Required before M2 implementation |
 | Execution-context format and evolution | Done | Versioned JSON and backward-read fixtures in spike 0003 |
-| Configuration model and precedence | Draft | Typed library configuration and proposed CLI precedence |
-| Error taxonomy and stability contract | Draft | API design guidelines |
-| Feature-flag policy | Draft | Additive feature rules; concrete matrix later |
-| Telemetry abstraction and event vocabulary | Draft | Observability contract |
+| Configuration model and precedence | Done | Typed library configuration and CLI precedence boundaries accepted |
+| Error taxonomy and stability contract | Done | Accepted API design guidelines |
+| Feature-flag policy | Done | Additive feature rules accepted; concrete matrix starts with the first feature |
+| Telemetry abstraction and event vocabulary | Done | Accepted observability contract |
 | Extension/plugin model | Deferred | Static Rust traits first; dynamic ABI post-1.0 |
 | Distributed coordination model | Deferred | Post-1.0 unless promoted through RFC |
 
@@ -89,40 +91,40 @@ Status vocabulary:
 | Deliverable | Status | Evidence or remaining action |
 | --- | --- | --- |
 | Toolchain, edition, and MSRV | Done | Stable 1.97.1; MSRV 1.95; both required CI |
-| Local prerequisite and setup guide | Draft | Development environment document |
+| Local prerequisite and setup guide | Done | Reproducible development environment document |
 | One-command bootstrap/check/test workflow | Done | `cargo xtask doctor/check/package` |
 | Local PostgreSQL test environment | Done | Disposable container script plus PostgreSQL CI service |
 | Editor defaults and line endings | Done | `.editorconfig`, `.gitattributes` |
 | Formatting configuration | Done | `rustfmt.toml` plus editor defaults |
 | Workspace lint policy | Done | Unsafe/panic/unwrap policies in root manifest |
-| Detailed Rust API design rules | Draft | API guidelines and coding conventions |
-| Error-handling and panic policy | Draft | Expand classifications and context rules |
-| Logging and sensitive-data coding rules | Draft | Threat model; add examples and review checklist |
-| Dependency introduction/review process | Draft | Dependency and license policy |
+| Detailed Rust API design rules | Done | Accepted API guidelines and coding conventions |
+| Error-handling and panic policy | Done | Accepted classifications, panic boundary, and context rules |
+| Logging and sensitive-data coding rules | Done | Accepted threat model and testable disclosure table |
+| Dependency introduction/review process | Done | Accepted dependency and license policy |
 | Feature matrix development commands | Deferred | Required when first optional feature appears |
 | Generated-code and migration conventions | Deferred | Required before M2 migrations |
-| Examples/fixtures naming and data policy | Draft | Conformance fixture/data policy |
+| Examples/fixtures naming and data policy | Done | Accepted conformance fixture layout and provenance policy |
 
 ## M0.6 — Verification and quality engineering
 
 | Deliverable | Status | Evidence or remaining action |
 | --- | --- | --- |
-| Test pyramid and contract-test strategy | Draft | Test strategy |
-| Deterministic time/ID/random/backoff strategy | Draft | Test strategy |
-| State-machine/property testing policy | Draft | Select concrete harness during M1 |
-| PostgreSQL version test matrix | Draft | Dimensions defined; exact majors not selected |
-| OS/architecture support matrix | Draft | Candidate matrix; exact support not selected |
+| Test pyramid and contract-test strategy | Done | Accepted test strategy |
+| Deterministic time/ID/random/backoff strategy | Done | Accepted test strategy and M1 support layout |
+| State-machine/property testing policy | Done | M1 gate and harness location accepted |
+| PostgreSQL version test matrix | Done | Oldest/newest-major rule accepted; exact majors are selected before M2 implementation |
+| OS/architecture support matrix | Done | Explicit M1 primary, development, and candidate targets |
 | Feature-combination test matrix | Deferred | Introduce with first optional feature |
-| Failure-injection/crash matrix | Draft | First vertical slice and test strategy |
-| Conformance suite structure | Draft | Matrix IDs, normalized runners, evidence states |
-| Coverage tooling and policy | Draft | Source coverage plus scenario evidence |
+| Failure-injection/crash matrix | Done | Named scenarios with metadata, replay, counters, outcome, and operator action |
+| Conformance suite structure | Done | Matrix IDs, harness layout, normalized runners, and evidence states |
+| Coverage tooling and policy | Done | Source coverage plus scenario evidence policy accepted |
 | Mutation testing policy | Deferred | Evaluate after stable core logic exists |
-| Concurrency model checking | Draft | Loom evaluation gate documented |
-| Fuzzing targets and corpus policy | Draft | Initial target classes documented |
-| Performance workload definitions | Draft | Nine named workloads |
-| Benchmark hardware/result protocol | Draft | Reproducibility and variance requirements |
+| Concurrency model checking | Done | Loom evaluation gate accepted |
+| Fuzzing targets and corpus policy | Done | Initial target classes and corpus policy accepted |
+| Performance workload definitions | Done | Nine named workloads accepted |
+| Benchmark hardware/result protocol | Done | Reproducibility and variance requirements accepted |
 | Soak and leak-test policy | Deferred | Required by M4 |
-| Flaky-test quarantine and ownership | Draft | Owner/issue/expiry policy |
+| Flaky-test quarantine and ownership | Done | Owner, issue, and expiry policy accepted |
 
 ## M0.7 — CI, security, and supply chain
 
@@ -142,46 +144,46 @@ Status vocabulary:
 | Scheduled deep test workflow | Deferred | Stable-only checks when relevant; no beta/nightly CI |
 | SBOM generation | Deferred | Select and add before first beta |
 | Artifact attestations/provenance | Deferred | Required before first stable release |
-| Reproducible package-content verification | Draft | Dry run exists; record package manifest/checksum |
+| Reproducible package-content verification | Done | `cargo xtask package` dry-run and package file-list verification |
 | CI permissions and action pinning | Done | Read-only defaults and immutable SHAs |
-| Dependency update and exception SLA | Draft | Severity-based response and 90-day exception expiry |
+| Dependency update and exception SLA | Done | Severity-based response and 90-day exception expiry accepted |
 
 ## M0.8 — Data, operations, and observability
 
 | Deliverable | Status | Evidence or remaining action |
 | --- | --- | --- |
-| Metadata retention and purge model | Draft | Eligibility, audit, and safety rules |
-| Database roles and least-privilege model | Draft | Migrator/runtime/operator roles |
-| Backup/restore and migration runbook | Draft | Policy exists; runnable procedure required by M2 |
-| RPO/RTO vocabulary and responsibility | Draft | Framework capability versus deployment promise |
+| Metadata retention and purge model | Done | Eligibility, audit, and safety rules accepted |
+| Database roles and least-privilege model | Done | Migrator, runtime, and operator role boundaries accepted |
+| Backup/restore and migration runbook | Done | Policy accepted; runnable procedure remains an M2 implementation gate |
+| RPO/RTO vocabulary and responsibility | Done | Framework capability versus deployment promise accepted |
 | Connection-pool and timeout policy | Deferred | Required before M2 |
 | Stale execution detection/recovery runbook | Deferred | Required by M4 |
 | CLI command, exit-code, and confirmation conventions | Deferred | Required before M4 CLI implementation |
-| Configuration precedence and validation | Draft | Typed library config and CLI precedence |
-| Stable log event and field catalog | Draft | Initial events and safe fields |
-| Metric name/unit/cardinality catalog | Draft | Candidate families and forbidden labels |
-| Trace/span hierarchy and propagation | Draft | Job/step/chunk/retry hierarchy |
+| Configuration precedence and validation | Done | Typed library configuration and CLI precedence accepted |
+| Stable log event and field catalog | Done | Initial events, safe fields, and deny-by-default rule accepted |
+| Metric name/unit/cardinality catalog | Done | Candidate families and forbidden labels accepted |
+| Trace/span hierarchy and propagation | Done | Job, step, chunk, and retry hierarchy accepted |
 | Health/readiness semantics | Deferred | Only if a resident worker/service is introduced |
-| Capacity planning and backpressure guidance | Draft | NFR and performance capacity model |
+| Capacity planning and backpressure guidance | Done | NFR and performance capacity model accepted |
 | Incident diagnostic bundle policy | Deferred | Required by M4 |
 
 ## M0.9 — Release, support, and documentation
 
 | Deliverable | Status | Evidence or remaining action |
 | --- | --- | --- |
-| SemVer, prerelease, and coordinated-crate policy | Draft | Release/support and crate-publishing policies |
-| Changelog format and release-note ownership | Draft | `CHANGELOG.md`; checklist needed |
-| Release checklist and rollback procedure | Draft | Prepare/build/publish/verify/emergency steps |
-| Metadata schema version and migration policy | Draft | ADR-0003 and support policy |
-| Public API deprecation policy | Draft | Finalize before 1.0 RC |
-| Supported release/backport window | Draft | Final stable commitment deferred to M5 |
-| Platform/PostgreSQL/Rust support matrix | Draft | Template and candidate 1.0 dimensions |
-| API documentation information architecture | Draft | Tutorials/how-to/reference/explanation |
-| Contributor/developer guide | Draft | Bootstrap and process docs; runnable tooling pending |
+| SemVer, prerelease, and coordinated-crate policy | Done | Accepted release/support and crate-publishing policies |
+| Changelog format and release-note ownership | Done | Accepted changelog format and release checklist |
+| Release checklist and rollback procedure | Done | Accepted prepare/build/publish/verify/emergency steps |
+| Metadata schema version and migration policy | Done | Accepted ADR-0003 and support policy |
+| Public API deprecation policy | Done | Pre-1.0 policy accepted; stable details remain an M5 gate |
+| Supported release/backport window | Deferred | Release owner; final stable commitment at M5 |
+| Platform/PostgreSQL/Rust support matrix | Done | M1 matrix explicit; exact later-milestone versions remain gated |
+| API documentation information architecture | Done | Tutorials, how-to, reference, and explanation structure accepted |
+| Contributor/developer guide | Done | Bootstrap, process docs, and runnable `cargo xtask` tooling |
 | User quickstart and examples plan | Deferred | Required with M1 user API |
 | Operator guide and runbook plan | Deferred | Required by M4 |
 | Migration guide format | Deferred | Required before first schema/API migration |
-| Documentation versioning and archival | Draft | Match crate/release lines |
+| Documentation versioning and archival | Done | Crate/release-line policy accepted |
 | Release announcement and communication channels | Deferred | Finalize before first beta |
 
 ## M0.10 — Governance, planning, and risk
@@ -189,16 +191,16 @@ Status vocabulary:
 | Deliverable | Status | Evidence or remaining action |
 | --- | --- | --- |
 | Governance, conduct, support, and security policies | Done | Root policy files |
-| Maintainer roles and succession | Draft | Single-maintainer reality documented |
-| RFC and ADR decision procedure | Draft | Templates and lifecycle documented |
-| Definition of ready and definition of done | Draft | Development process |
-| Issue lifecycle and triage cadence | Draft | Transition and cadence rules |
+| Maintainer roles and succession | Done | Single-maintainer reality and later gates accepted |
+| RFC and ADR decision procedure | Done | Templates and lifecycle accepted |
+| Definition of ready and definition of done | Done | Accepted development process |
+| Issue lifecycle and triage cadence | Done | Transition and cadence rules accepted |
 | Milestones M0–M5 and exit gates | Done | GitHub milestones and roadmap |
-| Risk register with owners and triggers | Draft | Eighteen initial risks |
-| Decision register and unresolved-question log | Draft | M0 decision register |
-| Architecture-spike template and evidence retention | Draft | Reproducible spike template |
-| Severity classification and response targets | Draft | P0–P3 response objectives |
-| Bus-factor mitigation | Draft | Access inventory and pre-release/1.0 gates |
+| Risk register with owners and triggers | Done | Eighteen accepted risks with role owners and triggers |
+| Decision register and unresolved-question log | Done | All M0 decisions accepted or explicitly deferred |
+| Architecture-spike template and evidence retention | Done | Reproducible template and three retained M0 spikes |
+| Severity classification and response targets | Done | P0–P3 response objectives accepted |
+| Bus-factor mitigation | Done | Access inventory and pre-release/1.0 gates accepted |
 | Community roadmap and contribution ladder | Deferred | Establish before wider contributor recruitment |
 | Funding/sponsorship/legal entity | Deferred | Reassess when maintenance burden warrants |
 
@@ -218,3 +220,23 @@ Runtime implementation may begin when:
 This gate does not require M2–M5 implementation details to be frozen. It does
 require their capability boundaries, prerequisites, and exit criteria to remain
 visible.
+
+## Deferred ownership
+
+Deferred items remain owned even when no individual assignee is named:
+
+- **Release owner:** commit/tag signing, release windows, API compatibility,
+  SBOM, provenance, announcements, and stable support decisions;
+- **Repository owner:** metadata model, definition compatibility, migrations,
+  pool/timeouts, backup/restore procedures, and recovery implementation;
+- **Runtime/API owner:** optional-feature matrices, coverage/model-checking
+  tooling, public API checks, and dynamic extension evaluation;
+- **Operations owner:** CLI safeguards, stale-execution recovery, health,
+  diagnostic bundles, operator guides, and soak/leak evidence;
+- **Product/governance owner:** name usage, community ladder, continuity,
+  funding, and post-1.0 distributed scope;
+- **Documentation owner:** website, quickstart, migration guides, link/example
+  validation, and versioned publication.
+
+The milestone or release gate named in each row is the due point. If an item is
+promoted earlier, the promoting RFC or issue must name its individual owner.
