@@ -1,6 +1,6 @@
 # ADR-0002: Async Execution Model
 
-- **State:** Proposed
+- **State:** Accepted
 - **Date:** 2026-07-29
 - **Owners:** maintainers
 - **Deciders:** project owner
@@ -14,12 +14,30 @@ components. Choosing an execution model changes every public extension trait.
 ## Decision
 
 Adopt async-first execution on Tokio 1.x for the initial runtime while keeping
-Tokio types out of core domain values and persistence contracts wherever
-practical. Define explicit adapters for blocking and CPU-bound user work.
-OxideBatch does not create a hidden global runtime.
+Tokio types out of core domain values and persistence contracts. OxideBatch
+does not create a hidden global runtime.
 
-The final trait representation is accepted only after the M0 object-safety and
-cancellation spike.
+Dynamically dispatched public extension methods return an OxideBatch-owned
+alias for:
+
+```rust
+Pin<Box<dyn Future<Output = T> + Send + 'a>>
+```
+
+This explicit representation is dyn-compatible and permits futures to borrow
+the component and call-scoped arguments. Native `async fn` traits may be used
+internally for static dispatch, but they are not the sole public extension form
+while they remain non-dyn-compatible. The public contract does not require the
+`async-trait` macro.
+
+Blocking and CPU-bound user work uses an explicit adapter with a configured
+nonzero concurrency bound. A stop is honored before a blocking call starts.
+Once synchronous work starts, OxideBatch awaits it to completion, reports a
+late stop, and stops before the next unit; it does not detach an uninterruptible
+side effect.
+
+Panics at async and blocking component boundaries become framework-owned typed
+failures. Panic payloads are not stable error or telemetry data.
 
 ## Consequences
 
@@ -28,6 +46,11 @@ cancellation spike.
 - users embedding another async ecosystem need an adapter;
 - careless blocking item code can starve the runtime and must be isolated;
 - runtime semantics, not Tokio implementation details, form the public promise.
+- dynamic extension calls allocate a boxed future;
+- blocking cancellation latency is at least the remaining duration of the
+  current synchronous call;
+- applications own the Tokio runtime lifecycle, and runtime-scoped resources
+  such as SQL pools must not outlive or move between runtimes.
 
 ## Alternatives considered
 
@@ -40,10 +63,22 @@ cancellation spike.
 
 ## Validation
 
-The M0 spike must demonstrate object-safe user components, borrowed transaction
-contexts, cancellation, panic isolation, and blocking adapters.
+[Spike 0001](../spikes/0001-async-public-traits.md) demonstrated:
+
+- compiler rejection of a native async trait object;
+- a boxed-future trait object borrowing call-scoped input;
+- cooperative async cancellation;
+- async and blocking panic classification;
+- bounded blocking concurrency without timer starvation;
+- the documented late-stop behavior for running blocking work.
+
+[Spike 0002](../spikes/0002-postgres-transactions-and-recovery.md)
+demonstrated a dynamically dispatched writer borrowing a transaction port whose
+SQLx transaction remained adapter-internal.
 
 ## Revisit triggers
 
-Revisit if the spike cannot express transaction-scoped writers safely or if a
-runtime-neutral contract has comparable ergonomics and testability.
+Revisit if dyn-compatible native async traits are stable across the MSRV, boxed
+future allocation violates an accepted performance budget, transaction-scoped
+writers can no longer be expressed safely, or a runtime-neutral contract has
+comparable ergonomics and testability.

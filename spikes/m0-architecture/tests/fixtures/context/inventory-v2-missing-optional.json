@@ -1,0 +1,9 @@
+{
+  "format": "oxide-batch.execution-context",
+  "format_version": 1,
+  "schema": "inventory-import",
+  "schema_version": 2,
+  "payload": {
+    "cursor": 42
+  }
+}

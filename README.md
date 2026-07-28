@@ -28,6 +28,8 @@ support commitments are clear.
 ```text
 crates/
 └── oxide-batch/    Public facade crate
+spikes/
+└── m0-architecture/ Reproducible, non-published architecture evidence
 xtask/              Repository development commands (not published)
 ```
 

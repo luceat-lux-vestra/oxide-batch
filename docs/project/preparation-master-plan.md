@@ -70,13 +70,13 @@ Status vocabulary:
 | System context and deployment diagrams | Draft | Context and initial deployment archetypes |
 | Crate/module boundaries and dependency direction | Draft | Architecture overview and ADR-0001 |
 | Public facade and publication boundaries | Done | ADR-0001 and crate policy |
-| Async/sync execution model | Draft | ADR-0002 plus object-safety spike |
-| Blocking and CPU-bound work isolation | Todo | Spike and resource policy |
-| Cancellation, panic, and shutdown model | Draft | Specify runtime ownership and deadlines |
-| Repository port and unit-of-work boundary | Todo | Transaction-enlistment spike |
-| PostgreSQL/SQLx selection | Draft | ADR-0003 plus real-database evidence |
+| Async/sync execution model | Done | Accepted ADR-0002 and spike 0001 |
+| Blocking and CPU-bound work isolation | Done | Bounded adapter and late-stop contract in spike 0001 |
+| Cancellation, panic, and shutdown model | Done | Accepted ADR-0002; M1 deadlines remain implementation policy |
+| Repository port and unit-of-work boundary | Done | Borrowed port and atomic enlistment in spike 0002 |
+| PostgreSQL/SQLx selection | Done | Accepted ADR-0003 and PostgreSQL 18.4 evidence |
 | Metadata logical and physical model | Deferred | Required before M2 implementation |
-| Execution-context format and evolution | Draft | JSON proposal; compatibility spike |
+| Execution-context format and evolution | Done | Versioned JSON and backward-read fixtures in spike 0003 |
 | Configuration model and precedence | Draft | Typed library configuration and proposed CLI precedence |
 | Error taxonomy and stability contract | Draft | API design guidelines |
 | Feature-flag policy | Draft | Additive feature rules; concrete matrix later |
@@ -91,7 +91,7 @@ Status vocabulary:
 | Toolchain, edition, and MSRV | Done | Stable 1.97.1; MSRV 1.95; both required CI |
 | Local prerequisite and setup guide | Draft | Development environment document |
 | One-command bootstrap/check/test workflow | Done | `cargo xtask doctor/check/package` |
-| Local PostgreSQL test environment | Deferred | Required before PostgreSQL spike/M2 |
+| Local PostgreSQL test environment | Done | Disposable container script plus PostgreSQL CI service |
 | Editor defaults and line endings | Done | `.editorconfig`, `.gitattributes` |
 | Formatting configuration | Done | `rustfmt.toml` plus editor defaults |
 | Workspace lint policy | Done | Unsafe/panic/unwrap policies in root manifest |
@@ -132,7 +132,7 @@ Status vocabulary:
 | Pull-request dependency review | Done | Severity and license gate |
 | Explicit MSRV CI | Done | Dedicated Rust 1.95 check |
 | Stable feature matrix CI | Deferred | Add with first optional feature |
-| Real PostgreSQL integration CI | Deferred | Add with repository spike/M2 |
+| Real PostgreSQL integration CI | Done | Dedicated PostgreSQL 18 spike job |
 | Cross-platform CI | Deferred | Required before first public runtime API |
 | RustSec and dependency policy CI | Done | Scheduled and PR `cargo-deny` checks |
 | License policy file and exception process | Done | `deny.toml` and documented exception rules |

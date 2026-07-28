@@ -66,3 +66,29 @@ jobs:
 
       - name: Check workspace on minimum supported Rust
         run: cargo +1.95.0 check --workspace --all-targets --all-features --locked
+
+  postgres-spike:
+    name: postgres-spike
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oxide_batch_spike
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username postgres --dbname oxide_batch_spike"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      OXIDEBATCH_SPIKE_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_spike
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Run real-PostgreSQL architecture spike
+        run: cargo test -p oxide-batch-m0-spikes --test postgres -- --nocapture --test-threads=1

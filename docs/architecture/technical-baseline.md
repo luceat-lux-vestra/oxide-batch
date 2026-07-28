@@ -1,8 +1,8 @@
 # Technical Baseline
 
-**State:** Proposed
+**State:** Accepted
 
-**Decision needed:** approve after the named architecture spikes
+**Accepted:** 2026-07-29 after the M0 architecture spikes
 
 Exact dependency versions are selected and locked when a crate is introduced.
 The project starts from the latest stable release compatible with the accepted
@@ -22,7 +22,7 @@ Floating `latest`, wildcard, and unbounded requirements are not used.
 | Diagnostics | `tracing` facade | Structured events and span context |
 | Telemetry export | optional OpenTelemetry adapter | Vendor-neutral; no SDK dependency in core |
 | CLI | Clap | Typed operator command surface |
-| Integration tests | Testcontainers plus real PostgreSQL | Transaction/locking semantics cannot be mocked |
+| Integration tests | Disposable container/CI service plus real PostgreSQL | Transaction/locking semantics cannot be mocked |
 | Property tests | Proptest where state-space matters | State transitions and retry/skip boundaries |
 | Benchmarks | Criterion or purpose-built harness | Record workload and environment with results |
 | Supply chain | `cargo-deny`, RustSec audit, pinned CI actions | License, advisory, source, and workflow controls |

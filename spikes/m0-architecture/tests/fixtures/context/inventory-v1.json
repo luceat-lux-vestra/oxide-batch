@@ -1,0 +1,10 @@
+{
+  "format": "oxide-batch.execution-context",
+  "format_version": 1,
+  "schema": "inventory-import",
+  "schema_version": 1,
+  "payload": {
+    "next_index": 41,
+    "partition": "north"
+  }
+}
