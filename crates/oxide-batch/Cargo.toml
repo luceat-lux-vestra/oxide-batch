@@ -16,3 +16,6 @@ workspace = true
 
 [package.metadata.docs.rs]
 all-features = true
+
+[dev-dependencies]
+futures-executor = "0.3.31"

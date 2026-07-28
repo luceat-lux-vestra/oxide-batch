@@ -4,15 +4,14 @@ mod conformance;
 mod contract;
 mod support;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::error::Error;
-use std::fmt;
 use std::num::NonZeroU64;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, UNIX_EPOCH};
 
-use contract::{CreateInstanceOutcome, RepositoryContract, run_repository_contract};
-use oxide_batch::{JobInstanceId, JobInstanceKey};
+use contract::run_repository_contract;
+use oxide_batch::InMemoryJobRepository;
 use support::{
     BoundedTimeout, BoundedTimeoutError, ControlledBackoff, DeterministicIds, DiagnosticContext,
     EventCapture, FixtureProvenance, FixtureProvenanceError, IdSequenceError, ManualClock,
@@ -170,7 +169,13 @@ fn fixture_provenance_and_sentinel_policy_are_enforced() -> Result<(), Box<dyn E
 
 #[test]
 fn shared_repository_contract_runs_against_a_test_adapter() -> Result<(), Box<dyn Error>> {
-    run_repository_contract(|| Ok(MemoryContractRepository::default()))?;
+    let first_id = NonZeroU64::new(100).ok_or(IdSequenceError::Exhausted)?;
+    run_repository_contract("in-memory", || {
+        Ok(InMemoryJobRepository::new(
+            Arc::new(ManualClock::new(UNIX_EPOCH)),
+            Arc::new(DeterministicIds::new(first_id)),
+        ))
+    })?;
     Ok(())
 }
 
@@ -188,44 +193,4 @@ fn failing_example_reports_reproducible_seed_and_events() {
     };
     let diagnostics = DiagnosticContext::new(scenario_id, 23, events.snapshot());
     assert_eq!(7, 8, "{diagnostics}");
-}
-
-#[derive(Debug, Default)]
-struct MemoryContractRepository {
-    instances: BTreeMap<JobInstanceKey, JobInstanceId>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct MemoryContractError;
-
-impl fmt::Display for MemoryContractError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("in-memory contract adapter failed")
-    }
-}
-
-impl Error for MemoryContractError {}
-
-impl RepositoryContract for MemoryContractRepository {
-    type Error = MemoryContractError;
-
-    fn backend_name(&self) -> &'static str {
-        "test-memory-adapter"
-    }
-
-    fn create_instance(
-        &mut self,
-        key: &JobInstanceKey,
-        proposed_id: JobInstanceId,
-    ) -> Result<CreateInstanceOutcome, Self::Error> {
-        if let Some(existing) = self.instances.get(key) {
-            return Ok(CreateInstanceOutcome::Existing(*existing));
-        }
-        self.instances.insert(key.clone(), proposed_id);
-        Ok(CreateInstanceOutcome::Created(proposed_id))
-    }
-
-    fn find_instance(&self, key: &JobInstanceKey) -> Result<Option<JobInstanceId>, Self::Error> {
-        Ok(self.instances.get(key).copied())
-    }
 }

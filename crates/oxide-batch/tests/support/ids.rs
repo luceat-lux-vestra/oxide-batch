@@ -3,7 +3,10 @@ use std::fmt;
 use std::num::NonZeroU64;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use oxide_batch::{DomainError, FailureId, JobExecutionId, JobInstanceId, StepExecutionId};
+use oxide_batch::{
+    DomainError, FailureId, IdGenerationError, IdGenerator, IdentifierKind, JobExecutionId,
+    JobInstanceId, StepExecutionId,
+};
 
 /// A cloneable, monotonically increasing nonzero ID source.
 #[derive(Clone, Debug)]
@@ -66,6 +69,30 @@ impl DeterministicIds {
     /// Returns an error if the sequence is exhausted or conversion fails.
     pub fn next_failure(&self) -> Result<FailureId, IdSequenceError> {
         FailureId::new(self.next_raw()?).map_err(IdSequenceError::Domain)
+    }
+}
+
+impl IdGenerator for DeterministicIds {
+    fn next_job_instance_id(&self) -> Result<JobInstanceId, IdGenerationError> {
+        self.next_job_instance()
+            .map_err(|error| map_generation_error(error, IdentifierKind::JobInstance))
+    }
+
+    fn next_job_execution_id(&self) -> Result<JobExecutionId, IdGenerationError> {
+        self.next_job_execution()
+            .map_err(|error| map_generation_error(error, IdentifierKind::JobExecution))
+    }
+
+    fn next_step_execution_id(&self) -> Result<StepExecutionId, IdGenerationError> {
+        self.next_step_execution()
+            .map_err(|error| map_generation_error(error, IdentifierKind::StepExecution))
+    }
+}
+
+fn map_generation_error(error: IdSequenceError, kind: IdentifierKind) -> IdGenerationError {
+    match error {
+        IdSequenceError::Exhausted => IdGenerationError::Exhausted { kind },
+        IdSequenceError::Domain(error) => IdGenerationError::Invalid(error),
     }
 }
 
