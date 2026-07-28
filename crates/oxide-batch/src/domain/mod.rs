@@ -3,6 +3,7 @@
 mod error;
 mod execution;
 mod identity;
+mod lifecycle;
 mod parameter;
 
 pub use error::{DomainError, IdentifierKind, NameKind};
@@ -14,6 +15,7 @@ pub use identity::{
     ExitCode, FailureId, JobExecutionId, JobInstanceId, JobName, ParameterName, StepExecutionId,
     StepName,
 };
+pub use lifecycle::{ExecutionVersion, LifecycleError, LifecycleTransition};
 pub use parameter::{
     JobInstanceKey, JobParameter, JobParameters, ParameterRole, ParameterValue, ParameterValueKind,
 };

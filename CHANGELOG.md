@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Deterministic M1 integration-test support for clocks, IDs, randomness,
   backoff, bounded waits, event diagnostics, fixture provenance, redaction
   sentinels, conformance IDs, and reusable repository contracts.
+- Deterministic job and step lifecycle transitions with typed optimistic-version
+  conflicts, terminal-state enforcement, separate exit-status enrichment, and
+  fresh execution attempts for restart.
 - M0 implementation-readiness plan, M0–M5 roadmap, decision records, and
   product, compatibility, architecture, engineering, security, operations, and
   release policy set.
