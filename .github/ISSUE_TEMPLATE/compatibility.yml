@@ -1,0 +1,46 @@
+name: Compatibility gap
+description: Report a difference from documented Spring Batch behavior.
+title: "compat: "
+labels:
+  - "type:bug"
+  - "area:compatibility"
+  - "status:needs-triage"
+body:
+  - type: input
+    id: spring-version
+    attributes:
+      label: Spring Batch version
+      placeholder: Exact version, such as 6.x.y
+    validations:
+      required: true
+  - type: input
+    id: oxide-version
+    attributes:
+      label: OxideBatch version or commit
+    validations:
+      required: true
+  - type: textarea
+    id: scenario
+    attributes:
+      label: Minimal scenario
+      description: Include job configuration, parameters, failure point, and restart sequence.
+    validations:
+      required: true
+  - type: textarea
+    id: reference
+    attributes:
+      label: Observed Spring Batch behavior
+      description: Include a reference test or official documentation link where possible.
+    validations:
+      required: true
+  - type: textarea
+    id: oxide
+    attributes:
+      label: Observed OxideBatch behavior
+    validations:
+      required: true
+  - type: textarea
+    id: contract
+    attributes:
+      label: Related compatibility contract
+      description: Link the applicable OxideBatch compatibility document or explain why one is missing.

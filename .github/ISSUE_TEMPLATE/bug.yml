@@ -1,0 +1,72 @@
+name: Bug report
+description: Report a reproducible defect or unexpected behavior.
+title: "bug: "
+labels:
+  - "type:bug"
+  - "status:needs-triage"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping improve OxideBatch. Do not include secrets or personal data.
+  - type: input
+    id: version
+    attributes:
+      label: OxideBatch version or commit
+      placeholder: 0.1.0-alpha.1 or commit SHA
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Rust version, OS, architecture, database, and database version.
+      placeholder: Rust 1.97.1, Linux x86_64, PostgreSQL 18
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Provide a small repository, test, or exact sequence of commands.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: dropdown
+    id: integrity
+    attributes:
+      label: Data or restart impact
+      options:
+        - None known
+        - Duplicate processing
+        - Lost or skipped processing
+        - Incorrect restart position
+        - Metadata corruption
+        - Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs and additional context
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: I removed credentials, personal data, and other secrets.
+          required: true

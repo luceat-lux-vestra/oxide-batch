@@ -1,0 +1,27 @@
+name: Documentation issue
+description: Report missing, incorrect, or unclear documentation.
+title: "docs: "
+labels:
+  - "type:docs"
+  - "area:docs"
+  - "status:needs-triage"
+body:
+  - type: input
+    id: location
+    attributes:
+      label: Documentation location
+      placeholder: URL or repository path
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Suggested improvement
+    validations:
+      required: true

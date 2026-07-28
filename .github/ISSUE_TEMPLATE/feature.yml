@@ -1,0 +1,52 @@
+name: Feature request
+description: Propose a user-facing capability or improvement.
+title: "feat: "
+labels:
+  - "type:feature"
+  - "status:needs-triage"
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the user or operational problem, not only the desired API.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed outcome
+      description: Describe observable behavior and acceptance criteria.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Primary area
+      options:
+        - Core domain
+        - Runtime
+        - Repository
+        - PostgreSQL
+        - CLI
+        - Observability
+        - Compatibility
+        - Developer experience
+        - Documentation
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and Discussions.
+          required: true
+        - label: I described the problem independently of a specific implementation.
+          required: true

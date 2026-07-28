@@ -1,0 +1,18 @@
+[package]
+name = "oxide-batch"
+description = "Enterprise-ready batch processing for Rust, inspired by Spring Batch"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["batch", "job", "workflow", "processing", "enterprise"]
+categories = ["asynchronous", "database"]
+publish = ["crates-io"]
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true

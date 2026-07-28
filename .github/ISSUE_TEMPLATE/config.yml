@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/luceat-lux-vestra/oxide-batch/discussions
+    about: Use Discussions for support questions and ideas that are not ready for an issue.
+  - name: Security vulnerability
+    url: https://github.com/luceat-lux-vestra/oxide-batch/security/advisories/new
+    about: Report suspected vulnerabilities privately. Do not open a public issue.

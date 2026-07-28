@@ -1,0 +1,8 @@
+* @luceat-lux-vestra
+
+/.github/ @luceat-lux-vestra
+/Cargo.toml @luceat-lux-vestra
+/Cargo.lock @luceat-lux-vestra
+/rust-toolchain.toml @luceat-lux-vestra
+/docs/governance/ @luceat-lux-vestra
+/migrations/ @luceat-lux-vestra

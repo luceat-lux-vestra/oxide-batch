@@ -1,0 +1,43 @@
+name: RFC proposal
+description: Propose a significant architectural, compatibility, or governance change.
+title: "rfc: "
+labels:
+  - "type:research"
+  - "status:needs-design"
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Summarize the proposed decision in a few sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Explain the problem, constraints, and why a repository-wide decision is needed.
+    validations:
+      required: true
+  - type: textarea
+    id: design
+    attributes:
+      label: Proposed design
+    validations:
+      required: true
+  - type: textarea
+    id: drawbacks
+    attributes:
+      label: Drawbacks and risks
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+    validations:
+      required: true
+  - type: textarea
+    id: unresolved
+    attributes:
+      label: Unresolved questions
