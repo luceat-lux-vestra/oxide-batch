@@ -12,6 +12,22 @@ and issue triage under the release support policy.
 | --- | --- | --- | --- | --- |
 | 0.1.0-alpha.1 | MSRV declared 1.95; development 1.97.1 | No runtime claim | Not applicable | Facade/foundation only |
 
+## M1 implementation matrix
+
+M1 makes a core-library claim only; PostgreSQL and operator behavior begin at
+later gates.
+
+| Target | M1 status | Required evidence |
+| --- | --- | --- |
+| Linux x86_64 GNU | Primary, release-blocking | MSRV and current-stable format, Clippy, unit, property, compile-fail, contract, and documentation tests |
+| macOS arm64/x86_64 | Development, best effort until CI is added | Local core checks; no release-blocking claim |
+| Linux aarch64 | Candidate, not yet supported | Add CI before promoting |
+| Windows x86_64 MSVC | Candidate, not yet supported | Resolve signal/filesystem differences and add CI before promoting |
+
+The first public M1 runtime API cannot be released until the primary Linux
+target has required CI. A target is not described as supported until its
+required evidence runs in CI.
+
 ## Proposed 1.0 dimensions
 
 - Rust: declared MSRV and current stable;

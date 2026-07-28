@@ -1,12 +1,13 @@
 # M0 Decision Register
 
-**State:** Active
+**State:** Closed
 
 **Owner:** project owner
 
 The repository foundation is operational. Product and policy recommendations
-were approved by the project owner on 2026-07-29. Architecture choices marked
-as pending still require the named spike evidence before M0 can close.
+were approved by the project owner on 2026-07-29. All M0 architecture choices
+have the required spike evidence; later-gate decisions remain visible as
+explicit deferrals rather than open M0 questions.
 
 | ID | Decision | Recommendation | State / gate |
 | --- | --- | --- | --- |
@@ -50,3 +51,7 @@ On 2026-07-29:
 
 The remaining entries in this register are accepted or explicitly deferred to
 their named later gate.
+
+M0 closed on 2026-07-29 through the runtime implementation kickoff gate. New
+questions that could change an accepted public contract use the RFC/ADR process
+and do not reopen this historical register.

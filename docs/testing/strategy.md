@@ -23,6 +23,24 @@ seeded generators. Retrying a flaky test is not a fix. Tests that need real time
 or scheduling races must state why and report enough evidence to reproduce a
 failure.
 
+## M1 harness and fixture layout
+
+M1 test support will live under `crates/oxide-batch/tests/support/` and provide
+manual clocks, deterministic ID sequences, seeded randomness, controllable
+backoff, event capture, and repository contract helpers. Shared behavior is
+organized by boundary:
+
+- `tests/contract/` for repository and component contracts;
+- `tests/conformance/` for scenarios named by the compatibility matrix;
+- `tests/property/` for lifecycle and identity invariants;
+- `tests/ui/` for compile-fail public API guarantees;
+- `tests/fixtures/<scenario-id>/` for versioned, reviewable data.
+
+Fixture directories use the stable scenario ID, contain no secrets or copied
+third-party implementation material, and include provenance when derived from
+an external specification. Tests must not depend on wall-clock time, random
+UUID generation, or registration order that is not part of the contract.
+
 ## PostgreSQL matrix
 
 CI runs the oldest and newest supported PostgreSQL major versions. Migration
