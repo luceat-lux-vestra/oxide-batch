@@ -3,15 +3,15 @@
 The public facade crate for [OxideBatch](https://github.com/luceat-lux-vestra/oxide-batch),
 an enterprise-ready batch processing framework for Rust inspired by Spring Batch.
 
-> This crate is implementing the M1 executable kernel. Its domain model and
-> process-local repository are available, but it does not yet expose a
-> production-ready batch runtime.
+> This crate is implementing the M1 executable kernel. Its domain model,
+> process-local repository, and single-step tasklet launcher are available,
+> but it is not yet a production-ready batch runtime.
 
 The facade owns validated job and step names, opaque instance/execution IDs,
 typed and value-redacted job parameters, canonical job-instance keys, lifecycle
 metadata, counters, exit statuses, redacted failure summaries, runtime-neutral
-repository ports, and an in-memory reference repository. Runtime APIs will be
-added behind this supported public entry point as M1 progresses.
+repository ports, an in-memory reference repository, and async tasklet
+execution with cooperative stopping.
 
 Job and step execution snapshots enforce the accepted lifecycle through
 database-agnostic optimistic versions. Exit status can be enriched independently
@@ -24,3 +24,10 @@ snapshot commits, reports a typed conflict when another unit commits first, and
 accepts injected clock and ID sources instead of reading hidden global state.
 It is intended for deterministic kernel tests and process-local execution; it
 is not durable across restarts.
+
+`JobLauncher` executes on an application-owned async runtime. The public
+`Tasklet` trait returns an OxideBatch-owned boxed future, so implementations can
+borrow call-scoped parameters and stop state without exposing Tokio types.
+Synchronous work must use `BlockingTaskletAdapter`, which applies an explicit
+nonzero concurrency bound and awaits already-running work before reporting a
+late stop.

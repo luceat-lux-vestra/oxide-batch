@@ -87,6 +87,11 @@ impl IdGenerator for DeterministicIds {
         self.next_step_execution()
             .map_err(|error| map_generation_error(error, IdentifierKind::StepExecution))
     }
+
+    fn next_failure_id(&self) -> Result<FailureId, IdGenerationError> {
+        self.next_failure()
+            .map_err(|error| map_generation_error(error, IdentifierKind::Failure))
+    }
 }
 
 fn map_generation_error(error: IdSequenceError, kind: IdentifierKind) -> IdGenerationError {

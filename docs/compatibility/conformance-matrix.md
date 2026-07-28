@@ -11,6 +11,9 @@ released OxideBatch version.
 | JOB-INSTANCE-001 | Identifying parameters select job instance | Job domain/configuration | Behavioral | Unreleased | `job_instance_same_identifying_parameters` | Implemented | Canonical Rust types |
 | JOB-EXEC-001 | Restart creates a new execution for same instance | Job restartability | Behavioral | Unreleased | `restart_creates_new_execution` | Implemented | API differs |
 | JOB-COMPLETE-001 | Completed instance rejects repeat launch | Job restartability | Behavioral | Unreleased | `completed_instance_rejects_launch` | Implemented | Error type differs |
+| TASKLET-001 | A single tasklet step drives job and step lifecycle | Step/tasklet execution | Behavioral | Unreleased | `successful_launch_borrows_context_and_persists_final_graph` | Implemented | Async-first Rust contract |
+| TASKLET-STOP-001 | Tasklet stop is cooperative and persisted | Step/tasklet execution | Behavioral | Unreleased | `cooperative_stop_during_async_work_is_persisted` | Implemented | Explicit stop token |
+| TASKLET-PANIC-001 | User panic is classified as execution failure | Step/tasklet execution | Semantic | Unreleased | `tasklet_panic_is_classified_and_runtime_remains_usable` | Implemented | Panic payload is redacted |
 | STEP-STATUS-001 | Batch status and exit status are distinct | Step domain | Semantic | Unreleased | `exit_status_does_not_forge_batch_status` | Implemented | — |
 | CHUNK-COMMIT-001 | Chunk commit advances checkpoint | Chunk processing | Behavioral | — | `committed_chunk_advances_checkpoint` | Planned M2 | Own schema |
 | CHUNK-ROLLBACK-001 | Failed chunk does not advance checkpoint | Chunk processing | Behavioral | — | `rolled_back_chunk_replays` | Planned M2 | Delivery scope explicit |

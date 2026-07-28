@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Deterministic job and step lifecycle transitions with typed optimistic-version
   conflicts, terminal-state enforcement, separate exit-status enrichment, and
   fresh execution attempts for restart.
+- Async-first single-step tasklet execution with persisted lifecycle outcomes,
+  cooperative stopping, panic classification, and an explicitly bounded
+  blocking adapter.
 - M0 implementation-readiness plan, M0–M5 roadmap, decision records, and
   product, compatibility, architecture, engineering, security, operations, and
   release policy set.
