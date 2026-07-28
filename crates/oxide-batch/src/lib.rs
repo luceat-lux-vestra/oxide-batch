@@ -32,11 +32,12 @@
 mod domain;
 
 pub use domain::{
-    BatchStatus, DomainError, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExitCode,
-    ExitStatus, FailureCategory, FailureId, FailureSummary, IdentifierKind, JobExecution,
-    JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey, JobName, JobParameter,
-    JobParameters, NameKind, ParameterName, ParameterRole, ParameterValue, ParameterValueKind,
-    StepExecution, StepExecutionId, StepName,
+    BatchStatus, DomainError, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps,
+    ExecutionVersion, ExitCode, ExitStatus, FailureCategory, FailureId, FailureSummary,
+    IdentifierKind, JobExecution, JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey,
+    JobName, JobParameter, JobParameters, LifecycleError, LifecycleTransition, NameKind,
+    ParameterName, ParameterRole, ParameterValue, ParameterValueKind, StepExecution,
+    StepExecutionId, StepName,
 };
 
 /// The version of the `OxideBatch` facade crate.

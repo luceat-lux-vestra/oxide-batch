@@ -9,9 +9,9 @@ released OxideBatch version.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | VS-LAUNCH-001 | First launch creates the execution graph | Job domain | Behavioral | — | `first_launch_creates_execution_graph` | Planned M1 | Canonical Rust types |
 | JOB-INSTANCE-001 | Identifying parameters select job instance | Job domain/configuration | Behavioral | Unreleased | `job_instance_same_identifying_parameters` | Implemented | Canonical Rust types |
-| JOB-EXEC-001 | Restart creates a new execution for same instance | Job restartability | Behavioral | — | `restart_creates_new_execution` | Planned M1 | API differs |
-| JOB-COMPLETE-001 | Completed instance rejects repeat launch | Job restartability | Behavioral | — | `completed_instance_rejects_launch` | Planned M1 | Error type differs |
-| STEP-STATUS-001 | Batch status and exit status are distinct | Step domain | Semantic | — | `exit_status_does_not_forge_batch_status` | Planned M1 | — |
+| JOB-EXEC-001 | Restart creates a new execution for same instance | Job restartability | Behavioral | Unreleased | `restart_creates_new_execution` | Implemented | API differs |
+| JOB-COMPLETE-001 | Completed instance rejects repeat launch | Job restartability | Behavioral | Unreleased | `completed_instance_rejects_launch` | Implemented | Error type differs |
+| STEP-STATUS-001 | Batch status and exit status are distinct | Step domain | Semantic | Unreleased | `exit_status_does_not_forge_batch_status` | Implemented | — |
 | CHUNK-COMMIT-001 | Chunk commit advances checkpoint | Chunk processing | Behavioral | — | `committed_chunk_advances_checkpoint` | Planned M2 | Own schema |
 | CHUNK-ROLLBACK-001 | Failed chunk does not advance checkpoint | Chunk processing | Behavioral | — | `rolled_back_chunk_replays` | Planned M2 | Delivery scope explicit |
 | RESTART-001 | Restart resumes at the latest committed checkpoint | Job restartability | Behavioral | — | `restart_resumes_latest_committed_checkpoint` | Planned M2 | Own context format |

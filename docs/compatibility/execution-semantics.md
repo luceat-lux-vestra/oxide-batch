@@ -33,8 +33,8 @@ The initial status vocabulary is `STARTING`, `STARTED`, `STOPPING`, `STOPPED`,
 | STARTING | STARTED, STOPPING, FAILED, UNKNOWN | Failure before user work is recorded |
 | STARTED | STOPPING, STOPPED, FAILED, COMPLETED, UNKNOWN | Completion requires all required steps |
 | STOPPING | STOPPED, FAILED, UNKNOWN | Stop is cooperative, not instantaneous |
-| STOPPED | STARTING, ABANDONED | Restart creates new execution attempts |
-| FAILED | STARTING, ABANDONED | Only when restart is permitted |
+| STOPPED | STARTING (new attempt), ABANDONED | Restart creates new execution attempts |
+| FAILED | STARTING (new attempt), ABANDONED | Only when restart is permitted |
 | COMPLETED | — | Terminal and not restartable |
 | ABANDONED | — | Terminal and intentionally not restartable |
 | UNKNOWN | FAILED, ABANDONED | Requires an explicit recovery decision |
@@ -42,6 +42,10 @@ The initial status vocabulary is `STARTING`, `STARTED`, `STOPPING`, `STOPPED`,
 Repository methods reject illegal transitions and stale versions. A new restart
 does not mutate an old attempt into a running attempt; it creates new job and
 step execution records linked to the same job instance.
+
+Execution versions are facade-owned monotonic values. Repositories use them as
+compare-and-swap tokens and report the caller's expected version and the
+record's actual version without exposing database-specific row or driver types.
 
 Exit status is not a substitute for batch status. Listener or application code
 may enrich exit status but cannot forge a lifecycle transition.

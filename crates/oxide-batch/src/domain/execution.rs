@@ -1,9 +1,10 @@
 use std::fmt;
 use std::time::SystemTime;
 
+use super::lifecycle::{validate_expected_version, validate_restart, validate_transition};
 use super::{
-    DomainError, ExitCode, FailureId, JobExecutionId, JobInstanceId, JobInstanceKey,
-    StepExecutionId, StepName,
+    DomainError, ExecutionVersion, ExitCode, FailureId, JobExecutionId, JobInstanceId,
+    JobInstanceKey, LifecycleError, LifecycleTransition, StepExecutionId, StepName,
 };
 
 /// The framework lifecycle status of a job or step execution.
@@ -349,6 +350,78 @@ impl ExecutionMetadata {
     pub const fn failure(&self) -> Option<FailureSummary> {
         self.failure
     }
+
+    fn transition(&self, transition: LifecycleTransition) -> Result<Self, LifecycleError> {
+        validate_transition(self.status, transition)?;
+
+        let target = transition.target();
+        let transitioned_at = transition.transitioned_at();
+        let current_timestamps = self.timestamps;
+        if transitioned_at
+            < current_timestamps
+                .started_at()
+                .unwrap_or(current_timestamps.created_at())
+            || current_timestamps
+                .ended_at()
+                .is_some_and(|ended_at| transitioned_at < ended_at)
+        {
+            return Err(LifecycleError::InvalidTransitionTime {
+                source: DomainError::InvalidTimestampOrder,
+            });
+        }
+        let started_at = if matches!(target, BatchStatus::Started) {
+            Some(transitioned_at)
+        } else {
+            current_timestamps.started_at()
+        };
+        let ended_at = if target.is_finished() {
+            current_timestamps.ended_at().or(Some(transitioned_at))
+        } else {
+            None
+        };
+        let timestamps =
+            ExecutionTimestamps::new(current_timestamps.created_at(), started_at, ended_at)
+                .map_err(|source| LifecycleError::InvalidTransitionTime { source })?;
+        let failure = transition.failure().or(self.failure);
+
+        Self::new(
+            target,
+            self.exit_status.clone(),
+            timestamps,
+            self.counts,
+            failure,
+        )
+        .map_err(|source| match source {
+            DomainError::FailedExecutionMissingFailure => {
+                LifecycleError::FailedTransitionMissingFailure
+            }
+            source => LifecycleError::InvalidTransitionTime { source },
+        })
+    }
+
+    fn with_exit_status(&self, exit_status: ExitStatus) -> Self {
+        Self {
+            status: self.status,
+            exit_status,
+            timestamps: self.timestamps,
+            counts: self.counts,
+            failure: self.failure,
+        }
+    }
+
+    fn starting(created_at: SystemTime) -> Self {
+        Self {
+            status: BatchStatus::Starting,
+            exit_status: ExitStatus::unknown(),
+            timestamps: ExecutionTimestamps {
+                created_at,
+                started_at: None,
+                ended_at: None,
+            },
+            counts: ExecutionCounts::default(),
+            failure: None,
+        }
+    }
 }
 
 /// One logical occurrence of a named job and its identifying parameters.
@@ -384,6 +457,7 @@ pub struct JobExecution {
     id: JobExecutionId,
     job_instance_id: JobInstanceId,
     metadata: ExecutionMetadata,
+    version: ExecutionVersion,
 }
 
 impl JobExecution {
@@ -398,6 +472,23 @@ impl JobExecution {
             id,
             job_instance_id,
             metadata,
+            version: ExecutionVersion::INITIAL,
+        }
+    }
+
+    /// Reconstructs a job execution snapshot with its optimistic version.
+    #[must_use]
+    pub const fn from_snapshot(
+        id: JobExecutionId,
+        job_instance_id: JobInstanceId,
+        metadata: ExecutionMetadata,
+        version: ExecutionVersion,
+    ) -> Self {
+        Self {
+            id,
+            job_instance_id,
+            metadata,
+            version,
         }
     }
 
@@ -418,6 +509,82 @@ impl JobExecution {
     pub const fn metadata(&self) -> &ExecutionMetadata {
         &self.metadata
     }
+
+    /// Returns the facade-owned optimistic-lock version.
+    #[must_use]
+    pub const fn version(&self) -> ExecutionVersion {
+        self.version
+    }
+
+    /// Applies one legal lifecycle transition using compare-and-swap semantics.
+    ///
+    /// The transition never changes exit status. Restart requests from
+    /// `STOPPED` or `FAILED` return
+    /// [`LifecycleError::RestartRequiresNewAttempt`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed stale-version, illegal-transition, timestamp, failure,
+    /// or version-exhaustion error without mutating this snapshot.
+    pub fn transition(
+        &mut self,
+        expected_version: ExecutionVersion,
+        transition: LifecycleTransition,
+    ) -> Result<ExecutionVersion, LifecycleError> {
+        transition_execution(
+            &mut self.metadata,
+            &mut self.version,
+            expected_version,
+            transition,
+        )
+    }
+
+    /// Enriches flow/operator exit status without changing batch status.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LifecycleError::StaleVersion`] or
+    /// [`LifecycleError::VersionExhausted`] without mutating this snapshot.
+    pub fn enrich_exit_status(
+        &mut self,
+        expected_version: ExecutionVersion,
+        exit_status: ExitStatus,
+    ) -> Result<ExecutionVersion, LifecycleError> {
+        enrich_execution_exit_status(
+            &mut self.metadata,
+            &mut self.version,
+            expected_version,
+            exit_status,
+        )
+    }
+
+    /// Creates a fresh `STARTING` attempt for the same logical job instance.
+    ///
+    /// The prior execution remains unchanged. Definition-level restart
+    /// permission is a repository/launcher concern layered on top of this
+    /// status policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed stale-version, non-restartable, or reused-ID error.
+    pub fn new_restart_attempt(
+        &self,
+        expected_version: ExecutionVersion,
+        new_execution_id: JobExecutionId,
+        created_at: SystemTime,
+    ) -> Result<Self, LifecycleError> {
+        validate_expected_version(expected_version, self.version)?;
+        validate_restart(self.metadata.status())?;
+        if new_execution_id == self.id {
+            return Err(LifecycleError::AttemptIdentifierReused);
+        }
+        validate_restart_time(&self.metadata, created_at)?;
+        Ok(Self::new(
+            new_execution_id,
+            self.job_instance_id,
+            ExecutionMetadata::starting(created_at),
+        ))
+    }
 }
 
 /// One attempt to execute a named step within a job execution.
@@ -427,6 +594,7 @@ pub struct StepExecution {
     job_execution_id: JobExecutionId,
     step_name: StepName,
     metadata: ExecutionMetadata,
+    version: ExecutionVersion,
 }
 
 impl StepExecution {
@@ -443,6 +611,25 @@ impl StepExecution {
             job_execution_id,
             step_name,
             metadata,
+            version: ExecutionVersion::INITIAL,
+        }
+    }
+
+    /// Reconstructs a step execution snapshot with its optimistic version.
+    #[must_use]
+    pub const fn from_snapshot(
+        id: StepExecutionId,
+        job_execution_id: JobExecutionId,
+        step_name: StepName,
+        metadata: ExecutionMetadata,
+        version: ExecutionVersion,
+    ) -> Self {
+        Self {
+            id,
+            job_execution_id,
+            step_name,
+            metadata,
+            version,
         }
     }
 
@@ -469,4 +656,117 @@ impl StepExecution {
     pub const fn metadata(&self) -> &ExecutionMetadata {
         &self.metadata
     }
+
+    /// Returns the facade-owned optimistic-lock version.
+    #[must_use]
+    pub const fn version(&self) -> ExecutionVersion {
+        self.version
+    }
+
+    /// Applies one legal lifecycle transition using compare-and-swap semantics.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed lifecycle/conflict error without mutating this snapshot.
+    pub fn transition(
+        &mut self,
+        expected_version: ExecutionVersion,
+        transition: LifecycleTransition,
+    ) -> Result<ExecutionVersion, LifecycleError> {
+        transition_execution(
+            &mut self.metadata,
+            &mut self.version,
+            expected_version,
+            transition,
+        )
+    }
+
+    /// Enriches flow/operator exit status without changing batch status.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed conflict/version error without mutating this snapshot.
+    pub fn enrich_exit_status(
+        &mut self,
+        expected_version: ExecutionVersion,
+        exit_status: ExitStatus,
+    ) -> Result<ExecutionVersion, LifecycleError> {
+        enrich_execution_exit_status(
+            &mut self.metadata,
+            &mut self.version,
+            expected_version,
+            exit_status,
+        )
+    }
+
+    /// Creates a fresh `STARTING` step attempt under a new job execution.
+    ///
+    /// The prior step execution remains unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed stale-version, non-restartable, or reused-ID error.
+    pub fn new_restart_attempt(
+        &self,
+        expected_version: ExecutionVersion,
+        new_execution_id: StepExecutionId,
+        new_job_execution_id: JobExecutionId,
+        created_at: SystemTime,
+    ) -> Result<Self, LifecycleError> {
+        validate_expected_version(expected_version, self.version)?;
+        validate_restart(self.metadata.status())?;
+        if new_execution_id == self.id || new_job_execution_id == self.job_execution_id {
+            return Err(LifecycleError::AttemptIdentifierReused);
+        }
+        validate_restart_time(&self.metadata, created_at)?;
+        Ok(Self::new(
+            new_execution_id,
+            new_job_execution_id,
+            self.step_name.clone(),
+            ExecutionMetadata::starting(created_at),
+        ))
+    }
+}
+
+fn transition_execution(
+    metadata: &mut ExecutionMetadata,
+    version: &mut ExecutionVersion,
+    expected_version: ExecutionVersion,
+    transition: LifecycleTransition,
+) -> Result<ExecutionVersion, LifecycleError> {
+    validate_expected_version(expected_version, *version)?;
+    let updated_metadata = metadata.transition(transition)?;
+    let updated_version = version.next()?;
+    *metadata = updated_metadata;
+    *version = updated_version;
+    Ok(updated_version)
+}
+
+fn enrich_execution_exit_status(
+    metadata: &mut ExecutionMetadata,
+    version: &mut ExecutionVersion,
+    expected_version: ExecutionVersion,
+    exit_status: ExitStatus,
+) -> Result<ExecutionVersion, LifecycleError> {
+    validate_expected_version(expected_version, *version)?;
+    let updated_version = version.next()?;
+    *metadata = metadata.with_exit_status(exit_status);
+    *version = updated_version;
+    Ok(updated_version)
+}
+
+fn validate_restart_time(
+    metadata: &ExecutionMetadata,
+    created_at: SystemTime,
+) -> Result<(), LifecycleError> {
+    if metadata
+        .timestamps()
+        .ended_at()
+        .is_some_and(|ended_at| created_at < ended_at)
+    {
+        return Err(LifecycleError::InvalidTransitionTime {
+            source: DomainError::InvalidTimestampOrder,
+        });
+    }
+    Ok(())
 }

@@ -11,3 +11,8 @@ typed and value-redacted job parameters, canonical job-instance keys, lifecycle
 metadata, counters, exit statuses, and redacted failure summaries. Runtime and
 repository APIs will be added behind this supported public entry point as M1
 progresses.
+
+Job and step execution snapshots enforce the accepted lifecycle through
+database-agnostic optimistic versions. Exit status can be enriched independently
+of batch status, and restarting a stopped or failed record always creates a
+distinct `STARTING` attempt.
