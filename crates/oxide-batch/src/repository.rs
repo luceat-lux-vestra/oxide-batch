@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use crate::{
-    BatchStatus, DomainError, ExecutionVersion, ExitStatus, IdentifierKind, JobExecution,
-    JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey, LifecycleError,
+    BatchStatus, DomainError, ExecutionVersion, ExitStatus, FailureId, IdentifierKind,
+    JobExecution, JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey, LifecycleError,
     LifecycleTransition, StepExecution, StepExecutionId, StepName,
 };
 
@@ -72,6 +72,14 @@ pub trait IdGenerator: Send + Sync {
     /// Returns [`IdGenerationError`] when the source is exhausted or produces
     /// an invalid value.
     fn next_step_execution_id(&self) -> Result<StepExecutionId, IdGenerationError>;
+
+    /// Returns the next opaque failure-correlation identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IdGenerationError`] when the source is exhausted or produces
+    /// an invalid value.
+    fn next_failure_id(&self) -> Result<FailureId, IdGenerationError>;
 }
 
 /// A thread-safe nonzero identifier sequence suitable for local execution.
@@ -120,6 +128,10 @@ impl IdGenerator for SequentialIdGenerator {
     fn next_step_execution_id(&self) -> Result<StepExecutionId, IdGenerationError> {
         StepExecutionId::new(self.next_raw(IdentifierKind::StepExecution)?)
             .map_err(IdGenerationError::Invalid)
+    }
+
+    fn next_failure_id(&self) -> Result<FailureId, IdGenerationError> {
+        FailureId::new(self.next_raw(IdentifierKind::Failure)?).map_err(IdGenerationError::Invalid)
     }
 }
 

@@ -17,5 +17,10 @@ workspace = true
 [package.metadata.docs.rs]
 all-features = true
 
+[dependencies]
+futures-util = "0.3.31"
+tokio = { version = "1.53.1", features = ["macros", "rt", "sync"] }
+
 [dev-dependencies]
 futures-executor = "0.3.31"
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "time"] }

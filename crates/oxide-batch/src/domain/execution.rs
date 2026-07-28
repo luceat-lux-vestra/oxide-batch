@@ -90,6 +90,30 @@ impl ExitStatus {
         }
     }
 
+    /// Constructs the conventional `COMPLETED` exit status.
+    #[must_use]
+    pub fn completed() -> Self {
+        Self {
+            code: ExitCode::framework_owned("COMPLETED"),
+        }
+    }
+
+    /// Constructs the conventional `FAILED` exit status.
+    #[must_use]
+    pub fn failed() -> Self {
+        Self {
+            code: ExitCode::framework_owned("FAILED"),
+        }
+    }
+
+    /// Constructs the conventional `STOPPED` exit status.
+    #[must_use]
+    pub fn stopped() -> Self {
+        Self {
+            code: ExitCode::framework_owned("STOPPED"),
+        }
+    }
+
     /// Borrows the exit code.
     #[must_use]
     pub const fn code(&self) -> &ExitCode {

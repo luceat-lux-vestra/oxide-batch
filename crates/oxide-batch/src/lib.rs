@@ -33,11 +33,19 @@
 //! process-global identifier state. A unit of work publishes changes only
 //! after [`RepositoryUnitOfWork::commit`] succeeds; dropping it rolls back its
 //! staged metadata.
+//!
+//! [`JobLauncher`] runs one-step [`TaskletJob`] definitions on an
+//! application-owned executor. Tasklets borrow their call-scoped
+//! [`TaskletContext`], receive cooperative [`StopToken`] state, and persist
+//! completed, failed, panicked, or stopped outcomes through the repository.
+//! Synchronous bodies use [`BlockingTaskletAdapter`] with an explicit nonzero
+//! concurrency bound.
 
 #![forbid(unsafe_code)]
 
 mod domain;
 mod repository;
+mod runtime;
 
 pub use domain::{
     BatchStatus, DomainError, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps,
@@ -50,6 +58,11 @@ pub use domain::{
 pub use repository::{
     BoxFuture, Clock, IdGenerationError, IdGenerator, InMemoryJobRepository, JobInstanceSelection,
     JobRepository, RepositoryError, RepositoryUnitOfWork, SequentialIdGenerator, SystemClock,
+};
+pub use runtime::{
+    BlockingTasklet, BlockingTaskletAdapter, BlockingTaskletContext, JobLauncher, LaunchError,
+    LaunchReport, StopSource, StopTiming, StopToken, Tasklet, TaskletContext, TaskletError,
+    TaskletExecutionOutcome, TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep,
 };
 
 /// The version of the `OxideBatch` facade crate.
