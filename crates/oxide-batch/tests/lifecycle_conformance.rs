@@ -1,4 +1,4 @@
 //! Named compatibility and first-slice lifecycle scenarios.
 
-#[path = "conformance/lifecycle.rs"]
-mod lifecycle;
+#[path = "lifecycle_conformance/cases.rs"]
+mod cases;

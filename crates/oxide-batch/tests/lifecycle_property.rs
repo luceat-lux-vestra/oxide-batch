@@ -1,4 +1,4 @@
 //! Property-style tests for facade-owned domain policies.
 
-#[path = "property/lifecycle.rs"]
-mod lifecycle;
+#[path = "lifecycle_property/cases.rs"]
+mod cases;
