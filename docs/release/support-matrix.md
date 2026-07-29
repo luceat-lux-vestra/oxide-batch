@@ -28,6 +28,24 @@ The first public M1 runtime API cannot be released until the primary Linux
 target has required CI. A target is not described as supported until its
 required evidence runs in CI.
 
+## M2 PostgreSQL implementation matrix
+
+M2 targets PostgreSQL majors 15 through 18 on Linux x86_64 GNU. PostgreSQL 15
+and 18 are release-blocking integration axes; majors 16 and 17 receive
+connection, migration, and vertical-slice smoke coverage.
+
+| Target | M2 status | Required evidence |
+| --- | --- | --- |
+| PostgreSQL 15 | Oldest, release-blocking | Repository contract, migrations, transactions, validated TLS, roles, crash/restart |
+| PostgreSQL 16–17 | Supported intermediate majors | Connection, migration, and vertical-slice smoke tests |
+| PostgreSQL 18 | Newest, release-blocking | Repository contract, migrations, transactions, validated TLS, roles, crash/restart |
+| PostgreSQL 14 | Not in the M2 support promise | Upstream support ends in November 2026; reassess only from explicit user demand |
+
+CI uses explicit major tags and reviews the matrix at M2 exit against the
+[PostgreSQL versioning policy](https://www.postgresql.org/support/versioning/).
+Certificate-validated Rustls connectivity is the supported production mode;
+plaintext connectivity is limited to local and isolated test environments.
+
 ## Proposed 1.0 dimensions
 
 - Rust: declared MSRV and current stable;
@@ -38,8 +56,9 @@ required evidence runs in CI.
 - PostgreSQL: oldest and newest selected supported major versions;
 - TLS: Rustls-backed PostgreSQL connectivity where supported by the adapter.
 
-Exact PostgreSQL and platform versions are selected before M2 implementation
-based on upstream support windows, CI availability, and user needs.
+The M2 PostgreSQL range is selected above. Other exact platform versions and
+any change to the database range are reviewed against upstream support windows,
+CI availability, and user needs.
 
 ## Rules
 

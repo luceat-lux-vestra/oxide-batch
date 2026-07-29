@@ -3,9 +3,10 @@
 The public facade crate for [OxideBatch](https://github.com/luceat-lux-vestra/oxide-batch),
 an enterprise-ready batch processing framework for Rust inspired by Spring Batch.
 
-> This crate is implementing the M1 executable kernel. Its domain model,
-> process-local repository, and single-step tasklet launcher are available,
-> but it is not yet a production-ready batch runtime.
+> This crate contains the completed M1 executable kernel. Its domain model,
+> process-local repository, and single-step tasklet launcher are available
+> while M2 durable chunk and restart work proceeds, but it is not yet a
+> production-ready batch runtime.
 
 The facade owns validated job and step names, opaque instance/execution IDs,
 typed and value-redacted job parameters, canonical job-instance keys, lifecycle

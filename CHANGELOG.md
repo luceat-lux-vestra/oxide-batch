@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and listener-failure diagnostics.
 - A runnable first in-memory job, facade-boundary compile-fail tests, and M1
   executable-kernel conformance and exit evidence.
+- An active M2 kickoff gate with dependency-ordered workstreams, PostgreSQL
+  15–18 verification targets, and durable chunk/restart exit criteria.
 - M0 implementation-readiness plan, M0–M5 roadmap, decision records, and
   product, compatibility, architecture, engineering, security, operations, and
   release policy set.
