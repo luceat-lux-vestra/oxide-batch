@@ -739,7 +739,7 @@ fn postgres_chunk_disconnect_is_known_not_committed_before_commit() -> Result<()
         remove_job_rows(&runtime_url, JOB).await?;
         let repository = PostgresJobRepository::connect(
             plaintext_config(runtime_url.clone())?,
-            Arc::new(FixedClock(UNIX_EPOCH + Duration::from_mins(15))),
+            Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(700))),
         )
         .await?;
         let scope = create_started_chunk_scope(&repository, JOB).await?;
