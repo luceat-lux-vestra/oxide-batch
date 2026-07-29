@@ -23,6 +23,12 @@ GRANT USAGE ON SCHEMA oxide_batch TO
     oxide_batch_operator_reader,
     oxide_batch_operator_writer;
 
+-- Disposable application-owned schema used to certify same-resource chunk
+-- enlistment without adding business tables to OxideBatch metadata migrations.
+CREATE SCHEMA oxide_batch_business AUTHORIZATION oxide_batch_migrator;
+REVOKE ALL ON SCHEMA oxide_batch_business FROM PUBLIC;
+GRANT USAGE ON SCHEMA oxide_batch_business TO oxide_batch_runtime;
+
 ALTER DEFAULT PRIVILEGES FOR ROLE oxide_batch_migrator IN SCHEMA oxide_batch
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO oxide_batch_runtime;
 ALTER DEFAULT PRIVILEGES FOR ROLE oxide_batch_migrator IN SCHEMA oxide_batch
@@ -31,3 +37,5 @@ ALTER DEFAULT PRIVILEGES FOR ROLE oxide_batch_migrator IN SCHEMA oxide_batch
     GRANT SELECT ON TABLES TO
         oxide_batch_operator_reader,
         oxide_batch_operator_writer;
+ALTER DEFAULT PRIVILEGES FOR ROLE oxide_batch_migrator IN SCHEMA oxide_batch_business
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO oxide_batch_runtime;

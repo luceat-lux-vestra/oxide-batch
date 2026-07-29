@@ -133,6 +133,7 @@ jobs:
           --health-timeout 5s
           --health-retries 15
     env:
+      OXIDEBATCH_POSTGRES_ADMIN_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_repository
       OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_repository
       OXIDEBATCH_POSTGRES_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_repository
     steps:
@@ -156,12 +157,24 @@ jobs:
             --test postgres_repository \
             concurrent_identical_launches_create_one_active_execution \
             -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            postgres_chunk_commit_and_rollback_are_atomic \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            postgres_chunk_conflict_rolls_back_losing_business_write \
+            -- --nocapture --test-threads=1
 
       - name: Verify disconnect and schema-version classifications
         run: |
           cargo test -p oxide-batch --features postgres \
             --test postgres_repository \
             disconnected_transaction_has_unknown_commit_and_pool_recovers \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            postgres_chunk_disconnect_is_known_not_committed_before_commit \
             -- --nocapture --test-threads=1
           cargo test -p oxide-batch --features postgres \
             --test postgres_repository \

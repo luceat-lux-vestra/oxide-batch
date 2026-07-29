@@ -6,14 +6,24 @@
 #[path = "contract/mod.rs"]
 mod contract;
 
+use std::collections::VecDeque;
 use std::error::Error;
+use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use contract::run_repository_contract;
 use oxide_batch::{
-    CaCertificate, Clock, JobInstanceKey, JobName, JobParameters, JobRepository, PostgresConfig,
-    PostgresConfigError, PostgresJobRepository, PostgresMigrator, RepositoryError, TlsMode,
+    BatchStatus, BoxFuture, BusinessStatement, BusinessValue, CaCertificate, Checkpoint,
+    ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext, ChunkCompletionError,
+    ChunkCompletionOutcome, ChunkCount, ChunkCounts, ChunkExecutionOutcome, ChunkJob, ChunkSize,
+    ChunkStep, ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager, Clock,
+    ExecutionContext, ItemProcessor, ItemReader, ItemWriter, JobInstanceKey, JobLauncher, JobName,
+    JobParameters, JobRepository, LifecycleTransition, PostgresChunkStateError,
+    PostgresChunkStateProvider, PostgresChunkTransactionManager, PostgresConfig,
+    PostgresConfigError, PostgresJobRepository, PostgresMigrator, ProcessContext, ProcessOutcome,
+    ProcessorError, ReadContext, ReadOutcome, ReaderError, RepositoryError, SequentialIdGenerator,
+    StateLimits, StepName, StopSource, TlsMode, WriteContext, WriteOutcome, WriterError,
 };
 use sqlx::postgres::PgPoolOptions;
 
@@ -28,6 +38,16 @@ impl Clock for FixedClock {
 
 fn runtime_url() -> Option<String> {
     std::env::var("OXIDEBATCH_POSTGRES_TEST_URL").ok()
+}
+
+fn migrator_url() -> Option<String> {
+    std::env::var("OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL").ok()
+}
+
+fn admin_url() -> Option<String> {
+    std::env::var("OXIDEBATCH_POSTGRES_ADMIN_TEST_URL")
+        .ok()
+        .or_else(migrator_url)
 }
 
 fn plaintext_config(url: String) -> Result<PostgresConfig, PostgresConfigError> {
@@ -55,6 +75,64 @@ async fn remove_contract_rows(url: &str) -> Result<(), sqlx::Error> {
     ] {
         sqlx::query(statement).execute(&pool).await?;
     }
+    pool.close().await;
+    Ok(())
+}
+
+async fn remove_job_rows(url: &str, job_name: &str) -> Result<(), sqlx::Error> {
+    let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
+    sqlx::query(
+        "DELETE FROM oxide_batch.ob_step_execution WHERE job_execution_id IN (\
+         SELECT execution.id FROM oxide_batch.ob_job_execution execution \
+         JOIN oxide_batch.ob_job_instance instance ON instance.id = execution.job_instance_id \
+         WHERE instance.job_name = $1)",
+    )
+    .bind(job_name)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "DELETE FROM oxide_batch.ob_job_execution WHERE job_instance_id IN (\
+         SELECT id FROM oxide_batch.ob_job_instance WHERE job_name = $1)",
+    )
+    .bind(job_name)
+    .execute(&pool)
+    .await?;
+    sqlx::query("DELETE FROM oxide_batch.ob_job_instance WHERE job_name = $1")
+        .bind(job_name)
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM oxide_batch.ob_job_definition WHERE job_name = $1")
+        .bind(job_name)
+        .execute(&pool)
+        .await?;
+    pool.close().await;
+    Ok(())
+}
+
+async fn prepare_business_fixture(url: &str) -> Result<(), sqlx::Error> {
+    let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
+    let schema_exists: bool =
+        sqlx::query_scalar("SELECT to_regnamespace('oxide_batch_business') IS NOT NULL")
+            .fetch_one(&pool)
+            .await?;
+    if !schema_exists {
+        sqlx::query("CREATE SCHEMA oxide_batch_business")
+            .execute(&pool)
+            .await?;
+    }
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS oxide_batch_business.chunk_output (\
+         job_name text NOT NULL, item bigint NOT NULL, \
+         PRIMARY KEY (job_name, item))",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "DELETE FROM oxide_batch_business.chunk_output \
+         WHERE job_name LIKE 'postgres_chunk_%'",
+    )
+    .execute(&pool)
+    .await?;
     pool.close().await;
     Ok(())
 }
@@ -247,8 +325,11 @@ fn disconnected_transaction_has_unknown_commit_and_pool_recovers() -> Result<(),
         eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
         return Ok(());
     };
-    let Some(admin_url) = std::env::var("OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL").ok() else {
-        eprintln!("skipped: OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL is not set");
+    let Some(admin_url) = admin_url() else {
+        eprintln!(
+            "skipped: neither OXIDEBATCH_POSTGRES_ADMIN_TEST_URL nor \
+             OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL is set"
+        );
         return Ok(());
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -291,6 +372,447 @@ fn disconnected_transaction_has_unknown_commit_and_pool_recovers() -> Result<(),
         repository.close().await?;
         admin.close().await;
         remove_contract_rows(&runtime_url).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
+
+struct ChunkReader {
+    items: VecDeque<i64>,
+}
+
+impl ItemReader<i64> for ChunkReader {
+    fn read<'a>(
+        &'a mut self,
+        _context: ReadContext<'a>,
+    ) -> BoxFuture<'a, Result<ReadOutcome<i64>, ReaderError>> {
+        let item = self.items.pop_front();
+        Box::pin(async move { Ok(item.map_or(ReadOutcome::EndOfInput, ReadOutcome::Item)) })
+    }
+}
+
+struct IdentityProcessor;
+
+impl ItemProcessor<i64, i64> for IdentityProcessor {
+    fn process<'a>(
+        &'a self,
+        item: &'a i64,
+        _context: ProcessContext<'a>,
+    ) -> BoxFuture<'a, Result<ProcessOutcome<i64>, ProcessorError>> {
+        Box::pin(async move { Ok(ProcessOutcome::Item(*item)) })
+    }
+}
+
+struct EnlistedWriter {
+    job_name: &'static str,
+    fail_after_write: bool,
+}
+
+impl ItemWriter<i64> for EnlistedWriter {
+    fn write<'a>(
+        &'a self,
+        items: &'a [i64],
+        mut context: WriteContext<'a>,
+    ) -> BoxFuture<'a, Result<WriteOutcome, WriterError>> {
+        Box::pin(async move {
+            let transaction = context.transaction().ok_or_else(WriterError::new)?;
+            for item in items {
+                let values = [
+                    BusinessValue::text(self.job_name),
+                    BusinessValue::i64(*item),
+                ];
+                transaction
+                    .execute(BusinessStatement::new(
+                        "INSERT INTO oxide_batch_business.chunk_output \
+                         (job_name, item) VALUES ($1, $2)",
+                        &values,
+                    ))
+                    .await
+                    .map_err(WriterError::from_error)?;
+            }
+            if self.fail_after_write {
+                return Err(WriterError::new());
+            }
+            Ok(WriteOutcome::Written)
+        })
+    }
+}
+
+struct TestCompletion {
+    fail: bool,
+}
+
+impl ChunkCompletion for TestCompletion {
+    fn after_commit<'a>(
+        &'a self,
+        _context: ChunkCompletionContext<'a>,
+    ) -> BoxFuture<'a, Result<ChunkCompletionOutcome, ChunkCompletionError>> {
+        if self.fail {
+            Box::pin(async { Err(ChunkCompletionError::new()) })
+        } else {
+            Box::pin(async { Ok(ChunkCompletionOutcome::Acknowledged) })
+        }
+    }
+}
+
+fn chunk_checkpoint(position: u64) -> Result<Checkpoint, Box<dyn Error>> {
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "format": "oxide-batch.checkpoint",
+        "format_version": 1,
+        "schema": "postgres.chunk.position",
+        "schema_version": 1,
+        "payload": {"position": position},
+    }))?;
+    Ok(Checkpoint::from_json(&bytes, StateLimits::default())?)
+}
+
+fn chunk_context() -> Result<ExecutionContext, Box<dyn Error>> {
+    Ok(ExecutionContext::from_json(
+        br#"{"format":"oxide-batch.execution-context","format_version":1,"schema":"postgres.chunk.context","schema_version":1,"payload":{"source":"fixture"}}"#,
+        StateLimits::default(),
+    )?)
+}
+
+fn postgres_chunk_transactions(
+    repository: &PostgresJobRepository,
+) -> PostgresChunkTransactionManager {
+    let provider: Arc<dyn PostgresChunkStateProvider> = Arc::new(
+        |committed: oxide_batch::ExecutionCounts, chunk: ChunkCounts| {
+            let position = committed
+                .read()
+                .checked_add(chunk.read().get())
+                .ok_or_else(PostgresChunkStateError::new)?;
+            let checkpoint =
+                chunk_checkpoint(position).map_err(|_| PostgresChunkStateError::new())?;
+            let context = chunk_context().map_err(|_| PostgresChunkStateError::new())?;
+            Ok(ChunkCommitReceipt::new(checkpoint, context))
+        },
+    );
+    PostgresChunkTransactionManager::new(repository.clone(), provider)
+}
+
+async fn business_items(url: &str, job_name: &str) -> Result<Vec<i64>, sqlx::Error> {
+    let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
+    let items = sqlx::query_scalar(
+        "SELECT item FROM oxide_batch_business.chunk_output \
+         WHERE job_name = $1 ORDER BY item",
+    )
+    .bind(job_name)
+    .fetch_all(&pool)
+    .await?;
+    pool.close().await;
+    Ok(items)
+}
+
+async fn launch_postgres_chunk(
+    repository: &PostgresJobRepository,
+    job_name: &'static str,
+    fail_after_write: bool,
+    fail_completion: bool,
+) -> Result<
+    (
+        oxide_batch::ChunkLaunchReport,
+        PostgresChunkTransactionManager,
+    ),
+    Box<dyn Error>,
+> {
+    let transactions = postgres_chunk_transactions(repository);
+    let step = ChunkStep::new(
+        StepName::new("import")?,
+        ChunkSize::new(2)?,
+        Box::new(ChunkReader {
+            items: VecDeque::from([10, 20, 30]),
+        }),
+        Arc::new(IdentityProcessor),
+        Arc::new(EnlistedWriter {
+            job_name,
+            fail_after_write,
+        }),
+        Arc::new(transactions.clone()),
+        Arc::new(TestCompletion {
+            fail: fail_completion,
+        }),
+    );
+    let mut job = ChunkJob::new(JobName::new(job_name)?, step);
+    let clock = FixedClock(UNIX_EPOCH + Duration::from_secs(500));
+    let ids = SequentialIdGenerator::new(NonZeroU64::MIN);
+    let launcher = JobLauncher::new(repository, &clock, &ids);
+    let (_source, token) = StopSource::new();
+    let report = launcher
+        .launch_chunk(&mut job, &JobParameters::new(), &token)
+        .await?;
+    Ok((report, transactions))
+}
+
+#[test]
+fn postgres_chunk_commit_and_rollback_are_atomic() -> Result<(), Box<dyn Error>> {
+    let Some(runtime_url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let Some(migrator_url) = migrator_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        prepare_business_fixture(&migrator_url).await?;
+        for job_name in [
+            "postgres_chunk_commit",
+            "postgres_chunk_rollback",
+            "postgres_chunk_ack_failure",
+        ] {
+            remove_job_rows(&runtime_url, job_name).await?;
+        }
+        let repository = PostgresJobRepository::connect(
+            plaintext_config(runtime_url.clone())?,
+            Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(500))),
+        )
+        .await?;
+
+        let (committed, manager) =
+            launch_postgres_chunk(&repository, "postgres_chunk_commit", false, false).await?;
+        assert_eq!(
+            committed.chunk().ok_or("chunk report missing")?.outcome(),
+            ChunkExecutionOutcome::Completed
+        );
+        let committed_scope = ChunkTransactionContext::new(
+            committed.launch().job_execution().id(),
+            committed.launch().step_execution().id(),
+        );
+        let durable = manager.load_committed_state(committed_scope).await?;
+        assert_eq!(
+            durable.step_execution().metadata().counts(),
+            oxide_batch::ExecutionCounts::new(3, 3, 3, 0, 2, 0)
+        );
+        assert_eq!(durable.checkpoint(), &chunk_checkpoint(3)?);
+        assert_eq!(
+            business_items(&runtime_url, "postgres_chunk_commit").await?,
+            [10, 20, 30]
+        );
+
+        let (rolled_back, manager) =
+            launch_postgres_chunk(&repository, "postgres_chunk_rollback", true, false).await?;
+        assert!(matches!(
+            rolled_back.chunk().ok_or("chunk report missing")?.outcome(),
+            ChunkExecutionOutcome::Failed(_)
+        ));
+        let rolled_back_scope = ChunkTransactionContext::new(
+            rolled_back.launch().job_execution().id(),
+            rolled_back.launch().step_execution().id(),
+        );
+        let durable = manager.load_committed_state(rolled_back_scope).await?;
+        assert_eq!(
+            durable.step_execution().metadata().counts(),
+            oxide_batch::ExecutionCounts::default()
+        );
+        assert_ne!(durable.checkpoint(), &chunk_checkpoint(2)?);
+        assert!(
+            business_items(&runtime_url, "postgres_chunk_rollback")
+                .await?
+                .is_empty()
+        );
+
+        let (ack_failed, manager) =
+            launch_postgres_chunk(&repository, "postgres_chunk_ack_failure", false, true).await?;
+        assert!(matches!(
+            ack_failed.chunk().ok_or("chunk report missing")?.outcome(),
+            ChunkExecutionOutcome::Failed(_)
+        ));
+        let ack_scope = ChunkTransactionContext::new(
+            ack_failed.launch().job_execution().id(),
+            ack_failed.launch().step_execution().id(),
+        );
+        let durable = manager.load_committed_state(ack_scope).await?;
+        assert_eq!(durable.checkpoint(), &chunk_checkpoint(2)?);
+        assert_eq!(durable.step_execution().metadata().counts().committed(), 1);
+        assert_eq!(
+            business_items(&runtime_url, "postgres_chunk_ack_failure").await?,
+            [10, 20]
+        );
+
+        repository.close().await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
+
+async fn create_started_chunk_scope(
+    repository: &PostgresJobRepository,
+    job_name: &str,
+) -> Result<ChunkTransactionContext, Box<dyn Error>> {
+    let key = JobInstanceKey::new(JobName::new(job_name)?, &JobParameters::new());
+    let mut create = repository.begin().await?;
+    let instance = create
+        .select_or_create_job_instance(&key)
+        .await?
+        .instance()
+        .clone();
+    let job = create.create_job_execution(instance.id()).await?;
+    let step = create
+        .create_step_execution(job.id(), &StepName::new("import")?)
+        .await?;
+    create.commit().await?;
+
+    let now = UNIX_EPOCH + Duration::from_secs(700);
+    let mut start = repository.begin().await?;
+    start
+        .transition_job_execution(
+            job.id(),
+            job.version(),
+            LifecycleTransition::new(BatchStatus::Started, now),
+        )
+        .await?;
+    start
+        .transition_step_execution(
+            step.id(),
+            step.version(),
+            LifecycleTransition::new(BatchStatus::Started, now),
+        )
+        .await?;
+    start.commit().await?;
+    Ok(ChunkTransactionContext::new(job.id(), step.id()))
+}
+
+#[test]
+fn postgres_chunk_conflict_rolls_back_losing_business_write() -> Result<(), Box<dyn Error>> {
+    let Some(runtime_url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let Some(migrator_url) = migrator_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        const JOB: &str = "postgres_chunk_conflict";
+        prepare_business_fixture(&migrator_url).await?;
+        remove_job_rows(&runtime_url, JOB).await?;
+        let repository = PostgresJobRepository::connect(
+            plaintext_config(runtime_url.clone())?,
+            Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(700))),
+        )
+        .await?;
+        let scope = create_started_chunk_scope(&repository, JOB).await?;
+        let manager = postgres_chunk_transactions(&repository);
+        let mut winner = manager.begin_for(scope).await?;
+        let mut loser = manager.begin_for(scope).await?;
+        let winner_values = [BusinessValue::text(JOB), BusinessValue::i64(1)];
+        winner
+            .business_transaction()
+            .ok_or("winner was not enlisted")?
+            .execute(BusinessStatement::new(
+                "INSERT INTO oxide_batch_business.chunk_output \
+                 (job_name, item) VALUES ($1, $2)",
+                &winner_values,
+            ))
+            .await?;
+        let loser_values = [BusinessValue::text(JOB), BusinessValue::i64(2)];
+        loser
+            .business_transaction()
+            .ok_or("loser was not enlisted")?
+            .execute(BusinessStatement::new(
+                "INSERT INTO oxide_batch_business.chunk_output \
+                 (job_name, item) VALUES ($1, $2)",
+                &loser_values,
+            ))
+            .await?;
+        let counts = ChunkCounts::new(
+            ChunkCount::new(1),
+            ChunkCount::new(1),
+            ChunkCount::new(1),
+            ChunkCount::ZERO,
+        )?;
+        winner.commit(counts).await?;
+        assert_eq!(
+            loser.commit(counts).await,
+            Err(ChunkTransactionError::NotCommitted)
+        );
+        assert_eq!(business_items(&runtime_url, JOB).await?, [1]);
+        let durable = manager.load_committed_state(scope).await?;
+        assert_eq!(durable.step_execution().metadata().counts().committed(), 1);
+        repository.close().await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
+
+#[test]
+fn postgres_chunk_disconnect_is_known_not_committed_before_commit() -> Result<(), Box<dyn Error>> {
+    let Some(runtime_url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let Some(migrator_url) = migrator_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL is not set");
+        return Ok(());
+    };
+    let Some(admin_url) = admin_url() else {
+        eprintln!(
+            "skipped: neither OXIDEBATCH_POSTGRES_ADMIN_TEST_URL nor \
+             OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL is set"
+        );
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        const JOB: &str = "postgres_chunk_disconnect";
+        prepare_business_fixture(&migrator_url).await?;
+        remove_job_rows(&runtime_url, JOB).await?;
+        let repository = PostgresJobRepository::connect(
+            plaintext_config(runtime_url.clone())?,
+            Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(700))),
+        )
+        .await?;
+        let scope = create_started_chunk_scope(&repository, JOB).await?;
+        let manager = postgres_chunk_transactions(&repository);
+        let mut transaction = manager.begin_for(scope).await?;
+        let values = [BusinessValue::text(JOB), BusinessValue::i64(1)];
+        transaction
+            .business_transaction()
+            .ok_or("transaction was not enlisted")?
+            .execute(BusinessStatement::new(
+                "INSERT INTO oxide_batch_business.chunk_output \
+                 (job_name, item) VALUES ($1, $2)",
+                &values,
+            ))
+            .await?;
+
+        let admin = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&admin_url)
+            .await?;
+        let terminated: bool = sqlx::query_scalar(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+             WHERE application_name = 'oxide-batch' \
+             AND state = 'idle in transaction' \
+             ORDER BY backend_start DESC LIMIT 1",
+        )
+        .fetch_one(&admin)
+        .await?;
+        assert!(terminated);
+        let counts = ChunkCounts::new(
+            ChunkCount::new(1),
+            ChunkCount::new(1),
+            ChunkCount::new(1),
+            ChunkCount::ZERO,
+        )?;
+        assert_eq!(
+            transaction.commit(counts).await,
+            Err(ChunkTransactionError::NotCommitted)
+        );
+        assert!(business_items(&runtime_url, JOB).await?.is_empty());
+        let durable = manager.load_committed_state(scope).await?;
+        assert_eq!(
+            durable.step_execution().metadata().counts(),
+            oxide_batch::ExecutionCounts::default()
+        );
+        admin.close().await;
+        repository.close().await?;
         Ok::<(), Box<dyn Error>>(())
     })
 }

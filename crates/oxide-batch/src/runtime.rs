@@ -760,8 +760,9 @@ impl<'a> JobLauncher<'a> {
             .first()
             .map(|failure| failure.summary())
             .or(tasklet_failure);
+        let durable_step = self.reload_step(started_step.id()).await?;
         let step_execution = self
-            .finish_step(&started_step, outcome, step_failure, &graph.correlation)
+            .finish_step(&durable_step, outcome, step_failure, &graph.correlation)
             .await?;
 
         let after_job_failures = self.run_after_job(&job.listeners, context, outcome).await?;
@@ -791,6 +792,16 @@ impl<'a> JobLauncher<'a> {
             original_failure: original_outcome.and(tasklet_failure),
             listener_failures,
         })
+    }
+
+    async fn reload_step(&self, id: StepExecutionId) -> Result<StepExecution, LaunchError> {
+        let mut unit = self.repository.begin().await?;
+        let step = unit
+            .get_step_execution(id)
+            .await?
+            .ok_or(RepositoryError::StepExecutionNotFound { id })?;
+        unit.rollback().await?;
+        Ok(step)
     }
 
     async fn create_execution_graph(

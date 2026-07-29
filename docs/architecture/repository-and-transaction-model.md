@@ -77,6 +77,13 @@ connection and transaction. Business writes, checkpoint, execution context,
 counters, and optimistic version commit or roll back together. The facade
 lends a bounded OxideBatch-owned transaction port; SQLx types remain private.
 
+The launched runtime supplies job/step execution identity when beginning this
+transaction. A state provider prepares bounded checkpoint/context values at
+the commit boundary from the prior durable counters and the open chunk; a
+missing execution identity or state-preparation failure is a known
+not-committed outcome. Standalone/non-enlisted execution cannot infer or claim
+the PostgreSQL atomic mode.
+
 After an ambiguous commit response, the physical connection is discarded and
 the outcome is `UNKNOWN` until a healthy connection reads durable state.
 
