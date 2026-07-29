@@ -54,13 +54,12 @@ warnings and reported advisories, bans, licenses, and sources as passing.
 `cargo xtask package` verified the 50-file facade package and completed the
 publish dry-run without upload.
 
-The required pull-request checks provide the primary `x86_64-unknown-linux-gnu`
-quality, MSRV, dependency-review, supply-chain, and package-independent
-evidence. Their run link and final result are recorded here before this exit
-candidate is accepted.
+The [required pull-request checks](https://github.com/luceat-lux-vestra/oxide-batch/pull/36/checks)
+passed for quality, Rust 1.95 MSRV, dependency review, supply-chain policy, and
+the real-PostgreSQL architecture spike. They provide the primary
+`x86_64-unknown-linux-gnu` evidence for this exit candidate.
 
 ## Remaining closure actions
 
-- Required pull-request checks pass on the implementation and evidence commits.
 - Issue #25 closes when the evidence pull request merges.
 - Issue #9 receives the merged revision and this record, then closes M1.
