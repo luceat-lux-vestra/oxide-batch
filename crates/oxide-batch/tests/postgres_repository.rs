@@ -40,6 +40,16 @@ fn runtime_url() -> Option<String> {
     std::env::var("OXIDEBATCH_POSTGRES_TEST_URL").ok()
 }
 
+fn migrator_url() -> Option<String> {
+    std::env::var("OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL").ok()
+}
+
+fn admin_url() -> Option<String> {
+    std::env::var("OXIDEBATCH_POSTGRES_ADMIN_TEST_URL")
+        .ok()
+        .or_else(migrator_url)
+}
+
 fn plaintext_config(url: String) -> Result<PostgresConfig, PostgresConfigError> {
     Ok(PostgresConfig::new(url)?.with_tls_mode(TlsMode::Plaintext))
 }
@@ -101,9 +111,15 @@ async fn remove_job_rows(url: &str, job_name: &str) -> Result<(), sqlx::Error> {
 
 async fn prepare_business_fixture(url: &str) -> Result<(), sqlx::Error> {
     let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
-    sqlx::query("CREATE SCHEMA IF NOT EXISTS oxide_batch_business")
-        .execute(&pool)
-        .await?;
+    let schema_exists: bool =
+        sqlx::query_scalar("SELECT to_regnamespace('oxide_batch_business') IS NOT NULL")
+            .fetch_one(&pool)
+            .await?;
+    if !schema_exists {
+        sqlx::query("CREATE SCHEMA oxide_batch_business")
+            .execute(&pool)
+            .await?;
+    }
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS oxide_batch_business.chunk_output (\
          job_name text NOT NULL, item bigint NOT NULL, \
@@ -309,8 +325,11 @@ fn disconnected_transaction_has_unknown_commit_and_pool_recovers() -> Result<(),
         eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
         return Ok(());
     };
-    let Some(admin_url) = std::env::var("OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL").ok() else {
-        eprintln!("skipped: OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL is not set");
+    let Some(admin_url) = admin_url() else {
+        eprintln!(
+            "skipped: neither OXIDEBATCH_POSTGRES_ADMIN_TEST_URL nor \
+             OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL is set"
+        );
         return Ok(());
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -530,7 +549,7 @@ fn postgres_chunk_commit_and_rollback_are_atomic() -> Result<(), Box<dyn Error>>
         eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
         return Ok(());
     };
-    let Some(admin_url) = std::env::var("OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL").ok() else {
+    let Some(migrator_url) = migrator_url() else {
         eprintln!("skipped: OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL is not set");
         return Ok(());
     };
@@ -538,7 +557,7 @@ fn postgres_chunk_commit_and_rollback_are_atomic() -> Result<(), Box<dyn Error>>
         .enable_all()
         .build()?;
     runtime.block_on(async {
-        prepare_business_fixture(&admin_url).await?;
+        prepare_business_fixture(&migrator_url).await?;
         for job_name in [
             "postgres_chunk_commit",
             "postgres_chunk_rollback",
@@ -661,7 +680,7 @@ fn postgres_chunk_conflict_rolls_back_losing_business_write() -> Result<(), Box<
         eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
         return Ok(());
     };
-    let Some(admin_url) = std::env::var("OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL").ok() else {
+    let Some(migrator_url) = migrator_url() else {
         eprintln!("skipped: OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL is not set");
         return Ok(());
     };
@@ -670,7 +689,7 @@ fn postgres_chunk_conflict_rolls_back_losing_business_write() -> Result<(), Box<
         .build()?;
     runtime.block_on(async {
         const JOB: &str = "postgres_chunk_conflict";
-        prepare_business_fixture(&admin_url).await?;
+        prepare_business_fixture(&migrator_url).await?;
         remove_job_rows(&runtime_url, JOB).await?;
         let repository = PostgresJobRepository::connect(
             plaintext_config(runtime_url.clone())?,
@@ -726,8 +745,15 @@ fn postgres_chunk_disconnect_is_known_not_committed_before_commit() -> Result<()
         eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
         return Ok(());
     };
-    let Some(admin_url) = std::env::var("OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL").ok() else {
+    let Some(migrator_url) = migrator_url() else {
         eprintln!("skipped: OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL is not set");
+        return Ok(());
+    };
+    let Some(admin_url) = admin_url() else {
+        eprintln!(
+            "skipped: neither OXIDEBATCH_POSTGRES_ADMIN_TEST_URL nor \
+             OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL is set"
+        );
         return Ok(());
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -735,7 +761,7 @@ fn postgres_chunk_disconnect_is_known_not_committed_before_commit() -> Result<()
         .build()?;
     runtime.block_on(async {
         const JOB: &str = "postgres_chunk_disconnect";
-        prepare_business_fixture(&admin_url).await?;
+        prepare_business_fixture(&migrator_url).await?;
         remove_job_rows(&runtime_url, JOB).await?;
         let repository = PostgresJobRepository::connect(
             plaintext_config(runtime_url.clone())?,
