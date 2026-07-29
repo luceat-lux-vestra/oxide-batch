@@ -80,6 +80,12 @@ Exit criteria:
 
 ## M2 — Durable Chunk and Restart
 
+**Status:** Active (2026-07-29)
+
+The implementation order, prerequisite decisions, PostgreSQL test matrix, and
+definition of done are recorded in the
+[M2 kickoff gate](project/m2-kickoff-gate.md).
+
 **Outcome:** a chunk-oriented PostgreSQL job can survive a process failure and
 restart from its last committed checkpoint without losing metadata integrity.
 

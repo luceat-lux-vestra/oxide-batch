@@ -10,7 +10,8 @@ approved before implementation depending on them begins.
 2. [M0 runtime implementation kickoff gate](project/kickoff-gate.md)
 3. [M0–M5 delivery roadmap](roadmap.md)
 4. [M1 executable-kernel exit evidence](project/m1-exit-evidence.md)
-5. [M0 decision register](product/open-decisions.md)
+5. [M2 durable chunk and restart kickoff gate](project/m2-kickoff-gate.md)
+6. [M0 decision register](product/open-decisions.md)
 
 ## Product
 
