@@ -101,6 +101,12 @@ bounded durable-state contracts are complete on merge. Their criterion mapping
 and implementation handoff are retained in the
 [M2 component-contract evidence](m2-component-contract-evidence.md).
 
+Issue #41's PostgreSQL adapter, released schema-v1 migration, redacting
+configuration, shared repository contract, TLS/role matrix, disconnect
+classification, and migration evidence are complete on merge. The mapping and
+handoff to chunk orchestration are retained in the
+[M2 PostgreSQL repository evidence](m2-postgres-repository-evidence.md).
+
 ## Definition of done
 
 M2 closes only when:

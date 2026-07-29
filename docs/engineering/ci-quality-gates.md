@@ -16,7 +16,7 @@ expensive and probabilistic checks run on a schedule or release candidate.
 | Dependency review | New vulnerability/license risk | Now |
 | MSRV build/test | Enforce declared Rust support | Before M1 |
 | Dependency/license/source policy | RustSec, license, bans, source control | Before M1 |
-| Feature matrix | Default/minimal/all and approved combinations | When features appear |
+| Feature matrix | Default/minimal/all and approved combinations | Active: facade-only and `postgres`/all |
 | Core platform matrix | Supported OS and architecture | Before first public runtime API |
 | PostgreSQL contracts | Real transaction and migration semantics | Before M2 |
 | SemVer API check | Detect public API breakage | After first public runtime API |
@@ -42,6 +42,12 @@ refactor must not create a skipped required job that appears successful.
 
 Failures create or update an owned issue. Scheduled checks may be quarantined
 only with an expiry and a release-impact statement.
+
+The first optional adapter activates the concrete feature matrix. The ordinary
+quality job checks the facade with no default features and the workspace with
+all features. PostgreSQL 15 and 18 additionally build and run the `postgres`
+feature against the released migration; PostgreSQL 15–18 run TLS, role, and
+repository-contract evidence.
 
 ## Release gates
 

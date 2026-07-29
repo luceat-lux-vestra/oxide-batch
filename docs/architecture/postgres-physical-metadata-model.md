@@ -1,14 +1,13 @@
 # PostgreSQL Physical Metadata Model
 
-**State:** Accepted for M2 implementation
+**State:** Implemented for M2
 
-**Schema version:** draft `1`
+**Schema version:** released `1`
 
-This model closes the physical-design gate for the first durable repository.
-The executable draft DDL lives under
-`tests/fixtures/postgres/design-gate/0001_draft_metadata.sql`. Issue #41
-promotes reviewed DDL into immutable product migrations; this design fixture is
-not itself a released migration.
+This model defines the first durable repository. The immutable released DDL is
+`crates/oxide-batch/migrations/0001_initial_metadata.sql`. The executable draft
+under `tests/fixtures/postgres/design-gate/` remains pre-release design evidence
+and is not a supported migration source.
 
 ## Namespace, encodings, and common rules
 

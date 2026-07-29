@@ -4,7 +4,9 @@
 
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::Arc;
 
+use oxide_batch::{CaCertificate, PostgresConfig, PostgresJobRepository, SystemClock, TlsMode};
 use sqlx::postgres::{PgConnectOptions, PgConnection, PgSslMode};
 use sqlx::{Connection, Executor};
 
@@ -26,6 +28,37 @@ fn database_code(error: &sqlx::Error) -> Option<String> {
         sqlx::Error::Database(database) => database.code().map(std::borrow::Cow::into_owned),
         _ => None,
     }
+}
+
+#[tokio::test]
+async fn facade_adapter_connects_with_rustls_verify_full() {
+    let Ok(database_url) = std::env::var("OXIDEBATCH_DESIGN_GATE_RUNTIME_URL") else {
+        eprintln!("skipped: M2 PostgreSQL design-gate fixture is not running");
+        return;
+    };
+    let root_certificate =
+        std::env::var("OXIDEBATCH_DESIGN_GATE_TLS_ROOT").expect("TLS root path must be set");
+    let config = PostgresConfig::new(database_url.clone())
+        .expect("fixture URL must be accepted")
+        .with_tls_mode(TlsMode::VerifyFull {
+            ca_certificate: Some(
+                CaCertificate::new(
+                    std::fs::read(&root_certificate).expect("TLS root must be readable"),
+                )
+                .expect("TLS root must fit the facade bound"),
+            ),
+        });
+    let diagnostic = format!("{config:?}");
+    assert!(!diagnostic.contains(&database_url));
+    assert!(!diagnostic.contains(&root_certificate));
+
+    let repository = PostgresJobRepository::connect(config, Arc::new(SystemClock))
+        .await
+        .expect("facade adapter must connect with validated TLS");
+    repository
+        .close()
+        .await
+        .expect("facade adapter pool must close");
 }
 
 #[tokio::test]
@@ -58,6 +91,12 @@ async fn rustls_verify_full_runtime_role_has_dml_but_not_ddl() {
     .await
     .expect("runtime must read schema version");
     assert_eq!(schema_version, 1);
+
+    let migration_history = connection
+        .execute("SELECT version FROM oxide_batch._sqlx_migrations")
+        .await
+        .expect_err("runtime must not mutate or inspect migration bookkeeping");
+    assert_eq!(database_code(&migration_history).as_deref(), Some("42501"));
 
     let updated = sqlx::query(
         "UPDATE oxide_batch.ob_step_execution \

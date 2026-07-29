@@ -3,9 +3,9 @@
 The public facade crate for [OxideBatch](https://github.com/luceat-lux-vestra/oxide-batch),
 an enterprise-ready batch processing framework for Rust inspired by Spring Batch.
 
-> This crate contains the completed M1 executable kernel. Its domain model,
-> process-local repository, and single-step tasklet launcher are available
-> while M2 durable chunk and restart work proceeds, but it is not yet a
+> This crate contains the completed M1 executable kernel and the first M2
+> PostgreSQL metadata adapter. Chunk orchestration, atomic enlisted chunk
+> commits, and durable restart are still in progress, so it is not yet a
 > production-ready batch runtime.
 
 The facade owns validated job and step names, opaque instance/execution IDs,
@@ -27,6 +27,39 @@ snapshot commits, reports a typed conflict when another unit commits first, and
 accepts injected clock and ID sources instead of reading hidden global state.
 It is intended for deterministic kernel tests and process-local execution; it
 is not durable across restarts.
+
+With the optional `postgres` feature, `PostgresJobRepository` implements the
+same repository contract over the immutable OxideBatch schema. Runtime startup
+verifies schema version 1 but never applies migrations; deployments call
+`PostgresMigrator` separately with a migrator identity. Production defaults
+require certificate and hostname validation, while plaintext transport is an
+explicit local-test choice. Connection strings, certificate paths, parameters,
+contexts, SQL text, and bound values are excluded from facade diagnostics.
+
+```toml
+[dependencies]
+oxide-batch = { version = "0.1.0-alpha.1", features = ["postgres"] }
+```
+
+```rust,no_run
+use std::sync::Arc;
+
+use oxide_batch::{PostgresConfig, PostgresJobRepository, PostgresMigrator, SystemClock};
+
+# async fn configure() -> Result<(), Box<dyn std::error::Error>> {
+let migrator = PostgresConfig::new(std::env::var("MIGRATOR_DATABASE_URL")?)?;
+PostgresMigrator::migrate(&migrator).await?;
+
+let runtime = PostgresConfig::new(std::env::var("RUNTIME_DATABASE_URL")?)?;
+let repository = PostgresJobRepository::connect(runtime, Arc::new(SystemClock)).await?;
+# repository.close().await?;
+# Ok(())
+# }
+```
+
+The migrator and runtime connection strings should identify different
+least-privilege roles in production. The adapter remains behind the public
+repository and unit-of-work ports; SQLx types are never part of those APIs.
 
 `JobLauncher` executes on an application-owned async runtime. The public
 `Tasklet` trait returns an OxideBatch-owned boxed future, so implementations can

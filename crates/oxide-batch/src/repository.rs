@@ -15,8 +15,15 @@ use crate::{
 };
 
 mod memory;
+#[cfg(feature = "postgres")]
+mod postgres;
 
 pub use memory::InMemoryJobRepository;
+#[cfg(feature = "postgres")]
+pub use postgres::{
+    CaCertificate, PostgresConfig, PostgresConfigError, PostgresJobRepository, PostgresMigrator,
+    TlsMode,
+};
 
 /// An owned, dynamically dispatched future used by public asynchronous ports.
 ///
@@ -319,6 +326,29 @@ pub trait RepositoryUnitOfWork: Send {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum RepositoryError {
+    /// The durable metadata schema has not been initialized.
+    SchemaUninitialized,
+    /// The durable metadata schema must be migrated before use.
+    MigrationRequired {
+        /// The version found in the database.
+        current: u32,
+        /// The version understood by this runtime.
+        supported: u32,
+    },
+    /// The durable metadata schema is newer than this runtime.
+    NewerSchema {
+        /// The version found in the database.
+        current: u32,
+        /// The version understood by this runtime.
+        supported: u32,
+    },
+    /// A facade identifier cannot be represented by the durable adapter.
+    IdentifierOutOfRange {
+        /// The identifier category.
+        kind: IdentifierKind,
+        /// The rejected facade value.
+        value: u64,
+    },
     /// A referenced job instance does not exist.
     JobInstanceNotFound {
         /// The missing identifier.
@@ -368,6 +398,11 @@ pub enum RepositoryError {
     Lifecycle(LifecycleError),
     /// Another committed unit of work invalidated this snapshot.
     ConcurrentModification,
+    /// A commit failed after `PostgreSQL` may have made it durable.
+    ///
+    /// Callers must inspect durable metadata through a new healthy unit of
+    /// work before deciding whether to retry.
+    CommitOutcomeUnknown,
     /// The repository is unavailable because of an infrastructure failure.
     Unavailable,
 }
@@ -375,6 +410,23 @@ pub enum RepositoryError {
 impl fmt::Display for RepositoryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::SchemaUninitialized => {
+                formatter.write_str("PostgreSQL metadata schema is not initialized")
+            }
+            Self::MigrationRequired { current, supported } => write!(
+                formatter,
+                "PostgreSQL metadata schema version {current} requires migration to {supported}"
+            ),
+            Self::NewerSchema { current, supported } => write!(
+                formatter,
+                "PostgreSQL metadata schema version {current} is newer than supported version {supported}"
+            ),
+            Self::IdentifierOutOfRange { kind, value } => {
+                write!(
+                    formatter,
+                    "{kind} identifier {value} exceeds PostgreSQL bigint"
+                )
+            }
             Self::JobInstanceNotFound { id } => {
                 write!(formatter, "job instance {id} was not found")
             }
@@ -407,6 +459,9 @@ impl fmt::Display for RepositoryError {
             Self::ConcurrentModification => {
                 formatter.write_str("repository unit of work is based on a stale snapshot")
             }
+            Self::CommitOutcomeUnknown => formatter.write_str(
+                "PostgreSQL commit outcome is unknown; inspect durable metadata before recovery",
+            ),
             Self::Unavailable => formatter.write_str("repository is unavailable"),
         }
     }

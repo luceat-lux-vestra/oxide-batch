@@ -48,6 +48,9 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-features
 
+      - name: Check facade without optional adapters
+        run: cargo check -p oxide-batch --no-default-features
+
       - name: Build documentation
         env:
           RUSTDOCFLAGS: -D warnings
@@ -107,3 +110,60 @@ jobs:
 
       - name: Run TLS, roles, schema, and restore fixture
         run: ./tests/fixtures/postgres/run-design-gate.sh ${{ matrix.postgres }}
+
+  postgres-repository:
+    name: postgres-${{ matrix.postgres }}-repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["15", "18"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oxide_batch_repository
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username postgres --dbname oxide_batch_repository"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_repository
+      OXIDEBATCH_POSTGRES_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_repository
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Apply and reapply immutable migrations
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_repository
+          migration_is_idempotent_when_migrator_fixture_is_available
+          -- --nocapture --test-threads=1
+
+      - name: Run shared PostgreSQL repository contract
+        run: |
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            shared_repository_contract_passes_on_postgres \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            concurrent_identical_launches_create_one_active_execution \
+            -- --nocapture --test-threads=1
+
+      - name: Verify disconnect and schema-version classifications
+        run: |
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            disconnected_transaction_has_unknown_commit_and_pool_recovers \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            newer_schema_is_rejected_without_guessing_compatibility \
+            -- --nocapture --test-threads=1

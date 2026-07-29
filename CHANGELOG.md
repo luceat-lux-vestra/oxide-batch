@@ -34,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Runtime-neutral item reader, processor, writer, chunk-completion, enlisted
   business-transaction, checked chunk-count, and bounded versioned durable-state
   contracts for M2.
+- An optional PostgreSQL metadata repository with facade-owned redacting
+  configuration, validated Rustls transport, bounded pool/timeouts, immutable
+  schema-v1 migrations, canonical instance-key hashing, database-authoritative
+  launch serialization, typed optimistic conflicts, and unknown-commit
+  classification.
 - M0 implementation-readiness plan, M0–M5 roadmap, decision records, and
   product, compatibility, architecture, engineering, security, operations, and
   release policy set.

@@ -128,12 +128,25 @@ docker exec -i \
   --dbname oxide_batch_design \
   <"${fixture_root}/design-gate/roles.sql"
 
+(
+  cd "${repository_root}"
+  OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL="postgres://oxide_batch_migrator:fixture-migrator-only@localhost:${database_port}/oxide_batch_design" \
+    cargo test \
+      -p oxide-batch \
+      --features postgres \
+      --test postgres_repository \
+      migration_is_idempotent_when_migrator_fixture_is_available \
+      -- \
+      --nocapture \
+      --test-threads=1
+)
+
 docker exec -i \
   --env PGPASSWORD=fixture-migrator-only \
   "${container_name}" \
   psql \
   "host=localhost dbname=oxide_batch_design user=oxide_batch_migrator sslmode=verify-full sslrootcert=/tls/ca.crt" \
-  <"${fixture_root}/design-gate/0001_draft_metadata.sql"
+  <"${fixture_root}/design-gate/roles-after-migration.sql"
 
 docker exec -i \
   --env PGPASSWORD=fixture-runtime-only \
@@ -144,12 +157,21 @@ docker exec -i \
 
 (
   cd "${repository_root}"
-  OXIDEBATCH_DESIGN_GATE_RUNTIME_URL="postgres://oxide_batch_runtime:fixture-runtime-only@localhost:${database_port}/oxide_batch_design" \
-  OXIDEBATCH_DESIGN_GATE_READER_URL="postgres://oxide_batch_operator_reader:fixture-reader-only@localhost:${database_port}/oxide_batch_design" \
-  OXIDEBATCH_DESIGN_GATE_TLS_ROOT="${temporary_root}/ca.crt" \
+  export OXIDEBATCH_DESIGN_GATE_RUNTIME_URL="postgres://oxide_batch_runtime:fixture-runtime-only@localhost:${database_port}/oxide_batch_design"
+  export OXIDEBATCH_DESIGN_GATE_READER_URL="postgres://oxide_batch_operator_reader:fixture-reader-only@localhost:${database_port}/oxide_batch_design"
+  export OXIDEBATCH_DESIGN_GATE_TLS_ROOT="${temporary_root}/ca.crt"
+  cargo test \
+    -p oxide-batch-m0-spikes \
+    --test postgres_design_gate \
+    -- \
+    --nocapture \
+    --test-threads=1
+
+  OXIDEBATCH_POSTGRES_TEST_URL="${OXIDEBATCH_DESIGN_GATE_RUNTIME_URL}" \
     cargo test \
-      -p oxide-batch-m0-spikes \
-      --test postgres_design_gate \
+      -p oxide-batch \
+      --features postgres \
+      --test postgres_repository \
       -- \
       --nocapture \
       --test-threads=1

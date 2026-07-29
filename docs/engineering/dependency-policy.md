@@ -114,3 +114,20 @@ Stable releases include or link:
 - SBOM in the selected standard format;
 - source revision and package checksum;
 - build/release provenance.
+
+## M2 PostgreSQL dependency record
+
+The optional `postgres` feature admits two production dependencies reviewed by
+issue #41:
+
+- `sqlx 0.9` is the critical database driver and migration engine accepted by
+  ADR-0003. Default features are disabled; only PostgreSQL, JSON, migrations,
+  macros, the application-owned Tokio runtime, and Rustls with native roots are
+  enabled. All SQLx types remain private to the adapter.
+- `sha2 0.10` is the focused implementation of the accepted SHA-256
+  job-instance identity algorithm. Digest bytes are persisted, while the
+  implementation type and crate remain private.
+
+Both follow the workspace MSRV, registry-source, license, advisory, lockfile,
+and replacement-review rules above. Disabling `postgres` removes both from the
+facade crate's active dependency graph.
