@@ -96,6 +96,11 @@ not promote the draft fixture into a supported schema. The criterion-by-
 criterion mapping is retained in the
 [M2 design-gate evidence](m2-design-gate-evidence.md).
 
+Issue #40's facade-owned component, transaction-enlistment, checked-count, and
+bounded durable-state contracts are complete on merge. Their criterion mapping
+and implementation handoff are retained in the
+[M2 component-contract evidence](m2-component-contract-evidence.md).
+
 ## Definition of done
 
 M2 closes only when:

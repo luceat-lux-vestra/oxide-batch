@@ -10,7 +10,7 @@ use std::num::NonZeroU64;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, UNIX_EPOCH};
 
-use contract::run_repository_contract;
+use contract::{run_component_contract, run_repository_contract};
 use oxide_batch::InMemoryJobRepository;
 use support::{
     BoundedTimeout, BoundedTimeoutError, ControlledBackoff, DeterministicIds, DiagnosticContext,
@@ -176,6 +176,13 @@ fn shared_repository_contract_runs_against_a_test_adapter() -> Result<(), Box<dy
             Arc::new(DeterministicIds::new(first_id)),
         ))
     })?;
+    Ok(())
+}
+
+#[test]
+fn shared_component_contract_covers_typed_outcomes_and_durable_state() -> Result<(), Box<dyn Error>>
+{
+    run_component_contract()?;
     Ok(())
 }
 

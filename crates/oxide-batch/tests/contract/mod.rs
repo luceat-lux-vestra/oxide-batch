@@ -1,5 +1,9 @@
 //! Repository contract cases shared by every metadata implementation.
 
+mod components;
+
+pub use components::run_component_contract;
+
 use std::error::Error;
 use std::fmt;
 use std::time::{Duration, UNIX_EPOCH};
