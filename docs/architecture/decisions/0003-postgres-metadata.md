@@ -1,6 +1,7 @@
 # ADR-0003: PostgreSQL Metadata Repository
 
-- **State:** Accepted
+- **State:** Superseded by ADR-0006
+- **Superseded by:** [ADR-0006](0006-repository-capability-model.md)
 - **Date:** 2026-07-29
 - **Owners:** maintainers
 - **Deciders:** project owner

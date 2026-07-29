@@ -52,7 +52,7 @@ backup/restore checks against every explicit `15`, `16`, `17`, and `18` image.
 Adapter repository, transaction, and crash depth remains release-blocking on
 15 and 18 as shown above.
 
-## Proposed 1.0 dimensions
+## M5 production-preview dimensions
 
 - Rust: declared MSRV and current stable;
 - Linux x86_64: primary runtime and PostgreSQL integration target;
@@ -65,6 +65,27 @@ Adapter repository, transaction, and crash depth remains release-blocking on
 The M2 PostgreSQL range is selected above. Other exact platform versions and
 any change to the database range are reviewed against upstream support windows,
 CI availability, and user needs.
+
+This preview interpretation is accepted by
+[RFC-0001](../rfcs/0001-m5-preview-and-project-wide-1-0.md). It is not a
+project-wide 1.0 or enterprise-readiness matrix.
+
+## Project-wide 1.0 dimensions
+
+M14 support would additionally name:
+
+- every public crate/API and configuration stability surface;
+- metadata and distributed protocol N/N-1/N-2 compatibility;
+- at least three certified Tier-1 database adapters;
+- at least two certified Tier-1 broker adapters and their delivery modes;
+- supported coordinator/worker topologies and transports;
+- Spring Batch baseline, complete ledger disposition, migration source
+  versions, and reference workloads;
+- security, supply-chain, soak, chaos, backup/restore, and disaster-recovery
+  evidence.
+
+These are accepted gates, not current support. Exact versions are added only
+after their automated or approved external certification evidence exists.
 
 ## Rules
 

@@ -3,8 +3,8 @@
 [![CI](https://github.com/luceat-lux-vestra/oxide-batch/actions/workflows/ci.yml/badge.svg)](https://github.com/luceat-lux-vestra/oxide-batch/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-OxideBatch is an enterprise-ready batch processing framework for Rust, inspired
-by Spring Batch and designed around idiomatic Rust.
+OxideBatch is an early-stage Rust-native framework for reliable, restartable
+batch processing, inspired by Spring Batch.
 
 > [!IMPORTANT]
 > OxideBatch has completed its M1 executable kernel and its first PostgreSQL
@@ -46,8 +46,9 @@ boundaries, and restart after process failure are being delivered through the
 [M2 kickoff gate](docs/project/m2-kickoff-gate.md).
 
 Start with the [documentation index](docs/README.md) and
-[M0–M5 delivery roadmap](docs/roadmap.md). Accepted decisions and deferred
-later-milestone gates are recorded before implementation depends on them.
+[continuous delivery roadmap](docs/roadmap.md). The M5-M14 full-parity program
+is accepted; the static/erased component architecture and distributed worker
+protocol remain gated by RFC-0005 and RFC-0009.
 
 ## Contributing
 

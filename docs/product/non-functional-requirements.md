@@ -32,15 +32,19 @@ When requirements conflict, use this order:
   cleanup.
 - Repository operations define timeouts and transient/permanent classifications.
 - Retry storms are bounded by attempts, duration, backoff, and cancellation.
-- Metadata backup/restore and migration recovery are exercised before 1.0.
+- Metadata backup/restore and migration recovery are exercised before every
+  durable preview/stable gate; multi-adapter and protocol paths are complete
+  before project-wide 1.0.
 
 Proposed measurement gates:
 
 - M2: 100% pass rate for the named crash matrix over repeated CI runs;
 - M4: a 24-hour soak without unbounded memory, task, connection, or handle
   growth;
-- M5: restore and restart the reference workload within its documented recovery
-  exercise target.
+- M5 preview: restore and restart the embedded PostgreSQL reference workload
+  within its documented recovery exercise target.
+- M14 GA: restore, migrate, and restart the complete supported reference
+  workload matrix within documented targets.
 
 ## Performance and scalability
 
