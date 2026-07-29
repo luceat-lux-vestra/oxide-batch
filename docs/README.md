@@ -11,7 +11,8 @@ approved before implementation depending on them begins.
 3. [M0–M5 delivery roadmap](roadmap.md)
 4. [M1 executable-kernel exit evidence](project/m1-exit-evidence.md)
 5. [M2 durable chunk and restart kickoff gate](project/m2-kickoff-gate.md)
-6. [M0 decision register](product/open-decisions.md)
+6. [M2 durable metadata design-gate evidence](project/m2-design-gate-evidence.md)
+7. [M0 decision register](product/open-decisions.md)
 
 ## Product
 
@@ -36,6 +37,7 @@ approved before implementation depending on them begins.
 - [Technical baseline](architecture/technical-baseline.md)
 - [Technology evaluation](architecture/technology-evaluation.md)
 - [Configuration model](architecture/configuration-model.md)
+- [PostgreSQL physical metadata model](architecture/postgres-physical-metadata-model.md)
 - [Rust API design guidelines](api/design-guidelines.md)
 - [Architecture spike template](architecture/spike-template.md)
 - [Completed architecture spike evidence](architecture/spikes/README.md)
@@ -56,6 +58,7 @@ approved before implementation depending on them begins.
 - [Threat model and supply-chain baseline](security/threat-model.md)
 - [Severity and response objectives](security/severity-and-response.md)
 - [Persistence and migration operations](operations/persistence-and-migrations.md)
+- [Metadata migration-guide template](operations/migration-guide-template.md)
 - [Observability contract](operations/observability-contract.md)
 
 ## Release, documentation, and governance

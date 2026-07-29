@@ -33,11 +33,11 @@ The original blockers on issue #13 are therefore resolved.
 
 | Gate | Owner | Required decision and evidence | Blocks |
 | --- | --- | --- | --- |
-| Definition compatibility | Runtime/API owner | Persisted job-definition identity, compatibility comparison, restart rejection, and upgrade rules | Durable restart |
-| Physical metadata model | Repository owner | Tables, keys, constraints, indexes, query ownership, context/checkpoint columns, and schema-version bootstrap | PostgreSQL adapter and migrations |
-| PostgreSQL support | Repository owner | Major-version matrix, TLS modes, runtime/migrator privileges, locale/collation assumptions, and CI images | Supported adapter claim |
-| Pool and timeout policy | Repository owner | Pool ownership, acquisition/statement/lock timeouts, cancellation, suspect-connection disposal, and safe diagnostic fields | Production adapter configuration |
-| Migration operations | Repository and documentation owners | Immutable migration convention, upgrade fixtures, newer-schema rejection, backup/restore exercise, and first migration-guide format | First durable schema release |
+| Definition compatibility | Runtime/API owner | Closed by [ADR-0004](../architecture/decisions/0004-job-definition-restart-compatibility.md): persisted identity, fail-closed comparison, rejection categories, and directed upgrade rules | Durable restart |
+| Physical metadata model | Repository owner | Closed by the [PostgreSQL physical metadata model](../architecture/postgres-physical-metadata-model.md) and executable draft DDL | PostgreSQL adapter and migrations |
+| PostgreSQL support | Repository owner | Closed for implementation by the 15–18 matrix, validated Rustls fixture, least-privilege roles, bytewise encodings, and explicit CI images | Supported adapter claim |
+| Pool and timeout policy | Repository owner | Closed by the typed bounds, ownership, cancellation, disposal, and safe-diagnostic contract in [persistence operations](../operations/persistence-and-migrations.md) | Production adapter configuration |
+| Migration operations | Repository and documentation owners | Closed by immutable naming/checksum rules, version bootstrap/rejection, upgrade matrix, backup/restore fixture, and [guide template](../operations/migration-guide-template.md) | First durable schema release |
 
 These decisions refine accepted ADR-0003 without reopening its choice of
 PostgreSQL or SQLx. A change to the public compatibility or transaction
@@ -89,6 +89,12 @@ default.
 Core contract and deterministic fixture work may proceed while PostgreSQL
 operational decisions are reviewed. Durable schema, adapter, and restart work
 must follow the gates that govern them.
+
+All five design gates were closed on 2026-07-29. Issue #41 still owns the
+adapter, released migrations, and full repository evidence; closing design does
+not promote the draft fixture into a supported schema. The criterion-by-
+criterion mapping is retained in the
+[M2 design-gate evidence](m2-design-gate-evidence.md).
 
 ## Definition of done
 

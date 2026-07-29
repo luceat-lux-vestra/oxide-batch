@@ -18,6 +18,7 @@ data, correctness, security, or dependency direction.
 | [0001](0001-workspace-and-facade.md) | Workspace and public facade | Accepted |
 | [0002](0002-execution-model.md) | Async execution model | Accepted |
 | [0003](0003-postgres-metadata.md) | PostgreSQL metadata repository | Accepted |
+| [0004](0004-job-definition-restart-compatibility.md) | Job-definition identity and restart compatibility | Accepted |
 
 Copy [template.md](template.md) for a new decision. ADRs are immutable after
 acceptance except for status and links; changed decisions receive a new ADR.

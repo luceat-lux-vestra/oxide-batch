@@ -92,3 +92,18 @@ jobs:
 
       - name: Run real-PostgreSQL architecture spike
         run: cargo test -p oxide-batch-m0-spikes --test postgres -- --nocapture --test-threads=1
+
+  postgres-design-gate:
+    name: postgres-${{ matrix.postgres }}-design-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["15", "16", "17", "18"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Run TLS, roles, schema, and restore fixture
+        run: ./tests/fixtures/postgres/run-design-gate.sh ${{ matrix.postgres }}
