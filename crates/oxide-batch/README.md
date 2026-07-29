@@ -39,3 +39,18 @@ order. A before failure prevents the associated user body. An after failure
 cannot undo completed user work; `LaunchReport` retains the provisional outcome
 and every redacted listener failure. Event sinks observe committed lifecycle
 states and cannot fail an execution, even if a sink panics.
+
+## First in-memory job
+
+The checked-in example defines a tasklet using only facade-owned batch types.
+The application supplies the async executor and explicitly constructs the
+process-local repository, clock, and identifier source:
+
+```console
+cargo run -p oxide-batch --example first_job
+```
+
+It prints the tasklet observation and the final persisted job status. The
+in-memory repository is intentionally non-durable; use this M1 example for
+learning, local execution, and deterministic tests rather than restart
+guarantees across process failure.

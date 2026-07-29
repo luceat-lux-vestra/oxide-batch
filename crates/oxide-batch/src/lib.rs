@@ -46,6 +46,15 @@
 //! emitted after corresponding metadata commits through a non-authoritative
 //! [`LifecycleEventSink`]. Their structured fields exclude parameters,
 //! contexts, records, credentials, and arbitrary user error payloads.
+//!
+//! Run the complete in-memory example from the workspace root:
+//!
+//! ```text
+//! cargo run -p oxide-batch --example first_job
+//! ```
+//!
+//! The application supplies the async executor; public tasklet and repository
+//! contracts use [`BoxFuture`] rather than executor- or database-driver types.
 
 #![forbid(unsafe_code)]
 
