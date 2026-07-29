@@ -568,6 +568,88 @@ pub trait BusinessTransaction: Send {
     ) -> BoxFuture<'a, Result<BusinessWriteResult, BusinessTransactionError>>;
 }
 
+/// Evidence returned after one chunk transaction is known to have committed.
+///
+/// The receipt owns the durable checkpoint and execution context so
+/// post-commit observers cannot borrow adapter-internal transaction state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChunkCommitReceipt {
+    checkpoint: Checkpoint,
+    execution_context: ExecutionContext,
+}
+
+impl ChunkCommitReceipt {
+    /// Constructs committed durable-state evidence.
+    #[must_use]
+    pub const fn new(checkpoint: Checkpoint, execution_context: ExecutionContext) -> Self {
+        Self {
+            checkpoint,
+            execution_context,
+        }
+    }
+
+    /// Borrows the committed reader checkpoint.
+    #[must_use]
+    pub const fn checkpoint(&self) -> &Checkpoint {
+        &self.checkpoint
+    }
+
+    /// Borrows the committed execution context.
+    #[must_use]
+    pub const fn execution_context(&self) -> &ExecutionContext {
+        &self.execution_context
+    }
+}
+
+/// Stable, payload-redacted chunk-transaction failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ChunkTransactionError {
+    /// The operation is known not to have committed.
+    NotCommitted,
+    /// The adapter cannot determine whether commit reached durable storage.
+    CommitOutcomeUnknown,
+}
+
+impl fmt::Display for ChunkTransactionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::NotCommitted => "chunk transaction did not commit",
+            Self::CommitOutcomeUnknown => "chunk transaction commit outcome is unknown",
+        })
+    }
+}
+
+impl Error for ChunkTransactionError {}
+
+/// One adapter-owned transaction for a bounded chunk attempt.
+///
+/// The runtime invokes the writer while this value is open, then commits the
+/// supplied checked counters or rolls the transaction back. Implementations
+/// keep database-driver and serialization types private.
+pub trait ChunkTransaction: Send {
+    /// Reborrows an enlisted business transaction when the selected delivery
+    /// mode supports same-resource atomicity.
+    fn business_transaction(&mut self) -> Option<&mut dyn BusinessTransaction>;
+
+    /// Commits business work and the supplied progress, returning the durable
+    /// checkpoint and context that became authoritative.
+    fn commit(
+        &mut self,
+        counts: ChunkCounts,
+    ) -> BoxFuture<'_, Result<ChunkCommitReceipt, ChunkTransactionError>>;
+
+    /// Rolls back all provisional work in this chunk attempt.
+    fn rollback(&mut self) -> BoxFuture<'_, Result<(), ChunkTransactionError>>;
+}
+
+/// Begins isolated adapter-owned chunk transactions.
+pub trait ChunkTransactionManager: Send + Sync {
+    /// Starts one transaction for a bounded chunk attempt.
+    fn begin(&self)
+    -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>>;
+}
+
 /// Stable, value-redacted enlisted-transaction failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]

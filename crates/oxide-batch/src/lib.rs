@@ -47,11 +47,14 @@
 //! [`LifecycleEventSink`]. Their structured fields exclude parameters,
 //! contexts, records, credentials, and arbitrary user error payloads.
 //!
-//! M2 chunk definitions use [`ItemReader`], [`ItemProcessor`], [`ItemWriter`],
-//! and [`ChunkCompletion`] extension contracts. End of input, filtering,
-//! cooperative stopping, failures, and post-commit acknowledgement remain
-//! distinct typed outcomes. An enlisted writer borrows [`BusinessTransaction`]
-//! for only its call; no database-driver type crosses the facade.
+//! M2 chunk definitions use [`ChunkStep`], [`ChunkJob`], [`ItemReader`],
+//! [`ItemProcessor`], [`ItemWriter`], and [`ChunkCompletion`]. The
+//! [`JobLauncher::launch_chunk`] path reuses job/step lifecycle metadata while
+//! [`ChunkTransaction`] isolates adapter-owned commit and rollback. End of
+//! input, filtering, cooperative stopping, failures, unknown commit, and
+//! post-commit acknowledgement remain distinct typed outcomes. An enlisted
+//! writer borrows [`BusinessTransaction`] for only its call; no database-driver
+//! type crosses the facade.
 //!
 //! [`Checkpoint`] and [`ExecutionContext`] retain bounded versioned JSON through
 //! application-owned [`VersionedStateCodec`] implementations. Codec signatures
@@ -70,6 +73,7 @@
 #![forbid(unsafe_code)]
 
 mod chunk;
+mod chunk_runtime;
 mod diagnostics;
 mod domain;
 mod listener;
@@ -79,11 +83,16 @@ mod state;
 
 pub use chunk::{
     BusinessStatement, BusinessTransaction, BusinessTransactionError, BusinessValue,
-    BusinessValueKind, BusinessWriteResult, ChunkCompletion, ChunkCompletionContext,
-    ChunkCompletionError, ChunkCompletionOutcome, ChunkCount, ChunkCounts, ChunkError,
-    ChunkProgress, ChunkSize, ItemProcessor, ItemReader, ItemWriter, ProcessContext,
-    ProcessOutcome, ProcessorError, ReadContext, ReadOutcome, ReaderError, WriteContext,
-    WriteOutcome, WriterError,
+    BusinessValueKind, BusinessWriteResult, ChunkCommitReceipt, ChunkCompletion,
+    ChunkCompletionContext, ChunkCompletionError, ChunkCompletionOutcome, ChunkCount, ChunkCounts,
+    ChunkError, ChunkProgress, ChunkSize, ChunkTransaction, ChunkTransactionError,
+    ChunkTransactionManager, ItemProcessor, ItemReader, ItemWriter, ProcessContext, ProcessOutcome,
+    ProcessorError, ReadContext, ReadOutcome, ReaderError, WriteContext, WriteOutcome, WriterError,
+};
+pub use chunk_runtime::{
+    ChunkAttemptOutcome, ChunkExecutionOutcome, ChunkExecutionReport, ChunkFailure, ChunkJob,
+    ChunkLaunchReport, ChunkListener, ChunkListenerContext, ChunkListenerError,
+    ChunkListenerFailure, ChunkListenerFailureKind, ChunkListenerPhase, ChunkStep,
 };
 pub use diagnostics::{
     DiagnosticField, EventComponent, EventSeverity, ExecutionAttempt, ExecutionCorrelation,

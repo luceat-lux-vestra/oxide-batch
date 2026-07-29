@@ -4,7 +4,8 @@ use std::fmt;
 use std::num::NonZeroU64;
 
 use crate::{
-    BatchStatus, FailureSummary, JobExecutionId, JobInstanceId, JobName, StepExecutionId, StepName,
+    BatchStatus, ChunkCount, FailureSummary, JobExecutionId, JobInstanceId, JobName,
+    StepExecutionId, StepName,
 };
 
 /// A nonzero, instance-scoped execution-attempt ordinal.
@@ -150,6 +151,8 @@ pub enum EventComponent {
     Job,
     /// A step execution.
     Step,
+    /// A bounded chunk transaction.
+    Chunk,
     /// A job or step listener boundary.
     Listener,
 }
@@ -162,6 +165,7 @@ impl EventComponent {
             Self::Launcher => "launcher",
             Self::Job => "job",
             Self::Step => "step",
+            Self::Chunk => "chunk",
             Self::Listener => "listener",
         }
     }
@@ -203,6 +207,18 @@ pub enum LifecycleEventKind {
     JobFailed,
     /// Step metadata is durably `FAILED`.
     StepFailed,
+    /// Job metadata is durably `UNKNOWN`.
+    JobUnknown,
+    /// Step metadata is durably `UNKNOWN`.
+    StepUnknown,
+    /// A bounded chunk transaction is starting.
+    ChunkStarted,
+    /// A bounded chunk transaction committed.
+    ChunkCommitted,
+    /// A bounded chunk transaction rolled back.
+    ChunkRolledBack,
+    /// A chunk commit result is unknown.
+    ChunkUnknown,
     /// A job before-listener returned an error or panicked.
     JobBeforeListenerFailed,
     /// A job after-listener returned an error or panicked.
@@ -231,6 +247,12 @@ impl LifecycleEventKind {
             Self::StepCompleted => "step.completed",
             Self::JobFailed => "job.failed",
             Self::StepFailed => "step.failed",
+            Self::JobUnknown => "job.unknown",
+            Self::StepUnknown => "step.unknown",
+            Self::ChunkStarted => "chunk.started",
+            Self::ChunkCommitted => "chunk.committed",
+            Self::ChunkRolledBack => "chunk.rolled_back",
+            Self::ChunkUnknown => "chunk.unknown",
             Self::JobBeforeListenerFailed => "job.before_listener.failed",
             Self::JobAfterListenerFailed => "job.after_listener.failed",
             Self::StepBeforeListenerFailed => "step.before_listener.failed",
@@ -248,13 +270,19 @@ impl LifecycleEventKind {
             | Self::JobStopping
             | Self::JobStopped
             | Self::JobCompleted
-            | Self::JobFailed => EventComponent::Job,
+            | Self::JobFailed
+            | Self::JobUnknown => EventComponent::Job,
             Self::StepStarting
             | Self::StepStarted
             | Self::StepStopping
             | Self::StepStopped
             | Self::StepCompleted
-            | Self::StepFailed => EventComponent::Step,
+            | Self::StepFailed
+            | Self::StepUnknown => EventComponent::Step,
+            Self::ChunkStarted
+            | Self::ChunkCommitted
+            | Self::ChunkRolledBack
+            | Self::ChunkUnknown => EventComponent::Chunk,
             Self::JobBeforeListenerFailed
             | Self::JobAfterListenerFailed
             | Self::StepBeforeListenerFailed
@@ -272,7 +300,12 @@ impl LifecycleEventKind {
             Self::JobStopped | Self::StepStopped => Some(BatchStatus::Stopped),
             Self::JobCompleted | Self::StepCompleted => Some(BatchStatus::Completed),
             Self::JobFailed | Self::StepFailed => Some(BatchStatus::Failed),
+            Self::JobUnknown | Self::StepUnknown => Some(BatchStatus::Unknown),
             Self::LaunchAccepted
+            | Self::ChunkStarted
+            | Self::ChunkCommitted
+            | Self::ChunkRolledBack
+            | Self::ChunkUnknown
             | Self::JobBeforeListenerFailed
             | Self::JobAfterListenerFailed
             | Self::StepBeforeListenerFailed
@@ -286,20 +319,27 @@ impl LifecycleEventKind {
         match self {
             Self::JobFailed
             | Self::StepFailed
+            | Self::JobUnknown
+            | Self::StepUnknown
+            | Self::ChunkUnknown
             | Self::JobBeforeListenerFailed
             | Self::JobAfterListenerFailed
             | Self::StepBeforeListenerFailed
             | Self::StepAfterListenerFailed => EventSeverity::Error,
-            Self::JobStopping | Self::StepStopping | Self::JobStopped | Self::StepStopped => {
-                EventSeverity::Warn
-            }
+            Self::JobStopping
+            | Self::StepStopping
+            | Self::JobStopped
+            | Self::StepStopped
+            | Self::ChunkRolledBack => EventSeverity::Warn,
             Self::LaunchAccepted
             | Self::JobStarting
             | Self::StepStarting
             | Self::JobStarted
             | Self::StepStarted
             | Self::JobCompleted
-            | Self::StepCompleted => EventSeverity::Info,
+            | Self::StepCompleted
+            | Self::ChunkStarted
+            | Self::ChunkCommitted => EventSeverity::Info,
         }
     }
 }
@@ -316,6 +356,7 @@ pub struct LifecycleEvent {
     kind: LifecycleEventKind,
     correlation: ExecutionCorrelation,
     failure: Option<FailureSummary>,
+    chunk_sequence: Option<ChunkCount>,
 }
 
 impl LifecycleEvent {
@@ -324,6 +365,7 @@ impl LifecycleEvent {
             kind,
             correlation,
             failure: None,
+            chunk_sequence: None,
         }
     }
 
@@ -336,6 +378,20 @@ impl LifecycleEvent {
             kind,
             correlation,
             failure: Some(failure),
+            chunk_sequence: None,
+        }
+    }
+
+    pub(crate) const fn chunk(
+        kind: LifecycleEventKind,
+        correlation: ExecutionCorrelation,
+        sequence: ChunkCount,
+    ) -> Self {
+        Self {
+            kind,
+            correlation,
+            failure: None,
+            chunk_sequence: Some(sequence),
         }
     }
 
@@ -355,6 +411,12 @@ impl LifecycleEvent {
     #[must_use]
     pub const fn failure(&self) -> Option<FailureSummary> {
         self.failure
+    }
+
+    /// Returns the chunk-attempt sequence for chunk events.
+    #[must_use]
+    pub const fn chunk_sequence(&self) -> Option<ChunkCount> {
+        self.chunk_sequence
     }
 
     /// Produces the reviewed fields suitable for a tracing span or event.
@@ -383,6 +445,12 @@ impl LifecycleEvent {
         ];
         if let Some(status) = self.kind.status() {
             fields.push(DiagnosticField::new("batch.status", status.to_string()));
+        }
+        if let Some(sequence) = self.chunk_sequence {
+            fields.push(DiagnosticField::new(
+                "chunk.sequence",
+                sequence.get().to_string(),
+            ));
         }
         if let Some(failure) = self.failure {
             fields.push(DiagnosticField::new(
@@ -432,6 +500,9 @@ impl fmt::Display for LifecycleEvent {
         )?;
         if let Some(status) = self.kind.status() {
             write!(formatter, " status={status}")?;
+        }
+        if let Some(sequence) = self.chunk_sequence {
+            write!(formatter, " chunk_sequence={}", sequence.get())?;
         }
         if let Some(failure) = self.failure {
             write!(

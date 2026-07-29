@@ -65,6 +65,7 @@ decisions own the normative detail.
 - [M2 durable metadata design-gate evidence](project/m2-design-gate-evidence.md)
 - [M2 chunk component contract evidence](project/m2-component-contract-evidence.md)
 - [M2 PostgreSQL repository evidence](project/m2-postgres-repository-evidence.md)
+- [M2 deterministic chunk runtime evidence](project/m2-chunk-runtime-evidence.md)
 - [Historical M0 decision register](product/open-decisions.md)
 
 Historical gates are preserved as records of their date. Later decisions link
