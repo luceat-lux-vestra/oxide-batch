@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Async-first single-step tasklet execution with persisted lifecycle outcomes,
   cooperative stopping, panic classification, and an explicitly bounded
   blocking adapter.
+- Deterministic job and step listeners, commit-aligned lifecycle events,
+  execution-attempt correlation, and value-redacted log, span, metric-label,
+  and listener-failure diagnostics.
 - M0 implementation-readiness plan, M0–M5 roadmap, decision records, and
   product, compatibility, architecture, engineering, security, operations, and
   release policy set.

@@ -14,17 +14,19 @@ released OxideBatch version.
 | TASKLET-001 | A single tasklet step drives job and step lifecycle | Step/tasklet execution | Behavioral | Unreleased | `successful_launch_borrows_context_and_persists_final_graph` | Implemented | Async-first Rust contract |
 | TASKLET-STOP-001 | Tasklet stop is cooperative and persisted | Step/tasklet execution | Behavioral | Unreleased | `cooperative_stop_during_async_work_is_persisted` | Implemented | Explicit stop token |
 | TASKLET-PANIC-001 | User panic is classified as execution failure | Step/tasklet execution | Semantic | Unreleased | `tasklet_panic_is_classified_and_runtime_remains_usable` | Implemented | Panic payload is redacted |
+| LISTENER-ORDER-001 | Before and after listeners nest deterministically | Job/step listeners | Behavioral | Unreleased | `listeners_nest_and_reverse_after_order` | Implemented | Async listener contract |
+| LISTENER-FAIL-001 | Listener failure has a typed redacted outcome | Job/step listeners | Semantic | Unreleased | `after_listener_failure_retains_original_outcome_and_work` | Implemented | Original outcome retained in launch report |
 | STEP-STATUS-001 | Batch status and exit status are distinct | Step domain | Semantic | Unreleased | `exit_status_does_not_forge_batch_status` | Implemented | — |
 | CHUNK-COMMIT-001 | Chunk commit advances checkpoint | Chunk processing | Behavioral | — | `committed_chunk_advances_checkpoint` | Planned M2 | Own schema |
 | CHUNK-ROLLBACK-001 | Failed chunk does not advance checkpoint | Chunk processing | Behavioral | — | `rolled_back_chunk_replays` | Planned M2 | Delivery scope explicit |
 | RESTART-001 | Restart resumes at the latest committed checkpoint | Job restartability | Behavioral | — | `restart_resumes_latest_committed_checkpoint` | Planned M2 | Own context format |
 | JOB-CONCURRENCY-001 | Concurrent launches create one job instance | Job repository | Behavioral | Unreleased | `concurrent_launch_creates_single_instance` | Partial | In-memory optimistic commit implemented; PostgreSQL locking remains M2 |
 | RECOVERY-001 | Orphaned running execution needs recovery | Advanced metadata | Operational | — | `orphan_requires_operator_decision` | Planned M2/M4 | Operator API differs |
-| OBS-INSPECT-001 | Execution inspection redacts record contents | Metadata/operations | Operational | Unreleased | `inspection_redacts_record_contents` | Partial | M1 in-memory contract implemented; durable schema remains M2 |
+| OBS-INSPECT-001 | Execution inspection redacts record contents | Metadata/operations | Operational | Unreleased | `inspection_redacts_record_contents` | Implemented | M1 in-memory inspection; durable schema remains M2 |
 | RETRY-001 | Retry is bounded and counted | Retry | Behavioral | — | `retry_limit_persists_across_restart` | Planned M3 | Error classification differs |
 | SKIP-001 | Skipped items have durable counts | Step fault tolerance | Behavioral | — | `skip_count_commits_with_chunk` | Planned M3 | — |
 | FLOW-001 | Exit outcome selects next step | Step flow | Behavioral | — | `exit_status_selects_transition` | Planned M3 | Rust-native definition |
-| OBS-001 | Job and step execution are observable | Observability | Operational | — | `telemetry_correlates_execution` | Planned M4 | OpenTelemetry mapping |
+| OBS-001 | Job and step execution are observable | Observability | Operational | Unreleased | `telemetry_correlates_execution` | Implemented | M1 event contract; exporter mapping remains M4 |
 
 ## Status values
 

@@ -11,7 +11,9 @@ The facade owns validated job and step names, opaque instance/execution IDs,
 typed and value-redacted job parameters, canonical job-instance keys, lifecycle
 metadata, counters, exit statuses, redacted failure summaries, runtime-neutral
 repository ports, an in-memory reference repository, and async tasklet
-execution with cooperative stopping.
+execution with cooperative stopping. Job and step listeners nest
+deterministically around tasklet work, and facade-owned lifecycle events expose
+only reviewed correlation and failure fields.
 
 Job and step execution snapshots enforce the accepted lifecycle through
 database-agnostic optimistic versions. Exit status can be enriched independently
@@ -31,3 +33,9 @@ borrow call-scoped parameters and stop state without exposing Tokio types.
 Synchronous work must use `BlockingTaskletAdapter`, which applies an explicit
 nonzero concurrency bound and awaits already-running work before reporting a
 late stop.
+
+Before-listeners run in registration order and after-listeners run in reverse
+order. A before failure prevents the associated user body. An after failure
+cannot undo completed user work; `LaunchReport` retains the provisional outcome
+and every redacted listener failure. Event sinks observe committed lifecycle
+states and cannot fail an execution, even if a sink panics.

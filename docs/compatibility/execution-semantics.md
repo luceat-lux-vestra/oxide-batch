@@ -96,7 +96,7 @@ adapter. The selected guarantee is visible in configuration and diagnostics.
 
 ## Listener ordering
 
-The proposed lifecycle order is:
+The lifecycle order is:
 
 1. persist creation/starting state;
 2. invoke the corresponding before-listener;
@@ -112,9 +112,12 @@ events and reverse registration order for after events.
 A before-listener failure prevents the associated user body and fails the
 execution. An after-listener failure cannot roll back already committed earlier
 chunks; it changes the enclosing execution outcome according to a typed listener
-failure rule and retains the original outcome as diagnostic context. Panic is
-captured at the same boundary as an error. Exact Spring Batch differences must
-be recorded in the conformance matrix before this proposal is accepted.
+failure rule and retains the original outcome as diagnostic context. All
+after-listeners still run in reverse order; the first failure in callback
+execution order owns the final listener classification, while every listener
+failure is retained with its phase, registration index, kind, and opaque
+failure ID. Panic is captured at the same boundary as an error. Exact Spring
+Batch differences are recorded in the conformance matrix.
 
 ## Cancellation, panic, and crash
 

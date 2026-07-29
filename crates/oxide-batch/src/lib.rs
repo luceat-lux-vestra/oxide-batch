@@ -40,13 +40,25 @@
 //! completed, failed, panicked, or stopped outcomes through the repository.
 //! Synchronous bodies use [`BlockingTaskletAdapter`] with an explicit nonzero
 //! concurrency bound.
+//!
+//! [`JobExecutionListener`] and [`StepExecutionListener`] callbacks nest around
+//! tasklet work with deterministic ordering. [`LifecycleEvent`] values are
+//! emitted after corresponding metadata commits through a non-authoritative
+//! [`LifecycleEventSink`]. Their structured fields exclude parameters,
+//! contexts, records, credentials, and arbitrary user error payloads.
 
 #![forbid(unsafe_code)]
 
+mod diagnostics;
 mod domain;
+mod listener;
 mod repository;
 mod runtime;
 
+pub use diagnostics::{
+    DiagnosticField, EventComponent, EventSeverity, ExecutionAttempt, ExecutionCorrelation,
+    LifecycleEvent, LifecycleEventKind, LifecycleEventSink, MetricLabel,
+};
 pub use domain::{
     BatchStatus, DomainError, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps,
     ExecutionVersion, ExitCode, ExitStatus, FailureCategory, FailureId, FailureSummary,
@@ -54,6 +66,10 @@ pub use domain::{
     JobName, JobParameter, JobParameters, LifecycleError, LifecycleTransition, NameKind,
     ParameterName, ParameterRole, ParameterValue, ParameterValueKind, StepExecution,
     StepExecutionId, StepName,
+};
+pub use listener::{
+    JobExecutionListener, ListenerContext, ListenerError, ListenerFailure, ListenerFailureKind,
+    ListenerPhase, StepExecutionListener,
 };
 pub use repository::{
     BoxFuture, Clock, IdGenerationError, IdGenerator, InMemoryJobRepository, JobInstanceSelection,
