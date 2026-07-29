@@ -171,12 +171,14 @@ impl TaskletJob {
 ///     context.parameters()
 /// }
 /// ```
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct TaskletContext<'a> {
     parameters: &'a JobParameters,
     job_execution_id: JobExecutionId,
     step_execution_id: StepExecutionId,
     stop: &'a StopToken,
+    correlation: &'a ExecutionCorrelation,
+    event_sink: Option<&'a dyn LifecycleEventSink>,
 }
 
 impl<'a> TaskletContext<'a> {
@@ -204,6 +206,20 @@ impl<'a> TaskletContext<'a> {
         self.stop
     }
 
+    /// Borrows the validated execution correlation.
+    #[must_use]
+    pub const fn correlation(&self) -> &'a ExecutionCorrelation {
+        self.correlation
+    }
+
+    pub(crate) fn emit_chunk_event(&self, kind: LifecycleEventKind, sequence: crate::ChunkCount) {
+        let Some(sink) = self.event_sink else {
+            return;
+        };
+        let event = LifecycleEvent::chunk(kind, self.correlation.clone(), sequence);
+        let _ = catch_unwind(AssertUnwindSafe(|| sink.emit(&event)));
+    }
+
     fn into_blocking(self) -> BlockingTaskletContext {
         BlockingTaskletContext {
             parameters: self.parameters.clone(),
@@ -211,6 +227,19 @@ impl<'a> TaskletContext<'a> {
             step_execution_id: self.step_execution_id,
             stop: self.stop.clone(),
         }
+    }
+}
+
+impl fmt::Debug for TaskletContext<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TaskletContext")
+            .field("job_execution_id", &self.job_execution_id)
+            .field("step_execution_id", &self.step_execution_id)
+            .field("stop_requested", &self.stop.is_stop_requested())
+            .field("correlation", &self.correlation)
+            .field("event_sink", &self.event_sink.map(|_| "<attached>"))
+            .finish_non_exhaustive()
     }
 }
 
@@ -268,6 +297,11 @@ pub enum TaskletOutcome {
     /// emitted by [`BlockingTaskletAdapter`] to preserve the late-stop
     /// limitation in the launch report.
     StoppedAfterBlockingWork,
+    /// An adapter-owned commit returned without a knowable durable outcome.
+    ///
+    /// Application tasklets should not return this variant. It exists so
+    /// framework adapters can persist `UNKNOWN` without guessing.
+    CommitOutcomeUnknown,
 }
 
 /// A value-redacted typed user-component failure.
@@ -416,6 +450,8 @@ pub enum TaskletExecutionOutcome {
     Failed(TaskletFailure),
     /// The job and step stopped cooperatively.
     Stopped(StopTiming),
+    /// A resource commit may or may not have reached durable storage.
+    Unknown,
 }
 
 /// Final persisted execution snapshots returned by [`JobLauncher`].
@@ -683,6 +719,8 @@ impl<'a> JobLauncher<'a> {
             job_execution_id: started_job.id(),
             step_execution_id: started_step.id(),
             stop,
+            correlation: &graph.correlation,
+            event_sink: self.event_sink,
         };
         let invocation = invoke_tasklet(job.step.tasklet.as_ref(), tasklet_context).await;
         let provisional_outcome = match invocation {
@@ -695,6 +733,7 @@ impl<'a> JobLauncher<'a> {
             Ok(TaskletOutcome::StoppedAfterBlockingWork) => {
                 TaskletExecutionOutcome::Stopped(StopTiming::AfterBlockingWork)
             }
+            Ok(TaskletOutcome::CommitOutcomeUnknown) => TaskletExecutionOutcome::Unknown,
             Err(failure) => TaskletExecutionOutcome::Failed(failure),
         };
         let tasklet_failure = if matches!(
@@ -711,7 +750,9 @@ impl<'a> JobLauncher<'a> {
         let mut listener_failures = self
             .run_after_step(&job.step.listeners, context, outcome)
             .await?;
-        if let Some(failure) = listener_failures.first() {
+        if let Some(failure) = listener_failures.first()
+            && outcome != TaskletExecutionOutcome::Unknown
+        {
             original_outcome = Some(outcome);
             outcome = listener_failure_outcome(failure.kind());
         }
@@ -725,10 +766,10 @@ impl<'a> JobLauncher<'a> {
 
         let after_job_failures = self.run_after_job(&job.listeners, context, outcome).await?;
         if !after_job_failures.is_empty() {
-            if original_outcome.is_none() {
+            if original_outcome.is_none() && outcome != TaskletExecutionOutcome::Unknown {
                 original_outcome = Some(outcome);
             }
-            if listener_failures.is_empty() {
+            if listener_failures.is_empty() && outcome != TaskletExecutionOutcome::Unknown {
                 outcome = listener_failure_outcome(after_job_failures[0].kind());
             }
             listener_failures.extend(after_job_failures);
@@ -1043,6 +1084,8 @@ impl<'a> JobLauncher<'a> {
             (false, TaskletExecutionOutcome::Stopped(_)) => LifecycleEventKind::StepStopped,
             (true, TaskletExecutionOutcome::Failed(_)) => LifecycleEventKind::JobFailed,
             (false, TaskletExecutionOutcome::Failed(_)) => LifecycleEventKind::StepFailed,
+            (true, TaskletExecutionOutcome::Unknown) => LifecycleEventKind::JobUnknown,
+            (false, TaskletExecutionOutcome::Unknown) => LifecycleEventKind::StepUnknown,
         };
         self.emit_event(kind, correlation, failure);
     }
@@ -1076,6 +1119,7 @@ fn final_status(outcome: TaskletExecutionOutcome) -> (BatchStatus, ExitStatus) {
         TaskletExecutionOutcome::Completed => (BatchStatus::Completed, ExitStatus::completed()),
         TaskletExecutionOutcome::Stopped(_) => (BatchStatus::Stopped, ExitStatus::stopped()),
         TaskletExecutionOutcome::Failed(_) => (BatchStatus::Failed, ExitStatus::failed()),
+        TaskletExecutionOutcome::Unknown => (BatchStatus::Unknown, ExitStatus::unknown()),
     }
 }
 

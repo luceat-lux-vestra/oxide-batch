@@ -62,6 +62,21 @@ Parameters, contexts, records, credentials, user error text, identifiers, and
 job/step names are excluded from metric labels. Exporter integration remains an
 M4 concern.
 
+### M2 deterministic chunk events
+
+The M2 chunk runtime emits `chunk.started`, `chunk.committed`,
+`chunk.rolled_back`, and `chunk.unknown`. Each event carries the existing
+validated job/instance/execution/step correlation plus a nonzero chunk-attempt
+sequence. The sequence is a span/event field, not a metric label.
+
+`chunk.committed` is emitted only after the transaction port returns a commit
+receipt. `chunk.rolled_back` is emitted only after rollback succeeds.
+`chunk.unknown` means the adapter could not determine whether commit reached
+durable storage; the enclosing step and job become `UNKNOWN` rather than
+guessing. Completion callbacks and after-listeners run after the committed
+event and cannot undo it. Event sink failure or panic remains isolated from
+execution correctness.
+
 ## Logs
 
 - Logs use stable event names plus human-readable messages.

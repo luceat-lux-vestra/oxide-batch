@@ -1,12 +1,12 @@
 # oxide-batch
 
 The public facade crate for [OxideBatch](https://github.com/luceat-lux-vestra/oxide-batch),
-an enterprise-ready batch processing framework for Rust inspired by Spring Batch.
+a restart-oriented batch processing framework for Rust inspired by Spring Batch.
 
 > This crate contains the completed M1 executable kernel and the first M2
-> PostgreSQL metadata adapter. Chunk orchestration, atomic enlisted chunk
-> commits, and durable restart are still in progress, so it is not yet a
-> production-ready batch runtime.
+> PostgreSQL metadata adapter, and deterministic M2 chunk orchestration. Atomic
+> enlisted PostgreSQL chunk commits and durable restart are still in progress,
+> so it is not yet a production-ready batch runtime.
 
 The facade owns validated job and step names, opaque instance/execution IDs,
 typed and value-redacted job parameters, canonical job-instance keys, lifecycle
@@ -91,6 +91,24 @@ envelopes. Application codecs receive JSON object bytes rather than Serde
 types, own explicit old-version upgrade paths, and produce only redacted failure
 classifications. The default envelope limit is 64 KiB and depth 16, with hard
 ceilings aligned to the accepted metadata model.
+
+## M2 chunk execution
+
+`ChunkStep` executes bounded read/process/filter/write attempts and publishes
+only counts returned by a successful `ChunkTransaction` commit. `ChunkJob` and
+`JobLauncher::launch_chunk` reuse the existing repository-backed job and step
+lifecycle. Stop before commit rolls the attempt back; stop or completion
+failure after commit cannot undo the committed chunk.
+
+Chunk listeners nest in registration/reverse-registration order. Component and
+listener panic payloads are discarded, and an ambiguous transaction response
+becomes `UNKNOWN` rather than being inferred. Correlated `chunk.started`,
+`chunk.committed`, `chunk.rolled_back`, and `chunk.unknown` events include a
+nonzero chunk sequence.
+
+The transaction port is an orchestration boundary, not yet a durable atomicity
+claim. The following M2 work connects it to the PostgreSQL adapter so business
+writes, checkpoint, context, counters, and optimistic version commit together.
 
 ## First in-memory job
 

@@ -107,6 +107,13 @@ classification, and migration evidence are complete on merge. The mapping and
 handoff to chunk orchestration are retained in the
 [M2 PostgreSQL repository evidence](m2-postgres-repository-evidence.md).
 
+Issue #42's deterministic chunk orchestrator, checked committed-only counters,
+listener nesting, cooperative stop/rollback behavior, lifecycle integration,
+chunk events, late acknowledgement, and explicit unknown-commit path are
+complete on merge. Their criterion mapping and handoff to PostgreSQL atomic
+enlistment are retained in the
+[M2 chunk runtime evidence](m2-chunk-runtime-evidence.md).
+
 ## Definition of done
 
 M2 closes only when:
