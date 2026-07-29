@@ -111,7 +111,7 @@ fn shared_repository_contract_passes_on_postgres() -> Result<(), Box<dyn Error>>
                     .map_err(|_| RepositoryError::Unavailable)?;
                 PostgresJobRepository::connect(
                     plaintext_config(url.clone()).map_err(|_| RepositoryError::Unavailable)?,
-                    Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(100))),
+                    Arc::new(FixedClock(UNIX_EPOCH)),
                 )
                 .await
             })

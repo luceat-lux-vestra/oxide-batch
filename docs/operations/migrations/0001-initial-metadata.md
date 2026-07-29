@@ -8,7 +8,7 @@
 
 **Migration:** `crates/oxide-batch/migrations/0001_initial_metadata.sql`
 
-**SHA-256:** `9cb4bd0883a67faf9bc8f1424897ef553ecda42d6e01db69e1713d6c1f1d8563`
+**SHA-256:** `612ef00037e65095cb43391ee1b30164b95d2c61d2738e0d169a38a77bcc3d96`
 
 ## Compatibility and ownership
 

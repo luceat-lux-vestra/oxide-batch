@@ -554,10 +554,19 @@ impl PostgresMigrator {
             match read_schema_version(&mut connection).await {
                 Ok(current) => verify_schema_version(current)?,
                 Err(RepositoryError::SchemaUninitialized) => {
-                    sqlx::query("CREATE SCHEMA IF NOT EXISTS oxide_batch")
-                        .execute(&mut connection)
-                        .await
-                        .map_err(|_| RepositoryError::Unavailable)?;
+                    let schema_exists: bool = sqlx::query_scalar(
+                        "SELECT EXISTS(\
+                         SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = 'oxide_batch')",
+                    )
+                    .fetch_one(&mut connection)
+                    .await
+                    .map_err(|_| RepositoryError::Unavailable)?;
+                    if !schema_exists {
+                        sqlx::query("CREATE SCHEMA oxide_batch")
+                            .execute(&mut connection)
+                            .await
+                            .map_err(|_| RepositoryError::Unavailable)?;
+                    }
                 }
                 Err(error) => return Err(error),
             }

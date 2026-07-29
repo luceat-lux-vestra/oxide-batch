@@ -28,7 +28,7 @@ selection exists; issues #42–#44 own those capabilities.
 
 | Version | File | SHA-256 |
 | --- | --- | --- |
-| 1 | `0001_initial_metadata.sql` | `9cb4bd0883a67faf9bc8f1424897ef553ecda42d6e01db69e1713d6c1f1d8563` |
+| 1 | `0001_initial_metadata.sql` | `612ef00037e65095cb43391ee1b30164b95d2c61d2738e0d169a38a77bcc3d96` |
 
 Released migration bytes are immutable. Any correction is a new contiguous
 migration and must add its checksum to release provenance.

@@ -1,4 +1,3 @@
-CREATE SCHEMA IF NOT EXISTS oxide_batch;
 SET LOCAL search_path TO oxide_batch, pg_catalog;
 
 CREATE TABLE ob_schema_version (
