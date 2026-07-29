@@ -13,7 +13,7 @@ Floating `latest`, wildcard, and unbounded requirements are not used.
 | --- | --- | --- |
 | Language | Rust 2024; stable 1.97.1 development/release; MSRV 1.95 | Accepted; stable-only required CI |
 | Async runtime | Tokio 1.x | Mature I/O, scheduling, cancellation primitives; isolate from core |
-| Database | PostgreSQL first | Strong transactional and locking behavior; only 1.0 repository |
+| Database | PostgreSQL reference adapter | Strong transactional and locking behavior; only currently accepted durable repository |
 | SQL access | SQLx with Tokio and Rustls features | Async PostgreSQL, compile-time/query tooling, migrations |
 | Serialization | Serde; versioned JSON initially | Human-inspectable execution context; evolution rules required |
 | IDs | UUID with framework-defined generation policy | No database sequence dependency in domain contracts |
@@ -27,7 +27,7 @@ Floating `latest`, wildcard, and unbounded requirements are not used.
 | Benchmarks | Criterion or purpose-built harness | Record workload and environment with results |
 | Supply chain | `cargo-deny`, RustSec audit, pinned CI actions | License, advisory, source, and workflow controls |
 
-## Deliberate deferrals
+## Current deferrals and later scope
 
 - a web server or management API framework;
 - a generic plugin ABI or dynamic loading;
@@ -35,6 +35,13 @@ Floating `latest`, wildcard, and unbounded requirements are not used.
 - a configuration framework beyond the CLI and application-owned assembly;
 - database abstraction across PostgreSQL, MySQL, and SQLite;
 - distributed consensus or leader election.
+
+These are deferrals from the current M2 implementation, not all permanent
+non-goals. Messaging, additional relational adapters, and compiled plans are
+accepted later-milestone scope. Distributed protocol implementation remains
+gated by RFC-0009.
+Hosted web/control-plane concerns remain outside the core even if a separate
+project is later created.
 
 ## Dependency acceptance
 

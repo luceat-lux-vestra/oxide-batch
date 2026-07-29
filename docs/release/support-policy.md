@@ -9,6 +9,11 @@ behavior. During `0.x`, incompatible changes may occur in minor releases and
 must be called out in the changelog. The 1.0 release begins the stable
 compatibility commitment.
 
+[RFC-0001](../rfcs/0001-m5-preview-and-project-wide-1-0.md) reserves
+project-wide 1.0 for M14 and treats M5 as a `0.x` Embedded Core Production
+Preview. No release is called stable or 1.0 before its named evidence gate
+passes.
+
 All public workspace crates use one coordinated version initially. Public
 crates are published in dependency order and the facade is published last.
 
@@ -16,6 +21,8 @@ crates are published in dependency order and the facade is published last.
 
 - alpha: architecture and API exploration; no compatibility promise;
 - beta: feature-complete for the named milestone; migration may still change;
+- production preview: supportable pre-1.0 capability set with explicit
+  limitations, upgrade expectations, and no project-wide stability promise;
 - release candidate: intended 1.0 contract; only release-blocking fixes;
 - stable: supported public API and metadata contracts.
 
@@ -64,7 +71,17 @@ policy is:
 - older minors: upgrade guidance only;
 - release candidates and prereleases: best effort.
 
-The stable support window is finalized before the first 1.0 release candidate.
+The stable support window is finalized before the first M14 1.0 release
+candidate. M5 preview support remains the pre-1.0 latest-line policy unless a
+separate release decision says otherwise.
+
+## Compatibility and readiness claims
+
+Release channel names do not create compatibility evidence. Every release
+states its verified feature-ledger rows, schemas, protocols, adapters,
+platforms, and known divergences. “Enterprise-ready,” complete parity, and
+project-wide production/1.0 claims require the
+[M14 gate](../roadmap.md#m14-project-wide-10-ga).
 
 ## Deprecation
 

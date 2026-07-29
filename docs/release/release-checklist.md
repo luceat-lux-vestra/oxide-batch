@@ -10,6 +10,10 @@ apply only after additional public crates are approved.
 - [ ] Confirm target version/channel and milestone exit criteria.
 - [ ] Resolve release blockers and review open security/data-integrity issues.
 - [ ] Update changelog, support matrix, compatibility matrix, and migration guide.
+- [ ] Confirm every advertised compatibility claim names released `Verified`
+      ledger rows, baseline version, and known divergences.
+- [ ] Confirm preview, RC, stable, and readiness wording matches the approved
+      milestone/release gate rather than a proposed roadmap label.
 - [ ] Confirm public API and feature changes match SemVer.
 - [ ] Confirm MSRV and supported database/platform matrix.
 - [ ] Review dependency advisories, licenses, sources, and exceptions.

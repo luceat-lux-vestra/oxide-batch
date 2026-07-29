@@ -2,6 +2,65 @@
 
 **State:** Accepted
 
+This document is the canonical operational policy for repository capabilities,
+schema lifecycle, adapter certification, export/import, retention, and
+upgrade/downgrade. The
+[repository and transaction model](../architecture/repository-and-transaction-model.md)
+owns accepted target port boundaries and delivery capabilities.
+
+## Current and target scope
+
+PostgreSQL and the OxideBatch-owned schema remain the only implemented durable
+repository and reference profile under
+[ADR-0006](../architecture/decisions/0006-repository-capability-model.md).
+[RFC-0007](../rfcs/0007-repository-services-and-capabilities.md) accepts
+additional relational adapters and capability negotiation as target scope.
+Planning text for those adapters does not constitute support.
+
+The PostgreSQL implementation is the reference semantic profile. A future
+adapter may use different SQL, keys, locking, or migration machinery, but it
+must preserve every capability it claims and disclose every limitation. A
+lowest-common-denominator abstraction must not remove a certified PostgreSQL
+fast path.
+
+## Repository capability negotiation
+
+The target versioned capability descriptor includes:
+
+- schema and migration versions plus supported upgrade sources;
+- uniqueness, compare-and-swap, isolation, locking, server-time, lease, and
+  fencing behavior;
+- transaction and delivery modes, including same-resource enlistment and
+  unknown-commit classification;
+- maximum identifier, parameter, context, checkpoint, page, and batch sizes;
+- pagination, streaming, retention, archive, export/import, backup, restore,
+  and rolling-upgrade features.
+
+Static requirements are checked when a plan is compiled. Actual
+database/server features are negotiated at connection or launch. Missing
+capabilities fail explicitly; they never silently weaken restart or delivery
+semantics.
+
+## Adapter support and certification
+
+The accepted relational program evaluates PostgreSQL, MySQL/MariaDB, SQLite,
+SQL Server, Oracle, DB2, and HANA. Each promoted adapter must pass:
+
+- the shared repository, explorer, operator, definition, retention, and
+  migration contract suites;
+- duplicate-launch, concurrent restart/stop, optimistic-conflict, stale-lease,
+  and fencing tests relevant to its capabilities;
+- crash/disconnect/unknown-commit tests;
+- every supported schema upgrade plus backup/restore;
+- query-plan/index, pagination, time precision, TLS/authentication, privilege,
+  and resource-bound evidence;
+- its feature-ledger and support-matrix rows.
+
+Certification names exact product and adapter versions and a support tier.
+External certification may supply evidence where CI licensing prevents a
+first-party matrix, but it cannot omit schema, migration, locking, or
+concurrency semantics.
+
 ## Ownership model
 
 OxideBatch owns its metadata schema. Spring Batch and OxideBatch processes do
@@ -90,6 +149,35 @@ Every schema-changing release includes a guide copied from
 source/target versions, application compatibility, lock/downtime expectations,
 backup and restore commands, invariants, canary queries, rollback, and recovery
 from every non-transactional phase.
+
+### Schema-version lifecycle and rolling operation
+
+Each adapter documents:
+
+- versions the runtime can read/write and versions the migrator can upgrade;
+- whether N and N-1 application binaries may run concurrently during a rolling
+  deployment;
+- the expand/migrate/contract phases, quiescence requirements, and feature
+  flags that protect mixed-version operation;
+- downgrade capability, if any, and data introduced by the new version that an
+  old runtime cannot preserve.
+
+Compatibility is fail-closed. “Rolling upgrade supported” is a release-specific
+claim with mixed-version tests. Default downgrade remains restore from a
+verified compatible backup; reverse migration is provided only when it is
+non-destructive and tested.
+
+### Definition and context codec migrations
+
+Definition manifests, compiled-plan manifests, parameters, execution contexts,
+checkpoints, external blob references, and protocol payloads have independent
+schema/codec versions. A database schema migration does not imply their
+compatibility.
+
+Readers reject unknown newer versions. A directed definition/context upgrade
+is bounded, deterministic, checksum-verified, and commits atomically with the
+new execution or import record. Failed upgrades leave prior durable bytes and
+execution lineage unchanged.
 
 ## Pool, TLS, and timeout contract
 
@@ -180,6 +268,36 @@ Retention policy must define:
 - emitted audit evidence.
 
 No purge operation may target a running, stopping, or ambiguous execution.
+
+Archive and purge primitives are bounded, paginated, resumable, and
+idempotent where specified. They preserve legal/audit holds, definition and
+migration lineage required to interpret retained executions, and a
+verification summary. Export is not a successful archive until checksums,
+record counts, and restore/read evidence pass.
+
+## Metadata export and import
+
+The accepted neutral package contains a versioned manifest, source framework
+and schema versions, counts, checksums, lineage, bounded records, and redaction
+classification. It may represent definitions, parameters, instances,
+executions, step executions, statuses, counters, contexts with approved codecs,
+and retention metadata.
+
+Export/import MUST:
+
+- use a dedicated role and a quiesced or explicitly snapshot-consistent source;
+- validate size, depth, count, checksum, identity, and referential invariants;
+- support dry-run and isolated-schema rehearsal;
+- be idempotent by package/source identity;
+- record mapping/tool versions and every omitted or transformed field;
+- fail closed on unknown context, definition, or status semantics;
+- reconcile counts, fingerprints, statuses, and representative explorer reads;
+- preserve a rollback path through backup/restore.
+
+The [Spring Batch migration contract](../compatibility/spring-batch-migration.md)
+owns Spring-specific extraction and mapping. Spring Batch and OxideBatch never
+mutate one live metadata schema. Import tooling does not translate arbitrary
+Java code.
 
 ## Recovery
 

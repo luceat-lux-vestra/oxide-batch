@@ -1,5 +1,10 @@
 # Project Preparation Master Plan
 
+> This is the historical M0 preparation record. Its M0-M5 and original 1.0
+> scope statements remain evidence of the 2026-07-29 gate, not the current
+> post-M5 decision. See
+> [RFC-0001](../rfcs/0001-m5-preview-and-project-wide-1-0.md).
+
 **State:** Accepted
 
 **M0 status:** Complete as of 2026-07-29

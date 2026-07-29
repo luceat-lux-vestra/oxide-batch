@@ -107,7 +107,7 @@ Required behavior:
 | UC-001 | M2 |
 | UC-002 | M3 |
 | UC-003 | M3 |
-| UC-004 | M5 validation |
+| UC-004 | M5 preview validation; M14 GA reference |
 | UC-005 | M2/M3 |
 | UC-006 | M3 |
 | UC-007 | M3 |

@@ -73,4 +73,10 @@ asserted for every point.
 - M2: PostgreSQL contract, migration, crash/restart, transaction integration.
 - M3: policy boundary and compatibility conformance.
 - M4: concurrency, shutdown, telemetry, load, and soak.
-- M5: full upgrade/recovery, security, performance, and release-candidate suite.
+- M5: embedded preview upgrade/recovery, security, performance, and soak suite.
+- M6-M10: complete component/flow/adapter/integration/local-scale evidence.
+- M11: protocol compatibility, distributed trace equivalence, and chaos.
+- M12: complete ledger differential and migration evidence.
+- M13: extension certification and reference workloads.
+- M14: full upgrade/recovery, security, support, and 1.0 release-candidate
+  suite.

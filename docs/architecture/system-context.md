@@ -2,6 +2,8 @@
 
 **State:** Accepted
 
+**Proposed extension:** Distributed execution depends on RFC-0009.
+
 ## Context
 
 ```mermaid
@@ -22,6 +24,12 @@ OxideBatch is an embedded framework plus optional operator tooling. An external
 scheduler decides when a process starts. The framework decides execution
 identity, lifecycle, checkpoint, and restart behavior. It is not itself a
 cluster scheduler or control-plane service.
+
+The current deployment archetypes below describe M1-M5 embedded scope.
+[Distributed execution](distributed-execution.md) is a proposed M11
+architecture under RFC-0009. The external
+[control-plane boundary](../operations/control-plane-boundary.md) is accepted
+by RFC-0008. Neither turns the core into a scheduler or hosted service.
 
 ## Initial deployable units
 
@@ -65,11 +73,14 @@ A one-shot process runs in a container with external secrets, PostgreSQL, and
 telemetry. Orchestrator retry must not create a new business instance unless
 identifying parameters change.
 
-## Explicitly absent
+## Permanently absent from the embedded core
 
 - OxideBatch-hosted SaaS/control plane;
 - built-in cron or dependency scheduler;
-- cross-host leader election;
 - hostile job-code sandbox;
 - shared live Spring Batch metadata tables;
 - automatic distributed transaction coordinator.
+
+Cross-host worker coordination is currently absent and proposed for M11 behind
+a versioned protocol. Hostile code isolation, if added, uses an explicit WASI
+profile rather than changing the trust model for native Rust job code.

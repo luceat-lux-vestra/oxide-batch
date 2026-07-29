@@ -11,15 +11,23 @@ Potential future workspace crates include:
 | --- | --- | --- |
 | `oxide-batch` | Stable facade and curated re-exports | Public |
 | `oxide-batch-core` | Domain model and execution contracts | Undecided |
-| `oxide-batch-runtime` | Execution engine | Undecided |
+| `oxide-batch-plan` | Definition graph and compiled plan | Undecided |
+| `oxide-batch-engine` | Execution engine | Undecided |
+| `oxide-batch-engine-tokio` | Explicit Tokio engine, if a separate boundary is justified | Undecided |
+| `oxide-batch-item` | Item/chunk/stream contracts | Undecided |
 | `oxide-batch-repository` | Persistence interfaces | Undecided |
-| `oxide-batch-postgres` | PostgreSQL implementation | Likely public |
+| `oxide-batch-repository-postgres` | PostgreSQL implementation | Likely public |
+| `oxide-batch-protocol` | Versioned worker/admin protocol | Undecided |
 | `oxide-batch-observability` | Telemetry integration | Undecided |
 | `oxide-batch-test` | Conformance and test utilities | Likely public |
 | `oxide-batch-cli` | Operational command-line interface | Likely public |
 
 This list is a namespace and architecture forecast, not approval to publish
 empty packages.
+
+The forecast is governed by
+[RFC-0003](../rfcs/0003-target-workspace-boundaries.md). An accepted workspace
+boundary still does not authorize publication.
 
 ## Publication rules
 

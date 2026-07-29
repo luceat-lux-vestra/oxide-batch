@@ -9,6 +9,9 @@ were approved by the project owner on 2026-07-29. All M0 architecture choices
 have the required spike evidence; later-gate decisions remain visible as
 explicit deferrals rather than open M0 questions.
 
+This is a historical M0 record. Later accepted decisions do not rewrite the
+rows below; their supersession is recorded separately after the table.
+
 | ID | Decision | Recommendation | State / gate |
 | --- | --- | --- | --- |
 | D-001 | Workspace and facade strategy | One workspace, public `oxide-batch` facade, internal crates private by default | Accepted in ADR-0001 |
@@ -23,6 +26,15 @@ explicit deferrals rather than open M0 questions.
 | D-010 | Stable support | Current minor plus critical fixes for previous minor for six months | Approved deferral; final decision at M5 |
 | D-011 | Schema rollback | Backup/restore by default; downgrade only when explicitly shipped | Accepted 2026-07-29 |
 | D-012 | Remote/distributed work | Post-1.0 unless promoted by RFC | Accepted 2026-07-29 |
+
+## Post-M0 supersession record
+
+| Original decision | Later decision | Effect | Date |
+| --- | --- | --- | --- |
+| D-002 | [RFC-0002](../rfcs/0002-full-spring-batch-feature-ledger-parity.md) | Complete Spring Batch 6.x feature-ledger coverage replaces selected compatibility as the long-term target; existing verified semantics remain valid | 2026-07-30 |
+| D-003 | [RFC-0001](../rfcs/0001-m5-preview-and-project-wide-1-0.md) | M5 becomes Embedded Core Production Preview and M14 becomes project-wide 1.0/GA | 2026-07-30 |
+| D-010 | [RFC-0001](../rfcs/0001-m5-preview-and-project-wide-1-0.md) | Final stable support commitment moves from the M5 gate to the M14 1.0 RC gate | 2026-07-30 |
+| D-012 | [RFC-0001](../rfcs/0001-m5-preview-and-project-wide-1-0.md) | Distributed execution moves to M11 before project-wide 1.0; protocol implementation remains gated by proposed RFC-0009 | 2026-07-30 |
 
 ## Approval rule
 

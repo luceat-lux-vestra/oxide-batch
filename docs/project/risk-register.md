@@ -18,7 +18,7 @@ additional maintainers join.
 | R-009 | Dependency/MSRV churn breaks enterprise builds | Medium | Medium | Release | MSRV CI, dependency review, controlled update policy |
 | R-010 | Telemetry leaks job parameters or creates cardinality incidents | Medium | High | Observability | Deny-by-default fields, safe wrappers, cardinality tests |
 | R-011 | PostgreSQL migrations cannot be rolled back safely | Medium | High | Repository | Forward-only policy, backup/restore drills, compatibility checks |
-| R-012 | Distributed features expand scope before local correctness | High | High | Product | Explicit post-1.0 boundary; RFC required to promote |
+| R-012 | Distributed features expand scope before local correctness | High | High | Product | M11 remains gated behind local correctness and proposed RFC-0009; roadmap placement does not authorize early work |
 | R-013 | One maintainer creates review and release bus-factor risk | High | High | Governance | Access inventory, recovery process, recruit before 1.0 |
 | R-014 | Conformance tests accidentally copy incompatible material | Low | High | Compatibility | Use public behavior/specification; record provenance and licenses |
 | R-015 | Benchmarks optimize happy path while restart degrades | Medium | Medium | Performance | Include failure/restart and metadata contention workloads |
