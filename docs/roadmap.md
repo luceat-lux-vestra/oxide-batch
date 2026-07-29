@@ -53,7 +53,10 @@ No production runtime implementation belongs in M0.
 
 ## M1 — Executable Kernel
 
-**Status:** Authorized
+**Status:** Complete (2026-07-29)
+
+The executable exit criteria and primary-platform gates are recorded in the
+[M1 exit evidence](project/m1-exit-evidence.md).
 
 **Outcome:** a user can define and run a single-process, single-step job against
 an in-memory repository with deterministic lifecycle events.

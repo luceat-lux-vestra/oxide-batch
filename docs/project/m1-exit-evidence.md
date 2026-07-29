@@ -1,9 +1,9 @@
 # M1 Executable Kernel Exit Evidence
 
-**State:** Exit candidate
+**State:** Complete (2026-07-29)
 
 **Implementation revision:**
-[`3a33500d004a3fc0b7f767e4cda874785ce7a544`](https://github.com/luceat-lux-vestra/oxide-batch/commit/3a33500d004a3fc0b7f767e4cda874785ce7a544)
+[`0ac48c5bf0b5113776c65c589cc321ac7f0a6aa4`](https://github.com/luceat-lux-vestra/oxide-batch/commit/0ac48c5bf0b5113776c65c589cc321ac7f0a6aa4)
 
 This record maps the M1 roadmap and issue #25 criteria to executable evidence.
 The compatibility rows remain `Implemented` until released behavior can be
@@ -57,9 +57,12 @@ publish dry-run without upload.
 The [required pull-request checks](https://github.com/luceat-lux-vestra/oxide-batch/pull/36/checks)
 passed for quality, Rust 1.95 MSRV, dependency review, supply-chain policy, and
 the real-PostgreSQL architecture spike. They provide the primary
-`x86_64-unknown-linux-gnu` evidence for this exit candidate.
+`x86_64-unknown-linux-gnu` evidence for the completed milestone.
 
-## Remaining closure actions
+## Closure record
 
-- Issue #25 closes when the evidence pull request merges.
-- Issue #9 receives the merged revision and this record, then closes M1.
+Pull request [#36](https://github.com/luceat-lux-vestra/oxide-batch/pull/36)
+merged the exit evidence as revision `0ac48c5` after all required checks passed.
+All seven M1 delivery issues are closed, and this record satisfies the closure
+criteria in umbrella issue
+[#9](https://github.com/luceat-lux-vestra/oxide-batch/issues/9).
