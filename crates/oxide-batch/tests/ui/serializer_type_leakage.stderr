@@ -1,0 +1,5 @@
+error[E0432]: unresolved import `oxide_batch::serde_json`
+ --> tests/ui/serializer_type_leakage.rs:3:18
+  |
+3 | use oxide_batch::serde_json::Value;
+  |                  ^^^^^^^^^^ could not find `serde_json` in `oxide_batch`

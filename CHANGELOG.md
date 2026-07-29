@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Accepted M2 definition-compatibility, physical metadata, pool/timeout, TLS,
   role, and migration-operation contracts with an executable PostgreSQL 15–18
   design-gate fixture.
+- Runtime-neutral item reader, processor, writer, chunk-completion, enlisted
+  business-transaction, checked chunk-count, and bounded versioned durable-state
+  contracts for M2.
 - M0 implementation-readiness plan, M0–M5 roadmap, decision records, and
   product, compatibility, architecture, engineering, security, operations, and
   release policy set.

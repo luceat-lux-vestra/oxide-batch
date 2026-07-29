@@ -47,6 +47,17 @@
 //! [`LifecycleEventSink`]. Their structured fields exclude parameters,
 //! contexts, records, credentials, and arbitrary user error payloads.
 //!
+//! M2 chunk definitions use [`ItemReader`], [`ItemProcessor`], [`ItemWriter`],
+//! and [`ChunkCompletion`] extension contracts. End of input, filtering,
+//! cooperative stopping, failures, and post-commit acknowledgement remain
+//! distinct typed outcomes. An enlisted writer borrows [`BusinessTransaction`]
+//! for only its call; no database-driver type crosses the facade.
+//!
+//! [`Checkpoint`] and [`ExecutionContext`] retain bounded versioned JSON through
+//! application-owned [`VersionedStateCodec`] implementations. Codec signatures
+//! exchange JSON object bytes, keeping serializer types out of the public
+//! contract. Their `Debug` output never includes payloads.
+//!
 //! Run the complete in-memory example from the workspace root:
 //!
 //! ```text
@@ -58,12 +69,22 @@
 
 #![forbid(unsafe_code)]
 
+mod chunk;
 mod diagnostics;
 mod domain;
 mod listener;
 mod repository;
 mod runtime;
+mod state;
 
+pub use chunk::{
+    BusinessStatement, BusinessTransaction, BusinessTransactionError, BusinessValue,
+    BusinessValueKind, BusinessWriteResult, ChunkCompletion, ChunkCompletionContext,
+    ChunkCompletionError, ChunkCompletionOutcome, ChunkCount, ChunkCounts, ChunkError,
+    ChunkProgress, ChunkSize, ItemProcessor, ItemReader, ItemWriter, ProcessContext,
+    ProcessOutcome, ProcessorError, ReadContext, ReadOutcome, ReaderError, WriteContext,
+    WriteOutcome, WriterError,
+};
 pub use diagnostics::{
     DiagnosticField, EventComponent, EventSeverity, ExecutionAttempt, ExecutionCorrelation,
     LifecycleEvent, LifecycleEventKind, LifecycleEventSink, MetricLabel,
@@ -88,6 +109,10 @@ pub use runtime::{
     BlockingTasklet, BlockingTaskletAdapter, BlockingTaskletContext, JobLauncher, LaunchError,
     LaunchReport, StopSource, StopTiming, StopToken, Tasklet, TaskletContext, TaskletError,
     TaskletExecutionOutcome, TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep,
+};
+pub use state::{
+    Checkpoint, DurableStateKind, ExecutionContext, StateCodecError, StateError, StateLimits,
+    StateSchemaId, StateSchemaVersion, VersionedStateCodec,
 };
 
 /// The version of the `OxideBatch` facade crate.

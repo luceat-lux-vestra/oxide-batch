@@ -12,7 +12,8 @@ approved before implementation depending on them begins.
 4. [M1 executable-kernel exit evidence](project/m1-exit-evidence.md)
 5. [M2 durable chunk and restart kickoff gate](project/m2-kickoff-gate.md)
 6. [M2 durable metadata design-gate evidence](project/m2-design-gate-evidence.md)
-7. [M0 decision register](product/open-decisions.md)
+7. [M2 chunk component contract evidence](project/m2-component-contract-evidence.md)
+8. [M0 decision register](product/open-decisions.md)
 
 ## Product
 

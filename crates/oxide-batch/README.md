@@ -41,6 +41,24 @@ cannot undo completed user work; `LaunchReport` retains the provisional outcome
 and every redacted listener failure. Event sinks observe committed lifecycle
 states and cannot fail an execution, even if a sink panics.
 
+## M2 component contracts
+
+The facade now owns runtime-neutral `ItemReader`, `ItemProcessor`, `ItemWriter`,
+and `ChunkCompletion` traits. Each asynchronous call may borrow component and
+call-scoped state without exposing an executor. Typed outcomes keep normal
+end-of-input, filtered items, cooperative stop, component failure, and
+post-commit acknowledgement separate.
+
+Durable PostgreSQL writers receive a call-scoped `BusinessTransaction` port.
+Statements use separately bound, value-redacted facade types; SQLx pools,
+connections, transactions, rows, and errors remain adapter-internal.
+
+`Checkpoint` and `ExecutionContext` are bounded, versioned, schema-aware JSON
+envelopes. Application codecs receive JSON object bytes rather than Serde
+types, own explicit old-version upgrade paths, and produce only redacted failure
+classifications. The default envelope limit is 64 KiB and depth 16, with hard
+ceilings aligned to the accepted metadata model.
+
 ## First in-memory job
 
 The checked-in example defines a tasklet using only facade-owned batch types.
