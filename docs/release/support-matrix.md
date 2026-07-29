@@ -45,6 +45,12 @@ CI uses explicit major tags and reviews the matrix at M2 exit against the
 [PostgreSQL versioning policy](https://www.postgresql.org/support/versioning/).
 Certificate-validated Rustls connectivity is the supported production mode;
 plaintext connectivity is limited to local and isolated test environments.
+The pre-adapter
+[design-gate fixture](../../tests/fixtures/postgres/design-gate/README.md)
+runs schema, role, `verify-full` TLS, newer-schema rejection, and logical
+backup/restore checks against every explicit `15`, `16`, `17`, and `18` image.
+Adapter repository, transaction, and crash depth remains release-blocking on
+15 and 18 as shown above.
 
 ## Proposed 1.0 dimensions
 
