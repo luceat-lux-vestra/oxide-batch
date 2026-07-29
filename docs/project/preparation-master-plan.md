@@ -77,7 +77,7 @@ Status vocabulary:
 | Cancellation, panic, and shutdown model | Done | Accepted ADR-0002; M1 deadlines remain implementation policy |
 | Repository port and unit-of-work boundary | Done | Borrowed port and atomic enlistment in spike 0002 |
 | PostgreSQL/SQLx selection | Done | Accepted ADR-0003 and PostgreSQL 18.4 evidence |
-| Metadata logical and physical model | Deferred | Required before M2 implementation |
+| Metadata logical and physical model | Done | Accepted PostgreSQL physical model and immutable schema-v1 migration |
 | Execution-context format and evolution | Done | Versioned JSON and backward-read fixtures in spike 0003 |
 | Configuration model and precedence | Done | Typed library configuration and CLI precedence boundaries accepted |
 | Error taxonomy and stability contract | Done | Accepted API design guidelines |
@@ -101,8 +101,8 @@ Status vocabulary:
 | Error-handling and panic policy | Done | Accepted classifications, panic boundary, and context rules |
 | Logging and sensitive-data coding rules | Done | Accepted threat model and testable disclosure table |
 | Dependency introduction/review process | Done | Accepted dependency and license policy |
-| Feature matrix development commands | Deferred | Required when first optional feature appears |
-| Generated-code and migration conventions | Deferred | Required before M2 migrations |
+| Feature matrix development commands | Done | Facade-only and all-feature checks plus PostgreSQL adapter matrix |
+| Generated-code and migration conventions | Done | Contiguous immutable SQL migrations with checksums and upgrade evidence |
 | Examples/fixtures naming and data policy | Done | Accepted conformance fixture layout and provenance policy |
 
 ## M0.6 — Verification and quality engineering
@@ -133,7 +133,7 @@ Status vocabulary:
 | Format, Clippy, unit, doc CI | Done | Required `quality` job |
 | Pull-request dependency review | Done | Severity and license gate |
 | Explicit MSRV CI | Done | Dedicated Rust 1.95 check |
-| Stable feature matrix CI | Deferred | Add with first optional feature |
+| Stable feature matrix CI | Done | No-default facade and all-feature workspace checks |
 | Real PostgreSQL integration CI | Done | Dedicated PostgreSQL 18 spike job |
 | Cross-platform CI | Deferred | Required before first public runtime API |
 | RustSec and dependency policy CI | Done | Scheduled and PR `cargo-deny` checks |
@@ -154,9 +154,9 @@ Status vocabulary:
 | --- | --- | --- |
 | Metadata retention and purge model | Done | Eligibility, audit, and safety rules accepted |
 | Database roles and least-privilege model | Done | Migrator, runtime, and operator role boundaries accepted |
-| Backup/restore and migration runbook | Done | Policy accepted; runnable procedure remains an M2 implementation gate |
+| Backup/restore and migration runbook | Done | Policy, template, and PostgreSQL 15–18 logical restore fixture |
 | RPO/RTO vocabulary and responsibility | Done | Framework capability versus deployment promise accepted |
-| Connection-pool and timeout policy | Deferred | Required before M2 |
+| Connection-pool and timeout policy | Done | Facade-owned bounded PostgreSQL configuration and adapter enforcement |
 | Stale execution detection/recovery runbook | Deferred | Required by M4 |
 | CLI command, exit-code, and confirmation conventions | Deferred | Required before M4 CLI implementation |
 | Configuration precedence and validation | Done | Typed library configuration and CLI precedence accepted |
@@ -182,7 +182,7 @@ Status vocabulary:
 | Contributor/developer guide | Done | Bootstrap, process docs, and runnable `cargo xtask` tooling |
 | User quickstart and examples plan | Deferred | Required with M1 user API |
 | Operator guide and runbook plan | Deferred | Required by M4 |
-| Migration guide format | Deferred | Required before first schema/API migration |
+| Migration guide format | Done | Accepted metadata migration-guide template |
 | Documentation versioning and archival | Done | Crate/release-line policy accepted |
 | Release announcement and communication channels | Deferred | Finalize before first beta |
 

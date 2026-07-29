@@ -13,7 +13,8 @@ approved before implementation depending on them begins.
 5. [M2 durable chunk and restart kickoff gate](project/m2-kickoff-gate.md)
 6. [M2 durable metadata design-gate evidence](project/m2-design-gate-evidence.md)
 7. [M2 chunk component contract evidence](project/m2-component-contract-evidence.md)
-8. [M0 decision register](product/open-decisions.md)
+8. [M2 PostgreSQL repository evidence](project/m2-postgres-repository-evidence.md)
+9. [M0 decision register](product/open-decisions.md)
 
 ## Product
 
@@ -60,6 +61,7 @@ approved before implementation depending on them begins.
 - [Severity and response objectives](security/severity-and-response.md)
 - [Persistence and migration operations](operations/persistence-and-migrations.md)
 - [Metadata migration-guide template](operations/migration-guide-template.md)
+- [Schema-v1 initial metadata migration](operations/migrations/0001-initial-metadata.md)
 - [Observability contract](operations/observability-contract.md)
 
 ## Release, documentation, and governance

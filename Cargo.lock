@@ -706,6 +706,8 @@ dependencies = [
  "futures-executor",
  "futures-util",
  "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
  "tokio",
  "trybuild",
 ]
@@ -715,6 +717,7 @@ name = "oxide-batch-m0-spikes"
 version = "0.0.0"
 dependencies = [
  "futures-util",
+ "oxide-batch",
  "serde",
  "serde_json",
  "sqlx",

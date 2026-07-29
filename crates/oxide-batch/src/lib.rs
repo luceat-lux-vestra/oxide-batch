@@ -105,6 +105,11 @@ pub use repository::{
     BoxFuture, Clock, IdGenerationError, IdGenerator, InMemoryJobRepository, JobInstanceSelection,
     JobRepository, RepositoryError, RepositoryUnitOfWork, SequentialIdGenerator, SystemClock,
 };
+#[cfg(feature = "postgres")]
+pub use repository::{
+    CaCertificate, PostgresConfig, PostgresConfigError, PostgresJobRepository, PostgresMigrator,
+    TlsMode,
+};
 pub use runtime::{
     BlockingTasklet, BlockingTaskletAdapter, BlockingTaskletContext, JobLauncher, LaunchError,
     LaunchReport, StopSource, StopTiming, StopToken, Tasklet, TaskletContext, TaskletError,
