@@ -1,0 +1,5 @@
+error[E0433]: cannot find `tokio` in `oxide_batch`
+ --> tests/ui/executor_type_leakage.rs:3:18
+  |
+3 | use oxide_batch::tokio::runtime::Handle;
+  |                  ^^^^^ could not find `tokio` in `oxide_batch`

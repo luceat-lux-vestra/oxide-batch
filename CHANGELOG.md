@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Deterministic job and step listeners, commit-aligned lifecycle events,
   execution-attempt correlation, and value-redacted log, span, metric-label,
   and listener-failure diagnostics.
+- A runnable first in-memory job, facade-boundary compile-fail tests, and M1
+  executable-kernel conformance and exit evidence.
 - M0 implementation-readiness plan, M0–M5 roadmap, decision records, and
   product, compatibility, architecture, engineering, security, operations, and
   release policy set.
