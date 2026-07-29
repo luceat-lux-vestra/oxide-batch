@@ -4,9 +4,9 @@ The public facade crate for [OxideBatch](https://github.com/luceat-lux-vestra/ox
 a restart-oriented batch processing framework for Rust inspired by Spring Batch.
 
 > This crate contains the completed M1 executable kernel and the first M2
-> PostgreSQL metadata adapter, and deterministic M2 chunk orchestration. Atomic
-> enlisted PostgreSQL chunk commits and durable restart are still in progress,
-> so it is not yet a production-ready batch runtime.
+> PostgreSQL metadata adapter, deterministic M2 chunk orchestration, and atomic
+> enlisted PostgreSQL chunk commits. Durable restart and recovery selection are
+> still in progress, so it is not yet a production-ready batch runtime.
 
 The facade owns validated job and step names, opaque instance/execution IDs,
 typed and value-redacted job parameters, canonical job-instance keys, lifecycle
@@ -106,9 +106,18 @@ becomes `UNKNOWN` rather than being inferred. Correlated `chunk.started`,
 `chunk.committed`, `chunk.rolled_back`, and `chunk.unknown` events include a
 nonzero chunk sequence.
 
-The transaction port is an orchestration boundary, not yet a durable atomicity
-claim. The following M2 work connects it to the PostgreSQL adapter so business
-writes, checkpoint, context, counters, and optimistic version commit together.
+With the `postgres` feature, `PostgresChunkTransactionManager` binds a launched
+chunk to its job/step execution identity. A `PostgresChunkStateProvider`
+produces the checkpoint and context for each commit from the prior durable
+counters and current checked counts. The adapter lends the writer one
+`BusinessTransaction`, then commits its writes, checkpoint, context, cumulative
+counters, injected-clock update time, and optimistic step version on the same
+connection. A failed CAS rolls everything back; a failed `COMMIT`
+acknowledgement discards the connection and reports `UNKNOWN`.
+
+Managers that do not enlist the writer retain the documented at-least-once
+boundary and cannot claim PostgreSQL same-resource atomicity. Durable restart
+selection and audited recovery remain the next M2 workstream.
 
 ## First in-memory job
 

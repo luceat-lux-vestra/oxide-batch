@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fmt;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -16,11 +17,14 @@ use super::{
     BoxFuture, Clock, JobInstanceSelection, JobRepository, RepositoryError, RepositoryUnitOfWork,
 };
 use crate::{
-    BatchStatus, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion,
+    BatchStatus, BusinessStatement, BusinessTransaction, BusinessTransactionError,
+    BusinessValueKind, BusinessWriteResult, Checkpoint, ChunkCommitReceipt, ChunkCounts,
+    ChunkTransaction, ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager,
+    ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion,
     ExitCode, ExitStatus, FailureCategory, FailureId, FailureSummary, IdentifierKind, JobExecution,
     JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey, JobName, JobParameter,
     JobParameters, LifecycleError, LifecycleTransition, ParameterName, ParameterRole,
-    ParameterValue, ParameterValueKind, StepExecution, StepExecutionId, StepName,
+    ParameterValue, ParameterValueKind, StateLimits, StepExecution, StepExecutionId, StepName,
 };
 
 const SUPPORTED_SCHEMA_VERSION: u32 = 1;
@@ -652,6 +656,27 @@ impl PostgresJobRepository {
             .await
             .map_err(|_| RepositoryError::Unavailable)
     }
+
+    async fn begin_connection(&self) -> Result<PoolConnection<Postgres>, RepositoryError> {
+        let mut connection = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+        if sqlx::query("BEGIN")
+            .execute(&mut *connection)
+            .await
+            .is_err()
+        {
+            connection.close_on_drop();
+            return Err(RepositoryError::Unavailable);
+        }
+        if let Err(error) = configure_transaction(&mut connection, &self.config).await {
+            connection.close_on_drop();
+            return Err(error);
+        }
+        Ok(connection)
+    }
 }
 
 impl fmt::Debug for PostgresJobRepository {
@@ -669,27 +694,220 @@ impl JobRepository for PostgresJobRepository {
         &'a self,
     ) -> BoxFuture<'a, Result<Box<dyn RepositoryUnitOfWork + 'a>, RepositoryError>> {
         Box::pin(async move {
-            let mut connection = self
-                .pool
-                .acquire()
-                .await
-                .map_err(|_| RepositoryError::Unavailable)?;
-            if sqlx::query("BEGIN")
-                .execute(&mut *connection)
-                .await
-                .is_err()
-            {
-                connection.close_on_drop();
-                return Err(RepositoryError::Unavailable);
-            }
-            if let Err(error) = configure_transaction(&mut connection, &self.config).await {
-                connection.close_on_drop();
-                return Err(error);
-            }
+            let connection = self.begin_connection().await?;
             Ok(Box::new(PostgresUnitOfWork {
                 repository: self,
                 connection: Some(connection),
             }) as Box<dyn RepositoryUnitOfWork + 'a>)
+        })
+    }
+}
+
+/// Durable progress loaded for one PostgreSQL-backed step execution.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PostgresDurableStepState {
+    step_execution: StepExecution,
+    checkpoint: Checkpoint,
+    execution_context: ExecutionContext,
+}
+
+impl PostgresDurableStepState {
+    /// Borrows the step snapshot, including committed counters and version.
+    #[must_use]
+    pub const fn step_execution(&self) -> &StepExecution {
+        &self.step_execution
+    }
+
+    /// Borrows the last committed checkpoint.
+    #[must_use]
+    pub const fn checkpoint(&self) -> &Checkpoint {
+        &self.checkpoint
+    }
+
+    /// Borrows the last committed execution context.
+    #[must_use]
+    pub const fn execution_context(&self) -> &ExecutionContext {
+        &self.execution_context
+    }
+}
+
+/// `PostgreSQL` same-resource chunk transaction manager.
+///
+/// Each launched chunk receives a single adapter-owned connection. Enlisted
+/// business statements and provider-produced checkpoint/context are committed
+/// with step counters and the optimistic version.
+#[derive(Clone)]
+pub struct PostgresChunkTransactionManager {
+    repository: PostgresJobRepository,
+    state_provider: Arc<dyn PostgresChunkStateProvider>,
+}
+
+impl PostgresChunkTransactionManager {
+    /// Constructs a same-resource transaction manager.
+    #[must_use]
+    pub const fn new(
+        repository: PostgresJobRepository,
+        state_provider: Arc<dyn PostgresChunkStateProvider>,
+    ) -> Self {
+        Self {
+            repository,
+            state_provider,
+        }
+    }
+
+    /// Reads the authoritative committed state through a healthy connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted repository failure when the execution is missing or
+    /// its durable state cannot be validated.
+    pub async fn load_committed_state(
+        &self,
+        context: ChunkTransactionContext,
+    ) -> Result<PostgresDurableStepState, RepositoryError> {
+        let row = sqlx::query(AssertSqlSafe(durable_step_select(
+            "WHERE execution.id = $1 AND execution.job_execution_id = $2",
+        )))
+        .bind(database_id(
+            context.step_execution_id().get(),
+            IdentifierKind::StepExecution,
+        )?)
+        .bind(database_id(
+            context.job_execution_id().get(),
+            IdentifierKind::JobExecution,
+        )?)
+        .fetch_optional(&self.repository.pool)
+        .await
+        .map_err(|_| RepositoryError::Unavailable)?
+        .ok_or(RepositoryError::StepExecutionNotFound {
+            id: context.step_execution_id(),
+        })?;
+        decode_durable_step_state(&row)
+    }
+}
+
+/// Produces checkpoint and context state at a `PostgreSQL` chunk commit boundary.
+///
+/// The provider receives the last committed durable counters and the checked
+/// counts for the open chunk. It may also observe application-owned reader
+/// state through synchronized values captured by the implementation.
+pub trait PostgresChunkStateProvider: Send + Sync {
+    /// Produces the durable state to commit with `chunk_counts`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a value-redacted preparation failure. Panics are caught by the
+    /// adapter and the open transaction is left eligible only for rollback.
+    fn state_for_commit(
+        &self,
+        committed_counts: ExecutionCounts,
+        chunk_counts: ChunkCounts,
+    ) -> Result<ChunkCommitReceipt, PostgresChunkStateError>;
+}
+
+impl<F> PostgresChunkStateProvider for F
+where
+    F: Fn(ExecutionCounts, ChunkCounts) -> Result<ChunkCommitReceipt, PostgresChunkStateError>
+        + Send
+        + Sync,
+{
+    fn state_for_commit(
+        &self,
+        committed_counts: ExecutionCounts,
+        chunk_counts: ChunkCounts,
+    ) -> Result<ChunkCommitReceipt, PostgresChunkStateError> {
+        self(committed_counts, chunk_counts)
+    }
+}
+
+/// Value-redacted failure while preparing `PostgreSQL` chunk state.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PostgresChunkStateError;
+
+impl PostgresChunkStateError {
+    /// Constructs a redacted state-preparation failure.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl fmt::Display for PostgresChunkStateError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("PostgreSQL chunk state preparation failed")
+    }
+}
+
+impl Error for PostgresChunkStateError {}
+
+impl fmt::Debug for PostgresChunkTransactionManager {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PostgresChunkTransactionManager")
+            .field("repository", &self.repository)
+            .field("durable_state", &"<redacted>")
+            .finish_non_exhaustive()
+    }
+}
+
+impl ChunkTransactionManager for PostgresChunkTransactionManager {
+    fn begin(
+        &self,
+    ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>> {
+        Box::pin(async { Err(ChunkTransactionError::NotCommitted) })
+    }
+
+    fn begin_for(
+        &self,
+        context: ChunkTransactionContext,
+    ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>> {
+        Box::pin(async move {
+            let step_id = database_id(
+                context.step_execution_id().get(),
+                IdentifierKind::StepExecution,
+            )
+            .map_err(|_| ChunkTransactionError::NotCommitted)?;
+            let job_id = database_id(
+                context.job_execution_id().get(),
+                IdentifierKind::JobExecution,
+            )
+            .map_err(|_| ChunkTransactionError::NotCommitted)?;
+            let mut connection = self
+                .repository
+                .begin_connection()
+                .await
+                .map_err(|_| ChunkTransactionError::NotCommitted)?;
+            let row = sqlx::query(AssertSqlSafe(durable_step_select(
+                "WHERE execution.id = $1 AND execution.job_execution_id = $2",
+            )))
+            .bind(step_id)
+            .bind(job_id)
+            .fetch_optional(&mut *connection)
+            .await;
+            let Ok(row) = row else {
+                rollback_chunk_connection(&mut connection).await;
+                return Err(ChunkTransactionError::NotCommitted);
+            };
+            let Some(row) = row else {
+                rollback_chunk_connection(&mut connection).await;
+                return Err(ChunkTransactionError::NotCommitted);
+            };
+            let Ok(durable) = decode_durable_step_state(&row) else {
+                rollback_chunk_connection(&mut connection).await;
+                return Err(ChunkTransactionError::NotCommitted);
+            };
+            if durable.step_execution.metadata().status() != BatchStatus::Started {
+                rollback_chunk_connection(&mut connection).await;
+                return Err(ChunkTransactionError::NotCommitted);
+            }
+            Ok(Box::new(PostgresChunkTransaction {
+                connection: Some(connection),
+                context,
+                expected_version: durable.step_execution.version(),
+                committed_counts: durable.step_execution.metadata().counts(),
+                clock: Arc::clone(&self.repository.clock),
+                state_provider: Arc::clone(&self.state_provider),
+            }) as Box<dyn ChunkTransaction>)
         })
     }
 }
@@ -1188,16 +1406,10 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         Self: 'a,
     {
         Box::pin(async move {
-            let mut connection = self.connection.take().ok_or(RepositoryError::Unavailable)?;
-            if sqlx::query("COMMIT")
-                .execute(&mut *connection)
+            let connection = self.connection.take().ok_or(RepositoryError::Unavailable)?;
+            commit_postgres_connection(connection)
                 .await
-                .is_err()
-            {
-                connection.close_on_drop();
-                return Err(RepositoryError::CommitOutcomeUnknown);
-            }
-            Ok(())
+                .map_err(|()| RepositoryError::CommitOutcomeUnknown)
         })
     }
 
@@ -1226,6 +1438,318 @@ impl Drop for PostgresUnitOfWork<'_> {
             connection.close_on_drop();
         }
     }
+}
+
+struct PostgresChunkTransaction {
+    connection: Option<PoolConnection<Postgres>>,
+    context: ChunkTransactionContext,
+    expected_version: ExecutionVersion,
+    committed_counts: ExecutionCounts,
+    clock: Arc<dyn Clock>,
+    state_provider: Arc<dyn PostgresChunkStateProvider>,
+}
+
+impl PostgresChunkTransaction {
+    fn connection(&mut self) -> Result<&mut PoolConnection<Postgres>, ChunkTransactionError> {
+        self.connection
+            .as_mut()
+            .ok_or(ChunkTransactionError::NotCommitted)
+    }
+
+    fn discard_connection(&mut self) {
+        if let Some(connection) = &mut self.connection {
+            connection.close_on_drop();
+        }
+    }
+}
+
+impl BusinessTransaction for PostgresChunkTransaction {
+    fn execute<'a>(
+        &'a mut self,
+        statement: BusinessStatement<'a>,
+    ) -> BoxFuture<'a, Result<BusinessWriteResult, BusinessTransactionError>> {
+        Box::pin(async move {
+            let statement_text = String::from(statement.text());
+            let mut query = sqlx::query(AssertSqlSafe(statement_text));
+            for value in statement.values() {
+                query = match value.kind() {
+                    BusinessValueKind::Text => {
+                        query.bind(value.as_text().ok_or(BusinessTransactionError::Rejected)?)
+                    }
+                    BusinessValueKind::Bytes => {
+                        query.bind(value.as_bytes().ok_or(BusinessTransactionError::Rejected)?)
+                    }
+                    BusinessValueKind::I64 => {
+                        query.bind(value.as_i64().ok_or(BusinessTransactionError::Rejected)?)
+                    }
+                    BusinessValueKind::Bool => {
+                        query.bind(value.as_bool().ok_or(BusinessTransactionError::Rejected)?)
+                    }
+                    BusinessValueKind::Null => query.bind(Option::<String>::None),
+                };
+            }
+            match query
+                .execute(
+                    &mut **self
+                        .connection()
+                        .map_err(|_| BusinessTransactionError::Infrastructure)?,
+                )
+                .await
+            {
+                Ok(result) => Ok(BusinessWriteResult::new(result.rows_affected())),
+                Err(error) => {
+                    let classified = classify_business_error(&error);
+                    if classified != BusinessTransactionError::Rejected {
+                        self.discard_connection();
+                    }
+                    Err(classified)
+                }
+            }
+        })
+    }
+}
+
+impl ChunkTransaction for PostgresChunkTransaction {
+    fn business_transaction(&mut self) -> Option<&mut dyn BusinessTransaction> {
+        Some(self)
+    }
+
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the atomic business/progress bind and commit boundary remains visible"
+    )]
+    fn commit(
+        &mut self,
+        counts: ChunkCounts,
+    ) -> BoxFuture<'_, Result<ChunkCommitReceipt, ChunkTransactionError>> {
+        Box::pin(async move {
+            let next_counts = add_chunk_counts(self.committed_counts, counts)?;
+            let receipt = catch_unwind(AssertUnwindSafe(|| {
+                self.state_provider
+                    .state_for_commit(self.committed_counts, counts)
+            }))
+            .ok()
+            .and_then(Result::ok)
+            .ok_or(ChunkTransactionError::NotCommitted)?;
+            let checkpoint_payload = durable_payload(receipt.checkpoint())?;
+            let context_payload = durable_payload(receipt.execution_context())?;
+            let next_version = self
+                .expected_version
+                .get()
+                .checked_add(1)
+                .map(ExecutionVersion::new)
+                .ok_or(ChunkTransactionError::NotCommitted)?;
+            let result = sqlx::query(
+                "UPDATE oxide_batch.ob_step_execution SET \
+                 read_count = $1, processed_count = $2, write_count = $3, \
+                 filter_count = $4, commit_count = $5, rollback_count = $6, \
+                 checkpoint_format = $7, checkpoint_schema = $8, \
+                 checkpoint_schema_version = $9, checkpoint_payload = $10, \
+                 context_format = $11, context_schema = $12, \
+                 context_schema_version = $13, context_payload = $14, \
+                 updated_at = to_timestamp($15::double precision / 1000.0), version = $16 \
+                 WHERE id = $17 AND job_execution_id = $18 \
+                 AND version = $19 AND status = 'STARTED'",
+            )
+            .bind(chunk_database_count(next_counts.read())?)
+            .bind(chunk_database_count(next_counts.processed())?)
+            .bind(chunk_database_count(next_counts.written())?)
+            .bind(chunk_database_count(next_counts.filtered())?)
+            .bind(chunk_database_count(next_counts.committed())?)
+            .bind(chunk_database_count(next_counts.rolled_back())?)
+            .bind(
+                i16::try_from(receipt.checkpoint().format_version())
+                    .map_err(|_| ChunkTransactionError::NotCommitted)?,
+            )
+            .bind(receipt.checkpoint().schema_id().as_str())
+            .bind(
+                i32::try_from(receipt.checkpoint().schema_version().get())
+                    .map_err(|_| ChunkTransactionError::NotCommitted)?,
+            )
+            .bind(Json(checkpoint_payload))
+            .bind(
+                i16::try_from(receipt.execution_context().format_version())
+                    .map_err(|_| ChunkTransactionError::NotCommitted)?,
+            )
+            .bind(receipt.execution_context().schema_id().as_str())
+            .bind(
+                i32::try_from(receipt.execution_context().schema_version().get())
+                    .map_err(|_| ChunkTransactionError::NotCommitted)?,
+            )
+            .bind(Json(context_payload))
+            .bind(
+                system_time_millis(self.clock.now())
+                    .map_err(|_| ChunkTransactionError::NotCommitted)?,
+            )
+            .bind(database_version(next_version).map_err(|_| ChunkTransactionError::NotCommitted)?)
+            .bind(
+                database_id(
+                    self.context.step_execution_id().get(),
+                    IdentifierKind::StepExecution,
+                )
+                .map_err(|_| ChunkTransactionError::NotCommitted)?,
+            )
+            .bind(
+                database_id(
+                    self.context.job_execution_id().get(),
+                    IdentifierKind::JobExecution,
+                )
+                .map_err(|_| ChunkTransactionError::NotCommitted)?,
+            )
+            .bind(
+                database_version(self.expected_version)
+                    .map_err(|_| ChunkTransactionError::NotCommitted)?,
+            )
+            .execute(&mut **self.connection()?)
+            .await;
+
+            let Ok(result) = result else {
+                rollback_chunk_transaction(&mut self.connection).await;
+                return Err(ChunkTransactionError::NotCommitted);
+            };
+            let affected = result.rows_affected();
+            if affected != 1 {
+                rollback_chunk_transaction(&mut self.connection).await;
+                return Err(ChunkTransactionError::NotCommitted);
+            }
+
+            let connection = self
+                .connection
+                .take()
+                .ok_or(ChunkTransactionError::NotCommitted)?;
+            commit_postgres_connection(connection)
+                .await
+                .map_err(|()| ChunkTransactionError::CommitOutcomeUnknown)?;
+            self.expected_version = next_version;
+            self.committed_counts = next_counts;
+            Ok(receipt)
+        })
+    }
+
+    fn rollback(&mut self) -> BoxFuture<'_, Result<(), ChunkTransactionError>> {
+        Box::pin(async move {
+            let Some(mut connection) = self.connection.take() else {
+                return Ok(());
+            };
+            if sqlx::query("ROLLBACK")
+                .execute(&mut *connection)
+                .await
+                .is_err()
+            {
+                connection.close_on_drop();
+            }
+            Ok(())
+        })
+    }
+}
+
+impl Drop for PostgresChunkTransaction {
+    fn drop(&mut self) {
+        if let Some(connection) = &mut self.connection {
+            connection.close_on_drop();
+        }
+    }
+}
+
+fn classify_business_error(error: &sqlx::Error) -> BusinessTransactionError {
+    let Some(database) = error.as_database_error() else {
+        return BusinessTransactionError::Infrastructure;
+    };
+    let Some(code) = database.code() else {
+        return BusinessTransactionError::Infrastructure;
+    };
+    if code == "57014" {
+        return BusinessTransactionError::Cancelled;
+    }
+    if code.starts_with("22") || code.starts_with("23") || code.starts_with("42") {
+        return BusinessTransactionError::Rejected;
+    }
+    BusinessTransactionError::Infrastructure
+}
+
+fn add_chunk_counts(
+    current: ExecutionCounts,
+    chunk: ChunkCounts,
+) -> Result<ExecutionCounts, ChunkTransactionError> {
+    Ok(ExecutionCounts::new(
+        current
+            .read()
+            .checked_add(chunk.read().get())
+            .ok_or(ChunkTransactionError::NotCommitted)?,
+        current
+            .processed()
+            .checked_add(chunk.processed().get())
+            .ok_or(ChunkTransactionError::NotCommitted)?,
+        current
+            .written()
+            .checked_add(chunk.written().get())
+            .ok_or(ChunkTransactionError::NotCommitted)?,
+        current
+            .filtered()
+            .checked_add(chunk.filtered().get())
+            .ok_or(ChunkTransactionError::NotCommitted)?,
+        current
+            .committed()
+            .checked_add(1)
+            .ok_or(ChunkTransactionError::NotCommitted)?,
+        current.rolled_back(),
+    ))
+}
+
+fn chunk_database_count(value: u64) -> Result<i64, ChunkTransactionError> {
+    i64::try_from(value).map_err(|_| ChunkTransactionError::NotCommitted)
+}
+
+fn durable_payload(state: &impl DurablePayload) -> Result<Value, ChunkTransactionError> {
+    let bytes = state
+        .payload_json()
+        .map_err(|_| ChunkTransactionError::NotCommitted)?;
+    serde_json::from_slice(&bytes).map_err(|_| ChunkTransactionError::NotCommitted)
+}
+
+trait DurablePayload {
+    fn payload_json(&self) -> Result<Vec<u8>, crate::StateError>;
+}
+
+impl DurablePayload for Checkpoint {
+    fn payload_json(&self) -> Result<Vec<u8>, crate::StateError> {
+        Checkpoint::payload_json(self)
+    }
+}
+
+impl DurablePayload for ExecutionContext {
+    fn payload_json(&self) -> Result<Vec<u8>, crate::StateError> {
+        ExecutionContext::payload_json(self)
+    }
+}
+
+async fn rollback_chunk_connection(connection: &mut PoolConnection<Postgres>) {
+    if sqlx::query("ROLLBACK")
+        .execute(&mut **connection)
+        .await
+        .is_err()
+    {
+        connection.close_on_drop();
+    }
+}
+
+async fn rollback_chunk_transaction(connection: &mut Option<PoolConnection<Postgres>>) {
+    let Some(mut connection) = connection.take() else {
+        return;
+    };
+    rollback_chunk_connection(&mut connection).await;
+}
+
+async fn commit_postgres_connection(mut connection: PoolConnection<Postgres>) -> Result<(), ()> {
+    if sqlx::query("COMMIT")
+        .execute(&mut *connection)
+        .await
+        .is_err()
+    {
+        connection.close_on_drop();
+        return Err(());
+    }
+    Ok(())
 }
 
 async fn configure_transaction(
@@ -1550,6 +2074,87 @@ fn step_execution_select(suffix: &str) -> String {
          (extract(epoch FROM execution.ended_at) * 1000)::bigint AS ended_ms, \
          execution.version FROM oxide_batch.ob_step_execution execution {suffix}"
     )
+}
+
+fn durable_step_select(suffix: &str) -> String {
+    format!(
+        "SELECT execution.id, execution.job_execution_id, execution.step_name, \
+         execution.status, execution.exit_code, execution.read_count, \
+         execution.processed_count, execution.write_count, execution.filter_count, \
+         execution.commit_count, execution.rollback_count, execution.failure_category, \
+         execution.failure_id, execution.checkpoint_format, execution.checkpoint_schema, \
+         execution.checkpoint_schema_version, execution.checkpoint_payload, \
+         execution.context_format, execution.context_schema, \
+         execution.context_schema_version, execution.context_payload, \
+         (extract(epoch FROM execution.created_at) * 1000)::bigint AS created_ms, \
+         (extract(epoch FROM execution.started_at) * 1000)::bigint AS started_ms, \
+         (extract(epoch FROM execution.ended_at) * 1000)::bigint AS ended_ms, \
+         execution.version FROM oxide_batch.ob_step_execution execution {suffix}"
+    )
+}
+
+fn decode_durable_step_state(row: &PgRow) -> Result<PostgresDurableStepState, RepositoryError> {
+    let checkpoint = decode_durable_state(
+        row,
+        "checkpoint_format",
+        "checkpoint_schema",
+        "checkpoint_schema_version",
+        "checkpoint_payload",
+        "oxide-batch.checkpoint",
+        Checkpoint::from_json,
+    )?;
+    let execution_context = decode_durable_state(
+        row,
+        "context_format",
+        "context_schema",
+        "context_schema_version",
+        "context_payload",
+        "oxide-batch.execution-context",
+        ExecutionContext::from_json,
+    )?;
+    Ok(PostgresDurableStepState {
+        step_execution: decode_step_execution(row)?,
+        checkpoint,
+        execution_context,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decode_durable_state<T>(
+    row: &PgRow,
+    format_column: &str,
+    schema_column: &str,
+    schema_version_column: &str,
+    payload_column: &str,
+    format: &str,
+    decode: impl FnOnce(&[u8], StateLimits) -> Result<T, crate::StateError>,
+) -> Result<T, RepositoryError> {
+    let format_version = u16::try_from(
+        row.try_get::<i16, _>(format_column)
+            .map_err(|_| RepositoryError::Unavailable)?,
+    )
+    .map_err(|_| RepositoryError::Unavailable)?;
+    let schema: String = row
+        .try_get(schema_column)
+        .map_err(|_| RepositoryError::Unavailable)?;
+    let schema_version = u32::try_from(
+        row.try_get::<i32, _>(schema_version_column)
+            .map_err(|_| RepositoryError::Unavailable)?,
+    )
+    .map_err(|_| RepositoryError::Unavailable)?;
+    let Json(payload): Json<Value> = row
+        .try_get(payload_column)
+        .map_err(|_| RepositoryError::Unavailable)?;
+    let envelope = json!({
+        "format": format,
+        "format_version": format_version,
+        "schema": schema,
+        "schema_version": schema_version,
+        "payload": payload,
+    });
+    let bytes = serde_json::to_vec(&envelope).map_err(|_| RepositoryError::Unavailable)?;
+    let limits = StateLimits::new(1024 * 1024, 64).map_err(|_| RepositoryError::Unavailable)?;
+    decode(&bytes, limits).map_err(|_| RepositoryError::Unavailable)
 }
 
 fn decode_job_execution(row: &PgRow) -> Result<JobExecution, RepositoryError> {

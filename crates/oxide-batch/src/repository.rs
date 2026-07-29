@@ -21,8 +21,9 @@ mod postgres;
 pub use memory::InMemoryJobRepository;
 #[cfg(feature = "postgres")]
 pub use postgres::{
-    CaCertificate, PostgresConfig, PostgresConfigError, PostgresJobRepository, PostgresMigrator,
-    TlsMode,
+    CaCertificate, PostgresChunkStateError, PostgresChunkStateProvider,
+    PostgresChunkTransactionManager, PostgresConfig, PostgresConfigError, PostgresDurableStepState,
+    PostgresJobRepository, PostgresMigrator, TlsMode,
 };
 
 /// An owned, dynamically dispatched future used by public asynchronous ports.

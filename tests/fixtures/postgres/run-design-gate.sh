@@ -167,6 +167,7 @@ docker exec -i \
     --nocapture \
     --test-threads=1
 
+  OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL="postgres://oxide_batch_migrator:fixture-migrator-only@localhost:${database_port}/oxide_batch_design" \
   OXIDEBATCH_POSTGRES_TEST_URL="${OXIDEBATCH_DESIGN_GATE_RUNTIME_URL}" \
     cargo test \
       -p oxide-batch \

@@ -85,9 +85,10 @@ pub use chunk::{
     BusinessStatement, BusinessTransaction, BusinessTransactionError, BusinessValue,
     BusinessValueKind, BusinessWriteResult, ChunkCommitReceipt, ChunkCompletion,
     ChunkCompletionContext, ChunkCompletionError, ChunkCompletionOutcome, ChunkCount, ChunkCounts,
-    ChunkError, ChunkProgress, ChunkSize, ChunkTransaction, ChunkTransactionError,
-    ChunkTransactionManager, ItemProcessor, ItemReader, ItemWriter, ProcessContext, ProcessOutcome,
-    ProcessorError, ReadContext, ReadOutcome, ReaderError, WriteContext, WriteOutcome, WriterError,
+    ChunkError, ChunkProgress, ChunkSize, ChunkTransaction, ChunkTransactionContext,
+    ChunkTransactionError, ChunkTransactionManager, ItemProcessor, ItemReader, ItemWriter,
+    ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome, ReaderError,
+    WriteContext, WriteOutcome, WriterError,
 };
 pub use chunk_runtime::{
     ChunkAttemptOutcome, ChunkExecutionOutcome, ChunkExecutionReport, ChunkFailure, ChunkJob,
@@ -116,8 +117,9 @@ pub use repository::{
 };
 #[cfg(feature = "postgres")]
 pub use repository::{
-    CaCertificate, PostgresConfig, PostgresConfigError, PostgresJobRepository, PostgresMigrator,
-    TlsMode,
+    CaCertificate, PostgresChunkStateError, PostgresChunkStateProvider,
+    PostgresChunkTransactionManager, PostgresConfig, PostgresConfigError, PostgresDurableStepState,
+    PostgresJobRepository, PostgresMigrator, TlsMode,
 };
 pub use runtime::{
     BlockingTasklet, BlockingTaskletAdapter, BlockingTaskletContext, JobLauncher, LaunchError,

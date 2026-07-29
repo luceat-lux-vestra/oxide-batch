@@ -4,7 +4,7 @@ use std::error::Error;
 use std::fmt;
 use std::num::NonZeroU32;
 
-use crate::{BoxFuture, Checkpoint, ExecutionContext, StopToken};
+use crate::{BoxFuture, Checkpoint, ExecutionContext, JobExecutionId, StepExecutionId, StopToken};
 
 /// A nonzero item limit for one chunk.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -643,11 +643,57 @@ pub trait ChunkTransaction: Send {
     fn rollback(&mut self) -> BoxFuture<'_, Result<(), ChunkTransactionError>>;
 }
 
+/// Repository execution identity for one launched chunk transaction.
+///
+/// Standalone chunk execution has no durable execution graph and therefore
+/// uses [`ChunkTransactionManager::begin`]. The repository-backed launcher
+/// supplies this context through [`ChunkTransactionManager::begin_for`].
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ChunkTransactionContext {
+    job_execution_id: JobExecutionId,
+    step_execution_id: StepExecutionId,
+}
+
+impl ChunkTransactionContext {
+    /// Constructs a durable chunk-transaction scope.
+    #[must_use]
+    pub const fn new(job_execution_id: JobExecutionId, step_execution_id: StepExecutionId) -> Self {
+        Self {
+            job_execution_id,
+            step_execution_id,
+        }
+    }
+
+    /// Returns the enclosing job execution.
+    #[must_use]
+    pub const fn job_execution_id(self) -> JobExecutionId {
+        self.job_execution_id
+    }
+
+    /// Returns the step execution whose progress is committed.
+    #[must_use]
+    pub const fn step_execution_id(self) -> StepExecutionId {
+        self.step_execution_id
+    }
+}
+
 /// Begins isolated adapter-owned chunk transactions.
 pub trait ChunkTransactionManager: Send + Sync {
     /// Starts one transaction for a bounded chunk attempt.
     fn begin(&self)
     -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>>;
+
+    /// Starts one transaction bound to a durable repository execution.
+    ///
+    /// The default preserves managers that do not need repository identity.
+    /// Durable adapters override this method and reject unbound
+    /// [`Self::begin`] calls rather than guessing an execution target.
+    fn begin_for(
+        &self,
+        _context: ChunkTransactionContext,
+    ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>> {
+        self.begin()
+    }
 }
 
 /// Stable, value-redacted enlisted-transaction failure.

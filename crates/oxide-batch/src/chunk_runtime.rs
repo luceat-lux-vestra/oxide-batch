@@ -9,11 +9,12 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::{
     BoxFuture, ChunkCompletion, ChunkCompletionContext, ChunkCompletionOutcome, ChunkCount,
-    ChunkCounts, ChunkProgress, ChunkSize, ChunkTransactionError, ChunkTransactionManager,
-    ItemProcessor, ItemReader, ItemWriter, JobExecutionListener, JobLauncher, JobName,
-    JobParameters, LaunchError, LaunchReport, LifecycleEventKind, ProcessContext, ProcessOutcome,
-    ReadContext, ReadOutcome, StepExecutionListener, StepName, StopToken, Tasklet, TaskletContext,
-    TaskletError, TaskletJob, TaskletOutcome, TaskletStep, WriteContext, WriteOutcome,
+    ChunkCounts, ChunkProgress, ChunkSize, ChunkTransactionContext, ChunkTransactionError,
+    ChunkTransactionManager, ItemProcessor, ItemReader, ItemWriter, JobExecutionListener,
+    JobLauncher, JobName, JobParameters, LaunchError, LaunchReport, LifecycleEventKind,
+    ProcessContext, ProcessOutcome, ReadContext, ReadOutcome, StepExecutionListener, StepName,
+    StopToken, Tasklet, TaskletContext, TaskletError, TaskletJob, TaskletOutcome, TaskletStep,
+    WriteContext, WriteOutcome,
 };
 
 /// A validated one-step chunk definition.
@@ -86,7 +87,7 @@ impl<I, O> ChunkStep<I, O> {
         I: Send + Sync,
         O: Send + Sync,
     {
-        execute_chunk_step(self, stop, |_| {}).await
+        execute_chunk_step(self, stop, None, |_| {}).await
     }
 }
 
@@ -197,20 +198,29 @@ where
     ) -> BoxFuture<'a, Result<TaskletOutcome, TaskletError>> {
         Box::pin(async move {
             let mut step = self.step.lock().await;
-            let report = execute_chunk_step(&mut step, context.stop_token(), |event| match event {
-                ChunkRuntimeEvent::Started(sequence) => {
-                    context.emit_chunk_event(LifecycleEventKind::ChunkStarted, sequence);
-                }
-                ChunkRuntimeEvent::Committed(sequence) => {
-                    context.emit_chunk_event(LifecycleEventKind::ChunkCommitted, sequence);
-                }
-                ChunkRuntimeEvent::RolledBack(sequence) => {
-                    context.emit_chunk_event(LifecycleEventKind::ChunkRolledBack, sequence);
-                }
-                ChunkRuntimeEvent::Unknown(sequence) => {
-                    context.emit_chunk_event(LifecycleEventKind::ChunkUnknown, sequence);
-                }
-            })
+            let transaction_context = ChunkTransactionContext::new(
+                context.job_execution_id(),
+                context.step_execution_id(),
+            );
+            let report = execute_chunk_step(
+                &mut step,
+                context.stop_token(),
+                Some(transaction_context),
+                |event| match event {
+                    ChunkRuntimeEvent::Started(sequence) => {
+                        context.emit_chunk_event(LifecycleEventKind::ChunkStarted, sequence);
+                    }
+                    ChunkRuntimeEvent::Committed(sequence) => {
+                        context.emit_chunk_event(LifecycleEventKind::ChunkCommitted, sequence);
+                    }
+                    ChunkRuntimeEvent::RolledBack(sequence) => {
+                        context.emit_chunk_event(LifecycleEventKind::ChunkRolledBack, sequence);
+                    }
+                    ChunkRuntimeEvent::Unknown(sequence) => {
+                        context.emit_chunk_event(LifecycleEventKind::ChunkUnknown, sequence);
+                    }
+                },
+            )
             .await;
             let outcome = match report.outcome() {
                 ChunkExecutionOutcome::Completed => Ok(TaskletOutcome::Completed),
@@ -580,6 +590,7 @@ impl ExecutionState {
 pub(crate) async fn execute_chunk_step<I, O>(
     step: &mut ChunkStep<I, O>,
     stop: &StopToken,
+    transaction_context: Option<ChunkTransactionContext>,
     mut emit: impl FnMut(ChunkRuntimeEvent),
 ) -> ChunkExecutionReport
 where
@@ -607,7 +618,11 @@ where
             return state.report(outcome, None);
         }
 
-        let mut transaction = match step.transactions.begin().await {
+        let transaction = match transaction_context {
+            Some(context) => step.transactions.begin_for(context).await,
+            None => step.transactions.begin().await,
+        };
+        let mut transaction = match transaction {
             Ok(transaction) => transaction,
             Err(ChunkTransactionError::NotCommitted) => {
                 let outcome = ChunkExecutionOutcome::Failed(ChunkFailure::TransactionBegin);

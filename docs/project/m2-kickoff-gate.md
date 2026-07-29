@@ -114,6 +114,13 @@ complete on merge. Their criterion mapping and handoff to PostgreSQL atomic
 enlistment are retained in the
 [M2 chunk runtime evidence](m2-chunk-runtime-evidence.md).
 
+Issue #43's adapter-owned PostgreSQL chunk transaction, borrowed business-write
+port, checkpoint/context/counter/version CAS, healthy-connection inspection,
+known rollback, ambiguous commit classification, and PostgreSQL 15/18
+integration matrix are complete on merge. Their criterion mapping and handoff
+to durable restart selection are retained in the
+[M2 PostgreSQL atomic chunk transaction evidence](m2-postgres-chunk-transaction-evidence.md).
+
 ## Definition of done
 
 M2 closes only when:
