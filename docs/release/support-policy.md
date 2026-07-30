@@ -27,7 +27,9 @@ crates are published in dependency order and the facade is published last.
 - stable: supported public API and metadata contracts.
 
 Releases use reviewed commits, protected `v<version>` tags, GitHub Releases, and
-crates.io Trusted Publishing. A release is complete only after package content,
+crates.io Trusted Publishing. A protected tag prepares a draft Release and its
+package evidence; a maintainer publishes the reviewed draft to authorize
+Trusted Publishing. A release is complete only after package content,
 documentation, provenance, and installation are verified.
 
 ## MSRV

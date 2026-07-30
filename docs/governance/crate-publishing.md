@@ -41,6 +41,10 @@ boundary still does not authorize publication.
   manifests while retaining local `path` dependencies.
 - Create a reviewed changelog entry and immutable Git tag for every release.
 - Published versions are permanent and must never be treated as disposable.
+- Do not publish operating-system binary assets until an approved first-party
+  user CLI or service binary exists. The current library release contains only
+  the package and its release evidence; reassess binary matrices with the M4
+  CLI boundary.
 
 ## Name allocation
 
@@ -69,3 +73,8 @@ is bound to:
 
 The release workflow exchanges GitHub's OIDC identity for a short-lived
 crates.io token. Long-lived crates.io tokens must not be stored in GitHub.
+
+A protected version tag first creates a draft GitHub Release containing the
+exact `.crate`, SHA-256 checksums, a package-scoped CycloneDX SBOM, and GitHub
+artifact attestations. Publishing that reviewed draft triggers
+`release.yml`; tag creation alone never publishes to crates.io.

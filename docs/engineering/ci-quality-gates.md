@@ -16,6 +16,7 @@ expensive and probabilistic checks run on a schedule or release candidate.
 | Dependency review | New vulnerability/license risk | Now |
 | MSRV build/test | Enforce declared Rust support | Before M1 |
 | Dependency/license/source policy | RustSec, license, bans, source control | Before M1 |
+| CodeQL | GitHub Actions workflow security analysis | Now |
 | Feature matrix | Default/minimal/all and approved combinations | Active: facade-only and `postgres`/all |
 | Core platform matrix | Supported OS and architecture | Before first public runtime API |
 | PostgreSQL contracts | Real transaction and migration semantics | Before M2 |
@@ -43,6 +44,14 @@ refactor must not create a skipped required job that appears successful.
 Failures create or update an owned issue. Scheduled checks may be quarantined
 only with an expiry and a release-impact statement.
 
+The scheduled supply-chain workflow creates or updates one owned security issue
+when its advisory, license, ban, or source gate fails. The issue is an
+operational notification and never converts a failed gate into success.
+
+GitHub CodeQL default setup analyzes Actions workflows. CodeQL does not support
+Rust analysis for this repository; dependency review, `cargo deny`, Clippy,
+tests, and the documented security review process remain the Rust gates.
+
 The first optional adapter activates the concrete feature matrix. The ordinary
 quality job checks the facade with no default features and the workspace with
 all features. PostgreSQL 15 and 18 additionally build and run the `postgres`
@@ -59,6 +68,23 @@ repository-contract evidence.
 - SBOM, provenance/attestation, changelog, license, and notices;
 - install/build from the exact packaged crates;
 - release-tag/version match and post-publish verification.
+
+Pushing a protected `v<version>` tag prepares, but does not publish, a draft
+GitHub Release. The tag workflow verifies the version, performs locked package
+and publish dry-runs, generates a package-scoped CycloneDX SBOM and checksums,
+and attests the exact `.crate` artifact. A maintainer reviews the draft and
+publishes it before Trusted Publishing runs.
+
+## Repository automation
+
+- changed-file labels communicate affected areas but never assign priority,
+  lifecycle status, or breaking-change disposition;
+- label automation is skipped for changes larger than its reviewed file bound;
+- AI review is advisory, non-required, and limited to trusted-contributor pull
+  requests and a bounded textual diff;
+- AI output cannot approve, merge, execute pull-request code, or override
+  accepted documents and deterministic evidence;
+- model quota or inference failure does not affect merge eligibility.
 
 ## Coverage
 
