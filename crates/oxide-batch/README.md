@@ -6,8 +6,8 @@ a restart-oriented batch processing framework for Rust inspired by Spring Batch.
 > This crate contains the completed M1 executable kernel and the first M2
 > PostgreSQL metadata adapter, deterministic M2 chunk orchestration, and atomic
 > enlisted PostgreSQL chunk commits, definition-guarded durable restart, and
-> audited recovery decisions. The M2 crash/conformance exit gate is still in
-> progress, so it is not yet a production-ready batch runtime.
+> audited recovery decisions. M2 process-kill crash/restart and conformance
+> evidence is complete, but no production-ready runtime has been released.
 
 The facade owns validated job and step names, opaque instance/execution IDs,
 typed and value-redacted job parameters, canonical job-instance keys, lifecycle
@@ -145,6 +145,13 @@ correlation, evidence digest, and injected-clock time, and changes the
 execution to `FAILED` or `ABANDONED`. Authentication, authorization, external
 evidence storage, and a recovery CLI remain deployment or later-operator
 concerns.
+
+The PostgreSQL 15 and 18 CI axes terminate a separate worker process before and
+after the second chunk commit, inspect durable state through a new connection,
+audit the orphan, and finish through a distinct restart attempt. See the
+[transaction guarantee](../../docs/operations/transaction-guarantees.md) and
+[crash/recovery runbook](../../docs/operations/crash-restart-and-recovery.md)
+for the exact replay boundary and operator procedure.
 
 ## First in-memory job
 

@@ -1,6 +1,6 @@
 # M2 Durable Chunk and Restart Kickoff Gate
 
-**State:** Active (2026-07-29)
+**State:** Complete (2026-07-30)
 
 **Umbrella:** GitHub issue
 [#13](https://github.com/luceat-lux-vestra/oxide-batch/issues/13)
@@ -8,9 +8,9 @@
 **Kickoff tracking:** GitHub issue
 [#38](https://github.com/luceat-lux-vestra/oxide-batch/issues/38)
 
-This record turns the accepted M2 roadmap outcome into definition-ready work.
-M2 is active, but implementation may cross a named decision boundary only
-after that boundary's gate below is closed.
+This record turned the accepted M2 roadmap outcome into definition-ready work.
+Implementation crossed each named decision boundary only after its gate below
+closed.
 
 ## Satisfied prerequisites
 
@@ -128,26 +128,32 @@ complete on merge. Their criterion mapping and the remaining crash/conformance
 handoff are retained in the
 [M2 durable restart and recovery evidence](m2-durable-restart-evidence.md).
 
+Issue #45's separate-process pre/post-commit crash worker, M2 conformance
+slice, PostgreSQL 15/18 release gate, operational guides, and milestone exit
+mapping are complete on merge. The criterion-by-criterion record is retained
+in the [M2 exit evidence](m2-exit-evidence.md).
+
 ## Definition of done
 
-M2 closes only when:
+M2 closed when:
 
-- `CHUNK-COMMIT-001`, `CHUNK-ROLLBACK-001`, `RESTART-001`, durable
+- [x] `CHUNK-COMMIT-001`, `CHUNK-ROLLBACK-001`, `RESTART-001`, durable
   `JOB-EXEC-001`, `JOB-CONCURRENCY-001`, and durable `OBS-INSPECT-001` pass;
-- committed chunks are not replayed and uncommitted chunks follow the
+- [x] committed chunks are not replayed and uncommitted chunks follow the
   documented at-least-once boundary;
-- business writes, checkpoint, context, counters, and execution version commit
+- [x] business writes, checkpoint, context, counters, and execution version commit
   or roll back together for enlisted PostgreSQL writers;
-- commit ambiguity is represented as `UNKNOWN` and requires durable inspection
+- [x] commit ambiguity is represented as `UNKNOWN` and requires durable inspection
   plus an explicit recovery decision;
-- repository migrations pass from every supported schema version and reject a
+- [x] repository migrations pass from every supported schema version and reject a
   newer schema;
-- PostgreSQL 15 and 18 integration gates pass in CI, including validated TLS
+- [x] PostgreSQL 15 and 18 integration gates pass in CI, including validated TLS
   and least-privilege runtime/migrator roles;
-- the crash worker covers every injection point in the first vertical slice;
-- public APIs and diagnostics expose no SQLx types, credentials, record
+- [x] the crash worker covers the pre/post-commit process-exit points, while
+  deterministic failure injection covers the remaining first-slice points;
+- [x] public APIs and diagnostics expose no SQLx types, credentials, record
   contents, or execution-context payloads;
-- PostgreSQL setup, migration, transaction guarantee, crash/restart, and
+- [x] PostgreSQL setup, migration, transaction guarantee, crash/restart, and
   recovery documentation is executable and reviewed.
 
 ## Scope controls

@@ -55,8 +55,10 @@ tests, and the documented security review process remain the Rust gates.
 The first optional adapter activates the concrete feature matrix. The ordinary
 quality job checks the facade with no default features and the workspace with
 all features. PostgreSQL 15 and 18 additionally build and run the `postgres`
-feature against the released migration; PostgreSQL 15–18 run TLS, role, and
-repository-contract evidence.
+feature against the released migration, atomic transaction suite, disconnect
+classification, and separate-process pre/post-commit crash/restart matrix.
+PostgreSQL 15–18 run TLS, role, migration, repository-contract, and
+vertical-slice smoke evidence.
 
 ## Release gates
 

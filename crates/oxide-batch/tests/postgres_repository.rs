@@ -223,7 +223,7 @@ fn shared_repository_contract_passes_on_postgres() -> Result<(), Box<dyn Error>>
 }
 
 #[test]
-fn concurrent_identical_launches_create_one_active_execution() -> Result<(), Box<dyn Error>> {
+fn concurrent_launch_creates_single_instance() -> Result<(), Box<dyn Error>> {
     const CONTENDERS: usize = 8;
 
     let Some(url) = runtime_url() else {
@@ -343,7 +343,7 @@ fn newer_schema_is_rejected_without_guessing_compatibility() -> Result<(), Box<d
 }
 
 #[test]
-fn disconnected_transaction_has_unknown_commit_and_pool_recovers() -> Result<(), Box<dyn Error>> {
+fn disconnect_during_commit_never_guesses_outcome() -> Result<(), Box<dyn Error>> {
     let Some(runtime_url) = runtime_url() else {
         eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
         return Ok(());
@@ -861,7 +861,7 @@ fn unknown_execution_requires_audited_postgres_recovery() -> Result<(), Box<dyn 
 }
 
 #[test]
-fn postgres_chunk_commit_and_rollback_are_atomic() -> Result<(), Box<dyn Error>> {
+fn committed_chunk_advances_checkpoint() -> Result<(), Box<dyn Error>> {
     let Some(runtime_url) = runtime_url() else {
         eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
         return Ok(());
@@ -954,6 +954,52 @@ fn postgres_chunk_commit_and_rollback_are_atomic() -> Result<(), Box<dyn Error>>
     })
 }
 
+#[test]
+fn writer_failure_rolls_back_business_and_checkpoint() -> Result<(), Box<dyn Error>> {
+    let Some(runtime_url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let Some(migrator_url) = migrator_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        const JOB: &str = "postgres_writer_failure";
+        prepare_business_fixture(&migrator_url).await?;
+        remove_job_rows(&runtime_url, JOB).await?;
+        let repository = PostgresJobRepository::connect(
+            plaintext_config(runtime_url.clone())?,
+            Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(500))),
+        )
+        .await?;
+
+        let (report, manager) = launch_postgres_chunk(&repository, JOB, true, false).await?;
+        assert!(matches!(
+            report.chunk().ok_or("chunk report missing")?.outcome(),
+            ChunkExecutionOutcome::Failed(_)
+        ));
+        let scope = ChunkTransactionContext::new(
+            report.launch().job_execution().id(),
+            report.launch().step_execution().id(),
+        );
+        let durable = manager.load_committed_state(scope).await?;
+        assert_eq!(
+            durable.step_execution().metadata().counts(),
+            oxide_batch::ExecutionCounts::default()
+        );
+        assert_ne!(durable.checkpoint(), &chunk_checkpoint(2)?);
+        assert!(business_items(&runtime_url, JOB).await?.is_empty());
+
+        repository.close().await?;
+        remove_job_rows(&runtime_url, JOB).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
+
 async fn create_started_chunk_scope(
     repository: &PostgresJobRepository,
     job_name: &str,
@@ -992,7 +1038,7 @@ async fn create_started_chunk_scope(
 }
 
 #[test]
-fn postgres_chunk_conflict_rolls_back_losing_business_write() -> Result<(), Box<dyn Error>> {
+fn optimistic_conflict_has_one_winner() -> Result<(), Box<dyn Error>> {
     let Some(runtime_url) = runtime_url() else {
         eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
         return Ok(());

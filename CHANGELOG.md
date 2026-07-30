@@ -46,6 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and compatibility rejection, explicit directed step mappings, committed
   checkpoint inheritance into distinct restart attempts, and versioned
   append-only PostgreSQL recovery decisions.
+- Separate-process PostgreSQL pre/post-commit crash injection, durable
+  restart/conformance evidence, and executable setup, transaction-guarantee,
+  crash/recovery, backup, and migration operations documentation for the M2
+  exit gate.
 - M0 implementation-readiness plan, M0–M5 roadmap, decision records, and
   product, compatibility, architecture, engineering, security, operations, and
   release policy set.

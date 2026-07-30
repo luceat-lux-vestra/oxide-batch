@@ -68,6 +68,7 @@ decisions own the normative detail.
 - [M2 deterministic chunk runtime evidence](project/m2-chunk-runtime-evidence.md)
 - [M2 PostgreSQL atomic chunk transaction evidence](project/m2-postgres-chunk-transaction-evidence.md)
 - [M2 durable restart and recovery evidence](project/m2-durable-restart-evidence.md)
+- [M2 durable chunk and restart exit evidence](project/m2-exit-evidence.md)
 - [Historical M0 decision register](product/open-decisions.md)
 
 Historical gates are preserved as records of their date. Later decisions link
@@ -122,6 +123,9 @@ to them and record supersession; they do not rewrite history.
 - [Threat model and supply-chain baseline](security/threat-model.md)
 - [Severity and response objectives](security/severity-and-response.md)
 - [Persistence and migration operations](operations/persistence-and-migrations.md)
+- [PostgreSQL setup](operations/postgres-setup.md)
+- [M2 transaction guarantees](operations/transaction-guarantees.md)
+- [Crash, restart, and recovery runbook](operations/crash-restart-and-recovery.md)
 - [Metadata migration-guide template](operations/migration-guide-template.md)
 - [Schema-v1 initial metadata migration](operations/migrations/0001-initial-metadata.md)
 - [Observability contract](operations/observability-contract.md)

@@ -25,8 +25,8 @@ checkpointing, crash recovery, operator visibility, and telemetry.
 | JOB-INSTANCE-001 | Reusing the same identifying parameters selects the same job instance. | `job_instance_same_identifying_parameters` | M1 |
 | JOB-EXEC-001 | Each retry or restart attempt has a distinct execution identity. | `restart_creates_new_execution` | M1 contract, M2 durable verification |
 | CHUNK-COMMIT-001 | A committed chunk advances its checkpoint and counters atomically. | `committed_chunk_advances_checkpoint` | M2 |
-| CHUNK-ROLLBACK-001 | A crash before commit replays only work allowed by the documented delivery guarantee. | `rolled_back_chunk_replays` | M2 |
-| RESTART-001 | A restart resumes from the latest committed checkpoint. | `restart_resumes_latest_committed_checkpoint` | M2 |
+| CHUNK-ROLLBACK-001 | A crash before commit replays only work allowed by the documented delivery guarantee. | `crash_before_commit_replays_chunk` | M2 |
+| RESTART-001 | A restart resumes from the latest committed checkpoint. | `crash_after_commit_does_not_replay_chunk` | M2 |
 | JOB-COMPLETE-001 | Launching an already completed instance is rejected. | `completed_instance_rejects_launch` | M1 |
 | JOB-CONCURRENCY-001 | Concurrent launch attempts cannot create duplicate job instances. | `concurrent_launch_creates_single_instance` | M2 |
 | OBS-INSPECT-001 | Status, exit status, counts, timestamps, and failure summaries are inspectable without exposing record contents. | `inspection_redacts_record_contents` | M1 contract, M2 durable verification |

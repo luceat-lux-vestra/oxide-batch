@@ -82,8 +82,8 @@ The accepted M0-M4 program remains the active delivery commitment:
   concurrency and partitioning;
 - operator CLI, vendor-neutral telemetry, and failure/conformance evidence.
 
-M2 is the active implementation milestone. Historical M0-M2 gates remain
-authoritative evidence for work already completed.
+M2 is complete; M3 is the next accepted near-term implementation milestone.
+Historical M0-M2 gates remain authoritative evidence for completed work.
 
 ## Release interpretation
 
