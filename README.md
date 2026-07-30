@@ -8,8 +8,10 @@ batch processing, inspired by Spring Batch.
 
 > [!IMPORTANT]
 > OxideBatch has completed the M1 executable kernel and M2 durable PostgreSQL
-> chunk/restart implementation gate. Compatibility rows remain unreleased
-> `Implemented` evidence, and no production-ready runtime has been released.
+> chunk/restart implementation gate. M3 fault tolerance and flow is active at
+> its kickoff/design gate; no M3 runtime capability is claimed yet.
+> Compatibility rows remain unreleased `Implemented` evidence, and no
+> production-ready runtime has been released.
 
 ## Project goals
 
@@ -43,7 +45,10 @@ planned multi-crate strategy.
 **M2 — Durable Chunk and Restart** are complete. M2 includes the PostgreSQL
 schema and repository, atomic enlisted chunks, definition-guarded restart,
 audited recovery, and separate-process pre/post-commit crash evidence recorded
-in the [M2 exit record](docs/project/m2-exit-evidence.md).
+in the [M2 exit record](docs/project/m2-exit-evidence.md). **M3 — Fault
+Tolerance and Flow** is active under its
+[kickoff gate](docs/project/m3-kickoff-gate.md); implementation remains behind
+the named policy, persistence, listener, compiled-plan, and flow decisions.
 
 Start with the [documentation index](docs/README.md) and
 [continuous delivery roadmap](docs/roadmap.md). The M5-M14 full-parity program

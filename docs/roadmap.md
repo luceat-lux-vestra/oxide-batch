@@ -5,7 +5,7 @@
 **Program decision:** M5-M14 is accepted by RFC-0001. RFC-0005 and RFC-0009
 remain evidence gates for their specific architectures.
 
-**Last reviewed:** 2026-07-30
+**Last reviewed:** 2026-07-31
 
 Milestones are capability and evidence gates, not calendar promises. M0-M4
 record accepted history and current work. The continuous M5-M14 program is
@@ -96,7 +96,11 @@ See the [M2 kickoff gate](project/m2-kickoff-gate.md).
 
 ## M3 — Fault Tolerance and Flow
 
-**Status:** Planned under the accepted near-term program
+**Status:** Active (2026-07-31)
+
+The decision gates, dependency-ordered workstreams, architecture constraints,
+and definition of done are recorded in the
+[M3 kickoff gate](project/m3-kickoff-gate.md).
 
 **Objective:** express deterministic multi-step control flow and bounded
 retry/skip/rollback behavior.

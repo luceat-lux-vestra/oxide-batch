@@ -50,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   restart/conformance evidence, and executable setup, transaction-guarantee,
   crash/recovery, backup, and migration operations documentation for the M2
   exit gate.
+- An active M3 kickoff gate with explicit fault-policy, persistence, listener,
+  compiled-plan, flow-decision, migration, resource, and evidence boundaries
+  plus dependency-ordered delivery workstreams.
 - M0 implementation-readiness plan, M0–M5 roadmap, decision records, and
   product, compatibility, architecture, engineering, security, operations, and
   release policy set.

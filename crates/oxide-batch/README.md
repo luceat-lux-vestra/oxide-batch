@@ -7,7 +7,9 @@ a restart-oriented batch processing framework for Rust inspired by Spring Batch.
 > PostgreSQL metadata adapter, deterministic M2 chunk orchestration, and atomic
 > enlisted PostgreSQL chunk commits, definition-guarded durable restart, and
 > audited recovery decisions. M2 process-kill crash/restart and conformance
-> evidence is complete, but no production-ready runtime has been released.
+> evidence is complete. M3 fault tolerance and flow is active at its
+> kickoff/design gate, but no M3 runtime capability or production-ready runtime
+> has been released.
 
 The facade owns validated job and step names, opaque instance/execution IDs,
 typed and value-redacted job parameters, canonical job-instance keys, lifecycle
