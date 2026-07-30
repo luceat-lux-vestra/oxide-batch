@@ -89,6 +89,15 @@ async fn remove_contract_rows(url: &str) -> Result<(), sqlx::Error> {
 async fn remove_job_rows(url: &str, job_name: &str) -> Result<(), sqlx::Error> {
     let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
     sqlx::query(
+        "DELETE FROM oxide_batch.ob_recovery_decision WHERE job_execution_id IN (\
+         SELECT execution.id FROM oxide_batch.ob_job_execution execution \
+         JOIN oxide_batch.ob_job_instance instance ON instance.id = execution.job_instance_id \
+         WHERE instance.job_name = $1)",
+    )
+    .bind(job_name)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
         "DELETE FROM oxide_batch.ob_step_execution WHERE job_execution_id IN (\
          SELECT execution.id FROM oxide_batch.ob_job_execution execution \
          JOIN oxide_batch.ob_job_instance instance ON instance.id = execution.job_instance_id \
