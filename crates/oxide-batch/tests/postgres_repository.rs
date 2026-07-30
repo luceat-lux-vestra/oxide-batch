@@ -973,7 +973,7 @@ fn writer_failure_rolls_back_business_and_checkpoint() -> Result<(), Box<dyn Err
         remove_job_rows(&runtime_url, JOB).await?;
         let repository = PostgresJobRepository::connect(
             plaintext_config(runtime_url.clone())?,
-            Arc::new(FixedClock(UNIX_EPOCH + Duration::from_mins(10))),
+            Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(500))),
         )
         .await?;
 
