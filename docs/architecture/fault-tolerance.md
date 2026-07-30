@@ -265,3 +265,10 @@ Implementation issues must provide:
 - crash tests before/after reservation, rollback, skip callback, and commit;
 - schema-v1-to-v2, corruption, newer-version, backup, and restore evidence;
 - bounded-state and no-item-value disclosure tests.
+
+The runtime-neutral policy, classifier, backoff, and listener contracts of this
+document are implemented and evidenced by the
+[M3 fault-tolerance and listener contract evidence](../project/m3-fault-contract-evidence.md).
+Chunk integration, durable reservation, schema 2, and manifest fingerprint
+input remain owned by the dependent M3 workstreams, so the ledger rows stay
+`Planned` until those land.

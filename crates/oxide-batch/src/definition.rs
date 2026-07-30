@@ -181,6 +181,11 @@ definition_token!(
     DefinitionTokenKind::Component,
     "An application-owned revision token for one opaque executable component."
 );
+definition_token!(
+    ClassifierRevision,
+    DefinitionTokenKind::Classifier,
+    "An application-owned revision token for one bounded fault classifier."
+);
 
 /// Component revisions for a one-step chunk definition.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -451,6 +456,8 @@ pub enum DefinitionTokenKind {
     Component,
     /// Directed compatibility edge key.
     Upgrade,
+    /// Bounded fault-classifier revision.
+    Classifier,
 }
 
 /// Failure to construct a bounded restart definition.

@@ -73,6 +73,7 @@ decisions own the normative detail.
 - [M2 durable chunk and restart exit evidence](project/m2-exit-evidence.md)
 - [M3 fault tolerance and flow kickoff gate](project/m3-kickoff-gate.md)
 - [M3 fault tolerance and flow design-gate evidence](project/m3-design-gate-evidence.md)
+- [M3 fault-tolerance and listener contract evidence](project/m3-fault-contract-evidence.md)
 - [Historical M0 decision register](product/open-decisions.md)
 
 Historical gates are preserved as records of their date. Later decisions link
