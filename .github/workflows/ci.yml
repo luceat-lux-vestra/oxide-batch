@@ -155,22 +155,26 @@ jobs:
             -- --nocapture --test-threads=1
           cargo test -p oxide-batch --features postgres \
             --test postgres_repository \
-            concurrent_identical_launches_create_one_active_execution \
+            concurrent_launch_creates_single_instance \
             -- --nocapture --test-threads=1
           cargo test -p oxide-batch --features postgres \
             --test postgres_repository \
-            postgres_chunk_commit_and_rollback_are_atomic \
+            committed_chunk_advances_checkpoint \
             -- --nocapture --test-threads=1
           cargo test -p oxide-batch --features postgres \
             --test postgres_repository \
-            postgres_chunk_conflict_rolls_back_losing_business_write \
+            writer_failure_rolls_back_business_and_checkpoint \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            optimistic_conflict_has_one_winner \
             -- --nocapture --test-threads=1
 
       - name: Verify disconnect and schema-version classifications
         run: |
           cargo test -p oxide-batch --features postgres \
             --test postgres_repository \
-            disconnected_transaction_has_unknown_commit_and_pool_recovers \
+            disconnect_during_commit_never_guesses_outcome \
             -- --nocapture --test-threads=1
           cargo test -p oxide-batch --features postgres \
             --test postgres_repository \
@@ -180,3 +184,9 @@ jobs:
             --test postgres_repository \
             newer_schema_is_rejected_without_guessing_compatibility \
             -- --nocapture --test-threads=1
+
+      - name: Run process-kill crash and restart matrix
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_crash_recovery
+          -- --nocapture --test-threads=1

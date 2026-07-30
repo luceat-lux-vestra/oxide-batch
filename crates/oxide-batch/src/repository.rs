@@ -369,7 +369,7 @@ impl fmt::Debug for RecoveryRequest {
 }
 
 /// One append-only recovery audit record.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct RecoveryDecision {
     job_execution_id: JobExecutionId,
     execution_version: ExecutionVersion,
@@ -451,6 +451,22 @@ impl RecoveryDecision {
     #[must_use]
     pub const fn decided_at(&self) -> SystemTime {
         self.decided_at
+    }
+}
+
+impl fmt::Debug for RecoveryDecision {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RecoveryDecision")
+            .field("job_execution_id", &self.job_execution_id)
+            .field("execution_version", &self.execution_version)
+            .field("prior_status", &self.prior_status)
+            .field("resulting_status", &self.resulting_status)
+            .field("reason_code", &self.reason_code)
+            .field("operator_reference", &self.operator_reference)
+            .field("evidence_digest", &"<redacted>")
+            .field("decided_at", &self.decided_at)
+            .finish()
     }
 }
 

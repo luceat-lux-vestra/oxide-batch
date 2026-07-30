@@ -36,8 +36,8 @@ pub const MATRIX_SCENARIOS: &[(&str, &str)] = &[
     ),
     ("STEP-STATUS-001", "exit_status_does_not_forge_batch_status"),
     ("CHUNK-COMMIT-001", "committed_chunk_advances_checkpoint"),
-    ("CHUNK-ROLLBACK-001", "rolled_back_chunk_replays"),
-    ("RESTART-001", "restart_resumes_latest_committed_checkpoint"),
+    ("CHUNK-ROLLBACK-001", "crash_before_commit_replays_chunk"),
+    ("RESTART-001", "crash_after_commit_does_not_replay_chunk"),
     (
         "JOB-CONCURRENCY-001",
         "concurrent_launch_creates_single_instance",

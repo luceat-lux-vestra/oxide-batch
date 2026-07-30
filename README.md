@@ -7,9 +7,9 @@ OxideBatch is an early-stage Rust-native framework for reliable, restartable
 batch processing, inspired by Spring Batch.
 
 > [!IMPORTANT]
-> OxideBatch has completed its M1 executable kernel and its first PostgreSQL
-> metadata adapter. M2 development is still adding chunk transactions and
-> durable restart; no production-ready runtime has been released.
+> OxideBatch has completed the M1 executable kernel and M2 durable PostgreSQL
+> chunk/restart implementation gate. Compatibility rows remain unreleased
+> `Implemented` evidence, and no production-ready runtime has been released.
 
 ## Project goals
 
@@ -39,11 +39,11 @@ planned multi-crate strategy.
 
 ## Status
 
-**M0 — Foundation** and **M1 — Executable Kernel** are complete.
-**M2 — Durable Chunk and Restart** is active: the PostgreSQL schema and
-repository are implemented, while chunk processing, transaction/checkpoint
-boundaries, and restart after process failure are being delivered through the
-[M2 kickoff gate](docs/project/m2-kickoff-gate.md).
+**M0 — Foundation**, **M1 — Executable Kernel**, and
+**M2 — Durable Chunk and Restart** are complete. M2 includes the PostgreSQL
+schema and repository, atomic enlisted chunks, definition-guarded restart,
+audited recovery, and separate-process pre/post-commit crash evidence recorded
+in the [M2 exit record](docs/project/m2-exit-evidence.md).
 
 Start with the [documentation index](docs/README.md) and
 [continuous delivery roadmap](docs/roadmap.md). The M5-M14 full-parity program

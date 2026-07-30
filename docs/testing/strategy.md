@@ -67,6 +67,11 @@ For each chunk and tasklet lifecycle, inject failure:
 Expected metadata, replay, counters, exit status, and operator action are
 asserted for every point.
 
+M2 pre/post-commit crash evidence runs the worker as a separate OS process and
+terminates through `process::exit`, so Rust transaction and pool destructors do
+not supply the rollback behavior under test. A new process inspects PostgreSQL,
+records the recovery decision, and resumes from the durable checkpoint.
+
 ## Quality gates by milestone
 
 - M1: unit, property, compile-fail, in-memory contract, documentation.

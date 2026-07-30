@@ -7,9 +7,9 @@
 **Date:** 2026-07-30
 
 This record maps the sixth M2 workstream's exit criteria to definition-guarded
-restart selection and audited PostgreSQL recovery. It does not claim that the
-M2 crash matrix, release conformance slice, recovery runbook, or milestone exit
-gate is complete; issue #45 owns those results.
+restart selection and audited PostgreSQL recovery. The subsequent
+[M2 exit record](m2-exit-evidence.md) supplies the process-kill crash matrix,
+release conformance slice, recovery runbook, and milestone decision.
 
 | Exit criterion | Evidence |
 | --- | --- |
@@ -53,6 +53,6 @@ execution remains a CI-required result rather than a local claim.
 - M2 exposes the correctness-bearing repository operation and inspection
   history, not the M4/M7 `JobOperator`, CLI, abandonment workflow for already
   finished work, pagination, or general recovery service.
-- Issue #45 must still execute crash injection around every commit phase, run
-  the PostgreSQL 15/18 release gate, publish setup/recovery operations, and
-  record the M2 exit decision.
+- Issue #45 executes the process-kill commit-boundary matrix, PostgreSQL 15/18
+  release gate, setup/recovery operations, and M2 exit decision in the
+  [M2 exit record](m2-exit-evidence.md).

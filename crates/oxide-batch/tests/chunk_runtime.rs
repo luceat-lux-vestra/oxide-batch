@@ -394,53 +394,69 @@ async fn empty_input_completes_without_committed_or_rolled_back_counts() {
     );
 }
 
+async fn assert_component_error_rolls_back(
+    reader_boundary: Boundary,
+    processor_boundary: Boundary,
+    writer_boundary: Boundary,
+    expected: ChunkFailure,
+) {
+    let (mut step, _batches, _completions, evidence) = step(
+        Reader::new([1]).with_boundary(reader_boundary),
+        Processor {
+            boundary: processor_boundary,
+            filter: None,
+        },
+        writer_boundary,
+        Boundary::Normal,
+        None,
+    );
+    let (_source, stop) = StopSource::new();
+
+    let report = step.execute(&stop).await;
+
+    assert_eq!(report.outcome(), ChunkExecutionOutcome::Failed(expected));
+    assert_eq!(report.committed_counts(), ChunkCounts::default());
+    assert_eq!(report.rolled_back_chunks(), ChunkCount::new(1));
+    assert!(
+        evidence
+            .commits
+            .lock()
+            .expect("commit evidence lock poisoned")
+            .is_empty()
+    );
+}
+
 #[tokio::test]
-async fn component_errors_roll_back_without_publishing_counts() {
-    for (reader_boundary, processor_boundary, writer_boundary, expected) in [
-        (
-            Boundary::Error,
-            Boundary::Normal,
-            Boundary::Normal,
-            ChunkFailure::Reader,
-        ),
-        (
-            Boundary::Normal,
-            Boundary::Error,
-            Boundary::Normal,
-            ChunkFailure::Processor,
-        ),
-        (
-            Boundary::Normal,
-            Boundary::Normal,
-            Boundary::Error,
-            ChunkFailure::Writer,
-        ),
-    ] {
-        let (mut step, _batches, _completions, evidence) = step(
-            Reader::new([1]).with_boundary(reader_boundary),
-            Processor {
-                boundary: processor_boundary,
-                filter: None,
-            },
-            writer_boundary,
-            Boundary::Normal,
-            None,
-        );
-        let (_source, stop) = StopSource::new();
+async fn reader_failure_preserves_checkpoint() {
+    assert_component_error_rolls_back(
+        Boundary::Error,
+        Boundary::Normal,
+        Boundary::Normal,
+        ChunkFailure::Reader,
+    )
+    .await;
+}
 
-        let report = step.execute(&stop).await;
+#[tokio::test]
+async fn processor_failure_rolls_back_chunk() {
+    assert_component_error_rolls_back(
+        Boundary::Normal,
+        Boundary::Error,
+        Boundary::Normal,
+        ChunkFailure::Processor,
+    )
+    .await;
+}
 
-        assert_eq!(report.outcome(), ChunkExecutionOutcome::Failed(expected));
-        assert_eq!(report.committed_counts(), ChunkCounts::default());
-        assert_eq!(report.rolled_back_chunks(), ChunkCount::new(1));
-        assert!(
-            evidence
-                .commits
-                .lock()
-                .expect("commit evidence lock poisoned")
-                .is_empty()
-        );
-    }
+#[tokio::test]
+async fn writer_failure_rolls_back_open_chunk() {
+    assert_component_error_rolls_back(
+        Boundary::Normal,
+        Boundary::Normal,
+        Boundary::Error,
+        ChunkFailure::Writer,
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -486,7 +502,7 @@ async fn component_panics_are_typed_and_payload_redacted() {
 }
 
 #[tokio::test]
-async fn stop_during_open_chunk_rolls_back_partial_progress() {
+async fn stop_during_chunk_uses_commit_boundary() {
     let (mut step, _batches, _completions, evidence) = step(
         Reader::new([1]).with_boundary(Boundary::Stop),
         Processor::normal(),
@@ -624,7 +640,7 @@ impl ChunkListener for PanickingListener {
 }
 
 #[tokio::test]
-async fn chunk_listeners_nest_and_after_failure_retains_commit() {
+async fn listener_failure_preserves_committed_work() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (step, _batches, _completions, _evidence) = step(
         Reader::new([1]),

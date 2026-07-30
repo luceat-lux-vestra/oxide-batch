@@ -174,6 +174,9 @@ fn audited_abandon_makes_an_orphaned_instance_terminal() -> Result<(), Box<dyn E
         abandoned.execution().metadata().status(),
         BatchStatus::Abandoned
     );
+    let diagnostic = format!("{:?}", abandoned.decision());
+    assert!(diagnostic.contains("ORPHAN_CONFIRMED"));
+    assert!(!diagnostic.contains("153, 153"));
 
     let mut restart = block_on(repository.begin())?;
     assert_eq!(

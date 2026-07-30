@@ -56,7 +56,7 @@ claim.
 
 ## M2 — Durable Chunk and Restart
 
-**Status:** Active (2026-07-29)
+**Status:** Complete (2026-07-30)
 
 **Objective:** resume a PostgreSQL-backed chunk job from the last committed
 checkpoint after process failure without corrupting metadata.
@@ -88,6 +88,9 @@ recovery, and M2 exit record.
 
 **Release implication:** durable PostgreSQL capability remains pre-1.0 and is
 claimed only for supported matrix rows.
+
+**Exit evidence:** [M2 durable chunk and restart exit
+evidence](project/m2-exit-evidence.md).
 
 See the [M2 kickoff gate](project/m2-kickoff-gate.md).
 
