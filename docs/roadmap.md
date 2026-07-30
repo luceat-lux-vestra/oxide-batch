@@ -100,7 +100,9 @@ See the [M2 kickoff gate](project/m2-kickoff-gate.md).
 
 The decision gates, dependency-ordered workstreams, architecture constraints,
 and definition of done are recorded in the
-[M3 kickoff gate](project/m3-kickoff-gate.md).
+[M3 kickoff gate](project/m3-kickoff-gate.md). The fault-tolerance, listener,
+compiled-plan, flow, schema, migration, and evidence decisions are closed by
+the [M3 design-gate record](project/m3-design-gate-evidence.md).
 
 **Objective:** express deterministic multi-step control flow and bounded
 retry/skip/rollback behavior.

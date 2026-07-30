@@ -150,6 +150,12 @@ source/target versions, application compatibility, lock/downtime expectations,
 backup and restore commands, invariants, canary queries, rollback, and recovery
 from every non-transactional phase.
 
+The accepted, unreleased schema-2 design is documented in
+[fault-tolerance and flow migration](migrations/0002-fault-tolerance-and-flow.md).
+It requires a quiesced transactional schema-1-to-2 upgrade, supports no mixed
+schema-1/schema-2 writers, leaves format-1 manifests byte-identical, and uses
+verified backup restore rather than destructive reverse SQL.
+
 ### Schema-version lifecycle and rolling operation
 
 Each adapter documents:

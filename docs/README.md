@@ -25,9 +25,11 @@ decisions own the normative detail.
 1. [Execution semantics](compatibility/execution-semantics.md)
 2. [Execution-plan architecture](architecture/execution-plan.md)
 3. [Item-processing model](architecture/item-processing-model.md)
-4. [Performance and capacity plan](engineering/performance-plan.md)
-5. [Async execution ADR](architecture/decisions/0002-execution-model.md)
-6. relevant roadmap and conformance rows
+4. [M3 fault-tolerance contract](architecture/fault-tolerance.md)
+5. [M3 basic-flow contract](architecture/basic-flow.md)
+6. [Performance and capacity plan](engineering/performance-plan.md)
+7. [Async execution ADR](architecture/decisions/0002-execution-model.md)
+8. relevant roadmap and conformance rows
 
 ### Repository and integration implementers
 
@@ -70,6 +72,7 @@ decisions own the normative detail.
 - [M2 durable restart and recovery evidence](project/m2-durable-restart-evidence.md)
 - [M2 durable chunk and restart exit evidence](project/m2-exit-evidence.md)
 - [M3 fault tolerance and flow kickoff gate](project/m3-kickoff-gate.md)
+- [M3 fault tolerance and flow design-gate evidence](project/m3-design-gate-evidence.md)
 - [Historical M0 decision register](product/open-decisions.md)
 
 Historical gates are preserved as records of their date. Later decisions link
@@ -98,6 +101,8 @@ to them and record supersession; they do not rewrite history.
 - [Architecture overview](architecture/overview.md)
 - [Execution-plan architecture](architecture/execution-plan.md)
 - [Item-processing model](architecture/item-processing-model.md)
+- [M3 fault-tolerance and listener contract](architecture/fault-tolerance.md)
+- [M3 basic flow and start-control contract](architecture/basic-flow.md)
 - [Repository and transaction model](architecture/repository-and-transaction-model.md)
 - [Integration model](architecture/integration-model.md)
 - [Distributed execution](architecture/distributed-execution.md)
@@ -129,6 +134,7 @@ to them and record supersession; they do not rewrite history.
 - [Crash, restart, and recovery runbook](operations/crash-restart-and-recovery.md)
 - [Metadata migration-guide template](operations/migration-guide-template.md)
 - [Schema-v1 initial metadata migration](operations/migrations/0001-initial-metadata.md)
+- [Schema-v2 fault-tolerance and flow migration](operations/migrations/0002-fault-tolerance-and-flow.md)
 - [Observability contract](operations/observability-contract.md)
 - [Control-plane boundary](operations/control-plane-boundary.md)
 

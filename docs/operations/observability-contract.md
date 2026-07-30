@@ -77,6 +77,32 @@ guessing. Completion callbacks and after-listeners run after the committed
 event and cannot undo it. Event sink failure or panic remains isolated from
 execution correctness.
 
+### M3 fault-tolerance and flow events
+
+M3 adds:
+
+- `retry.reserved`, after the retry reservation commits;
+- `retry.backoff_started` and `retry.backoff_cancelled`;
+- `retry.exhausted`, after exhaustion is durably classified;
+- `item.skipped`, only after the accepting chunk commits;
+- `fault.rollback_committed` and `fault.no_rollback_committed`;
+- `flow.decision_committed`, after result and target commit;
+- `flow.completed_step_reused`;
+- `step.start_limit_exceeded`.
+
+Safe fields are fault phase, stable failure category, retry ordinal, configured
+limit class, backoff duration, skip phase, aggregate numeric counts, source
+node kind, target kind, and existing opaque execution correlation. Events may
+include logical node IDs in spans/logs under the same bounded-name policy as
+step names. They do not include item/record identifiers, error text,
+parameters, contexts, retry-key/input digests, policy private state, decider
+private state, or transition patterns.
+
+Job/step/node names, retry ordinals, IDs, and exit codes are not metric labels.
+Metric candidates remain bounded enums such as phase, category, outcome, and
+event name. A crash may lose or duplicate telemetry after a durable decision;
+repository counters and flow-decision rows remain authoritative.
+
 ## Logs
 
 - Logs use stable event names plus human-readable messages.

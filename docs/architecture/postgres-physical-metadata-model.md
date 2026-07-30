@@ -9,6 +9,68 @@ This model defines the first durable repository. The immutable released DDL is
 under `tests/fixtures/postgres/design-gate/` remains pre-release design evidence
 and is not a supported migration source.
 
+## Accepted schema-2 target
+
+Schema 2 is accepted for M3 but is not released or implemented until issue #62
+promotes immutable migration SQL. Its version-specific operational contract is
+the [fault-tolerance and flow migration](../operations/migrations/0002-fault-tolerance-and-flow.md).
+
+### Step-execution additions
+
+`ob_step_execution` gains:
+
+- `step_logical_id`, initially backfilled exactly from `step_name`, with
+  uniqueness per job execution;
+- non-negative read/process/write retry counts;
+- non-negative read/process/write skip counts;
+- a non-negative no-rollback count;
+- fault-state format, schema, schema version, object-shaped canonical payload
+  bounded to 64 KiB, and a 32-byte checksum.
+
+The execution failure-category constraint remains backward-compatible and adds
+`OPTIMISTIC_CONFLICT`, `TIMEOUT`, `UNSUPPORTED_CAPABILITY`, and
+`UNKNOWN_COMMIT`.
+
+The empty fault state contains no unresolved retry key. A non-empty state
+contains at most 256 digest-sorted entries containing only phase, category,
+retry ordinal, policy revision, checkpoint digest, and retry-key digest as
+accepted by the
+[fault-tolerance contract](fault-tolerance.md). Unknown versions, checksum
+mismatch, invalid values, or inconsistent count/limit state fail closed before
+user work.
+
+### `ob_flow_decision`
+
+One append-only row records a selected M3 transition.
+
+- primary key: positive `id`;
+- foreign keys: job execution, optional source step execution, and optional
+  reused prior decision, all restricted on delete;
+- unique: `(job_execution_id, sequence)` and
+  `(job_execution_id, source_node_id)`;
+- checked values: positive sequence, 1-to-128-byte source/target logical IDs,
+  1-to-64-byte observed exit outcome, transition and terminal categories,
+  32-byte plan fingerprint and input digest, and facade-clock timestamp;
+- ownership: the flow runtime appends after the source result is durable and
+  before starting the selected target.
+
+M3 graphs are acyclic, so one source-node visit per job execution is an
+invariant. The record contains no parameter/context/item value, decider private
+state, error text, endpoint, credential, or SQL.
+
+### Schema-2 named queries
+
+| Query ID | Purpose and atomic rule |
+| --- | --- |
+| `FAULT-RESERVE-001` | Step CAS reserves one retry ordinal and advances one phase retry count after known rollback |
+| `FAULT-COMMIT-001` | Existing chunk CAS commits skip/no-rollback counts and clears resolved fault state with business progress |
+| `STEP-START-001` | Count starts for one job instance/logical step and create the next step execution in one transaction |
+| `FLOW-APPEND-001` | Append one validated transition/decider result before target start |
+| `FLOW-RESTART-001` | Read ordered decisions and reusable completed-step outcomes for one instance and plan fingerprint |
+
+Implementation must publish supporting index plans on realistic history before
+schema 2 is released.
+
 ## Namespace, encodings, and common rules
 
 M2 uses the fixed `oxide_batch` schema. Configurable identifiers are deferred

@@ -20,6 +20,8 @@ chat, prompt, issue, pull-request description, or report.
 | Architecture layers and dependency direction | [Architecture overview](../architecture/overview.md) |
 | Definitions and compiled plans | [Execution-plan architecture](../architecture/execution-plan.md) |
 | Item components and chunk lifecycle | [Item-processing model](../architecture/item-processing-model.md) |
+| M3 retry, skip, rollback, backoff, and item/retry/skip listeners | [M3 fault-tolerance contract](../architecture/fault-tolerance.md) |
+| M3 sequential/conditional flow, deciders, and start controls | [M3 basic-flow contract](../architecture/basic-flow.md) |
 | Repository/transaction ports and capabilities | [Repository and transaction model](../architecture/repository-and-transaction-model.md) |
 | Integrations and support tiers | [Integration model](../architecture/integration-model.md) |
 | Distributed execution/protocol semantics | [Distributed execution](../architecture/distributed-execution.md) |

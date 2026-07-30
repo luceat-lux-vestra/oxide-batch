@@ -137,16 +137,39 @@ behavior.
 
 ## Retry, skip, rollback, and repeat
 
-- Retry is bounded by typed policy and preserves deterministic attempt state
-  across restart where the row requires it.
-- Backoff uses monotonic time, is injectable, and is cancellable.
-- Skip records a deliberate non-completion and durable counter at the specified
-  commit boundary.
-- Rollback classification uses stable error categories, not strings.
-- No-rollback cannot advance a checkpoint past an effect whose outcome is not
-  compatible with the selected delivery mode.
+- Retry classification receives stable phase/category data, never error text.
+  M3 durably reserves each re-invocation after a known rollback, so restart
+  cannot exceed the configured retry budget.
+- Backoff uses injected monotonic time, deterministic finite arithmetic, and
+  cooperative cancellation. A stop during backoff consumes an already durable
+  reservation and invokes no component.
+- One aggregate skip limit applies across separately durable read, process, and
+  write counts. The skip after the limit fails. A skip and its callback become
+  authoritative only with the accepting chunk commit.
+- No-rollback is capability-scoped. It cannot silently discard an item,
+  preserve an ambiguous effect, or advance a checkpoint beyond the selected
+  delivery guarantee.
 - Completion/repeat policies are bounded. Adaptive decisions are persisted
   when needed for deterministic restart.
+
+The exact M3 policy, listener, durable-state, and fingerprint rules are owned
+by the [fault-tolerance contract](../architecture/fault-tolerance.md).
+
+## Basic flow and start controls
+
+M3 sequential and conditional flow is a finite acyclic compiled graph.
+Transitions match bounded step exit outcomes by deterministic specificity; an
+ambiguous definition is rejected and an unmatched outcome fails rather than
+choosing registration order.
+
+The selected transition or decider result commits before the target starts.
+Restart reuses a matching committed decision and a previously completed step
+unless `allow_start_if_complete` explicitly permits re-execution. Step start
+limits are checked atomically across the job instance and stable logical step
+ID. Entering `STARTING` consumes one start even if no user work follows.
+
+The exact M3 graph, manifest, decision, restart, and start-control rules are
+owned by the [basic-flow contract](../architecture/basic-flow.md).
 
 ## Listener and event semantics
 
@@ -162,6 +185,11 @@ boundary as an error. Exact deviations from Spring Batch are ledgered.
 
 Telemetry observes committed decisions and may be duplicated or lost; it never
 changes execution state.
+
+M3 read, process, write, retry, and skip callbacks follow the ordering and
+commit-relative rules in the
+[fault-tolerance contract](../architecture/fault-tolerance.md). Listener
+failure and panic are not themselves retryable or skippable in the M3 slice.
 
 ## Local concurrency
 
