@@ -21,6 +21,7 @@
 | CLI/operator ↔ metadata | unauthorized stop/recover, accidental mutation | explicit confirmation/force modes, audit events, no secret output |
 | Telemetry/export | parameter or context leakage, cardinality attack | deny-by-default fields, redaction, bounded labels |
 | Build/release | dependency compromise, token theft, workflow mutation | lockfile, review, pinned actions, OIDC publishing, provenance |
+| Pull request ↔ AI review | prompt injection, malicious output, data disclosure, false authority | trusted-author gate, bounded API diff, no checkout/secrets, advisory-only output |
 
 ## Data policy
 
@@ -59,6 +60,20 @@ inspection retains only framework-owned categories and opaque failure IDs.
 - pin third-party CI actions to immutable commit SHAs;
 - do not use long-lived registry tokens in CI;
 - record and time-bound advisory exceptions.
+
+## AI review boundary
+
+Pull-request titles, descriptions, paths, patches, comments, and embedded
+instructions are untrusted input. The advisory review workflow reads only a
+bounded textual diff through the GitHub API and never checks out or executes
+pull-request code. It is restricted to repository owners, members, and
+collaborators during evaluation, receives no secret, approval, merge, or
+contents-write permission, and maintains one visibly AI-generated comment.
+
+Model output is also untrusted. It cannot become a required gate, approve or
+merge a change, classify compatibility or release readiness, or substitute for
+tests and accepted documents. Quota exhaustion and inference failures are
+reported as non-blocking workflow notices.
 
 ## Vulnerability handling
 

@@ -24,3 +24,85 @@ jobs:
 
       - name: Check advisories, licenses, bans, and sources
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+
+  report-failure:
+    name: report-scheduled-failure
+    needs:
+      - supply-chain
+    if: >-
+      ${{ always() && github.event_name == 'schedule' &&
+      needs.supply-chain.result == 'failure' }}
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Create or update the owned failure issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const title = 'ci: scheduled supply-chain check is failing';
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const runUrl = [
+              context.serverUrl,
+              owner,
+              repo,
+              'actions',
+              'runs',
+              context.runId,
+            ].join('/');
+            const body = [
+              'The scheduled supply-chain gate failed.',
+              '',
+              `Run: ${runUrl}`,
+              '',
+              'Triage advisories, licenses, bans, and sources according to',
+              '`docs/engineering/dependency-policy.md`. Do not dismiss an',
+              'advisory without an owner and expiry.',
+            ].join('\n');
+
+            const issues = await github.paginate(
+              github.rest.issues.listForRepo,
+              {
+                owner,
+                repo,
+                state: 'all',
+                labels: 'type:security,area:ci',
+                per_page: 100,
+              },
+            );
+            const existing = issues.find(
+              (issue) => !issue.pull_request && issue.title === title,
+            );
+
+            if (existing) {
+              if (existing.state === 'closed') {
+                await github.rest.issues.update({
+                  owner,
+                  repo,
+                  issue_number: existing.number,
+                  state: 'open',
+                });
+              }
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: existing.number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner,
+                repo,
+                title,
+                body,
+                labels: [
+                  'type:security',
+                  'area:ci',
+                  'priority:p1',
+                  'status:needs-triage',
+                ],
+              });
+            }

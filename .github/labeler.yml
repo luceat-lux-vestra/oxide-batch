@@ -1,0 +1,82 @@
+changed-files-labels-limit: 10
+max-files-changed: 100
+
+area:ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/**"
+          - "deny.toml"
+          - "rust-toolchain.toml"
+          - "rustfmt.toml"
+          - "xtask/**"
+
+area:core:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/oxide-batch/src/domain/**"
+          - "crates/oxide-batch/src/definition.rs"
+          - "crates/oxide-batch/src/lib.rs"
+          - "crates/oxide-batch/src/state.rs"
+
+area:runtime:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/oxide-batch/src/chunk.rs"
+          - "crates/oxide-batch/src/chunk_runtime.rs"
+          - "crates/oxide-batch/src/diagnostics.rs"
+          - "crates/oxide-batch/src/listener.rs"
+          - "crates/oxide-batch/src/runtime.rs"
+
+area:repository:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/oxide-batch/src/repository.rs"
+          - "crates/oxide-batch/src/repository/**"
+          - "crates/oxide-batch/tests/repository.rs"
+          - "crates/oxide-batch/tests/postgres_repository.rs"
+          - "docs/architecture/*repository*"
+          - "docs/operations/persistence-and-migrations.md"
+
+area:postgres:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/oxide-batch/migrations/**"
+          - "crates/oxide-batch/src/repository/postgres.rs"
+          - "crates/oxide-batch/tests/postgres_repository.rs"
+          - "docs/architecture/postgres-physical-metadata-model.md"
+          - "docs/operations/migrations/**"
+          - "tests/fixtures/postgres/**"
+
+area:compatibility:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/oxide-batch/tests/conformance/**"
+          - "crates/oxide-batch/tests/lifecycle_conformance.rs"
+          - "crates/oxide-batch/tests/lifecycle_conformance/**"
+          - "docs/compatibility/**"
+
+area:docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.md"
+
+area:governance:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "AGENTS.md"
+          - "CODE_OF_CONDUCT.md"
+          - "CONTRIBUTING.md"
+          - "GOVERNANCE.md"
+          - "SECURITY.md"
+          - "SUPPORT.md"
+          - "docs/governance/**"
+          - "docs/project/**"
+          - "docs/release/**"
+          - "docs/rfcs/**"
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/Cargo.toml"
+          - "Cargo.lock"
+          - "deny.toml"

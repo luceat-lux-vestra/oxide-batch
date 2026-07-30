@@ -52,6 +52,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Dedicated MSRV and supply-chain CI checks.
 - Repository `cargo xtask` commands for development checks and package
   verification.
+- Changed-file pull-request labeling, bounded non-authoritative AI review,
+  CodeQL workflow scanning, and owned scheduled supply-chain failure reporting.
+- Protected-tag draft Release preparation with locked package verification,
+  CycloneDX SBOM, SHA-256 checksums, and package provenance/SBOM attestations.
 
 ### Fixed
 

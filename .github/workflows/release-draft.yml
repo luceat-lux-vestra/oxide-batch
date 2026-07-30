@@ -1,0 +1,105 @@
+name: Prepare release draft
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-draft-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: prepare-release-draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Verify tag and package
+        id: package
+        run: |
+          package_version="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "oxide-batch") | .version')"
+          test "v${package_version}" = "${GITHUB_REF_NAME}"
+          cargo package -p oxide-batch --locked
+          cargo publish -p oxide-batch --locked --dry-run
+          crate_path="target/package/oxide-batch-${package_version}.crate"
+          test -s "${crate_path}"
+          echo "version=${package_version}" >> "${GITHUB_OUTPUT}"
+          echo "crate_path=${crate_path}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install pinned SBOM generator
+        run: cargo install cargo-cyclonedx --version 0.5.9 --locked
+
+      - name: Generate release SBOM and checksums
+        id: evidence
+        env:
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+          CRATE_PATH: ${{ steps.package.outputs.crate_path }}
+        run: |
+          sbom_name="oxide-batch-${PACKAGE_VERSION}.cdx"
+          cargo cyclonedx \
+            --manifest-path crates/oxide-batch/Cargo.toml \
+            --format json \
+            --all-features \
+            --target all \
+            --spec-version 1.5 \
+            --override-filename "${sbom_name}"
+          sbom_source="crates/oxide-batch/${sbom_name}.json"
+          sbom_path="target/package/${sbom_name}.json"
+          test -s "${sbom_source}"
+          cp "${sbom_source}" "${sbom_path}"
+          checksum_path="target/package/oxide-batch-${PACKAGE_VERSION}.sha256"
+          (
+            cd target/package
+            sha256sum \
+              "oxide-batch-${PACKAGE_VERSION}.crate" \
+              "${sbom_name}.json" \
+              > "oxide-batch-${PACKAGE_VERSION}.sha256"
+          )
+          test -s "${checksum_path}"
+          echo "sbom_path=${sbom_path}" >> "${GITHUB_OUTPUT}"
+          echo "checksum_path=${checksum_path}" >> "${GITHUB_OUTPUT}"
+
+      - name: Attest package provenance
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: ${{ steps.package.outputs.crate_path }}
+
+      - name: Attest package SBOM
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: ${{ steps.package.outputs.crate_path }}
+          sbom-path: ${{ steps.evidence.outputs.sbom_path }}
+
+      - name: Create or refresh draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+          CRATE_PATH: ${{ steps.package.outputs.crate_path }}
+          SBOM_PATH: ${{ steps.evidence.outputs.sbom_path }}
+          CHECKSUM_PATH: ${{ steps.evidence.outputs.checksum_path }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            is_draft="$(gh release view "${GITHUB_REF_NAME}" \
+              --json isDraft --jq .isDraft)"
+            test "${is_draft}" = "true"
+            gh release upload "${GITHUB_REF_NAME}" \
+              "${CRATE_PATH}" "${SBOM_PATH}" "${CHECKSUM_PATH}" \
+              --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              "${CRATE_PATH}" "${SBOM_PATH}" "${CHECKSUM_PATH}" \
+              --verify-tag \
+              --draft \
+              --generate-notes \
+              --title "OxideBatch ${PACKAGE_VERSION}"
+          fi

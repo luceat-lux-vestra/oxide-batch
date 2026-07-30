@@ -57,6 +57,18 @@ public runtime release.
 - Branch deletion after merge: automatic
 - Auto-merge: enabled
 
+## Automation
+
+- Pull requests receive bounded changed-file area labels. Priority, lifecycle
+  status, and breaking-change disposition remain maintainer decisions.
+- CODEOWNERS remains the reviewer mechanism; automation does not fabricate an
+  approving reviewer for the single-maintainer repository.
+- AI review is optional advisory output for trusted contributors, is not a
+  required check, and has no approval or merge authority.
+- Scheduled supply-chain failures create or update one owned issue.
+- Protected version tags prepare draft Releases. A maintainer publishes the
+  reviewed draft; no tag workflow publishes a release automatically.
+
 ## Review cadence
 
 Security and data-integrity issues take priority. Issues are not automatically

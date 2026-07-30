@@ -35,6 +35,8 @@ apply only after additional public crates are approved.
 
 - [ ] Merge the reviewed release PR.
 - [ ] Create the protected, signed `v<version>` tag from the reviewed commit.
+- [ ] Review the tag-generated draft Release, `.crate`, checksum, SBOM, and
+      package attestations.
 - [ ] Publish the GitHub Release with notes and migration warnings.
 - [ ] Let Trusted Publishing release crates in dependency order, facade last.
 - [ ] Do not retry a partially successful multi-crate publish blindly; inspect
