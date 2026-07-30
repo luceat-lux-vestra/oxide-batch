@@ -11,12 +11,13 @@ use futures_util::FutureExt;
 use tokio::sync::{Notify, Semaphore};
 
 use crate::{
-    BatchStatus, BoxFuture, Clock, ExecutionAttempt, ExecutionCorrelation, ExitStatus,
-    FailureCategory, FailureSummary, IdGenerator, JobExecution, JobExecutionId,
-    JobExecutionListener, JobInstance, JobInstanceKey, JobName, JobParameters, JobRepository,
-    LifecycleEvent, LifecycleEventKind, LifecycleEventSink, LifecycleTransition, ListenerContext,
-    ListenerFailure, ListenerFailureKind, ListenerPhase, RepositoryError, StepExecution,
-    StepExecutionId, StepExecutionListener, StepName,
+    BatchStatus, BoxFuture, Clock, ComponentRevision, DefinitionError, DefinitionIdentity,
+    DefinitionRevision, ExecutionAttempt, ExecutionCorrelation, ExitStatus, FailureCategory,
+    FailureSummary, IdGenerator, JobExecution, JobExecutionId, JobExecutionListener, JobInstance,
+    JobInstanceKey, JobName, JobParameters, JobRepository, LifecycleEvent, LifecycleEventKind,
+    LifecycleEventSink, LifecycleTransition, ListenerContext, ListenerFailure, ListenerFailureKind,
+    ListenerPhase, RepositoryError, StepExecution, StepExecutionId, StepExecutionListener,
+    StepName,
 };
 
 /// A dynamically dispatched, single-invocation asynchronous step body.
@@ -114,6 +115,7 @@ impl fmt::Debug for TaskletStep {
 pub struct TaskletJob {
     name: JobName,
     step: TaskletStep,
+    definition: DefinitionIdentity,
     listeners: Vec<Arc<dyn JobExecutionListener>>,
 }
 
@@ -123,18 +125,48 @@ impl fmt::Debug for TaskletJob {
             .debug_struct("TaskletJob")
             .field("name", &self.name)
             .field("step", &self.step)
+            .field("definition", &self.definition)
             .field("listener_count", &self.listeners.len())
             .finish()
     }
 }
 
 impl TaskletJob {
-    /// Constructs a single-step job.
-    #[must_use]
-    pub const fn new(name: JobName, step: TaskletStep) -> Self {
+    /// Constructs a tasklet job with explicit restart-relevant revisions.
+    ///
+    /// Applications that may durably restart a job should use this constructor
+    /// and change the component revision whenever the tasklet's durable
+    /// behavior changes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DefinitionError`] if the bounded canonical manifest cannot be
+    /// encoded.
+    pub fn new(
+        name: JobName,
+        step: TaskletStep,
+        revision: DefinitionRevision,
+        component_revision: &ComponentRevision,
+    ) -> Result<Self, DefinitionError> {
+        let definition =
+            DefinitionIdentity::tasklet(&name, step.name(), revision, component_revision)?;
+        Ok(Self {
+            name,
+            step,
+            definition,
+            listeners: Vec::new(),
+        })
+    }
+
+    pub(crate) fn from_definition_identity(
+        name: JobName,
+        step: TaskletStep,
+        definition: DefinitionIdentity,
+    ) -> Self {
         Self {
             name,
             step,
+            definition,
             listeners: Vec::new(),
         }
     }
@@ -156,6 +188,12 @@ impl TaskletJob {
     #[must_use]
     pub const fn step(&self) -> &TaskletStep {
         &self.step
+    }
+
+    /// Borrows the exact restart-relevant definition identity.
+    #[must_use]
+    pub const fn definition_identity(&self) -> &DefinitionIdentity {
+        &self.definition
     }
 }
 
@@ -602,7 +640,9 @@ impl<'a> JobLauncher<'a> {
         stop: &StopToken,
     ) -> Result<LaunchReport, LaunchError> {
         let key = JobInstanceKey::new(job.name.clone(), parameters);
-        let graph = self.create_execution_graph(&key, job.step.name()).await?;
+        let graph = self
+            .create_execution_graph(&key, job.step.name(), job.definition_identity())
+            .await?;
         self.emit_event(LifecycleEventKind::LaunchAccepted, &graph.correlation, None);
         self.emit_event(LifecycleEventKind::JobStarting, &graph.correlation, None);
         self.emit_event(LifecycleEventKind::StepStarting, &graph.correlation, None);
@@ -808,6 +848,7 @@ impl<'a> JobLauncher<'a> {
         &self,
         key: &JobInstanceKey,
         step_name: &StepName,
+        definition: &DefinitionIdentity,
     ) -> Result<CreatedExecutionGraph, LaunchError> {
         let mut unit = self.repository.begin().await?;
         let instance = unit
@@ -815,7 +856,9 @@ impl<'a> JobLauncher<'a> {
             .await?
             .instance()
             .clone();
-        let job_execution = unit.create_job_execution(instance.id()).await?;
+        let job_execution = unit
+            .create_job_execution_with_definition(instance.id(), definition)
+            .await?;
         let step_execution = unit
             .create_step_execution(job_execution.id(), step_name)
             .await?;

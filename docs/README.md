@@ -67,6 +67,7 @@ decisions own the normative detail.
 - [M2 PostgreSQL repository evidence](project/m2-postgres-repository-evidence.md)
 - [M2 deterministic chunk runtime evidence](project/m2-chunk-runtime-evidence.md)
 - [M2 PostgreSQL atomic chunk transaction evidence](project/m2-postgres-chunk-transaction-evidence.md)
+- [M2 durable restart and recovery evidence](project/m2-durable-restart-evidence.md)
 - [Historical M0 decision register](product/open-decisions.md)
 
 Historical gates are preserved as records of their date. Later decisions link

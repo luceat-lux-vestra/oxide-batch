@@ -74,6 +74,7 @@
 
 mod chunk;
 mod chunk_runtime;
+mod definition;
 mod diagnostics;
 mod domain;
 mod listener;
@@ -95,6 +96,11 @@ pub use chunk_runtime::{
     ChunkLaunchReport, ChunkListener, ChunkListenerContext, ChunkListenerError,
     ChunkListenerFailure, ChunkListenerFailureKind, ChunkListenerPhase, ChunkStep,
 };
+pub use definition::{
+    ChunkComponentRevisions, ChunkDeliveryMode, ChunkRestartContract, ComponentRevision,
+    DefinitionError, DefinitionIdentity, DefinitionRevision, DefinitionTokenKind,
+    DefinitionUpgrade, DefinitionUpgradeKey, StepDefinitionUpgrade,
+};
 pub use diagnostics::{
     DiagnosticField, EventComponent, EventSeverity, ExecutionAttempt, ExecutionCorrelation,
     LifecycleEvent, LifecycleEventKind, LifecycleEventSink, MetricLabel,
@@ -113,7 +119,9 @@ pub use listener::{
 };
 pub use repository::{
     BoxFuture, Clock, IdGenerationError, IdGenerator, InMemoryJobRepository, JobInstanceSelection,
-    JobRepository, RepositoryError, RepositoryUnitOfWork, SequentialIdGenerator, SystemClock,
+    JobRepository, RecoveryDecision, RecoveryDisposition, RecoveryField, RecoveryRequest,
+    RecoveryRequestError, RecoveryResult, RepositoryError, RepositoryUnitOfWork,
+    SequentialIdGenerator, SystemClock,
 };
 #[cfg(feature = "postgres")]
 pub use repository::{

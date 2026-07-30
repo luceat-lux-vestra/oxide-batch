@@ -3,13 +3,14 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use super::{
-    BoxFuture, Clock, IdGenerator, JobInstanceSelection, JobRepository, RepositoryError,
-    RepositoryUnitOfWork,
+    BoxFuture, Clock, IdGenerator, JobInstanceSelection, JobRepository, RecoveryDecision,
+    RecoveryRequest, RecoveryResult, RepositoryError, RepositoryUnitOfWork, recovered_execution,
 };
 use crate::{
-    BatchStatus, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion,
-    ExitStatus, IdentifierKind, JobExecution, JobExecutionId, JobInstance, JobInstanceId,
-    JobInstanceKey, LifecycleTransition, StepExecution, StepExecutionId, StepName,
+    BatchStatus, DefinitionIdentity, DefinitionRevision, DefinitionUpgrade, ExecutionCounts,
+    ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitStatus, IdentifierKind,
+    JobExecution, JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey, JobName,
+    LifecycleTransition, StepExecution, StepExecutionId, StepName,
 };
 
 /// Deterministic, process-local reference implementation of [`JobRepository`].
@@ -67,6 +68,7 @@ impl JobRepository for InMemoryJobRepository {
                 repository: self,
                 base_revision,
                 staged: snapshot,
+                definition_override: None,
             }) as Box<dyn RepositoryUnitOfWork + 'a>)
         })
     }
@@ -81,12 +83,17 @@ struct MemoryState {
     job_executions_by_instance: BTreeMap<JobInstanceId, Vec<JobExecutionId>>,
     step_executions: BTreeMap<StepExecutionId, StepExecution>,
     step_executions_by_job: BTreeMap<JobExecutionId, Vec<StepExecutionId>>,
+    recovery_decisions: BTreeMap<JobExecutionId, Vec<RecoveryDecision>>,
+    definitions: BTreeMap<(JobName, DefinitionRevision), DefinitionIdentity>,
+    execution_definitions: BTreeMap<JobExecutionId, DefinitionIdentity>,
+    definition_upgrades: BTreeMap<(JobName, [u8; 32], [u8; 32]), DefinitionUpgrade>,
 }
 
 struct InMemoryUnitOfWork<'repository> {
     repository: &'repository InMemoryJobRepository,
     base_revision: u64,
     staged: MemoryState,
+    definition_override: Option<DefinitionIdentity>,
 }
 
 impl InMemoryUnitOfWork<'_> {
@@ -117,9 +124,62 @@ impl InMemoryUnitOfWork<'_> {
             .last()
             .and_then(|id| self.staged.job_executions.get(id)))
     }
+
+    fn ensure_definition(
+        &mut self,
+        job_name: &JobName,
+        definition: &DefinitionIdentity,
+    ) -> Result<(), RepositoryError> {
+        if let Some(actual) = definition.job_name()
+            && actual != job_name
+        {
+            return Err(RepositoryError::DefinitionJobMismatch {
+                expected: job_name.clone(),
+                actual: actual.clone(),
+            });
+        }
+        let key = (job_name.clone(), definition.revision().clone());
+        if let Some(existing) = self.staged.definitions.get(&key) {
+            if existing.manifest_digest() != definition.manifest_digest() {
+                return Err(RepositoryError::DefinitionDrift {
+                    job_name: job_name.clone(),
+                    revision: definition.revision().clone(),
+                });
+            }
+            return Ok(());
+        }
+        self.staged.definitions.insert(key, definition.clone());
+        Ok(())
+    }
 }
 
 impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
+    fn register_definition_upgrade<'a>(
+        &'a mut self,
+        job_name: &'a JobName,
+        upgrade: &'a DefinitionUpgrade,
+    ) -> BoxFuture<'a, Result<(), RepositoryError>> {
+        Box::pin(async move {
+            self.ensure_definition(job_name, upgrade.from())?;
+            self.ensure_definition(job_name, upgrade.to())?;
+            let key = (
+                job_name.clone(),
+                *upgrade.from().manifest_digest(),
+                *upgrade.to().manifest_digest(),
+            );
+            if let Some(existing) = self.staged.definition_upgrades.get(&key) {
+                if existing != upgrade {
+                    return Err(RepositoryError::DefinitionUpgradeConflict {
+                        job_name: job_name.clone(),
+                    });
+                }
+                return Ok(());
+            }
+            self.staged.definition_upgrades.insert(key, upgrade.clone());
+            Ok(())
+        })
+    }
+
     fn select_or_create_job_instance<'a>(
         &'a mut self,
         key: &'a JobInstanceKey,
@@ -157,6 +217,21 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         job_instance_id: JobInstanceId,
     ) -> BoxFuture<'_, Result<JobExecution, RepositoryError>> {
         Box::pin(async move {
+            let definition = self
+                .definition_override
+                .take()
+                .unwrap_or_else(DefinitionIdentity::legacy);
+            let job_name = self
+                .staged
+                .instances_by_id
+                .get(&job_instance_id)
+                .ok_or(RepositoryError::JobInstanceNotFound {
+                    id: job_instance_id,
+                })?
+                .key()
+                .job_name()
+                .clone();
+            self.ensure_definition(&job_name, &definition)?;
             if let Some(latest) = self.latest_job_execution(job_instance_id)? {
                 match latest.metadata().status() {
                     BatchStatus::Stopped | BatchStatus::Failed => {}
@@ -178,6 +253,23 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                         });
                     }
                 }
+                let previous_definition =
+                    self.staged.execution_definitions.get(&latest.id()).ok_or(
+                        RepositoryError::IncompatibleDefinition {
+                            instance_id: job_instance_id,
+                        },
+                    )?;
+                if previous_definition.manifest_digest() != definition.manifest_digest()
+                    && !self.staged.definition_upgrades.contains_key(&(
+                        job_name,
+                        *previous_definition.manifest_digest(),
+                        *definition.manifest_digest(),
+                    ))
+                {
+                    return Err(RepositoryError::IncompatibleDefinition {
+                        instance_id: job_instance_id,
+                    });
+                }
             }
 
             let id = self.repository.ids.next_job_execution_id()?;
@@ -190,6 +282,7 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
             let execution =
                 JobExecution::new(id, job_instance_id, self.create_starting_metadata()?);
             self.staged.job_executions.insert(id, execution.clone());
+            self.staged.execution_definitions.insert(id, definition);
             self.staged
                 .job_executions_by_instance
                 .get_mut(&job_instance_id)
@@ -198,6 +291,17 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 })?
                 .push(id);
             Ok(execution)
+        })
+    }
+
+    fn create_job_execution_with_definition<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        definition: &'a DefinitionIdentity,
+    ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>> {
+        Box::pin(async move {
+            self.definition_override = Some(definition.clone());
+            self.create_job_execution(job_instance_id).await
         })
     }
 
@@ -379,6 +483,69 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .filter_map(|id| self.staged.step_executions.get(id))
                 .cloned()
                 .collect())
+        })
+    }
+
+    fn recover_job_execution<'a>(
+        &'a mut self,
+        id: JobExecutionId,
+        request: &'a RecoveryRequest,
+    ) -> BoxFuture<'a, Result<RecoveryResult, RepositoryError>> {
+        Box::pin(async move {
+            let prior = self
+                .staged
+                .job_executions
+                .get(&id)
+                .cloned()
+                .ok_or(RepositoryError::JobExecutionNotFound { id })?;
+            if self
+                .staged
+                .recovery_decisions
+                .get(&id)
+                .is_some_and(|decisions| {
+                    decisions
+                        .iter()
+                        .any(|decision| decision.execution_version() == request.expected_version())
+                })
+            {
+                return Err(RepositoryError::ConcurrentModification);
+            }
+            let decided_at = self.repository.clock.now();
+            let recovered = recovered_execution(&prior, request, decided_at)?;
+            let decision = RecoveryDecision::new(
+                id,
+                request.expected_version(),
+                prior.metadata().status(),
+                recovered.metadata().status(),
+                request.reason_code().to_owned(),
+                request.operator_reference().to_owned(),
+                *request.evidence_digest(),
+                decided_at,
+            );
+            self.staged.job_executions.insert(id, recovered.clone());
+            self.staged
+                .recovery_decisions
+                .entry(id)
+                .or_default()
+                .push(decision.clone());
+            Ok(RecoveryResult::new(recovered, decision))
+        })
+    }
+
+    fn recovery_decision(
+        &mut self,
+        id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Option<RecoveryDecision>, RepositoryError>> {
+        Box::pin(async move {
+            if !self.staged.job_executions.contains_key(&id) {
+                return Err(RepositoryError::JobExecutionNotFound { id });
+            }
+            Ok(self
+                .staged
+                .recovery_decisions
+                .get(&id)
+                .and_then(|decisions| decisions.first())
+                .cloned())
         })
     }
 

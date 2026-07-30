@@ -17,11 +17,12 @@ use clock::ManualClock;
 use futures_executor::block_on;
 use ids::{DeterministicIds, IdSequenceError};
 use oxide_batch::{
-    BatchStatus, ExecutionVersion, ExitCode, ExitStatus, FailureCategory, FailureId,
+    BatchStatus, ComponentRevision, DefinitionIdentity, DefinitionRevision, DefinitionUpgrade,
+    DefinitionUpgradeKey, ExecutionVersion, ExitCode, ExitStatus, FailureCategory, FailureId,
     FailureSummary, IdGenerationError, IdGenerator, IdentifierKind, InMemoryJobRepository,
     JobInstanceKey, JobName, JobParameter, JobParameters, JobRepository, LifecycleError,
-    LifecycleTransition, ParameterName, ParameterRole, ParameterValue, RepositoryError,
-    SequentialIdGenerator, StepName,
+    LifecycleTransition, ParameterName, ParameterRole, ParameterValue, RecoveryRequest,
+    RepositoryError, SequentialIdGenerator, StepDefinitionUpgrade, StepName,
 };
 
 fn time(second: u64) -> SystemTime {
@@ -54,6 +55,206 @@ fn instance_key() -> Result<JobInstanceKey, oxide_batch::DomainError> {
         JobName::new("repository_import")?,
         &parameters,
     ))
+}
+
+#[test]
+fn explicit_recovery_is_audited_before_restart() -> Result<(), Box<dyn Error>> {
+    let (repository, clock) = repository(time(100))?;
+    let key = instance_key()?;
+    let mut create = block_on(repository.begin())?;
+    let instance = block_on(create.select_or_create_job_instance(&key))?
+        .instance()
+        .clone();
+    let execution = block_on(create.create_job_execution(instance.id()))?;
+    block_on(create.commit())?;
+
+    let mut unknown = block_on(repository.begin())?;
+    let ambiguous = block_on(unknown.transition_job_execution(
+        execution.id(),
+        execution.version(),
+        LifecycleTransition::new(BatchStatus::Unknown, time(101)),
+    ))?;
+    block_on(unknown.commit())?;
+
+    let mut blocked = block_on(repository.begin())?;
+    assert_eq!(
+        block_on(blocked.create_job_execution(instance.id())),
+        Err(RepositoryError::ExecutionAlreadyActive {
+            instance_id: instance.id(),
+            execution_id: execution.id(),
+            status: BatchStatus::Unknown,
+        })
+    );
+    block_on(blocked.rollback())?;
+
+    clock.set(time(102));
+    let request = RecoveryRequest::mark_failed(
+        ambiguous.version(),
+        "COMMIT_INSPECTED_NOT_DURABLE",
+        "operator-correlation-42",
+        [0xA5; 32],
+        FailureCategory::PermanentInfrastructure,
+        FailureId::new(900)?,
+    )?;
+    let mut recovery = block_on(repository.begin())?;
+    let result = block_on(recovery.recover_job_execution(execution.id(), &request))?;
+    assert_eq!(result.execution().metadata().status(), BatchStatus::Failed);
+    assert_eq!(result.decision().prior_status(), BatchStatus::Unknown);
+    assert_eq!(result.decision().resulting_status(), BatchStatus::Failed);
+    assert_eq!(result.decision().decided_at(), time(102));
+    block_on(recovery.commit())?;
+
+    let mut restart = block_on(repository.begin())?;
+    let restarted = block_on(restart.create_job_execution(instance.id()))?;
+    assert_ne!(restarted.id(), execution.id());
+    block_on(restart.commit())?;
+
+    let mut inspection = block_on(repository.begin())?;
+    let decision = block_on(inspection.recovery_decision(execution.id()))?;
+    assert_eq!(decision, Some(result.decision().clone()));
+    block_on(inspection.rollback())?;
+    Ok(())
+}
+
+#[test]
+fn recovery_is_versioned_bounded_and_value_redacted() -> Result<(), Box<dyn Error>> {
+    let request = RecoveryRequest::abandon(
+        ExecutionVersion::INITIAL,
+        "ORPHAN_CONFIRMED",
+        "operator-secret-correlation",
+        [0x5A; 32],
+    )?;
+    let diagnostic = format!("{request:?}");
+    assert!(diagnostic.contains("ORPHAN_CONFIRMED"));
+    assert!(diagnostic.contains("operator-secret-correlation"));
+    assert!(!diagnostic.contains("5a5a5a"));
+    assert!(
+        RecoveryRequest::mark_failed(
+            ExecutionVersion::INITIAL,
+            " padded ",
+            "operator",
+            [0; 32],
+            FailureCategory::Invariant,
+            FailureId::new(2)?,
+        )
+        .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn audited_abandon_makes_an_orphaned_instance_terminal() -> Result<(), Box<dyn Error>> {
+    let (repository, clock) = repository(time(100))?;
+    let key = instance_key()?;
+    let mut create = block_on(repository.begin())?;
+    let instance = block_on(create.select_or_create_job_instance(&key))?
+        .instance()
+        .clone();
+    let execution = block_on(create.create_job_execution(instance.id()))?;
+    block_on(create.commit())?;
+    let mut start = block_on(repository.begin())?;
+    let started = block_on(start.transition_job_execution(
+        execution.id(),
+        execution.version(),
+        LifecycleTransition::new(BatchStatus::Started, time(101)),
+    ))?;
+    block_on(start.commit())?;
+
+    clock.set(time(102));
+    let request = RecoveryRequest::abandon(
+        started.version(),
+        "ORPHAN_CONFIRMED",
+        "operator-correlation-99",
+        [0x99; 32],
+    )?;
+    let mut recover = block_on(repository.begin())?;
+    let abandoned = block_on(recover.recover_job_execution(execution.id(), &request))?;
+    block_on(recover.commit())?;
+    assert_eq!(
+        abandoned.execution().metadata().status(),
+        BatchStatus::Abandoned
+    );
+
+    let mut restart = block_on(repository.begin())?;
+    assert_eq!(
+        block_on(restart.create_job_execution(instance.id())),
+        Err(RepositoryError::AbandonedInstance { id: instance.id() })
+    );
+    block_on(restart.rollback())?;
+    Ok(())
+}
+
+#[test]
+fn restart_definition_drift_and_direct_compatibility_are_typed() -> Result<(), Box<dyn Error>> {
+    let (repository, clock) = repository(time(100))?;
+    let key = instance_key()?;
+    let step = StepName::new("import")?;
+    let renamed_step = StepName::new("import-v2")?;
+    let v1 = DefinitionIdentity::tasklet(
+        key.job_name(),
+        &step,
+        DefinitionRevision::new("v1")?,
+        &ComponentRevision::new("tasklet-v1")?,
+    )?;
+    let drift = DefinitionIdentity::tasklet(
+        key.job_name(),
+        &step,
+        DefinitionRevision::new("v1")?,
+        &ComponentRevision::new("tasklet-v1-drifted")?,
+    )?;
+    let v2 = DefinitionIdentity::tasklet(
+        key.job_name(),
+        &renamed_step,
+        DefinitionRevision::new("v2")?,
+        &ComponentRevision::new("tasklet-v2-compatible")?,
+    )?;
+    let mut create = block_on(repository.begin())?;
+    let instance = block_on(create.select_or_create_job_instance(&key))?
+        .instance()
+        .clone();
+    let first = block_on(create.create_job_execution_with_definition(instance.id(), &v1))?;
+    block_on(create.commit())?;
+    clock.set(time(101));
+    let mut fail = block_on(repository.begin())?;
+    block_on(fail.transition_job_execution(
+        first.id(),
+        first.version(),
+        LifecycleTransition::failed(
+            time(101),
+            FailureSummary::new(FailureCategory::UserComponent, FailureId::new(700)?),
+        ),
+    ))?;
+    block_on(fail.commit())?;
+
+    let mut rejected = block_on(repository.begin())?;
+    assert!(matches!(
+        block_on(rejected.create_job_execution_with_definition(instance.id(), &drift)),
+        Err(RepositoryError::DefinitionDrift { .. })
+    ));
+    block_on(rejected.rollback())?;
+    let mut rejected = block_on(repository.begin())?;
+    assert_eq!(
+        block_on(rejected.create_job_execution_with_definition(instance.id(), &v2)),
+        Err(RepositoryError::IncompatibleDefinition {
+            instance_id: instance.id(),
+        })
+    );
+    block_on(rejected.rollback())?;
+
+    let upgrade = DefinitionUpgrade::new(
+        DefinitionUpgradeKey::new("v1-to-v2")?,
+        v1,
+        v2.clone(),
+        [StepDefinitionUpgrade::new(step, renamed_step)],
+    )?;
+    let mut register = block_on(repository.begin())?;
+    block_on(register.register_definition_upgrade(key.job_name(), &upgrade))?;
+    block_on(register.commit())?;
+    let mut restart = block_on(repository.begin())?;
+    let second = block_on(restart.create_job_execution_with_definition(instance.id(), &v2))?;
+    block_on(restart.commit())?;
+    assert_ne!(first.id(), second.id());
+    Ok(())
 }
 
 // VS-LAUNCH-001

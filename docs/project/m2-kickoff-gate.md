@@ -121,6 +121,13 @@ integration matrix are complete on merge. Their criterion mapping and handoff
 to durable restart selection are retained in the
 [M2 PostgreSQL atomic chunk transaction evidence](m2-postgres-chunk-transaction-evidence.md).
 
+Issue #44's canonical definition identities, typed drift/incompatibility
+rejections, direct byte-preserving upgrade edges, distinct restart attempts,
+committed-state inheritance, and versioned audited recovery decisions are
+complete on merge. Their criterion mapping and the remaining crash/conformance
+handoff are retained in the
+[M2 durable restart and recovery evidence](m2-durable-restart-evidence.md).
+
 ## Definition of done
 
 M2 closes only when:

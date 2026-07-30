@@ -22,11 +22,12 @@ use std::time::{Duration, UNIX_EPOCH};
 use clock::ManualClock;
 use ids::DeterministicIds;
 use oxide_batch::{
-    BatchStatus, BoxFuture, InMemoryJobRepository, JobExecutionListener, JobLauncher, JobName,
-    JobParameter, JobParameters, LifecycleEvent, LifecycleEventKind, LifecycleEventSink,
-    ListenerContext, ListenerError, ListenerFailureKind, ListenerPhase, ParameterName,
-    ParameterRole, ParameterValue, StopSource, Tasklet, TaskletContext, TaskletError,
-    TaskletExecutionOutcome, TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep,
+    BatchStatus, BoxFuture, ComponentRevision, DefinitionRevision, InMemoryJobRepository,
+    JobExecutionListener, JobLauncher, JobName, JobParameter, JobParameters, LifecycleEvent,
+    LifecycleEventKind, LifecycleEventSink, ListenerContext, ListenerError, ListenerFailureKind,
+    ListenerPhase, ParameterName, ParameterRole, ParameterValue, StopSource, Tasklet,
+    TaskletContext, TaskletError, TaskletExecutionOutcome, TaskletFailure, TaskletJob,
+    TaskletOutcome, TaskletStep,
 };
 use secrets::{SENTINEL_SECRET, assert_sentinel_absent};
 
@@ -70,7 +71,13 @@ fn job(
     for listener in step_listeners {
         step = step.with_listener(listener);
     }
-    let mut job = TaskletJob::new(JobName::new("daily_import")?, step);
+    let mut job = TaskletJob::new(
+        JobName::new("daily_import")?,
+        step,
+        DefinitionRevision::new("test-v1").expect("static definition revision is valid"),
+        &ComponentRevision::new("tasklet-v1").expect("static component revision is valid"),
+    )
+    .expect("static tasklet definition is valid");
     for listener in job_listeners {
         job = job.with_listener(listener);
     }

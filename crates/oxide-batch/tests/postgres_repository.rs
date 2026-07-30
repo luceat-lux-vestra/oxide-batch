@@ -16,14 +16,18 @@ use contract::run_repository_contract;
 use oxide_batch::{
     BatchStatus, BoxFuture, BusinessStatement, BusinessValue, CaCertificate, Checkpoint,
     ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext, ChunkCompletionError,
-    ChunkCompletionOutcome, ChunkCount, ChunkCounts, ChunkExecutionOutcome, ChunkJob, ChunkSize,
-    ChunkStep, ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager, Clock,
-    ExecutionContext, ItemProcessor, ItemReader, ItemWriter, JobInstanceKey, JobLauncher, JobName,
-    JobParameters, JobRepository, LifecycleTransition, PostgresChunkStateError,
-    PostgresChunkStateProvider, PostgresChunkTransactionManager, PostgresConfig,
-    PostgresConfigError, PostgresJobRepository, PostgresMigrator, ProcessContext, ProcessOutcome,
-    ProcessorError, ReadContext, ReadOutcome, ReaderError, RepositoryError, SequentialIdGenerator,
-    StateLimits, StepName, StopSource, TlsMode, WriteContext, WriteOutcome, WriterError,
+    ChunkCompletionOutcome, ChunkComponentRevisions, ChunkCount, ChunkCounts, ChunkDeliveryMode,
+    ChunkExecutionOutcome, ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep,
+    ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager, Clock,
+    ComponentRevision, DefinitionIdentity, DefinitionRevision, DefinitionUpgrade,
+    DefinitionUpgradeKey, ExecutionContext, FailureCategory, FailureId, FailureSummary,
+    ItemProcessor, ItemReader, ItemWriter, JobInstanceKey, JobLauncher, JobName, JobParameters,
+    JobRepository, LifecycleTransition, PostgresChunkStateError, PostgresChunkStateProvider,
+    PostgresChunkTransactionManager, PostgresConfig, PostgresConfigError, PostgresJobRepository,
+    PostgresMigrator, ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome,
+    ReaderError, RecoveryRequest, RepositoryError, SequentialIdGenerator, StateLimits,
+    StateSchemaId, StateSchemaVersion, StepDefinitionUpgrade, StepName, StopSource, TlsMode,
+    WriteContext, WriteOutcome, WriterError,
 };
 use sqlx::postgres::PgPoolOptions;
 
@@ -70,6 +74,9 @@ async fn remove_contract_rows(url: &str) -> Result<(), sqlx::Error> {
          WHERE job_name = 'repository_contract_job')",
         "DELETE FROM oxide_batch.ob_job_instance \
          WHERE job_name = 'repository_contract_job'",
+        "DELETE FROM oxide_batch.ob_definition_upgrade WHERE from_definition_id IN (\
+         SELECT id FROM oxide_batch.ob_job_definition \
+         WHERE job_name = 'repository_contract_job')",
         "DELETE FROM oxide_batch.ob_job_definition \
          WHERE job_name = 'repository_contract_job'",
     ] {
@@ -81,6 +88,15 @@ async fn remove_contract_rows(url: &str) -> Result<(), sqlx::Error> {
 
 async fn remove_job_rows(url: &str, job_name: &str) -> Result<(), sqlx::Error> {
     let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
+    sqlx::query(
+        "DELETE FROM oxide_batch.ob_recovery_decision WHERE job_execution_id IN (\
+         SELECT execution.id FROM oxide_batch.ob_job_execution execution \
+         JOIN oxide_batch.ob_job_instance instance ON instance.id = execution.job_instance_id \
+         WHERE instance.job_name = $1)",
+    )
+    .bind(job_name)
+    .execute(&pool)
+    .await?;
     sqlx::query(
         "DELETE FROM oxide_batch.ob_step_execution WHERE job_execution_id IN (\
          SELECT execution.id FROM oxide_batch.ob_job_execution execution \
@@ -101,6 +117,13 @@ async fn remove_job_rows(url: &str, job_name: &str) -> Result<(), sqlx::Error> {
         .bind(job_name)
         .execute(&pool)
         .await?;
+    sqlx::query(
+        "DELETE FROM oxide_batch.ob_definition_upgrade WHERE from_definition_id IN (\
+         SELECT id FROM oxide_batch.ob_job_definition WHERE job_name = $1)",
+    )
+    .bind(job_name)
+    .execute(&pool)
+    .await?;
     sqlx::query("DELETE FROM oxide_batch.ob_job_definition WHERE job_name = $1")
         .bind(job_name)
         .execute(&pool)
@@ -532,7 +555,24 @@ async fn launch_postgres_chunk(
             fail: fail_completion,
         }),
     );
-    let mut job = ChunkJob::new(JobName::new(job_name)?, step);
+    let mut job = ChunkJob::new(
+        JobName::new(job_name)?,
+        step,
+        DefinitionRevision::new("postgres-fixture-v1")?,
+        &ChunkComponentRevisions::new(
+            ComponentRevision::new("reader-v1")?,
+            ComponentRevision::new("processor-v1")?,
+            ComponentRevision::new("writer-v1")?,
+            ComponentRevision::new("checkpoint-v1")?,
+            ChunkRestartContract::new(
+                StateSchemaId::new("postgres.chunk.position")?,
+                StateSchemaVersion::new(1)?,
+                StateSchemaId::new("postgres.chunk.context")?,
+                StateSchemaVersion::new(1)?,
+                ChunkDeliveryMode::AtomicSameResource,
+            ),
+        ),
+    )?;
     let clock = FixedClock(UNIX_EPOCH + Duration::from_secs(500));
     let ids = SequentialIdGenerator::new(NonZeroU64::MIN);
     let launcher = JobLauncher::new(repository, &clock, &ids);
@@ -541,6 +581,283 @@ async fn launch_postgres_chunk(
         .launch_chunk(&mut job, &JobParameters::new(), &token)
         .await?;
     Ok((report, transactions))
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the end-to-end restart scenario keeps transactional phases and evidence contiguous"
+)]
+fn durable_restart_requires_compatible_definition_and_inherits_checkpoint()
+-> Result<(), Box<dyn Error>> {
+    let Some(runtime_url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        const JOB: &str = "postgres_durable_restart";
+        remove_job_rows(&runtime_url, JOB).await?;
+        let repository = PostgresJobRepository::connect(
+            plaintext_config(runtime_url.clone())?,
+            Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(700))),
+        )
+        .await?;
+        let job_name = JobName::new(JOB)?;
+        let source_step = StepName::new("import-v1")?;
+        let target_step = StepName::new("import-v2")?;
+        let restart_contract = || -> Result<ChunkRestartContract, Box<dyn Error>> {
+            Ok(ChunkRestartContract::new(
+                StateSchemaId::new("postgres.chunk.position")?,
+                StateSchemaVersion::new(1)?,
+                StateSchemaId::new("postgres.chunk.context")?,
+                StateSchemaVersion::new(1)?,
+                ChunkDeliveryMode::AtomicSameResource,
+            ))
+        };
+        let v1 = DefinitionIdentity::chunk(
+            &job_name,
+            &source_step,
+            ChunkSize::new(2)?,
+            DefinitionRevision::new("v1")?,
+            &ChunkComponentRevisions::new(
+                ComponentRevision::new("reader-v1")?,
+                ComponentRevision::new("processor-v1")?,
+                ComponentRevision::new("writer-v1")?,
+                ComponentRevision::new("checkpoint-codec-v1")?,
+                restart_contract()?,
+            ),
+        )?;
+        let v2 = DefinitionIdentity::chunk(
+            &job_name,
+            &target_step,
+            ChunkSize::new(2)?,
+            DefinitionRevision::new("v2")?,
+            &ChunkComponentRevisions::new(
+                ComponentRevision::new("reader-v2-compatible")?,
+                ComponentRevision::new("processor-v2-compatible")?,
+                ComponentRevision::new("writer-v2-compatible")?,
+                ComponentRevision::new("checkpoint-codec-v1")?,
+                restart_contract()?,
+            ),
+        )?;
+        let drifted_v1 = DefinitionIdentity::chunk(
+            &job_name,
+            &source_step,
+            ChunkSize::new(2)?,
+            DefinitionRevision::new("v1")?,
+            &ChunkComponentRevisions::new(
+                ComponentRevision::new("reader-v1-drifted")?,
+                ComponentRevision::new("processor-v1")?,
+                ComponentRevision::new("writer-v1")?,
+                ComponentRevision::new("checkpoint-codec-v1")?,
+                restart_contract()?,
+            ),
+        )?;
+        let key = JobInstanceKey::new(job_name.clone(), &JobParameters::new());
+
+        let mut create = repository.begin().await?;
+        let instance = create
+            .select_or_create_job_instance(&key)
+            .await?
+            .instance()
+            .clone();
+        let first = create
+            .create_job_execution_with_definition(instance.id(), &v1)
+            .await?;
+        let first_step = create
+            .create_step_execution(first.id(), &source_step)
+            .await?;
+        create.commit().await?;
+
+        let started_at = UNIX_EPOCH + Duration::from_secs(701);
+        let mut start = repository.begin().await?;
+        let started_job = start
+            .transition_job_execution(
+                first.id(),
+                first.version(),
+                LifecycleTransition::new(BatchStatus::Started, started_at),
+            )
+            .await?;
+        start
+            .transition_step_execution(
+                first_step.id(),
+                first_step.version(),
+                LifecycleTransition::new(BatchStatus::Started, started_at),
+            )
+            .await?;
+        start.commit().await?;
+
+        let manager = postgres_chunk_transactions(&repository);
+        let scope = ChunkTransactionContext::new(first.id(), first_step.id());
+        let mut chunk = manager.begin_for(scope).await?;
+        chunk
+            .commit(ChunkCounts::new(
+                ChunkCount::new(2),
+                ChunkCount::new(2),
+                ChunkCount::new(2),
+                ChunkCount::ZERO,
+            )?)
+            .await?;
+        let committed = manager.load_committed_state(scope).await?;
+        assert_eq!(committed.checkpoint(), &chunk_checkpoint(2)?);
+
+        let failed_at = UNIX_EPOCH + Duration::from_secs(702);
+        let mut fail = repository.begin().await?;
+        fail.transition_step_execution(
+            first_step.id(),
+            committed.step_execution().version(),
+            LifecycleTransition::failed(
+                failed_at,
+                FailureSummary::new(FailureCategory::UserComponent, FailureId::new(901)?),
+            ),
+        )
+        .await?;
+        fail.transition_job_execution(
+            first.id(),
+            started_job.version(),
+            LifecycleTransition::failed(
+                failed_at,
+                FailureSummary::new(FailureCategory::UserComponent, FailureId::new(902)?),
+            ),
+        )
+        .await?;
+        fail.commit().await?;
+
+        let mut incompatible = repository.begin().await?;
+        assert_eq!(
+            incompatible
+                .create_job_execution_with_definition(instance.id(), &drifted_v1)
+                .await,
+            Err(RepositoryError::DefinitionDrift {
+                job_name: job_name.clone(),
+                revision: DefinitionRevision::new("v1")?,
+            })
+        );
+        incompatible.rollback().await?;
+
+        let mut incompatible = repository.begin().await?;
+        assert_eq!(
+            incompatible
+                .create_job_execution_with_definition(instance.id(), &v2)
+                .await,
+            Err(RepositoryError::IncompatibleDefinition {
+                instance_id: instance.id(),
+            })
+        );
+        incompatible.rollback().await?;
+
+        let upgrade = DefinitionUpgrade::new(
+            DefinitionUpgradeKey::new("v1-to-v2")?,
+            v1,
+            v2.clone(),
+            [StepDefinitionUpgrade::new(
+                source_step.clone(),
+                target_step.clone(),
+            )],
+        )?;
+        let mut register = repository.begin().await?;
+        register
+            .register_definition_upgrade(&job_name, &upgrade)
+            .await?;
+        register.commit().await?;
+
+        let mut restart = repository.begin().await?;
+        let second = restart
+            .create_job_execution_with_definition(instance.id(), &v2)
+            .await?;
+        let second_step = restart
+            .create_step_execution(second.id(), &target_step)
+            .await?;
+        restart.commit().await?;
+        assert_ne!(first.id(), second.id());
+        assert_ne!(first_step.id(), second_step.id());
+
+        let resumed = manager
+            .load_committed_state(ChunkTransactionContext::new(second.id(), second_step.id()))
+            .await?;
+        assert_eq!(resumed.checkpoint(), &chunk_checkpoint(2)?);
+        assert_eq!(resumed.execution_context(), &chunk_context()?);
+        assert_eq!(resumed.step_execution().metadata().counts().committed(), 1);
+
+        repository.close().await?;
+        remove_job_rows(&runtime_url, JOB).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
+
+#[test]
+fn unknown_execution_requires_audited_postgres_recovery() -> Result<(), Box<dyn Error>> {
+    let Some(runtime_url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        const JOB: &str = "postgres_explicit_recovery";
+        remove_job_rows(&runtime_url, JOB).await?;
+        let repository = PostgresJobRepository::connect(
+            plaintext_config(runtime_url.clone())?,
+            Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(800))),
+        )
+        .await?;
+        let key = JobInstanceKey::new(JobName::new(JOB)?, &JobParameters::new());
+        let mut create = repository.begin().await?;
+        let instance = create
+            .select_or_create_job_instance(&key)
+            .await?
+            .instance()
+            .clone();
+        let execution = create.create_job_execution(instance.id()).await?;
+        create.commit().await?;
+        let mut mark_unknown = repository.begin().await?;
+        let unknown = mark_unknown
+            .transition_job_execution(
+                execution.id(),
+                execution.version(),
+                LifecycleTransition::new(
+                    BatchStatus::Unknown,
+                    UNIX_EPOCH + Duration::from_secs(800),
+                ),
+            )
+            .await?;
+        mark_unknown.commit().await?;
+
+        let request = RecoveryRequest::mark_failed(
+            unknown.version(),
+            "DURABLE_INSPECTION_COMPLETE",
+            "operator-correlation-7",
+            [7; 32],
+            FailureCategory::PermanentInfrastructure,
+            FailureId::new(903)?,
+        )?;
+        let mut recover = repository.begin().await?;
+        let recovered = recover
+            .recover_job_execution(execution.id(), &request)
+            .await?;
+        recover.commit().await?;
+        assert_eq!(
+            recovered.execution().metadata().status(),
+            BatchStatus::Failed
+        );
+
+        let mut inspect = repository.begin().await?;
+        assert_eq!(
+            inspect.recovery_decision(execution.id()).await?,
+            Some(recovered.decision().clone())
+        );
+        let restarted = inspect.create_job_execution(instance.id()).await?;
+        inspect.commit().await?;
+        assert_ne!(restarted.id(), execution.id());
+
+        repository.close().await?;
+        remove_job_rows(&runtime_url, JOB).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
 }
 
 #[test]

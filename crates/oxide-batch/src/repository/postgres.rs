@@ -14,17 +14,19 @@ use sqlx::types::Json;
 use sqlx::{AssertSqlSafe, Connection, PgConnection, PgPool, Postgres, Row};
 
 use super::{
-    BoxFuture, Clock, JobInstanceSelection, JobRepository, RepositoryError, RepositoryUnitOfWork,
+    BoxFuture, Clock, JobInstanceSelection, JobRepository, RecoveryDecision, RecoveryRequest,
+    RecoveryResult, RepositoryError, RepositoryUnitOfWork, recovered_execution,
 };
 use crate::{
     BatchStatus, BusinessStatement, BusinessTransaction, BusinessTransactionError,
     BusinessValueKind, BusinessWriteResult, Checkpoint, ChunkCommitReceipt, ChunkCounts,
     ChunkTransaction, ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager,
-    ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion,
-    ExitCode, ExitStatus, FailureCategory, FailureId, FailureSummary, IdentifierKind, JobExecution,
-    JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey, JobName, JobParameter,
-    JobParameters, LifecycleError, LifecycleTransition, ParameterName, ParameterRole,
-    ParameterValue, ParameterValueKind, StateLimits, StepExecution, StepExecutionId, StepName,
+    DefinitionIdentity, DefinitionUpgrade, ExecutionContext, ExecutionCounts, ExecutionMetadata,
+    ExecutionTimestamps, ExecutionVersion, ExitCode, ExitStatus, FailureCategory, FailureId,
+    FailureSummary, IdentifierKind, JobExecution, JobExecutionId, JobInstance, JobInstanceId,
+    JobInstanceKey, JobName, JobParameter, JobParameters, LifecycleError, LifecycleTransition,
+    ParameterName, ParameterRole, ParameterValue, ParameterValueKind, StateLimits, StepExecution,
+    StepExecutionId, StepName,
 };
 
 const SUPPORTED_SCHEMA_VERSION: u32 = 1;
@@ -34,7 +36,6 @@ const MAX_STATEMENT_TIMEOUT: Duration = Duration::from_hours(24);
 const MAX_CONNECTION_LIFETIME: Duration = Duration::from_hours(7 * 24);
 const MAX_INSTANCE_KEY_INPUT: usize = 1024 * 1024;
 const MAX_CA_CERTIFICATE_BYTES: usize = 1024 * 1024;
-const DEFAULT_DEFINITION_REVISION: &str = "__m1_repository_port_v1";
 const DEFAULT_CONTEXT_SCHEMA: &str = "oxide_batch.empty.v1";
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
@@ -698,6 +699,7 @@ impl JobRepository for PostgresJobRepository {
             Ok(Box::new(PostgresUnitOfWork {
                 repository: self,
                 connection: Some(connection),
+                definition_override: None,
             }) as Box<dyn RepositoryUnitOfWork + 'a>)
         })
     }
@@ -915,6 +917,7 @@ impl ChunkTransactionManager for PostgresChunkTransactionManager {
 struct PostgresUnitOfWork<'repository> {
     repository: &'repository PostgresJobRepository,
     connection: Option<PoolConnection<Postgres>>,
+    definition_override: Option<DefinitionIdentity>,
 }
 
 impl PostgresUnitOfWork<'_> {
@@ -984,6 +987,73 @@ impl PostgresUnitOfWork<'_> {
 }
 
 impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
+    fn register_definition_upgrade<'a>(
+        &'a mut self,
+        job_name: &'a JobName,
+        upgrade: &'a DefinitionUpgrade,
+    ) -> BoxFuture<'a, Result<(), RepositoryError>> {
+        Box::pin(async move {
+            let registered_at = self.repository.clock.now();
+            let from_id = ensure_definition(
+                &mut **self.transaction()?,
+                job_name.as_str(),
+                upgrade.from(),
+                registered_at,
+            )
+            .await?;
+            let to_id = ensure_definition(
+                &mut **self.transaction()?,
+                job_name.as_str(),
+                upgrade.to(),
+                registered_at,
+            )
+            .await?;
+            let mapping = upgrade
+                .step_mapping()
+                .iter()
+                .map(|(source, target)| {
+                    (
+                        source.as_str().to_owned(),
+                        Value::String(target.as_str().to_owned()),
+                    )
+                })
+                .collect::<Map<String, Value>>();
+            let registered_ms = system_time_millis(registered_at)?;
+            sqlx::query(
+                "INSERT INTO oxide_batch.ob_definition_upgrade \
+                 (from_definition_id, to_definition_id, upgrade_key, step_mapping, registered_at) \
+                 VALUES ($1, $2, $3, $4, to_timestamp($5::double precision / 1000.0)) \
+                 ON CONFLICT (from_definition_id, to_definition_id) DO NOTHING",
+            )
+            .bind(from_id)
+            .bind(to_id)
+            .bind(upgrade.key().as_str())
+            .bind(Json(Value::Object(mapping.clone())))
+            .bind(registered_ms)
+            .execute(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            let matches: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_definition_upgrade \
+                 WHERE from_definition_id = $1 AND to_definition_id = $2 \
+                 AND upgrade_key = $3 AND step_mapping = $4)",
+            )
+            .bind(from_id)
+            .bind(to_id)
+            .bind(upgrade.key().as_str())
+            .bind(Json(Value::Object(mapping)))
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            if !matches {
+                return Err(RepositoryError::DefinitionUpgradeConflict {
+                    job_name: job_name.clone(),
+                });
+            }
+            Ok(())
+        })
+    }
+
     fn select_or_create_job_instance<'a>(
         &'a mut self,
         key: &'a JobInstanceKey,
@@ -1031,6 +1101,10 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         job_instance_id: JobInstanceId,
     ) -> BoxFuture<'_, Result<JobExecution, RepositoryError>> {
         Box::pin(async move {
+            let definition = self
+                .definition_override
+                .take()
+                .unwrap_or_else(DefinitionIdentity::legacy);
             let instance_database_id =
                 database_id(job_instance_id.get(), IdentifierKind::JobInstance)?;
             let instance = sqlx::query(
@@ -1085,9 +1159,43 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 .try_get("identifying_parameters")
                 .map_err(|_| RepositoryError::Unavailable)?;
             let registered_at = self.repository.clock.now();
-            let definition_id =
-                ensure_default_definition(&mut **self.transaction()?, &job_name, registered_at)
-                    .await?;
+            let definition_id = ensure_definition(
+                &mut **self.transaction()?,
+                &job_name,
+                &definition,
+                registered_at,
+            )
+            .await?;
+            let mut upgrade_from = None;
+            if let Some(previous) = &latest {
+                let previous_definition_id: i64 = sqlx::query_scalar(
+                    "SELECT definition_id FROM oxide_batch.ob_job_execution WHERE id = $1",
+                )
+                .bind(database_id(
+                    previous.id().get(),
+                    IdentifierKind::JobExecution,
+                )?)
+                .fetch_one(&mut **self.transaction()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
+                if previous_definition_id != definition_id {
+                    let compatible: bool = sqlx::query_scalar(
+                        "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_definition_upgrade \
+                         WHERE from_definition_id = $1 AND to_definition_id = $2)",
+                    )
+                    .bind(previous_definition_id)
+                    .bind(definition_id)
+                    .fetch_one(&mut **self.transaction()?)
+                    .await
+                    .map_err(|_| RepositoryError::Unavailable)?;
+                    if !compatible {
+                        return Err(RepositoryError::IncompatibleDefinition {
+                            instance_id: job_instance_id,
+                        });
+                    }
+                    upgrade_from = Some(previous_definition_id);
+                }
+            }
             let attempt: i32 = sqlx::query_scalar(
                 "SELECT COALESCE(MAX(attempt), 0) + 1 \
                  FROM oxide_batch.ob_job_execution WHERE job_instance_id = $1",
@@ -1105,16 +1213,18 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             let context = Json(json!({}));
             let id: i64 = sqlx::query_scalar(
                 "INSERT INTO oxide_batch.ob_job_execution \
-                 (job_instance_id, definition_id, restart_of_execution_id, attempt, \
+                 (job_instance_id, definition_id, upgrade_from_definition_id, \
+                  restart_of_execution_id, attempt, \
                   status, exit_code, parameters, context_format, context_schema, \
                   context_schema_version, context_payload, created_at, updated_at, version) \
-                 VALUES ($1, $2, $3, $4, 'STARTING', 'UNKNOWN', $5, 1, $6, 1, $7, \
-                  to_timestamp($8::double precision / 1000.0), \
-                  to_timestamp($8::double precision / 1000.0), 0) \
+                 VALUES ($1, $2, $3, $4, $5, 'STARTING', 'UNKNOWN', $6, 1, $7, 1, $8, \
+                  to_timestamp($9::double precision / 1000.0), \
+                  to_timestamp($9::double precision / 1000.0), 0) \
                  RETURNING id",
             )
             .bind(instance_database_id)
             .bind(definition_id)
+            .bind(upgrade_from)
             .bind(restart_of)
             .bind(attempt)
             .bind(parameters)
@@ -1134,6 +1244,21 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         })
     }
 
+    fn create_job_execution_with_definition<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        definition: &'a DefinitionIdentity,
+    ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>> {
+        Box::pin(async move {
+            self.definition_override = Some(definition.clone());
+            self.create_job_execution(job_instance_id).await
+        })
+    }
+
+    #[allow(
+        clippy::too_many_lines,
+        reason = "exact and mapped restart-state insertion remain visible in one transaction"
+    )]
     fn create_step_execution<'a>(
         &'a mut self,
         job_execution_id: JobExecutionId,
@@ -1141,47 +1266,114 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
     ) -> BoxFuture<'a, Result<StepExecution, RepositoryError>> {
         Box::pin(async move {
             let job_id = database_id(job_execution_id.get(), IdentifierKind::JobExecution)?;
-            let exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_job_execution WHERE id = $1)",
+            let execution_row = sqlx::query(
+                "SELECT restart_of_execution_id, upgrade_from_definition_id \
+                 FROM oxide_batch.ob_job_execution WHERE id = $1",
             )
             .bind(job_id)
-            .fetch_one(&mut **self.transaction()?)
+            .fetch_optional(&mut **self.transaction()?)
             .await
-            .map_err(|_| RepositoryError::Unavailable)?;
-            if !exists {
-                return Err(RepositoryError::JobExecutionNotFound {
-                    id: job_execution_id,
-                });
-            }
+            .map_err(|_| RepositoryError::Unavailable)?
+            .ok_or(RepositoryError::JobExecutionNotFound {
+                id: job_execution_id,
+            })?;
+            let restart_source = execution_row
+                .try_get::<Option<i64>, _>("restart_of_execution_id")
+                .map_err(|_| RepositoryError::Unavailable)?;
+            let upgraded = execution_row
+                .try_get::<Option<i64>, _>("upgrade_from_definition_id")
+                .map_err(|_| RepositoryError::Unavailable)?
+                .is_some();
             let created_at = self.repository.clock.now();
             let created_ms = system_time_millis(created_at)?;
-            let id: i64 = sqlx::query_scalar(
-                "INSERT INTO oxide_batch.ob_step_execution \
-                 (job_execution_id, step_name, status, exit_code, \
-                  checkpoint_format, checkpoint_schema, checkpoint_schema_version, \
-                  checkpoint_payload, context_format, context_schema, \
-                  context_schema_version, context_payload, created_at, updated_at, version) \
-                 VALUES ($1, $2, 'STARTING', 'UNKNOWN', 1, $3, 1, $4, 1, $3, 1, $4, \
-                  to_timestamp($5::double precision / 1000.0), \
-                  to_timestamp($5::double precision / 1000.0), 0) \
-                 RETURNING id",
-            )
-            .bind(job_id)
-            .bind(step_name.as_str())
-            .bind(DEFAULT_CONTEXT_SCHEMA)
-            .bind(Json(json!({})))
-            .bind(created_ms)
-            .fetch_one(&mut **self.transaction()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
+            let restarted_id = if let Some(source_job_id) = restart_source {
+                let source_step_name = if upgraded {
+                    sqlx::query_scalar(
+                        "SELECT mapping.key \
+                         FROM oxide_batch.ob_job_execution execution \
+                         JOIN oxide_batch.ob_definition_upgrade upgrade \
+                           ON upgrade.from_definition_id = execution.upgrade_from_definition_id \
+                          AND upgrade.to_definition_id = execution.definition_id \
+                         CROSS JOIN LATERAL jsonb_each_text(upgrade.step_mapping) mapping \
+                         WHERE execution.id = $1 AND mapping.value = $2",
+                    )
+                    .bind(job_id)
+                    .bind(step_name.as_str())
+                    .fetch_optional(&mut **self.transaction()?)
+                    .await
+                    .map_err(|_| RepositoryError::Unavailable)?
+                    .ok_or(RepositoryError::InvalidDefinitionUpgrade {
+                        execution_id: job_execution_id,
+                    })?
+                } else {
+                    step_name.as_str().to_owned()
+                };
+                sqlx::query_scalar(
+                    "INSERT INTO oxide_batch.ob_step_execution \
+                     (job_execution_id, step_name, status, exit_code, read_count, \
+                      processed_count, write_count, filter_count, commit_count, rollback_count, \
+                      checkpoint_format, checkpoint_schema, checkpoint_schema_version, \
+                      checkpoint_payload, context_format, context_schema, \
+                      context_schema_version, context_payload, created_at, updated_at, version) \
+                     SELECT $1, $2, 'STARTING', 'UNKNOWN', source.read_count, \
+                      source.processed_count, source.write_count, source.filter_count, \
+                      source.commit_count, source.rollback_count, source.checkpoint_format, \
+                      source.checkpoint_schema, source.checkpoint_schema_version, \
+                      source.checkpoint_payload, source.context_format, source.context_schema, \
+                      source.context_schema_version, source.context_payload, \
+                      to_timestamp($3::double precision / 1000.0), \
+                      to_timestamp($3::double precision / 1000.0), 0 \
+                     FROM oxide_batch.ob_step_execution source \
+                     WHERE source.job_execution_id = $4 AND source.step_name = $5 \
+                     ORDER BY source.id DESC LIMIT 1 \
+                     RETURNING id",
+                )
+                .bind(job_id)
+                .bind(step_name.as_str())
+                .bind(created_ms)
+                .bind(source_job_id)
+                .bind(source_step_name)
+                .fetch_optional(&mut **self.transaction()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?
+            } else {
+                None
+            };
+            let id: i64 = match (restart_source, restarted_id) {
+                (Some(_), Some(id)) => id,
+                (Some(_), None) => {
+                    return Err(RepositoryError::RestartStateNotFound {
+                        execution_id: job_execution_id,
+                        step_name: step_name.clone(),
+                    });
+                }
+                (None, _) => sqlx::query_scalar(
+                    "INSERT INTO oxide_batch.ob_step_execution \
+                     (job_execution_id, step_name, status, exit_code, \
+                      checkpoint_format, checkpoint_schema, checkpoint_schema_version, \
+                      checkpoint_payload, context_format, context_schema, \
+                      context_schema_version, context_payload, created_at, updated_at, version) \
+                     VALUES ($1, $2, 'STARTING', 'UNKNOWN', 1, $3, 1, $4, 1, $3, 1, $4, \
+                      to_timestamp($5::double precision / 1000.0), \
+                      to_timestamp($5::double precision / 1000.0), 0) \
+                     RETURNING id",
+                )
+                .bind(job_id)
+                .bind(step_name.as_str())
+                .bind(DEFAULT_CONTEXT_SCHEMA)
+                .bind(Json(json!({})))
+                .bind(created_ms)
+                .fetch_one(&mut **self.transaction()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?,
+            };
             let id_value =
                 StepExecutionId::new(u64::try_from(id).map_err(|_| RepositoryError::Unavailable)?)?;
-            Ok(StepExecution::new(
-                id_value,
-                job_execution_id,
-                step_name.clone(),
-                starting_metadata(created_at)?,
-            ))
+            let execution = self
+                .step_execution(id_value)
+                .await?
+                .ok_or(RepositoryError::StepExecutionNotFound { id: id_value })?;
+            Ok(execution)
         })
     }
 
@@ -1398,6 +1590,114 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
             rows.iter().map(decode_step_execution).collect()
+        })
+    }
+
+    fn recover_job_execution<'a>(
+        &'a mut self,
+        id: JobExecutionId,
+        request: &'a RecoveryRequest,
+    ) -> BoxFuture<'a, Result<RecoveryResult, RepositoryError>> {
+        Box::pin(async move {
+            let database_execution_id = database_id(id.get(), IdentifierKind::JobExecution)?;
+            let row = sqlx::query(AssertSqlSafe(job_execution_select(
+                "WHERE execution.id = $1 FOR UPDATE",
+            )))
+            .bind(database_execution_id)
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .ok_or(RepositoryError::JobExecutionNotFound { id })?;
+            let prior = decode_job_execution(&row)?;
+            let decided_at = self.repository.clock.now();
+            let recovered = recovered_execution(&prior, request, decided_at)?;
+            let decided_ms = system_time_millis(decided_at)?;
+            let prior_version = database_version(request.expected_version())?;
+            let resulting_status = recovered.metadata().status().to_string();
+            sqlx::query("SAVEPOINT ob_recovery_decision")
+                .execute(&mut **self.transaction()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
+            let affected = update_job_execution(
+                &mut **self.transaction()?,
+                &recovered,
+                decided_at,
+                request.expected_version(),
+            )
+            .await?;
+            if affected != 1 {
+                rollback_recovery_savepoint(&mut **self.transaction()?).await;
+                return Err(self.classify_job_cas(id, request.expected_version()).await);
+            }
+            let insert = sqlx::query(
+                "INSERT INTO oxide_batch.ob_recovery_decision \
+                 (job_execution_id, execution_version, prior_status, resulting_status, \
+                  reason_code, operator_reference, evidence_digest, decided_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, \
+                  to_timestamp($8::double precision / 1000.0))",
+            )
+            .bind(database_execution_id)
+            .bind(prior_version)
+            .bind(prior.metadata().status().to_string())
+            .bind(&resulting_status)
+            .bind(request.reason_code())
+            .bind(request.operator_reference())
+            .bind(&request.evidence_digest()[..])
+            .bind(decided_ms)
+            .execute(&mut **self.transaction()?)
+            .await;
+            if insert.is_err() {
+                rollback_recovery_savepoint(&mut **self.transaction()?).await;
+                return Err(RepositoryError::ConcurrentModification);
+            }
+            sqlx::query("RELEASE SAVEPOINT ob_recovery_decision")
+                .execute(&mut **self.transaction()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
+            let decision = RecoveryDecision::new(
+                id,
+                request.expected_version(),
+                prior.metadata().status(),
+                recovered.metadata().status(),
+                request.reason_code().to_owned(),
+                request.operator_reference().to_owned(),
+                *request.evidence_digest(),
+                decided_at,
+            );
+            Ok(RecoveryResult::new(recovered, decision))
+        })
+    }
+
+    fn recovery_decision(
+        &mut self,
+        id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Option<RecoveryDecision>, RepositoryError>> {
+        Box::pin(async move {
+            let database_execution_id = database_id(id.get(), IdentifierKind::JobExecution)?;
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_job_execution WHERE id = $1)",
+            )
+            .bind(database_execution_id)
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            if !exists {
+                return Err(RepositoryError::JobExecutionNotFound { id });
+            }
+            let row = sqlx::query(
+                "SELECT execution_version, prior_status, resulting_status, reason_code, \
+                 operator_reference, evidence_digest, \
+                 (extract(epoch FROM decided_at) * 1000)::bigint AS decided_ms \
+                 FROM oxide_batch.ob_recovery_decision \
+                 WHERE job_execution_id = $1 ORDER BY decided_at DESC, id DESC LIMIT 1",
+            )
+            .bind(database_execution_id)
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            row.as_ref()
+                .map(|row| decode_recovery_decision(id, row))
+                .transpose()
         })
     }
 
@@ -1733,6 +2033,12 @@ async fn rollback_chunk_connection(connection: &mut PoolConnection<Postgres>) {
     }
 }
 
+async fn rollback_recovery_savepoint(connection: &mut PgConnection) {
+    let _ = sqlx::query("ROLLBACK TO SAVEPOINT ob_recovery_decision")
+        .execute(connection)
+        .await;
+}
+
 async fn rollback_chunk_transaction(connection: &mut Option<PoolConnection<Postgres>>) {
     let Some(mut connection) = connection.take() else {
         return;
@@ -2008,44 +2314,64 @@ fn decode_identifying_parameters(value: &Value) -> Result<JobParameters, Reposit
     Ok(parameters)
 }
 
-async fn ensure_default_definition(
+async fn ensure_definition(
     transaction: &mut PgConnection,
     job_name: &str,
+    definition: &DefinitionIdentity,
     registered_at: SystemTime,
 ) -> Result<i64, RepositoryError> {
-    let manifest = json!({
-        "format": 1,
-        "repository_port": "m1",
-        "revision": DEFAULT_DEFINITION_REVISION
-    });
-    let canonical = serde_json::to_vec(&manifest).map_err(|_| RepositoryError::Unavailable)?;
-    let digest = Sha256::digest(canonical);
+    let expected_job_name = JobName::new(job_name.to_owned())?;
+    if let Some(actual) = definition.job_name()
+        && actual != &expected_job_name
+    {
+        return Err(RepositoryError::DefinitionJobMismatch {
+            expected: expected_job_name,
+            actual: actual.clone(),
+        });
+    }
+    if definition.manifest_format() != 1 {
+        return Err(RepositoryError::UnsupportedManifestVersion {
+            format: definition.manifest_format(),
+        });
+    }
+    let manifest: Value = serde_json::from_slice(definition.canonical_manifest())
+        .map_err(|_| RepositoryError::Unavailable)?;
     let registered_ms = system_time_millis(registered_at)?;
     sqlx::query(
         "INSERT INTO oxide_batch.ob_job_definition \
          (job_name, definition_revision, manifest_format, manifest_digest, manifest, registered_at) \
-         VALUES ($1, $2, 1, $3, $4, to_timestamp($5::double precision / 1000.0)) \
-         ON CONFLICT (job_name, definition_revision) DO NOTHING",
+         VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0)) \
+         ON CONFLICT DO NOTHING",
     )
     .bind(job_name)
-    .bind(DEFAULT_DEFINITION_REVISION)
-    .bind(&digest[..])
+    .bind(definition.revision().as_str())
+    .bind(i16::try_from(definition.manifest_format()).map_err(|_| {
+        RepositoryError::UnsupportedManifestVersion {
+            format: definition.manifest_format(),
+        }
+    })?)
+    .bind(&definition.manifest_digest()[..])
     .bind(Json(manifest))
     .bind(registered_ms)
     .execute(&mut *transaction)
     .await
     .map_err(|_| RepositoryError::Unavailable)?;
-    sqlx::query_scalar(
+    let id = sqlx::query_scalar(
         "SELECT id FROM oxide_batch.ob_job_definition \
-         WHERE job_name = $1 AND definition_revision = $2 AND manifest_digest = $3",
+         WHERE job_name = $1 AND manifest_digest = $2",
     )
     .bind(job_name)
-    .bind(DEFAULT_DEFINITION_REVISION)
-    .bind(&digest[..])
+    .bind(&definition.manifest_digest()[..])
     .fetch_optional(&mut *transaction)
     .await
-    .map_err(|_| RepositoryError::Unavailable)?
-    .ok_or(RepositoryError::Unavailable)
+    .map_err(|_| RepositoryError::Unavailable)?;
+    match id {
+        Some(id) => Ok(id),
+        None => Err(RepositoryError::DefinitionDrift {
+            job_name: expected_job_name,
+            revision: definition.revision().clone(),
+        }),
+    }
 }
 
 fn job_execution_select(suffix: &str) -> String {
@@ -2181,6 +2507,36 @@ fn decode_step_execution(row: &PgRow) -> Result<StepExecution, RepositoryError> 
     let version = ExecutionVersion::new(read_u64(row, "version")?);
     Ok(StepExecution::from_snapshot(
         id, job_id, name, metadata, version,
+    ))
+}
+
+fn decode_recovery_decision(
+    id: JobExecutionId,
+    row: &PgRow,
+) -> Result<RecoveryDecision, RepositoryError> {
+    let digest = row
+        .try_get::<Vec<u8>, _>("evidence_digest")
+        .map_err(|_| RepositoryError::Unavailable)?;
+    let evidence_digest: [u8; 32] = digest
+        .try_into()
+        .map_err(|_| RepositoryError::Unavailable)?;
+    Ok(RecoveryDecision::new(
+        id,
+        ExecutionVersion::new(read_u64(row, "execution_version")?),
+        decode_status(
+            &row.try_get::<String, _>("prior_status")
+                .map_err(|_| RepositoryError::Unavailable)?,
+        )?,
+        decode_status(
+            &row.try_get::<String, _>("resulting_status")
+                .map_err(|_| RepositoryError::Unavailable)?,
+        )?,
+        row.try_get("reason_code")
+            .map_err(|_| RepositoryError::Unavailable)?,
+        row.try_get("operator_reference")
+            .map_err(|_| RepositoryError::Unavailable)?,
+        evidence_digest,
+        millis_system_time(read_i64(row, "decided_ms")?)?,
     ))
 }
 

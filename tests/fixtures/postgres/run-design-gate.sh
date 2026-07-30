@@ -106,8 +106,15 @@ docker run --detach --rm \
 
 ready=false
 for _ in $(seq 1 45); do
+  # The official image starts a socket-only temporary server while initializing
+  # an empty data directory. Probe TCP so only the final server can become ready.
   if docker exec "${container_name}" \
-    pg_isready --username postgres --dbname oxide_batch_design >/dev/null 2>&1
+    pg_isready \
+      --host 127.0.0.1 \
+      --port 5432 \
+      --username postgres \
+      --dbname oxide_batch_design \
+      >/dev/null 2>&1
   then
     ready=true
     break

@@ -20,10 +20,10 @@ use futures_util::future::join_all;
 use ids::DeterministicIds;
 use oxide_batch::{
     BatchStatus, BlockingTasklet, BlockingTaskletAdapter, BlockingTaskletContext, BoxFuture,
-    FailureCategory, InMemoryJobRepository, JobLauncher, JobName, JobParameter, JobParameters,
-    JobRepository, LaunchError, ParameterName, ParameterRole, ParameterValue, RepositoryError,
-    StopSource, StopTiming, StopToken, Tasklet, TaskletContext, TaskletError,
-    TaskletExecutionOutcome, TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep,
+    ComponentRevision, DefinitionRevision, FailureCategory, InMemoryJobRepository, JobLauncher,
+    JobName, JobParameter, JobParameters, JobRepository, LaunchError, ParameterName, ParameterRole,
+    ParameterValue, RepositoryError, StopSource, StopTiming, StopToken, Tasklet, TaskletContext,
+    TaskletError, TaskletExecutionOutcome, TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep,
 };
 
 struct Fixture {
@@ -64,7 +64,10 @@ fn job(tasklet: Arc<dyn Tasklet>) -> Result<TaskletJob, oxide_batch::DomainError
     Ok(TaskletJob::new(
         JobName::new("daily_import")?,
         TaskletStep::new(oxide_batch::StepName::new("import")?, tasklet),
-    ))
+        DefinitionRevision::new("test-v1").expect("static definition revision is valid"),
+        &ComponentRevision::new("tasklet-v1").expect("static component revision is valid"),
+    )
+    .expect("static tasklet definition is valid"))
 }
 
 async fn assert_report_is_persisted(

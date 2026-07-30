@@ -23,15 +23,33 @@ use clock::ManualClock;
 use ids::DeterministicIds;
 use oxide_batch::{
     BatchStatus, BoxFuture, Checkpoint, ChunkAttemptOutcome, ChunkCommitReceipt, ChunkCompletion,
-    ChunkCompletionContext, ChunkCompletionError, ChunkCompletionOutcome, ChunkCount, ChunkCounts,
-    ChunkExecutionOutcome, ChunkFailure, ChunkJob, ChunkListener, ChunkListenerContext,
-    ChunkListenerError, ChunkSize, ChunkStep, ChunkTransaction, ChunkTransactionError,
-    ChunkTransactionManager, ExecutionContext, InMemoryJobRepository, ItemProcessor, ItemReader,
+    ChunkCompletionContext, ChunkCompletionError, ChunkCompletionOutcome, ChunkComponentRevisions,
+    ChunkCount, ChunkCounts, ChunkDeliveryMode, ChunkExecutionOutcome, ChunkFailure, ChunkJob,
+    ChunkListener, ChunkListenerContext, ChunkListenerError, ChunkRestartContract, ChunkSize,
+    ChunkStep, ChunkTransaction, ChunkTransactionError, ChunkTransactionManager, ComponentRevision,
+    DefinitionRevision, ExecutionContext, InMemoryJobRepository, ItemProcessor, ItemReader,
     ItemWriter, JobLauncher, JobName, JobParameters, LifecycleEvent, LifecycleEventKind,
     LifecycleEventSink, ListenerContext, ListenerError, ProcessContext, ProcessOutcome,
-    ProcessorError, ReadContext, ReadOutcome, ReaderError, StateLimits, StepExecutionListener,
-    StepName, StopSource, TaskletExecutionOutcome, WriteContext, WriteOutcome, WriterError,
+    ProcessorError, ReadContext, ReadOutcome, ReaderError, StateLimits, StateSchemaId,
+    StateSchemaVersion, StepExecutionListener, StepName, StopSource, TaskletExecutionOutcome,
+    WriteContext, WriteOutcome, WriterError,
 };
+
+fn chunk_revisions() -> ChunkComponentRevisions {
+    ChunkComponentRevisions::new(
+        ComponentRevision::new("reader-v1").expect("static reader revision is valid"),
+        ComponentRevision::new("processor-v1").expect("static processor revision is valid"),
+        ComponentRevision::new("writer-v1").expect("static writer revision is valid"),
+        ComponentRevision::new("checkpoint-v1").expect("static checkpoint revision is valid"),
+        ChunkRestartContract::new(
+            StateSchemaId::new("test.chunk.checkpoint").expect("static schema is valid"),
+            StateSchemaVersion::new(1).expect("static schema version is valid"),
+            StateSchemaId::new("test.chunk.context").expect("static schema is valid"),
+            StateSchemaVersion::new(1).expect("static schema version is valid"),
+            ChunkDeliveryMode::AtLeastOnce,
+        ),
+    )
+}
 
 #[derive(Clone, Copy)]
 enum Boundary {
@@ -712,7 +730,13 @@ async fn job_launcher_persists_chunk_step_lifecycle() {
         Boundary::Normal,
         None,
     );
-    let mut job = ChunkJob::new(JobName::new("daily_import").expect("valid job name"), step);
+    let mut job = ChunkJob::new(
+        JobName::new("daily_import").expect("valid job name"),
+        step,
+        DefinitionRevision::new("test-v1").expect("static definition revision is valid"),
+        &chunk_revisions(),
+    )
+    .expect("static chunk definition is valid");
     let clock = ManualClock::new(UNIX_EPOCH + Duration::from_secs(100));
     let ids = DeterministicIds::new(NonZeroU64::MIN);
     let repository = InMemoryJobRepository::new(Arc::new(clock.clone()), Arc::new(ids.clone()));
@@ -812,7 +836,10 @@ async fn unknown_chunk_commit_persists_unknown_lifecycle() {
     let mut job = ChunkJob::new(
         JobName::new("ambiguous_import").expect("valid job name"),
         step,
-    );
+        DefinitionRevision::new("test-v1").expect("static definition revision is valid"),
+        &chunk_revisions(),
+    )
+    .expect("static chunk definition is valid");
     let clock = ManualClock::new(UNIX_EPOCH + Duration::from_secs(200));
     let ids = DeterministicIds::new(NonZeroU64::MIN);
     let repository = InMemoryJobRepository::new(Arc::new(clock.clone()), Arc::new(ids.clone()));
@@ -857,7 +884,10 @@ async fn launch_without_chunk_body_does_not_reuse_a_prior_chunk_report() {
     let mut job = ChunkJob::new(
         JobName::new("restartable_import").expect("valid job name"),
         step,
-    );
+        DefinitionRevision::new("test-v1").expect("static definition revision is valid"),
+        &chunk_revisions(),
+    )
+    .expect("static chunk definition is valid");
     let clock = ManualClock::new(UNIX_EPOCH + Duration::from_secs(301));
     let ids = DeterministicIds::new(NonZeroU64::MIN);
     let repository = InMemoryJobRepository::new(Arc::new(clock.clone()), Arc::new(ids.clone()));
