@@ -9,10 +9,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use crate::{
-    BatchStatus, DomainError, ExecutionVersion, ExitStatus, FailureId, IdentifierKind,
-    JobExecution, JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey, LifecycleError,
-    LifecycleTransition, StepExecution, StepExecutionId, StepName,
+    BatchStatus, DefinitionIdentity, DefinitionRevision, DefinitionUpgrade, DomainError,
+    ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitStatus, FailureCategory,
+    FailureId, FailureSummary, IdentifierKind, JobExecution, JobExecutionId, JobInstance,
+    JobInstanceId, JobInstanceKey, JobName, LifecycleError, LifecycleTransition, StepExecution,
+    StepExecutionId, StepName,
 };
+
+const MAX_RECOVERY_REASON_BYTES: usize = 64;
+const MAX_OPERATOR_REFERENCE_BYTES: usize = 128;
 
 mod memory;
 #[cfg(feature = "postgres")]
@@ -200,6 +205,403 @@ impl JobInstanceSelection {
     }
 }
 
+/// Explicit operator disposition for an orphaned or ambiguous execution.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum RecoveryDisposition {
+    /// Make the observed attempt restart-eligible.
+    MarkFailed,
+    /// Make the logical instance permanently non-restartable.
+    Abandon,
+}
+
+impl RecoveryDisposition {
+    /// Returns the durable status produced by this disposition.
+    #[must_use]
+    pub const fn resulting_status(self) -> BatchStatus {
+        match self {
+            Self::MarkFailed => BatchStatus::Failed,
+            Self::Abandon => BatchStatus::Abandoned,
+        }
+    }
+}
+
+/// Bounded, value-redacted request for one audited recovery decision.
+#[derive(Clone, Eq, PartialEq)]
+pub struct RecoveryRequest {
+    expected_version: ExecutionVersion,
+    disposition: RecoveryDisposition,
+    reason_code: String,
+    operator_reference: String,
+    evidence_digest: [u8; 32],
+    failure: Option<FailureSummary>,
+}
+
+impl RecoveryRequest {
+    /// Validates a request that makes an observed execution restart-eligible.
+    ///
+    /// Authentication and authorization remain deployment responsibilities;
+    /// `operator_reference` is an opaque audit correlation, not a credential.
+    ///
+    /// # Errors
+    ///
+    /// Rejects empty, oversized, whitespace-padded, or control-containing
+    /// reason and operator values.
+    pub fn mark_failed(
+        expected_version: ExecutionVersion,
+        reason_code: impl Into<String>,
+        operator_reference: impl Into<String>,
+        evidence_digest: [u8; 32],
+        failure_category: FailureCategory,
+        failure_id: FailureId,
+    ) -> Result<Self, RecoveryRequestError> {
+        Self::new(
+            expected_version,
+            RecoveryDisposition::MarkFailed,
+            reason_code,
+            operator_reference,
+            evidence_digest,
+            Some(FailureSummary::new(failure_category, failure_id)),
+        )
+    }
+
+    /// Validates a request that permanently abandons the logical instance.
+    ///
+    /// # Errors
+    ///
+    /// Rejects empty, oversized, whitespace-padded, or control-containing
+    /// reason and operator values.
+    pub fn abandon(
+        expected_version: ExecutionVersion,
+        reason_code: impl Into<String>,
+        operator_reference: impl Into<String>,
+        evidence_digest: [u8; 32],
+    ) -> Result<Self, RecoveryRequestError> {
+        Self::new(
+            expected_version,
+            RecoveryDisposition::Abandon,
+            reason_code,
+            operator_reference,
+            evidence_digest,
+            None,
+        )
+    }
+
+    fn new(
+        expected_version: ExecutionVersion,
+        disposition: RecoveryDisposition,
+        reason_code: impl Into<String>,
+        operator_reference: impl Into<String>,
+        evidence_digest: [u8; 32],
+        failure: Option<FailureSummary>,
+    ) -> Result<Self, RecoveryRequestError> {
+        let reason_code = reason_code.into();
+        validate_recovery_text(
+            &reason_code,
+            RecoveryField::ReasonCode,
+            MAX_RECOVERY_REASON_BYTES,
+        )?;
+        let operator_reference = operator_reference.into();
+        validate_recovery_text(
+            &operator_reference,
+            RecoveryField::OperatorReference,
+            MAX_OPERATOR_REFERENCE_BYTES,
+        )?;
+        Ok(Self {
+            expected_version,
+            disposition,
+            reason_code,
+            operator_reference,
+            evidence_digest,
+            failure,
+        })
+    }
+
+    /// Returns the observed optimistic version.
+    #[must_use]
+    pub const fn expected_version(&self) -> ExecutionVersion {
+        self.expected_version
+    }
+
+    /// Returns the requested disposition.
+    #[must_use]
+    pub const fn disposition(&self) -> RecoveryDisposition {
+        self.disposition
+    }
+
+    /// Borrows the bounded reason code.
+    #[must_use]
+    pub fn reason_code(&self) -> &str {
+        &self.reason_code
+    }
+
+    /// Borrows the opaque operator correlation.
+    #[must_use]
+    pub fn operator_reference(&self) -> &str {
+        &self.operator_reference
+    }
+
+    /// Returns the digest of externally retained inspection evidence.
+    #[must_use]
+    pub const fn evidence_digest(&self) -> &[u8; 32] {
+        &self.evidence_digest
+    }
+
+    /// Returns the typed failure applied by a `FAILED` disposition.
+    #[must_use]
+    pub const fn failure(&self) -> Option<FailureSummary> {
+        self.failure
+    }
+}
+
+impl fmt::Debug for RecoveryRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RecoveryRequest")
+            .field("expected_version", &self.expected_version)
+            .field("disposition", &self.disposition)
+            .field("reason_code", &self.reason_code)
+            .field("operator_reference", &self.operator_reference)
+            .field("evidence_digest", &"<redacted>")
+            .field("failure", &self.failure)
+            .finish()
+    }
+}
+
+/// One append-only recovery audit record.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecoveryDecision {
+    job_execution_id: JobExecutionId,
+    execution_version: ExecutionVersion,
+    prior_status: BatchStatus,
+    resulting_status: BatchStatus,
+    reason_code: String,
+    operator_reference: String,
+    evidence_digest: [u8; 32],
+    decided_at: SystemTime,
+}
+
+impl RecoveryDecision {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        job_execution_id: JobExecutionId,
+        execution_version: ExecutionVersion,
+        prior_status: BatchStatus,
+        resulting_status: BatchStatus,
+        reason_code: String,
+        operator_reference: String,
+        evidence_digest: [u8; 32],
+        decided_at: SystemTime,
+    ) -> Self {
+        Self {
+            job_execution_id,
+            execution_version,
+            prior_status,
+            resulting_status,
+            reason_code,
+            operator_reference,
+            evidence_digest,
+            decided_at,
+        }
+    }
+
+    /// Returns the execution whose observed version was resolved.
+    #[must_use]
+    pub const fn job_execution_id(&self) -> JobExecutionId {
+        self.job_execution_id
+    }
+
+    /// Returns the observed version before the decision.
+    #[must_use]
+    pub const fn execution_version(&self) -> ExecutionVersion {
+        self.execution_version
+    }
+
+    /// Returns the status observed under lock.
+    #[must_use]
+    pub const fn prior_status(&self) -> BatchStatus {
+        self.prior_status
+    }
+
+    /// Returns the durable status produced by the decision.
+    #[must_use]
+    pub const fn resulting_status(&self) -> BatchStatus {
+        self.resulting_status
+    }
+
+    /// Borrows the bounded reason code.
+    #[must_use]
+    pub fn reason_code(&self) -> &str {
+        &self.reason_code
+    }
+
+    /// Borrows the opaque operator correlation.
+    #[must_use]
+    pub fn operator_reference(&self) -> &str {
+        &self.operator_reference
+    }
+
+    /// Returns the digest of externally retained evidence.
+    #[must_use]
+    pub const fn evidence_digest(&self) -> &[u8; 32] {
+        &self.evidence_digest
+    }
+
+    /// Returns the injected facade-clock decision time.
+    #[must_use]
+    pub const fn decided_at(&self) -> SystemTime {
+        self.decided_at
+    }
+}
+
+/// Result of atomically appending an audit decision and changing execution state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecoveryResult {
+    execution: JobExecution,
+    decision: RecoveryDecision,
+}
+
+impl RecoveryResult {
+    pub(crate) const fn new(execution: JobExecution, decision: RecoveryDecision) -> Self {
+        Self {
+            execution,
+            decision,
+        }
+    }
+
+    /// Borrows the recovered execution snapshot.
+    #[must_use]
+    pub const fn execution(&self) -> &JobExecution {
+        &self.execution
+    }
+
+    /// Borrows the append-only audit decision.
+    #[must_use]
+    pub const fn decision(&self) -> &RecoveryDecision {
+        &self.decision
+    }
+}
+
+/// Recovery request field category.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum RecoveryField {
+    /// Stable machine-readable reason code.
+    ReasonCode,
+    /// Opaque authenticated-operator correlation.
+    OperatorReference,
+}
+
+/// Invalid bounded recovery request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum RecoveryRequestError {
+    /// A field was empty.
+    Empty {
+        /// Invalid field.
+        field: RecoveryField,
+    },
+    /// A field exceeded its UTF-8 byte bound.
+    TooLong {
+        /// Invalid field.
+        field: RecoveryField,
+        /// Maximum accepted UTF-8 bytes.
+        max_bytes: usize,
+    },
+    /// A field had surrounding whitespace.
+    SurroundingWhitespace {
+        /// Invalid field.
+        field: RecoveryField,
+    },
+    /// A field contained a control character.
+    ControlCharacter {
+        /// Invalid field.
+        field: RecoveryField,
+    },
+}
+
+impl fmt::Display for RecoveryRequestError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty { field } => write!(formatter, "{field:?} must not be empty"),
+            Self::TooLong { field, max_bytes } => {
+                write!(formatter, "{field:?} exceeds {max_bytes} bytes")
+            }
+            Self::SurroundingWhitespace { field } => {
+                write!(formatter, "{field:?} has surrounding whitespace")
+            }
+            Self::ControlCharacter { field } => {
+                write!(formatter, "{field:?} contains a control character")
+            }
+        }
+    }
+}
+
+impl Error for RecoveryRequestError {}
+
+fn validate_recovery_text(
+    value: &str,
+    field: RecoveryField,
+    max_bytes: usize,
+) -> Result<(), RecoveryRequestError> {
+    if value.is_empty() {
+        return Err(RecoveryRequestError::Empty { field });
+    }
+    if value.len() > max_bytes {
+        return Err(RecoveryRequestError::TooLong { field, max_bytes });
+    }
+    if value.trim() != value {
+        return Err(RecoveryRequestError::SurroundingWhitespace { field });
+    }
+    if value.chars().any(char::is_control) {
+        return Err(RecoveryRequestError::ControlCharacter { field });
+    }
+    Ok(())
+}
+
+pub(crate) fn recovered_execution(
+    prior: &JobExecution,
+    request: &RecoveryRequest,
+    decided_at: SystemTime,
+) -> Result<JobExecution, RepositoryError> {
+    if prior.version() != request.expected_version() {
+        return Err(RepositoryError::Lifecycle(LifecycleError::StaleVersion {
+            expected: request.expected_version(),
+            actual: prior.version(),
+        }));
+    }
+    let prior_status = prior.metadata().status();
+    if !matches!(
+        prior_status,
+        BatchStatus::Starting | BatchStatus::Started | BatchStatus::Stopping | BatchStatus::Unknown
+    ) {
+        return Err(RepositoryError::RecoveryNotAllowed {
+            id: prior.id(),
+            status: prior_status,
+        });
+    }
+    let current_time = prior.metadata().timestamps();
+    let timestamps = ExecutionTimestamps::new(
+        current_time.created_at(),
+        current_time.started_at(),
+        Some(decided_at),
+    )?;
+    let resulting_status = request.disposition().resulting_status();
+    let metadata = ExecutionMetadata::new(
+        resulting_status,
+        prior.metadata().exit_status().clone(),
+        timestamps,
+        prior.metadata().counts(),
+        request.failure(),
+    )?;
+    Ok(JobExecution::from_snapshot(
+        prior.id(),
+        prior.job_instance_id(),
+        metadata,
+        prior.version().next()?,
+    ))
+}
+
 /// Starts isolated repository units of work.
 ///
 /// A unit of work does not become visible until it is committed. Dropping one
@@ -219,6 +621,13 @@ pub trait JobRepository: Send + Sync {
 /// `PostgreSQL` adapter to keep its concrete transaction private. A successful
 /// operation is still provisional until [`commit`](Self::commit) succeeds.
 pub trait RepositoryUnitOfWork: Send {
+    /// Registers one explicit directed definition compatibility edge.
+    fn register_definition_upgrade<'a>(
+        &'a mut self,
+        job_name: &'a JobName,
+        upgrade: &'a DefinitionUpgrade,
+    ) -> BoxFuture<'a, Result<(), RepositoryError>>;
+
     /// Selects or creates the unique logical instance for `key`.
     fn select_or_create_job_instance<'a>(
         &'a mut self,
@@ -234,6 +643,16 @@ pub trait RepositoryUnitOfWork: Send {
         &mut self,
         job_instance_id: JobInstanceId,
     ) -> BoxFuture<'_, Result<JobExecution, RepositoryError>>;
+
+    /// Creates an attempt bound to an exact restart-relevant definition.
+    ///
+    /// Durable adapters compare the supplied identity with the definition that
+    /// produced the latest checkpoint before creating a restart attempt.
+    fn create_job_execution_with_definition<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        definition: &'a DefinitionIdentity,
+    ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>>;
 
     /// Creates a step attempt linked to an existing job execution.
     fn create_step_execution<'a>(
@@ -309,6 +728,19 @@ pub trait RepositoryUnitOfWork: Send {
         &mut self,
         job_execution_id: JobExecutionId,
     ) -> BoxFuture<'_, Result<Vec<StepExecution>, RepositoryError>>;
+
+    /// Atomically resolves one orphaned or ambiguous execution and appends its audit record.
+    fn recover_job_execution<'a>(
+        &'a mut self,
+        id: JobExecutionId,
+        request: &'a RecoveryRequest,
+    ) -> BoxFuture<'a, Result<RecoveryResult, RepositoryError>>;
+
+    /// Loads the append-only recovery decision for one execution, when present.
+    fn recovery_decision(
+        &mut self,
+        id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Option<RecoveryDecision>, RepositoryError>>;
 
     /// Atomically publishes all changes made by this unit of work.
     fn commit<'a>(self: Box<Self>) -> BoxFuture<'a, Result<(), RepositoryError>>
@@ -391,6 +823,54 @@ pub enum RepositoryError {
         /// Its current framework status.
         status: BatchStatus,
     },
+    /// One job name and revision were bound to a different manifest.
+    DefinitionDrift {
+        /// Definition whose application revision drifted.
+        job_name: JobName,
+        /// Reused application-owned revision.
+        revision: DefinitionRevision,
+    },
+    /// A manifest was registered or launched under a different job name.
+    DefinitionJobMismatch {
+        /// Job name selected by the instance or registration call.
+        expected: JobName,
+        /// Job name encoded in the definition manifest.
+        actual: JobName,
+    },
+    /// The proposed definition cannot interpret the latest checkpoint.
+    IncompatibleDefinition {
+        /// Logical instance whose last definition is incompatible.
+        instance_id: JobInstanceId,
+    },
+    /// The runtime cannot interpret the supplied or persisted manifest format.
+    UnsupportedManifestVersion {
+        /// Unsupported format version.
+        format: u16,
+    },
+    /// A registered directed edge did not map a required durable step.
+    InvalidDefinitionUpgrade {
+        /// New execution whose mapped state could not be resolved.
+        execution_id: JobExecutionId,
+    },
+    /// A directed edge was already registered with different immutable content.
+    DefinitionUpgradeConflict {
+        /// Job whose edge conflicted.
+        job_name: JobName,
+    },
+    /// A restartable definition required durable step state that was absent.
+    RestartStateNotFound {
+        /// New restart execution.
+        execution_id: JobExecutionId,
+        /// Target step whose source state was absent.
+        step_name: StepName,
+    },
+    /// Recovery was requested for a state that needs no recovery decision.
+    RecoveryNotAllowed {
+        /// Rejected execution.
+        id: JobExecutionId,
+        /// Durable status observed under lock.
+        status: BatchStatus,
+    },
     /// A domain value could not be constructed.
     Domain(DomainError),
     /// An injected identifier source failed.
@@ -454,6 +934,45 @@ impl fmt::Display for RepositoryError {
                 formatter,
                 "job instance {instance_id} already has execution {execution_id} in {status}"
             ),
+            Self::DefinitionDrift { job_name, revision } => write!(
+                formatter,
+                "job {job_name} definition revision {} has drifted",
+                revision.as_str()
+            ),
+            Self::DefinitionJobMismatch { expected, actual } => write!(
+                formatter,
+                "definition for job {actual} cannot be used for job {expected}"
+            ),
+            Self::IncompatibleDefinition { instance_id } => write!(
+                formatter,
+                "job instance {instance_id} has no direct compatible definition"
+            ),
+            Self::UnsupportedManifestVersion { format } => {
+                write!(
+                    formatter,
+                    "definition manifest format {format} is unsupported"
+                )
+            }
+            Self::InvalidDefinitionUpgrade { execution_id } => write!(
+                formatter,
+                "definition upgrade for execution {execution_id} is incomplete"
+            ),
+            Self::DefinitionUpgradeConflict { job_name } => {
+                write!(formatter, "job {job_name} definition upgrade conflicts")
+            }
+            Self::RestartStateNotFound {
+                execution_id,
+                step_name,
+            } => write!(
+                formatter,
+                "restart execution {execution_id} has no durable source for step {step_name}"
+            ),
+            Self::RecoveryNotAllowed { id, status } => {
+                write!(
+                    formatter,
+                    "job execution {id} in {status} cannot be recovered"
+                )
+            }
             Self::Domain(error) => write!(formatter, "invalid repository domain value: {error}"),
             Self::Identifier(error) => write!(formatter, "identifier generation failed: {error}"),
             Self::Lifecycle(error) => error.fmt(formatter),

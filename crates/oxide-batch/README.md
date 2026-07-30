@@ -5,8 +5,9 @@ a restart-oriented batch processing framework for Rust inspired by Spring Batch.
 
 > This crate contains the completed M1 executable kernel and the first M2
 > PostgreSQL metadata adapter, deterministic M2 chunk orchestration, and atomic
-> enlisted PostgreSQL chunk commits. Durable restart and recovery selection are
-> still in progress, so it is not yet a production-ready batch runtime.
+> enlisted PostgreSQL chunk commits, definition-guarded durable restart, and
+> audited recovery decisions. The M2 crash/conformance exit gate is still in
+> progress, so it is not yet a production-ready batch runtime.
 
 The facade owns validated job and step names, opaque instance/execution IDs,
 typed and value-redacted job parameters, canonical job-instance keys, lifecycle
@@ -116,8 +117,34 @@ connection. A failed CAS rolls everything back; a failed `COMMIT`
 acknowledgement discards the connection and reports `UNKNOWN`.
 
 Managers that do not enlist the writer retain the documented at-least-once
-boundary and cannot claim PostgreSQL same-resource atomicity. Durable restart
-selection and audited recovery remain the next M2 workstream.
+boundary and cannot claim PostgreSQL same-resource atomicity.
+
+## M2 durable restart and recovery
+
+`TaskletJob::new` and `ChunkJob::new` require application-owned definition and
+component revisions. Chunk definitions also declare checkpoint/context schema
+IDs and versions plus their delivery mode. OxideBatch builds a bounded
+canonical manifest, hashes it with SHA-256, and binds every PostgreSQL
+execution to the exact persisted definition. Reusing one revision with
+different restart-relevant content is a typed definition-drift error. A failed
+or stopped execution can restart with the same digest or with one registered,
+directed `DefinitionUpgrade`; edges are not inferred or treated as transitive.
+
+The current directed upgrade path copies checkpoint and context bytes
+unchanged. It is valid only when the mapped source and target steps retain the
+same state schemas and meanings. A state-schema change requires a future
+explicit transformation contract and is not silently accepted.
+
+A PostgreSQL restart creates new job and step execution IDs and loads the
+latest committed checkpoint, execution context, and cumulative counters into
+the new step attempt. Completed and abandoned instances remain terminal.
+`STARTING`, `STARTED`, `STOPPING`, and `UNKNOWN` attempts block replay until an
+operator submits a versioned `RecoveryRequest`. Recovery rereads the durable
+row under lock, atomically appends prior/result status, reason, operator
+correlation, evidence digest, and injected-clock time, and changes the
+execution to `FAILED` or `ABANDONED`. Authentication, authorization, external
+evidence storage, and a recovery CLI remain deployment or later-operator
+concerns.
 
 ## First in-memory job
 

@@ -5,10 +5,10 @@ use std::num::NonZeroU64;
 use std::sync::Arc;
 
 use oxide_batch::{
-    BoxFuture, InMemoryJobRepository, JobLauncher, JobName, JobParameter, JobParameters,
-    ParameterName, ParameterRole, ParameterValue, SequentialIdGenerator, StopSource, SystemClock,
-    Tasklet, TaskletContext, TaskletError, TaskletExecutionOutcome, TaskletJob, TaskletOutcome,
-    TaskletStep,
+    BoxFuture, ComponentRevision, DefinitionRevision, InMemoryJobRepository, JobLauncher, JobName,
+    JobParameter, JobParameters, ParameterName, ParameterRole, ParameterValue,
+    SequentialIdGenerator, StopSource, SystemClock, Tasklet, TaskletContext, TaskletError,
+    TaskletExecutionOutcome, TaskletJob, TaskletOutcome, TaskletStep,
 };
 
 struct ImportTasklet;
@@ -37,7 +37,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         oxide_batch::StepName::new("import")?,
         Arc::new(ImportTasklet),
     );
-    let job = TaskletJob::new(JobName::new("daily_import")?, step);
+    let job = TaskletJob::new(
+        JobName::new("daily_import")?,
+        step,
+        DefinitionRevision::new("example-v1")?,
+        &ComponentRevision::new("import-tasklet-v1")?,
+    )?;
     let parameters = JobParameters::try_from_iter([(
         ParameterName::new("business_date")?,
         JobParameter::new(

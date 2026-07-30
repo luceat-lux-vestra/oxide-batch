@@ -39,12 +39,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   schema-v1 migrations, canonical instance-key hashing, database-authoritative
   launch serialization, typed optimistic conflicts, and unknown-commit
   classification.
+- Deterministic chunk orchestration and PostgreSQL same-resource chunk
+  transactions that atomically commit business writes, checkpoints, contexts,
+  counters, and optimistic versions.
+- Canonical definition manifests and SHA-256 identity, typed definition-drift
+  and compatibility rejection, explicit directed step mappings, committed
+  checkpoint inheritance into distinct restart attempts, and versioned
+  append-only PostgreSQL recovery decisions.
 - M0 implementation-readiness plan, M0–M5 roadmap, decision records, and
   product, compatibility, architecture, engineering, security, operations, and
   release policy set.
 - Dedicated MSRV and supply-chain CI checks.
 - Repository `cargo xtask` commands for development checks and package
   verification.
+
+### Fixed
+
+- PostgreSQL design-gate readiness now probes the final TCP listener instead of
+  mistaking the official image's socket-only initialization server for a ready
+  database.
 
 ## [0.1.0-alpha.1] - 2026-07-29
 

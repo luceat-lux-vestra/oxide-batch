@@ -8,13 +8,14 @@ use futures_util::FutureExt;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::{
-    BoxFuture, ChunkCompletion, ChunkCompletionContext, ChunkCompletionOutcome, ChunkCount,
-    ChunkCounts, ChunkProgress, ChunkSize, ChunkTransactionContext, ChunkTransactionError,
-    ChunkTransactionManager, ItemProcessor, ItemReader, ItemWriter, JobExecutionListener,
-    JobLauncher, JobName, JobParameters, LaunchError, LaunchReport, LifecycleEventKind,
-    ProcessContext, ProcessOutcome, ReadContext, ReadOutcome, StepExecutionListener, StepName,
-    StopToken, Tasklet, TaskletContext, TaskletError, TaskletJob, TaskletOutcome, TaskletStep,
-    WriteContext, WriteOutcome,
+    BoxFuture, ChunkCompletion, ChunkCompletionContext, ChunkCompletionOutcome,
+    ChunkComponentRevisions, ChunkCount, ChunkCounts, ChunkProgress, ChunkSize,
+    ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager, DefinitionError,
+    DefinitionIdentity, DefinitionRevision, ItemProcessor, ItemReader, ItemWriter,
+    JobExecutionListener, JobLauncher, JobName, JobParameters, LaunchError, LaunchReport,
+    LifecycleEventKind, ProcessContext, ProcessOutcome, ReadContext, ReadOutcome,
+    StepExecutionListener, StepName, StopToken, Tasklet, TaskletContext, TaskletError, TaskletJob,
+    TaskletOutcome, TaskletStep, WriteContext, WriteOutcome,
 };
 
 /// A validated one-step chunk definition.
@@ -107,24 +108,37 @@ impl<I, O> fmt::Debug for ChunkStep<I, O> {
 pub struct ChunkJob<I, O> {
     name: JobName,
     step_name: StepName,
+    definition: DefinitionIdentity,
     tasklet: Arc<ChunkTasklet<I, O>>,
     step_listeners: Vec<Arc<dyn StepExecutionListener>>,
     listeners: Vec<Arc<dyn JobExecutionListener>>,
 }
 
 impl<I, O> ChunkJob<I, O> {
-    /// Constructs a single-step chunk job.
-    #[must_use]
-    pub fn new(name: JobName, step: ChunkStep<I, O>) -> Self {
+    /// Constructs a chunk job with explicit restart-relevant revisions.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DefinitionError`] if the bounded canonical manifest cannot be
+    /// encoded.
+    pub fn new(
+        name: JobName,
+        step: ChunkStep<I, O>,
+        revision: DefinitionRevision,
+        components: &ChunkComponentRevisions,
+    ) -> Result<Self, DefinitionError> {
         let step_name = step.name.clone();
+        let definition =
+            DefinitionIdentity::chunk(&name, &step_name, step.size, revision, components)?;
         let step_listeners = step.step_listeners.clone();
-        Self {
+        Ok(Self {
             name,
             step_name,
+            definition,
             tasklet: Arc::new(ChunkTasklet::new(step)),
             step_listeners,
             listeners: Vec::new(),
-        }
+        })
     }
 
     /// Registers a job listener in deterministic before-order.
@@ -153,6 +167,7 @@ impl<I, O> fmt::Debug for ChunkJob<I, O> {
             .debug_struct("ChunkJob")
             .field("name", &self.name)
             .field("step_name", &self.step_name)
+            .field("definition", &self.definition)
             .field("listener_count", &self.listeners.len())
             .field("step_listener_count", &self.step_listeners.len())
             .finish_non_exhaustive()
@@ -287,7 +302,11 @@ impl JobLauncher<'_> {
         for listener in &job.step_listeners {
             tasklet_step = tasklet_step.with_listener(Arc::clone(listener));
         }
-        let mut tasklet_job = TaskletJob::new(job.name.clone(), tasklet_step);
+        let mut tasklet_job = TaskletJob::from_definition_identity(
+            job.name.clone(),
+            tasklet_step,
+            job.definition.clone(),
+        );
         for listener in &job.listeners {
             tasklet_job = tasklet_job.with_listener(Arc::clone(listener));
         }
