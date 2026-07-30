@@ -110,6 +110,20 @@ staged path is:
 4. add general flow node types;
 5. deprecate wrappers only through the public compatibility policy.
 
+## M3 bounded lowering and flow slice
+
+M3 implements the acyclic step/decision/terminal subset, deterministic exit
+patterns, durable decisions, and start controls specified by the
+[basic-flow contract](basic-flow.md). Its fixed graph and manifest bounds are
+implementation requirements, not defaults that a caller may disable.
+
+Manifest format 2 is canonical JSON and captures the graph, fault policies,
+authoritative listener/decider revisions, and start controls. Format-1
+one-step wrappers remain readable and lower without changing their original
+bytes, fingerprint, normalized repository writes, or callback trace. Moving a
+persisted definition from format 1 to 2 requires a direct compatibility edge;
+schema migration never rewrites manifest identity.
+
 ## Evidence
 
 Production implementation requires:

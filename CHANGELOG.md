@@ -53,6 +53,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - An active M3 kickoff gate with explicit fault-policy, persistence, listener,
   compiled-plan, flow-decision, migration, resource, and evidence boundaries
   plus dependency-ordered delivery workstreams.
+- Accepted M3 contracts for typed bounded retry/skip/rollback, deterministic
+  backoff, item/retry/skip listeners, acyclic conditional flow, durable
+  deciders, start controls, manifest format 2, and the schema-2
+  migration/restore boundary.
 - M0 implementation-readiness plan, M0–M5 roadmap, decision records, and
   product, compatibility, architecture, engineering, security, operations, and
   release policy set.

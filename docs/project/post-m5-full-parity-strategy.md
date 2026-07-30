@@ -68,6 +68,8 @@ call it complete.
 | Target layers and dependency direction | [Architecture overview](../architecture/overview.md) | RFC-0003, RFC-0005, RFC-0006 |
 | Definitions, plans, revisions, and fingerprints | [Execution-plan architecture](../architecture/execution-plan.md) | RFC-0004 |
 | Item components and static/erased boundaries | [Item-processing model](../architecture/item-processing-model.md) | RFC-0005 |
+| M3 fault policies and item/retry/skip listeners | [M3 fault-tolerance contract](../architecture/fault-tolerance.md) | Existing M3 scope and ADR-0002 |
+| M3 basic flow, deciders, and start controls | [M3 basic-flow contract](../architecture/basic-flow.md) | RFC-0004 and ADR-0005 |
 | Repository ports and transaction capabilities | [Repository and transaction model](../architecture/repository-and-transaction-model.md) | RFC-0007 |
 | Integration categories and delivery capabilities | [Integration model](../architecture/integration-model.md) | RFC-0007 |
 | Coordinator/worker semantics and protocol | [Distributed execution](../architecture/distributed-execution.md) | RFC-0009 |

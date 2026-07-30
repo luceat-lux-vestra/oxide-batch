@@ -64,6 +64,9 @@ closes these gates in the canonical documents and fixtures. An accepted
 contract change still requires a superseding RFC or ADR before dependent
 implementation.
 
+The decisions and dependency handoff are recorded in the
+[M3 design-gate evidence](m3-design-gate-evidence.md).
+
 ## Governing architecture constraints
 
 [RFC-0005](../rfcs/0005-static-and-erased-components.md) remains proposed.

@@ -87,6 +87,27 @@ the PostgreSQL atomic mode.
 After an ambiguous commit response, the physical connection is discarded and
 the outcome is `UNKNOWN` until a healthy connection reads durable state.
 
+## M3 fault and flow transactions
+
+The [M3 fault-tolerance contract](fault-tolerance.md) adds one metadata-only
+retry-reservation transaction after a known rollback and before backoff. Its
+step compare-and-swap increments exactly one phase retry counter plus the
+durably acknowledged rollback count and replaces the bounded checksummed
+fault-state envelope. A stale reservation cannot spend the same retry ordinal
+twice.
+
+An accepted skip commits its phase count, retry-key removal, checkpoint,
+context, business writes, listener work, ordinary counters, and optimistic
+version in the existing chunk transaction. Known rollback changes none of
+those values except `rollback_count` in the subsequent authoritative metadata
+update. An unknown commit changes no inferred counter and enters `UNKNOWN`.
+
+The [M3 basic-flow contract](basic-flow.md) appends a selected transition after
+the source step result is durable and before the target starts. Decider result
+and target selection share one transaction. Step start-limit comparison and
+step-execution creation also share one transaction across the job instance and
+logical step ID.
+
 ## Adapter certification
 
 Every adapter runs the same logical contract suite plus adapter-specific
