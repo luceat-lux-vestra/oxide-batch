@@ -319,7 +319,10 @@ fn newer_schema_is_rejected_without_guessing_compatibility() -> Result<(), Box<d
             .max_connections(1)
             .connect(&url)
             .await?;
-        sqlx::query("UPDATE oxide_batch.ob_schema_version SET version = 2")
+        let supported = PostgresMigrator::supported_schema_version();
+        let newer = supported + 1;
+        sqlx::query("UPDATE oxide_batch.ob_schema_version SET version = $1")
+            .bind(i32::try_from(newer)?)
             .execute(&pool)
             .await?;
         let result = PostgresJobRepository::connect(
@@ -327,7 +330,8 @@ fn newer_schema_is_rejected_without_guessing_compatibility() -> Result<(), Box<d
             Arc::new(FixedClock(UNIX_EPOCH)),
         )
         .await;
-        sqlx::query("UPDATE oxide_batch.ob_schema_version SET version = 1")
+        sqlx::query("UPDATE oxide_batch.ob_schema_version SET version = $1")
+            .bind(i32::try_from(supported)?)
             .execute(&pool)
             .await?;
         pool.close().await;
@@ -337,8 +341,8 @@ fn newer_schema_is_rejected_without_guessing_compatibility() -> Result<(), Box<d
         assert_eq!(
             error,
             RepositoryError::NewerSchema {
-                current: 2,
-                supported: 1,
+                current: newer,
+                supported,
             }
         );
         Ok::<(), Box<dyn Error>>(())
