@@ -1204,10 +1204,15 @@ fn fault_policy() -> Result<FaultPolicy, Box<dyn Error>> {
     )?)
 }
 
+/// Creates and starts one chunk step at `started_at`.
+///
+/// The instant must not precede the repository clock, because the clock stamps
+/// `created_at` and the lifecycle rejects a start before creation.
 async fn started_chunk_step(
     repository: &PostgresJobRepository,
     job_name: &JobName,
     step_name: &StepName,
+    started_at: SystemTime,
 ) -> Result<ChunkTransactionContext, Box<dyn Error>> {
     let key = JobInstanceKey::new(job_name.clone(), &JobParameters::new());
     let mut create = repository.begin().await?;
@@ -1222,7 +1227,6 @@ async fn started_chunk_step(
         .await?;
     create.commit().await?;
 
-    let started_at = UNIX_EPOCH + Duration::from_secs(910);
     let mut start = repository.begin().await?;
     start
         .transition_job_execution(
@@ -1278,7 +1282,13 @@ fn retry_reservation_is_a_durable_compare_and_swap() -> Result<(), Box<dyn Error
         .await?;
         let job_name = JobName::new(JOB)?;
         let step_name = StepName::new("import")?;
-        let scope = started_chunk_step(&repository, &job_name, &step_name).await?;
+        let scope = started_chunk_step(
+            &repository,
+            &job_name,
+            &step_name,
+            UNIX_EPOCH + Duration::from_secs(910),
+        )
+        .await?;
         let policy = fault_policy()?;
 
         let state = PostgresFaultState::new(repository.clone(), &policy);
@@ -1364,7 +1374,13 @@ fn skips_counters_and_fault_state_commit_with_the_chunk() -> Result<(), Box<dyn 
         .await?;
         let job_name = JobName::new(JOB)?;
         let step_name = StepName::new("import")?;
-        let scope = started_chunk_step(&repository, &job_name, &step_name).await?;
+        let scope = started_chunk_step(
+            &repository,
+            &job_name,
+            &step_name,
+            UNIX_EPOCH + Duration::from_secs(920),
+        )
+        .await?;
         let policy = fault_policy()?;
 
         let state = PostgresFaultState::new(repository.clone(), &policy);
@@ -1446,7 +1462,13 @@ fn corrupt_fault_state_fails_before_component_work() -> Result<(), Box<dyn Error
         .await?;
         let job_name = JobName::new(JOB)?;
         let step_name = StepName::new("import")?;
-        let scope = started_chunk_step(&repository, &job_name, &step_name).await?;
+        let scope = started_chunk_step(
+            &repository,
+            &job_name,
+            &step_name,
+            UNIX_EPOCH + Duration::from_secs(930),
+        )
+        .await?;
         let policy = fault_policy()?;
 
         let pool = PgPoolOptions::new()

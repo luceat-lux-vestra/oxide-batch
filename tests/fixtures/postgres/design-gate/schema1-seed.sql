@@ -97,9 +97,12 @@ SELECT
     4, 4, 4, 0, 2, 0,
     1, 'fixture.cursor', 1, '{"cursor":4}'::jsonb,
     1, 'fixture.step', 1, '{}'::jsonb,
-    CURRENT_TIMESTAMP,
-    CURRENT_TIMESTAMP,
+    -- The step borrows its enclosing execution's instants. A later
+    -- `CURRENT_TIMESTAMP` would sit after an already-recorded `ended_at` and
+    -- violate the schema-1 timestamp-order constraint.
+    execution.created_at,
+    execution.started_at,
     execution.ended_at,
-    CURRENT_TIMESTAMP,
+    execution.updated_at,
     2
 FROM ob_job_execution AS execution;
