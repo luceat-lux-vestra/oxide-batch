@@ -57,6 +57,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   backoff, item/retry/skip listeners, acyclic conditional flow, durable
   deciders, start controls, manifest format 2, and the schema-2
   migration/restore boundary.
+- Runtime-neutral M3 fault-tolerance values: bounded retry, retry-state, and
+  aggregate skip limits, capped deterministic backoff with an injected
+  cancellable sleeper, order-independent phase/category classification over
+  extended stable failure categories, capability-scoped rollback dispositions,
+  and ordered item/retry/skip listener families with panic-safe aggregation.
 - M0 implementation-readiness plan, M0–M5 roadmap, decision records, and
   product, compatibility, architecture, engineering, security, operations, and
   release policy set.

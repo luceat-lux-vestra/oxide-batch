@@ -2698,6 +2698,11 @@ fn decode_status(value: &str) -> Result<BatchStatus, RepositoryError> {
     }
 }
 
+/// Maps a facade category to its durable name.
+///
+/// The four M3 categories are accepted by the schema-2 constraint added in
+/// migration `0002`. A schema-1 database rejects them, so no runtime can
+/// silently store a value an older reader cannot interpret.
 const fn encode_failure_category(value: FailureCategory) -> &'static str {
     match value {
         FailureCategory::InvalidDefinition => "INVALID_DEFINITION",
@@ -2709,6 +2714,10 @@ const fn encode_failure_category(value: FailureCategory) -> &'static str {
         FailureCategory::Cancelled => "CANCELLED",
         FailureCategory::Serialization => "SERIALIZATION",
         FailureCategory::Invariant => "INVARIANT",
+        FailureCategory::OptimisticConflict => "OPTIMISTIC_CONFLICT",
+        FailureCategory::Timeout => "TIMEOUT",
+        FailureCategory::UnsupportedCapability => "UNSUPPORTED_CAPABILITY",
+        FailureCategory::UnknownCommit => "UNKNOWN_COMMIT",
     }
 }
 
@@ -2723,6 +2732,10 @@ fn decode_failure_category(value: &str) -> Result<FailureCategory, RepositoryErr
         "CANCELLED" => Ok(FailureCategory::Cancelled),
         "SERIALIZATION" => Ok(FailureCategory::Serialization),
         "INVARIANT" => Ok(FailureCategory::Invariant),
+        "OPTIMISTIC_CONFLICT" => Ok(FailureCategory::OptimisticConflict),
+        "TIMEOUT" => Ok(FailureCategory::Timeout),
+        "UNSUPPORTED_CAPABILITY" => Ok(FailureCategory::UnsupportedCapability),
+        "UNKNOWN_COMMIT" => Ok(FailureCategory::UnknownCommit),
         _ => Err(RepositoryError::Unavailable),
     }
 }

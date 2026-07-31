@@ -56,6 +56,23 @@
 //! writer borrows [`BusinessTransaction`] for only its call; no database-driver
 //! type crosses the facade.
 //!
+//! M3 adds runtime-neutral fault-tolerance values. [`FaultPolicy`] combines a
+//! [`FaultClassifier`] over stable [`FaultPhase`] and [`FailureCategory`]
+//! inputs with a bounded [`RetryLimit`], [`RetryStateLimit`], [`SkipLimit`],
+//! and a deterministic [`BackoffPolicy`]. [`FaultPolicy::decide`] is a pure
+//! function of the policy, a framework-owned [`FaultDescriptor`], and
+//! [`FaultEvidence`], so a restart reproduces the same decision. Waiting uses
+//! an injected [`BackoffSleeper`] rather than wall-clock time, and
+//! [`RollbackDisposition::CommitSafeSkip`] still records a skip instead of
+//! silently dropping an item.
+//!
+//! [`ItemListenerSet`] owns the M3 [`ReadListener`], [`ProcessListener`],
+//! [`WriteListener`], [`RetryListener`], and [`SkipListener`] families. Before
+//! callbacks run in registration order and stop at the first failure; the
+//! matching completion callbacks run only the entered listeners in reverse
+//! order and aggregate every failure. A panic is classified exactly like a
+//! returned [`ListenerError`], and no callback receives an error payload.
+//!
 //! [`Checkpoint`] and [`ExecutionContext`] retain bounded versioned JSON through
 //! application-owned [`VersionedStateCodec`] implementations. Codec signatures
 //! exchange JSON object bytes, keeping serializer types out of the public
@@ -77,6 +94,8 @@ mod chunk_runtime;
 mod definition;
 mod diagnostics;
 mod domain;
+mod fault;
+mod item_listener;
 mod listener;
 mod repository;
 mod runtime;
@@ -97,9 +116,9 @@ pub use chunk_runtime::{
     ChunkListenerFailure, ChunkListenerFailureKind, ChunkListenerPhase, ChunkStep,
 };
 pub use definition::{
-    ChunkComponentRevisions, ChunkDeliveryMode, ChunkRestartContract, ComponentRevision,
-    DefinitionError, DefinitionIdentity, DefinitionRevision, DefinitionTokenKind,
-    DefinitionUpgrade, DefinitionUpgradeKey, StepDefinitionUpgrade,
+    ChunkComponentRevisions, ChunkDeliveryMode, ChunkRestartContract, ClassifierRevision,
+    ComponentRevision, DefinitionError, DefinitionIdentity, DefinitionRevision,
+    DefinitionTokenKind, DefinitionUpgrade, DefinitionUpgradeKey, StepDefinitionUpgrade,
 };
 pub use diagnostics::{
     DiagnosticField, EventComponent, EventSeverity, ExecutionAttempt, ExecutionCorrelation,
@@ -112,6 +131,17 @@ pub use domain::{
     JobName, JobParameter, JobParameters, LifecycleError, LifecycleTransition, NameKind,
     ParameterName, ParameterRole, ParameterValue, ParameterValueKind, StepExecution,
     StepExecutionId, StepName,
+};
+pub use fault::{
+    BackoffKind, BackoffOutcome, BackoffPolicy, BackoffSleeper, FaultAction, FaultClassifier,
+    FaultDecision, FaultDescriptor, FaultEvidence, FaultPhase, FaultPolicy, FaultPolicyError,
+    FaultRule, RetryLimit, RetryOrdinal, RetryStateLimit, RollbackDisposition, SkipCounts,
+    SkipLimit,
+};
+pub use item_listener::{
+    BeforeCallbackOutcome, ItemListenerContext, ItemListenerError, ItemListenerFailure,
+    ItemListenerPhase, ItemListenerSet, ProcessListener, ReadListener, RetryListener, RetryOutcome,
+    SkipListener, WriteListener,
 };
 pub use listener::{
     JobExecutionListener, ListenerContext, ListenerError, ListenerFailure, ListenerFailureKind,

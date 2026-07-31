@@ -271,6 +271,32 @@ pub enum FailureCategory {
     Serialization,
     /// A framework invariant was violated.
     Invariant,
+    /// An optimistic version check lost to a concurrent writer.
+    OptimisticConflict,
+    /// A bounded operation exceeded its deadline.
+    Timeout,
+    /// The selected resource cannot provide a required capability.
+    UnsupportedCapability,
+    /// A commit outcome is unknown and must never be guessed.
+    UnknownCommit,
+}
+
+impl FailureCategory {
+    /// Returns whether a fault policy may retry or skip this category.
+    ///
+    /// Definition, lifecycle, cancellation, serialization, invariant,
+    /// capability, and unknown-commit failures always fail closed.
+    #[must_use]
+    pub const fn is_policy_eligible(self) -> bool {
+        matches!(
+            self,
+            Self::TransientInfrastructure
+                | Self::PermanentInfrastructure
+                | Self::UserComponent
+                | Self::OptimisticConflict
+                | Self::Timeout
+        )
+    }
 }
 
 /// A value-redacted failure summary suitable for execution inspection.
