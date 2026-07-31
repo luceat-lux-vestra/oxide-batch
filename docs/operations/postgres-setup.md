@@ -37,7 +37,7 @@ certificate through `CaCertificate`. There is no invalid-certificate mode.
 isolated test environments. Connection strings and certificate contents or
 paths are redacted from facade diagnostics.
 
-## Initialize schema version 1
+## Initialize schema version 2
 
 Enable the adapter:
 
@@ -46,8 +46,9 @@ Enable the adapter:
 oxide-batch = { version = "0.1.0-alpha.1", features = ["postgres"] }
 ```
 
-Apply the released migration with the migrator identity before starting any
-runtime:
+Apply the released migrations with the migrator identity before starting any
+runtime. `PostgresMigrator::migrate` installs schema `1` and `2` on an empty
+database and applies only the pending migration on an existing one:
 
 ```rust,no_run
 use oxide_batch::{PostgresConfig, PostgresMigrator};
@@ -81,14 +82,14 @@ Runtime startup is fail-closed:
 | --- | --- |
 | Missing schema/version row | `SchemaUninitialized` |
 | Supported older schema | `MigrationRequired` |
-| Exact schema version 1 | connection accepted |
-| Version above 1 | `NewerSchema` |
+| Exact schema version 2 | connection accepted |
+| Version above 2 | `NewerSchema` |
 
 Runtime startup never applies migrations automatically.
 
 ## Verify the installation
 
-As migrator, the singleton query must return exactly `1`:
+As migrator, the singleton query must return exactly `2`:
 
 ```sql
 SELECT version
@@ -114,8 +115,11 @@ Run `16` and `17` in place of the major for the supported intermediate axes.
 
 Before a schema change, quiesce launchers, resolve or retain every ambiguous
 execution, record application/framework/schema versions, and take a verified
-backup. Default rollback is restoration of that compatible backup; schema
-version 1 has no destructive reverse migration.
+backup. Default rollback is restoration of that compatible backup; no released
+schema version has a destructive reverse migration. The schema-1 to schema-2
+consequences, including the loss of executions created after the backup, are
+recorded in
+[the schema-2 migration guide](migrations/0002-fault-tolerance-and-flow.md).
 
 The design-gate fixture performs a logical `pg_dump`, restores into a clean
 database of the same major version, and rereads the schema singleton.

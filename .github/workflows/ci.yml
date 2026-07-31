@@ -170,6 +170,21 @@ jobs:
             optimistic_conflict_has_one_winner \
             -- --nocapture --test-threads=1
 
+      - name: Verify durable fault-tolerance state
+        run: |
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            retry_reservation_is_a_durable_compare_and_swap \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            skips_counters_and_fault_state_commit_with_the_chunk \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            corrupt_fault_state_fails_before_component_work \
+            -- --nocapture --test-threads=1
+
       - name: Verify disconnect and schema-version classifications
         run: |
           cargo test -p oxide-batch --features postgres \

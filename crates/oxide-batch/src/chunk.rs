@@ -5,8 +5,8 @@ use std::fmt;
 use std::num::NonZeroU32;
 
 use crate::{
-    BoxFuture, Checkpoint, ExecutionContext, FailureCategory, JobExecutionId, StepExecutionId,
-    StopToken,
+    BoxFuture, Checkpoint, ExecutionContext, FailureCategory, FaultProgress, JobExecutionId,
+    SkipCounts, StepExecutionId, StopToken,
 };
 
 /// A nonzero item limit for one chunk.
@@ -625,6 +625,46 @@ impl fmt::Display for ChunkTransactionError {
 
 impl Error for ChunkTransactionError {}
 
+/// The fault-tolerance progress one chunk commit makes authoritative.
+///
+/// The values are deltas contributed by a single chunk attempt. A durable
+/// adapter adds them to the committed totals it read when the transaction
+/// began, so replaying an uncommitted chunk after a crash cannot double-count.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct ChunkFaultProgress {
+    skips: SkipCounts,
+    no_rollbacks: u64,
+}
+
+impl ChunkFaultProgress {
+    /// The progress of a chunk that accepted no skip.
+    pub const NONE: Self = Self {
+        skips: SkipCounts::ZERO,
+        no_rollbacks: 0,
+    };
+
+    /// Constructs the delta contributed by one chunk attempt.
+    #[must_use]
+    pub const fn new(skips: SkipCounts, no_rollbacks: u64) -> Self {
+        Self {
+            skips,
+            no_rollbacks,
+        }
+    }
+
+    /// Returns the per-phase skips this chunk accepted.
+    #[must_use]
+    pub const fn skips(self) -> SkipCounts {
+        self.skips
+    }
+
+    /// Returns the accepted commit-safe skips this chunk committed.
+    #[must_use]
+    pub const fn no_rollbacks(self) -> u64 {
+        self.no_rollbacks
+    }
+}
+
 /// One adapter-owned transaction for a bounded chunk attempt.
 ///
 /// The runtime invokes the writer while this value is open, then commits the
@@ -637,9 +677,15 @@ pub trait ChunkTransaction: Send {
 
     /// Commits business work and the supplied progress, returning the durable
     /// checkpoint and context that became authoritative.
+    ///
+    /// `fault` carries the skips this chunk accepted. A durable adapter also
+    /// clears the retained fault state of the superseded checkpoint generation
+    /// in this transaction, so a skip, its counters, and the checkpoint that
+    /// makes it authoritative commit or roll back together.
     fn commit(
         &mut self,
         counts: ChunkCounts,
+        fault: ChunkFaultProgress,
     ) -> BoxFuture<'_, Result<ChunkCommitReceipt, ChunkTransactionError>>;
 
     /// Rolls back all provisional work in this chunk attempt.
@@ -680,11 +726,75 @@ impl ChunkTransactionContext {
     }
 }
 
+/// Committed step progress one chunk-step attempt inherits.
+///
+/// A restart resumes bounded policy limits and stable retry-key identity from
+/// the durable state its attempt inherited, so a retry budget is not refilled
+/// by restarting the process.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct InheritedStepProgress {
+    read_ordinal: u64,
+    checkpoint_digest: [u8; 32],
+    fault: FaultProgress,
+}
+
+impl InheritedStepProgress {
+    /// The progress a standalone or first-attempt chunk step inherits.
+    pub const NONE: Self = Self {
+        read_ordinal: 0,
+        checkpoint_digest: [0; 32],
+        fault: FaultProgress::NONE,
+    };
+
+    /// Constructs inherited progress from durable step state.
+    #[must_use]
+    pub const fn new(read_ordinal: u64, checkpoint_digest: [u8; 32], fault: FaultProgress) -> Self {
+        Self {
+            read_ordinal,
+            checkpoint_digest,
+            fault,
+        }
+    }
+
+    /// Returns the stable reader ordinal the next chunk continues from.
+    #[must_use]
+    pub const fn read_ordinal(self) -> u64 {
+        self.read_ordinal
+    }
+
+    /// Returns the digest of the last committed checkpoint.
+    ///
+    /// Retry keys are derived from this generation, so an inherited digest
+    /// makes a reserved ordinal resumable after restart.
+    #[must_use]
+    pub const fn checkpoint_digest(self) -> [u8; 32] {
+        self.checkpoint_digest
+    }
+
+    /// Returns the inherited committed fault-tolerance totals.
+    #[must_use]
+    pub const fn fault(self) -> FaultProgress {
+        self.fault
+    }
+}
+
 /// Begins isolated adapter-owned chunk transactions.
 pub trait ChunkTransactionManager: Send + Sync {
     /// Starts one transaction for a bounded chunk attempt.
     fn begin(&self)
     -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>>;
+
+    /// Returns the durable progress this step attempt inherits.
+    ///
+    /// The default suits managers without durable state. A durable adapter
+    /// overrides it and fails closed rather than restarting bounded policy
+    /// limits from zero.
+    fn inherited_progress(
+        &self,
+        _context: ChunkTransactionContext,
+    ) -> BoxFuture<'_, Result<InheritedStepProgress, ChunkTransactionError>> {
+        Box::pin(std::future::ready(Ok(InheritedStepProgress::NONE)))
+    }
 
     /// Starts one transaction bound to a durable repository execution.
     ///

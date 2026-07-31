@@ -90,7 +90,13 @@ async fn rustls_verify_full_runtime_role_has_dml_but_not_ddl() {
     .fetch_one(&mut connection)
     .await
     .expect("runtime must read schema version");
-    assert_eq!(schema_version, 1);
+    // The design gate installs every released migration, so the runtime role
+    // observes the current supported schema rather than a pinned one.
+    assert_eq!(
+        schema_version,
+        i32::try_from(oxide_batch::PostgresMigrator::supported_schema_version())
+            .expect("the supported schema version fits an i32")
+    );
 
     let migration_history = connection
         .execute("SELECT version FROM oxide_batch._sqlx_migrations")

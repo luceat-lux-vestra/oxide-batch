@@ -297,6 +297,48 @@ impl FailureCategory {
                 | Self::Timeout
         )
     }
+
+    /// Returns the stable code durable adapters persist for this category.
+    ///
+    /// The spelling is durable data: an existing code is never renamed, and a
+    /// new variant only ever adds a code.
+    pub(crate) const fn durable_code(self) -> &'static str {
+        match self {
+            Self::InvalidDefinition => "INVALID_DEFINITION",
+            Self::DuplicateExecution => "DUPLICATE_EXECUTION",
+            Self::IllegalTransition => "ILLEGAL_TRANSITION",
+            Self::TransientInfrastructure => "TRANSIENT_INFRASTRUCTURE",
+            Self::PermanentInfrastructure => "PERMANENT_INFRASTRUCTURE",
+            Self::UserComponent => "USER_COMPONENT",
+            Self::Cancelled => "CANCELLED",
+            Self::Serialization => "SERIALIZATION",
+            Self::Invariant => "INVARIANT",
+            Self::OptimisticConflict => "OPTIMISTIC_CONFLICT",
+            Self::Timeout => "TIMEOUT",
+            Self::UnsupportedCapability => "UNSUPPORTED_CAPABILITY",
+            Self::UnknownCommit => "UNKNOWN_COMMIT",
+        }
+    }
+
+    /// Returns the category for one durable code, rejecting unknown values.
+    pub(crate) fn from_durable_code(value: &str) -> Option<Self> {
+        Some(match value {
+            "INVALID_DEFINITION" => Self::InvalidDefinition,
+            "DUPLICATE_EXECUTION" => Self::DuplicateExecution,
+            "ILLEGAL_TRANSITION" => Self::IllegalTransition,
+            "TRANSIENT_INFRASTRUCTURE" => Self::TransientInfrastructure,
+            "PERMANENT_INFRASTRUCTURE" => Self::PermanentInfrastructure,
+            "USER_COMPONENT" => Self::UserComponent,
+            "CANCELLED" => Self::Cancelled,
+            "SERIALIZATION" => Self::Serialization,
+            "INVARIANT" => Self::Invariant,
+            "OPTIMISTIC_CONFLICT" => Self::OptimisticConflict,
+            "TIMEOUT" => Self::Timeout,
+            "UNSUPPORTED_CAPABILITY" => Self::UnsupportedCapability,
+            "UNKNOWN_COMMIT" => Self::UnknownCommit,
+            _ => return None,
+        })
+    }
 }
 
 /// A value-redacted failure summary suitable for execution inspection.

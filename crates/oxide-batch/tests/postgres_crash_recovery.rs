@@ -9,10 +9,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use oxide_batch::{
     BatchStatus, BusinessStatement, BusinessValue, Checkpoint, ChunkCommitReceipt,
-    ChunkComponentRevisions, ChunkCount, ChunkCounts, ChunkDeliveryMode, ChunkRestartContract,
-    ChunkSize, ChunkTransactionContext, ChunkTransactionManager, Clock, ComponentRevision,
-    DefinitionIdentity, DefinitionRevision, ExecutionContext, FailureCategory, FailureId,
-    JobInstanceKey, JobName, JobParameters, JobRepository, LifecycleTransition,
+    ChunkComponentRevisions, ChunkCount, ChunkCounts, ChunkDeliveryMode, ChunkFaultProgress,
+    ChunkRestartContract, ChunkSize, ChunkTransactionContext, ChunkTransactionManager, Clock,
+    ComponentRevision, DefinitionIdentity, DefinitionRevision, ExecutionContext, FailureCategory,
+    FailureId, JobInstanceKey, JobName, JobParameters, JobRepository, LifecycleTransition,
     PostgresChunkStateError, PostgresChunkStateProvider, PostgresChunkTransactionManager,
     PostgresConfig, PostgresMigrator, RecoveryRequest, StateLimits, StateSchemaId,
     StateSchemaVersion, StepName, TlsMode,
@@ -239,7 +239,10 @@ async fn commit_items(
     }
     let count = ChunkCount::new(u64::try_from(items.len())?);
     transaction
-        .commit(ChunkCounts::new(count, count, count, ChunkCount::ZERO)?)
+        .commit(
+            ChunkCounts::new(count, count, count, ChunkCount::ZERO)?,
+            ChunkFaultProgress::NONE,
+        )
         .await?;
     Ok(())
 }
@@ -313,7 +316,10 @@ async fn run_crash_worker(point: CrashPoint, url: String) -> Result<(), Box<dyn 
 
     let count = ChunkCount::new(2);
     interrupted
-        .commit(ChunkCounts::new(count, count, count, ChunkCount::ZERO)?)
+        .commit(
+            ChunkCounts::new(count, count, count, ChunkCount::ZERO)?,
+            ChunkFaultProgress::NONE,
+        )
         .await?;
     std::process::exit(CRASH_EXIT_CODE);
 }

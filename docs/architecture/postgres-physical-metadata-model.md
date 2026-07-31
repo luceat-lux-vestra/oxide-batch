@@ -1,19 +1,25 @@
 # PostgreSQL Physical Metadata Model
 
-**State:** Implemented for M2
+**State:** Implemented for M2 and the M3 fault-tolerance slice
 
-**Schema version:** released `1`
+**Schema version:** released `2`
 
 This model defines the first durable repository. The immutable released DDL is
 `crates/oxide-batch/migrations/0001_initial_metadata.sql`. The executable draft
 under `tests/fixtures/postgres/design-gate/` remains pre-release design evidence
 and is not a supported migration source.
 
-## Accepted schema-2 target
+## Schema 2
 
-Schema 2 is accepted for M3 but is not released or implemented until issue #62
-promotes immutable migration SQL. Its version-specific operational contract is
-the [fault-tolerance and flow migration](../operations/migrations/0002-fault-tolerance-and-flow.md).
+Schema 2 is installed by
+`crates/oxide-batch/migrations/0002_fault_tolerance_and_flow.sql`. Its
+version-specific operational contract is the
+[fault-tolerance and flow migration](../operations/migrations/0002-fault-tolerance-and-flow.md),
+and its implementation evidence is the
+[M3 PostgreSQL fault-durability evidence](../project/m3-postgres-fault-durability-evidence.md).
+
+`ob_flow_decision` exists in schema 2 but no runtime path writes it yet; the
+flow workstream owns its queries.
 
 ### Step-execution additions
 
@@ -60,16 +66,24 @@ state, error text, endpoint, credential, or SQL.
 
 ### Schema-2 named queries
 
-| Query ID | Purpose and atomic rule |
-| --- | --- |
-| `FAULT-RESERVE-001` | Step CAS reserves one retry ordinal and advances one phase retry count after known rollback |
-| `FAULT-COMMIT-001` | Existing chunk CAS commits skip/no-rollback counts and clears resolved fault state with business progress |
-| `STEP-START-001` | Count starts for one job instance/logical step and create the next step execution in one transaction |
-| `FLOW-APPEND-001` | Append one validated transition/decider result before target start |
-| `FLOW-RESTART-001` | Read ordered decisions and reusable completed-step outcomes for one instance and plan fingerprint |
+| Query ID | Purpose and atomic rule | State |
+| --- | --- | --- |
+| `FAULT-RESERVE-001` | Step CAS reserves one retry ordinal and advances one phase retry count after known rollback | Implemented by `PostgresFaultState::reserve` |
+| `FAULT-COMMIT-001` | Existing chunk CAS commits skip/no-rollback counts and clears resolved fault state with business progress | Implemented by the chunk-transaction commit |
+| `STEP-START-001` | Count starts for one job instance/logical step and create the next step execution in one transaction | Index `ob_step_execution_logical_history` exists; the query is owned by the flow workstream |
+| `FLOW-APPEND-001` | Append one validated transition/decider result before target start | Table exists; query owned by the flow workstream |
+| `FLOW-RESTART-001` | Read ordered decisions and reusable completed-step outcomes for one instance and plan fingerprint | Table exists; query owned by the flow workstream |
 
-Implementation must publish supporting index plans on realistic history before
-schema 2 is released.
+`FAULT-RESERVE-001` reads the step row `FOR UPDATE`, requires the supplied
+ordinal to directly follow the persisted one, and updates under
+`WHERE version = expected AND status = 'STARTED'`, so a stale or concurrent
+writer loses instead of spending one ordinal twice. `FAULT-COMMIT-001` adds the
+chunk's skip and no-rollback deltas to the durable totals it read when the
+transaction began and writes the empty fault-state envelope, because the commit
+that advances the checkpoint supersedes the whole retry generation.
+
+Supporting index plans for the flow queries are published by the workstream that
+implements them on realistic history.
 
 ## Namespace, encodings, and common rules
 
@@ -193,9 +207,12 @@ One named step attempt inside a job execution.
 
 - primary key: `id`;
 - foreign key: `job_execution_id`;
-- unique: `(job_execution_id, step_name)`;
-- checks: lifecycle/timestamps, all six counters and version non-negative,
-  checkpoint and step-context envelopes are objects within 1 MiB;
+- unique: `(job_execution_id, step_name)` and, from schema 2,
+  `(job_execution_id, step_logical_id)`;
+- checks: lifecycle/timestamps, all six M2 counters, the seven schema-2 fault
+  counters, and version non-negative; checkpoint and step-context envelopes are
+  objects within 1 MiB; the fault-state envelope is an object within 64 KiB with
+  a 32-byte checksum;
 - checkpoint columns: `checkpoint_format`, `checkpoint_schema`,
   `checkpoint_schema_version`, and `checkpoint_payload`;
 - context columns: `context_format`, `context_schema`,
@@ -247,6 +264,7 @@ fixtures.
 | `STEP-CREATE-001` | Create or read a named step in an execution | unique `(job_execution_id, step_name)` |
 | `STEP-CAS-001` | Commit checkpoint/counters by ID and expected version | step PK; version remains a filter |
 | `STEP-RESTART-001` | Find latest durable step state for an instance/name | execution latest index plus `ob_step_execution_job_name` |
+| `STEP-LOGICAL-001` | Read bounded start history for one logical step | `ob_step_execution_logical_history` on `(step_logical_id, job_execution_id, id DESC)` |
 | `RECOVERY-APPEND-001` | Append one decision for observed version | unique `(job_execution_id, execution_version)` |
 | `RECOVERY-HISTORY-001` | Inspect execution decisions chronologically | `ob_recovery_execution_time` on `(job_execution_id, decided_at, id)` |
 

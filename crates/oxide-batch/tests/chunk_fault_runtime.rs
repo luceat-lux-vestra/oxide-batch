@@ -35,18 +35,19 @@ use oxide_batch::{
     BusinessTransactionError, BusinessWriteResult, Checkpoint, ChunkCommitReceipt, ChunkCompletion,
     ChunkCompletionContext, ChunkCompletionError, ChunkCompletionOutcome, ChunkComponentRevisions,
     ChunkCounts, ChunkDeliveryMode, ChunkExecutionOutcome, ChunkExecutionReport, ChunkFailure,
-    ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep, ChunkTransaction, ChunkTransactionError,
-    ChunkTransactionManager, ClassifierRevision, ComponentRevision, DefinitionRevision,
-    ExecutionAttempt, ExecutionContext, ExecutionCorrelation, FailureCategory, FaultAction,
-    FaultClassifier, FaultDescriptor, FaultPhase, FaultPolicy, FaultPolicyError, FaultRule,
-    FaultRuntime, FaultStateStore, InMemoryFaultState, InMemoryJobRepository, ItemListenerContext,
-    ItemListenerSet, ItemProcessor, ItemReader, ItemWriter, JobExecutionId, JobInstanceId,
-    JobLauncher, JobName, JobParameters, LifecycleEvent, LifecycleEventKind, LifecycleEventSink,
-    ListenerError, ProcessContext, ProcessListener, ProcessOutcome, ProcessorError, ReadContext,
-    ReadListener, ReadOutcome, ReaderError, RetryLimit, RetryOrdinal, RetryOutcome,
-    RetryReservation, RetryStateLimit, RollbackDisposition, SkipLimit, SkipListener, StateLimits,
-    StateSchemaId, StateSchemaVersion, StepExecutionId, StepName, StopSource, StopToken,
-    WriteContext, WriteListener, WriteOutcome, WriterError,
+    ChunkFaultProgress, ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep, ChunkTransaction,
+    ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager, ClassifierRevision,
+    ComponentRevision, DefinitionRevision, ExecutionAttempt, ExecutionContext,
+    ExecutionCorrelation, FailureCategory, FaultAction, FaultClassifier, FaultDescriptor,
+    FaultPhase, FaultPolicy, FaultPolicyError, FaultProgress, FaultRule, FaultRuntime,
+    FaultStateStore, InMemoryFaultState, InMemoryJobRepository, InheritedStepProgress,
+    ItemListenerContext, ItemListenerSet, ItemProcessor, ItemReader, ItemWriter, JobExecutionId,
+    JobInstanceId, JobLauncher, JobName, JobParameters, LifecycleEvent, LifecycleEventKind,
+    LifecycleEventSink, ListenerError, ProcessContext, ProcessListener, ProcessOutcome,
+    ProcessorError, ReadContext, ReadListener, ReadOutcome, ReaderError, RetryCounts, RetryLimit,
+    RetryOrdinal, RetryOutcome, RetryReservation, RetryStateLimit, RollbackDisposition, SkipCounts,
+    SkipLimit, SkipListener, StateLimits, StateSchemaId, StateSchemaVersion, StepExecutionId,
+    StepName, StopSource, StopToken, WriteContext, WriteListener, WriteOutcome, WriterError,
 };
 use secrets::assert_sentinel_absent;
 
@@ -268,23 +269,44 @@ struct Transactions {
     trace: Trace,
     enlisted: bool,
     commit_error: Option<ChunkTransactionError>,
+    accepted: Arc<Mutex<Vec<ChunkFaultProgress>>>,
+    inherited: Option<InheritedStepProgress>,
 }
 
 impl Transactions {
-    const fn new(trace: Trace) -> Self {
+    fn new(trace: Trace) -> Self {
         Self {
             trace,
             enlisted: false,
             commit_error: None,
+            accepted: Arc::new(Mutex::new(Vec::new())),
+            inherited: Some(InheritedStepProgress::NONE),
         }
     }
 
-    const fn enlisted(mut self) -> Self {
+    /// Declares the durable progress a restarted attempt inherits.
+    fn inheriting(mut self, inherited: InheritedStepProgress) -> Self {
+        self.inherited = Some(inherited);
+        self
+    }
+
+    /// Makes the durable progress unreadable, as corrupt state would.
+    fn unreadable_progress(mut self) -> Self {
+        self.inherited = None;
+        self
+    }
+
+    /// Returns the fault progress every committed chunk made authoritative.
+    fn accepted(&self) -> Arc<Mutex<Vec<ChunkFaultProgress>>> {
+        Arc::clone(&self.accepted)
+    }
+
+    fn enlisted(mut self) -> Self {
         self.enlisted = true;
         self
     }
 
-    const fn failing_commit(mut self, error: ChunkTransactionError) -> Self {
+    fn failing_commit(mut self, error: ChunkTransactionError) -> Self {
         self.commit_error = Some(error);
         self
     }
@@ -302,8 +324,17 @@ impl ChunkTransactionManager for Transactions {
                 None
             },
             commit_error: self.commit_error,
+            accepted: Arc::clone(&self.accepted),
         };
         Box::pin(async move { Ok(Box::new(transaction) as Box<dyn ChunkTransaction>) })
+    }
+
+    fn inherited_progress(
+        &self,
+        _context: ChunkTransactionContext,
+    ) -> BoxFuture<'_, Result<InheritedStepProgress, ChunkTransactionError>> {
+        let inherited = self.inherited;
+        Box::pin(async move { inherited.ok_or(ChunkTransactionError::NotCommitted) })
     }
 }
 
@@ -322,6 +353,7 @@ struct TestTransaction {
     trace: Trace,
     business: Option<NoopBusiness>,
     commit_error: Option<ChunkTransactionError>,
+    accepted: Arc<Mutex<Vec<ChunkFaultProgress>>>,
 }
 
 impl ChunkTransaction for TestTransaction {
@@ -334,11 +366,16 @@ impl ChunkTransaction for TestTransaction {
     fn commit(
         &mut self,
         _counts: ChunkCounts,
+        fault: ChunkFaultProgress,
     ) -> BoxFuture<'_, Result<ChunkCommitReceipt, ChunkTransactionError>> {
         if let Some(error) = self.commit_error {
             self.trace.record("commit_failed");
             return Box::pin(async move { Err(error) });
         }
+        self.accepted
+            .lock()
+            .expect("accepted fault progress lock poisoned")
+            .push(fault);
         self.trace.record("commit");
         Box::pin(async { Ok(receipt()) })
     }
@@ -1621,6 +1658,131 @@ fn chunk_revisions(delivery_mode: ChunkDeliveryMode) -> ChunkComponentRevisions 
             delivery_mode,
         ),
     )
+}
+
+/// Builds a one-step chunk job whose process phase skips item 2.
+fn skipping_job(transactions: Arc<Transactions>, skip_limit: u64) -> ChunkJob<i32, i32> {
+    let trace = Trace::default();
+    let (writer, _batches) = Writer::new(trace.clone());
+    let step = ChunkStep::new(
+        step_name(),
+        chunk_size(3),
+        Box::new(Reader::new([1, 2, 3], trace.clone())),
+        Arc::new(Processor::new(trace.clone()).failing(
+            2,
+            9,
+            ProcessorError::with_category(FailureCategory::UserComponent),
+        )),
+        Arc::new(writer),
+        transactions,
+        Arc::new(Completion),
+    )
+    .with_fault_runtime(runtime(
+        policy(
+            [rule(
+                FaultPhase::Process,
+                FailureCategory::UserComponent,
+                FaultAction::skip(RollbackDisposition::Rollback),
+            )],
+            0,
+            skip_limit,
+            BackoffPolicy::none(),
+        ),
+        Arc::new(RecordingSleeper::new()),
+        ChunkDeliveryMode::AtLeastOnce,
+    ));
+    ChunkJob::new(
+        JobName::new("skip_job").expect("static job name is valid"),
+        step,
+        DefinitionRevision::new("test-v1").expect("static definition revision is valid"),
+        &chunk_revisions(ChunkDeliveryMode::AtLeastOnce),
+    )
+    .expect("static chunk definition is valid")
+}
+
+async fn launch(job: &mut ChunkJob<i32, i32>) -> ChunkExecutionReport {
+    let clock = ManualClock::new(UNIX_EPOCH + Duration::from_secs(100));
+    let generator = DeterministicIds::new(NonZeroU64::MIN);
+    let repository =
+        InMemoryJobRepository::new(Arc::new(clock.clone()), Arc::new(generator.clone()));
+    let launcher = JobLauncher::new(&repository, &clock, &generator);
+    let (_source, stop) = StopSource::new();
+    launcher
+        .launch_chunk(job, &JobParameters::new(), &stop)
+        .await
+        .expect("chunk launch must complete")
+        .chunk()
+        .expect("the chunk body ran")
+        .clone()
+}
+
+#[tokio::test]
+async fn accepted_skips_are_committed_as_one_delta() {
+    let transactions = Arc::new(Transactions::new(Trace::default()));
+    let accepted = transactions.accepted();
+    let mut job = skipping_job(Arc::clone(&transactions), 4);
+
+    let report = launch(&mut job).await;
+
+    assert_eq!(report.outcome(), ChunkExecutionOutcome::Completed);
+    assert_eq!(report.skip_counts().process(), 1);
+    let committed = accepted.lock().expect("accepted lock poisoned").clone();
+    // Exactly one commit carried the skip, and it carried it once.
+    let skipping: Vec<_> = committed
+        .iter()
+        .filter(|progress| *progress != &ChunkFaultProgress::NONE)
+        .collect();
+    assert_eq!(skipping.len(), 1);
+    assert_eq!(skipping[0].skips().process(), 1);
+    assert_eq!(skipping[0].skips().read(), 0);
+    assert_eq!(skipping[0].skips().write(), 0);
+    assert_eq!(skipping[0].no_rollbacks(), 0);
+}
+
+#[tokio::test]
+async fn inherited_skip_totals_exhaust_the_shared_limit() {
+    let inherited = InheritedStepProgress::new(
+        7,
+        [4; 32],
+        FaultProgress::new(RetryCounts::ZERO, SkipCounts::new(1, 0, 0), 3, 0),
+    );
+    let transactions = Arc::new(Transactions::new(Trace::default()).inheriting(inherited));
+    let mut job = skipping_job(Arc::clone(&transactions), 1);
+
+    let report = launch(&mut job).await;
+
+    // The inherited read skip already spent the shared limit of one, so the
+    // next skippable failure fails the step instead of skipping again.
+    assert_eq!(
+        report.outcome(),
+        ChunkExecutionOutcome::Failed(ChunkFailure::Processor)
+    );
+    assert_eq!(report.skip_counts().read(), 1);
+    assert_eq!(report.skip_counts().process(), 0);
+    assert_eq!(report.no_rollback_count(), 0);
+}
+
+#[tokio::test]
+async fn unreadable_durable_progress_fails_before_component_work() {
+    let trace = Trace::default();
+    let transactions = Arc::new(Transactions::new(trace.clone()).unreadable_progress());
+    let mut job = skipping_job(Arc::clone(&transactions), 4);
+
+    let report = launch(&mut job).await;
+
+    assert_eq!(
+        report.outcome(),
+        ChunkExecutionOutcome::Failed(ChunkFailure::FaultState)
+    );
+    assert_eq!(report.committed_chunks().get(), 0);
+    assert!(
+        transactions
+            .accepted()
+            .lock()
+            .expect("lock poisoned")
+            .is_empty(),
+        "no chunk may commit after unusable durable state"
+    );
 }
 
 #[tokio::test]

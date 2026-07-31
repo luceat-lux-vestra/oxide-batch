@@ -260,6 +260,7 @@ impl ChunkTransaction for TestTransaction {
     fn commit(
         &mut self,
         counts: ChunkCounts,
+        _fault: oxide_batch::ChunkFaultProgress,
     ) -> BoxFuture<'_, Result<ChunkCommitReceipt, ChunkTransactionError>> {
         if let Some(error) = self.commit_error {
             return Box::pin(async move { Err(error) });

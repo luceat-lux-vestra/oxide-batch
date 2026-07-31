@@ -28,7 +28,7 @@ pub use memory::InMemoryJobRepository;
 pub use postgres::{
     CaCertificate, PostgresChunkStateError, PostgresChunkStateProvider,
     PostgresChunkTransactionManager, PostgresConfig, PostgresConfigError, PostgresDurableStepState,
-    PostgresJobRepository, PostgresMigrator, TlsMode,
+    PostgresFaultState, PostgresJobRepository, PostgresMigrator, TlsMode,
 };
 
 /// An owned, dynamically dispatched future used by public asynchronous ports.
@@ -880,6 +880,11 @@ pub enum RepositoryError {
         /// Target step whose source state was absent.
         step_name: StepName,
     },
+    /// Durable fault state could not be interpreted, so no work may begin.
+    ///
+    /// Corruption, an unsupported fault-state version, a checksum mismatch, or
+    /// state that belongs to a superseded checkpoint fails closed.
+    FaultStateCorrupt,
     /// Recovery was requested for a state that needs no recovery decision.
     RecoveryNotAllowed {
         /// Rejected execution.
@@ -983,6 +988,9 @@ impl fmt::Display for RepositoryError {
                 formatter,
                 "restart execution {execution_id} has no durable source for step {step_name}"
             ),
+            Self::FaultStateCorrupt => {
+                formatter.write_str("durable fault state is unusable and no work may begin")
+            }
             Self::RecoveryNotAllowed { id, status } => {
                 write!(
                     formatter,

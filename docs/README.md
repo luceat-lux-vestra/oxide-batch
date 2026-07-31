@@ -75,6 +75,7 @@ decisions own the normative detail.
 - [M3 fault tolerance and flow design-gate evidence](project/m3-design-gate-evidence.md)
 - [M3 fault-tolerance and listener contract evidence](project/m3-fault-contract-evidence.md)
 - [M3 fault-tolerance runtime evidence](project/m3-fault-runtime-evidence.md)
+- [M3 PostgreSQL fault-durability evidence](project/m3-postgres-fault-durability-evidence.md)
 - [Historical M0 decision register](product/open-decisions.md)
 
 Historical gates are preserved as records of their date. Later decisions link
@@ -132,7 +133,7 @@ to them and record supersession; they do not rewrite history.
 - [Severity and response objectives](security/severity-and-response.md)
 - [Persistence and migration operations](operations/persistence-and-migrations.md)
 - [PostgreSQL setup](operations/postgres-setup.md)
-- [M2 transaction guarantees](operations/transaction-guarantees.md)
+- [Transaction guarantees](operations/transaction-guarantees.md)
 - [Crash, restart, and recovery runbook](operations/crash-restart-and-recovery.md)
 - [Metadata migration-guide template](operations/migration-guide-template.md)
 - [Schema-v1 initial metadata migration](operations/migrations/0001-initial-metadata.md)

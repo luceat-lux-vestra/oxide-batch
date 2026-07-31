@@ -2,7 +2,7 @@ use std::error::Error;
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
@@ -20,16 +20,19 @@ use super::{
 use crate::{
     BatchStatus, BusinessStatement, BusinessTransaction, BusinessTransactionError,
     BusinessValueKind, BusinessWriteResult, Checkpoint, ChunkCommitReceipt, ChunkCounts,
-    ChunkTransaction, ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager,
-    DefinitionIdentity, DefinitionUpgrade, ExecutionContext, ExecutionCounts, ExecutionMetadata,
-    ExecutionTimestamps, ExecutionVersion, ExitCode, ExitStatus, FailureCategory, FailureId,
-    FailureSummary, IdentifierKind, JobExecution, JobExecutionId, JobInstance, JobInstanceId,
-    JobInstanceKey, JobName, JobParameter, JobParameters, LifecycleError, LifecycleTransition,
-    ParameterName, ParameterRole, ParameterValue, ParameterValueKind, StateLimits, StepExecution,
-    StepExecutionId, StepName,
+    ChunkFaultProgress, ChunkTransaction, ChunkTransactionContext, ChunkTransactionError,
+    ChunkTransactionManager, ClassifierRevision, DefinitionIdentity, DefinitionUpgrade,
+    ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion,
+    ExitCode, ExitStatus, FailureCategory, FailureId, FailureSummary, FaultPhase, FaultPolicy,
+    FaultProgress, FaultStateEntry, FaultStateEnvelope, FaultStateError, FaultStateFormatError,
+    FaultStateStore, IdentifierKind, InheritedStepProgress, JobExecution, JobExecutionId,
+    JobInstance, JobInstanceId, JobInstanceKey, JobName, JobParameter, JobParameters,
+    LifecycleError, LifecycleTransition, ParameterName, ParameterRole, ParameterValue,
+    ParameterValueKind, RetryCounts, RetryKey, RetryLimit, RetryOrdinal, RetryReservation,
+    RetryStateLimit, SkipCounts, StateLimits, StepExecution, StepExecutionId, StepName,
 };
 
-const SUPPORTED_SCHEMA_VERSION: u32 = 1;
+const SUPPORTED_SCHEMA_VERSION: u32 = 2;
 const MAX_POOL_SIZE: u32 = 1024;
 const MAX_SHORT_TIMEOUT: Duration = Duration::from_mins(5);
 const MAX_STATEMENT_TIMEOUT: Duration = Duration::from_hours(24);
@@ -711,6 +714,8 @@ pub struct PostgresDurableStepState {
     step_execution: StepExecution,
     checkpoint: Checkpoint,
     execution_context: ExecutionContext,
+    fault_progress: FaultProgress,
+    fault_state: FaultStateEnvelope,
 }
 
 impl PostgresDurableStepState {
@@ -730,6 +735,288 @@ impl PostgresDurableStepState {
     #[must_use]
     pub const fn execution_context(&self) -> &ExecutionContext {
         &self.execution_context
+    }
+
+    /// Returns the committed fault-tolerance totals of this attempt.
+    #[must_use]
+    pub const fn fault_progress(&self) -> FaultProgress {
+        self.fault_progress
+    }
+
+    /// Borrows the validated unresolved retry state of this attempt.
+    #[must_use]
+    pub const fn fault_state(&self) -> &FaultStateEnvelope {
+        &self.fault_state
+    }
+}
+
+/// Durable `PostgreSQL` retry-reservation state for one step execution.
+///
+/// A reservation is one short metadata-only transaction that runs after a known
+/// rollback and before backoff. It reads the retained state under a row lock,
+/// requires the supplied ordinal to follow the persisted one, and advances the
+/// phase retry count, the acknowledged rollback count, and the retained
+/// envelope with an optimistic version check. A stale or concurrent writer
+/// loses instead of spending the same ordinal twice.
+///
+/// The retained state is cleared by the enlisted chunk commit, because the
+/// commit that advances the checkpoint supersedes the whole generation.
+pub struct PostgresFaultState {
+    repository: PostgresJobRepository,
+    revision: ClassifierRevision,
+    retry_limit: RetryLimit,
+    state_limit: RetryStateLimit,
+    bound: Mutex<Option<ChunkTransactionContext>>,
+}
+
+impl PostgresFaultState {
+    /// Constructs durable state for the step that installs `policy`.
+    ///
+    /// The runtime binds the step execution before the first chunk attempt.
+    #[must_use]
+    pub fn new(repository: PostgresJobRepository, policy: &FaultPolicy) -> Self {
+        Self {
+            repository,
+            revision: policy.classifier().revision().clone(),
+            retry_limit: policy.retry_limit(),
+            state_limit: policy.retry_state_limit(),
+            bound: Mutex::new(None),
+        }
+    }
+
+    fn context(&self) -> Result<ChunkTransactionContext, FaultStateError> {
+        (*self
+            .bound
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
+        .ok_or(FaultStateError::Unbound)
+    }
+
+    async fn load<'executor, E>(
+        &self,
+        executor: E,
+        lock: bool,
+    ) -> Result<PostgresFaultRow, FaultStateError>
+    where
+        E: sqlx::Executor<'executor, Database = Postgres>,
+    {
+        let context = self.context()?;
+        let query = format!(
+            "SELECT execution.version, execution.status, \
+             execution.checkpoint_format, execution.checkpoint_schema, \
+             execution.checkpoint_schema_version, execution.checkpoint_payload, \
+             execution.fault_state_format, execution.fault_state_schema, \
+             execution.fault_state_schema_version, execution.fault_state_payload, \
+             execution.fault_state_checksum \
+             FROM oxide_batch.ob_step_execution execution \
+             WHERE execution.id = $1 AND execution.job_execution_id = $2{}",
+            if lock { " FOR UPDATE" } else { "" }
+        );
+        let row = sqlx::query(AssertSqlSafe(query))
+            .bind(
+                database_id(
+                    context.step_execution_id().get(),
+                    IdentifierKind::StepExecution,
+                )
+                .map_err(|_| FaultStateError::Unavailable)?,
+            )
+            .bind(
+                database_id(
+                    context.job_execution_id().get(),
+                    IdentifierKind::JobExecution,
+                )
+                .map_err(|_| FaultStateError::Unavailable)?,
+            )
+            .fetch_optional(executor)
+            .await
+            .map_err(|_| FaultStateError::Unavailable)?
+            .ok_or(FaultStateError::Unavailable)?;
+        let checkpoint: Checkpoint = decode_durable_state(
+            &row,
+            "checkpoint_format",
+            "checkpoint_schema",
+            "checkpoint_schema_version",
+            "checkpoint_payload",
+            "oxide-batch.checkpoint",
+            Checkpoint::from_json,
+        )
+        .map_err(|_| FaultStateError::Unavailable)?;
+        let checkpoint_digest = checkpoint.generation_digest();
+        let envelope = decode_fault_state(&row).map_err(FaultStateError::Corrupt)?;
+        envelope.validate_for(self.retry_limit, self.state_limit, &checkpoint_digest)?;
+        Ok(PostgresFaultRow {
+            version: ExecutionVersion::new(
+                read_u64(&row, "version").map_err(|_| FaultStateError::Unavailable)?,
+            ),
+            started: row
+                .try_get::<String, _>("status")
+                .map_err(|_| FaultStateError::Unavailable)?
+                == BatchStatus::Started.to_string(),
+            checkpoint_digest,
+            envelope,
+        })
+    }
+}
+
+struct PostgresFaultRow {
+    version: ExecutionVersion,
+    started: bool,
+    checkpoint_digest: [u8; 32],
+    envelope: FaultStateEnvelope,
+}
+
+impl fmt::Debug for PostgresFaultState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PostgresFaultState")
+            .field("retry_limit", &self.retry_limit)
+            .field("retry_state_limit", &self.state_limit)
+            .finish_non_exhaustive()
+    }
+}
+
+impl FaultStateStore for PostgresFaultState {
+    fn bind(&self, context: ChunkTransactionContext) -> BoxFuture<'_, Result<(), FaultStateError>> {
+        Box::pin(async move {
+            *self
+                .bound
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(context);
+            self.load(&self.repository.pool, false).await.map(|_| ())
+        })
+    }
+
+    fn reserved_ordinal(
+        &self,
+        key: RetryKey,
+    ) -> BoxFuture<'_, Result<Option<RetryOrdinal>, FaultStateError>> {
+        Box::pin(async move {
+            let row = self.load(&self.repository.pool, false).await?;
+            Ok(row.envelope.reserved_ordinal(key))
+        })
+    }
+
+    fn reserve(&self, reservation: RetryReservation) -> BoxFuture<'_, Result<(), FaultStateError>> {
+        Box::pin(async move {
+            let context = self.context()?;
+            let mut connection = self
+                .repository
+                .begin_connection()
+                .await
+                .map_err(|_| FaultStateError::Unavailable)?;
+            let result = self
+                .reserve_locked(&mut connection, context, reservation)
+                .await;
+            match result {
+                Ok(()) => commit_postgres_connection(connection)
+                    .await
+                    .map_err(|()| FaultStateError::Unavailable),
+                Err(error) => {
+                    rollback_chunk_connection(&mut connection).await;
+                    Err(error)
+                }
+            }
+        })
+    }
+
+    fn resolve(&self, _key: RetryKey) -> BoxFuture<'_, Result<(), FaultStateError>> {
+        Box::pin(std::future::ready(Ok(())))
+    }
+
+    fn clear_resolved(&self) -> BoxFuture<'_, Result<(), FaultStateError>> {
+        Box::pin(std::future::ready(Ok(())))
+    }
+
+    fn unresolved(&self) -> BoxFuture<'_, Result<u32, FaultStateError>> {
+        Box::pin(async move {
+            let row = self.load(&self.repository.pool, false).await?;
+            u32::try_from(row.envelope.len()).map_err(|_| FaultStateError::Unavailable)
+        })
+    }
+}
+
+impl PostgresFaultState {
+    async fn reserve_locked(
+        &self,
+        connection: &mut PoolConnection<Postgres>,
+        context: ChunkTransactionContext,
+        reservation: RetryReservation,
+    ) -> Result<(), FaultStateError> {
+        let row = self.load(&mut **connection, true).await?;
+        if !row.started {
+            return Err(FaultStateError::StaleReservation);
+        }
+        let entry = FaultStateEntry::new(
+            reservation.key(),
+            reservation.phase(),
+            reservation.category(),
+            reservation.ordinal(),
+            self.revision.clone(),
+        );
+        let next = row
+            .envelope
+            .reserved(entry, row.checkpoint_digest, self.state_limit)?;
+        let payload: Value = serde_json::from_slice(&next.to_canonical_json()?)
+            .map_err(|_| FaultStateError::Unavailable)?;
+        let checksum = next.checksum()?;
+        let retry_column = match reservation.phase() {
+            FaultPhase::Read => "read_retry_count",
+            FaultPhase::Process => "process_retry_count",
+            FaultPhase::Write => "write_retry_count",
+            _ => return Err(FaultStateError::StaleReservation),
+        };
+        let next_version = row
+            .version
+            .next()
+            .map_err(|_| FaultStateError::Unavailable)?;
+        let updated = sqlx::query(AssertSqlSafe(format!(
+            "UPDATE oxide_batch.ob_step_execution SET \
+             {retry_column} = {retry_column} + 1, rollback_count = rollback_count + 1, \
+             fault_state_format = $1, fault_state_schema = $2, \
+             fault_state_schema_version = $3, fault_state_payload = $4, \
+             fault_state_checksum = $5, \
+             updated_at = to_timestamp($6::double precision / 1000.0), version = $7 \
+             WHERE id = $8 AND job_execution_id = $9 AND version = $10 AND status = 'STARTED'"
+        )))
+        .bind(
+            i16::try_from(FaultStateEnvelope::FORMAT_VERSION)
+                .map_err(|_| FaultStateError::Unavailable)?,
+        )
+        .bind(FaultStateEnvelope::FORMAT)
+        .bind(
+            i32::try_from(FaultStateEnvelope::SCHEMA_VERSION)
+                .map_err(|_| FaultStateError::Unavailable)?,
+        )
+        .bind(Json(payload))
+        .bind(checksum.as_slice())
+        .bind(
+            system_time_millis(self.repository.clock.now())
+                .map_err(|_| FaultStateError::Unavailable)?,
+        )
+        .bind(database_version(next_version).map_err(|_| FaultStateError::Unavailable)?)
+        .bind(
+            database_id(
+                context.step_execution_id().get(),
+                IdentifierKind::StepExecution,
+            )
+            .map_err(|_| FaultStateError::Unavailable)?,
+        )
+        .bind(
+            database_id(
+                context.job_execution_id().get(),
+                IdentifierKind::JobExecution,
+            )
+            .map_err(|_| FaultStateError::Unavailable)?,
+        )
+        .bind(database_version(row.version).map_err(|_| FaultStateError::Unavailable)?)
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| FaultStateError::Unavailable)?;
+        if updated.rows_affected() == 1 {
+            Ok(())
+        } else {
+            Err(FaultStateError::StaleReservation)
+        }
     }
 }
 
@@ -910,6 +1197,28 @@ impl ChunkTransactionManager for PostgresChunkTransactionManager {
                 clock: Arc::clone(&self.repository.clock),
                 state_provider: Arc::clone(&self.state_provider),
             }) as Box<dyn ChunkTransaction>)
+        })
+    }
+
+    fn inherited_progress(
+        &self,
+        context: ChunkTransactionContext,
+    ) -> BoxFuture<'_, Result<InheritedStepProgress, ChunkTransactionError>> {
+        Box::pin(async move {
+            let durable = self
+                .load_committed_state(context)
+                .await
+                .map_err(|_| ChunkTransactionError::NotCommitted)?;
+            let digest = durable.checkpoint.generation_digest();
+            if !durable.fault_state.is_empty() && durable.fault_state.checkpoint_digest() != &digest
+            {
+                return Err(ChunkTransactionError::NotCommitted);
+            }
+            Ok(InheritedStepProgress::new(
+                durable.step_execution.metadata().counts().read(),
+                digest,
+                durable.fault_progress,
+            ))
         })
     }
 }
@@ -1310,17 +1619,28 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 };
                 sqlx::query_scalar(
                     "INSERT INTO oxide_batch.ob_step_execution \
-                     (job_execution_id, step_name, status, exit_code, read_count, \
-                      processed_count, write_count, filter_count, commit_count, rollback_count, \
-                      checkpoint_format, checkpoint_schema, checkpoint_schema_version, \
-                      checkpoint_payload, context_format, context_schema, \
-                      context_schema_version, context_payload, created_at, updated_at, version) \
-                     SELECT $1, $2, 'STARTING', 'UNKNOWN', source.read_count, \
+                     (job_execution_id, step_name, step_logical_id, status, exit_code, \
+                      read_count, processed_count, write_count, filter_count, commit_count, \
+                      rollback_count, checkpoint_format, checkpoint_schema, \
+                      checkpoint_schema_version, checkpoint_payload, context_format, \
+                      context_schema, context_schema_version, context_payload, \
+                      read_retry_count, process_retry_count, write_retry_count, \
+                      read_skip_count, process_skip_count, write_skip_count, \
+                      no_rollback_count, fault_state_format, fault_state_schema, \
+                      fault_state_schema_version, fault_state_payload, fault_state_checksum, \
+                      created_at, updated_at, version) \
+                     SELECT $1, $2, $2, 'STARTING', 'UNKNOWN', source.read_count, \
                       source.processed_count, source.write_count, source.filter_count, \
                       source.commit_count, source.rollback_count, source.checkpoint_format, \
                       source.checkpoint_schema, source.checkpoint_schema_version, \
                       source.checkpoint_payload, source.context_format, source.context_schema, \
                       source.context_schema_version, source.context_payload, \
+                      source.read_retry_count, source.process_retry_count, \
+                      source.write_retry_count, source.read_skip_count, \
+                      source.process_skip_count, source.write_skip_count, \
+                      source.no_rollback_count, source.fault_state_format, \
+                      source.fault_state_schema, source.fault_state_schema_version, \
+                      source.fault_state_payload, source.fault_state_checksum, \
                       to_timestamp($3::double precision / 1000.0), \
                       to_timestamp($3::double precision / 1000.0), 0 \
                      FROM oxide_batch.ob_step_execution source \
@@ -1349,11 +1669,11 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 }
                 (None, _) => sqlx::query_scalar(
                     "INSERT INTO oxide_batch.ob_step_execution \
-                     (job_execution_id, step_name, status, exit_code, \
+                     (job_execution_id, step_name, step_logical_id, status, exit_code, \
                       checkpoint_format, checkpoint_schema, checkpoint_schema_version, \
                       checkpoint_payload, context_format, context_schema, \
                       context_schema_version, context_payload, created_at, updated_at, version) \
-                     VALUES ($1, $2, 'STARTING', 'UNKNOWN', 1, $3, 1, $4, 1, $3, 1, $4, \
+                     VALUES ($1, $2, $2, 'STARTING', 'UNKNOWN', 1, $3, 1, $4, 1, $3, 1, $4, \
                       to_timestamp($5::double precision / 1000.0), \
                       to_timestamp($5::double precision / 1000.0), 0) \
                      RETURNING id",
@@ -1821,9 +2141,15 @@ impl ChunkTransaction for PostgresChunkTransaction {
     fn commit(
         &mut self,
         counts: ChunkCounts,
+        fault: ChunkFaultProgress,
     ) -> BoxFuture<'_, Result<ChunkCommitReceipt, ChunkTransactionError>> {
         Box::pin(async move {
             let next_counts = add_chunk_counts(self.committed_counts, counts)?;
+            let empty_state = FaultStateEnvelope::empty();
+            let empty_payload = durable_fault_payload(&empty_state)?;
+            let empty_checksum = empty_state
+                .checksum()
+                .map_err(|_| ChunkTransactionError::NotCommitted)?;
             let receipt = catch_unwind(AssertUnwindSafe(|| {
                 self.state_provider
                     .state_for_commit(self.committed_counts, counts)
@@ -1847,6 +2173,13 @@ impl ChunkTransaction for PostgresChunkTransaction {
                  checkpoint_schema_version = $9, checkpoint_payload = $10, \
                  context_format = $11, context_schema = $12, \
                  context_schema_version = $13, context_payload = $14, \
+                 read_skip_count = read_skip_count + $20, \
+                 process_skip_count = process_skip_count + $21, \
+                 write_skip_count = write_skip_count + $22, \
+                 no_rollback_count = no_rollback_count + $23, \
+                 fault_state_format = $24, fault_state_schema = $25, \
+                 fault_state_schema_version = $26, fault_state_payload = $27, \
+                 fault_state_checksum = $28, \
                  updated_at = to_timestamp($15::double precision / 1000.0), version = $16 \
                  WHERE id = $17 AND job_execution_id = $18 \
                  AND version = $19 AND status = 'STARTED'",
@@ -1900,6 +2233,21 @@ impl ChunkTransaction for PostgresChunkTransaction {
                 database_version(self.expected_version)
                     .map_err(|_| ChunkTransactionError::NotCommitted)?,
             )
+            .bind(chunk_database_count(fault.skips().read())?)
+            .bind(chunk_database_count(fault.skips().process())?)
+            .bind(chunk_database_count(fault.skips().write())?)
+            .bind(chunk_database_count(fault.no_rollbacks())?)
+            .bind(
+                i16::try_from(FaultStateEnvelope::FORMAT_VERSION)
+                    .map_err(|_| ChunkTransactionError::NotCommitted)?,
+            )
+            .bind(FaultStateEnvelope::FORMAT)
+            .bind(
+                i32::try_from(FaultStateEnvelope::SCHEMA_VERSION)
+                    .map_err(|_| ChunkTransactionError::NotCommitted)?,
+            )
+            .bind(Json(empty_payload))
+            .bind(empty_checksum.as_slice())
             .execute(&mut **self.connection()?)
             .await;
 
@@ -1998,6 +2346,13 @@ fn add_chunk_counts(
 
 fn chunk_database_count(value: u64) -> Result<i64, ChunkTransactionError> {
     i64::try_from(value).map_err(|_| ChunkTransactionError::NotCommitted)
+}
+
+fn durable_fault_payload(state: &FaultStateEnvelope) -> Result<Value, ChunkTransactionError> {
+    let bytes = state
+        .to_canonical_json()
+        .map_err(|_| ChunkTransactionError::NotCommitted)?;
+    serde_json::from_slice(&bytes).map_err(|_| ChunkTransactionError::NotCommitted)
 }
 
 fn durable_payload(state: &impl DurablePayload) -> Result<Value, ChunkTransactionError> {
@@ -2412,6 +2767,12 @@ fn durable_step_select(suffix: &str) -> String {
          execution.checkpoint_schema_version, execution.checkpoint_payload, \
          execution.context_format, execution.context_schema, \
          execution.context_schema_version, execution.context_payload, \
+         execution.read_retry_count, execution.process_retry_count, \
+         execution.write_retry_count, execution.read_skip_count, \
+         execution.process_skip_count, execution.write_skip_count, \
+         execution.no_rollback_count, execution.fault_state_format, \
+         execution.fault_state_schema, execution.fault_state_schema_version, \
+         execution.fault_state_payload, execution.fault_state_checksum, \
          (extract(epoch FROM execution.created_at) * 1000)::bigint AS created_ms, \
          (extract(epoch FROM execution.started_at) * 1000)::bigint AS started_ms, \
          (extract(epoch FROM execution.ended_at) * 1000)::bigint AS ended_ms, \
@@ -2442,7 +2803,80 @@ fn decode_durable_step_state(row: &PgRow) -> Result<PostgresDurableStepState, Re
         step_execution: decode_step_execution(row)?,
         checkpoint,
         execution_context,
+        fault_progress: decode_fault_progress(row)?,
+        fault_state: decode_fault_state(row).map_err(|_| RepositoryError::FaultStateCorrupt)?,
     })
+}
+
+fn decode_fault_progress(row: &PgRow) -> Result<FaultProgress, RepositoryError> {
+    Ok(FaultProgress::new(
+        RetryCounts::new(
+            read_u64(row, "read_retry_count")?,
+            read_u64(row, "process_retry_count")?,
+            read_u64(row, "write_retry_count")?,
+        ),
+        SkipCounts::new(
+            read_u64(row, "read_skip_count")?,
+            read_u64(row, "process_skip_count")?,
+            read_u64(row, "write_skip_count")?,
+        ),
+        read_u64(row, "rollback_count")?,
+        read_u64(row, "no_rollback_count")?,
+    ))
+}
+
+fn decode_fault_state(row: &PgRow) -> Result<FaultStateEnvelope, FaultStateFormatError> {
+    let format_version = u16::try_from(
+        row.try_get::<i16, _>("fault_state_format")
+            .map_err(|_| FaultStateFormatError::Malformed)?,
+    )
+    .map_err(|_| FaultStateFormatError::UnsupportedFormat)?;
+    let schema: String = row
+        .try_get("fault_state_schema")
+        .map_err(|_| FaultStateFormatError::Malformed)?;
+    let schema_version = u32::try_from(
+        row.try_get::<i32, _>("fault_state_schema_version")
+            .map_err(|_| FaultStateFormatError::Malformed)?,
+    )
+    .map_err(|_| FaultStateFormatError::UnsupportedSchemaVersion)?;
+    let Json(payload): Json<Value> = row
+        .try_get("fault_state_payload")
+        .map_err(|_| FaultStateFormatError::Malformed)?;
+    let checksum: Vec<u8> = row
+        .try_get("fault_state_checksum")
+        .map_err(|_| FaultStateFormatError::Malformed)?;
+    let checksum: [u8; 32] = checksum
+        .try_into()
+        .map_err(|_| FaultStateFormatError::ChecksumMismatch)?;
+    let bytes = canonical_fault_bytes(&payload)?;
+    FaultStateEnvelope::from_canonical_json(
+        format_version,
+        &schema,
+        schema_version,
+        &bytes,
+        &checksum,
+    )
+}
+
+/// Rebuilds the exact canonical bytes the durable checksum covers.
+///
+/// `jsonb` does not preserve the stored byte form, so the adapter re-emits the
+/// document through the framework's canonical member order before validating.
+fn canonical_fault_bytes(payload: &Value) -> Result<Vec<u8>, FaultStateFormatError> {
+    let object = payload
+        .as_object()
+        .ok_or(FaultStateFormatError::Malformed)?;
+    let mut canonical = serde_json::Map::new();
+    for member in ["checkpoint", "entries"] {
+        canonical.insert(
+            String::from(member),
+            object
+                .get(member)
+                .cloned()
+                .ok_or(FaultStateFormatError::Malformed)?,
+        );
+    }
+    serde_json::to_vec(&Value::Object(canonical)).map_err(|_| FaultStateFormatError::Malformed)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2704,40 +3138,11 @@ fn decode_status(value: &str) -> Result<BatchStatus, RepositoryError> {
 /// migration `0002`. A schema-1 database rejects them, so no runtime can
 /// silently store a value an older reader cannot interpret.
 const fn encode_failure_category(value: FailureCategory) -> &'static str {
-    match value {
-        FailureCategory::InvalidDefinition => "INVALID_DEFINITION",
-        FailureCategory::DuplicateExecution => "DUPLICATE_EXECUTION",
-        FailureCategory::IllegalTransition => "ILLEGAL_TRANSITION",
-        FailureCategory::TransientInfrastructure => "TRANSIENT_INFRASTRUCTURE",
-        FailureCategory::PermanentInfrastructure => "PERMANENT_INFRASTRUCTURE",
-        FailureCategory::UserComponent => "USER_COMPONENT",
-        FailureCategory::Cancelled => "CANCELLED",
-        FailureCategory::Serialization => "SERIALIZATION",
-        FailureCategory::Invariant => "INVARIANT",
-        FailureCategory::OptimisticConflict => "OPTIMISTIC_CONFLICT",
-        FailureCategory::Timeout => "TIMEOUT",
-        FailureCategory::UnsupportedCapability => "UNSUPPORTED_CAPABILITY",
-        FailureCategory::UnknownCommit => "UNKNOWN_COMMIT",
-    }
+    value.durable_code()
 }
 
 fn decode_failure_category(value: &str) -> Result<FailureCategory, RepositoryError> {
-    match value {
-        "INVALID_DEFINITION" => Ok(FailureCategory::InvalidDefinition),
-        "DUPLICATE_EXECUTION" => Ok(FailureCategory::DuplicateExecution),
-        "ILLEGAL_TRANSITION" => Ok(FailureCategory::IllegalTransition),
-        "TRANSIENT_INFRASTRUCTURE" => Ok(FailureCategory::TransientInfrastructure),
-        "PERMANENT_INFRASTRUCTURE" => Ok(FailureCategory::PermanentInfrastructure),
-        "USER_COMPONENT" => Ok(FailureCategory::UserComponent),
-        "CANCELLED" => Ok(FailureCategory::Cancelled),
-        "SERIALIZATION" => Ok(FailureCategory::Serialization),
-        "INVARIANT" => Ok(FailureCategory::Invariant),
-        "OPTIMISTIC_CONFLICT" => Ok(FailureCategory::OptimisticConflict),
-        "TIMEOUT" => Ok(FailureCategory::Timeout),
-        "UNSUPPORTED_CAPABILITY" => Ok(FailureCategory::UnsupportedCapability),
-        "UNKNOWN_COMMIT" => Ok(FailureCategory::UnknownCommit),
-        _ => Err(RepositoryError::Unavailable),
-    }
+    FailureCategory::from_durable_code(value).ok_or(RepositoryError::Unavailable)
 }
 
 #[cfg(test)]

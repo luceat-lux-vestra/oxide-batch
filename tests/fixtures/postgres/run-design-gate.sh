@@ -135,6 +135,68 @@ docker exec -i \
   --dbname oxide_batch_design \
   <"${fixture_root}/design-gate/roles.sql"
 
+# Schema-1 to schema-2 upgrade evidence. The immutable released SQL is applied
+# to a separate database that already holds realistic schema-1 history, because
+# the migrator run below installs both migrations at once on a clean schema.
+upgrade_psql() {
+  docker exec -i \
+    --env PGPASSWORD=postgres \
+    "${container_name}" \
+    psql \
+    --username postgres \
+    --dbname oxide_batch_upgrade \
+    --set ON_ERROR_STOP=on \
+    --quiet
+}
+
+docker exec \
+  --env PGPASSWORD=postgres \
+  "${container_name}" \
+  createdb --username postgres oxide_batch_upgrade
+
+{
+  echo 'CREATE SCHEMA oxide_batch;'
+  echo 'BEGIN;'
+  cat "${repository_root}/crates/oxide-batch/migrations/0001_initial_metadata.sql"
+  echo 'COMMIT;'
+} | upgrade_psql
+
+upgrade_psql <"${fixture_root}/design-gate/schema1-seed.sql"
+
+upgrade_started="$(date +%s)"
+{
+  echo 'BEGIN;'
+  cat "${repository_root}/crates/oxide-batch/migrations/0002_fault_tolerance_and_flow.sql"
+  echo 'COMMIT;'
+} | upgrade_psql
+echo "schema 1 to 2 migration took $(($(date +%s) - upgrade_started))s"
+
+upgrade_psql <"${fixture_root}/design-gate/verify-schema2-upgrade.sql"
+
+# Reapplying the migration must refuse to run against schema 2 instead of
+# silently corrupting the upgraded rows.
+set +e
+reapply_output="$(
+  {
+    echo 'BEGIN;'
+    cat "${repository_root}/crates/oxide-batch/migrations/0002_fault_tolerance_and_flow.sql"
+    echo 'COMMIT;'
+  } | upgrade_psql 2>&1
+)"
+reapply_status=$?
+set -e
+if [[ ${reapply_status} -eq 0 ]]; then
+  echo "schema 2 migration was applied twice" >&2
+  exit 1
+fi
+if [[ "${reapply_output}" != *"schema version 1 is required"* ]]; then
+  echo "${reapply_output}" >&2
+  echo "reapplying schema 2 returned an unexpected diagnostic" >&2
+  exit 1
+fi
+
+echo "PostgreSQL ${postgres_major} schema 1 to 2 upgrade fixture passed"
+
 (
   cd "${repository_root}"
   OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL="postgres://oxide_batch_migrator:fixture-migrator-only@localhost:${database_port}/oxide_batch_design" \
@@ -216,14 +278,14 @@ docker exec \
   --command \
   "SELECT version FROM oxide_batch.ob_schema_version WHERE singleton = true" \
   | tr -d '[:space:]' \
-  | grep -qx '1'
+  | grep -qx '2'
 
 docker exec \
   --env PGPASSWORD=fixture-migrator-only \
   "${container_name}" \
   psql \
   "host=localhost dbname=oxide_batch_restore user=oxide_batch_migrator sslmode=verify-full sslrootcert=/tls/ca.crt" \
-  --command "UPDATE oxide_batch.ob_schema_version SET version = 2" \
+  --command "UPDATE oxide_batch.ob_schema_version SET version = 3" \
   >/dev/null
 
 set +e
@@ -242,7 +304,7 @@ if [[ ${newer_schema_status} -eq 0 ]]; then
   echo "newer metadata schema was not rejected" >&2
   exit 1
 fi
-if [[ "${newer_schema_output}" != *"newer than supported version 1"* ]]; then
+if [[ "${newer_schema_output}" != *"newer than supported version 2"* ]]; then
   echo "${newer_schema_output}" >&2
   echo "newer-schema rejection returned an unexpected diagnostic" >&2
   exit 1
