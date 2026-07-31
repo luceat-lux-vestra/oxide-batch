@@ -100,14 +100,19 @@ INSERT INTO ob_step_execution (
 FROM ob_job_execution
 WHERE attempt = 1;
 
--- Schema-2 runtime DML advances the checkpoint, the fault counters, and the
--- retained fault state in the same compare-and-swap update.
+-- Schema-2 runtime DML advances the checkpoint, every fault counter, and the
+-- retained fault state in one compare-and-swap update. This fixture proves the
+-- runtime role may write the new columns; the reservation and commit boundaries
+-- that separate them are covered by the repository suite. The row is left at
+-- version 1 because the design-gate spike updates it from there.
 UPDATE ob_step_execution
 SET checkpoint_payload = '{"cursor":2}'::jsonb,
     read_count = 2,
     processed_count = 2,
     write_count = 2,
     commit_count = 1,
+    rollback_count = rollback_count + 1,
+    read_retry_count = read_retry_count + 1,
     process_skip_count = process_skip_count + 1,
     no_rollback_count = no_rollback_count + 1,
     fault_state_payload = '{"checkpoint": "0000000000000000000000000000000000000000000000000000000000000000", "entries": []}'::jsonb,
@@ -118,13 +123,6 @@ SET checkpoint_payload = '{"cursor":2}'::jsonb,
     updated_at = CURRENT_TIMESTAMP,
     version = version + 1
 WHERE step_name = 'import' AND version = 0;
-
-UPDATE ob_step_execution
-SET read_retry_count = read_retry_count + 1,
-    rollback_count = rollback_count + 1,
-    updated_at = CURRENT_TIMESTAMP,
-    version = version + 1
-WHERE step_logical_id = 'import' AND version = 1;
 
 INSERT INTO ob_flow_decision (
     job_execution_id,
