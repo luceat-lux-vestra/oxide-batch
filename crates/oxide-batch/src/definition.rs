@@ -10,13 +10,20 @@ use sha2::{Digest, Sha256};
 use crate::{ChunkSize, JobName, StateSchemaId, StateSchemaVersion, StepName};
 
 const MAX_TOKEN_BYTES: usize = 128;
-const MAX_MANIFEST_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 const MANIFEST_FORMAT: u16 = 1;
+/// The canonical manifest format that captures a compiled flow graph.
+pub(crate) const MANIFEST_FORMAT_FLOW: u16 = 2;
+/// The newest canonical manifest format this runtime can interpret.
+pub(crate) const SUPPORTED_MANIFEST_FORMAT: u16 = MANIFEST_FORMAT_FLOW;
 const LEGACY_REVISION: &str = "__m1_repository_port_v1";
 const LEGACY_MANIFEST: &[u8] =
     br#"{"format":1,"repository_port":"m1","revision":"__m1_repository_port_v1"}"#;
 
-fn validate_token(value: &str, kind: DefinitionTokenKind) -> Result<(), DefinitionError> {
+pub(crate) fn validate_token(
+    value: &str,
+    kind: DefinitionTokenKind,
+) -> Result<(), DefinitionError> {
     if value.is_empty() {
         return Err(DefinitionError::EmptyToken { kind });
     }
@@ -62,6 +69,8 @@ macro_rules! definition_token {
         }
     };
 }
+
+pub(crate) use definition_token;
 
 definition_token!(
     DefinitionRevision,
@@ -221,6 +230,27 @@ impl ChunkComponentRevisions {
     pub const fn delivery_mode(&self) -> ChunkDeliveryMode {
         self.restart.delivery_mode
     }
+
+    /// Projects the restart-relevant chunk declaration into manifest members.
+    pub(crate) fn manifest_value(&self) -> serde_json::Value {
+        json!({
+            "checkpoint": {
+                "schema": self.restart.checkpoint_schema.as_str(),
+                "version": self.restart.checkpoint_schema_version.get()
+            },
+            "components": {
+                "checkpoint": self.checkpoint.as_str(),
+                "processor": self.processor.as_str(),
+                "reader": self.reader.as_str(),
+                "writer": self.writer.as_str()
+            },
+            "context": {
+                "schema": self.restart.context_schema.as_str(),
+                "version": self.restart.context_schema_version.get()
+            },
+            "delivery_mode": self.restart.delivery_mode.manifest_name()
+        })
+    }
 }
 
 /// Declared delivery boundary included in a chunk definition fingerprint.
@@ -288,6 +318,7 @@ impl DefinitionIdentity {
             None,
             DefinitionRevision(LEGACY_REVISION.to_owned()),
             LEGACY_MANIFEST.to_vec(),
+            MANIFEST_FORMAT,
         )
     }
 
@@ -357,10 +388,31 @@ impl DefinitionIdentity {
         Self::encode(job_name.clone(), revision, &manifest)
     }
 
+    /// Builds the canonical identity for a compiled flow graph.
+    ///
+    /// The supplied value must already be the manifest the plan compiler
+    /// normalized; this constructor only encodes, bounds, and hashes it.
+    pub(crate) fn from_flow_manifest(
+        job_name: &JobName,
+        revision: DefinitionRevision,
+        manifest: &serde_json::Value,
+    ) -> Result<Self, DefinitionError> {
+        Self::encode_as(job_name.clone(), revision, manifest, MANIFEST_FORMAT_FLOW)
+    }
+
     fn encode(
         job_name: JobName,
         revision: DefinitionRevision,
         manifest: &serde_json::Value,
+    ) -> Result<Self, DefinitionError> {
+        Self::encode_as(job_name, revision, manifest, MANIFEST_FORMAT)
+    }
+
+    fn encode_as(
+        job_name: JobName,
+        revision: DefinitionRevision,
+        manifest: &serde_json::Value,
+        format: u16,
     ) -> Result<Self, DefinitionError> {
         let canonical =
             serde_json::to_vec(manifest).map_err(|_| DefinitionError::ManifestEncoding)?;
@@ -369,19 +421,25 @@ impl DefinitionIdentity {
                 max_bytes: MAX_MANIFEST_BYTES,
             });
         }
-        Ok(Self::from_canonical(Some(job_name), revision, canonical))
+        Ok(Self::from_canonical(
+            Some(job_name),
+            revision,
+            canonical,
+            format,
+        ))
     }
 
     fn from_canonical(
         job_name: Option<JobName>,
         revision: DefinitionRevision,
         canonical: Vec<u8>,
+        format: u16,
     ) -> Self {
         let digest: [u8; 32] = Sha256::digest(&canonical).into();
         Self {
             job_name,
             revision,
-            manifest_format: MANIFEST_FORMAT,
+            manifest_format: format,
             manifest_digest: digest,
             canonical_manifest: canonical.into_boxed_slice(),
         }
@@ -414,10 +472,35 @@ impl DefinitionIdentity {
         &self.manifest_digest
     }
 
-    #[cfg(feature = "postgres")]
-    pub(crate) fn canonical_manifest(&self) -> &[u8] {
+    /// Borrows the exact canonical manifest bytes that produced the digest.
+    ///
+    /// The manifest records names, logical identifiers, revisions, schema
+    /// versions, and bounded policy values. Parameters, contexts, item values,
+    /// credentials, endpoints, and component-private state are never encoded
+    /// into it, so operators may inspect and archive these bytes.
+    #[must_use]
+    pub fn canonical_manifest(&self) -> &[u8] {
         &self.canonical_manifest
     }
+}
+
+/// Returns whether this runtime can interpret `format`.
+///
+/// # Errors
+///
+/// Returns [`ManifestError::UnsupportedFormat`] for a newer format and
+/// [`ManifestError::MissingFormat`] for zero.
+pub(crate) const fn check_manifest_format(format: u16) -> Result<(), ManifestError> {
+    if format == 0 {
+        return Err(ManifestError::MissingFormat);
+    }
+    if format > SUPPORTED_MANIFEST_FORMAT {
+        return Err(ManifestError::UnsupportedFormat {
+            format,
+            supported: SUPPORTED_MANIFEST_FORMAT,
+        });
+    }
+    Ok(())
 }
 
 impl fmt::Debug for DefinitionIdentity {
@@ -452,6 +535,247 @@ impl fmt::Debug for DigestPrefix {
     }
 }
 
+/// A validated, read-only view of one canonical definition manifest.
+///
+/// The reader accepts every manifest format this runtime understands, so a
+/// deployment can inspect a definition persisted by an older release. It never
+/// guesses: a newer format, a non-canonical encoding, a floating-point value,
+/// an out-of-bound graph, or a digest that does not match the supplied bytes
+/// fails closed.
+///
+/// ```
+/// use oxide_batch::{
+///     ComponentRevision, DefinitionIdentity, DefinitionManifest, DefinitionRevision, JobName,
+///     StepName,
+/// };
+///
+/// let identity = DefinitionIdentity::tasklet(
+///     &JobName::new("daily_import")?,
+///     &StepName::new("import")?,
+///     DefinitionRevision::new("2026-07-31")?,
+///     &ComponentRevision::new("tasklet-v1")?,
+/// )?;
+/// let manifest = DefinitionManifest::read_verified(
+///     identity.canonical_manifest(),
+///     identity.manifest_digest(),
+/// )?;
+/// assert_eq!(manifest.format(), 1);
+/// assert_eq!(manifest.node_count(), None);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DefinitionManifest {
+    format: u16,
+    digest: [u8; 32],
+    job_name: Option<JobName>,
+    node_count: Option<usize>,
+    transition_count: Option<usize>,
+}
+
+impl DefinitionManifest {
+    /// Reads and validates canonical manifest bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ManifestError`] when the bytes exceed the durable bound, are
+    /// not a canonical JSON object, omit or overflow the format member, declare
+    /// a format this runtime cannot interpret, contain a floating-point value,
+    /// or describe a graph outside the accepted bounds.
+    pub fn read(bytes: &[u8]) -> Result<Self, ManifestError> {
+        if bytes.len() > MAX_MANIFEST_BYTES {
+            return Err(ManifestError::TooLarge {
+                max_bytes: MAX_MANIFEST_BYTES,
+            });
+        }
+        let document: serde_json::Value =
+            serde_json::from_slice(bytes).map_err(|_| ManifestError::MalformedJson)?;
+        let members = document.as_object().ok_or(ManifestError::NotAnObject)?;
+        if contains_float(&document) {
+            return Err(ManifestError::FloatValue);
+        }
+        let reencoded = serde_json::to_vec(&document).map_err(|_| ManifestError::MalformedJson)?;
+        if reencoded != bytes {
+            return Err(ManifestError::NonCanonicalEncoding);
+        }
+        let format = members
+            .get("format")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|format| u16::try_from(format).ok())
+            .ok_or(ManifestError::MissingFormat)?;
+        check_manifest_format(format)?;
+        let job_name = members
+            .get("job")
+            .and_then(serde_json::Value::as_str)
+            .map(JobName::new)
+            .transpose()
+            .map_err(|_| ManifestError::InvalidJobName)?;
+        let (node_count, transition_count) = if format == MANIFEST_FORMAT_FLOW {
+            let nodes = array_len(members.get("nodes"))?;
+            let transitions = array_len(members.get("transitions"))?;
+            if nodes > crate::plan::MAX_NODES || transitions > crate::plan::MAX_TRANSITIONS {
+                return Err(ManifestError::GraphOutOfBounds {
+                    max_nodes: crate::plan::MAX_NODES,
+                    max_transitions: crate::plan::MAX_TRANSITIONS,
+                });
+            }
+            (Some(nodes), Some(transitions))
+        } else {
+            (None, None)
+        };
+        Ok(Self {
+            format,
+            digest: Sha256::digest(bytes).into(),
+            job_name,
+            node_count,
+            transition_count,
+        })
+    }
+
+    /// Reads canonical bytes and requires them to hash to `expected`.
+    ///
+    /// # Errors
+    ///
+    /// Returns every [`ManifestError`] [`read`](Self::read) returns, plus
+    /// [`ManifestError::DigestMismatch`] when the bytes were altered.
+    pub fn read_verified(bytes: &[u8], expected: &[u8; 32]) -> Result<Self, ManifestError> {
+        let manifest = Self::read(bytes)?;
+        if &manifest.digest != expected {
+            return Err(ManifestError::DigestMismatch);
+        }
+        Ok(manifest)
+    }
+
+    /// Returns the declared canonical manifest format.
+    #[must_use]
+    pub const fn format(&self) -> u16 {
+        self.format
+    }
+
+    /// Returns the SHA-256 digest of the exact bytes that were read.
+    #[must_use]
+    pub const fn digest(&self) -> &[u8; 32] {
+        &self.digest
+    }
+
+    /// Borrows the job name bound into the manifest, when present.
+    #[must_use]
+    pub const fn job_name(&self) -> Option<&JobName> {
+        self.job_name.as_ref()
+    }
+
+    /// Returns the compiled node count of a flow manifest.
+    #[must_use]
+    pub const fn node_count(&self) -> Option<usize> {
+        self.node_count
+    }
+
+    /// Returns the compiled transition count of a flow manifest.
+    #[must_use]
+    pub const fn transition_count(&self) -> Option<usize> {
+        self.transition_count
+    }
+}
+
+fn array_len(value: Option<&serde_json::Value>) -> Result<usize, ManifestError> {
+    value
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::len)
+        .ok_or(ManifestError::MalformedGraph)
+}
+
+fn contains_float(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Number(number) => number.as_i64().is_none() && number.as_u64().is_none(),
+        serde_json::Value::Array(values) => values.iter().any(contains_float),
+        serde_json::Value::Object(members) => members.values().any(contains_float),
+        _ => false,
+    }
+}
+
+/// A canonical definition manifest that cannot be interpreted.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ManifestError {
+    /// The bytes exceeded the durable manifest bound.
+    TooLarge {
+        /// Maximum accepted byte length.
+        max_bytes: usize,
+    },
+    /// The bytes are not valid JSON.
+    MalformedJson,
+    /// The document is not a JSON object.
+    NotAnObject,
+    /// Re-encoding the document did not reproduce the supplied bytes.
+    NonCanonicalEncoding,
+    /// The document contains a floating-point number.
+    FloatValue,
+    /// The format member is absent or not a `u16`.
+    MissingFormat,
+    /// The manifest is newer than this runtime understands.
+    UnsupportedFormat {
+        /// Format found in the manifest.
+        format: u16,
+        /// Newest format this runtime interprets.
+        supported: u16,
+    },
+    /// A flow manifest omitted or malformed its graph members.
+    MalformedGraph,
+    /// A flow manifest declared a graph larger than this runtime accepts.
+    GraphOutOfBounds {
+        /// Maximum accepted node count.
+        max_nodes: usize,
+        /// Maximum accepted transition count.
+        max_transitions: usize,
+    },
+    /// The bound job name is not a valid [`JobName`].
+    InvalidJobName,
+    /// The bytes do not hash to the expected fingerprint.
+    DigestMismatch,
+}
+
+impl fmt::Display for ManifestError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooLarge { max_bytes } => {
+                write!(formatter, "definition manifest exceeds {max_bytes} bytes")
+            }
+            Self::MalformedJson => formatter.write_str("definition manifest is not valid JSON"),
+            Self::NotAnObject => formatter.write_str("definition manifest is not a JSON object"),
+            Self::NonCanonicalEncoding => {
+                formatter.write_str("definition manifest is not canonically encoded")
+            }
+            Self::FloatValue => {
+                formatter.write_str("definition manifest contains a floating-point value")
+            }
+            Self::MissingFormat => {
+                formatter.write_str("definition manifest has no usable format member")
+            }
+            Self::UnsupportedFormat { format, supported } => write!(
+                formatter,
+                "definition manifest format {format} is newer than the supported format {supported}"
+            ),
+            Self::MalformedGraph => {
+                formatter.write_str("flow manifest has no readable node and transition members")
+            }
+            Self::GraphOutOfBounds {
+                max_nodes,
+                max_transitions,
+            } => write!(
+                formatter,
+                "flow manifest exceeds {max_nodes} nodes or {max_transitions} transitions"
+            ),
+            Self::InvalidJobName => {
+                formatter.write_str("definition manifest binds an invalid job name")
+            }
+            Self::DigestMismatch => {
+                formatter.write_str("definition manifest does not match its fingerprint")
+            }
+        }
+    }
+}
+
+impl Error for ManifestError {}
+
 /// Definition token category used by validation diagnostics.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -464,6 +788,10 @@ pub enum DefinitionTokenKind {
     Upgrade,
     /// Bounded fault-classifier revision.
     Classifier,
+    /// Stable flow-graph node identifier.
+    Node,
+    /// Bounded decider revision.
+    Decider,
 }
 
 /// Failure to construct a bounded restart definition.
@@ -510,6 +838,12 @@ pub enum DefinitionError {
     /// A step's fault runtime declared a different delivery mode than its
     /// restart contract.
     DeliveryModeMismatch,
+    /// A one-step wrapper could not be lowered into its compatibility plan.
+    ///
+    /// The framework derives the compatibility graph from values it has
+    /// already validated, so this variant reports a framework invariant rather
+    /// than an application mistake.
+    CompatibilityLowering,
 }
 
 impl fmt::Display for DefinitionError {
@@ -539,6 +873,9 @@ impl fmt::Display for DefinitionError {
             }
             Self::DeliveryModeMismatch => formatter
                 .write_str("fault runtime and restart contract declare different delivery modes"),
+            Self::CompatibilityLowering => {
+                formatter.write_str("one-step compatibility lowering produced an invalid plan")
+            }
         }
     }
 }

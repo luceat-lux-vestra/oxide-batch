@@ -8,20 +8,22 @@ use std::time::Duration;
 use futures_util::FutureExt;
 use tokio::sync::Mutex as AsyncMutex;
 
+use crate::runtime::{lower_one_step, one_step_node};
 use crate::{
     BackoffOutcome, BoxFuture, ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext,
     ChunkCompletionOutcome, ChunkComponentRevisions, ChunkCount, ChunkCounts, ChunkFaultProgress,
     ChunkSize, ChunkTransaction, ChunkTransactionContext, ChunkTransactionError,
-    ChunkTransactionManager, DefinitionError, DefinitionIdentity, DefinitionRevision,
-    ExecutionCorrelation, FailureCategory, FailureId, FailureSummary, FaultDecision,
-    FaultDescriptor, FaultEvidence, FaultPhase, FaultProgress, FaultRuntime, InheritedStepProgress,
-    ItemListenerContext, ItemListenerFailure, ItemListenerSet, ItemProcessor, ItemReader,
-    ItemWriter, JobExecutionListener, JobLauncher, JobName, JobParameters, LaunchError,
-    LaunchReport, LifecycleEventKind, ListenerFailureKind, ProcessContext, ProcessOutcome,
-    ProcessorError, ReadContext, ReadOutcome, ReaderError, RetryCounts, RetryKey, RetryOrdinal,
-    RetryOutcome, RetryReservation, RollbackDisposition, SkipCounts, StepExecutionListener,
-    StepName, StopToken, Tasklet, TaskletContext, TaskletError, TaskletJob, TaskletOutcome,
-    TaskletStep, WriteContext, WriteOutcome, WriterError,
+    ChunkTransactionManager, CompiledExecutionPlan, DefinitionError, DefinitionIdentity,
+    DefinitionRevision, ExecutionCorrelation, FailureCategory, FailureId, FailureSummary,
+    FaultDecision, FaultDescriptor, FaultEvidence, FaultPhase, FaultProgress, FaultRuntime,
+    InheritedStepProgress, ItemListenerContext, ItemListenerFailure, ItemListenerSet,
+    ItemProcessor, ItemReader, ItemWriter, JobExecutionListener, JobLauncher, JobName,
+    JobParameters, LaunchError, LaunchReport, LifecycleEventKind, ListenerFailureKind,
+    ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome, ReaderError,
+    RetryCounts, RetryKey, RetryOrdinal, RetryOutcome, RetryReservation, RollbackDisposition,
+    SkipCounts, StepComponents, StepExecutionListener, StepName, StopToken, Tasklet,
+    TaskletContext, TaskletError, TaskletJob, TaskletOutcome, TaskletStep, WriteContext,
+    WriteOutcome, WriterError,
 };
 
 /// A validated one-step chunk definition.
@@ -144,7 +146,7 @@ impl<I, O> fmt::Debug for ChunkStep<I, O> {
 pub struct ChunkJob<I, O> {
     name: JobName,
     step_name: StepName,
-    definition: DefinitionIdentity,
+    plan: CompiledExecutionPlan,
     tasklet: Arc<ChunkTasklet<I, O>>,
     step_listeners: Vec<Arc<dyn StepExecutionListener>>,
     listeners: Vec<Arc<dyn JobExecutionListener>>,
@@ -174,15 +176,41 @@ impl<I, O> ChunkJob<I, O> {
         let definition =
             DefinitionIdentity::chunk(&name, &step_name, step.size, revision, components)?;
         step.definition_digest = *definition.manifest_digest();
+        let mut node = one_step_node(
+            &step_name,
+            StepComponents::Chunk {
+                size: step.size,
+                revisions: Box::new(components.clone()),
+            },
+        )?;
+        if let Some(fault) = step.fault.as_ref() {
+            node = node.with_fault_policy(fault.policy().clone());
+        }
+        let plan = lower_one_step(definition, node)?;
         let step_listeners = step.step_listeners.clone();
         Ok(Self {
             name,
             step_name,
-            definition,
+            plan,
             tasklet: Arc::new(ChunkTasklet::new(step)),
             step_listeners,
             listeners: Vec::new(),
         })
+    }
+
+    /// Borrows the in-memory compatibility plan this wrapper lowers into.
+    ///
+    /// The plan retains the wrapper's original manifest bytes, format, and
+    /// fingerprint and records no durable flow decision.
+    #[must_use]
+    pub const fn compiled_plan(&self) -> &CompiledExecutionPlan {
+        &self.plan
+    }
+
+    /// Borrows the exact restart-relevant definition identity.
+    #[must_use]
+    pub const fn definition_identity(&self) -> &DefinitionIdentity {
+        self.plan.definition_identity()
     }
 
     /// Registers a job listener in deterministic before-order.
@@ -211,7 +239,7 @@ impl<I, O> fmt::Debug for ChunkJob<I, O> {
             .debug_struct("ChunkJob")
             .field("name", &self.name)
             .field("step_name", &self.step_name)
-            .field("definition", &self.definition)
+            .field("definition", self.plan.definition_identity())
             .field("listener_count", &self.listeners.len())
             .field("step_listener_count", &self.step_listeners.len())
             .finish_non_exhaustive()
@@ -348,11 +376,8 @@ impl JobLauncher<'_> {
         for listener in &job.step_listeners {
             tasklet_step = tasklet_step.with_listener(Arc::clone(listener));
         }
-        let mut tasklet_job = TaskletJob::from_definition_identity(
-            job.name.clone(),
-            tasklet_step,
-            job.definition.clone(),
-        );
+        let mut tasklet_job =
+            TaskletJob::from_lowered_plan(job.name.clone(), tasklet_step, job.plan.clone());
         for listener in &job.listeners {
             tasklet_job = tasklet_job.with_listener(Arc::clone(listener));
         }

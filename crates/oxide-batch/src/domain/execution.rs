@@ -282,6 +282,26 @@ pub enum FailureCategory {
 }
 
 impl FailureCategory {
+    /// Returns the stable, low-cardinality manifest and telemetry name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidDefinition => "invalid_definition",
+            Self::DuplicateExecution => "duplicate_execution",
+            Self::IllegalTransition => "illegal_transition",
+            Self::TransientInfrastructure => "transient_infrastructure",
+            Self::PermanentInfrastructure => "permanent_infrastructure",
+            Self::UserComponent => "user_component",
+            Self::Cancelled => "cancelled",
+            Self::Serialization => "serialization",
+            Self::Invariant => "invariant",
+            Self::OptimisticConflict => "optimistic_conflict",
+            Self::Timeout => "timeout",
+            Self::UnsupportedCapability => "unsupported_capability",
+            Self::UnknownCommit => "unknown_commit",
+        }
+    }
+
     /// Returns whether a fault policy may retry or skip this category.
     ///
     /// Definition, lifecycle, cancellation, serialization, invariant,

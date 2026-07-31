@@ -1,0 +1,35 @@
+repository begin
+unit select_or_create_job_instance job=daily_import identifying=1
+unit create_job_execution_with_definition instance=1 manifest_format=1 digest=4357b7a8
+unit create_step_execution job_execution=2 step=import
+unit job_executions instance=1
+unit commit
+event launch.accepted job_execution=2 step_execution=3 job_attempt=1 step_attempt=1
+event job.starting job_execution=2 step_execution=3 job_attempt=1 step_attempt=1
+event step.starting job_execution=2 step_execution=3 job_attempt=1 step_attempt=1
+repository begin
+unit transition_job_execution job_execution=2 expected_version=0 target=Started
+unit commit
+event job.started job_execution=2 step_execution=3 job_attempt=1 step_attempt=1
+repository begin
+unit transition_step_execution step_execution=3 expected_version=0 target=Started
+unit commit
+event step.started job_execution=2 step_execution=3 job_attempt=1 step_attempt=1
+event chunk.started job_execution=2 step_execution=3 job_attempt=1 step_attempt=1 chunk=1
+event chunk.rolled_back job_execution=2 step_execution=3 job_attempt=1 step_attempt=1 chunk=1
+repository begin
+unit get_step_execution step_execution=3
+unit rollback
+repository begin
+unit enrich_step_exit_status step_execution=3 expected_version=1 exit=FAILED
+unit transition_step_execution step_execution=3 expected_version=2 target=Failed
+unit commit
+event step.failed job_execution=2 step_execution=3 job_attempt=1 step_attempt=1 failure=UserComponent
+repository begin
+unit enrich_job_exit_status job_execution=2 expected_version=1 exit=FAILED
+unit transition_job_execution job_execution=2 expected_version=2 target=Failed
+unit commit
+event job.failed job_execution=2 step_execution=3 job_attempt=1 step_attempt=1 failure=UserComponent
+durable instance=1
+durable job_execution=2 status=Failed exit=FAILED version=3 read=0 processed=0 written=0 filtered=0 committed=0 rolled_back=0 failure=UserComponent
+durable step_execution=3 step=import status=Failed exit=FAILED version=3 read=0 processed=0 written=0 filtered=0 committed=0 rolled_back=0 failure=UserComponent

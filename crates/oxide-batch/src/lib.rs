@@ -109,6 +109,7 @@ mod fault;
 mod fault_state;
 mod item_listener;
 mod listener;
+mod plan;
 mod repository;
 mod runtime;
 mod state;
@@ -129,8 +130,9 @@ pub use chunk_runtime::{
 };
 pub use definition::{
     ChunkComponentRevisions, ChunkDeliveryMode, ChunkRestartContract, ClassifierRevision,
-    ComponentRevision, DefinitionError, DefinitionIdentity, DefinitionRevision,
-    DefinitionTokenKind, DefinitionUpgrade, DefinitionUpgradeKey, StepDefinitionUpgrade,
+    ComponentRevision, DefinitionError, DefinitionIdentity, DefinitionManifest, DefinitionRevision,
+    DefinitionTokenKind, DefinitionUpgrade, DefinitionUpgradeKey, ManifestError,
+    StepDefinitionUpgrade,
 };
 pub use diagnostics::{
     DiagnosticField, EventComponent, EventSeverity, ExecutionAttempt, ExecutionCorrelation,
@@ -163,6 +165,12 @@ pub use item_listener::{
 pub use listener::{
     JobExecutionListener, ListenerContext, ListenerError, ListenerFailure, ListenerFailureKind,
     ListenerPhase, StepExecutionListener,
+};
+pub use plan::{
+    CompiledExecutionPlan, DeciderRevision, DecisionInputVersion, DecisionNode, ExitPattern,
+    FlowGraph, FlowNode, FlowSelectionError, FlowTarget, FlowTransition, MAX_NODES,
+    MAX_OUTGOING_TRANSITIONS, MAX_PATTERN_BYTES, MAX_TRANSITIONS, NodeId, PatternSpecificity,
+    PlanError, StartControls, StartLimit, StepComponents, StepNode, TerminalKind,
 };
 pub use repository::{
     BoxFuture, Clock, IdGenerationError, IdGenerator, InMemoryJobRepository, JobInstanceSelection,

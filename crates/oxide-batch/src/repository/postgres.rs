@@ -2684,11 +2684,11 @@ async fn ensure_definition(
             actual: actual.clone(),
         });
     }
-    if definition.manifest_format() != 1 {
-        return Err(RepositoryError::UnsupportedManifestVersion {
+    crate::definition::check_manifest_format(definition.manifest_format()).map_err(|_| {
+        RepositoryError::UnsupportedManifestVersion {
             format: definition.manifest_format(),
-        });
-    }
+        }
+    })?;
     let manifest: Value = serde_json::from_slice(definition.canonical_manifest())
         .map_err(|_| RepositoryError::Unavailable)?;
     let registered_ms = system_time_millis(registered_at)?;
