@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use sha2::{Digest, Sha256};
+
 use super::{DomainError, JobName, ParameterName};
 
 const MAX_PARAMETER_STRING_BYTES: usize = 64 * 1024;
@@ -296,6 +298,46 @@ impl JobParameters {
             .filter(|parameter| parameter.is_identifying())
             .count()
     }
+
+    /// Hashes the complete typed parameter projection for durable flow input.
+    ///
+    /// The raw canonical bytes never leave this sensitivity-owning type. Flow
+    /// records retain only the domain-separated SHA-256 result, so parameters
+    /// are neither copied into repository rows nor exposed through diagnostics.
+    pub(crate) fn flow_input_digest(&self) -> [u8; 32] {
+        let mut hash = Sha256::new();
+        hash.update(b"oxide-batch.flow-parameters.v1\0");
+        for (name, parameter) in &self.values {
+            hash_parameter_field(&mut hash, name.as_str().as_bytes());
+            hash.update([match parameter.role() {
+                ParameterRole::Identifying => 1,
+                ParameterRole::NonIdentifying => 0,
+            }]);
+            match &parameter.value.0 {
+                ParameterValueInner::String(value) => {
+                    hash.update([1]);
+                    hash_parameter_field(&mut hash, value.as_bytes());
+                }
+                ParameterValueInner::I64(value) => {
+                    hash.update([2]);
+                    hash.update(value.to_be_bytes());
+                }
+                ParameterValueInner::U64(value) => {
+                    hash.update([3]);
+                    hash.update(value.to_be_bytes());
+                }
+                ParameterValueInner::Bool(value) => {
+                    hash.update([4, u8::from(*value)]);
+                }
+            }
+        }
+        hash.finalize().into()
+    }
+}
+
+fn hash_parameter_field(hash: &mut Sha256, value: &[u8]) {
+    hash.update(u64::try_from(value.len()).unwrap_or(u64::MAX).to_be_bytes());
+    hash.update(value);
 }
 
 impl fmt::Debug for JobParameters {

@@ -1,6 +1,6 @@
 # PostgreSQL Physical Metadata Model
 
-**State:** Implemented for M2 and the M3 fault-tolerance slice
+**State:** Implemented for M2 and the M3 fault-tolerance/flow slices
 
 **Schema version:** released `2`
 
@@ -16,10 +16,8 @@ Schema 2 is installed by
 version-specific operational contract is the
 [fault-tolerance and flow migration](../operations/migrations/0002-fault-tolerance-and-flow.md),
 and its implementation evidence is the
-[M3 PostgreSQL fault-durability evidence](../project/m3-postgres-fault-durability-evidence.md).
-
-`ob_flow_decision` exists in schema 2 but no runtime path writes it yet; the
-flow workstream owns its queries.
+[M3 PostgreSQL fault-durability evidence](../project/m3-postgres-fault-durability-evidence.md)
+and [M3 flow runtime evidence](../project/m3-flow-runtime-evidence.md).
 
 ### Step-execution additions
 
@@ -70,9 +68,9 @@ state, error text, endpoint, credential, or SQL.
 | --- | --- | --- |
 | `FAULT-RESERVE-001` | Step CAS reserves one retry ordinal and advances one phase retry count after known rollback | Implemented by `PostgresFaultState::reserve` |
 | `FAULT-COMMIT-001` | Existing chunk CAS commits skip/no-rollback counts and clears resolved fault state with business progress | Implemented by the chunk-transaction commit |
-| `STEP-START-001` | Count starts for one job instance/logical step and create the next step execution in one transaction | Index `ob_step_execution_logical_history` exists; the query is owned by the flow workstream |
-| `FLOW-APPEND-001` | Append one validated transition/decider result before target start | Table exists; query owned by the flow workstream |
-| `FLOW-RESTART-001` | Read ordered decisions and reusable completed-step outcomes for one instance and plan fingerprint | Table exists; query owned by the flow workstream |
+| `STEP-START-001` | Lock the instance, count starts for one instance/logical step, and create the next step execution in one transaction | Implemented by `create_flow_step_execution` |
+| `FLOW-APPEND-001` | Validate the exact persisted manifest and append one transition/decider result before target start | Implemented by `append_flow_decision` |
+| `FLOW-RESTART-001` | Read ordered decisions, latest logical-step state, and reusable decisions for one instance and plan fingerprint | Implemented by `flow_decisions`, `latest_flow_step`, and `find_reusable_flow_decision` |
 
 `FAULT-RESERVE-001` reads the step row `FOR UPDATE`, requires the supplied
 ordinal to directly follow the persisted one, and updates under

@@ -11,7 +11,7 @@ use crate::{ChunkSize, JobName, StateSchemaId, StateSchemaVersion, StepName};
 
 const MAX_TOKEN_BYTES: usize = 128;
 pub(crate) const MAX_MANIFEST_BYTES: usize = 64 * 1024;
-const MANIFEST_FORMAT: u16 = 1;
+pub(crate) const MANIFEST_FORMAT_ONE_STEP: u16 = 1;
 /// The canonical manifest format that captures a compiled flow graph.
 pub(crate) const MANIFEST_FORMAT_FLOW: u16 = 2;
 /// The newest canonical manifest format this runtime can interpret.
@@ -318,7 +318,7 @@ impl DefinitionIdentity {
             None,
             DefinitionRevision(LEGACY_REVISION.to_owned()),
             LEGACY_MANIFEST.to_vec(),
-            MANIFEST_FORMAT,
+            MANIFEST_FORMAT_ONE_STEP,
         )
     }
 
@@ -339,7 +339,7 @@ impl DefinitionIdentity {
                 "tasklet": component_revision.as_str()
             },
             "delivery_mode": "best_effort",
-            "format": MANIFEST_FORMAT,
+            "format": MANIFEST_FORMAT_ONE_STEP,
             "job": job_name.as_str(),
             "kind": "tasklet",
             "restart_state": "none",
@@ -379,7 +379,7 @@ impl DefinitionIdentity {
                 "version": components.restart.checkpoint_schema_version.get()
             },
             "delivery_mode": components.restart.delivery_mode.manifest_name(),
-            "format": MANIFEST_FORMAT,
+            "format": MANIFEST_FORMAT_ONE_STEP,
             "job": job_name.as_str(),
             "kind": "chunk",
             "step": step_name.as_str(),
@@ -405,7 +405,7 @@ impl DefinitionIdentity {
         revision: DefinitionRevision,
         manifest: &serde_json::Value,
     ) -> Result<Self, DefinitionError> {
-        Self::encode_as(job_name, revision, manifest, MANIFEST_FORMAT)
+        Self::encode_as(job_name, revision, manifest, MANIFEST_FORMAT_ONE_STEP)
     }
 
     fn encode_as(

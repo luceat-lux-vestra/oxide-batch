@@ -100,6 +100,14 @@ impl TaskletStep {
     pub const fn name(&self) -> &StepName {
         &self.name
     }
+
+    pub(crate) fn tasklet(&self) -> &dyn Tasklet {
+        self.tasklet.as_ref()
+    }
+
+    pub(crate) fn listeners(&self) -> &[Arc<dyn StepExecutionListener>] {
+        &self.listeners
+    }
 }
 
 impl fmt::Debug for TaskletStep {
@@ -266,6 +274,23 @@ pub struct TaskletContext<'a> {
 }
 
 impl<'a> TaskletContext<'a> {
+    pub(crate) const fn new_for_flow(
+        parameters: &'a JobParameters,
+        job_execution_id: JobExecutionId,
+        step_execution_id: StepExecutionId,
+        stop: &'a StopToken,
+        correlation: &'a ExecutionCorrelation,
+    ) -> Self {
+        Self {
+            parameters,
+            job_execution_id,
+            step_execution_id,
+            stop,
+            correlation,
+            event_sink: None,
+        }
+    }
+
     /// Borrows the launch parameters.
     #[must_use]
     pub const fn parameters(&self) -> &'a JobParameters {
@@ -389,11 +414,16 @@ impl BlockingTaskletContext {
 }
 
 /// The user-controlled result of one tasklet invocation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum TaskletOutcome {
     /// User work finished successfully.
     Completed,
+    /// User work completed with a custom bounded flow-facing exit status.
+    ///
+    /// The lifecycle status remains `COMPLETED`; only transition selection and
+    /// the persisted exit status observe this value.
+    CompletedWith(ExitStatus),
     /// User work observed a cooperative stop.
     Stopped,
     /// A blocking adapter completed already-running synchronous work and then
@@ -764,6 +794,7 @@ impl<'a> JobLauncher<'a> {
                     &graph.step_execution,
                     outcome,
                     Some(failure.summary()),
+                    None,
                     &graph.correlation,
                 )
                 .await?;
@@ -816,6 +847,7 @@ impl<'a> JobLauncher<'a> {
                     &graph.step_execution,
                     outcome,
                     Some(failure.summary()),
+                    None,
                     &graph.correlation,
                 )
                 .await?;
@@ -858,13 +890,20 @@ impl<'a> JobLauncher<'a> {
             event_sink: self.event_sink,
         };
         let invocation = invoke_tasklet(job.step.tasklet.as_ref(), tasklet_context).await;
+        let mut custom_exit = None;
         let provisional_outcome = match invocation {
             Ok(TaskletOutcome::Completed) if !stop.is_stop_requested() => {
                 TaskletExecutionOutcome::Completed
             }
-            Ok(TaskletOutcome::Completed | TaskletOutcome::Stopped) => {
-                TaskletExecutionOutcome::Stopped(StopTiming::DuringExecution)
+            Ok(TaskletOutcome::CompletedWith(exit_status)) if !stop.is_stop_requested() => {
+                custom_exit = Some(exit_status);
+                TaskletExecutionOutcome::Completed
             }
+            Ok(
+                TaskletOutcome::Completed
+                | TaskletOutcome::CompletedWith(_)
+                | TaskletOutcome::Stopped,
+            ) => TaskletExecutionOutcome::Stopped(StopTiming::DuringExecution),
             Ok(TaskletOutcome::StoppedAfterBlockingWork) => {
                 TaskletExecutionOutcome::Stopped(StopTiming::AfterBlockingWork)
             }
@@ -890,6 +929,7 @@ impl<'a> JobLauncher<'a> {
         {
             original_outcome = Some(outcome);
             outcome = listener_failure_outcome(failure.kind());
+            custom_exit = None;
         }
         let step_failure = listener_failures
             .first()
@@ -897,7 +937,13 @@ impl<'a> JobLauncher<'a> {
             .or(tasklet_failure);
         let durable_step = self.reload_step(started_step.id()).await?;
         let step_execution = self
-            .finish_step(&durable_step, outcome, step_failure, &graph.correlation)
+            .finish_step(
+                &durable_step,
+                outcome,
+                step_failure,
+                custom_exit.as_ref(),
+                &graph.correlation,
+            )
             .await?;
 
         let after_job_failures = self.run_after_job(&job.listeners, context, outcome).await?;
@@ -917,7 +963,11 @@ impl<'a> JobLauncher<'a> {
         let job_execution = self
             .finish_job(
                 &started_job,
-                Self::terminal_status(plan, outcome)?,
+                Self::terminal_status_for_exit(
+                    plan,
+                    outcome,
+                    step_execution.metadata().exit_status(),
+                )?,
                 job_failure,
                 &graph.correlation,
             )
@@ -1051,13 +1101,15 @@ impl<'a> JobLauncher<'a> {
         step: &StepExecution,
         outcome: TaskletExecutionOutcome,
         failure: Option<FailureSummary>,
+        custom_exit: Option<&ExitStatus>,
         correlation: &ExecutionCorrelation,
     ) -> Result<StepExecution, LaunchError> {
-        let (status, exit_status) = final_status(outcome);
+        let (status, default_exit) = final_status(outcome);
+        let exit_status = custom_exit.unwrap_or(&default_exit);
         let now = self.clock.now();
         let mut unit = self.repository.begin().await?;
         let step = unit
-            .enrich_step_exit_status(step.id(), step.version(), &exit_status)
+            .enrich_step_exit_status(step.id(), step.version(), exit_status)
             .await?;
         let transition = transition_for_outcome(status, now, failure)?;
         let step = unit
@@ -1079,7 +1131,7 @@ impl<'a> JobLauncher<'a> {
         let stopping_step = self.mark_step_stopping(step, correlation).await?;
         let outcome = TaskletExecutionOutcome::Stopped(StopTiming::BeforeStart);
         let step = self
-            .finish_step(&stopping_step, outcome, None, correlation)
+            .finish_step(&stopping_step, outcome, None, None, correlation)
             .await?;
         let status = Self::terminal_status(plan, outcome)?;
         let job = self
@@ -1251,10 +1303,24 @@ impl<'a> JobLauncher<'a> {
         plan: &CompiledExecutionPlan,
         outcome: TaskletExecutionOutcome,
     ) -> Result<BatchStatus, LaunchError> {
+        let (_, exit_status) = final_status(outcome);
+        Self::terminal_status_for_exit(plan, outcome, &exit_status)
+    }
+
+    fn terminal_status_for_exit(
+        plan: &CompiledExecutionPlan,
+        outcome: TaskletExecutionOutcome,
+        exit_status: &ExitStatus,
+    ) -> Result<BatchStatus, LaunchError> {
         if matches!(outcome, TaskletExecutionOutcome::Unknown) {
             return Ok(BatchStatus::Unknown);
         }
-        let (_, exit_status) = final_status(outcome);
+        if plan.manifest_format() == crate::definition::MANIFEST_FORMAT_ONE_STEP
+            && outcome == TaskletExecutionOutcome::Completed
+            && exit_status.code().as_str() != "COMPLETED"
+        {
+            return Ok(BatchStatus::Completed);
+        }
         match plan.select_target(plan.entry(), exit_status.code())? {
             FlowTarget::Terminal(TerminalKind::Complete) => Ok(BatchStatus::Completed),
             FlowTarget::Terminal(TerminalKind::Fail) => Ok(BatchStatus::Failed),
@@ -1365,7 +1431,7 @@ async fn invoke_after_job(
     }
 }
 
-async fn invoke_before_step(
+pub(crate) async fn invoke_before_step(
     listener: &dyn StepExecutionListener,
     context: ListenerContext<'_>,
 ) -> Result<(), ListenerFailureKind> {
@@ -1378,7 +1444,7 @@ async fn invoke_before_step(
     }
 }
 
-async fn invoke_after_step(
+pub(crate) async fn invoke_after_step(
     listener: &dyn StepExecutionListener,
     context: ListenerContext<'_>,
     outcome: TaskletExecutionOutcome,
@@ -1392,7 +1458,7 @@ async fn invoke_after_step(
     }
 }
 
-async fn invoke_tasklet(
+pub(crate) async fn invoke_tasklet(
     tasklet: &dyn Tasklet,
     context: TaskletContext<'_>,
 ) -> Result<TaskletOutcome, TaskletFailure> {

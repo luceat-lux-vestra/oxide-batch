@@ -108,6 +108,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   their format-1 manifest bytes and fingerprint unchanged while routing terminal
   outcomes through the compiled plan, with eleven golden lifecycle, listener,
   repository-write, stop, panic, restart, and unknown-commit equivalence traces.
+- Durable execution of the finite M3 flow slice with sequential and conditional
+  tasklet/chunk steps, custom exit outcomes, typed panic-safe deciders,
+  `Complete`/`Fail`/`Stop` terminals, instance-wide atomic start limits, and
+  `allow_start_if_complete`. In-memory and PostgreSQL repositories now append
+  manifest-validated transition decisions before target start, reconstruct
+  logical-step history across attempts, and reuse matching completed-step and
+  decider decisions during restart.
 - M0 implementation-readiness plan, M0–M5 roadmap, decision records, and
   product, compatibility, architecture, engineering, security, operations, and
   release policy set.

@@ -8,9 +8,10 @@ use super::{
 };
 use crate::{
     BatchStatus, DefinitionIdentity, DefinitionRevision, DefinitionUpgrade, ExecutionCounts,
-    ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitStatus, IdentifierKind,
+    ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitStatus, FlowDecision,
+    FlowDecisionId, FlowDecisionRequest, FlowStepState, FlowTransitionKind, IdentifierKind,
     JobExecution, JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey, JobName,
-    LifecycleTransition, StepExecution, StepExecutionId, StepName,
+    LifecycleTransition, NodeId, StartLimit, StepExecution, StepExecutionId, StepName,
 };
 
 /// Deterministic, process-local reference implementation of [`JobRepository`].
@@ -83,6 +84,9 @@ struct MemoryState {
     job_executions_by_instance: BTreeMap<JobInstanceId, Vec<JobExecutionId>>,
     step_executions: BTreeMap<StepExecutionId, StepExecution>,
     step_executions_by_job: BTreeMap<JobExecutionId, Vec<StepExecutionId>>,
+    step_logical_ids: BTreeMap<StepExecutionId, NodeId>,
+    flow_decisions: BTreeMap<FlowDecisionId, FlowDecision>,
+    flow_decisions_by_job: BTreeMap<JobExecutionId, Vec<FlowDecisionId>>,
     recovery_decisions: BTreeMap<JobExecutionId, Vec<RecoveryDecision>>,
     definitions: BTreeMap<(JobName, DefinitionRevision), DefinitionIdentity>,
     execution_definitions: BTreeMap<JobExecutionId, DefinitionIdentity>,
@@ -150,6 +154,59 @@ impl InMemoryUnitOfWork<'_> {
         }
         self.staged.definitions.insert(key, definition.clone());
         Ok(())
+    }
+
+    fn instance_for_execution(
+        &self,
+        execution_id: JobExecutionId,
+    ) -> Result<JobInstanceId, RepositoryError> {
+        self.staged
+            .job_executions
+            .get(&execution_id)
+            .map(JobExecution::job_instance_id)
+            .ok_or(RepositoryError::JobExecutionNotFound { id: execution_id })
+    }
+
+    fn next_flow_decision_id(&self) -> Result<FlowDecisionId, RepositoryError> {
+        let next = self
+            .staged
+            .flow_decisions
+            .keys()
+            .next_back()
+            .map_or(1, |id| id.get().checked_add(1).unwrap_or(0));
+        FlowDecisionId::new(next).map_err(RepositoryError::from)
+    }
+
+    fn latest_flow_step_snapshot(
+        &self,
+        instance_id: JobInstanceId,
+        node_id: &NodeId,
+    ) -> Result<Option<FlowStepState>, RepositoryError> {
+        let executions = self
+            .staged
+            .job_executions_by_instance
+            .get(&instance_id)
+            .ok_or(RepositoryError::JobInstanceNotFound { id: instance_id })?;
+        for execution_id in executions.iter().rev() {
+            let step_ids = self
+                .staged
+                .step_executions_by_job
+                .get(execution_id)
+                .into_iter()
+                .flatten();
+            for step_id in step_ids.rev() {
+                if self.staged.step_logical_ids.get(step_id) == Some(node_id) {
+                    let execution = self
+                        .staged
+                        .step_executions
+                        .get(step_id)
+                        .cloned()
+                        .ok_or(RepositoryError::FlowStateCorrupt)?;
+                    return Ok(Some(FlowStepState::new(node_id.clone(), execution, None)));
+                }
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -311,9 +368,48 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         step_name: &'a StepName,
     ) -> BoxFuture<'a, Result<StepExecution, RepositoryError>> {
         Box::pin(async move {
-            if !self.staged.job_executions.contains_key(&job_execution_id) {
-                return Err(RepositoryError::JobExecutionNotFound {
-                    id: job_execution_id,
+            let node_id =
+                NodeId::new(step_name.as_str()).map_err(|_| RepositoryError::FlowStateCorrupt)?;
+            self.create_flow_step_execution(
+                job_execution_id,
+                step_name,
+                &node_id,
+                StartLimit::UNRESTRICTED,
+            )
+            .await
+        })
+    }
+
+    fn create_flow_step_execution<'a>(
+        &'a mut self,
+        job_execution_id: JobExecutionId,
+        step_name: &'a StepName,
+        node_id: &'a NodeId,
+        start_limit: StartLimit,
+    ) -> BoxFuture<'a, Result<StepExecution, RepositoryError>> {
+        Box::pin(async move {
+            let instance_id = self.instance_for_execution(job_execution_id)?;
+            let historical_starts = self
+                .staged
+                .job_executions_by_instance
+                .get(&instance_id)
+                .into_iter()
+                .flatten()
+                .flat_map(|execution_id| {
+                    self.staged
+                        .step_executions_by_job
+                        .get(execution_id)
+                        .into_iter()
+                        .flatten()
+                })
+                .filter(|step_id| self.staged.step_logical_ids.get(step_id) == Some(node_id))
+                .count();
+            if u64::try_from(historical_starts).unwrap_or(u64::MAX) >= u64::from(start_limit.get())
+            {
+                return Err(RepositoryError::StartLimitExceeded {
+                    instance_id,
+                    node_id: node_id.clone(),
+                    limit: start_limit,
                 });
             }
             let id = self.repository.ids.next_step_execution_id()?;
@@ -323,13 +419,22 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                     value: id.get(),
                 });
             }
-            let execution = StepExecution::new(
-                id,
-                job_execution_id,
-                step_name.clone(),
-                self.create_starting_metadata()?,
-            );
+            let counts = self
+                .latest_flow_step_snapshot(instance_id, node_id)?
+                .map_or_else(ExecutionCounts::default, |state| {
+                    state.execution().metadata().counts()
+                });
+            let created_at = self.repository.clock.now();
+            let metadata = ExecutionMetadata::new(
+                BatchStatus::Starting,
+                ExitStatus::unknown(),
+                ExecutionTimestamps::new(created_at, None, None)?,
+                counts,
+                None,
+            )?;
+            let execution = StepExecution::new(id, job_execution_id, step_name.clone(), metadata);
             self.staged.step_executions.insert(id, execution.clone());
+            self.staged.step_logical_ids.insert(id, node_id.clone());
             self.staged
                 .step_executions_by_job
                 .entry(job_execution_id)
@@ -483,6 +588,177 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .filter_map(|id| self.staged.step_executions.get(id))
                 .cloned()
                 .collect())
+        })
+    }
+
+    fn latest_flow_step<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        node_id: &'a NodeId,
+    ) -> BoxFuture<'a, Result<Option<FlowStepState>, RepositoryError>> {
+        Box::pin(async move { self.latest_flow_step_snapshot(job_instance_id, node_id) })
+    }
+
+    fn append_flow_decision<'a>(
+        &'a mut self,
+        request: &'a FlowDecisionRequest,
+    ) -> BoxFuture<'a, Result<FlowDecision, RepositoryError>> {
+        Box::pin(async move {
+            let instance_id = self.instance_for_execution(request.job_execution_id())?;
+            let definition = self
+                .staged
+                .execution_definitions
+                .get(&request.job_execution_id())
+                .ok_or(RepositoryError::FlowStateCorrupt)?;
+            if definition.manifest_digest() != request.plan_fingerprint() {
+                return Err(RepositoryError::FlowStateCorrupt);
+            }
+            let manifest = serde_json::from_slice(definition.canonical_manifest())
+                .map_err(|_| RepositoryError::FlowStateCorrupt)?;
+            if !crate::flow::decision_matches_manifest(&manifest, request) {
+                return Err(RepositoryError::FlowStateCorrupt);
+            }
+            let existing = self
+                .staged
+                .flow_decisions_by_job
+                .get(&request.job_execution_id())
+                .cloned()
+                .unwrap_or_default();
+            let expected_sequence = u64::try_from(existing.len())
+                .ok()
+                .and_then(|value| value.checked_add(1))
+                .ok_or(RepositoryError::FlowStateCorrupt)?;
+            if request.sequence().get() != expected_sequence
+                || existing.iter().any(|id| {
+                    self.staged.flow_decisions.get(id).is_some_and(|decision| {
+                        decision.source_node_id() == request.source_node_id()
+                    })
+                })
+            {
+                return Err(RepositoryError::ConcurrentModification);
+            }
+            if let Some(step_id) = request.source_step_execution_id() {
+                let step = self
+                    .staged
+                    .step_executions
+                    .get(&step_id)
+                    .ok_or(RepositoryError::FlowStateCorrupt)?;
+                if self.instance_for_execution(step.job_execution_id())? != instance_id
+                    || self.staged.step_logical_ids.get(&step_id) != Some(request.source_node_id())
+                {
+                    return Err(RepositoryError::FlowStateCorrupt);
+                }
+            } else if request.kind() != FlowTransitionKind::Decider {
+                return Err(RepositoryError::FlowStateCorrupt);
+            }
+            if let Some(reused_id) = request.reused_decision_id() {
+                let reused = self
+                    .staged
+                    .flow_decisions
+                    .get(&reused_id)
+                    .ok_or(RepositoryError::FlowStateCorrupt)?;
+                let reused_instance = self.instance_for_execution(reused.job_execution_id())?;
+                if reused_instance != instance_id
+                    || reused.source_node_id() != request.source_node_id()
+                    || reused.plan_fingerprint() != request.plan_fingerprint()
+                    || reused.input_digest() != request.input_digest()
+                    || reused.observed_outcome() != request.observed_outcome()
+                    || reused.target() != request.target()
+                {
+                    return Err(RepositoryError::FlowStateCorrupt);
+                }
+            }
+            let id = self.next_flow_decision_id()?;
+            let decision = FlowDecision::new(
+                id,
+                request.job_execution_id(),
+                request.sequence(),
+                request.source_node_id().clone(),
+                request.source_step_execution_id(),
+                request.kind(),
+                request.observed_outcome().clone(),
+                request.target().clone(),
+                *request.plan_fingerprint(),
+                *request.input_digest(),
+                request.reused_decision_id(),
+                request.decided_at(),
+            );
+            self.staged.flow_decisions.insert(id, decision.clone());
+            self.staged
+                .flow_decisions_by_job
+                .entry(request.job_execution_id())
+                .or_default()
+                .push(id);
+            Ok(decision)
+        })
+    }
+
+    fn find_reusable_flow_decision<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        node_id: &'a NodeId,
+        plan_fingerprint: &'a [u8; 32],
+        input_digest: &'a [u8; 32],
+        kind: FlowTransitionKind,
+    ) -> BoxFuture<'a, Result<Option<FlowDecision>, RepositoryError>> {
+        Box::pin(async move {
+            let executions = self
+                .staged
+                .job_executions_by_instance
+                .get(&job_instance_id)
+                .ok_or(RepositoryError::JobInstanceNotFound {
+                    id: job_instance_id,
+                })?;
+            for execution_id in executions.iter().rev() {
+                for decision_id in self
+                    .staged
+                    .flow_decisions_by_job
+                    .get(execution_id)
+                    .into_iter()
+                    .flatten()
+                    .rev()
+                {
+                    let decision = self
+                        .staged
+                        .flow_decisions
+                        .get(decision_id)
+                        .ok_or(RepositoryError::FlowStateCorrupt)?;
+                    if decision.source_node_id() == node_id
+                        && decision.plan_fingerprint() == plan_fingerprint
+                        && decision.input_digest() == input_digest
+                        && decision.kind() == kind
+                    {
+                        return Ok(Some(decision.clone()));
+                    }
+                }
+            }
+            Ok(None)
+        })
+    }
+
+    fn flow_decisions(
+        &mut self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Vec<FlowDecision>, RepositoryError>> {
+        Box::pin(async move {
+            if !self.staged.job_executions.contains_key(&job_execution_id) {
+                return Err(RepositoryError::JobExecutionNotFound {
+                    id: job_execution_id,
+                });
+            }
+            self.staged
+                .flow_decisions_by_job
+                .get(&job_execution_id)
+                .into_iter()
+                .flatten()
+                .map(|id| {
+                    self.staged
+                        .flow_decisions
+                        .get(id)
+                        .cloned()
+                        .ok_or(RepositoryError::FlowStateCorrupt)
+                })
+                .collect()
         })
     }
 

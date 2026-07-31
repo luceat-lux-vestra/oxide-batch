@@ -11,9 +11,10 @@ use std::time::SystemTime;
 use crate::{
     BatchStatus, DefinitionIdentity, DefinitionRevision, DefinitionUpgrade, DomainError,
     ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitStatus, FailureCategory,
-    FailureId, FailureSummary, IdentifierKind, JobExecution, JobExecutionId, JobInstance,
-    JobInstanceId, JobInstanceKey, JobName, LifecycleError, LifecycleTransition, StepExecution,
-    StepExecutionId, StepName,
+    FailureId, FailureSummary, FlowDecision, FlowDecisionRequest, FlowStepState,
+    FlowTransitionKind, IdentifierKind, JobExecution, JobExecutionId, JobInstance, JobInstanceId,
+    JobInstanceKey, JobName, LifecycleError, LifecycleTransition, NodeId, StartLimit,
+    StepExecution, StepExecutionId, StepName,
 };
 
 const MAX_RECOVERY_REASON_BYTES: usize = 64;
@@ -677,6 +678,22 @@ pub trait RepositoryUnitOfWork: Send {
         step_name: &'a StepName,
     ) -> BoxFuture<'a, Result<StepExecution, RepositoryError>>;
 
+    /// Atomically checks an instance-wide start limit and creates one logical
+    /// step attempt.
+    ///
+    /// Entering `STARTING` consumes one start. The logical ID is independent
+    /// of the display/durable step name and is the restart authority for a
+    /// format-2 plan.
+    fn create_flow_step_execution<'a>(
+        &'a mut self,
+        _job_execution_id: JobExecutionId,
+        _step_name: &'a StepName,
+        _node_id: &'a NodeId,
+        _start_limit: StartLimit,
+    ) -> BoxFuture<'a, Result<StepExecution, RepositoryError>> {
+        Box::pin(async { Err(RepositoryError::FlowStateCorrupt) })
+    }
+
     /// Applies a compare-and-swap lifecycle transition to a job execution.
     fn transition_job_execution(
         &mut self,
@@ -744,6 +761,43 @@ pub trait RepositoryUnitOfWork: Send {
         &mut self,
         job_execution_id: JobExecutionId,
     ) -> BoxFuture<'_, Result<Vec<StepExecution>, RepositoryError>>;
+
+    /// Loads the latest durable attempt for one instance/logical-step pair.
+    fn latest_flow_step<'a>(
+        &'a mut self,
+        _job_instance_id: JobInstanceId,
+        _node_id: &'a NodeId,
+    ) -> BoxFuture<'a, Result<Option<FlowStepState>, RepositoryError>> {
+        Box::pin(async { Err(RepositoryError::FlowStateCorrupt) })
+    }
+
+    /// Appends one already plan-validated transition before its target starts.
+    fn append_flow_decision<'a>(
+        &'a mut self,
+        _request: &'a FlowDecisionRequest,
+    ) -> BoxFuture<'a, Result<FlowDecision, RepositoryError>> {
+        Box::pin(async { Err(RepositoryError::FlowStateCorrupt) })
+    }
+
+    /// Finds a prior decision whose exact durable input may be reused.
+    fn find_reusable_flow_decision<'a>(
+        &'a mut self,
+        _job_instance_id: JobInstanceId,
+        _node_id: &'a NodeId,
+        _plan_fingerprint: &'a [u8; 32],
+        _input_digest: &'a [u8; 32],
+        _kind: FlowTransitionKind,
+    ) -> BoxFuture<'a, Result<Option<FlowDecision>, RepositoryError>> {
+        Box::pin(async { Err(RepositoryError::FlowStateCorrupt) })
+    }
+
+    /// Loads one execution's flow decisions in sequence order.
+    fn flow_decisions(
+        &mut self,
+        _job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Vec<FlowDecision>, RepositoryError>> {
+        Box::pin(async { Err(RepositoryError::FlowStateCorrupt) })
+    }
 
     /// Atomically resolves one orphaned or ambiguous execution and appends its audit record.
     fn recover_job_execution<'a>(
@@ -885,6 +939,17 @@ pub enum RepositoryError {
     /// Corruption, an unsupported fault-state version, a checksum mismatch, or
     /// state that belongs to a superseded checkpoint fails closed.
     FaultStateCorrupt,
+    /// The instance-wide start limit for a logical step is exhausted.
+    StartLimitExceeded {
+        /// Logical instance whose historical starts were counted.
+        instance_id: JobInstanceId,
+        /// Stable logical step identifier.
+        node_id: NodeId,
+        /// Configured finite limit.
+        limit: StartLimit,
+    },
+    /// Durable flow history is missing, contradictory, or corrupt.
+    FlowStateCorrupt,
     /// Recovery was requested for a state that needs no recovery decision.
     RecoveryNotAllowed {
         /// Rejected execution.
@@ -910,6 +975,7 @@ pub enum RepositoryError {
 }
 
 impl fmt::Display for RepositoryError {
+    #[allow(clippy::too_many_lines)]
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::SchemaUninitialized => {
@@ -990,6 +1056,19 @@ impl fmt::Display for RepositoryError {
             ),
             Self::FaultStateCorrupt => {
                 formatter.write_str("durable fault state is unusable and no work may begin")
+            }
+            Self::StartLimitExceeded {
+                instance_id,
+                node_id,
+                limit,
+            } => write!(
+                formatter,
+                "job instance {instance_id} exhausted start limit {} for node {}",
+                limit.get(),
+                node_id.as_str()
+            ),
+            Self::FlowStateCorrupt => {
+                formatter.write_str("durable flow history is unusable and no work may begin")
             }
             Self::RecoveryNotAllowed { id, status } => {
                 write!(

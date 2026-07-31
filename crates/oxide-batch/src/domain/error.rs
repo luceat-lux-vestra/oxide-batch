@@ -36,6 +36,8 @@ pub enum IdentifierKind {
     JobExecution,
     /// A step-execution identifier.
     StepExecution,
+    /// A durable flow-decision identifier.
+    FlowDecision,
     /// An opaque failure identifier.
     Failure,
 }
@@ -46,6 +48,7 @@ impl fmt::Display for IdentifierKind {
             Self::JobInstance => "job instance",
             Self::JobExecution => "job execution",
             Self::StepExecution => "step execution",
+            Self::FlowDecision => "flow decision",
             Self::Failure => "failure",
         })
     }

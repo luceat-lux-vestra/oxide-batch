@@ -28,12 +28,13 @@ use oxide_batch::{
     ChunkListener, ChunkListenerContext, ChunkListenerError, ChunkRestartContract, ChunkSize,
     ChunkStep, ChunkTransaction, ChunkTransactionError, ChunkTransactionManager, ComponentRevision,
     DefinitionRevision, ExecutionAttempt, ExecutionContext, ExecutionCorrelation,
+    FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget,
     InMemoryJobRepository, ItemProcessor, ItemReader, ItemWriter, JobExecutionId, JobInstanceId,
     JobLauncher, JobName, JobParameters, LifecycleEvent, LifecycleEventKind, LifecycleEventSink,
-    ListenerContext, ListenerError, ProcessContext, ProcessOutcome, ProcessorError, ReadContext,
-    ReadOutcome, ReaderError, StateLimits, StateSchemaId, StateSchemaVersion, StepExecutionId,
-    StepExecutionListener, StepName, StopSource, TaskletExecutionOutcome, WriteContext,
-    WriteOutcome, WriterError,
+    ListenerContext, ListenerError, NodeId, ProcessContext, ProcessOutcome, ProcessorError,
+    ReadContext, ReadOutcome, ReaderError, StateLimits, StateSchemaId, StateSchemaVersion,
+    StepComponents, StepExecutionId, StepExecutionListener, StepName, StepNode, StopSource,
+    TaskletExecutionOutcome, TerminalKind, WriteContext, WriteOutcome, WriterError,
 };
 
 fn correlation() -> ExecutionCorrelation {
@@ -822,6 +823,64 @@ async fn job_launcher_persists_chunk_step_lifecycle() {
             (LifecycleEventKind::ChunkStarted, Some(2)),
             (LifecycleEventKind::ChunkCommitted, Some(2)),
         ]
+    );
+}
+
+#[tokio::test]
+async fn flow_launcher_executes_a_bound_chunk_step() {
+    let (step, _batches, _completions, evidence) = step(
+        Reader::new([1, 2, 3]),
+        Processor::normal(),
+        Boundary::Normal,
+        Boundary::Normal,
+        None,
+    );
+    let revisions = chunk_revisions();
+    let node = NodeId::new("import").expect("static node ID is valid");
+    let name = JobName::new("flow_chunk").expect("static job name is valid");
+    let plan = FlowGraph::new(node.clone())
+        .with_node(FlowNode::step(StepNode::new(
+            node.clone(),
+            StepName::new("import").expect("static step name is valid"),
+            StepComponents::Chunk {
+                size: ChunkSize::new(2).expect("static chunk size is nonzero"),
+                revisions: Box::new(revisions.clone()),
+            },
+        )))
+        .with_sequence(node.clone(), FlowTarget::Terminal(TerminalKind::Complete))
+        .expect("static sequence is valid")
+        .compile(
+            &name,
+            DefinitionRevision::new("flow-v1").expect("static revision is valid"),
+        )
+        .expect("static flow compiles");
+    let job = FlowJob::new(name, plan)
+        .expect("format-2 flow is valid")
+        .with_chunk_step(node, step, &revisions)
+        .expect("chunk declaration matches the plan");
+    let clock = ManualClock::new(UNIX_EPOCH + Duration::from_secs(200));
+    let ids = DeterministicIds::new(NonZeroU64::MIN);
+    let repository = InMemoryJobRepository::new(Arc::new(clock.clone()), Arc::new(ids.clone()));
+    let (_source, stop) = StopSource::new();
+
+    let report = FlowLauncher::new(&repository, &clock, &ids)
+        .launch(&job, &JobParameters::new(), &stop)
+        .await
+        .expect("flow chunk launch must complete");
+
+    assert_eq!(report.outcome(), &FlowExecutionOutcome::Completed);
+    assert_eq!(report.step_executions().len(), 1);
+    assert_eq!(
+        report.step_executions()[0].metadata().status(),
+        BatchStatus::Completed
+    );
+    assert_eq!(
+        evidence
+            .commits
+            .lock()
+            .expect("commit evidence lock poisoned")
+            .len(),
+        2
     );
 }
 
