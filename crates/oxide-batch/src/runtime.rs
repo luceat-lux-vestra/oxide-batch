@@ -11,13 +11,14 @@ use futures_util::FutureExt;
 use tokio::sync::{Notify, Semaphore};
 
 use crate::{
-    BatchStatus, BoxFuture, Clock, ComponentRevision, DefinitionError, DefinitionIdentity,
-    DefinitionRevision, ExecutionAttempt, ExecutionCorrelation, ExitStatus, FailureCategory,
-    FailureSummary, IdGenerator, JobExecution, JobExecutionId, JobExecutionListener, JobInstance,
-    JobInstanceKey, JobName, JobParameters, JobRepository, LifecycleEvent, LifecycleEventKind,
-    LifecycleEventSink, LifecycleTransition, ListenerContext, ListenerFailure, ListenerFailureKind,
-    ListenerPhase, RepositoryError, StepExecution, StepExecutionId, StepExecutionListener,
-    StepName,
+    BatchStatus, BoxFuture, Clock, CompiledExecutionPlan, ComponentRevision, DefinitionError,
+    DefinitionIdentity, DefinitionRevision, ExecutionAttempt, ExecutionCorrelation, ExitStatus,
+    FailureCategory, FailureSummary, FlowSelectionError, FlowTarget, IdGenerator, JobExecution,
+    JobExecutionId, JobExecutionListener, JobInstance, JobInstanceKey, JobName, JobParameters,
+    JobRepository, LifecycleEvent, LifecycleEventKind, LifecycleEventSink, LifecycleTransition,
+    ListenerContext, ListenerFailure, ListenerFailureKind, ListenerPhase, NodeId, RepositoryError,
+    StepComponents, StepExecution, StepExecutionId, StepExecutionListener, StepName, StepNode,
+    TerminalKind,
 };
 
 /// A dynamically dispatched, single-invocation asynchronous step body.
@@ -115,7 +116,7 @@ impl fmt::Debug for TaskletStep {
 pub struct TaskletJob {
     name: JobName,
     step: TaskletStep,
-    definition: DefinitionIdentity,
+    plan: CompiledExecutionPlan,
     listeners: Vec<Arc<dyn JobExecutionListener>>,
 }
 
@@ -125,7 +126,7 @@ impl fmt::Debug for TaskletJob {
             .debug_struct("TaskletJob")
             .field("name", &self.name)
             .field("step", &self.step)
-            .field("definition", &self.definition)
+            .field("definition", self.plan.definition_identity())
             .field("listener_count", &self.listeners.len())
             .finish()
     }
@@ -150,23 +151,30 @@ impl TaskletJob {
     ) -> Result<Self, DefinitionError> {
         let definition =
             DefinitionIdentity::tasklet(&name, step.name(), revision, component_revision)?;
+        let plan = lower_one_step(
+            definition,
+            one_step_node(
+                step.name(),
+                StepComponents::Tasklet(component_revision.clone()),
+            )?,
+        )?;
         Ok(Self {
             name,
             step,
-            definition,
+            plan,
             listeners: Vec::new(),
         })
     }
 
-    pub(crate) fn from_definition_identity(
+    pub(crate) fn from_lowered_plan(
         name: JobName,
         step: TaskletStep,
-        definition: DefinitionIdentity,
+        plan: CompiledExecutionPlan,
     ) -> Self {
         Self {
             name,
             step,
-            definition,
+            plan,
             listeners: Vec::new(),
         }
     }
@@ -193,8 +201,46 @@ impl TaskletJob {
     /// Borrows the exact restart-relevant definition identity.
     #[must_use]
     pub const fn definition_identity(&self) -> &DefinitionIdentity {
-        &self.definition
+        self.plan.definition_identity()
     }
+
+    /// Borrows the in-memory compatibility plan this wrapper lowers into.
+    ///
+    /// The plan retains the wrapper's original manifest bytes, format, and
+    /// fingerprint. Its synthetic graph routes the framework's own exit codes
+    /// to terminals and records no durable flow decision.
+    #[must_use]
+    pub const fn compiled_plan(&self) -> &CompiledExecutionPlan {
+        &self.plan
+    }
+}
+
+/// Derives the synthetic step node of a one-step compatibility plan.
+///
+/// The node identifier is the validated step name, which already satisfies the
+/// logical-identifier rules, so lowering never invents an identity.
+pub(crate) fn one_step_node(
+    step_name: &StepName,
+    components: StepComponents,
+) -> Result<StepNode, DefinitionError> {
+    Ok(StepNode::new(
+        NodeId::new(step_name.as_str())?,
+        step_name.clone(),
+        components,
+    ))
+}
+
+/// Lowers one validated wrapper step into its compatibility plan.
+///
+/// The framework derives every value from inputs it has already validated, so
+/// a rejected graph reports [`DefinitionError::CompatibilityLowering`] rather
+/// than an application mistake.
+pub(crate) fn lower_one_step(
+    definition: DefinitionIdentity,
+    node: StepNode,
+) -> Result<CompiledExecutionPlan, DefinitionError> {
+    CompiledExecutionPlan::compatibility_one_step(definition, node)
+        .map_err(|_| DefinitionError::CompatibilityLowering)
 }
 
 /// Borrowed execution data supplied to an asynchronous tasklet.
@@ -578,6 +624,14 @@ impl LaunchReport {
 pub enum LaunchError {
     /// Metadata creation, transition, or commit failed.
     Repository(RepositoryError),
+    /// The compiled plan could not route a produced exit outcome.
+    Flow(FlowSelectionError),
+    /// The launcher was given a plan it cannot execute.
+    ///
+    /// This launcher executes the one-step compatibility plan that
+    /// [`TaskletJob`] and [`ChunkJob`](crate::ChunkJob) lower into. Multi-node
+    /// graphs are executed by the durable-flow runtime.
+    UnsupportedPlan,
 }
 
 impl fmt::Display for LaunchError {
@@ -585,6 +639,10 @@ impl fmt::Display for LaunchError {
         match self {
             Self::Repository(error) => {
                 write!(formatter, "job repository operation failed: {error}")
+            }
+            Self::Flow(error) => write!(formatter, "compiled plan could not route: {error}"),
+            Self::UnsupportedPlan => {
+                formatter.write_str("this launcher executes one-step compatibility plans only")
             }
         }
     }
@@ -594,6 +652,8 @@ impl Error for LaunchError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Repository(error) => Some(error),
+            Self::Flow(error) => Some(error),
+            Self::UnsupportedPlan => None,
         }
     }
 }
@@ -601,6 +661,12 @@ impl Error for LaunchError {
 impl From<RepositoryError> for LaunchError {
     fn from(error: RepositoryError) -> Self {
         Self::Repository(error)
+    }
+}
+
+impl From<FlowSelectionError> for LaunchError {
+    fn from(error: FlowSelectionError) -> Self {
+        Self::Flow(error)
     }
 }
 
@@ -662,6 +728,7 @@ impl<'a> JobLauncher<'a> {
         stop: &StopToken,
     ) -> Result<LaunchReport, LaunchError> {
         let key = JobInstanceKey::new(job.name.clone(), parameters);
+        let plan = job.compiled_plan();
         let graph = self
             .create_execution_graph(&key, job.step.name(), job.definition_identity())
             .await?;
@@ -672,6 +739,7 @@ impl<'a> JobLauncher<'a> {
         if stop.is_stop_requested() {
             let (job_execution, step_execution) = self
                 .stop_graph(
+                    plan,
                     &graph.job_execution,
                     &graph.step_execution,
                     &graph.correlation,
@@ -702,7 +770,7 @@ impl<'a> JobLauncher<'a> {
             let job_execution = self
                 .finish_job(
                     &graph.job_execution,
-                    outcome,
+                    Self::terminal_status(plan, outcome)?,
                     Some(failure.summary()),
                     &graph.correlation,
                 )
@@ -723,7 +791,12 @@ impl<'a> JobLauncher<'a> {
             .await?;
         if stop.is_stop_requested() {
             let (job_execution, step_execution) = self
-                .stop_graph(&started_job, &graph.step_execution, &graph.correlation)
+                .stop_graph(
+                    plan,
+                    &started_job,
+                    &graph.step_execution,
+                    &graph.correlation,
+                )
                 .await?;
             return Ok(LaunchReport {
                 instance: graph.instance,
@@ -757,7 +830,7 @@ impl<'a> JobLauncher<'a> {
             let job_execution = self
                 .finish_job(
                     &started_job,
-                    final_outcome,
+                    Self::terminal_status(plan, final_outcome)?,
                     Some(listener_failures[0].summary()),
                     &graph.correlation,
                 )
@@ -842,7 +915,12 @@ impl<'a> JobLauncher<'a> {
             .map(|failure| failure.summary())
             .or(tasklet_failure);
         let job_execution = self
-            .finish_job(&started_job, outcome, job_failure, &graph.correlation)
+            .finish_job(
+                &started_job,
+                Self::terminal_status(plan, outcome)?,
+                job_failure,
+                &graph.correlation,
+            )
             .await?;
 
         Ok(LaunchReport {
@@ -949,11 +1027,11 @@ impl<'a> JobLauncher<'a> {
     async fn finish_job(
         &self,
         job: &JobExecution,
-        outcome: TaskletExecutionOutcome,
+        status: BatchStatus,
         failure: Option<FailureSummary>,
         correlation: &ExecutionCorrelation,
     ) -> Result<JobExecution, LaunchError> {
-        let (status, exit_status) = final_status(outcome);
+        let exit_status = status_exit_status(status);
         let now = self.clock.now();
         let mut unit = self.repository.begin().await?;
         let job = unit
@@ -964,7 +1042,7 @@ impl<'a> JobLauncher<'a> {
             .transition_job_execution(job.id(), job.version(), transition)
             .await?;
         unit.commit().await?;
-        self.emit_final_event(true, outcome, correlation, failure);
+        self.emit_event(job_event_kind(status), correlation, failure);
         Ok(job)
     }
 
@@ -986,12 +1064,13 @@ impl<'a> JobLauncher<'a> {
             .transition_step_execution(step.id(), step.version(), transition)
             .await?;
         unit.commit().await?;
-        self.emit_final_event(false, outcome, correlation, failure);
+        self.emit_final_event(outcome, correlation, failure);
         Ok(step)
     }
 
     async fn stop_graph(
         &self,
+        plan: &CompiledExecutionPlan,
         job: &JobExecution,
         step: &StepExecution,
         correlation: &ExecutionCorrelation,
@@ -1002,8 +1081,9 @@ impl<'a> JobLauncher<'a> {
         let step = self
             .finish_step(&stopping_step, outcome, None, correlation)
             .await?;
+        let status = Self::terminal_status(plan, outcome)?;
         let job = self
-            .finish_job(&stopping_job, outcome, None, correlation)
+            .finish_job(&stopping_job, status, None, correlation)
             .await?;
         Ok((job, step))
     }
@@ -1148,22 +1228,39 @@ impl<'a> JobLauncher<'a> {
 
     fn emit_final_event(
         &self,
-        job: bool,
         outcome: TaskletExecutionOutcome,
         correlation: &ExecutionCorrelation,
         failure: Option<FailureSummary>,
     ) {
-        let kind = match (job, outcome) {
-            (true, TaskletExecutionOutcome::Completed) => LifecycleEventKind::JobCompleted,
-            (false, TaskletExecutionOutcome::Completed) => LifecycleEventKind::StepCompleted,
-            (true, TaskletExecutionOutcome::Stopped(_)) => LifecycleEventKind::JobStopped,
-            (false, TaskletExecutionOutcome::Stopped(_)) => LifecycleEventKind::StepStopped,
-            (true, TaskletExecutionOutcome::Failed(_)) => LifecycleEventKind::JobFailed,
-            (false, TaskletExecutionOutcome::Failed(_)) => LifecycleEventKind::StepFailed,
-            (true, TaskletExecutionOutcome::Unknown) => LifecycleEventKind::JobUnknown,
-            (false, TaskletExecutionOutcome::Unknown) => LifecycleEventKind::StepUnknown,
+        let kind = match outcome {
+            TaskletExecutionOutcome::Completed => LifecycleEventKind::StepCompleted,
+            TaskletExecutionOutcome::Stopped(_) => LifecycleEventKind::StepStopped,
+            TaskletExecutionOutcome::Failed(_) => LifecycleEventKind::StepFailed,
+            TaskletExecutionOutcome::Unknown => LifecycleEventKind::StepUnknown,
         };
         self.emit_event(kind, correlation, failure);
+    }
+
+    /// Routes one step outcome through the compiled plan.
+    ///
+    /// An unknown commit never reaches the graph. The runtime cannot know what
+    /// happened, and the accepted M3 terminal set deliberately has no unknown
+    /// terminal, so routing it would downgrade an unknown outcome to a decided
+    /// one. It fails closed as `UNKNOWN` instead.
+    fn terminal_status(
+        plan: &CompiledExecutionPlan,
+        outcome: TaskletExecutionOutcome,
+    ) -> Result<BatchStatus, LaunchError> {
+        if matches!(outcome, TaskletExecutionOutcome::Unknown) {
+            return Ok(BatchStatus::Unknown);
+        }
+        let (_, exit_status) = final_status(outcome);
+        match plan.select_target(plan.entry(), exit_status.code())? {
+            FlowTarget::Terminal(TerminalKind::Complete) => Ok(BatchStatus::Completed),
+            FlowTarget::Terminal(TerminalKind::Fail) => Ok(BatchStatus::Failed),
+            FlowTarget::Terminal(TerminalKind::Stop) => Ok(BatchStatus::Stopped),
+            FlowTarget::Node(_) => Err(LaunchError::UnsupportedPlan),
+        }
     }
 
     fn emit_event(
@@ -1188,6 +1285,24 @@ struct CreatedExecutionGraph {
     job_execution: JobExecution,
     step_execution: StepExecution,
     correlation: ExecutionCorrelation,
+}
+
+const fn job_event_kind(status: BatchStatus) -> LifecycleEventKind {
+    match status {
+        BatchStatus::Completed => LifecycleEventKind::JobCompleted,
+        BatchStatus::Stopped => LifecycleEventKind::JobStopped,
+        BatchStatus::Unknown => LifecycleEventKind::JobUnknown,
+        _ => LifecycleEventKind::JobFailed,
+    }
+}
+
+fn status_exit_status(status: BatchStatus) -> ExitStatus {
+    match status {
+        BatchStatus::Completed => ExitStatus::completed(),
+        BatchStatus::Stopped => ExitStatus::stopped(),
+        BatchStatus::Unknown => ExitStatus::unknown(),
+        _ => ExitStatus::failed(),
+    }
 }
 
 fn final_status(outcome: TaskletExecutionOutcome) -> (BatchStatus, ExitStatus) {

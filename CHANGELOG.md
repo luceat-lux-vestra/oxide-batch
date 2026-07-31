@@ -100,6 +100,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   byte-for-byte logical-ID backfill verification, published empty-state checksum
   verification, constraint and index verification, fail-closed bounds probes, and
   a reapplication guard.
+- Immutable bounded M3 flow graphs and compiled execution plans with stable node
+  and decider revisions, deterministic exit-pattern selection, start controls,
+  structural validation, canonical manifest format 2, golden fingerprints, and
+  fail-closed format-1/format-2 manifest reading.
+- Compatibility lowering for existing one-step tasklet and chunk jobs that keeps
+  their format-1 manifest bytes and fingerprint unchanged while routing terminal
+  outcomes through the compiled plan, with eleven golden lifecycle, listener,
+  repository-write, stop, panic, restart, and unknown-commit equivalence traces.
 - M0 implementation-readiness plan, M0–M5 roadmap, decision records, and
   product, compatibility, architecture, engineering, security, operations, and
   release policy set.

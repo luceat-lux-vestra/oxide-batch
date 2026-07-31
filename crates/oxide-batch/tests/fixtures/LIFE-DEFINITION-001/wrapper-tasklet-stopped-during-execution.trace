@@ -1,0 +1,33 @@
+repository begin
+unit select_or_create_job_instance job=daily_import identifying=1
+unit create_job_execution_with_definition instance=1 manifest_format=1 digest=50f52abd
+unit create_step_execution job_execution=2 step=import
+unit job_executions instance=1
+unit commit
+event launch.accepted job_execution=2 step_execution=3 job_attempt=1 step_attempt=1
+event job.starting job_execution=2 step_execution=3 job_attempt=1 step_attempt=1
+event step.starting job_execution=2 step_execution=3 job_attempt=1 step_attempt=1
+repository begin
+unit transition_job_execution job_execution=2 expected_version=0 target=Started
+unit commit
+event job.started job_execution=2 step_execution=3 job_attempt=1 step_attempt=1
+repository begin
+unit transition_step_execution step_execution=3 expected_version=0 target=Started
+unit commit
+event step.started job_execution=2 step_execution=3 job_attempt=1 step_attempt=1
+repository begin
+unit get_step_execution step_execution=3
+unit rollback
+repository begin
+unit enrich_step_exit_status step_execution=3 expected_version=1 exit=STOPPED
+unit transition_step_execution step_execution=3 expected_version=2 target=Stopped
+unit commit
+event step.stopped job_execution=2 step_execution=3 job_attempt=1 step_attempt=1
+repository begin
+unit enrich_job_exit_status job_execution=2 expected_version=1 exit=STOPPED
+unit transition_job_execution job_execution=2 expected_version=2 target=Stopped
+unit commit
+event job.stopped job_execution=2 step_execution=3 job_attempt=1 step_attempt=1
+durable instance=1
+durable job_execution=2 status=Stopped exit=STOPPED version=3 read=0 processed=0 written=0 filtered=0 committed=0 rolled_back=0 failure=none
+durable step_execution=3 step=import status=Stopped exit=STOPPED version=3 read=0 processed=0 written=0 filtered=0 committed=0 rolled_back=0 failure=none

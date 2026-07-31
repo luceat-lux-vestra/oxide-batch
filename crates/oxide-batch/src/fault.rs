@@ -644,6 +644,17 @@ pub enum RollbackDisposition {
     CommitSafeSkip,
 }
 
+impl RollbackDisposition {
+    /// Returns the stable, low-cardinality manifest and telemetry name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Rollback => "rollback",
+            Self::CommitSafeSkip => "commit_safe_skip",
+        }
+    }
+}
+
 /// The action a classifier rule declares for one phase and category.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct FaultAction {
