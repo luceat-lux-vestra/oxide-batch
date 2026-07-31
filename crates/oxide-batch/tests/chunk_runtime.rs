@@ -827,6 +827,48 @@ async fn job_launcher_persists_chunk_step_lifecycle() {
 }
 
 #[tokio::test]
+async fn terminal_known_rollback_commits_with_failed_step_lifecycle() {
+    let (step, _batches, _completions, _evidence) = step(
+        Reader::new([1]),
+        Processor::normal(),
+        Boundary::Error,
+        Boundary::Normal,
+        None,
+    );
+    let mut job = ChunkJob::new(
+        JobName::new("terminal_rollback").expect("valid job name"),
+        step,
+        DefinitionRevision::new("test-v1").expect("static definition revision is valid"),
+        &chunk_revisions(),
+    )
+    .expect("static chunk definition is valid");
+    let clock = ManualClock::new(UNIX_EPOCH + Duration::from_secs(150));
+    let ids = DeterministicIds::new(NonZeroU64::MIN);
+    let repository = InMemoryJobRepository::new(Arc::new(clock.clone()), Arc::new(ids.clone()));
+    let launcher = JobLauncher::new(&repository, &clock, &ids);
+    let (_source, stop) = StopSource::new();
+
+    let report = launcher
+        .launch_chunk(&mut job, &JobParameters::new(), &stop)
+        .await
+        .expect("known rollback must persist a failed lifecycle");
+
+    assert!(matches!(
+        report.chunk().expect("chunk body must run").outcome(),
+        ChunkExecutionOutcome::Failed(_)
+    ));
+    assert_eq!(
+        report
+            .launch()
+            .step_execution()
+            .metadata()
+            .counts()
+            .rolled_back(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn flow_launcher_executes_a_bound_chunk_step() {
     let (step, _batches, _completions, evidence) = step(
         Reader::new([1, 2, 3]),
@@ -881,6 +923,59 @@ async fn flow_launcher_executes_a_bound_chunk_step() {
             .expect("commit evidence lock poisoned")
             .len(),
         2
+    );
+}
+
+#[tokio::test]
+async fn flow_launcher_persists_a_bound_chunk_terminal_rollback() {
+    let (step, _batches, _completions, _evidence) = step(
+        Reader::new([1]),
+        Processor::normal(),
+        Boundary::Error,
+        Boundary::Normal,
+        None,
+    );
+    let revisions = chunk_revisions();
+    let node = NodeId::new("import").expect("static node ID is valid");
+    let name = JobName::new("flow_chunk_rollback").expect("static job name is valid");
+    let plan = FlowGraph::new(node.clone())
+        .with_node(FlowNode::step(StepNode::new(
+            node.clone(),
+            StepName::new("import").expect("static step name is valid"),
+            StepComponents::Chunk {
+                size: ChunkSize::new(2).expect("static chunk size is nonzero"),
+                revisions: Box::new(revisions.clone()),
+            },
+        )))
+        .with_sequence(node.clone(), FlowTarget::Terminal(TerminalKind::Complete))
+        .expect("static sequence is valid")
+        .compile(
+            &name,
+            DefinitionRevision::new("flow-v1").expect("static revision is valid"),
+        )
+        .expect("static flow compiles");
+    let job = FlowJob::new(name, plan)
+        .expect("format-2 flow is valid")
+        .with_chunk_step(node, step, &revisions)
+        .expect("chunk declaration matches the plan");
+    let clock = ManualClock::new(UNIX_EPOCH + Duration::from_secs(250));
+    let ids = DeterministicIds::new(NonZeroU64::MIN);
+    let repository = InMemoryJobRepository::new(Arc::new(clock.clone()), Arc::new(ids.clone()));
+    let (_source, stop) = StopSource::new();
+
+    let report = FlowLauncher::new(&repository, &clock, &ids)
+        .launch(&job, &JobParameters::new(), &stop)
+        .await
+        .expect("flow chunk failure must produce a durable report");
+
+    assert!(matches!(report.outcome(), FlowExecutionOutcome::Failed(_)));
+    assert_eq!(report.step_executions().len(), 1);
+    assert_eq!(
+        report.step_executions()[0]
+            .metadata()
+            .counts()
+            .rolled_back(),
+        1
     );
 }
 

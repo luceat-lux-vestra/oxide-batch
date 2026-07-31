@@ -4,18 +4,19 @@
 
 use std::error::Error;
 use std::num::NonZeroU64;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use oxide_batch::{
     BatchStatus, BoxFuture, Clock, ComponentRevision, DeciderError, DeciderRevision, DecisionInput,
     DecisionInputVersion, DecisionNode, DefinitionRevision, ExitCode, ExitPattern, ExitStatus,
-    FlowExecutionOutcome, FlowFailure, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget,
-    FlowTransition, FlowTransitionKind, InMemoryJobRepository, JobExecutionDecider, JobInstanceKey,
-    JobName, JobParameters, JobRepository, NodeId, RepositoryError, SequentialIdGenerator,
-    StartControls, StartLimit, StepComponents, StepName, StepNode, StopSource, Tasklet,
-    TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
+    FlowEvent, FlowEventKind, FlowEventSink, FlowExecutionOutcome, FlowFailure, FlowGraph, FlowJob,
+    FlowLauncher, FlowNode, FlowTarget, FlowTransition, FlowTransitionKind, InMemoryJobRepository,
+    JobExecutionDecider, JobInstanceKey, JobName, JobParameters, JobRepository, NodeId,
+    RepositoryError, SequentialIdGenerator, StartControls, StartLimit, StepComponents, StepName,
+    StepNode, StopSource, Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep,
+    TerminalKind,
 };
 
 #[derive(Debug)]
@@ -30,6 +31,27 @@ impl Clock for FixedClock {
 struct CountingTasklet {
     calls: Arc<AtomicUsize>,
     behavior: Behavior,
+}
+
+#[derive(Default)]
+struct FlowEventCapture(Mutex<Vec<FlowEventKind>>);
+
+impl FlowEventSink for FlowEventCapture {
+    fn emit(&self, event: &FlowEvent) {
+        let mut events = match self.0.lock() {
+            Ok(events) => events,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        events.push(event.kind());
+    }
+}
+
+struct PanickingFlowEventSink;
+
+impl FlowEventSink for PanickingFlowEventSink {
+    fn emit(&self, _event: &FlowEvent) {
+        panic!("flow telemetry must not affect traversal");
+    }
 }
 
 enum Behavior {
@@ -175,8 +197,10 @@ async fn exit_status_selects_most_specific_transition() -> Result<(), Box<dyn Er
         )?;
     let (clock, ids, repository) = infrastructure();
     let (_, stop) = StopSource::new();
+    let events = FlowEventCapture::default();
 
     let report = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref())
+        .with_event_sink(&events)
         .launch(&job, &JobParameters::new(), &stop)
         .await?;
 
@@ -193,6 +217,44 @@ async fn exit_status_selects_most_specific_transition() -> Result<(), Box<dyn Er
         report.job_execution().metadata().status(),
         BatchStatus::Completed
     );
+    let captured = match events.0.lock() {
+        Ok(events) => events,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    assert_eq!(
+        *captured,
+        [
+            FlowEventKind::StepResultCommitted,
+            FlowEventKind::DecisionCommitted,
+            FlowEventKind::StepResultCommitted,
+            FlowEventKind::DecisionCommitted,
+        ]
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn flow_event_sink_panic_is_non_authoritative() -> Result<(), Box<dyn Error>> {
+    let only = NodeId::new("only")?;
+    let name = JobName::new("panicking-flow-events")?;
+    let plan = FlowGraph::new(only.clone())
+        .with_node(tasklet_node("only", StartControls::default())?)
+        .with_sequence(only.clone(), FlowTarget::Terminal(TerminalKind::Complete))?
+        .compile(&name, DefinitionRevision::new("v1")?)?;
+    let job = FlowJob::new(name, plan)?.with_tasklet_step(
+        only,
+        tasklet_step("only", Arc::new(AtomicUsize::new(0)), Behavior::Complete)?,
+    )?;
+    let (clock, ids, repository) = infrastructure();
+    let (_, stop) = StopSource::new();
+
+    let report = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref())
+        .with_event_sink(&PanickingFlowEventSink)
+        .launch(&job, &JobParameters::new(), &stop)
+        .await?;
+
+    assert_eq!(report.outcome(), &FlowExecutionOutcome::Completed);
+    assert_eq!(report.decisions().len(), 1);
     Ok(())
 }
 
@@ -279,7 +341,9 @@ async fn failed_start_consumes_limit() -> Result<(), Box<dyn Error>> {
     )?;
     let (clock, ids, repository) = infrastructure();
     let (_, stop) = StopSource::new();
-    let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
+    let events = FlowEventCapture::default();
+    let launcher =
+        FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref()).with_event_sink(&events);
 
     let first = launcher.launch(&job, &JobParameters::new(), &stop).await?;
     assert!(matches!(first.outcome(), FlowExecutionOutcome::Failed(_)));
@@ -291,6 +355,18 @@ async fn failed_start_consumes_limit() -> Result<(), Box<dyn Error>> {
         &FlowExecutionOutcome::Failed(FlowFailure::StartLimitExceeded { node: only, limit })
     );
     assert!(second.step_executions().is_empty());
+    let captured = match events.0.lock() {
+        Ok(events) => events,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    assert_eq!(
+        *captured,
+        [
+            FlowEventKind::StepResultCommitted,
+            FlowEventKind::DecisionCommitted,
+            FlowEventKind::StartLimitExceeded,
+        ]
+    );
     Ok(())
 }
 

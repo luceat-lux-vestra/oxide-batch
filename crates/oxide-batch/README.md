@@ -6,10 +6,10 @@ a restart-oriented batch processing framework for Rust inspired by Spring Batch.
 > This crate contains the completed M1 executable kernel and the first M2
 > PostgreSQL metadata adapter, deterministic M2 chunk orchestration, and atomic
 > enlisted PostgreSQL chunk commits, definition-guarded durable restart, and
-> audited recovery decisions. M2 process-kill crash/restart and conformance
-> evidence is complete. M3 fault tolerance and flow is active at its
-> kickoff/design gate, but no M3 runtime capability or production-ready runtime
-> has been released.
+> audited recovery decisions. M2 and M3 process-kill crash/restart and
+> conformance implementation evidence is complete, including typed bounded
+> fault tolerance and the finite durable-flow slice. No production-ready
+> runtime has been released.
 
 The facade owns validated job and step names, opaque instance/execution IDs,
 typed and value-redacted job parameters, canonical job-instance keys, lifecycle

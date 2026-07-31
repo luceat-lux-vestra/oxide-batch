@@ -195,6 +195,17 @@ impl ExecutionCounts {
     pub const fn rolled_back(self) -> u64 {
         self.rolled_back
     }
+
+    fn with_terminal_rollback(self) -> Result<Self, LifecycleError> {
+        let rolled_back = self
+            .rolled_back
+            .checked_add(1)
+            .ok_or(LifecycleError::CountExhausted)?;
+        Ok(Self {
+            rolled_back,
+            ..self
+        })
+    }
 }
 
 /// Validated creation, start, and end instants for an execution attempt.
@@ -496,11 +507,17 @@ impl ExecutionMetadata {
                 .map_err(|source| LifecycleError::InvalidTransitionTime { source })?;
         let failure = transition.failure().or(self.failure);
 
+        let counts = if transition.terminal_rollback() {
+            self.counts.with_terminal_rollback()?
+        } else {
+            self.counts
+        };
+
         Self::new(
             target,
             self.exit_status.clone(),
             timestamps,
-            self.counts,
+            counts,
             failure,
         )
         .map_err(|source| match source {

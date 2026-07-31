@@ -82,8 +82,10 @@ The accepted M0-M4 program remains the active delivery commitment:
   concurrency and partitioning;
 - operator CLI, vendor-neutral telemetry, and failure/conformance evidence.
 
-M2 is complete; M3 is active under its fault-tolerance and flow kickoff gate.
-Historical M0-M2 gates remain authoritative evidence for completed work.
+M2 and M3 are complete implementation milestones; M4 is the next planned
+near-term milestone. Historical M0-M3 gates remain authoritative evidence for
+completed work, while release and production-readiness claims remain gated by
+their separate evidence.
 
 ## Release interpretation
 

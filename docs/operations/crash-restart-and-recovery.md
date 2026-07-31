@@ -1,8 +1,8 @@
 # Crash, Restart, and Recovery Runbook
 
-**State:** Implemented for M2
+**State:** Implemented for M2 and M3
 
-This runbook covers the embedded M2 PostgreSQL path. It does not provide the
+This runbook covers the embedded M2/M3 PostgreSQL path. It does not provide the
 future M4 operator CLI, automatic stale-worker takeover, or recovery
 authorization. Deployment tooling must authenticate the operator and retain
 the full evidence referenced by the bounded OxideBatch audit record.
@@ -66,8 +66,8 @@ A restart:
 1. requires the same definition fingerprint or one registered direct
    `DefinitionUpgrade`;
 2. creates distinct job and step execution IDs;
-3. copies only the latest committed checkpoint, execution context, and six
-   counters;
+3. copies the latest committed checkpoint, execution context, base execution
+   counters, M3 fault counters, and retained retry state;
 4. resumes input after that checkpoint;
 5. leaves the prior attempt and recovery audit inspectable.
 
@@ -97,12 +97,19 @@ The reproducible process-kill matrix is:
 cargo test -p oxide-batch --features postgres \
   --test postgres_crash_recovery \
   -- --nocapture --test-threads=1
+cargo test -p oxide-batch --features postgres \
+  --test postgres_fault_crash_recovery \
+  -- --nocapture --test-threads=1
+cargo test -p oxide-batch --features postgres \
+  --test postgres_flow_crash_recovery \
+  -- --nocapture --test-threads=1
 ```
 
 Set both `OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL` and
 `OXIDEBATCH_POSTGRES_TEST_URL` to an isolated migrated database. The test
-creates and removes only its named metadata and
-`oxide_batch_business.m2_crash_output` fixture rows.
+creates and removes only its named metadata and the
+`oxide_batch_business.m2_crash_output`, `m3_fault_crash_call`, or
+`m3_flow_crash_call` fixture rows.
 
 ## Fault-tolerance state after a crash
 
@@ -118,6 +125,34 @@ part of the chunk commit, so an uncommitted chunk leaves all of them unchanged.
 Restart copies the committed totals and the retained state to the new step
 attempt, which is why the shared skip limit spans every attempt of one job
 instance.
+
+A skip callback runs before the transaction that accepts its skip. A process
+exit during that callback can therefore leave an external callback effect while
+the durable skip and no-rollback counts remain unchanged. On restart the
+callback may run again. Only callback work enlisted in the accepting transaction
+has exactly one committed effect; external callback work must be idempotent or
+reconciled.
+
+A terminal known rollback that fails the step is committed with that terminal
+step lifecycle and increments the attempt's `rollback_count`. A retry
+reservation already accounts for its own known rollback, so the terminal path
+does not count the same attempt twice.
+
+## Flow state after a crash
+
+The flow runtime commits a step terminal result before appending its selected
+transition, then commits the transition before starting its target. Recovery
+therefore follows the durable boundary:
+
+- after a completed source step but before its decision, restart records a
+  `CompletedStepReuse` decision and does not invoke the source body again;
+- after a decision commit but before target start, restart reuses the recorded
+  target and does not repeat source work or decision selection;
+- an active or `UNKNOWN` job execution still requires the audited recovery
+  procedure above before a new attempt can start.
+
+Flow events can be lost or duplicated around a crash and are not recovery
+authority. Inspect the step-execution and `ob_flow_decision` rows.
 
 If durable fault state cannot be validated — an unsupported version, a checksum
 mismatch, an unknown enumeration value, or state retained against a superseded

@@ -86,12 +86,15 @@ M3 adds:
 - `retry.exhausted`, after exhaustion is durably classified;
 - `item.skipped`, only after the accepting chunk commits;
 - `fault.rollback_committed` and `fault.no_rollback_committed`;
+- `flow.step_result_committed`, after terminal step lifecycle commit;
 - `flow.decision_committed`, after result and target commit;
 - `flow.completed_step_reused`;
 - `step.start_limit_exceeded`.
 
-The chunk runtime emits the retry, skip, and rollback events above today. The
-flow and start-control events arrive with the flow workstream.
+The chunk runtime emits the retry, skip, and rollback events above. The flow
+runtime emits its four events through a separate `FlowEventSink` after the
+named repository decision. Sink failure or panic is isolated and cannot alter
+execution state or outcome.
 
 Safe fields are fault phase, stable failure category, retry ordinal, configured
 limit class, backoff duration, skip phase, aggregate numeric counts, source

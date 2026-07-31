@@ -207,7 +207,13 @@ jobs:
             -- --nocapture --test-threads=1
 
       - name: Run process-kill crash and restart matrix
-        run: >-
-          cargo test -p oxide-batch --features postgres
-          --test postgres_crash_recovery
-          -- --nocapture --test-threads=1
+        run: |
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_crash_recovery \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_fault_crash_recovery \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_flow_crash_recovery \
+            -- --nocapture --test-threads=1

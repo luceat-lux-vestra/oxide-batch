@@ -365,6 +365,9 @@ where
                 ChunkExecutionOutcome::Failed(_) => Err(TaskletError::new()),
                 ChunkExecutionOutcome::Unknown => Ok(TaskletOutcome::CommitOutcomeUnknown),
             };
+            if report.terminal_rollback {
+                context.acknowledge_terminal_rollback();
+            }
             *self
                 .last_report
                 .lock()
@@ -656,6 +659,7 @@ pub struct ChunkExecutionReport {
     retry_counts: RetryCounts,
     rollback_count: u64,
     no_rollback_count: u64,
+    terminal_rollback: bool,
 }
 
 impl ChunkExecutionReport {
@@ -796,6 +800,7 @@ struct ExecutionState {
     retry_counts: RetryCounts,
     rollback_count: u64,
     no_rollback_count: u64,
+    terminal_rollback: bool,
     next_failure_id: u64,
 }
 
@@ -816,6 +821,7 @@ impl ExecutionState {
             retry_counts: inherited.retries(),
             rollback_count: 0,
             no_rollback_count: inherited.no_rollbacks(),
+            terminal_rollback: false,
             next_failure_id: 0,
         }
     }
@@ -827,6 +833,7 @@ impl ExecutionState {
         replacement.retry_counts = self.retry_counts;
         replacement.rollback_count = self.rollback_count;
         replacement.no_rollback_count = self.no_rollback_count;
+        replacement.terminal_rollback = self.terminal_rollback;
         replacement.next_failure_id = self.next_failure_id;
         std::mem::replace(self, replacement)
     }
@@ -848,6 +855,7 @@ impl ExecutionState {
             retry_counts: self.retry_counts,
             rollback_count: self.rollback_count,
             no_rollback_count: self.no_rollback_count,
+            terminal_rollback: self.terminal_rollback,
         }
     }
 }
@@ -1243,6 +1251,8 @@ where
                 return state.report(ChunkExecutionOutcome::Completed, None);
             }
             AttemptResult::RolledBack(outcome) => {
+                state.rollback_count = state.rollback_count.saturating_add(1);
+                state.terminal_rollback = true;
                 state.rolled_back_chunks = match state.rolled_back_chunks.checked_increment() {
                     Ok(count) => count,
                     Err(_) => {
@@ -1412,9 +1422,6 @@ where
         Verdict::Terminal(outcome) => {
             if transaction.rollback().await.is_err() {
                 return AttemptResult::RollbackFailed(Some(outcome));
-            }
-            if !matches!(outcome, ChunkExecutionOutcome::Completed) {
-                state.rollback_count = state.rollback_count.saturating_add(1);
             }
             AttemptResult::RolledBack(outcome)
         }
@@ -1998,7 +2005,6 @@ where
             if transaction.rollback().await.is_err() {
                 return AttemptResult::RollbackFailed(Some(outcome));
             }
-            state.rollback_count = state.rollback_count.saturating_add(1);
             return AttemptResult::RolledBack(outcome);
         }
     }
@@ -2050,7 +2056,6 @@ where
             if transaction.rollback().await.is_err() {
                 return AttemptResult::RollbackFailed(Some(outcome));
             }
-            state.rollback_count = state.rollback_count.saturating_add(1);
             AttemptResult::RolledBack(outcome)
         }
         Err(ChunkTransactionError::CommitOutcomeUnknown) => AttemptResult::Unknown,

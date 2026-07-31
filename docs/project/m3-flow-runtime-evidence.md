@@ -86,8 +86,13 @@ The PostgreSQL tests are environment-gated by
 `postgres_flow` tests passed serially against Homebrew PostgreSQL 18.4 on
 macOS arm64. They also run against migrated PostgreSQL 15 and 18 databases in
 the repository CI matrix; without the variable they explicitly self-skip. The
-final M3 exit workstream must retain the CI result and add any required
-process-kill matrix evidence before promoting these rows to `Verified`.
+M3 exit workstream retains those axes and adds separate-process step-result and
+decision-commit crash evidence in
+[`postgres_flow_crash_recovery.rs`](../../crates/oxide-batch/tests/postgres_flow_crash_recovery.rs).
 
-General flow telemetry, released-version verification, M7 advanced flow
-coverage, and operator-service crash recovery remain outside this evidence.
+Post-commit flow telemetry is implemented by `FlowEventSink` and pinned by
+`flow_event_sink_panic_is_non_authoritative` plus the event-order assertion in
+`exit_status_selects_most_specific_transition`. Released-version
+verification, M7 advanced flow coverage, and operator-service crash recovery
+remain outside this evidence. The joined milestone result is recorded in the
+[M3 exit evidence](m3-exit-evidence.md).
