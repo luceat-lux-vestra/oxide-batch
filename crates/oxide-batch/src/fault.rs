@@ -82,6 +82,22 @@ impl FaultPhase {
             Self::Backoff => "backoff",
         }
     }
+
+    /// Returns the phase for one persisted name, rejecting unknown values.
+    ///
+    /// The names are durable fault-state data and are never renamed.
+    pub(crate) fn from_durable_name(value: &str) -> Option<Self> {
+        Some(match value {
+            "read" => Self::Read,
+            "process" => Self::Process,
+            "write" => Self::Write,
+            "transaction" => Self::Transaction,
+            "checkpoint" => Self::Checkpoint,
+            "listener" => Self::Listener,
+            "backoff" => Self::Backoff,
+            _ => return None,
+        })
+    }
 }
 
 impl fmt::Display for FaultPhase {
@@ -298,6 +314,30 @@ impl SkipCounts {
             .checked_add(self.process)
             .and_then(|partial| partial.checked_add(self.write))
             .ok_or(FaultPolicyError::SkipCountOverflow)
+    }
+
+    /// Returns the totals after adding one chunk's committed skips.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FaultPolicyError::SkipCountOverflow`] instead of wrapping.
+    pub fn checked_add(self, other: Self) -> Result<Self, FaultPolicyError> {
+        let next = Self {
+            read: self
+                .read
+                .checked_add(other.read)
+                .ok_or(FaultPolicyError::SkipCountOverflow)?,
+            process: self
+                .process
+                .checked_add(other.process)
+                .ok_or(FaultPolicyError::SkipCountOverflow)?,
+            write: self
+                .write
+                .checked_add(other.write)
+                .ok_or(FaultPolicyError::SkipCountOverflow)?,
+        };
+        next.checked_total()?;
+        Ok(next)
     }
 
     /// Returns the counts after one committed skip in `phase`.

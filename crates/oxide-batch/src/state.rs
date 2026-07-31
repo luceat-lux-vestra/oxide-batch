@@ -5,6 +5,7 @@ use std::fmt;
 use std::num::{NonZeroU32, NonZeroUsize};
 
 use serde_json::{Map, Number, Value};
+use sha2::{Digest, Sha256};
 
 const FORMAT_VERSION: u16 = 1;
 const MAX_SCHEMA_ID_BYTES: usize = 128;
@@ -543,6 +544,17 @@ durable_state!(
     DurableStateKind::ExecutionContext,
     "Bounded, versioned application restart state committed with a chunk."
 );
+
+impl Checkpoint {
+    /// Returns the framework digest identifying this checkpoint generation.
+    ///
+    /// Retry keys are derived from the generation, so the runtime and every
+    /// durable adapter must agree on this exact derivation.
+    pub(crate) fn generation_digest(&self) -> [u8; 32] {
+        self.to_json()
+            .map_or([0; 32], |bytes| Sha256::digest(&bytes).into())
+    }
+}
 
 /// Stable, value-redacted durable-state validation failure.
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -10,12 +10,13 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::{
     BackoffOutcome, BoxFuture, ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext,
-    ChunkCompletionOutcome, ChunkComponentRevisions, ChunkCount, ChunkCounts, ChunkSize,
-    ChunkTransaction, ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager,
-    DefinitionError, DefinitionIdentity, DefinitionRevision, ExecutionCorrelation, FailureCategory,
-    FailureId, FailureSummary, FaultDecision, FaultDescriptor, FaultEvidence, FaultPhase,
-    FaultRuntime, ItemListenerContext, ItemListenerFailure, ItemListenerSet, ItemProcessor,
-    ItemReader, ItemWriter, JobExecutionListener, JobLauncher, JobName, JobParameters, LaunchError,
+    ChunkCompletionOutcome, ChunkComponentRevisions, ChunkCount, ChunkCounts, ChunkFaultProgress,
+    ChunkSize, ChunkTransaction, ChunkTransactionContext, ChunkTransactionError,
+    ChunkTransactionManager, DefinitionError, DefinitionIdentity, DefinitionRevision,
+    ExecutionCorrelation, FailureCategory, FailureId, FailureSummary, FaultDecision,
+    FaultDescriptor, FaultEvidence, FaultPhase, FaultProgress, FaultRuntime, InheritedStepProgress,
+    ItemListenerContext, ItemListenerFailure, ItemListenerSet, ItemProcessor, ItemReader,
+    ItemWriter, JobExecutionListener, JobLauncher, JobName, JobParameters, LaunchError,
     LaunchReport, LifecycleEventKind, ListenerFailureKind, ProcessContext, ProcessOutcome,
     ProcessorError, ReadContext, ReadOutcome, ReaderError, RetryCounts, RetryKey, RetryOrdinal,
     RetryOutcome, RetryReservation, RollbackDisposition, SkipCounts, StepExecutionListener,
@@ -546,6 +547,8 @@ pub enum ChunkFailure {
     ItemListenerPanic,
     /// A retry ordinal could not be reserved durably.
     RetryReservation,
+    /// Durable fault state was unusable, so no component work began.
+    FaultState,
     /// The step already retains its maximum unresolved retry keys.
     RetryStateExhausted,
     /// The selected resource cannot honour the declared policy.
@@ -627,13 +630,18 @@ impl ChunkExecutionReport {
 
     /// Returns committed per-phase skip counts.
     ///
-    /// A skip appears here only after the chunk that accepted it committed.
+    /// A skip appears here only after the chunk that accepted it committed. On
+    /// a repository-backed run the totals include the counts this attempt
+    /// inherited, because the aggregate skip limit spans every attempt of one
+    /// job instance.
     #[must_use]
     pub const fn skip_counts(&self) -> SkipCounts {
         self.skip_counts
     }
 
     /// Returns per-phase counts of durably reserved retry ordinals.
+    ///
+    /// The counts include the ordinals this attempt inherited.
     #[must_use]
     pub const fn retry_counts(&self) -> RetryCounts {
         self.retry_counts
@@ -642,14 +650,15 @@ impl ChunkExecutionReport {
     /// Returns framework rollback decisions with a durable acknowledgement.
     ///
     /// A retry reservation and a terminal known rollback each add one. A
-    /// database abort caused by process death is not counted.
+    /// database abort caused by process death is not counted. Unlike the skip
+    /// and retry counts this value is scoped to the current attempt.
     #[must_use]
     pub const fn rollback_count(&self) -> u64 {
         self.rollback_count
     }
 
     /// Returns commits that accepted a
-    /// [`RollbackDisposition::CommitSafeSkip`].
+    /// [`RollbackDisposition::CommitSafeSkip`], including inherited ones.
     #[must_use]
     pub const fn no_rollback_count(&self) -> u64 {
         self.no_rollback_count
@@ -719,16 +728,21 @@ struct ExecutionState {
 
 impl ExecutionState {
     fn new() -> Self {
+        Self::inheriting(FaultProgress::NONE)
+    }
+
+    /// Starts an attempt from the totals its durable predecessor committed.
+    fn inheriting(inherited: FaultProgress) -> Self {
         Self {
             committed_counts: ChunkCounts::default(),
             committed_chunks: ChunkCount::ZERO,
             rolled_back_chunks: ChunkCount::ZERO,
             listener_failures: Vec::new(),
             item_listener_failures: Vec::new(),
-            skip_counts: SkipCounts::ZERO,
-            retry_counts: RetryCounts::ZERO,
+            skip_counts: inherited.skips(),
+            retry_counts: inherited.retries(),
             rollback_count: 0,
-            no_rollback_count: 0,
+            no_rollback_count: inherited.no_rollbacks(),
             next_failure_id: 0,
         }
     }
@@ -815,6 +829,19 @@ impl<I, O> ChunkBuffer<I, O> {
             checkpoint_digest,
         }
     }
+}
+
+/// Returns the fault-tolerance deltas one chunk commit makes authoritative.
+fn accepted_fault_progress<O>(skips: &[PendingSkip<O>]) -> Option<ChunkFaultProgress> {
+    let mut counts = SkipCounts::ZERO;
+    let mut no_rollbacks = 0_u64;
+    for skip in skips {
+        counts = counts.checked_increment(skip.phase).ok()?;
+        if skip.disposition == RollbackDisposition::CommitSafeSkip {
+            no_rollbacks = no_rollbacks.checked_add(1)?;
+        }
+    }
+    Some(ChunkFaultProgress::new(counts, no_rollbacks))
 }
 
 /// Returns durable skips plus the skips one chunk has not yet committed.
@@ -957,9 +984,20 @@ where
         size: *size,
     };
 
-    let mut state = ExecutionState::new();
+    let inherited = match inherited_progress(
+        transactions.as_ref(),
+        fault.as_ref(),
+        transaction_context,
+    )
+    .await
+    {
+        Ok(inherited) => inherited,
+        Err(outcome) => return ExecutionState::new().report(outcome, None),
+    };
+    let base_ordinal = inherited.read_ordinal();
+    let mut state = ExecutionState::inheriting(inherited.fault());
     let mut sequence = ChunkCount::ZERO;
-    let mut buffer = ChunkBuffer::new(0, [0_u8; 32]);
+    let mut buffer = ChunkBuffer::new(base_ordinal, inherited.checkpoint_digest());
 
     loop {
         if stop.is_stop_requested() {
@@ -1054,7 +1092,19 @@ where
 
                 let end_of_input = buffer.end_of_input;
                 let checkpoint_digest = checkpoint_digest(receipt.checkpoint());
-                buffer = ChunkBuffer::new(state.committed_counts.read().get(), checkpoint_digest);
+                let Some(next_ordinal) =
+                    base_ordinal.checked_add(state.committed_counts.read().get())
+                else {
+                    return finish_failed_attempt(
+                        listeners,
+                        listener_context,
+                        ChunkAttemptOutcome::Committed,
+                        ChunkExecutionOutcome::Failed(ChunkFailure::Count),
+                        &mut state,
+                    )
+                    .await;
+                };
+                buffer = ChunkBuffer::new(next_ordinal, checkpoint_digest);
 
                 let completion_context = ChunkCompletionContext::new(
                     receipt.checkpoint(),
@@ -1160,6 +1210,33 @@ where
                 )
                 .await;
             }
+        }
+    }
+}
+
+/// Loads the durable progress this attempt inherits and binds durable state.
+///
+/// A standalone chunk step has no repository execution and inherits nothing. A
+/// repository-backed step fails closed rather than restarting a bounded policy
+/// limit from zero or deriving retry keys from the wrong checkpoint.
+async fn inherited_progress(
+    transactions: &dyn ChunkTransactionManager,
+    fault: Option<&FaultRuntime>,
+    context: Option<ChunkTransactionContext>,
+) -> Result<InheritedStepProgress, ChunkExecutionOutcome> {
+    let Some(context) = context else {
+        return Ok(InheritedStepProgress::NONE);
+    };
+    if let Some(fault) = fault
+        && fault.state().bind(context).await.is_err()
+    {
+        return Err(ChunkExecutionOutcome::Failed(ChunkFailure::FaultState));
+    }
+    match transactions.inherited_progress(context).await {
+        Ok(inherited) => Ok(inherited),
+        Err(ChunkTransactionError::CommitOutcomeUnknown) => Err(ChunkExecutionOutcome::Unknown),
+        Err(ChunkTransactionError::NotCommitted) => {
+            Err(ChunkExecutionOutcome::Failed(ChunkFailure::FaultState))
         }
     }
 }
@@ -1853,16 +1930,6 @@ where
         }
     }
 
-    if let Some(fault) = components.fault
-        && fault.state().clear_resolved().await.is_err()
-    {
-        let outcome = ChunkExecutionOutcome::Failed(ChunkFailure::RetryReservation);
-        if transaction.rollback().await.is_err() {
-            return AttemptResult::RollbackFailed(Some(outcome));
-        }
-        return AttemptResult::RolledBack(outcome);
-    }
-
     let read = ChunkCount::new(buffer.slots.len() as u64);
     let processed = ChunkCount::new(outputs.values.len() as u64);
     let Ok(counts) = ChunkCounts::new(
@@ -1878,20 +1945,30 @@ where
         return AttemptResult::RolledBack(outcome);
     };
 
-    match transaction.commit(counts).await {
+    let Some(accepted) = accepted_fault_progress(&buffer.skips) else {
+        let outcome = ChunkExecutionOutcome::Failed(ChunkFailure::Count);
+        if transaction.rollback().await.is_err() {
+            return AttemptResult::RollbackFailed(Some(outcome));
+        }
+        return AttemptResult::RolledBack(outcome);
+    };
+
+    match transaction.commit(counts, accepted).await {
         Ok(receipt) => {
-            for skip in &buffer.skips {
-                match state.skip_counts.checked_increment(skip.phase) {
-                    Ok(next) => state.skip_counts = next,
-                    Err(_) => {
-                        return AttemptResult::RolledBack(ChunkExecutionOutcome::Failed(
-                            ChunkFailure::Count,
-                        ));
-                    }
-                }
-                if skip.disposition == RollbackDisposition::CommitSafeSkip {
-                    state.no_rollback_count = state.no_rollback_count.saturating_add(1);
-                }
+            let Ok(next_skips) = state.skip_counts.checked_add(accepted.skips()) else {
+                return AttemptResult::RolledBack(ChunkExecutionOutcome::Failed(
+                    ChunkFailure::Count,
+                ));
+            };
+            state.skip_counts = next_skips;
+            state.no_rollback_count = state
+                .no_rollback_count
+                .saturating_add(accepted.no_rollbacks());
+            // The commit that advanced the checkpoint superseded every retry
+            // key of the previous generation, so the durable clear is already
+            // authoritative and this only prunes process-local bookkeeping.
+            if let Some(fault) = components.fault {
+                let _ = fault.state().clear_resolved().await;
             }
             AttemptResult::Committed { counts, receipt }
         }
@@ -2188,11 +2265,7 @@ fn retry_key<I, O>(
 }
 
 fn checkpoint_digest(checkpoint: &crate::Checkpoint) -> [u8; 32] {
-    use sha2::{Digest, Sha256};
-
-    checkpoint
-        .to_json()
-        .map_or([0_u8; 32], |bytes| Sha256::digest(&bytes).into())
+    checkpoint.generation_digest()
 }
 
 fn emit_committed_skips<I, O, E>(buffer: &ChunkBuffer<I, O>, sequence: ChunkCount, emit: &mut E)

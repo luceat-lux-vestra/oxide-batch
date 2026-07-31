@@ -77,6 +77,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `fault.rollback_committed`, and `fault.no_rollback_committed` lifecycle events
   carrying only fault phase, retry ordinal, backoff duration, stable category,
   and the existing opaque correlation.
+- Durable PostgreSQL fault-tolerance state in immutable schema version 2:
+  per-phase retry and skip counters, a no-rollback count, a bounded checksummed
+  fault-state envelope holding at most 256 digest-sorted retry entries, backfilled
+  step logical IDs, the extended failure-category constraint, and the
+  append-only `ob_flow_decision` table the flow workstream will write.
+- `PostgresFaultState`, a durable retry-reservation store whose compare-and-swap
+  runs as one short metadata transaction after a known rollback and before
+  backoff. It advances the phase retry count, the acknowledged rollback count,
+  and the retained envelope under an optimistic version check, so a stale or
+  concurrent writer loses instead of spending one ordinal twice, and a restart
+  resumes the persisted ordinal instead of refilling the retry budget.
+- Enlisted commit of the skips one chunk accepted: the per-phase deltas, the
+  no-rollback delta, and the cleared fault state of the superseded checkpoint
+  generation now commit or roll back with the business writes, checkpoint,
+  context, counters, and optimistic version.
+- Restart inheritance of committed fault-tolerance totals and retained retry
+  state, so the shared skip limit and every retry budget span all attempts of one
+  job instance.
+- A schema-1 to schema-2 upgrade fixture with realistic completed,
+  failed-with-active-restart, stopped, and unresolved `UNKNOWN` source history,
+  byte-for-byte logical-ID backfill verification, published empty-state checksum
+  verification, constraint and index verification, fail-closed bounds probes, and
+  a reapplication guard.
 - M0 implementation-readiness plan, M0–M5 roadmap, decision records, and
   product, compatibility, architecture, engineering, security, operations, and
   release policy set.
@@ -90,6 +113,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `ChunkTransaction::commit` takes the `ChunkFaultProgress` one chunk accepted,
+  and `ChunkTransactionManager` gains `inherited_progress` with a
+  no-inheritance default. `FaultStateStore` gains `bind`, with a process-local
+  default, because a durable store cannot know its step execution until the
+  attempt starts.
+- `ChunkExecutionReport` retry, skip, and no-rollback counts are cumulative
+  durable totals rather than per-attempt counts, because the aggregate skip
+  limit is defined across every attempt of one job instance.
+- The PostgreSQL runtime requires metadata schema version 2 and rejects
+  version 3 or higher without guessing compatibility. Downgrade from schema 2
+  is restore-only.
 - `ChunkStep::execute` takes the `ExecutionCorrelation` for the run, because
   item, retry, and skip callbacks receive it. The repository-backed
   `JobLauncher::launch_chunk` path is unchanged.

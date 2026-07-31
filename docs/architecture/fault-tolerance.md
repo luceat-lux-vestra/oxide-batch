@@ -280,7 +280,9 @@ runs the retry scope, and replays the chunk from its in-memory buffer of
 already-read inputs. Only components that have not yet succeeded are
 re-invoked, so a stateful reader never rewinds.
 
-Durable reservation, schema 2, restart inheritance, and manifest fingerprint
-input remain owned by the dependent M3 workstreams, so the ledger rows stay
-`Implemented` rather than released `Verified` until those land with their
-crash, restart, and migration evidence.
+Durable reservation, schema 2, and restart inheritance are implemented and
+evidenced by the
+[M3 PostgreSQL fault-durability evidence](../project/m3-postgres-fault-durability-evidence.md).
+Manifest fingerprint input remains owned by the compiled-plan workstream, so the
+ledger rows stay `Implemented` rather than released `Verified` until a named
+release satisfies the compatibility contract's full evidence profile.

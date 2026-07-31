@@ -14,20 +14,23 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use contract::run_repository_contract;
 use oxide_batch::{
-    BatchStatus, BoxFuture, BusinessStatement, BusinessValue, CaCertificate, Checkpoint,
-    ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext, ChunkCompletionError,
+    BackoffPolicy, BatchStatus, BoxFuture, BusinessStatement, BusinessValue, CaCertificate,
+    Checkpoint, ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext, ChunkCompletionError,
     ChunkCompletionOutcome, ChunkComponentRevisions, ChunkCount, ChunkCounts, ChunkDeliveryMode,
-    ChunkExecutionOutcome, ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep,
-    ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager, Clock,
-    ComponentRevision, DefinitionIdentity, DefinitionRevision, DefinitionUpgrade,
-    DefinitionUpgradeKey, ExecutionContext, FailureCategory, FailureId, FailureSummary,
-    ItemProcessor, ItemReader, ItemWriter, JobInstanceKey, JobLauncher, JobName, JobParameters,
-    JobRepository, LifecycleTransition, PostgresChunkStateError, PostgresChunkStateProvider,
-    PostgresChunkTransactionManager, PostgresConfig, PostgresConfigError, PostgresJobRepository,
+    ChunkExecutionOutcome, ChunkFaultProgress, ChunkJob, ChunkRestartContract, ChunkSize,
+    ChunkStep, ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager,
+    ClassifierRevision, Clock, ComponentRevision, DefinitionIdentity, DefinitionRevision,
+    DefinitionUpgrade, DefinitionUpgradeKey, ExecutionContext, FailureCategory, FailureId,
+    FailureSummary, FaultAction, FaultClassifier, FaultPhase, FaultPolicy, FaultRule,
+    FaultStateError, FaultStateFormatError, FaultStateStore, ItemProcessor, ItemReader, ItemWriter,
+    JobInstanceKey, JobLauncher, JobName, JobParameters, JobRepository, LifecycleTransition,
+    PostgresChunkStateError, PostgresChunkStateProvider, PostgresChunkTransactionManager,
+    PostgresConfig, PostgresConfigError, PostgresFaultState, PostgresJobRepository,
     PostgresMigrator, ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome,
-    ReaderError, RecoveryRequest, RepositoryError, SequentialIdGenerator, StateLimits,
-    StateSchemaId, StateSchemaVersion, StepDefinitionUpgrade, StepName, StopSource, TlsMode,
-    WriteContext, WriteOutcome, WriterError,
+    ReaderError, RecoveryRequest, RepositoryError, RetryKey, RetryLimit, RetryOrdinal,
+    RetryReservation, RetryStateLimit, SequentialIdGenerator, SkipCounts, SkipLimit, StateLimits,
+    StateSchemaId, StateSchemaVersion, StepDefinitionUpgrade, StepExecutionId, StepName,
+    StopSource, TlsMode, WriteContext, WriteOutcome, WriterError,
 };
 use sqlx::postgres::PgPoolOptions;
 
@@ -190,7 +193,7 @@ fn configuration_bounds_and_diagnostics_are_safe() -> Result<(), Box<dyn Error>>
         CaCertificate::new(Vec::new()).err(),
         Some(PostgresConfigError::EmptyCaCertificate)
     );
-    assert_eq!(PostgresMigrator::supported_schema_version(), 1);
+    assert_eq!(PostgresMigrator::supported_schema_version(), 2);
     Ok(())
 }
 
@@ -694,12 +697,15 @@ fn durable_restart_requires_compatible_definition_and_inherits_checkpoint()
         let scope = ChunkTransactionContext::new(first.id(), first_step.id());
         let mut chunk = manager.begin_for(scope).await?;
         chunk
-            .commit(ChunkCounts::new(
-                ChunkCount::new(2),
-                ChunkCount::new(2),
-                ChunkCount::new(2),
-                ChunkCount::ZERO,
-            )?)
+            .commit(
+                ChunkCounts::new(
+                    ChunkCount::new(2),
+                    ChunkCount::new(2),
+                    ChunkCount::new(2),
+                    ChunkCount::ZERO,
+                )?,
+                ChunkFaultProgress::NONE,
+            )
             .await?;
         let committed = manager.load_committed_state(scope).await?;
         assert_eq!(committed.checkpoint(), &chunk_checkpoint(2)?);
@@ -1089,9 +1095,9 @@ fn optimistic_conflict_has_one_winner() -> Result<(), Box<dyn Error>> {
             ChunkCount::new(1),
             ChunkCount::ZERO,
         )?;
-        winner.commit(counts).await?;
+        winner.commit(counts, ChunkFaultProgress::NONE).await?;
         assert_eq!(
-            loser.commit(counts).await,
+            loser.commit(counts, ChunkFaultProgress::NONE).await,
             Err(ChunkTransactionError::NotCommitted)
         );
         assert_eq!(business_items(&runtime_url, JOB).await?, [1]);
@@ -1165,7 +1171,7 @@ fn postgres_chunk_disconnect_is_known_not_committed_before_commit() -> Result<()
             ChunkCount::ZERO,
         )?;
         assert_eq!(
-            transaction.commit(counts).await,
+            transaction.commit(counts, ChunkFaultProgress::NONE).await,
             Err(ChunkTransactionError::NotCommitted)
         );
         assert!(business_items(&runtime_url, JOB).await?.is_empty());
@@ -1178,4 +1184,314 @@ fn postgres_chunk_disconnect_is_known_not_committed_before_commit() -> Result<()
         repository.close().await?;
         Ok::<(), Box<dyn Error>>(())
     })
+}
+
+/// Builds the bounded policy the durable fault-state fixture installs.
+fn fault_policy() -> Result<FaultPolicy, Box<dyn Error>> {
+    Ok(FaultPolicy::new(
+        FaultClassifier::new(
+            ClassifierRevision::new("postgres_fault_v1")?,
+            [FaultRule::new(
+                FaultPhase::Write,
+                FailureCategory::Timeout,
+                FaultAction::retry(),
+            )?],
+        )?,
+        RetryLimit::new(3)?,
+        RetryStateLimit::new(8)?,
+        SkipLimit::new(4),
+        BackoffPolicy::none(),
+    )?)
+}
+
+async fn started_chunk_step(
+    repository: &PostgresJobRepository,
+    job_name: &JobName,
+    step_name: &StepName,
+) -> Result<ChunkTransactionContext, Box<dyn Error>> {
+    let key = JobInstanceKey::new(job_name.clone(), &JobParameters::new());
+    let mut create = repository.begin().await?;
+    let instance = create
+        .select_or_create_job_instance(&key)
+        .await?
+        .instance()
+        .clone();
+    let execution = create.create_job_execution(instance.id()).await?;
+    let step = create
+        .create_step_execution(execution.id(), step_name)
+        .await?;
+    create.commit().await?;
+
+    let started_at = UNIX_EPOCH + Duration::from_secs(910);
+    let mut start = repository.begin().await?;
+    start
+        .transition_job_execution(
+            execution.id(),
+            execution.version(),
+            LifecycleTransition::new(BatchStatus::Started, started_at),
+        )
+        .await?;
+    start
+        .transition_step_execution(
+            step.id(),
+            step.version(),
+            LifecycleTransition::new(BatchStatus::Started, started_at),
+        )
+        .await?;
+    start.commit().await?;
+    Ok(ChunkTransactionContext::new(execution.id(), step.id()))
+}
+
+async fn step_counters(
+    url: &str,
+    step: StepExecutionId,
+) -> Result<(i64, i64, i64, i64), sqlx::Error> {
+    let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
+    let row: (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT write_retry_count, rollback_count, process_skip_count, no_rollback_count \
+         FROM oxide_batch.ob_step_execution WHERE id = $1",
+    )
+    .bind(i64::try_from(step.get()).unwrap_or(i64::MAX))
+    .fetch_one(&pool)
+    .await?;
+    pool.close().await;
+    Ok(row)
+}
+
+#[test]
+fn retry_reservation_is_a_durable_compare_and_swap() -> Result<(), Box<dyn Error>> {
+    const JOB: &str = "postgres_fault_reservation_job";
+
+    let Some(url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        remove_job_rows(&url, JOB).await?;
+        let repository = PostgresJobRepository::connect(
+            plaintext_config(url.clone())?,
+            Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(910))),
+        )
+        .await?;
+        let job_name = JobName::new(JOB)?;
+        let step_name = StepName::new("import")?;
+        let scope = started_chunk_step(&repository, &job_name, &step_name).await?;
+        let policy = fault_policy()?;
+
+        let state = PostgresFaultState::new(repository.clone(), &policy);
+        state.bind(scope).await?;
+        let key = RetryKey::from_bytes([7; 32]);
+        assert_eq!(state.reserved_ordinal(key).await?, None);
+        assert_eq!(state.unresolved().await?, 0);
+
+        state
+            .reserve(RetryReservation::new(
+                key,
+                FaultPhase::Write,
+                FailureCategory::Timeout,
+                RetryOrdinal::new(1)?,
+            ))
+            .await?;
+
+        // The same ordinal is never spent twice, even by a writer that still
+        // believes the initial call failed.
+        assert_eq!(
+            state
+                .reserve(RetryReservation::new(
+                    key,
+                    FaultPhase::Write,
+                    FailureCategory::Timeout,
+                    RetryOrdinal::new(1)?,
+                ))
+                .await,
+            Err(FaultStateError::StaleReservation)
+        );
+
+        // A new process inherits the reserved ordinal instead of restarting the
+        // retry budget.
+        let restarted = PostgresFaultState::new(repository.clone(), &policy);
+        restarted.bind(scope).await?;
+        assert_eq!(
+            restarted.reserved_ordinal(key).await?,
+            Some(RetryOrdinal::new(1)?)
+        );
+        assert_eq!(restarted.unresolved().await?, 1);
+        restarted
+            .reserve(RetryReservation::new(
+                key,
+                FaultPhase::Write,
+                FailureCategory::Timeout,
+                RetryOrdinal::new(2)?,
+            ))
+            .await?;
+
+        let (write_retries, rollbacks, _, _) =
+            step_counters(&url, scope.step_execution_id()).await?;
+        assert_eq!(write_retries, 2);
+        assert_eq!(rollbacks, 2);
+
+        // An unbound store cannot read or write any step.
+        let unbound = PostgresFaultState::new(repository.clone(), &policy);
+        assert_eq!(unbound.unresolved().await, Err(FaultStateError::Unbound));
+
+        repository.close().await?;
+        remove_job_rows(&url, JOB).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn skips_counters_and_fault_state_commit_with_the_chunk() -> Result<(), Box<dyn Error>> {
+    const JOB: &str = "postgres_fault_commit_job";
+
+    let Some(url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        remove_job_rows(&url, JOB).await?;
+        let repository = PostgresJobRepository::connect(
+            plaintext_config(url.clone())?,
+            Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(920))),
+        )
+        .await?;
+        let job_name = JobName::new(JOB)?;
+        let step_name = StepName::new("import")?;
+        let scope = started_chunk_step(&repository, &job_name, &step_name).await?;
+        let policy = fault_policy()?;
+
+        let state = PostgresFaultState::new(repository.clone(), &policy);
+        state.bind(scope).await?;
+        let key = RetryKey::from_bytes([11; 32]);
+        state
+            .reserve(RetryReservation::new(
+                key,
+                FaultPhase::Write,
+                FailureCategory::Timeout,
+                RetryOrdinal::new(1)?,
+            ))
+            .await?;
+        assert_eq!(state.unresolved().await?, 1);
+
+        let manager = postgres_chunk_transactions(&repository);
+        let mut rolled_back = manager.begin_for(scope).await?;
+        rolled_back.rollback().await?;
+        // A rolled-back attempt leaves the reservation and every counter alone.
+        assert_eq!(state.unresolved().await?, 1);
+        let (_, _, skips, no_rollbacks) = step_counters(&url, scope.step_execution_id()).await?;
+        assert_eq!((skips, no_rollbacks), (0, 0));
+
+        let mut chunk = manager.begin_for(scope).await?;
+        chunk
+            .commit(
+                ChunkCounts::new(
+                    ChunkCount::new(2),
+                    ChunkCount::new(1),
+                    ChunkCount::new(1),
+                    ChunkCount::ZERO,
+                )?,
+                ChunkFaultProgress::new(SkipCounts::new(0, 1, 0), 1),
+            )
+            .await?;
+
+        let (_, _, skips, no_rollbacks) = step_counters(&url, scope.step_execution_id()).await?;
+        assert_eq!((skips, no_rollbacks), (1, 1));
+        // The commit that advanced the checkpoint superseded the whole retry
+        // generation, so no key survives to be spent again.
+        assert_eq!(state.unresolved().await?, 0);
+        assert_eq!(state.reserved_ordinal(key).await?, None);
+
+        let committed = manager.load_committed_state(scope).await?;
+        assert_eq!(committed.fault_progress().skips().process(), 1);
+        assert_eq!(committed.fault_progress().no_rollbacks(), 1);
+        assert_eq!(committed.fault_progress().retries().write(), 1);
+        assert!(committed.fault_state().is_empty());
+
+        let inherited = manager.inherited_progress(scope).await?;
+        assert_eq!(inherited.read_ordinal(), 2);
+        assert_eq!(inherited.fault().skips().process(), 1);
+        assert_eq!(inherited.fault().no_rollbacks(), 1);
+
+        repository.close().await?;
+        remove_job_rows(&url, JOB).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn corrupt_fault_state_fails_before_component_work() -> Result<(), Box<dyn Error>> {
+    const JOB: &str = "postgres_fault_corruption_job";
+
+    let Some(url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        remove_job_rows(&url, JOB).await?;
+        let repository = PostgresJobRepository::connect(
+            plaintext_config(url.clone())?,
+            Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(930))),
+        )
+        .await?;
+        let job_name = JobName::new(JOB)?;
+        let step_name = StepName::new("import")?;
+        let scope = started_chunk_step(&repository, &job_name, &step_name).await?;
+        let policy = fault_policy()?;
+
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await?;
+        let step_id = i64::try_from(scope.step_execution_id().get())?;
+        sqlx::query(
+            "UPDATE oxide_batch.ob_step_execution \
+             SET fault_state_checksum = decode(repeat('ee', 32), 'hex') WHERE id = $1",
+        )
+        .bind(step_id)
+        .execute(&pool)
+        .await?;
+
+        let state = PostgresFaultState::new(repository.clone(), &policy);
+        assert_eq!(
+            state.bind(scope).await,
+            Err(FaultStateError::Corrupt(
+                FaultStateFormatError::ChecksumMismatch
+            ))
+        );
+        let manager = postgres_chunk_transactions(&repository);
+        assert!(manager.load_committed_state(scope).await.is_err());
+        assert_eq!(
+            manager.inherited_progress(scope).await,
+            Err(ChunkTransactionError::NotCommitted)
+        );
+
+        // A newer fault-state schema is unsupported rather than guessed.
+        sqlx::query(
+            "UPDATE oxide_batch.ob_step_execution \
+             SET fault_state_checksum = decode($2, 'hex'), fault_state_schema_version = 2 \
+             WHERE id = $1",
+        )
+        .bind(step_id)
+        .bind("a491114819e0d3bd8b7ca004dc0636f95b45e2fcb1a67ddb5726beaea12f9922")
+        .execute(&pool)
+        .await?;
+        assert!(manager.inherited_progress(scope).await.is_err());
+        pool.close().await;
+
+        repository.close().await?;
+        remove_job_rows(&url, JOB).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
 }

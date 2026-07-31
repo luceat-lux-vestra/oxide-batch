@@ -144,6 +144,13 @@ source version still supported, migrates each to the target, and runs repository
 plus vertical-slice reads. Fixtures include active, terminal, failed, stopped,
 and `UNKNOWN` executions without storing real user records.
 
+The released source versions are `1` and `2`. The design-gate fixture applies
+migration `0001` to a dedicated database, seeds
+`design-gate/schema1-seed.sql` with completed, failed-with-active-restart,
+stopped, and unresolved `UNKNOWN` history, applies migration `0002`, and runs
+`design-gate/verify-schema2-upgrade.sql`. Reapplying `0002` must fail with the
+`schema version 1 is required` guard rather than modify an upgraded database.
+
 Every schema-changing release includes a guide copied from
 [the migration-guide template](migration-guide-template.md). The guide names
 source/target versions, application compatibility, lock/downtime expectations,

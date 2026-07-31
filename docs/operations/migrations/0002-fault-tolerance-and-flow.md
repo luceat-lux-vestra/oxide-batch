@@ -1,6 +1,6 @@
 # Schema 2 Fault-Tolerance and Flow Migration
 
-**State:** Accepted design; unreleased until issue #62 promotes immutable SQL
+**State:** Implemented; released with the schema-2 runtime
 
 **Source schema:** `1`
 
@@ -9,10 +9,13 @@
 **Rolling deployment:** Not supported. All schema-1 runtimes must be quiesced
 before migration, and they reject schema 2 on startup.
 
-This is the version-specific migration and rollback contract. The final
-`0002_<lower_snake_case>.sql`, checksum, measured duration, and exact canary
-queries are added by the implementation workstream before schema 2 is
-released.
+**Immutable SQL:** `crates/oxide-batch/migrations/0002_fault_tolerance_and_flow.sql`
+
+This is the version-specific migration and rollback contract. The executable
+fixture that proves it is
+`tests/fixtures/postgres/run-design-gate.sh`, which applies migration `0001`
+to a separate database, seeds realistic schema-1 history, applies migration
+`0002`, and runs `tests/fixtures/postgres/design-gate/verify-schema2-upgrade.sql`.
 
 ## Data-model changes
 
@@ -32,7 +35,13 @@ value and adds `OPTIMISTIC_CONFLICT`, `TIMEOUT`,
 `UNSUPPORTED_CAPABILITY`, and `UNKNOWN_COMMIT`.
 
 All new counters default to zero. Existing rows receive the empty format-1
-fault-state envelope and its published checksum. Non-empty envelopes hold at
+fault-state envelope
+`{"checkpoint": "<64 zero hex digits>", "entries": []}` and its published
+SHA-256 checksum
+`a491114819e0d3bd8b7ca004dc0636f95b45e2fcb1a67ddb5726beaea12f9922`. The
+runtime asserts the same vector in
+`crates/oxide-batch/tests/fault_state.rs::empty_state_matches_the_published_migration_vector`,
+so the migration default and the framework encoder cannot drift apart. Non-empty envelopes hold at
 most 256 digest-sorted retry entries and remain bounded to 64 KiB. The
 migration adds a unique constraint on
 `(job_execution_id, step_logical_id)` and the bounded history index required by
@@ -140,13 +149,31 @@ lost. The operator must reconcile any associated business effects before
 resuming. Reverse deletion of the new table/columns is not a supported
 downgrade because it would erase restart-relevant state.
 
-## Release evidence still required
+## Released evidence
 
-Issue #62 must replace design placeholders with:
+| Requirement | Evidence |
+| --- | --- |
+| Immutable SQL | `crates/oxide-batch/migrations/0002_fault_tolerance_and_flow.sql`, applied inside one sqlx-owned transaction under the existing advisory lock |
+| Empty-state vector | `fault_state.rs::empty_state_matches_the_published_migration_vector` pins the canonical bytes and checksum the migration installs |
+| Realistic source fixtures | `design-gate/schema1-seed.sql` seeds completed, failed-with-active-restart, stopped, and unresolved `UNKNOWN` instances |
+| Upgrade verification | `design-gate/verify-schema2-upgrade.sql` asserts the singleton version, byte-for-byte logical-ID backfill, zero counters, the published envelope, every new constraint and index, extended category acceptance, and closed-fail bounds |
+| Reapplication safety | The design-gate fixture reapplies `0002` and requires the `schema version 1 is required` rejection |
+| PostgreSQL matrix | `postgres-15/16/17/18-design-gate` run the upgrade fixture; `postgres-15/18-repository` run the schema-2 runtime, TLS, least-privilege, and process-kill suites |
+| Backup and restore | The design-gate fixture dumps the migrated schema, restores it into a clean database, and requires schema version `2` |
+| Newer-version rejection | The restored database is forced to version `3` and the runtime must refuse it |
 
-- the immutable SQL filename and released checksum;
-- measured migration/lock/WAL/disk requirements;
-- realistic active, terminal, failed, stopped, and `UNKNOWN` source fixtures;
-- PostgreSQL 15–18 results, query plans, least-privilege grants, and TLS;
-- backup artifact checksum and restore transcript;
-- canary acceptance IDs and residual limitations.
+The measured migration duration is reported by the design-gate fixture for each
+supported major. The migration adds columns with constant defaults and one
+bounded backfill of `step_logical_id`, so its lock window scales with the number
+of step-execution rows; deployments with unusually large history must measure it
+against their own snapshot before scheduling the maintenance window.
+
+## Residual limitations
+
+- A terminal known rollback does not yet increment `rollback_count` with the
+  terminal step update. Only the acknowledged retry-reservation rollback is
+  durable, so `rollback_count` is a lower bound for steps that failed without
+  reserving a retry. Step-lifecycle counter plumbing is owned by the M3 exit
+  workstream.
+- `ob_flow_decision` is created and constrained by this migration but is not yet
+  written by any runtime path. Issue #64 owns its append and restart queries.

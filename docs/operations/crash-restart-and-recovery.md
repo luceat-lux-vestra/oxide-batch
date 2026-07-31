@@ -104,6 +104,28 @@ Set both `OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL` and
 creates and removes only its named metadata and
 `oxide_batch_business.m2_crash_output` fixture rows.
 
+## Fault-tolerance state after a crash
+
+A retry reservation is durable before the runtime waits for backoff, so a
+process that stops between reservation and re-invocation has still consumed that
+ordinal. Restart resumes the persisted ordinal and never refills the retry
+budget; it may invoke fewer retries than were reserved, never more. A crash
+before the reservation commits consumes nothing, and the initial component call
+may replay under its declared delivery mode.
+
+Committed skip counts, `no_rollback_count`, and the retained retry state are
+part of the chunk commit, so an uncommitted chunk leaves all of them unchanged.
+Restart copies the committed totals and the retained state to the new step
+attempt, which is why the shared skip limit spans every attempt of one job
+instance.
+
+If durable fault state cannot be validated — an unsupported version, a checksum
+mismatch, an unknown enumeration value, or state retained against a superseded
+checkpoint — the step fails closed before any component runs. Treat that as
+metadata corruption: inspect the step row, restore from the verified backup
+named in [the schema-2 migration guide](migrations/0002-fault-tolerance-and-flow.md),
+and do not edit the envelope by hand.
+
 ## Escalation
 
 Stop and preserve evidence when:

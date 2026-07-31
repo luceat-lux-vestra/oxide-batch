@@ -117,10 +117,10 @@ pub use chunk::{
     BusinessStatement, BusinessTransaction, BusinessTransactionError, BusinessValue,
     BusinessValueKind, BusinessWriteResult, ChunkCommitReceipt, ChunkCompletion,
     ChunkCompletionContext, ChunkCompletionError, ChunkCompletionOutcome, ChunkCount, ChunkCounts,
-    ChunkError, ChunkProgress, ChunkSize, ChunkTransaction, ChunkTransactionContext,
-    ChunkTransactionError, ChunkTransactionManager, ItemProcessor, ItemReader, ItemWriter,
-    ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome, ReaderError,
-    WriteContext, WriteOutcome, WriterError,
+    ChunkError, ChunkFaultProgress, ChunkProgress, ChunkSize, ChunkTransaction,
+    ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager, InheritedStepProgress,
+    ItemProcessor, ItemReader, ItemWriter, ProcessContext, ProcessOutcome, ProcessorError,
+    ReadContext, ReadOutcome, ReaderError, WriteContext, WriteOutcome, WriterError,
 };
 pub use chunk_runtime::{
     ChunkAttemptOutcome, ChunkExecutionOutcome, ChunkExecutionReport, ChunkFailure, ChunkJob,
@@ -151,7 +151,8 @@ pub use fault::{
     SkipLimit,
 };
 pub use fault_state::{
-    FaultRuntime, FaultStateError, FaultStateStore, InMemoryFaultState, RetryCounts, RetryKey,
+    FaultProgress, FaultRuntime, FaultStateEntry, FaultStateEnvelope, FaultStateError,
+    FaultStateFormatError, FaultStateStore, InMemoryFaultState, RetryCounts, RetryKey,
     RetryReservation,
 };
 pub use item_listener::{
@@ -173,7 +174,7 @@ pub use repository::{
 pub use repository::{
     CaCertificate, PostgresChunkStateError, PostgresChunkStateProvider,
     PostgresChunkTransactionManager, PostgresConfig, PostgresConfigError, PostgresDurableStepState,
-    PostgresJobRepository, PostgresMigrator, TlsMode,
+    PostgresFaultState, PostgresJobRepository, PostgresMigrator, TlsMode,
 };
 pub use runtime::{
     BlockingTasklet, BlockingTaskletAdapter, BlockingTaskletContext, JobLauncher, LaunchError,
