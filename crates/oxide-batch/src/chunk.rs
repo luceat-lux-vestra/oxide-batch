@@ -4,7 +4,10 @@ use std::error::Error;
 use std::fmt;
 use std::num::NonZeroU32;
 
-use crate::{BoxFuture, Checkpoint, ExecutionContext, JobExecutionId, StepExecutionId, StopToken};
+use crate::{
+    BoxFuture, Checkpoint, ExecutionContext, FailureCategory, JobExecutionId, StepExecutionId,
+    StopToken,
+};
 
 /// A nonzero item limit for one chunk.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -869,16 +872,46 @@ pub trait ChunkCompletion: Send + Sync {
 }
 
 macro_rules! component_error {
-    ($name:ident, $message:literal) => {
+    (
+        $name:ident,
+        $message:literal
+        $(, $field:ident : $field_type:ty = $field_default:expr, $field_docs:literal)* $(,)?
+    ) => {
         #[doc = $message]
-        #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-        pub struct $name;
+        ///
+        /// The adapter translates its own typed error into a stable
+        /// [`FailureCategory`] at this boundary. The payload, display text, and
+        /// source chain are dropped, so classification never inspects them.
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        pub struct $name {
+            category: FailureCategory,
+            $(
+                #[doc = $field_docs]
+                $field: $field_type,
+            )*
+        }
 
         impl $name {
-            /// Constructs a value-redacted component failure.
+            /// Constructs a value-redacted [`FailureCategory::UserComponent`]
+            /// failure.
             #[must_use]
             pub const fn new() -> Self {
-                Self
+                Self {
+                    category: FailureCategory::UserComponent,
+                    $($field: $field_default,)*
+                }
+            }
+
+            /// Constructs a failure that declares its own stable category.
+            ///
+            /// A category that is not policy-eligible fails closed: the fault
+            /// is never retried or skipped.
+            #[must_use]
+            pub const fn with_category(category: FailureCategory) -> Self {
+                Self {
+                    category,
+                    $($field: $field_default,)*
+                }
             }
 
             /// Classifies an arbitrary user error without retaining its
@@ -886,7 +919,19 @@ macro_rules! component_error {
             #[must_use]
             pub fn from_error(error: impl Error + Send + Sync + 'static) -> Self {
                 drop(error);
-                Self
+                Self::new()
+            }
+
+            /// Returns the stable category supplied by the adapter.
+            #[must_use]
+            pub const fn category(self) -> FailureCategory {
+                self.category
+            }
+        }
+
+        impl Default for $name {
+            fn default() -> Self {
+                Self::new()
             }
         }
 
@@ -900,7 +945,55 @@ macro_rules! component_error {
     };
 }
 
-component_error!(ReaderError, "item reader failed");
+component_error!(
+    ReaderError,
+    "item reader failed",
+    checkpoint_advanced: bool = false,
+    "Whether the reader proved its checkpoint moved past one failed input.",
+);
 component_error!(ProcessorError, "item processor failed");
-component_error!(WriterError, "item writer failed");
+component_error!(
+    WriterError,
+    "item writer failed",
+    rolled_back_output: Option<usize> = None,
+    "The located, known-rolled-back output index, when the writer supplied one.",
+);
 component_error!(ChunkCompletionError, "chunk completion callback failed");
+
+impl ReaderError {
+    /// Records that the reader moved its checkpoint past exactly one failed
+    /// input.
+    ///
+    /// A read skip requires this proof. Without it a repeated failure at the
+    /// same position fails the step instead of skipping forever.
+    #[must_use]
+    pub const fn with_checkpoint_advanced(mut self, advanced: bool) -> Self {
+        self.checkpoint_advanced = advanced;
+        self
+    }
+
+    /// Returns whether the reader proved forward checkpoint progress.
+    #[must_use]
+    pub const fn has_checkpoint_advanced(self) -> bool {
+        self.checkpoint_advanced
+    }
+}
+
+impl WriterError {
+    /// Records that the batch is known to have rolled back and identifies the
+    /// single failed output by its zero-based index in the supplied batch.
+    ///
+    /// A write skip requires this evidence. An unlocated, partially visible, or
+    /// ambiguous write cannot be skipped.
+    #[must_use]
+    pub const fn with_rolled_back_output(mut self, index: usize) -> Self {
+        self.rolled_back_output = Some(index);
+        self
+    }
+
+    /// Returns the located failed output index, when the writer supplied one.
+    #[must_use]
+    pub const fn rolled_back_output(self) -> Option<usize> {
+        self.rolled_back_output
+    }
+}

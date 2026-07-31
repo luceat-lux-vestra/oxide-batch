@@ -27,13 +27,29 @@ use oxide_batch::{
     ChunkCount, ChunkCounts, ChunkDeliveryMode, ChunkExecutionOutcome, ChunkFailure, ChunkJob,
     ChunkListener, ChunkListenerContext, ChunkListenerError, ChunkRestartContract, ChunkSize,
     ChunkStep, ChunkTransaction, ChunkTransactionError, ChunkTransactionManager, ComponentRevision,
-    DefinitionRevision, ExecutionContext, InMemoryJobRepository, ItemProcessor, ItemReader,
-    ItemWriter, JobLauncher, JobName, JobParameters, LifecycleEvent, LifecycleEventKind,
-    LifecycleEventSink, ListenerContext, ListenerError, ProcessContext, ProcessOutcome,
-    ProcessorError, ReadContext, ReadOutcome, ReaderError, StateLimits, StateSchemaId,
-    StateSchemaVersion, StepExecutionListener, StepName, StopSource, TaskletExecutionOutcome,
-    WriteContext, WriteOutcome, WriterError,
+    DefinitionRevision, ExecutionAttempt, ExecutionContext, ExecutionCorrelation,
+    InMemoryJobRepository, ItemProcessor, ItemReader, ItemWriter, JobExecutionId, JobInstanceId,
+    JobLauncher, JobName, JobParameters, LifecycleEvent, LifecycleEventKind, LifecycleEventSink,
+    ListenerContext, ListenerError, ProcessContext, ProcessOutcome, ProcessorError, ReadContext,
+    ReadOutcome, ReaderError, StateLimits, StateSchemaId, StateSchemaVersion, StepExecutionId,
+    StepExecutionListener, StepName, StopSource, TaskletExecutionOutcome, WriteContext,
+    WriteOutcome, WriterError,
 };
+
+fn correlation() -> ExecutionCorrelation {
+    let attempt = |value: u64| {
+        ExecutionAttempt::new(NonZeroU64::new(value).expect("static attempt is nonzero"))
+    };
+    ExecutionCorrelation::new(
+        JobName::new("standalone_chunk").expect("static job name is valid"),
+        JobInstanceId::new(1).expect("static instance id is nonzero"),
+        JobExecutionId::new(1).expect("static execution id is nonzero"),
+        attempt(1),
+        StepName::new("standalone_step").expect("static step name is valid"),
+        StepExecutionId::new(1).expect("static execution id is nonzero"),
+        attempt(1),
+    )
+}
 
 fn chunk_revisions() -> ChunkComponentRevisions {
     ChunkComponentRevisions::new(
@@ -328,7 +344,7 @@ async fn partial_final_chunk_commits_checked_counts() {
     );
     let (_source, stop) = StopSource::new();
 
-    let report = step.execute(&stop).await;
+    let report = step.execute(&correlation(), &stop).await;
 
     assert_eq!(report.outcome(), ChunkExecutionOutcome::Completed);
     assert_eq!(report.committed_chunks(), ChunkCount::new(2));
@@ -374,7 +390,7 @@ async fn empty_input_completes_without_committed_or_rolled_back_counts() {
     );
     let (_source, stop) = StopSource::new();
 
-    let report = step.execute(&stop).await;
+    let report = step.execute(&correlation(), &stop).await;
 
     assert_eq!(report.outcome(), ChunkExecutionOutcome::Completed);
     assert_eq!(report.committed_counts(), ChunkCounts::default());
@@ -412,7 +428,7 @@ async fn assert_component_error_rolls_back(
     );
     let (_source, stop) = StopSource::new();
 
-    let report = step.execute(&stop).await;
+    let report = step.execute(&correlation(), &stop).await;
 
     assert_eq!(report.outcome(), ChunkExecutionOutcome::Failed(expected));
     assert_eq!(report.committed_counts(), ChunkCounts::default());
@@ -493,7 +509,7 @@ async fn component_panics_are_typed_and_payload_redacted() {
         );
         let (_source, stop) = StopSource::new();
 
-        let report = step.execute(&stop).await;
+        let report = step.execute(&correlation(), &stop).await;
 
         assert_eq!(report.outcome(), ChunkExecutionOutcome::Failed(expected));
         assert!(!format!("{report:?}").contains("secret"));
@@ -512,7 +528,7 @@ async fn stop_during_chunk_uses_commit_boundary() {
     );
     let (_source, stop) = StopSource::new();
 
-    let report = step.execute(&stop).await;
+    let report = step.execute(&correlation(), &stop).await;
 
     assert_eq!(report.outcome(), ChunkExecutionOutcome::Stopped);
     assert_eq!(report.committed_counts(), ChunkCounts::default());
@@ -537,7 +553,7 @@ async fn late_completion_failure_cannot_undo_committed_chunk() {
     );
     let (_source, stop) = StopSource::new();
 
-    let report = step.execute(&stop).await;
+    let report = step.execute(&correlation(), &stop).await;
 
     assert_eq!(
         report.outcome(),
@@ -570,7 +586,7 @@ async fn stop_acknowledged_after_commit_retains_committed_chunk() {
     );
     let (_source, stop) = StopSource::new();
 
-    let report = step.execute(&stop).await;
+    let report = step.execute(&correlation(), &stop).await;
 
     assert_eq!(report.outcome(), ChunkExecutionOutcome::Stopped);
     assert_eq!(report.committed_chunks(), ChunkCount::new(1));
@@ -662,7 +678,7 @@ async fn listener_failure_preserves_committed_work() {
         }));
     let (_source, stop) = StopSource::new();
 
-    let report = step.execute(&stop).await;
+    let report = step.execute(&correlation(), &stop).await;
 
     assert_eq!(
         *events.lock().expect("listener events lock poisoned"),
@@ -694,7 +710,7 @@ async fn chunk_listener_panics_are_typed_at_both_boundaries() {
         let mut step = step.with_chunk_listener(Arc::new(PanickingListener { before }));
         let (_source, stop) = StopSource::new();
 
-        let report = step.execute(&stop).await;
+        let report = step.execute(&correlation(), &stop).await;
 
         assert_eq!(
             report.outcome(),
@@ -723,7 +739,7 @@ async fn unknown_commit_is_not_rolled_back_or_guessed() {
     );
     let (_source, stop) = StopSource::new();
 
-    let report = step.execute(&stop).await;
+    let report = step.execute(&correlation(), &stop).await;
 
     assert_eq!(report.outcome(), ChunkExecutionOutcome::Unknown);
     assert_eq!(report.committed_counts(), ChunkCounts::default());

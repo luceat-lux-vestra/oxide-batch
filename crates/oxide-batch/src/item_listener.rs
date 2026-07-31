@@ -577,14 +577,20 @@ impl<I, O> ItemListenerSet<I, O> {
     pub fn skip_listeners(&self) -> usize {
         self.skip.len()
     }
+}
 
+/// The callback passes borrow items across `await`, so both item types must be
+/// shareable. Registration and inspection remain available for any item type.
+impl<I, O> ItemListenerSet<I, O>
+where
+    I: Sync,
+    O: Sync,
+{
     /// Runs read before-callbacks in registration order.
     pub async fn before_read(&self, context: ItemListenerContext<'_>) -> BeforeCallbackOutcome {
-        forward_pass(
-            self.read.len(),
-            ItemListenerPhase::BeforeRead,
-            async |index| invoke(|| self.read[index].before_read(context)).await,
-        )
+        forward_pass(self.read.len(), ItemListenerPhase::BeforeRead, |index| {
+            Box::pin(invoke(move || self.read[index].before_read(context)))
+        })
         .await
     }
 
@@ -598,7 +604,7 @@ impl<I, O> ItemListenerSet<I, O> {
         reverse_pass(
             entered.min(self.read.len()),
             ItemListenerPhase::AfterRead,
-            async |index| invoke(|| self.read[index].after_read(item, context)).await,
+            |index| Box::pin(invoke(move || self.read[index].after_read(item, context))),
         )
         .await
     }
@@ -613,7 +619,11 @@ impl<I, O> ItemListenerSet<I, O> {
         reverse_pass(
             entered.min(self.read.len()),
             ItemListenerPhase::ReadError,
-            async |index| invoke(|| self.read[index].on_read_error(fault, context)).await,
+            |index| {
+                Box::pin(invoke(move || {
+                    self.read[index].on_read_error(fault, context)
+                }))
+            },
         )
         .await
     }
@@ -627,7 +637,11 @@ impl<I, O> ItemListenerSet<I, O> {
         forward_pass(
             self.process.len(),
             ItemListenerPhase::BeforeProcess,
-            async |index| invoke(|| self.process[index].before_process(input, context)).await,
+            |index| {
+                Box::pin(invoke(move || {
+                    self.process[index].before_process(input, context)
+                }))
+            },
         )
         .await
     }
@@ -643,8 +657,10 @@ impl<I, O> ItemListenerSet<I, O> {
         reverse_pass(
             entered.min(self.process.len()),
             ItemListenerPhase::AfterProcess,
-            async |index| {
-                invoke(|| self.process[index].after_process(input, output, context)).await
+            |index| {
+                Box::pin(invoke(move || {
+                    self.process[index].after_process(input, output, context)
+                }))
             },
         )
         .await
@@ -661,8 +677,10 @@ impl<I, O> ItemListenerSet<I, O> {
         reverse_pass(
             entered.min(self.process.len()),
             ItemListenerPhase::ProcessError,
-            async |index| {
-                invoke(|| self.process[index].on_process_error(input, fault, context)).await
+            |index| {
+                Box::pin(invoke(move || {
+                    self.process[index].on_process_error(input, fault, context)
+                }))
             },
         )
         .await
@@ -674,11 +692,11 @@ impl<I, O> ItemListenerSet<I, O> {
         outputs: &[O],
         context: ItemListenerContext<'_>,
     ) -> BeforeCallbackOutcome {
-        forward_pass(
-            self.write.len(),
-            ItemListenerPhase::BeforeWrite,
-            async |index| invoke(|| self.write[index].before_write(outputs, context)).await,
-        )
+        forward_pass(self.write.len(), ItemListenerPhase::BeforeWrite, |index| {
+            Box::pin(invoke(move || {
+                self.write[index].before_write(outputs, context)
+            }))
+        })
         .await
     }
 
@@ -692,7 +710,11 @@ impl<I, O> ItemListenerSet<I, O> {
         reverse_pass(
             entered.min(self.write.len()),
             ItemListenerPhase::AfterWrite,
-            async |index| invoke(|| self.write[index].after_write(outputs, context)).await,
+            |index| {
+                Box::pin(invoke(move || {
+                    self.write[index].after_write(outputs, context)
+                }))
+            },
         )
         .await
     }
@@ -708,8 +730,10 @@ impl<I, O> ItemListenerSet<I, O> {
         reverse_pass(
             entered.min(self.write.len()),
             ItemListenerPhase::WriteError,
-            async |index| {
-                invoke(|| self.write[index].on_write_error(outputs, fault, context)).await
+            |index| {
+                Box::pin(invoke(move || {
+                    self.write[index].on_write_error(outputs, fault, context)
+                }))
             },
         )
         .await
@@ -721,11 +745,11 @@ impl<I, O> ItemListenerSet<I, O> {
         fault: FaultDescriptor,
         context: ItemListenerContext<'_>,
     ) -> BeforeCallbackOutcome {
-        forward_pass(
-            self.retry.len(),
-            ItemListenerPhase::BeforeRetry,
-            async |index| invoke(|| self.retry[index].before_retry(fault, context)).await,
-        )
+        forward_pass(self.retry.len(), ItemListenerPhase::BeforeRetry, |index| {
+            Box::pin(invoke(move || {
+                self.retry[index].before_retry(fault, context)
+            }))
+        })
         .await
     }
 
@@ -740,7 +764,11 @@ impl<I, O> ItemListenerSet<I, O> {
         reverse_pass(
             entered.min(self.retry.len()),
             ItemListenerPhase::AfterRetry,
-            async |index| invoke(|| self.retry[index].after_retry(fault, outcome, context)).await,
+            |index| {
+                Box::pin(invoke(move || {
+                    self.retry[index].after_retry(fault, outcome, context)
+                }))
+            },
         )
         .await
     }
@@ -755,7 +783,11 @@ impl<I, O> ItemListenerSet<I, O> {
         reverse_pass(
             entered.min(self.retry.len()),
             ItemListenerPhase::RetryExhausted,
-            async |index| invoke(|| self.retry[index].on_retry_exhausted(fault, context)).await,
+            |index| {
+                Box::pin(invoke(move || {
+                    self.retry[index].on_retry_exhausted(fault, context)
+                }))
+            },
         )
         .await
     }
@@ -766,8 +798,10 @@ impl<I, O> ItemListenerSet<I, O> {
         fault: FaultDescriptor,
         context: ItemListenerContext<'_>,
     ) -> Vec<ItemListenerFailure> {
-        ordered_pass(self.skip.len(), async |index| {
-            invoke(|| self.skip[index].on_skip_in_read(fault, context)).await
+        ordered_pass(self.skip.len(), |index| {
+            Box::pin(invoke(move || {
+                self.skip[index].on_skip_in_read(fault, context)
+            }))
         })
         .await
     }
@@ -779,8 +813,10 @@ impl<I, O> ItemListenerSet<I, O> {
         fault: FaultDescriptor,
         context: ItemListenerContext<'_>,
     ) -> Vec<ItemListenerFailure> {
-        ordered_pass(self.skip.len(), async |index| {
-            invoke(|| self.skip[index].on_skip_in_process(input, fault, context)).await
+        ordered_pass(self.skip.len(), |index| {
+            Box::pin(invoke(move || {
+                self.skip[index].on_skip_in_process(input, fault, context)
+            }))
         })
         .await
     }
@@ -792,8 +828,10 @@ impl<I, O> ItemListenerSet<I, O> {
         fault: FaultDescriptor,
         context: ItemListenerContext<'_>,
     ) -> Vec<ItemListenerFailure> {
-        ordered_pass(self.skip.len(), async |index| {
-            invoke(|| self.skip[index].on_skip_in_write(output, fault, context)).await
+        ordered_pass(self.skip.len(), |index| {
+            Box::pin(invoke(move || {
+                self.skip[index].on_skip_in_write(output, fault, context)
+            }))
         })
         .await
     }
@@ -850,13 +888,13 @@ where
     }
 }
 
-async fn forward_pass<F>(
+async fn forward_pass<'a, F>(
     count: usize,
     phase: ItemListenerPhase,
     mut call: F,
 ) -> BeforeCallbackOutcome
 where
-    F: AsyncFnMut(usize) -> Result<(), ListenerFailureKind>,
+    F: FnMut(usize) -> BoxFuture<'a, Result<(), ListenerFailureKind>>,
 {
     for index in 0..count {
         if let Err(kind) = call(index).await {
@@ -872,13 +910,13 @@ where
     }
 }
 
-async fn reverse_pass<F>(
+async fn reverse_pass<'a, F>(
     entered: usize,
     phase: ItemListenerPhase,
     mut call: F,
 ) -> Vec<ItemListenerFailure>
 where
-    F: AsyncFnMut(usize) -> Result<(), ListenerFailureKind>,
+    F: FnMut(usize) -> BoxFuture<'a, Result<(), ListenerFailureKind>>,
 {
     let mut failures = Vec::new();
     for index in (0..entered).rev() {
@@ -889,9 +927,9 @@ where
     failures
 }
 
-async fn ordered_pass<F>(count: usize, mut call: F) -> Vec<ItemListenerFailure>
+async fn ordered_pass<'a, F>(count: usize, mut call: F) -> Vec<ItemListenerFailure>
 where
-    F: AsyncFnMut(usize) -> Result<(), ListenerFailureKind>,
+    F: FnMut(usize) -> BoxFuture<'a, Result<(), ListenerFailureKind>>,
 {
     let mut failures = Vec::new();
     for index in 0..count {

@@ -269,6 +269,18 @@ Implementation issues must provide:
 The runtime-neutral policy, classifier, backoff, and listener contracts of this
 document are implemented and evidenced by the
 [M3 fault-tolerance and listener contract evidence](../project/m3-fault-contract-evidence.md).
-Chunk integration, durable reservation, schema 2, and manifest fingerprint
+Their integration into deterministic chunk execution — retry replay after a
+known rollback, reservation ordering, stop points, phase skip classification,
+capability-scoped no-rollback, item/retry/skip callbacks, and the post-decision
+events — is evidenced by the
+[M3 fault-tolerance runtime evidence](../project/m3-fault-runtime-evidence.md).
+
+A retry ends the chunk attempt: the runtime rolls back, reserves the ordinal,
+runs the retry scope, and replays the chunk from its in-memory buffer of
+already-read inputs. Only components that have not yet succeeded are
+re-invoked, so a stateful reader never rewinds.
+
+Durable reservation, schema 2, restart inheritance, and manifest fingerprint
 input remain owned by the dependent M3 workstreams, so the ledger rows stay
-`Planned` until those land.
+`Implemented` rather than released `Verified` until those land with their
+crash, restart, and migration evidence.

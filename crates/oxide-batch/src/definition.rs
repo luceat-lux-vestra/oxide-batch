@@ -215,6 +215,12 @@ impl ChunkComponentRevisions {
             restart,
         }
     }
+
+    /// Returns the delivery mode declared by the restart contract.
+    #[must_use]
+    pub const fn delivery_mode(&self) -> ChunkDeliveryMode {
+        self.restart.delivery_mode
+    }
 }
 
 /// Declared delivery boundary included in a chunk definition fingerprint.
@@ -501,6 +507,9 @@ pub enum DefinitionError {
     DuplicateSourceStep,
     /// Two source steps mapped to the same target step.
     DuplicateTargetStep,
+    /// A step's fault runtime declared a different delivery mode than its
+    /// restart contract.
+    DeliveryModeMismatch,
 }
 
 impl fmt::Display for DefinitionError {
@@ -528,6 +537,8 @@ impl fmt::Display for DefinitionError {
             Self::DuplicateTargetStep => {
                 formatter.write_str("definition upgrade reuses a target step")
             }
+            Self::DeliveryModeMismatch => formatter
+                .write_str("fault runtime and restart contract declare different delivery modes"),
         }
     }
 }

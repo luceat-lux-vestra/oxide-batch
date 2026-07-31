@@ -90,6 +90,9 @@ M3 adds:
 - `flow.completed_step_reused`;
 - `step.start_limit_exceeded`.
 
+The chunk runtime emits the retry, skip, and rollback events above today. The
+flow and start-control events arrive with the flow workstream.
+
 Safe fields are fault phase, stable failure category, retry ordinal, configured
 limit class, backoff duration, skip phase, aggregate numeric counts, source
 node kind, target kind, and existing opaque execution correlation. Events may

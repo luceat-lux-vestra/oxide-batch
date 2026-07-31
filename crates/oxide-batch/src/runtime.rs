@@ -258,6 +258,28 @@ impl<'a> TaskletContext<'a> {
         let _ = catch_unwind(AssertUnwindSafe(|| sink.emit(&event)));
     }
 
+    pub(crate) fn emit_fault_event(&self, fault: &crate::chunk_runtime::FaultRuntimeEvent) {
+        let Some(sink) = self.event_sink else {
+            return;
+        };
+        let mut event = LifecycleEvent::fault(
+            fault.kind,
+            self.correlation.clone(),
+            fault.sequence,
+            fault.phase,
+        );
+        if let Some(summary) = fault.summary {
+            event = event.with_failure(summary);
+        }
+        if let Some(ordinal) = fault.ordinal {
+            event = event.with_retry_ordinal(ordinal);
+        }
+        if let Some(backoff) = fault.backoff {
+            event = event.with_backoff(backoff);
+        }
+        let _ = catch_unwind(AssertUnwindSafe(|| sink.emit(&event)));
+    }
+
     fn into_blocking(self) -> BlockingTaskletContext {
         BlockingTaskletContext {
             parameters: self.parameters.clone(),
