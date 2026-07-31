@@ -107,6 +107,7 @@ mod diagnostics;
 mod domain;
 mod fault;
 mod fault_state;
+mod flow;
 mod item_listener;
 mod listener;
 mod plan;
@@ -156,6 +157,12 @@ pub use fault_state::{
     FaultProgress, FaultRuntime, FaultStateEntry, FaultStateEnvelope, FaultStateError,
     FaultStateFormatError, FaultStateStore, InMemoryFaultState, RetryCounts, RetryKey,
     RetryReservation,
+};
+pub use flow::{
+    DeciderError, DecisionInput, DecisionStepInput, FlowDecision, FlowDecisionId,
+    FlowDecisionRequest, FlowDecisionSequence, FlowExecutionOutcome, FlowFailure, FlowJob,
+    FlowJobError, FlowLaunchReport, FlowLauncher, FlowRuntimeError, FlowStepState,
+    FlowTransitionKind, JobExecutionDecider,
 };
 pub use item_listener::{
     BeforeCallbackOutcome, ItemListenerContext, ItemListenerError, ItemListenerFailure,

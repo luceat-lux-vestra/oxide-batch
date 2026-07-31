@@ -67,6 +67,11 @@ halves of `exit_status_selects_most_specific_transition` and
 `equally_specific_overlapping_patterns_are_rejected`, but neither row may move
 until #64 executes a durable multi-step traversal.
 
+That limitation was subsequently closed for the finite M3 slice by the
+[M3 durable flow runtime evidence](m3-flow-runtime-evidence.md). The rows are
+now `Partial`, not `Verified`, because advanced M7 flow and release evidence
+remain outstanding.
+
 ## Deliberate decisions recorded here
 
 - **An unknown commit outcome never reaches the graph.** The accepted M3

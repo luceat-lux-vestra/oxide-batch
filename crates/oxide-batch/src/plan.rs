@@ -1073,6 +1073,16 @@ impl CompiledExecutionPlan {
         self.nodes.get(id)
     }
 
+    /// Iterates over compiled nodes in stable logical-identifier order.
+    ///
+    /// The returned order is canonical and independent of builder declaration
+    /// order. It is useful when binding executable components to an immutable
+    /// plan before launch.
+    #[must_use]
+    pub fn nodes(&self) -> impl ExactSizeIterator<Item = (&NodeId, &FlowNode)> {
+        self.nodes.iter()
+    }
+
     /// Borrows one node's transitions in evaluation order.
     ///
     /// The first matching transition wins, so the slice is ordered from the

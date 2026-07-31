@@ -246,6 +246,54 @@ impl<I, O> fmt::Debug for ChunkJob<I, O> {
     }
 }
 
+impl crate::FlowJob {
+    /// Binds a stateful chunk step to one compiled flow node.
+    ///
+    /// The chunk's size, component revisions, delivery mode, and fault policy
+    /// must exactly match the immutable plan. The component is erased only at
+    /// the existing tasklet composition boundary; item calls keep the accepted
+    /// M3 boxed component contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::FlowJobError::ComponentMismatch`] when executable and
+    /// manifest declarations differ, or the ordinary binding errors for an
+    /// unknown, wrong-kind, duplicate, or differently named node.
+    pub fn with_chunk_step<I, O>(
+        mut self,
+        node_id: crate::NodeId,
+        mut step: ChunkStep<I, O>,
+        revisions: &ChunkComponentRevisions,
+    ) -> Result<Self, crate::FlowJobError>
+    where
+        I: Send + Sync + 'static,
+        O: Send + Sync + 'static,
+    {
+        let Some(crate::FlowNode::Step(compiled)) = self.compiled_plan().node(&node_id) else {
+            return Err(crate::FlowJobError::WrongNodeKind { node: node_id });
+        };
+        let expected = StepComponents::Chunk {
+            size: step.size,
+            revisions: Box::new(revisions.clone()),
+        };
+        if compiled.step_name() != step.name()
+            || compiled.components() != &expected
+            || compiled.fault_policy() != step.fault.as_ref().map(FaultRuntime::policy)
+        {
+            return Err(crate::FlowJobError::ComponentMismatch { node: node_id });
+        }
+        step.definition_digest = *self.compiled_plan().fingerprint();
+        let listeners = step.step_listeners.clone();
+        let tasklet: Arc<dyn Tasklet> = Arc::new(ChunkTasklet::new(step));
+        let mut tasklet_step = TaskletStep::new(compiled.step_name().clone(), tasklet);
+        for listener in listeners {
+            tasklet_step = tasklet_step.with_listener(listener);
+        }
+        self.bind_chunk_tasklet(node_id, tasklet_step)?;
+        Ok(self)
+    }
+}
+
 struct ChunkTasklet<I, O> {
     step: AsyncMutex<ChunkStep<I, O>>,
     last_report: Mutex<Option<ChunkExecutionReport>>,

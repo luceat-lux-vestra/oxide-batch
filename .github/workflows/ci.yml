@@ -185,6 +185,12 @@ jobs:
             corrupt_fault_state_fails_before_component_work \
             -- --nocapture --test-threads=1
 
+      - name: Verify durable flow traversal
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_flow
+          -- --nocapture --test-threads=1
+
       - name: Verify disconnect and schema-version classifications
         run: |
           cargo test -p oxide-batch --features postgres \

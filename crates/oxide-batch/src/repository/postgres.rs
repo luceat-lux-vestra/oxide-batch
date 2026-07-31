@@ -25,11 +25,13 @@ use crate::{
     ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion,
     ExitCode, ExitStatus, FailureCategory, FailureId, FailureSummary, FaultPhase, FaultPolicy,
     FaultProgress, FaultStateEntry, FaultStateEnvelope, FaultStateError, FaultStateFormatError,
-    FaultStateStore, IdentifierKind, InheritedStepProgress, JobExecution, JobExecutionId,
-    JobInstance, JobInstanceId, JobInstanceKey, JobName, JobParameter, JobParameters,
-    LifecycleError, LifecycleTransition, ParameterName, ParameterRole, ParameterValue,
-    ParameterValueKind, RetryCounts, RetryKey, RetryLimit, RetryOrdinal, RetryReservation,
-    RetryStateLimit, SkipCounts, StateLimits, StepExecution, StepExecutionId, StepName,
+    FaultStateStore, FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowDecisionSequence,
+    FlowStepState, FlowTarget, FlowTransitionKind, IdentifierKind, InheritedStepProgress,
+    JobExecution, JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey, JobName,
+    JobParameter, JobParameters, LifecycleError, LifecycleTransition, NodeId, ParameterName,
+    ParameterRole, ParameterValue, ParameterValueKind, RetryCounts, RetryKey, RetryLimit,
+    RetryOrdinal, RetryReservation, RetryStateLimit, SkipCounts, StartLimit, StateLimits,
+    StepExecution, StepExecutionId, StepName, TerminalKind,
 };
 
 const SUPPORTED_SCHEMA_VERSION: u32 = 2;
@@ -1697,6 +1699,138 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         })
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the instance lock, start-limit check, and state-copy insert form one visible atomic rule"
+    )]
+    fn create_flow_step_execution<'a>(
+        &'a mut self,
+        job_execution_id: JobExecutionId,
+        step_name: &'a StepName,
+        node_id: &'a NodeId,
+        start_limit: StartLimit,
+    ) -> BoxFuture<'a, Result<StepExecution, RepositoryError>> {
+        Box::pin(async move {
+            let job_id = database_id(job_execution_id.get(), IdentifierKind::JobExecution)?;
+            let instance_id: i64 = sqlx::query_scalar(
+                "SELECT job_instance_id FROM oxide_batch.ob_job_execution WHERE id = $1",
+            )
+            .bind(job_id)
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .ok_or(RepositoryError::JobExecutionNotFound {
+                id: job_execution_id,
+            })?;
+            sqlx::query("SELECT id FROM oxide_batch.ob_job_instance WHERE id = $1 FOR UPDATE")
+                .bind(instance_id)
+                .fetch_one(&mut **self.transaction()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
+            let starts: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM oxide_batch.ob_step_execution step \
+                 JOIN oxide_batch.ob_job_execution job ON job.id = step.job_execution_id \
+                 WHERE job.job_instance_id = $1 AND step.step_logical_id = $2",
+            )
+            .bind(instance_id)
+            .bind(node_id.as_str())
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            if u64::try_from(starts).map_err(|_| RepositoryError::FlowStateCorrupt)?
+                >= u64::from(start_limit.get())
+            {
+                return Err(RepositoryError::StartLimitExceeded {
+                    instance_id: JobInstanceId::new(
+                        u64::try_from(instance_id)
+                            .map_err(|_| RepositoryError::FlowStateCorrupt)?,
+                    )?,
+                    node_id: node_id.clone(),
+                    limit: start_limit,
+                });
+            }
+
+            let created_ms = system_time_millis(self.repository.clock.now())?;
+            let source_id: Option<i64> = sqlx::query_scalar(
+                "SELECT step.id FROM oxide_batch.ob_step_execution step \
+                 JOIN oxide_batch.ob_job_execution job ON job.id = step.job_execution_id \
+                 WHERE job.job_instance_id = $1 AND step.step_logical_id = $2 \
+                 ORDER BY job.attempt DESC, step.id DESC LIMIT 1",
+            )
+            .bind(instance_id)
+            .bind(node_id.as_str())
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+
+            let id: i64 = if let Some(source_id) = source_id {
+                sqlx::query_scalar(
+                    "INSERT INTO oxide_batch.ob_step_execution \
+                     (job_execution_id, step_name, step_logical_id, status, exit_code, \
+                      read_count, processed_count, write_count, filter_count, commit_count, \
+                      rollback_count, checkpoint_format, checkpoint_schema, \
+                      checkpoint_schema_version, checkpoint_payload, context_format, \
+                      context_schema, context_schema_version, context_payload, \
+                      read_retry_count, process_retry_count, write_retry_count, \
+                      read_skip_count, process_skip_count, write_skip_count, \
+                      no_rollback_count, fault_state_format, fault_state_schema, \
+                      fault_state_schema_version, fault_state_payload, fault_state_checksum, \
+                      created_at, updated_at, version) \
+                     SELECT $1, $2, $3, 'STARTING', 'UNKNOWN', source.read_count, \
+                      source.processed_count, source.write_count, source.filter_count, \
+                      source.commit_count, source.rollback_count, source.checkpoint_format, \
+                      source.checkpoint_schema, source.checkpoint_schema_version, \
+                      source.checkpoint_payload, source.context_format, source.context_schema, \
+                      source.context_schema_version, source.context_payload, \
+                      source.read_retry_count, source.process_retry_count, \
+                      source.write_retry_count, source.read_skip_count, \
+                      source.process_skip_count, source.write_skip_count, \
+                      source.no_rollback_count, source.fault_state_format, \
+                      source.fault_state_schema, source.fault_state_schema_version, \
+                      source.fault_state_payload, source.fault_state_checksum, \
+                      to_timestamp($4::double precision / 1000.0), \
+                      to_timestamp($4::double precision / 1000.0), 0 \
+                     FROM oxide_batch.ob_step_execution source WHERE source.id = $5 \
+                     RETURNING id",
+                )
+                .bind(job_id)
+                .bind(step_name.as_str())
+                .bind(node_id.as_str())
+                .bind(created_ms)
+                .bind(source_id)
+                .fetch_one(&mut **self.transaction()?)
+                .await
+                .map_err(|_| RepositoryError::ConcurrentModification)?
+            } else {
+                sqlx::query_scalar(
+                    "INSERT INTO oxide_batch.ob_step_execution \
+                     (job_execution_id, step_name, step_logical_id, status, exit_code, \
+                      checkpoint_format, checkpoint_schema, checkpoint_schema_version, \
+                      checkpoint_payload, context_format, context_schema, \
+                      context_schema_version, context_payload, created_at, updated_at, version) \
+                     VALUES ($1, $2, $3, 'STARTING', 'UNKNOWN', 1, $4, 1, $5, 1, $4, 1, $5, \
+                      to_timestamp($6::double precision / 1000.0), \
+                      to_timestamp($6::double precision / 1000.0), 0) RETURNING id",
+                )
+                .bind(job_id)
+                .bind(step_name.as_str())
+                .bind(node_id.as_str())
+                .bind(DEFAULT_CONTEXT_SCHEMA)
+                .bind(Json(json!({})))
+                .bind(created_ms)
+                .fetch_one(&mut **self.transaction()?)
+                .await
+                .map_err(|_| RepositoryError::ConcurrentModification)?
+            };
+            let id = StepExecutionId::new(
+                u64::try_from(id).map_err(|_| RepositoryError::FlowStateCorrupt)?,
+            )?;
+            self.step_execution(id)
+                .await?
+                .ok_or(RepositoryError::StepExecutionNotFound { id })
+        })
+    }
+
     fn transition_job_execution(
         &mut self,
         id: JobExecutionId,
@@ -1910,6 +2044,246 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
             rows.iter().map(decode_step_execution).collect()
+        })
+    }
+
+    fn latest_flow_step<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        node_id: &'a NodeId,
+    ) -> BoxFuture<'a, Result<Option<FlowStepState>, RepositoryError>> {
+        Box::pin(async move {
+            let instance_id = database_id(job_instance_id.get(), IdentifierKind::JobInstance)?;
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_job_instance WHERE id = $1)",
+            )
+            .bind(instance_id)
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            if !exists {
+                return Err(RepositoryError::JobInstanceNotFound {
+                    id: job_instance_id,
+                });
+            }
+            let row = sqlx::query(AssertSqlSafe(durable_step_select(
+                "JOIN oxide_batch.ob_job_execution flow_job \
+                 ON flow_job.id = execution.job_execution_id \
+                 WHERE flow_job.job_instance_id = $1 AND execution.step_logical_id = $2 \
+                 ORDER BY flow_job.attempt DESC, execution.id DESC LIMIT 1",
+            )))
+            .bind(instance_id)
+            .bind(node_id.as_str())
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            row.map(|row| {
+                let durable = decode_durable_step_state(&row)?;
+                Ok(FlowStepState::new(
+                    node_id.clone(),
+                    durable.step_execution,
+                    Some(durable.execution_context),
+                ))
+            })
+            .transpose()
+        })
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn append_flow_decision<'a>(
+        &'a mut self,
+        request: &'a FlowDecisionRequest,
+    ) -> BoxFuture<'a, Result<FlowDecision, RepositoryError>> {
+        Box::pin(async move {
+            let job_id = database_id(
+                request.job_execution_id().get(),
+                IdentifierKind::JobExecution,
+            )?;
+            let (fingerprint, Json(manifest)): (Vec<u8>, Json<Value>) = sqlx::query_as(
+                "SELECT definition.manifest_digest, definition.manifest \
+                 FROM oxide_batch.ob_job_execution execution \
+                 JOIN oxide_batch.ob_job_definition definition \
+                   ON definition.id = execution.definition_id WHERE execution.id = $1",
+            )
+            .bind(job_id)
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .ok_or(RepositoryError::JobExecutionNotFound {
+                id: request.job_execution_id(),
+            })?;
+            if fingerprint.as_slice() != request.plan_fingerprint() {
+                return Err(RepositoryError::FlowStateCorrupt);
+            }
+            if !crate::flow::decision_matches_manifest(&manifest, request) {
+                return Err(RepositoryError::FlowStateCorrupt);
+            }
+            if let Some(step_id) = request.source_step_execution_id() {
+                let valid: bool = sqlx::query_scalar(
+                    "SELECT EXISTS( \
+                       SELECT 1 FROM oxide_batch.ob_step_execution source \
+                       JOIN oxide_batch.ob_job_execution source_job \
+                         ON source_job.id = source.job_execution_id \
+                       JOIN oxide_batch.ob_job_execution target_job ON target_job.id = $1 \
+                       WHERE source.id = $2 \
+                         AND source_job.job_instance_id = target_job.job_instance_id \
+                         AND source.step_logical_id = $3)",
+                )
+                .bind(job_id)
+                .bind(database_id(step_id.get(), IdentifierKind::StepExecution)?)
+                .bind(request.source_node_id().as_str())
+                .fetch_one(&mut **self.transaction()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
+                if !valid {
+                    return Err(RepositoryError::FlowStateCorrupt);
+                }
+            } else if request.kind() != FlowTransitionKind::Decider {
+                return Err(RepositoryError::FlowStateCorrupt);
+            }
+            if let Some(reused_id) = request.reused_decision_id() {
+                let valid: bool = sqlx::query_scalar(
+                    "SELECT EXISTS( \
+                       SELECT 1 FROM oxide_batch.ob_flow_decision prior \
+                       JOIN oxide_batch.ob_job_execution prior_job \
+                         ON prior_job.id = prior.job_execution_id \
+                       JOIN oxide_batch.ob_job_execution target_job ON target_job.id = $1 \
+                       WHERE prior.id = $2 \
+                         AND prior_job.job_instance_id = target_job.job_instance_id \
+                         AND prior.source_node_id = $3 \
+                         AND prior.plan_fingerprint = $4 \
+                         AND prior.input_digest = $5 \
+                         AND prior.observed_outcome = $6 \
+                         AND prior.target_node_id IS NOT DISTINCT FROM $7 \
+                         AND prior.terminal_kind IS NOT DISTINCT FROM $8)",
+                )
+                .bind(job_id)
+                .bind(database_id(reused_id.get(), IdentifierKind::FlowDecision)?)
+                .bind(request.source_node_id().as_str())
+                .bind(request.plan_fingerprint().as_slice())
+                .bind(request.input_digest().as_slice())
+                .bind(request.observed_outcome().as_str())
+                .bind(flow_target_node(request.target()))
+                .bind(flow_terminal_code(request.target()))
+                .fetch_one(&mut **self.transaction()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
+                if !valid {
+                    return Err(RepositoryError::FlowStateCorrupt);
+                }
+            }
+            let decided_ms = system_time_millis(request.decided_at())?;
+            let id: i64 = sqlx::query_scalar(
+                "INSERT INTO oxide_batch.ob_flow_decision \
+                 (job_execution_id, source_step_execution_id, reused_decision_id, sequence, \
+                  source_node_id, observed_outcome, target_node_id, transition_kind, \
+                  terminal_kind, plan_fingerprint, input_digest, decided_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, \
+                  to_timestamp($12::double precision / 1000.0)) RETURNING id",
+            )
+            .bind(job_id)
+            .bind(
+                request
+                    .source_step_execution_id()
+                    .map(|id| database_id(id.get(), IdentifierKind::StepExecution))
+                    .transpose()?,
+            )
+            .bind(
+                request
+                    .reused_decision_id()
+                    .map(|id| database_id(id.get(), IdentifierKind::FlowDecision))
+                    .transpose()?,
+            )
+            .bind(database_id(
+                request.sequence().get(),
+                IdentifierKind::FlowDecision,
+            )?)
+            .bind(request.source_node_id().as_str())
+            .bind(request.observed_outcome().as_str())
+            .bind(flow_target_node(request.target()))
+            .bind(request.kind().durable_code())
+            .bind(flow_terminal_code(request.target()))
+            .bind(request.plan_fingerprint().as_slice())
+            .bind(request.input_digest().as_slice())
+            .bind(decided_ms)
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::ConcurrentModification)?;
+            Ok(FlowDecision::new(
+                FlowDecisionId::new(
+                    u64::try_from(id).map_err(|_| RepositoryError::FlowStateCorrupt)?,
+                )?,
+                request.job_execution_id(),
+                request.sequence(),
+                request.source_node_id().clone(),
+                request.source_step_execution_id(),
+                request.kind(),
+                request.observed_outcome().clone(),
+                request.target().clone(),
+                *request.plan_fingerprint(),
+                *request.input_digest(),
+                request.reused_decision_id(),
+                request.decided_at(),
+            ))
+        })
+    }
+
+    fn find_reusable_flow_decision<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        node_id: &'a NodeId,
+        plan_fingerprint: &'a [u8; 32],
+        input_digest: &'a [u8; 32],
+        kind: FlowTransitionKind,
+    ) -> BoxFuture<'a, Result<Option<FlowDecision>, RepositoryError>> {
+        Box::pin(async move {
+            let instance_id = database_id(job_instance_id.get(), IdentifierKind::JobInstance)?;
+            let row = sqlx::query(AssertSqlSafe(flow_decision_select(
+                "JOIN oxide_batch.ob_job_execution flow_job \
+                 ON flow_job.id = decision.job_execution_id \
+                 WHERE flow_job.job_instance_id = $1 AND decision.source_node_id = $2 \
+                   AND decision.plan_fingerprint = $3 AND decision.input_digest = $4 \
+                   AND decision.transition_kind = $5 \
+                 ORDER BY flow_job.attempt DESC, decision.sequence DESC LIMIT 1",
+            )))
+            .bind(instance_id)
+            .bind(node_id.as_str())
+            .bind(plan_fingerprint.as_slice())
+            .bind(input_digest.as_slice())
+            .bind(kind.durable_code())
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            row.map(|row| decode_flow_decision(&row)).transpose()
+        })
+    }
+
+    fn flow_decisions(
+        &mut self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Vec<FlowDecision>, RepositoryError>> {
+        Box::pin(async move {
+            let job_id = database_id(job_execution_id.get(), IdentifierKind::JobExecution)?;
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_job_execution WHERE id = $1)",
+            )
+            .bind(job_id)
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            if !exists {
+                return Err(RepositoryError::JobExecutionNotFound {
+                    id: job_execution_id,
+                });
+            }
+            let rows = sqlx::query(AssertSqlSafe(flow_decision_select(
+                "WHERE decision.job_execution_id = $1 ORDER BY decision.sequence",
+            )))
+            .bind(job_id)
+            .fetch_all(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            rows.iter().map(decode_flow_decision).collect()
         })
     }
 
@@ -2778,6 +3152,114 @@ fn durable_step_select(suffix: &str) -> String {
          (extract(epoch FROM execution.ended_at) * 1000)::bigint AS ended_ms, \
          execution.version FROM oxide_batch.ob_step_execution execution {suffix}"
     )
+}
+
+fn flow_decision_select(suffix: &str) -> String {
+    format!(
+        "SELECT decision.id, decision.job_execution_id, \
+         decision.source_step_execution_id, decision.reused_decision_id, \
+         decision.sequence, decision.source_node_id, decision.observed_outcome, \
+         decision.target_node_id, decision.transition_kind, decision.terminal_kind, \
+         decision.plan_fingerprint, decision.input_digest, \
+         (extract(epoch FROM decision.decided_at) * 1000)::bigint AS decided_ms \
+         FROM oxide_batch.ob_flow_decision decision {suffix}"
+    )
+}
+
+fn flow_target_node(target: &FlowTarget) -> Option<&str> {
+    match target {
+        FlowTarget::Node(node) => Some(node.as_str()),
+        FlowTarget::Terminal(_) => None,
+    }
+}
+
+fn flow_terminal_code(target: &FlowTarget) -> Option<&'static str> {
+    match target {
+        FlowTarget::Node(_) => None,
+        FlowTarget::Terminal(TerminalKind::Complete) => Some("COMPLETE"),
+        FlowTarget::Terminal(TerminalKind::Fail) => Some("FAIL"),
+        FlowTarget::Terminal(TerminalKind::Stop) => Some("STOP"),
+    }
+}
+
+fn decode_flow_decision(row: &PgRow) -> Result<FlowDecision, RepositoryError> {
+    let id = FlowDecisionId::new(read_u64(row, "id")?)?;
+    let job_execution_id = JobExecutionId::new(read_u64(row, "job_execution_id")?)?;
+    let sequence = FlowDecisionSequence::new(read_u64(row, "sequence")?)
+        .map_err(|_| RepositoryError::FlowStateCorrupt)?;
+    let source_node_id = NodeId::new(
+        row.try_get::<String, _>("source_node_id")
+            .map_err(|_| RepositoryError::FlowStateCorrupt)?,
+    )
+    .map_err(|_| RepositoryError::FlowStateCorrupt)?;
+    let source_step_execution_id = row
+        .try_get::<Option<i64>, _>("source_step_execution_id")
+        .map_err(|_| RepositoryError::FlowStateCorrupt)?
+        .map(|value| {
+            StepExecutionId::new(
+                u64::try_from(value).map_err(|_| RepositoryError::FlowStateCorrupt)?,
+            )
+            .map_err(RepositoryError::from)
+        })
+        .transpose()?;
+    let reused_decision_id = row
+        .try_get::<Option<i64>, _>("reused_decision_id")
+        .map_err(|_| RepositoryError::FlowStateCorrupt)?
+        .map(|value| {
+            FlowDecisionId::new(
+                u64::try_from(value).map_err(|_| RepositoryError::FlowStateCorrupt)?,
+            )
+            .map_err(RepositoryError::from)
+        })
+        .transpose()?;
+    let kind = FlowTransitionKind::from_durable_code(
+        &row.try_get::<String, _>("transition_kind")
+            .map_err(|_| RepositoryError::FlowStateCorrupt)?,
+    )
+    .ok_or(RepositoryError::FlowStateCorrupt)?;
+    let observed_outcome = ExitCode::new(
+        row.try_get::<String, _>("observed_outcome")
+            .map_err(|_| RepositoryError::FlowStateCorrupt)?,
+    )?;
+    let target_node = row
+        .try_get::<Option<String>, _>("target_node_id")
+        .map_err(|_| RepositoryError::FlowStateCorrupt)?;
+    let terminal = row
+        .try_get::<Option<String>, _>("terminal_kind")
+        .map_err(|_| RepositoryError::FlowStateCorrupt)?;
+    let target = match (target_node, terminal.as_deref()) {
+        (Some(node), None) => {
+            FlowTarget::Node(NodeId::new(node).map_err(|_| RepositoryError::FlowStateCorrupt)?)
+        }
+        (None, Some("COMPLETE")) => FlowTarget::Terminal(TerminalKind::Complete),
+        (None, Some("FAIL")) => FlowTarget::Terminal(TerminalKind::Fail),
+        (None, Some("STOP")) => FlowTarget::Terminal(TerminalKind::Stop),
+        _ => return Err(RepositoryError::FlowStateCorrupt),
+    };
+    let fingerprint: [u8; 32] = row
+        .try_get::<Vec<u8>, _>("plan_fingerprint")
+        .map_err(|_| RepositoryError::FlowStateCorrupt)?
+        .try_into()
+        .map_err(|_| RepositoryError::FlowStateCorrupt)?;
+    let input_digest: [u8; 32] = row
+        .try_get::<Vec<u8>, _>("input_digest")
+        .map_err(|_| RepositoryError::FlowStateCorrupt)?
+        .try_into()
+        .map_err(|_| RepositoryError::FlowStateCorrupt)?;
+    Ok(FlowDecision::new(
+        id,
+        job_execution_id,
+        sequence,
+        source_node_id,
+        source_step_execution_id,
+        kind,
+        observed_outcome,
+        target,
+        fingerprint,
+        input_digest,
+        reused_decision_id,
+        millis_system_time(read_i64(row, "decided_ms")?)?,
+    ))
 }
 
 fn decode_durable_step_state(row: &PgRow) -> Result<PostgresDurableStepState, RepositoryError> {

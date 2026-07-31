@@ -175,5 +175,6 @@ against their own snapshot before scheduling the maintenance window.
   durable, so `rollback_count` is a lower bound for steps that failed without
   reserving a retry. Step-lifecycle counter plumbing is owned by the M3 exit
   workstream.
-- `ob_flow_decision` is created and constrained by this migration but is not yet
-  written by any runtime path. Issue #64 owns its append and restart queries.
+- The M3 flow runtime now writes and reads `ob_flow_decision`. Process-kill
+  certification and released-version verification remain owned by the M3 exit
+  evidence rather than by this migration guide.
