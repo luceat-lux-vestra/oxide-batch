@@ -62,6 +62,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   cancellable sleeper, order-independent phase/category classification over
   extended stable failure categories, capability-scoped rollback dispositions,
   and ordered item/retry/skip listener families with panic-safe aggregation.
+- Deterministic fault-tolerant chunk execution: a retryable fault rolls the
+  attempt back, reserves its ordinal through a bounded `FaultStateStore`, runs
+  the retry scope, waits the injected cancellable backoff, and replays the chunk
+  from its buffered inputs without re-reading committed input. Read, process,
+  and write skips are classified from framework evidence, counted per phase, and
+  become authoritative only in the commit that accepts them; a commit-safe skip
+  requires the declared delivery mode and an enlisted transaction. Item, retry,
+  and skip callbacks run at their contracted boundaries, and the chunk report
+  exposes per-phase retry and skip counts, rollback and no-rollback counts, and
+  redacted listener failures.
+- Post-decision `retry.reserved`, `retry.backoff_started`,
+  `retry.backoff_cancelled`, `retry.exhausted`, `item.skipped`,
+  `fault.rollback_committed`, and `fault.no_rollback_committed` lifecycle events
+  carrying only fault phase, retry ordinal, backoff duration, stable category,
+  and the existing opaque correlation.
 - M0 implementation-readiness plan, M0–M5 roadmap, decision records, and
   product, compatibility, architecture, engineering, security, operations, and
   release policy set.
@@ -72,6 +87,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   CodeQL workflow scanning, and owned scheduled supply-chain failure reporting.
 - Protected-tag draft Release preparation with locked package verification,
   CycloneDX SBOM, SHA-256 checksums, and package provenance/SBOM attestations.
+
+### Changed
+
+- `ChunkStep::execute` takes the `ExecutionCorrelation` for the run, because
+  item, retry, and skip callbacks receive it. The repository-backed
+  `JobLauncher::launch_chunk` path is unchanged.
+- `ReaderError`, `ProcessorError`, `WriterError`, and `ChunkCompletionError`
+  declare a stable `FailureCategory` at the adapter boundary and still drop the
+  payload, display text, and source chain. `ReaderError` can prove forward
+  checkpoint progress and `WriterError` can locate one known-rolled-back output,
+  which the read and write skip contracts require.
 
 ### Fixed
 

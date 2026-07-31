@@ -73,6 +73,17 @@
 //! order and aggregate every failure. A panic is classified exactly like a
 //! returned [`ListenerError`], and no callback receives an error payload.
 //!
+//! [`ChunkStep::with_fault_runtime`] installs a [`FaultRuntime`] and makes that
+//! policy executable. A retryable fault rolls the chunk attempt back, reserves
+//! its ordinal through a bounded [`FaultStateStore`], runs the retry scope,
+//! waits the injected backoff, and replays the chunk from inputs it already
+//! read, so a stateful reader never rewinds. An accepted skip is provisional
+//! until the commit that records it, and a commit-safe skip additionally
+//! requires [`ChunkDeliveryMode::AtomicSameResource`] and an enlisted
+//! transaction. [`ChunkExecutionReport`] returns per-phase
+//! [`RetryCounts`] and [`SkipCounts`], rollback and no-rollback counts, and
+//! redacted [`ItemListenerFailure`] values.
+//!
 //! [`Checkpoint`] and [`ExecutionContext`] retain bounded versioned JSON through
 //! application-owned [`VersionedStateCodec`] implementations. Codec signatures
 //! exchange JSON object bytes, keeping serializer types out of the public
@@ -95,6 +106,7 @@ mod definition;
 mod diagnostics;
 mod domain;
 mod fault;
+mod fault_state;
 mod item_listener;
 mod listener;
 mod repository;
@@ -137,6 +149,10 @@ pub use fault::{
     FaultDecision, FaultDescriptor, FaultEvidence, FaultPhase, FaultPolicy, FaultPolicyError,
     FaultRule, RetryLimit, RetryOrdinal, RetryStateLimit, RollbackDisposition, SkipCounts,
     SkipLimit,
+};
+pub use fault_state::{
+    FaultRuntime, FaultStateError, FaultStateStore, InMemoryFaultState, RetryCounts, RetryKey,
+    RetryReservation,
 };
 pub use item_listener::{
     BeforeCallbackOutcome, ItemListenerContext, ItemListenerError, ItemListenerFailure,

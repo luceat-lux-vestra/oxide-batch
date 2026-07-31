@@ -2,10 +2,11 @@
 
 use std::fmt;
 use std::num::NonZeroU64;
+use std::time::Duration;
 
 use crate::{
-    BatchStatus, ChunkCount, FailureSummary, JobExecutionId, JobInstanceId, JobName,
-    StepExecutionId, StepName,
+    BatchStatus, ChunkCount, FailureSummary, FaultPhase, JobExecutionId, JobInstanceId, JobName,
+    RetryOrdinal, StepExecutionId, StepName,
 };
 
 /// A nonzero, instance-scoped execution-attempt ordinal.
@@ -155,6 +156,12 @@ pub enum EventComponent {
     Chunk,
     /// A job or step listener boundary.
     Listener,
+    /// A bounded retry scope.
+    Retry,
+    /// One item classified by a fault policy.
+    Item,
+    /// A rollback or no-rollback classification.
+    Fault,
 }
 
 impl EventComponent {
@@ -167,6 +174,9 @@ impl EventComponent {
             Self::Step => "step",
             Self::Chunk => "chunk",
             Self::Listener => "listener",
+            Self::Retry => "retry",
+            Self::Item => "item",
+            Self::Fault => "fault",
         }
     }
 }
@@ -227,6 +237,20 @@ pub enum LifecycleEventKind {
     StepBeforeListenerFailed,
     /// A step after-listener returned an error or panicked.
     StepAfterListenerFailed,
+    /// A retry ordinal became durably reserved.
+    RetryReserved,
+    /// A cancellable backoff wait started.
+    RetryBackoffStarted,
+    /// Cooperative stop cancelled a backoff wait.
+    RetryBackoffCancelled,
+    /// A retry budget is durably spent for one key.
+    RetryExhausted,
+    /// A skip became authoritative in the accepting chunk commit.
+    ItemSkipped,
+    /// A known rollback was classified by the fault policy.
+    FaultRollbackCommitted,
+    /// A commit-safe skip committed without rolling back.
+    FaultNoRollbackCommitted,
 }
 
 impl LifecycleEventKind {
@@ -257,6 +281,13 @@ impl LifecycleEventKind {
             Self::JobAfterListenerFailed => "job.after_listener.failed",
             Self::StepBeforeListenerFailed => "step.before_listener.failed",
             Self::StepAfterListenerFailed => "step.after_listener.failed",
+            Self::RetryReserved => "retry.reserved",
+            Self::RetryBackoffStarted => "retry.backoff_started",
+            Self::RetryBackoffCancelled => "retry.backoff_cancelled",
+            Self::RetryExhausted => "retry.exhausted",
+            Self::ItemSkipped => "item.skipped",
+            Self::FaultRollbackCommitted => "fault.rollback_committed",
+            Self::FaultNoRollbackCommitted => "fault.no_rollback_committed",
         }
     }
 
@@ -287,6 +318,12 @@ impl LifecycleEventKind {
             | Self::JobAfterListenerFailed
             | Self::StepBeforeListenerFailed
             | Self::StepAfterListenerFailed => EventComponent::Listener,
+            Self::RetryReserved
+            | Self::RetryBackoffStarted
+            | Self::RetryBackoffCancelled
+            | Self::RetryExhausted => EventComponent::Retry,
+            Self::ItemSkipped => EventComponent::Item,
+            Self::FaultRollbackCommitted | Self::FaultNoRollbackCommitted => EventComponent::Fault,
         }
     }
 
@@ -309,7 +346,14 @@ impl LifecycleEventKind {
             | Self::JobBeforeListenerFailed
             | Self::JobAfterListenerFailed
             | Self::StepBeforeListenerFailed
-            | Self::StepAfterListenerFailed => None,
+            | Self::StepAfterListenerFailed
+            | Self::RetryReserved
+            | Self::RetryBackoffStarted
+            | Self::RetryBackoffCancelled
+            | Self::RetryExhausted
+            | Self::ItemSkipped
+            | Self::FaultRollbackCommitted
+            | Self::FaultNoRollbackCommitted => None,
         }
     }
 
@@ -325,13 +369,20 @@ impl LifecycleEventKind {
             | Self::JobBeforeListenerFailed
             | Self::JobAfterListenerFailed
             | Self::StepBeforeListenerFailed
-            | Self::StepAfterListenerFailed => EventSeverity::Error,
+            | Self::StepAfterListenerFailed
+            | Self::RetryExhausted => EventSeverity::Error,
             Self::JobStopping
             | Self::StepStopping
             | Self::JobStopped
             | Self::StepStopped
-            | Self::ChunkRolledBack => EventSeverity::Warn,
+            | Self::ChunkRolledBack
+            | Self::RetryReserved
+            | Self::RetryBackoffCancelled
+            | Self::ItemSkipped
+            | Self::FaultRollbackCommitted
+            | Self::FaultNoRollbackCommitted => EventSeverity::Warn,
             Self::LaunchAccepted
+            | Self::RetryBackoffStarted
             | Self::JobStarting
             | Self::StepStarting
             | Self::JobStarted
@@ -357,6 +408,9 @@ pub struct LifecycleEvent {
     correlation: ExecutionCorrelation,
     failure: Option<FailureSummary>,
     chunk_sequence: Option<ChunkCount>,
+    fault_phase: Option<FaultPhase>,
+    retry_ordinal: Option<RetryOrdinal>,
+    backoff: Option<Duration>,
 }
 
 impl LifecycleEvent {
@@ -366,6 +420,9 @@ impl LifecycleEvent {
             correlation,
             failure: None,
             chunk_sequence: None,
+            fault_phase: None,
+            retry_ordinal: None,
+            backoff: None,
         }
     }
 
@@ -379,6 +436,9 @@ impl LifecycleEvent {
             correlation,
             failure: Some(failure),
             chunk_sequence: None,
+            fault_phase: None,
+            retry_ordinal: None,
+            backoff: None,
         }
     }
 
@@ -392,7 +452,60 @@ impl LifecycleEvent {
             correlation,
             failure: None,
             chunk_sequence: Some(sequence),
+            fault_phase: None,
+            retry_ordinal: None,
+            backoff: None,
         }
+    }
+
+    pub(crate) const fn fault(
+        kind: LifecycleEventKind,
+        correlation: ExecutionCorrelation,
+        sequence: ChunkCount,
+        phase: FaultPhase,
+    ) -> Self {
+        Self {
+            kind,
+            correlation,
+            failure: None,
+            chunk_sequence: Some(sequence),
+            fault_phase: Some(phase),
+            retry_ordinal: None,
+            backoff: None,
+        }
+    }
+
+    pub(crate) const fn with_failure(mut self, failure: FailureSummary) -> Self {
+        self.failure = Some(failure);
+        self
+    }
+
+    pub(crate) const fn with_retry_ordinal(mut self, ordinal: RetryOrdinal) -> Self {
+        self.retry_ordinal = Some(ordinal);
+        self
+    }
+
+    pub(crate) const fn with_backoff(mut self, backoff: Duration) -> Self {
+        self.backoff = Some(backoff);
+        self
+    }
+
+    /// Returns the fault phase for a retry, skip, or rollback event.
+    #[must_use]
+    pub const fn fault_phase(&self) -> Option<FaultPhase> {
+        self.fault_phase
+    }
+
+    /// Returns the reserved retry ordinal for a retry event.
+    #[must_use]
+    pub const fn retry_ordinal(&self) -> Option<RetryOrdinal> {
+        self.retry_ordinal
+    }
+
+    /// Returns the deterministic backoff duration for a backoff event.
+    #[must_use]
+    pub const fn backoff(&self) -> Option<Duration> {
+        self.backoff
     }
 
     /// Returns the stable event kind.
@@ -452,6 +565,23 @@ impl LifecycleEvent {
                 sequence.get().to_string(),
             ));
         }
+        if let Some(phase) = self.fault_phase {
+            fields.push(DiagnosticField::new("fault.phase", phase.as_str()));
+        }
+        if let Some(ordinal) = self.retry_ordinal {
+            fields.push(DiagnosticField::new(
+                "retry.ordinal",
+                ordinal.get().to_string(),
+            ));
+        }
+        if let Some(backoff) = self.backoff {
+            fields.push(DiagnosticField::new(
+                "retry.backoff_ms",
+                u64::try_from(backoff.as_millis())
+                    .unwrap_or(u64::MAX)
+                    .to_string(),
+            ));
+        }
         if let Some(failure) = self.failure {
             fields.push(DiagnosticField::new(
                 "failure.category",
@@ -478,6 +608,9 @@ impl LifecycleEvent {
         if let Some(status) = self.kind.status() {
             labels.push(MetricLabel::new("status", status.to_string()));
         }
+        if let Some(phase) = self.fault_phase {
+            labels.push(MetricLabel::new("fault_phase", phase.as_str()));
+        }
         labels
     }
 }
@@ -503,6 +636,15 @@ impl fmt::Display for LifecycleEvent {
         }
         if let Some(sequence) = self.chunk_sequence {
             write!(formatter, " chunk_sequence={}", sequence.get())?;
+        }
+        if let Some(phase) = self.fault_phase {
+            write!(formatter, " fault_phase={phase}")?;
+        }
+        if let Some(ordinal) = self.retry_ordinal {
+            write!(formatter, " retry_ordinal={}", ordinal.get())?;
+        }
+        if let Some(backoff) = self.backoff {
+            write!(formatter, " backoff_ms={}", backoff.as_millis())?;
         }
         if let Some(failure) = self.failure {
             write!(
