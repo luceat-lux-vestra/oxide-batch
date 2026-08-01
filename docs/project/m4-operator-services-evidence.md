@@ -24,7 +24,7 @@ becomes released `Verified` because of this workstream.
 | Duplicate idempotency keys cannot duplicate an effect | `ob_operator_request` is unique on `(action, operation_id)` and commits with its effect. `replayed_operation_id_returns_the_recorded_outcome` proves a replay returns the recorded row and creates no second execution; `operation_id_reuse_with_a_different_digest_is_rejected` proves a reused key with a different canonical request is `OperationIdConflict`. |
 | Guards preserve lifecycle, definition, audit, and unknown-outcome rules | `abandon_requires_a_stopped_failed_or_recovered_execution`, `repeat_abandon_changes_nothing`, `abandoned_execution_rejects_restart`, `stop_on_a_stopping_or_terminal_execution_changes_nothing`, `stale_expected_version_loses_the_compare_and_swap`, `operator_request_and_effect_commit_together`, and `rejected_action_is_audited_without_an_effect` run on both backends. `ambiguous_operator_commit_reports_unknown_outcome` proves an ambiguous commit returns `OperationOutcomeUnknown` and records no completed request. |
 | Guarded, audited retention | `held_instance_is_never_purged`, `running_stopping_or_unknown_execution_is_never_purged`, `stale_plan_digest_rejects_apply_without_deleting`, `purge_deletes_in_instance_owned_order_within_batch_bounds`, and `interrupted_purge_leaves_completed_batches_durable` run on both backends. |
-| Separated PostgreSQL privileges | `tests/fixtures/postgres/design-gate/roles-after-migration.sql` removes every metadata `DELETE` from the runtime role and grants the operator writer only the inserts, column updates, and deletes one bounded purge batch requires. The operator reader keeps `SELECT` only. |
+| Separated PostgreSQL privileges | Not satisfied by this workstream. The [schema-3 migration guide](../operations/migrations/0003-operations-and-local-scale.md) specifies the runtime, operator-reader, and operator-writer grants, and the [setup guide](../operations/postgres-setup.md) records them for deployments. The design-gate fixture still runs every PostgreSQL suite as the runtime role, which cleans up its own rows with `DELETE`, so narrowing that role requires the schema-3 release fixture the M4 exit workstream owns. |
 | Compatibility adapters preserve facade behavior | The M1 through M3 repository, chunk, fault, flow, and PostgreSQL suites pass unchanged. `RecoveryDecision` gains an opaque identity, and the canonical instance-key digest moves to `JobInstanceKey::digest` with byte-identical version-1 encoding, which its released golden vector still asserts. |
 | Public APIs expose no implementation types | The services use facade types, `BoxFuture`, and the standard library. `ExplorerRepository` is the only new adapter port, and no SQLx, Tokio, credential, SQL, parameter, context, or deployment-authorization type appears in a signature, projection, or audit record. |
 
@@ -48,7 +48,9 @@ and `projection_excludes_parameter_and_context_values`.
 `stale_plan_digest_rejects_apply_without_deleting`,
 `purge_deletes_in_instance_owned_order_within_batch_bounds`, and
 `interrupted_purge_leaves_completed_batches_durable`. `runtime_role_cannot_purge`
-remains a fixture-level privilege assertion rather than a Rust test.
+is not satisfied: the shared contract exercises purge semantics through the
+configured test identity, and proving that the runtime role cannot purge needs
+the schema-3 release fixture rather than a Rust test.
 
 `LIFE-ABANDON-001` gains
 `abandon_requires_a_stopped_failed_or_recovered_execution`,
@@ -62,7 +64,9 @@ issue #78.
 
 `META-UPGRADE-001` scenarios remain owned by the M4 exit workstream, because
 this workstream adds the schema-3 migration but does not run the PostgreSQL
-matrix upgrade and restore evidence.
+matrix upgrade and restore evidence, and does not narrow the schema-3 role
+grants. The design-gate fixture now expects schema version 3 and rejects
+version 4, which is the only fixture change this workstream makes.
 
 ## Documentation corrections
 

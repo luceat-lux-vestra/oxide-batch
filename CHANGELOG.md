@@ -100,9 +100,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   in instance-owned order inside one transaction per batch, audited per-table
   counts, and safe re-planning after an interrupted run.
 - PostgreSQL schema version 3 with immutable migration
-  `0003_operations_and_local_scale.sql`, its bounded explorer, operator, and
-  retention adapters, and narrowed least-privilege grants that remove metadata
-  `DELETE` from the runtime role.
+  `0003_operations_and_local_scale.sql` and its bounded explorer, operator, and
+  retention adapters. The schema-3 least-privilege grants required by purge are
+  specified by the migration guide and remain unimplemented fixture work.
 - A shared in-memory and PostgreSQL service contract suite covering the named
   `REPO-EXPLORE-001`, `REPO-OPERATOR-001`, `REPO-RETENTION-001`, and M4
   `LIFE-ABANDON-001` scenarios, plus `JobInstanceKey::digest`, opaque

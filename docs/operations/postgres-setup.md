@@ -28,7 +28,10 @@ Deployment tooling creates login credentials, grants database `CONNECT`, and
 rotates secrets. OxideBatch migrations do not create production passwords.
 The executable reference grants are
 `tests/fixtures/postgres/design-gate/roles.sql` and
-`roles-after-migration.sql`.
+`roles-after-migration.sql`. They cover schema 2; the schema-3 grants a purge
+requires are specified by
+[the schema-3 migration guide](migrations/0003-operations-and-local-scale.md)
+and are not yet executable, so a deployment applies them itself.
 
 ## TLS
 

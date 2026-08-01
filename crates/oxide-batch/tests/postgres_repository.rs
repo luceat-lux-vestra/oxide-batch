@@ -61,18 +61,8 @@ fn plaintext_config(url: String) -> Result<PostgresConfig, PostgresConfigError> 
     Ok(PostgresConfig::new(url)?.with_tls_mode(TlsMode::Plaintext))
 }
 
-// Metadata cleanup runs with the administrative identity when one is
-// configured, because the runtime role holds no metadata `DELETE` privilege
-// once least-privilege grants are applied.
-fn cleanup_url(url: &str) -> String {
-    admin_url().unwrap_or_else(|| url.to_owned())
-}
-
 async fn remove_contract_rows(url: &str) -> Result<(), sqlx::Error> {
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&cleanup_url(url))
-        .await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
     for statement in [
         "DELETE FROM oxide_batch.ob_recovery_decision WHERE job_execution_id IN (\
          SELECT execution.id FROM oxide_batch.ob_job_execution execution \
@@ -236,10 +226,7 @@ fn shared_repository_contract_passes_on_postgres() -> Result<(), Box<dyn Error>>
 }
 
 async fn remove_service_rows(url: &str) -> Result<(), sqlx::Error> {
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&cleanup_url(url))
-        .await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
     for job_name in ["service_contract_job", "service_contract_other_job"] {
         for statement in [
             "DELETE FROM oxide_batch.ob_operator_request WHERE job_instance_id IN (\
