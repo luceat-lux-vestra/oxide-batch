@@ -27,18 +27,21 @@ decisions own the normative detail.
 3. [Item-processing model](architecture/item-processing-model.md)
 4. [M3 fault-tolerance contract](architecture/fault-tolerance.md)
 5. [M3 basic-flow contract](architecture/basic-flow.md)
-6. [Performance and capacity plan](engineering/performance-plan.md)
-7. [Async execution ADR](architecture/decisions/0002-execution-model.md)
-8. relevant roadmap and conformance rows
+6. [M4 shutdown and recovery contract](architecture/shutdown-and-recovery.md)
+7. [M4 local-scale contract](architecture/local-scale.md)
+8. [Performance and capacity plan](engineering/performance-plan.md)
+9. [Async execution ADR](architecture/decisions/0002-execution-model.md)
+10. relevant roadmap and conformance rows
 
 ### Repository and integration implementers
 
 1. [Repository and transaction model](architecture/repository-and-transaction-model.md)
-2. [Integration model](architecture/integration-model.md)
-3. [Persistence and migrations](operations/persistence-and-migrations.md)
-4. [PostgreSQL physical metadata model](architecture/postgres-physical-metadata-model.md)
-5. [Repository ADR](architecture/decisions/0003-postgres-metadata.md)
-6. adapter ledger rows and certification evidence
+2. [M4 operator, explorer, and retention contract](architecture/operator-and-explorer-services.md)
+3. [Integration model](architecture/integration-model.md)
+4. [Persistence and migrations](operations/persistence-and-migrations.md)
+5. [PostgreSQL physical metadata model](architecture/postgres-physical-metadata-model.md)
+6. [Repository ADR](architecture/decisions/0003-postgres-metadata.md)
+7. adapter ledger rows and certification evidence
 
 ### Distributed execution contributors
 
@@ -80,6 +83,7 @@ decisions own the normative detail.
 - [M3 durable flow runtime evidence](project/m3-flow-runtime-evidence.md)
 - [M3 fault tolerance and flow exit evidence](project/m3-exit-evidence.md)
 - [M4 operations and local scale kickoff gate](project/m4-kickoff-gate.md)
+- [M4 operations and local-scale design-gate evidence](project/m4-design-gate-evidence.md)
 - [Historical M0 decision register](product/open-decisions.md)
 
 Historical gates are preserved as records of their date. Later decisions link
@@ -110,7 +114,10 @@ to them and record supersession; they do not rewrite history.
 - [Item-processing model](architecture/item-processing-model.md)
 - [M3 fault-tolerance and listener contract](architecture/fault-tolerance.md)
 - [M3 basic flow and start-control contract](architecture/basic-flow.md)
+- [M4 shutdown and stale-recovery contract](architecture/shutdown-and-recovery.md)
+- [M4 bounded local-scale contract](architecture/local-scale.md)
 - [Repository and transaction model](architecture/repository-and-transaction-model.md)
+- [M4 operator, explorer, and retention contract](architecture/operator-and-explorer-services.md)
 - [Integration model](architecture/integration-model.md)
 - [Distributed execution](architecture/distributed-execution.md)
 - [Technical baseline](architecture/technical-baseline.md)
@@ -142,8 +149,10 @@ to them and record supersession; they do not rewrite history.
 - [Metadata migration-guide template](operations/migration-guide-template.md)
 - [Schema-v1 initial metadata migration](operations/migrations/0001-initial-metadata.md)
 - [Schema-v2 fault-tolerance and flow migration](operations/migrations/0002-fault-tolerance-and-flow.md)
+- [Schema-v3 operations and local-scale migration](operations/migrations/0003-operations-and-local-scale.md)
 - [Observability contract](operations/observability-contract.md)
 - [Control-plane boundary](operations/control-plane-boundary.md)
+- [M4 operator CLI and configuration contract](operations/operator-cli.md)
 
 ## Release, documentation, and governance
 

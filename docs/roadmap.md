@@ -139,9 +139,12 @@ in the [M3 exit evidence](project/m3-exit-evidence.md).
 
 The decision gates, dependency-ordered workstreams, architecture constraints,
 and definition of done are recorded in the
-[M4 kickoff gate](project/m4-kickoff-gate.md). Implementation cannot cross its
-operator/explorer, CLI, shutdown/recovery, telemetry, retention, local-scale,
-schema, manifest, security, or evidence gates before those contracts close.
+[M4 kickoff gate](project/m4-kickoff-gate.md). The operator/explorer, CLI,
+shutdown/recovery, telemetry, retention, local-scale, schema, manifest,
+security, and evidence gates are closed by the
+[M4 design-gate record](project/m4-design-gate-evidence.md), which authorizes
+the dependency-ordered implementation workstreams without claiming any
+implemented capability.
 
 **Objective:** provide guarded local operation, observability, and bounded
 single-host parallelism.

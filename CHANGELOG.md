@@ -57,6 +57,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   shutdown/recovery, telemetry, retention, configuration, bounded local-scale,
   migration, security, resource, and evidence boundaries plus
   dependency-ordered delivery workstreams.
+- Accepted M4 contracts for the bounded keyset-paginated `JobExplorer`, the
+  idempotent guarded `JobOperator` with separately authorizable read,
+  lifecycle, and destructive classes, and the initial hold plus two-phase
+  purge retention slice.
+- Accepted M4 contracts for the minimal `oxide-batch` operator CLI, per-value
+  configuration precedence, versioned JSON output, stable exit categories,
+  confirmation and non-interactive safeguards, and secret handling.
+- Accepted M4 contracts for graceful shutdown ordering, in-flight chunk
+  policy, deadlines and drain reporting, owner-token and server-time stale
+  evidence, evidence-bound recovery, and the process-signal/kill matrix.
+- Accepted M4 contracts for the bounded split and local partition subset,
+  single-invocation partitioning, durable partition state, deterministic
+  aggregation, finite resource budgets, manifest format 3, and
+  sequential-fallback equivalence.
+- Versioned M4 telemetry: schema version 1, the operations, shutdown,
+  recovery, retention, and local-scale event catalog, an enforced label
+  cardinality budget, bounded exporter queues with counted drops, and the
+  bounded redacted diagnostic bundle.
+- The accepted unreleased schema-3 design adding execution ownership and stop
+  evidence, one instance hold, `ob_operator_request`, `ob_retention_action`,
+  and `ob_step_partition`, with a backfill-free transactional upgrade and a
+  restore-only rollback boundary.
 - Accepted M3 contracts for typed bounded retry/skip/rollback, deterministic
   backoff, item/retry/skip listeners, acyclic conditional flow, durable
   deciders, start controls, manifest format 2, and the schema-2

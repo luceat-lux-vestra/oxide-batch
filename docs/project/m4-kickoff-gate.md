@@ -70,6 +70,12 @@ closes these gates in canonical documents and executable fixtures. Any change
 to an accepted contract still requires a superseding RFC or ADR before
 dependent implementation.
 
+Every gate in the table above is now closed by the
+[M4 design-gate evidence](m4-design-gate-evidence.md), which links the
+canonical document that owns each decision and names the implementation
+scenarios each dependent issue must satisfy. Closing these gates authorizes
+the delivery order below; it claims no implemented capability.
+
 ## Governing architecture constraints
 
 [RFC-0009](../rfcs/0009-transport-neutral-worker-protocol.md) remains

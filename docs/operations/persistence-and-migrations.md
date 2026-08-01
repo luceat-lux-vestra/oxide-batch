@@ -163,6 +163,14 @@ It requires a quiesced transactional schema-1-to-2 upgrade, supports no mixed
 schema-1/schema-2 writers, leaves format-1 manifests byte-identical, and uses
 verified backup restore rather than destructive reverse SQL.
 
+The accepted, unreleased schema-3 design is documented in
+[operations and local-scale migration](migrations/0003-operations-and-local-scale.md).
+It adds ownership and stop evidence, one instance hold, operator and retention
+audit, and durable local partitions. It requires a quiesced transactional
+schema-2-to-3 upgrade, performs no backfill, supports no mixed
+schema-2/schema-3 writers, leaves formats 1 and 2 byte-identical, and uses
+verified backup restore rather than destructive reverse SQL.
+
 ### Schema-version lifecycle and rolling operation
 
 Each adapter documents:
@@ -288,6 +296,17 @@ migration lineage required to interpret retained executions, and a
 verification summary. Export is not a successful archive until checksums,
 record counts, and restore/read evidence pass.
 
+The M4 slice implements only holds and a guarded two-phase purge of terminal
+history on the PostgreSQL reference adapter, as specified by the
+[operator, explorer, and retention contract](../architecture/operator-and-explorer-services.md).
+A purge plan returns bounded candidates and a plan digest; application
+re-validates eligibility and observed versions and rejects a stale plan
+without deleting anything. Purge requires the operator-writer role and its
+narrowly granted deletes; the runtime role cannot purge and the operator-reader
+role can plan but not apply. Archive packages, export/import, checksum
+verification of exported data, retention policy storage, scheduled purge, and
+cross-adapter portability remain M8 scope.
+
 ## Metadata export and import
 
 The accepted neutral package contains a versioned manifest, source framework
@@ -318,3 +337,8 @@ Stale detection provides evidence; it does not automatically rewrite status.
 Recovery records operator, time, prior state, reason, and resulting state.
 Ambiguous external side effects require application-specific confirmation
 before an execution is made restartable.
+
+The M4 evidence, clock, digest, and permitted-result rules are owned by the
+[M4 shutdown and recovery contract](../architecture/shutdown-and-recovery.md).
+Ownership tokens recorded from schema 3 are evidence only; they are not leases
+and never authorize takeover.

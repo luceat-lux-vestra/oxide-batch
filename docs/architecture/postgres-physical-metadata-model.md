@@ -1,13 +1,121 @@
 # PostgreSQL Physical Metadata Model
 
-**State:** Implemented for M2 and the M3 fault-tolerance/flow slices
+**State:** Implemented for M2 and the M3 fault-tolerance/flow slices; schema 3
+is accepted design and unreleased
 
-**Schema version:** released `2`
+**Schema version:** released `2`; accepted unreleased `3`
 
 This model defines the first durable repository. The immutable released DDL is
 `crates/oxide-batch/migrations/0001_initial_metadata.sql`. The executable draft
 under `tests/fixtures/postgres/design-gate/` remains pre-release design evidence
 and is not a supported migration source.
+
+## Schema 3
+
+Schema 3 is the accepted, unreleased M4 slice. Its version-specific operational
+contract is the
+[operations and local-scale migration](../operations/migrations/0003-operations-and-local-scale.md).
+It adds ownership and stop evidence, one instance hold, operator and retention
+audit, and durable local partitions. It adds no lease, fencing token, or
+heartbeat.
+
+### Execution and instance additions
+
+`ob_job_execution` gains:
+
+- nullable 16-byte `owner_token` written when a process takes ownership of a
+  non-terminal execution;
+- nullable `stop_requested_at` facade-clock instant and bounded
+  `stop_requested_by` actor reference of at most 128 bytes.
+
+The failure-category constraint retains every schema-2 value and adds
+`SHUTDOWN_INCOMPLETE` and `STALE_RECOVERED`.
+
+`ob_job_instance` gains one optional hold: `hold_actor`, `hold_reason`, and
+`hold_placed_at`. One check constraint requires all three to be null or all
+three to be non-null.
+
+### `ob_operator_request`
+
+The append-only idempotency and audit record for every mutating operator
+action, including rejected ones.
+
+- primary key: positive `id`;
+- foreign keys: job execution and optional job instance, restricted on delete;
+- unique: `(action, operation_id)`;
+- checked values: closed-set action and authorization class, 1-to-64-byte
+  operation ID, 1-to-128-byte actor reference, bounded reason code of at most
+  64 bytes, closed-set outcome class, optional prior and result status from
+  the accepted lifecycle vocabulary, non-negative observed execution version,
+  32-byte request digest, and facade-clock `requested_at`;
+- ownership: the operator service inserts the row in the same transaction as
+  its effect, or with the recorded rejection class and no effect.
+
+Replay of the same `(action, operation_id)` compares the stored request digest
+before returning the recorded outcome. The table holds no free-form operator
+text.
+
+### `ob_retention_action`
+
+The append-only audit record for holds, hold releases, and applied purges.
+
+- primary key: positive `id`;
+- foreign keys: optional job instance, restricted on delete;
+- unique: `(action, operation_id)`;
+- checked values: closed-set action, bounded operation ID, actor reference,
+  reason code, 32-byte plan digest for an applied purge, non-negative
+  per-table deleted counts, batch bound of at most 1000, closed-set outcome
+  class, and facade-clock `applied_at`;
+- ownership: written in the same transaction as the batch it audits.
+
+A purge that deletes a job instance retains its retention rows, because the
+instance foreign key is nullable and cleared before the instance row is
+removed.
+
+### `ob_step_partition`
+
+The durable partition plan and per-partition result for one partitioned step
+execution.
+
+- primary key: positive `id`;
+- foreign keys: parent `step_execution_id` and optional worker
+  `step_execution_id`, restricted on delete;
+- unique: `(step_execution_id, partition_key)`;
+- checked values: 1-to-128-byte `partition_key` with `COLLATE "C"`, positive
+  partition ordinal, lifecycle status from the accepted vocabulary, optional
+  exit code of at most 64 bytes, non-negative counters and version, an
+  object-shaped partition context bounded to 4 KiB with format, schema,
+  schema version, and a 32-byte checksum;
+- ownership: the complete partition plan is inserted in one transaction before
+  any worker starts; each worker updates only its own row under
+  `WHERE version = expected`.
+
+Partition keys are unique per parent step execution and are compared byte for
+byte. A completed partition is never rerun on restart. The table contains no
+parameter, item, checkpoint, credential, endpoint, SQL, or user error value.
+
+### Schema-3 named queries
+
+| Query ID | Purpose and atomic rule | Owner |
+| --- | --- | --- |
+| `OP-REQUEST-001` | Insert one operator request and its lifecycle effect under compare-and-swap in one transaction | Operator service |
+| `OP-REPLAY-001` | Read a recorded outcome by `(action, operation_id)` and compare the request digest | Operator service |
+| `OP-STOP-001` | Compare-and-swap the durable stop request on one execution | Operator service |
+| `EXEC-STALE-001` | Select stale candidates by status, server-time age bound, and owner token | Stale detection |
+| `RETAIN-PLAN-001` | Read bounded purge candidates with their observed versions in identity order | Retention service |
+| `RETAIN-APPLY-001` | Re-validate candidates and delete one bounded batch in instance-owned order | Retention service |
+| `PART-PLAN-001` | Insert the complete partition plan for one parent step execution | Partitioned step runtime |
+| `PART-CAS-001` | Update one partition result by ID and expected version | Partition worker |
+| `PART-AGGREGATE-001` | Read every partition of one parent step in `partition_key` order | Partitioned step runtime |
+
+`EXEC-STALE-001` compares the durable `updated_at` against repository server
+time. It never uses the inspecting process's wall clock and never updates a
+row. `RETAIN-APPLY-001` deletes flow decisions, recovery decisions, operator
+requests, step partitions, step executions, job executions, and then empty job
+instances, in that order and inside one transaction per batch.
+
+Supporting index plans for these queries are published by the workstream that
+implements them on realistic history.
 
 ## Schema 2
 
@@ -277,6 +385,14 @@ execution. Definition and upgrade rows remain while referenced. The later
 operator API must delete in instance-owned order and cannot target unresolved
 executions.
 
+Schema 3 keeps that rule and makes it executable. Purge is explicit, bounded,
+two phase, and audited as specified by the
+[operator, explorer, and retention contract](operator-and-explorer-services.md).
+It deletes in instance-owned order inside one transaction per batch, never
+targets a running, stopping, or `UNKNOWN` execution, never targets a held
+instance, and never deletes a definition, an upgrade edge, or the schema
+version row. There is still no automatic or scheduled deletion.
+
 ## Transaction ownership
 
 Launch selection, definition registration/comparison, instance creation, and
@@ -284,6 +400,12 @@ execution creation use one repository transaction. A chunk transaction is
 owned by the PostgreSQL adapter and contains enlisted business writes plus the
 step compare-and-swap update. Recovery decision insertion and lifecycle update
 also share one transaction.
+
+From schema 3, one operator request row and its lifecycle effect share one
+transaction; the complete partition plan for one parent step is inserted in one
+transaction; each partition result is one compare-and-swap update; parent
+aggregation and the parent step's terminal update share one transaction; and
+each purge batch is one transaction containing its retention audit row.
 
 All SQL uses bound values. Schema, table, and column identifiers are fixed
 adapter constants, never URL or application input.

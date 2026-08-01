@@ -109,6 +109,46 @@ Metric candidates remain bounded enums such as phase, category, outcome, and
 event name. A crash may lose or duplicate telemetry after a durable decision;
 repository counters and flow-decision rows remain authoritative.
 
+### M4 operations, shutdown, and local-scale events
+
+M4 publishes the event catalog as versioned documentation. The telemetry
+schema version is `1`, is carried on every emitted event, and changes only
+through the documented compatibility policy. Adding an event or a safe field
+is a minor change; removing or repurposing either is a breaking change.
+
+Every catalog entry fixes its name, severity, timing relative to the governing
+commit, safe fields, and whether a crash may duplicate or lose it. M4 adds:
+
+- `operator.request_accepted`, `operator.request_rejected`, and
+  `operator.request_completed`, emitted after the operator request row commits
+  with its effect;
+- `explorer.page_served`, debug level, after the page read returns;
+- `shutdown.requested`, `shutdown.intake_stopped`, `shutdown.drain_completed`,
+  and `shutdown.deadline_exceeded`;
+- `stale.detected`, after evidence is gathered and before any proposal is
+  returned;
+- `recovery.proposed`, `recovery.applied`, and `recovery.rejected`, with the
+  applied event emitted after the decision and lifecycle change commit;
+- `retention.planned`, `retention.applied`, and `retention.rejected`;
+- `split.branch_started` and `split.branch_completed`;
+- `partition.plan_committed`, `partition.assigned`, `partition.completed`, and
+  `partition.aggregated`, with the aggregated event emitted after the parent
+  step's terminal commit;
+- `telemetry.export_dropped`, emitted at most once per throttling window.
+
+Safe fields for these events are the existing opaque execution correlation
+plus the operator action, authorization class, outcome class, rejection class,
+reason code, opaque operation ID, opaque actor reference, drain result, counts
+of unjoined tasks, elapsed-inactivity duration class, evidence-digest presence,
+per-table deleted counts, branch and partition ordinals, worker count, and
+aggregate status.
+
+Operator actions, recovery decisions, retention actions, partitions, and
+shutdown outcomes remain authoritative only in durable metadata. A crash may
+lose or duplicate any of these events. Operator request rows, recovery
+decisions, retention actions, partition rows, and execution status remain the
+sole authorities.
+
 ## Logs
 
 - Logs use stable event names plus human-readable messages.
@@ -133,6 +173,24 @@ IDs, job parameters, exception messages, item types, and arbitrary user strings
 are forbidden metric labels. Job/step names require an explicit cardinality
 budget.
 
+### M4 label-cardinality budget
+
+The budget is enforced by the framework, not left to deployment discipline.
+
+- Every metric family declares its complete label set in the versioned
+  catalog. A label absent from the catalog cannot be attached.
+- Bounded enum labels are the default: phase, category, outcome, action,
+  authorization class, lifecycle status, event name, and node kind.
+- Total distinct label-value combinations per family are budgeted at `200`.
+  Reaching the budget maps further values to the reserved value `__other__`
+  and increments a dropped-cardinality counter; it never allocates unbounded
+  series.
+- Job and step names are labels only when name labelling is explicitly enabled
+  with a configured allowlist of at most `50` names. Names outside the
+  allowlist map to `__other__`.
+- Opaque IDs, operation IDs, actor references, partition keys, cursor tokens,
+  reason text, and digests are never metric labels under any configuration.
+
 ## Traces
 
 Proposed span hierarchy:
@@ -156,3 +214,49 @@ The framework emits `tracing`-compatible structured diagnostics. An optional
 OpenTelemetry adapter maps the stable OxideBatch event model to SDK/exporter
 types. Export queues are bounded and flush behavior during shutdown has a
 separate deadline from batch correctness.
+
+### M4 exporter bounds and failure isolation
+
+- The exporter owns one bounded queue of `64..=65536` records, default `1024`.
+- A full queue drops the newest record, increments a dropped-record counter,
+  and emits `telemetry.export_dropped` at most once per throttling window,
+  bounded `1 s..=1 h`, default `60 s`. The queue never applies backpressure to
+  execution.
+- Exporter construction, encoding, transport, and shutdown failures are
+  isolated. An exporter failure or panic cannot fail a step, roll back a
+  transaction, change a status, or extend a correctness deadline.
+- The exporter runs on tasks owned by the runtime that created it. There is no
+  detached task and no process-global exporter.
+- Flush uses the separate `TelemetryFlushDeadline` in
+  [shutdown and recovery](../architecture/shutdown-and-recovery.md). Missing it
+  reports the dropped count and never changes the durable outcome.
+- No SDK, exporter, protocol, or transport type appears in a public OxideBatch
+  API, error, or diagnostic.
+
+Telemetry overhead is measured with export enabled and disabled on the same
+workloads, and reported with the environment and correctness result required by
+the [performance plan](../engineering/performance-plan.md).
+
+## Diagnostic bundles
+
+`diagnostics bundle` produces a bounded, redacted incident package for one
+named execution. Its contents are fixed:
+
+- a manifest with the bundle format version, framework version, telemetry
+  schema version, metadata schema version, manifest format version, creation
+  instant, and a checksum over every included file;
+- effective configuration with resolved sources and redacted values;
+- the repository capability descriptor and schema status;
+- explorer projections for the named execution, its step executions,
+  partitions, flow decisions, recovery decisions, and operator requests;
+- the last retained events for that execution, bounded to `200` records by
+  default;
+- host resource summary limited to CPU count, available memory class, and
+  platform identity.
+
+A bundle excludes parameters, contexts, checkpoints, fault-state payloads,
+item data, credentials, endpoints, SQL, user error text, and environment
+variable values. Total bundle size is bounded to `4 MiB`; a bound that removes
+content records the omission in the manifest. File names are deterministic so
+two bundles of the same execution are comparable. A bundle is diagnostic
+evidence and never an authority for correctness.

@@ -7,7 +7,7 @@ the framework provides typed configuration values and validation. A CLI may add
 file/environment/argument loading without making that mechanism mandatory for
 library users.
 
-## Proposed precedence
+## Precedence
 
 For the first-party CLI, highest priority wins:
 
@@ -15,6 +15,12 @@ For the first-party CLI, highest priority wins:
 2. environment variable;
 3. configuration file;
 4. documented framework default.
+
+M4 makes this precedence binding for the operator CLI and resolves it per
+value rather than per source, so one source may supply some values while
+another supplies the rest. The observable command grammar, output, exit
+categories, confirmation rules, and secret handling are owned by the
+[M4 operator CLI contract](../operations/operator-cli.md).
 
 Application code may assemble typed configuration differently but receives the
 same validation and effective-configuration diagnostics.
@@ -24,7 +30,7 @@ same validation and effective-configuration diagnostics.
 | Class | Examples | Change behavior |
 | --- | --- | --- |
 | Definition | step flow, chunk size, retry/skip policy | Version/restart compatibility impact |
-| Runtime | concurrency, timeouts, shutdown deadline | May vary by execution within safe bounds |
+| Runtime | concurrency, timeouts, shutdown deadline, stop-poll interval, stale threshold | May vary by execution within safe bounds |
 | Repository | URL, pool, schema namespace | Deployment-controlled, secret-bearing |
 | Telemetry | filters, exporter, sampling | Must not alter correctness |
 | Operator | output format, confirmation, query limits | CLI-only |

@@ -108,6 +108,32 @@ and target selection share one transaction. Step start-limit comparison and
 step-execution creation also share one transaction across the job instance and
 logical step ID.
 
+## M4 operator, explorer, retention, and partition transactions
+
+The [M4 operator, explorer, and retention contract](operator-and-explorer-services.md)
+fixes the observable behavior of the `JobExplorer`, `JobOperator`, and
+`RetentionRepository` ports for this milestone.
+
+Each mutating operator action commits one append-only operator request row in
+the same transaction as its lifecycle compare-and-swap, so idempotency, audit,
+and effect cannot diverge. A durable stop request is a compare-and-swap on the
+execution row; it does not transition an execution whose owner is gone.
+Recovery keeps its accepted M2 shape of one appended decision plus one
+compare-and-swap, and additionally requires a matching evidence digest and
+observed version. Each purge batch is one transaction that contains its own
+retention audit row and deletes in instance-owned order.
+
+The [M4 local-scale contract](local-scale.md) adds three metadata boundaries:
+the complete partition plan for one parent step commits before any worker
+starts; each partition result is one compare-and-swap on its own row; and
+parent aggregation shares one transaction with the parent step's terminal
+lifecycle update. A stale partition writer loses its compare-and-swap rather
+than publishing a result twice.
+
+Explorer reads are single-statement, keyset paginated, ordered by immutable
+keys, and bounded by page size, response size, and the configured statement
+timeout. They take no lock and never participate in a chunk transaction.
+
 ## Adapter certification
 
 Every adapter runs the same logical contract suite plus adapter-specific

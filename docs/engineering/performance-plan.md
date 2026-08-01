@@ -100,6 +100,31 @@ Local and distributed scaling reports compare 1/10/100 workers or the largest
 practical bounded equivalent, record resource saturation and skew, and verify
 checkpoint/ordering/duplicate semantics at every scale.
 
+## M4 operations and local-scale measurements
+
+The M4 slice supplies provisional budgets, not release commitments. Required
+reports are:
+
+- P-010 at `1`, `10`, and the largest configured worker count, with scaling
+  efficiency, skew, aggregation cost, peak memory, connection count, and task
+  count, plus the sequential-fallback equivalence result;
+- P-012 explorer pagination over `10^3`, `10^6`, and `10^8` executions,
+  reporting per-page latency, rows scanned, index used, and cursor size, with
+  unbounded history loads prohibited;
+- retention plan and apply throughput per bounded batch, lock wait, and impact
+  on a concurrently running launch;
+- P-014 shutdown and cancellation latency measured separately for
+  request-to-intake-stop, request-to-durable-terminal, async, blocking, and
+  transaction phases, plus the count of unjoined tasks at the deadline;
+- telemetry overhead with export enabled and disabled on P-001 and P-010,
+  including exporter queue depth and dropped-record counts;
+- P-015 soak across repeated shutdown, restart, and recovery cycles, reporting
+  task, connection, handle, and memory growth.
+
+Each report records the environment, the correctness result, and reproducible
+raw evidence. A concurrency result that changes durable observations relative
+to the sequential fallback is invalid regardless of its throughput.
+
 ## Regression gates
 
 - Baselines are established only after correctness assertions pass.

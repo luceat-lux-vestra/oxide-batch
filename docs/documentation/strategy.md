@@ -22,6 +22,10 @@ chat, prompt, issue, pull-request description, or report.
 | Item components and chunk lifecycle | [Item-processing model](../architecture/item-processing-model.md) |
 | M3 retry, skip, rollback, backoff, and item/retry/skip listeners | [M3 fault-tolerance contract](../architecture/fault-tolerance.md) |
 | M3 sequential/conditional flow, deciders, and start controls | [M3 basic-flow contract](../architecture/basic-flow.md) |
+| M4 explorer queries, operator guards/idempotency, and retention primitives | [M4 operator, explorer, and retention contract](../architecture/operator-and-explorer-services.md) |
+| M4 graceful shutdown, stale detection, and explicit recovery | [M4 shutdown and recovery contract](../architecture/shutdown-and-recovery.md) |
+| M4 parallel steps, local partitions, aggregation, and budgets | [M4 local-scale contract](../architecture/local-scale.md) |
+| M4 operator CLI grammar, output, exit categories, and secrets | [M4 operator CLI contract](../operations/operator-cli.md) |
 | Repository/transaction ports and capabilities | [Repository and transaction model](../architecture/repository-and-transaction-model.md) |
 | Integrations and support tiers | [Integration model](../architecture/integration-model.md) |
 | Distributed execution/protocol semantics | [Distributed execution](../architecture/distributed-execution.md) |
