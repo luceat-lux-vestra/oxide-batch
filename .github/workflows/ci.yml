@@ -170,6 +170,13 @@ jobs:
             optimistic_conflict_has_one_winner \
             -- --nocapture --test-threads=1
 
+      - name: Run shared PostgreSQL operator, explorer, and retention contract
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_repository
+          shared_service_contract_passes_on_postgres
+          -- --nocapture --test-threads=1
+
       - name: Verify durable fault-tolerance state
         run: |
           cargo test -p oxide-batch --features postgres \

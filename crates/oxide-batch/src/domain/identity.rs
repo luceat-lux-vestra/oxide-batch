@@ -219,6 +219,26 @@ opaque_id!(
     "An opaque identifier for one step attempt."
 );
 opaque_id!(
+    RecoveryDecisionId,
+    IdentifierKind::RecoveryDecision,
+    "An opaque identifier for one append-only recovery decision."
+);
+opaque_id!(
+    OperatorRequestId,
+    IdentifierKind::OperatorRequest,
+    "An opaque identifier for one append-only operator request record."
+);
+opaque_id!(
+    RetentionActionId,
+    IdentifierKind::RetentionAction,
+    "An opaque identifier for one append-only retention audit record."
+);
+opaque_id!(
+    StepPartitionId,
+    IdentifierKind::StepPartition,
+    "An opaque identifier for one durable step partition."
+);
+opaque_id!(
     FailureId,
     IdentifierKind::Failure,
     "An opaque identifier used to correlate a redacted failure."

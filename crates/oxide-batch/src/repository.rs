@@ -9,12 +9,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use crate::{
-    BatchStatus, DefinitionIdentity, DefinitionRevision, DefinitionUpgrade, DomainError,
+    ActorRef, BatchStatus, DefinitionIdentity, DefinitionRevision, DefinitionUpgrade, DomainError,
     ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitStatus, FailureCategory,
     FailureId, FailureSummary, FlowDecision, FlowDecisionRequest, FlowStepState,
     FlowTransitionKind, IdentifierKind, JobExecution, JobExecutionId, JobInstance, JobInstanceId,
-    JobInstanceKey, JobName, LifecycleError, LifecycleTransition, NodeId, StartLimit,
-    StepExecution, StepExecutionId, StepName,
+    JobInstanceKey, JobName, LifecycleError, LifecycleTransition, NodeId, OperationId,
+    OperatorAction, OperatorRecord, OperatorRecordDraft, PurgeCounts, PurgePlan, PurgePlanRequest,
+    PurgeSurvey, ReasonCode, RecoveryDecisionId, RetentionAction, RetentionHold, RetentionRecord,
+    RetentionRecordDraft, StartLimit, StepExecution, StepExecutionId, StepName,
 };
 
 const MAX_RECOVERY_REASON_BYTES: usize = 64;
@@ -24,12 +26,12 @@ mod memory;
 #[cfg(feature = "postgres")]
 mod postgres;
 
-pub use memory::InMemoryJobRepository;
+pub use memory::{InMemoryExplorer, InMemoryJobRepository};
 #[cfg(feature = "postgres")]
 pub use postgres::{
     CaCertificate, PostgresChunkStateError, PostgresChunkStateProvider,
     PostgresChunkTransactionManager, PostgresConfig, PostgresConfigError, PostgresDurableStepState,
-    PostgresFaultState, PostgresJobRepository, PostgresMigrator, TlsMode,
+    PostgresExplorer, PostgresFaultState, PostgresJobRepository, PostgresMigrator, TlsMode,
 };
 
 /// An owned, dynamically dispatched future used by public asynchronous ports.
@@ -372,6 +374,7 @@ impl fmt::Debug for RecoveryRequest {
 /// One append-only recovery audit record.
 #[derive(Clone, Eq, PartialEq)]
 pub struct RecoveryDecision {
+    id: RecoveryDecisionId,
     job_execution_id: JobExecutionId,
     execution_version: ExecutionVersion,
     prior_status: BatchStatus,
@@ -385,6 +388,7 @@ pub struct RecoveryDecision {
 impl RecoveryDecision {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
+        id: RecoveryDecisionId,
         job_execution_id: JobExecutionId,
         execution_version: ExecutionVersion,
         prior_status: BatchStatus,
@@ -395,6 +399,7 @@ impl RecoveryDecision {
         decided_at: SystemTime,
     ) -> Self {
         Self {
+            id,
             job_execution_id,
             execution_version,
             prior_status,
@@ -404,6 +409,12 @@ impl RecoveryDecision {
             evidence_digest,
             decided_at,
         }
+    }
+
+    /// Returns the opaque append-only decision identifier.
+    #[must_use]
+    pub const fn id(&self) -> RecoveryDecisionId {
+        self.id
     }
 
     /// Returns the execution whose observed version was resolved.
@@ -459,6 +470,7 @@ impl fmt::Debug for RecoveryDecision {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("RecoveryDecision")
+            .field("id", &self.id)
             .field("job_execution_id", &self.job_execution_id)
             .field("execution_version", &self.execution_version)
             .field("prior_status", &self.prior_status)
@@ -812,6 +824,144 @@ pub trait RepositoryUnitOfWork: Send {
         id: JobExecutionId,
     ) -> BoxFuture<'_, Result<Option<RecoveryDecision>, RepositoryError>>;
 
+    /// Reads the recorded outcome of one `(action, operation id)` pair.
+    ///
+    /// An adapter without durable operator audit rejects the capability rather
+    /// than inferring idempotency from timing or request similarity.
+    fn find_operator_request<'a>(
+        &'a mut self,
+        _action: OperatorAction,
+        _operation_id: &'a OperationId,
+    ) -> BoxFuture<'a, Result<Option<OperatorRecord>, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::OperatorRequests,
+            })
+        })
+    }
+
+    /// Appends one operator audit row in the transaction of its effect.
+    fn append_operator_request<'a>(
+        &'a mut self,
+        _draft: &'a OperatorRecordDraft,
+    ) -> BoxFuture<'a, Result<OperatorRecord, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::OperatorRequests,
+            })
+        })
+    }
+
+    /// Records a durable stop request under compare-and-swap.
+    ///
+    /// The request does not transition the execution. The owning runtime
+    /// observes it at the next chunk-commit boundary and at least once per its
+    /// configured poll interval.
+    fn request_execution_stop<'a>(
+        &'a mut self,
+        _id: JobExecutionId,
+        _expected_version: ExecutionVersion,
+        _actor: &'a ActorRef,
+        _requested_at: SystemTime,
+    ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::StopRequests,
+            })
+        })
+    }
+
+    /// Reads the active retention hold of one logical instance.
+    fn job_instance_hold(
+        &mut self,
+        _id: JobInstanceId,
+    ) -> BoxFuture<'_, Result<Option<RetentionHold>, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::InstanceHolds,
+            })
+        })
+    }
+
+    /// Places the single retention hold of one logical instance.
+    fn place_instance_hold<'a>(
+        &'a mut self,
+        _id: JobInstanceId,
+        _actor: &'a ActorRef,
+        _reason: &'a ReasonCode,
+        _placed_at: SystemTime,
+    ) -> BoxFuture<'a, Result<RetentionHold, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::InstanceHolds,
+            })
+        })
+    }
+
+    /// Releases the retention hold of one logical instance.
+    fn release_instance_hold(
+        &mut self,
+        _id: JobInstanceId,
+    ) -> BoxFuture<'_, Result<Option<RetentionHold>, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::InstanceHolds,
+            })
+        })
+    }
+
+    /// Reads the recorded outcome of one retention `(action, operation id)`.
+    fn find_retention_action<'a>(
+        &'a mut self,
+        _action: RetentionAction,
+        _operation_id: &'a OperationId,
+    ) -> BoxFuture<'a, Result<Option<RetentionRecord>, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::RetentionPurge,
+            })
+        })
+    }
+
+    /// Appends one retention audit row in the transaction it audits.
+    fn append_retention_action<'a>(
+        &'a mut self,
+        _draft: &'a RetentionRecordDraft,
+    ) -> BoxFuture<'a, Result<RetentionRecord, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::RetentionPurge,
+            })
+        })
+    }
+
+    /// Surveys bounded purge candidates with the versions observed for them.
+    fn purge_survey<'a>(
+        &'a mut self,
+        _request: &'a PurgePlanRequest,
+    ) -> BoxFuture<'a, Result<PurgeSurvey, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::RetentionPurge,
+            })
+        })
+    }
+
+    /// Re-validates a plan and deletes one bounded batch in instance-owned order.
+    ///
+    /// Any candidate whose eligibility or version changed produces
+    /// [`RepositoryError::RetentionPlanStale`] and deletes nothing.
+    fn apply_purge<'a>(
+        &'a mut self,
+        _plan: &'a PurgePlan,
+    ) -> BoxFuture<'a, Result<PurgeCounts, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::RetentionPurge,
+            })
+        })
+    }
+
     /// Atomically publishes all changes made by this unit of work.
     fn commit<'a>(self: Box<Self>) -> BoxFuture<'a, Result<(), RepositoryError>>
     where
@@ -823,6 +973,42 @@ pub trait RepositoryUnitOfWork: Send {
     fn rollback<'a>(self: Box<Self>) -> BoxFuture<'a, Result<(), RepositoryError>>
     where
         Self: 'a;
+}
+
+/// A separately negotiated durable repository capability.
+///
+/// An adapter that cannot provide a capability rejects it with a typed error
+/// rather than emulating it with an unbounded scan or an inferred guarantee.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum RepositoryCapability {
+    /// Append-only operator audit and idempotency rows.
+    OperatorRequests,
+    /// Durable compare-and-swap stop requests.
+    StopRequests,
+    /// The single retention hold of a logical instance.
+    InstanceHolds,
+    /// Bounded two-phase retention purge.
+    RetentionPurge,
+}
+
+impl RepositoryCapability {
+    /// Returns the stable name of the capability.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OperatorRequests => "operator requests",
+            Self::StopRequests => "durable stop requests",
+            Self::InstanceHolds => "instance holds",
+            Self::RetentionPurge => "retention purge",
+        }
+    }
+}
+
+impl fmt::Display for RepositoryCapability {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
 }
 
 /// A stable repository failure independent of a database or async runtime.
@@ -963,6 +1149,15 @@ pub enum RepositoryError {
     Identifier(IdGenerationError),
     /// A lifecycle or optimistic-version rule rejected an update.
     Lifecycle(LifecycleError),
+    /// A purge candidate changed after its plan was produced.
+    ///
+    /// Nothing was deleted. A new plan observes the remaining candidates.
+    RetentionPlanStale,
+    /// The adapter does not provide a required repository capability.
+    UnsupportedCapability {
+        /// The capability the caller required.
+        capability: RepositoryCapability,
+    },
     /// Another committed unit of work invalidated this snapshot.
     ConcurrentModification,
     /// A commit failed after `PostgreSQL` may have made it durable.
@@ -1079,6 +1274,12 @@ impl fmt::Display for RepositoryError {
             Self::Domain(error) => write!(formatter, "invalid repository domain value: {error}"),
             Self::Identifier(error) => write!(formatter, "identifier generation failed: {error}"),
             Self::Lifecycle(error) => error.fmt(formatter),
+            Self::RetentionPlanStale => {
+                formatter.write_str("the purge plan is stale and nothing was deleted")
+            }
+            Self::UnsupportedCapability { capability } => {
+                write!(formatter, "the adapter does not support {capability}")
+            }
             Self::ConcurrentModification => {
                 formatter.write_str("repository unit of work is based on a stale snapshot")
             }

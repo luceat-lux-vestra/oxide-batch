@@ -79,6 +79,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   evidence, one instance hold, `ob_operator_request`, `ob_retention_action`,
   and `ob_step_partition`, with a backfill-free transactional upgrade and a
   restore-only rollback boundary.
+- A portable bounded `JobExplorer` over a new `ExplorerRepository` port: the
+  closed M4 query set, keyset-only pagination with a captured identity ceiling,
+  an opaque checksummed cursor that separates a damaged token from one reused
+  against another query, filter, or page size, redacted projections carrying
+  names, opaque identifiers, ordinals, counters, versions, timestamps, digests,
+  parameter descriptors, and durable-state envelope descriptions, and enforced
+  page, response, and age bounds.
+- A portable guarded `JobOperator` application service for launch, restart,
+  stop, abandon, and recover. Every mutating action carries a validated
+  `ActorRef`, `ReasonCode`, and `OperationId` envelope with a framework request
+  digest, commits its append-only audit row in the transaction of its effect,
+  replays by operation identifier, rejects a reused identifier that carries a
+  different canonical request, reports optimistic conflicts and guard failures
+  as audited rejections without an effect, and never guesses an ambiguous
+  commit. An audit append that collides with a concurrently recorded operation
+  identifier rolls its own effect back and returns the recorded outcome instead
+  of surfacing the collision, and every abandoned unit of work is rolled back
+  explicitly rather than dropped.
+- A `RecoveryDirective` that pairs a recovery disposition with the evidence
+  that disposition requires, so a `MarkFailed` decision without its stated
+  failure is unrepresentable rather than a deferred validation error and an
+  abandoning decision carries no failure for its request digest to cover.
+- A portable `RetentionService` with instance holds and a bounded two-phase
+  purge: eligibility that never targets a running, stopping, ambiguous, or held
+  instance, a plan digest that rejects a stale apply without deleting, deletion
+  in instance-owned order inside one transaction per batch, audited per-table
+  counts, and safe re-planning after an interrupted run.
+- PostgreSQL schema version 3 with immutable migration
+  `0003_operations_and_local_scale.sql` and its bounded explorer, operator, and
+  retention adapters. The schema-3 least-privilege grants required by purge are
+  specified by the migration guide and remain unimplemented fixture work.
+- A shared in-memory and PostgreSQL service contract suite covering the named
+  `REPO-EXPLORE-001`, `REPO-OPERATOR-001`, `REPO-RETENTION-001`, and M4
+  `LIFE-ABANDON-001` scenarios, plus `JobInstanceKey::digest`, opaque
+  recovery-decision, operator-request, retention-action, and step-partition
+  identifiers, and `BatchStatus::as_str`/`ParameterValueKind::as_str` durable
+  codes.
 - Accepted M3 contracts for typed bounded retry/skip/rollback, deterministic
   backoff, item/retry/skip listeners, acyclic conditional flow, durable
   deciders, start controls, manifest format 2, and the schema-2
@@ -164,6 +201,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The PostgreSQL runtime now requires metadata schema version 3 and rejects
+  version 4 or higher. Schema 2 to 3 is a quiesced, backfill-free, transactional
+  upgrade; a schema-2 runtime sees schema 3 as newer and performs no work.
+- The canonical instance-key digest moved from the PostgreSQL adapter to
+  `JobInstanceKey::digest`, with a byte-identical version-1 encoding, so the
+  durable adapter, redacted projections, and operator request digests share one
+  identity.
+- `RecoveryDecision` carries an opaque `RecoveryDecisionId`, because the bounded
+  explorer orders decisions by an immutable identity column.
+- The accepted M4 `launch` guard no longer rejects a held instance: a hold
+  protects history from purge and never blocks a lifecycle action, which the
+  same contract's retention section already required.
+- The accepted `ob_operator_request` job-execution reference is now optional
+  alongside its job-instance reference, because a launch rejected before its
+  instance exists must still be audited without an effect.
+- The accepted cursor encoding separates its integrity checksum from an 8-byte
+  query binding, because one checksum over both cannot distinguish
+  `CursorInvalid` from `CursorQueryMismatch`.
 - `ChunkTransaction::commit` takes the `ChunkFaultProgress` one chunk accepted,
   and `ChunkTransactionManager` gains `inherited_progress` with a
   no-inheritance default. `FaultStateStore` gains `bind`, with a process-local
@@ -172,9 +227,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `ChunkExecutionReport` retry, skip, and no-rollback counts are cumulative
   durable totals rather than per-attempt counts, because the aggregate skip
   limit is defined across every attempt of one job instance.
-- The PostgreSQL runtime requires metadata schema version 2 and rejects
-  version 3 or higher without guessing compatibility. Downgrade from schema 2
-  is restore-only.
+- The PostgreSQL runtime required metadata schema version 2 and rejected
+  version 3 or higher without guessing compatibility. Downgrade from a released
+  schema version is restore-only.
 - `ChunkStep::execute` takes the `ExecutionCorrelation` for the run, because
   item, retry, and skip callbacks receive it. The repository-backed
   `JobLauncher::launch_chunk` path is unchanged.

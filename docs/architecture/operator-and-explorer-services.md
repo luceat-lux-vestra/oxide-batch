@@ -88,8 +88,13 @@ encoding is:
 - query discriminant;
 - the immutable ordering key tuple;
 - the captured identity ceiling;
-- a 32-byte SHA-256 checksum over the preceding fields and the canonical query
-  identity, including its filters.
+- an 8-byte binding derived from the canonical query identity, including its
+  filters and page size;
+- a 32-byte SHA-256 checksum over all preceding fields.
+
+The checksum covers integrity and the binding covers identity, so a damaged
+token and a token reused against another query are separable rather than
+indistinguishable.
 
 The token is at most 256 bytes and carries no parameter, context, item,
 credential, or user-supplied text. A cursor presented to a different query,
@@ -152,6 +157,12 @@ transaction as its effect. The row is unique on `(action, operation_id)` and
 records the request digest, actor reference, reason code, prior status, result
 status, observed execution version, outcome class, and facade-clock timestamp.
 
+A rejected action is audited without an effect, so it commits its row in a
+separate transaction that stages no lifecycle change. Both target references
+are therefore optional: a launch rejected before its instance exists names
+neither an instance nor an execution, and the operation identifier and request
+digest remain the audit correlation.
+
 Replay behavior is fixed:
 
 - the same `(action, operation_id)` with the same `RequestDigest` returns the
@@ -168,7 +179,7 @@ timing, request similarity, or client retry behavior.
 
 | Action | Preconditions | Effect | Idempotency |
 | --- | --- | --- | --- |
-| `launch` | Definition resolves to one manifest and fingerprint; instance is absent or has no unresolved execution; instance is not `COMPLETED` or held | Creates instance when required and one `STARTING` execution | By operation ID |
+| `launch` | Definition resolves to one manifest and fingerprint; instance is absent or has no unresolved execution; instance is not `COMPLETED` or `ABANDONED` | Creates instance when required and one `STARTING` execution | By operation ID |
 | `restart` | Prior latest execution is `FAILED` or `STOPPED`; fingerprint is `Strict` or has exactly one directed `Compatible` edge; start controls permit the attempt | Creates a new execution attempt from the committed checkpoint | By operation ID |
 | `stop` | Execution is `STARTING` or `STARTED` | Durably records the stop request and moves the execution to `STOPPING` when this process owns it | Repeat request on a `STOPPING` or terminal execution succeeds and changes nothing |
 | `abandon` | Execution is `STOPPED` or `FAILED`, or is `UNKNOWN` with an applied recovery decision | Terminal `ABANDONED` | Repeat on an already `ABANDONED` execution succeeds and changes nothing |
@@ -177,6 +188,14 @@ timing, request similarity, or client retry behavior.
 `restart` never targets an `UNKNOWN` execution. `recover` resolves it first.
 Neither `stop` nor `abandon` may skip a state in the accepted lifecycle table
 in [execution semantics](../compatibility/execution-semantics.md).
+
+A `recover` request carries its disposition and that disposition's required
+evidence as one value: marking an attempt `FAILED` carries the stated failure
+category and identifier, and abandoning carries neither. A decision missing
+its evidence is therefore unrepresentable rather than a request that validates
+only once it reaches the repository, and an abandoning decision cannot carry a
+failure that its durable outcome ignores while its request digest still covers
+it.
 
 Stop is durable rather than in-process only. The operator writes
 `stop_requested_at` and `stop_requested_by` under compare-and-swap. The owning
@@ -198,6 +217,18 @@ service does not guess, does not re-issue the statement on a suspect
 connection, and does not mark the operator request completed. The caller
 resolves the ambiguity by replaying the same `operation_id`, which either
 returns the recorded outcome or re-attempts the effect exactly once.
+
+Two callers can pass the same replay probe before either commits. The loser's
+audit append then collides on `(action, operation_id)`. That collision is a
+duplicate rather than a failure: the loser rolls its own effect back, re-reads
+the recorded row, and returns it as a replayed outcome, or reports
+`OperationIdConflict` when the recorded request digest differs. A conflict that
+does not resolve to a recorded row keeps its original repository error.
+
+Every path that abandons a unit of work rolls it back explicitly. Dropping one
+is not a rollback: an adapter that owns a pooled connection discards that
+connection on drop, so an implicit drop turns each read-only probe or rejected
+action into pool churn.
 
 ### Audit
 
@@ -229,8 +260,9 @@ reference adapter only.
 
 A hold is placed on a job instance, records actor, reason code, and
 facade-clock timestamp, and is released explicitly. A held instance rejects
-purge planning and purge application. A hold does not block launch, restart,
-or any lifecycle action.
+purge planning and purge application. A hold protects history only: it does not
+block launch, restart, or any other lifecycle action, and the `launch` guard
+above therefore does not consult it.
 
 ### Eligibility
 
@@ -263,7 +295,10 @@ Purge is two phase and target guarded.
 Application deletes within one instance-owned order and one transaction per
 batch: flow decisions, recovery decisions, operator requests, step partitions,
 step executions, job executions, and finally job instances that retain no
-execution. Interrupting a run leaves completed batches durable; re-running is
+execution. A surviving flow decision that cites a purged decision as its reused
+provenance has that citation cleared first, because the evidence it names no
+longer exists. A retention audit row outlives the instance it protected, so its
+instance reference is cleared rather than cascading the row away. Interrupting a run leaves completed batches durable; re-running is
 safe because a new plan observes the remaining candidates. Replaying the same
 operation ID returns the recorded outcome instead of deleting again.
 

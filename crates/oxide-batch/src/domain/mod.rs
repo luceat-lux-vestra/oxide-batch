@@ -12,8 +12,8 @@ pub use execution::{
     FailureCategory, FailureSummary, JobExecution, JobInstance, StepExecution,
 };
 pub use identity::{
-    ExitCode, FailureId, JobExecutionId, JobInstanceId, JobName, ParameterName, StepExecutionId,
-    StepName,
+    ExitCode, FailureId, JobExecutionId, JobInstanceId, JobName, OperatorRequestId, ParameterName,
+    RecoveryDecisionId, RetentionActionId, StepExecutionId, StepName, StepPartitionId,
 };
 pub use lifecycle::{ExecutionVersion, LifecycleError, LifecycleTransition};
 pub use parameter::{

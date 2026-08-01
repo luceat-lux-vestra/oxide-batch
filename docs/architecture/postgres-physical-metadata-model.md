@@ -41,7 +41,8 @@ The append-only idempotency and audit record for every mutating operator
 action, including rejected ones.
 
 - primary key: positive `id`;
-- foreign keys: job execution and optional job instance, restricted on delete;
+- foreign keys: optional job execution and optional job instance, restricted on
+  delete, because a rejected launch may precede both rows;
 - unique: `(action, operation_id)`;
 - checked values: closed-set action and authorization class, 1-to-64-byte
   operation ID, 1-to-128-byte actor reference, bounded reason code of at most

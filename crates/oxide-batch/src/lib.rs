@@ -113,6 +113,7 @@ mod listener;
 mod plan;
 mod repository;
 mod runtime;
+mod service;
 mod state;
 
 pub use chunk::{
@@ -144,8 +145,9 @@ pub use domain::{
     ExecutionVersion, ExitCode, ExitStatus, FailureCategory, FailureId, FailureSummary,
     IdentifierKind, JobExecution, JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey,
     JobName, JobParameter, JobParameters, LifecycleError, LifecycleTransition, NameKind,
-    ParameterName, ParameterRole, ParameterValue, ParameterValueKind, StepExecution,
-    StepExecutionId, StepName,
+    OperatorRequestId, ParameterName, ParameterRole, ParameterValue, ParameterValueKind,
+    RecoveryDecisionId, RetentionActionId, StepExecution, StepExecutionId, StepName,
+    StepPartitionId,
 };
 pub use fault::{
     BackoffKind, BackoffOutcome, BackoffPolicy, BackoffSleeper, FaultAction, FaultClassifier,
@@ -180,21 +182,35 @@ pub use plan::{
     PlanError, StartControls, StartLimit, StepComponents, StepNode, TerminalKind,
 };
 pub use repository::{
-    BoxFuture, Clock, IdGenerationError, IdGenerator, InMemoryJobRepository, JobInstanceSelection,
-    JobRepository, RecoveryDecision, RecoveryDisposition, RecoveryField, RecoveryRequest,
-    RecoveryRequestError, RecoveryResult, RepositoryError, RepositoryUnitOfWork,
-    SequentialIdGenerator, SystemClock,
+    BoxFuture, Clock, IdGenerationError, IdGenerator, InMemoryExplorer, InMemoryJobRepository,
+    JobInstanceSelection, JobRepository, RecoveryDecision, RecoveryDisposition, RecoveryField,
+    RecoveryRequest, RecoveryRequestError, RecoveryResult, RepositoryCapability, RepositoryError,
+    RepositoryUnitOfWork, SequentialIdGenerator, SystemClock,
 };
 #[cfg(feature = "postgres")]
 pub use repository::{
     CaCertificate, PostgresChunkStateError, PostgresChunkStateProvider,
     PostgresChunkTransactionManager, PostgresConfig, PostgresConfigError, PostgresDurableStepState,
-    PostgresFaultState, PostgresJobRepository, PostgresMigrator, TlsMode,
+    PostgresExplorer, PostgresFaultState, PostgresJobRepository, PostgresMigrator, TlsMode,
 };
 pub use runtime::{
     BlockingTasklet, BlockingTaskletAdapter, BlockingTaskletContext, JobLauncher, LaunchError,
     LaunchReport, StopSource, StopTiming, StopToken, Tasklet, TaskletContext, TaskletError,
     TaskletExecutionOutcome, TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep,
+};
+pub use service::{
+    ActorRef, AuthorizationClass, Cursor, CursorError, CursorKey, DEFAULT_PAGE_SIZE,
+    DEFAULT_PURGE_AGE, DefinitionDescriptor, ExplorerError, ExplorerQuery, ExplorerRepository,
+    JobExecutionProjection, JobExplorer, JobInstanceProjection, JobOperator, MAX_ACTOR_REF_BYTES,
+    MAX_CURSOR_BYTES, MAX_OPERATION_ID_BYTES, MAX_PAGE_SIZE, MAX_PURGE_BATCH,
+    MAX_REASON_CODE_BYTES, MAX_RESPONSE_BYTES, MIN_PURGE_AGE, MIN_UNRESOLVED_AGE, OperationId,
+    OperatorAction, OperatorError, OperatorOutcome, OperatorOutcomeClass, OperatorRecord,
+    OperatorRecordDraft, OperatorRejection, OperatorRequest, Page, PageRequest, PageSize,
+    ParameterDescriptor, PurgeBatchBound, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest,
+    PurgeSurvey, QueryWindow, ReasonCode, RecoveryDirective, RequestDigest, RequestField,
+    RequestFieldError, RetentionAction, RetentionError, RetentionHold, RetentionOutcome,
+    RetentionRecord, RetentionRecordDraft, RetentionReport, RetentionService,
+    StateEnvelopeDescriptor, StepExecutionProjection, StepPartitionProjection, TerminalStatusSet,
 };
 pub use state::{
     Checkpoint, DurableStateKind, ExecutionContext, StateCodecError, StateError, StateLimits,
