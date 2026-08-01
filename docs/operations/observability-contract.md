@@ -228,8 +228,8 @@ separate deadline from batch correctness.
 - The exporter runs on tasks owned by the runtime that created it. There is no
   detached task and no process-global exporter.
 - Flush uses the separate `TelemetryFlushDeadline` in
-  [shutdown and recovery](../architecture/shutdown-and-recovery.md). Missing it
-  reports the dropped count and never changes the durable outcome.
+  [shutdown and stale-recovery](../architecture/shutdown-and-recovery.md).
+  Missing it reports the dropped count and never changes the durable outcome.
 - No SDK, exporter, protocol, or transport type appears in a public OxideBatch
   API, error, or diagnostic.
 

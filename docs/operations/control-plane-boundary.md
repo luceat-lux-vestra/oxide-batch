@@ -61,7 +61,7 @@ authorization. Removing deployment authorization removes no core guard. The
 exact request envelope, guards, and audit records are owned by the
 [operator, explorer, and retention contract](../architecture/operator-and-explorer-services.md),
 and the minimal CLI over them by the
-[M4 operator CLI contract](operator-cli.md).
+[M4 operator CLI and configuration contract](operator-cli.md).
 
 ## Extraction gate
 

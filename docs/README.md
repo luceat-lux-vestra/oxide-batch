@@ -27,8 +27,8 @@ decisions own the normative detail.
 3. [Item-processing model](architecture/item-processing-model.md)
 4. [M3 fault-tolerance contract](architecture/fault-tolerance.md)
 5. [M3 basic-flow contract](architecture/basic-flow.md)
-6. [M4 shutdown and recovery contract](architecture/shutdown-and-recovery.md)
-7. [M4 local-scale contract](architecture/local-scale.md)
+6. [M4 shutdown and stale-recovery contract](architecture/shutdown-and-recovery.md)
+7. [M4 bounded local-scale contract](architecture/local-scale.md)
 8. [Performance and capacity plan](engineering/performance-plan.md)
 9. [Async execution ADR](architecture/decisions/0002-execution-model.md)
 10. relevant roadmap and conformance rows

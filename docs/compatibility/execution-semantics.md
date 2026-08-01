@@ -221,7 +221,7 @@ aggregation is deterministic in key order rather than completion order. An
 branch or worker is the canonical sequential execution and must produce
 identical normalized observations. The exact subset, budgets, and equivalence
 rules are owned by the
-[M4 local-scale contract](../architecture/local-scale.md).
+[M4 bounded local-scale contract](../architecture/local-scale.md).
 
 ## Shutdown, stale detection, and recovery
 
@@ -238,7 +238,7 @@ Recovery binds an evidence digest and an observed version, permits only
 `FAILED` or `ABANDONED`, and never infers whether an ambiguous external effect
 committed. The exact ordering, deadlines, evidence, clock rules, and signal
 matrix are owned by the
-[M4 shutdown and recovery contract](../architecture/shutdown-and-recovery.md).
+[M4 shutdown and stale-recovery contract](../architecture/shutdown-and-recovery.md).
 
 ## Distributed ownership and equivalence
 

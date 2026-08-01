@@ -103,7 +103,7 @@ clock.
 
 A partial aggregate is never published. If the parent cannot observe every
 child result, it records the drain outcome from
-[shutdown and recovery](shutdown-and-recovery.md) instead of aggregating.
+[shutdown and stale-recovery](shutdown-and-recovery.md) instead of aggregating.
 
 ## Structured ownership and cancellation
 

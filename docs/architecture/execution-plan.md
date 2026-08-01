@@ -129,9 +129,9 @@ schema migration never rewrites manifest identity.
 M4 adds exactly one split node kind and one partitioned step node kind to the
 M3 acyclic subset, with the branch, partition, budget, ownership, aggregation,
 and thread-safety rules fixed by the
-[M4 local-scale contract](local-scale.md). Compilation rejects nested splits,
-partitioned steps inside a branch, decision nodes inside a branch, and any
-zero, contradictory, or unbounded budget.
+[M4 bounded local-scale contract](local-scale.md). Compilation rejects nested
+splits, partitioned steps inside a branch, decision nodes inside a branch, and
+any zero, contradictory, or unbounded budget.
 
 Manifest format 3 adds those node kinds, the partitioner and aggregation
 identity, and the budgets that change assignment identity or aggregate meaning,

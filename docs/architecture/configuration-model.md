@@ -20,7 +20,7 @@ M4 makes this precedence binding for the operator CLI and resolves it per
 value rather than per source, so one source may supply some values while
 another supplies the rest. The observable command grammar, output, exit
 categories, confirmation rules, and secret handling are owned by the
-[M4 operator CLI contract](../operations/operator-cli.md).
+[M4 operator CLI and configuration contract](../operations/operator-cli.md).
 
 Application code may assemble typed configuration differently but receives the
 same validation and effective-configuration diagnostics.

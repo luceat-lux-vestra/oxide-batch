@@ -123,9 +123,9 @@ compare-and-swap, and additionally requires a matching evidence digest and
 observed version. Each purge batch is one transaction that contains its own
 retention audit row and deletes in instance-owned order.
 
-The [M4 local-scale contract](local-scale.md) adds three metadata boundaries:
-the complete partition plan for one parent step commits before any worker
-starts; each partition result is one compare-and-swap on its own row; and
+The [M4 bounded local-scale contract](local-scale.md) adds three metadata
+boundaries: the complete partition plan for one parent step commits before any
+worker starts; each partition result is one compare-and-swap on its own row; and
 parent aggregation shares one transaction with the parent step's terminal
 lifecycle update. A stale partition writer loses its compare-and-swap rather
 than publishing a result twice.

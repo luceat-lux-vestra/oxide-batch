@@ -339,6 +339,6 @@ Ambiguous external side effects require application-specific confirmation
 before an execution is made restartable.
 
 The M4 evidence, clock, digest, and permitted-result rules are owned by the
-[M4 shutdown and recovery contract](../architecture/shutdown-and-recovery.md).
+[M4 shutdown and stale-recovery contract](../architecture/shutdown-and-recovery.md).
 Ownership tokens recorded from schema 3 are evidence only; they are not leases
 and never authorize takeover.
