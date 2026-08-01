@@ -21,6 +21,28 @@ pub enum ParameterValueKind {
     Bool,
 }
 
+impl ParameterValueKind {
+    /// Returns the stable type tag for this kind.
+    ///
+    /// The tag identifies the parameter's type without exposing its value, so
+    /// redacted projections and audit records can carry it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::String => "STRING",
+            Self::I64 => "I64",
+            Self::U64 => "U64",
+            Self::Bool => "BOOL",
+        }
+    }
+}
+
+impl fmt::Display for ParameterValueKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 /// A bounded typed job-parameter value.
 ///
 /// `Debug` and `Display` intentionally redact the underlying value. Use the
@@ -404,6 +426,52 @@ impl JobInstanceKey {
         self.identifying_parameters
             .iter()
             .map(|(name, value)| (name, value.kind()))
+    }
+
+    /// Returns the canonical 32-byte digest of this identifying key.
+    ///
+    /// The encoding is version tagged, length prefixed, and type tagged, so
+    /// two keys collide only when their job name and identifying parameters
+    /// are equal. Durable adapters, operator request digests, and redacted
+    /// projections share it, and no parameter value is recoverable from the
+    /// result. The version-1 byte layout is durable data and never changes.
+    #[must_use]
+    pub fn digest(&self) -> [u8; 32] {
+        let mut encoded = Vec::new();
+        encoded.push(1);
+        push_length_prefixed(&mut encoded, self.job_name.as_str().as_bytes());
+        for (name, value) in &self.identifying_parameters {
+            push_length_prefixed(&mut encoded, name.as_str().as_bytes());
+            encoded.push(parameter_tag(value.kind()));
+            match &value.0 {
+                ParameterValueInner::String(value) => {
+                    push_length_prefixed(&mut encoded, value.as_bytes());
+                }
+                ParameterValueInner::I64(value) => {
+                    encoded.extend_from_slice(&value.to_be_bytes());
+                }
+                ParameterValueInner::U64(value) => {
+                    encoded.extend_from_slice(&value.to_be_bytes());
+                }
+                ParameterValueInner::Bool(value) => encoded.push(u8::from(*value)),
+            }
+        }
+        Sha256::digest(encoded).into()
+    }
+}
+
+fn push_length_prefixed(target: &mut Vec<u8>, value: &[u8]) {
+    let length = u32::try_from(value.len()).unwrap_or(u32::MAX);
+    target.extend_from_slice(&length.to_be_bytes());
+    target.extend_from_slice(value);
+}
+
+const fn parameter_tag(kind: ParameterValueKind) -> u8 {
+    match kind {
+        ParameterValueKind::String => 1,
+        ParameterValueKind::I64 => 2,
+        ParameterValueKind::U64 => 3,
+        ParameterValueKind::Bool => 4,
     }
 }
 

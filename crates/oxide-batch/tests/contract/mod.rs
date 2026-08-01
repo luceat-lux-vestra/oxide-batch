@@ -1,8 +1,14 @@
 //! Repository contract cases shared by every metadata implementation.
 
 mod components;
+// Only the service test binaries run these cases; other binaries reuse the
+// module for the repository and component contracts alone.
+#[allow(dead_code)]
+mod services;
 
 pub use components::run_component_contract;
+#[allow(unused_imports)]
+pub use services::{ContractClock, ServiceBackend, run_service_contract};
 
 use std::error::Error;
 use std::fmt;

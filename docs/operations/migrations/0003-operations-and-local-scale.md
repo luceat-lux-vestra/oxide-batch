@@ -9,8 +9,7 @@
 **Rolling deployment:** Not supported. All schema-2 runtimes must be quiesced
 before migration, and they reject schema 3 on startup.
 
-**Immutable SQL:** `crates/oxide-batch/migrations/0003_operations_and_local_scale.sql`,
-authored by the workstream that implements it
+**Immutable SQL:** `crates/oxide-batch/migrations/0003_operations_and_local_scale.sql`
 
 This is the version-specific migration and rollback contract for the M4
 operator, retention, shutdown/stale, and bounded local-scale slices. The
@@ -36,7 +35,9 @@ null or all non-null, enforced by one check constraint.
 Schema 3 creates three tables:
 
 - `ob_operator_request`, the append-only audit and idempotency record for
-  every mutating operator action, unique on `(action, operation_id)`;
+  every mutating operator action, unique on `(action, operation_id)`, whose job
+  execution and job instance references are both optional because a rejected
+  launch may precede either row;
 - `ob_retention_action`, the append-only audit record for holds and applied
   purges;
 - `ob_step_partition`, the durable partition plan and per-partition result for

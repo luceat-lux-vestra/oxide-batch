@@ -6,10 +6,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
-use sha2::{Digest, Sha256};
 use sqlx::migrate::Migrator;
 use sqlx::pool::PoolConnection;
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgRow, PgSslMode};
+use sqlx::postgres::{PgArguments, PgConnectOptions, PgPoolOptions, PgRow, PgSslMode};
 use sqlx::types::Json;
 use sqlx::{AssertSqlSafe, Connection, PgConnection, PgPool, Postgres, Row};
 
@@ -18,28 +17,36 @@ use super::{
     RecoveryResult, RepositoryError, RepositoryUnitOfWork, recovered_execution,
 };
 use crate::{
-    BatchStatus, BusinessStatement, BusinessTransaction, BusinessTransactionError,
+    ActorRef, BatchStatus, BusinessStatement, BusinessTransaction, BusinessTransactionError,
     BusinessValueKind, BusinessWriteResult, Checkpoint, ChunkCommitReceipt, ChunkCounts,
     ChunkFaultProgress, ChunkTransaction, ChunkTransactionContext, ChunkTransactionError,
-    ChunkTransactionManager, ClassifierRevision, DefinitionIdentity, DefinitionUpgrade,
-    ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion,
-    ExitCode, ExitStatus, FailureCategory, FailureId, FailureSummary, FaultPhase, FaultPolicy,
-    FaultProgress, FaultStateEntry, FaultStateEnvelope, FaultStateError, FaultStateFormatError,
-    FaultStateStore, FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowDecisionSequence,
-    FlowStepState, FlowTarget, FlowTransitionKind, IdentifierKind, InheritedStepProgress,
-    JobExecution, JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey, JobName,
-    JobParameter, JobParameters, LifecycleError, LifecycleTransition, NodeId, ParameterName,
-    ParameterRole, ParameterValue, ParameterValueKind, RetryCounts, RetryKey, RetryLimit,
-    RetryOrdinal, RetryReservation, RetryStateLimit, SkipCounts, StartLimit, StateLimits,
-    StepExecution, StepExecutionId, StepName, TerminalKind,
+    ChunkTransactionManager, ClassifierRevision, CursorError, CursorKey, DefinitionDescriptor,
+    DefinitionIdentity, DefinitionRevision, DefinitionUpgrade, DurableStateKind, ExecutionContext,
+    ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitCode,
+    ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, FailureCategory, FailureId,
+    FailureSummary, FaultPhase, FaultPolicy, FaultProgress, FaultStateEntry, FaultStateEnvelope,
+    FaultStateError, FaultStateFormatError, FaultStateStore, FlowDecision, FlowDecisionId,
+    FlowDecisionRequest, FlowDecisionSequence, FlowStepState, FlowTarget, FlowTransitionKind,
+    IdentifierKind, InheritedStepProgress, JobExecution, JobExecutionId, JobExecutionProjection,
+    JobInstance, JobInstanceId, JobInstanceKey, JobInstanceProjection, JobName, JobParameter,
+    JobParameters, LifecycleError, LifecycleTransition, NodeId, OperationId, OperatorAction,
+    OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft, OperatorRejection,
+    OperatorRequestId, ParameterDescriptor, ParameterName, ParameterRole, ParameterValue,
+    ParameterValueKind, PurgeBatchBound, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest,
+    PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecisionId, RequestDigest, RetentionAction,
+    RetentionActionId, RetentionHold, RetentionOutcome, RetentionRecord, RetentionRecordDraft,
+    RetryCounts, RetryKey, RetryLimit, RetryOrdinal, RetryReservation, RetryStateLimit, SkipCounts,
+    StartLimit, StateEnvelopeDescriptor, StateLimits, StateSchemaId, StateSchemaVersion,
+    StepExecution, StepExecutionId, StepExecutionProjection, StepName, StepPartitionId,
+    StepPartitionProjection, TerminalKind,
 };
 
-const SUPPORTED_SCHEMA_VERSION: u32 = 2;
+const SUPPORTED_SCHEMA_VERSION: u32 = 3;
+const MAX_INSTANCE_KEY_INPUT: usize = 1024 * 1024;
 const MAX_POOL_SIZE: u32 = 1024;
 const MAX_SHORT_TIMEOUT: Duration = Duration::from_mins(5);
 const MAX_STATEMENT_TIMEOUT: Duration = Duration::from_hours(24);
 const MAX_CONNECTION_LIFETIME: Duration = Duration::from_hours(7 * 24);
-const MAX_INSTANCE_KEY_INPUT: usize = 1024 * 1024;
 const MAX_CA_CERTIFICATE_BYTES: usize = 1024 * 1024;
 const DEFAULT_CONTEXT_SCHEMA: &str = "oxide_batch.empty.v1";
 
@@ -1295,6 +1302,109 @@ impl PostgresUnitOfWork<'_> {
             Err(error) => error,
         }
     }
+
+    async fn purge_delete(
+        &mut self,
+        statement: &'static str,
+        ids: &[i64],
+    ) -> Result<u64, RepositoryError> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        Ok(sqlx::query(statement)
+            .bind(ids)
+            .execute(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .rows_affected())
+    }
+
+    async fn purge_count(
+        &mut self,
+        statement: &'static str,
+        ids: &[i64],
+    ) -> Result<u64, RepositoryError> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let row = sqlx::query(statement)
+            .bind(ids)
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+        read_u64(&row, "matched")
+    }
+
+    async fn purge_counts(
+        &mut self,
+        candidates: &[PurgeCandidate],
+    ) -> Result<PurgeCounts, RepositoryError> {
+        let executions = candidate_execution_ids(candidates)?;
+        let instances = candidate_instance_ids(candidates)?;
+        let flow_decisions = self
+            .purge_count(
+                "SELECT count(*) AS matched FROM oxide_batch.ob_flow_decision \
+                 WHERE job_execution_id = ANY($1)",
+                &executions,
+            )
+            .await?;
+        let recovery_decisions = self
+            .purge_count(
+                "SELECT count(*) AS matched FROM oxide_batch.ob_recovery_decision \
+                 WHERE job_execution_id = ANY($1)",
+                &executions,
+            )
+            .await?;
+        let operator_requests = self
+            .purge_count(
+                "SELECT count(*) AS matched FROM oxide_batch.ob_operator_request \
+                 WHERE job_execution_id = ANY($1)",
+                &executions,
+            )
+            .await?;
+        let step_partitions = self
+            .purge_count(
+                "SELECT count(*) AS matched FROM oxide_batch.ob_step_partition \
+                 WHERE step_execution_id IN ( \
+                   SELECT id FROM oxide_batch.ob_step_execution \
+                   WHERE job_execution_id = ANY($1))",
+                &executions,
+            )
+            .await?;
+        let step_executions = self
+            .purge_count(
+                "SELECT count(*) AS matched FROM oxide_batch.ob_step_execution \
+                 WHERE job_execution_id = ANY($1)",
+                &executions,
+            )
+            .await?;
+        let job_instances = if instances.is_empty() {
+            0
+        } else {
+            let row = sqlx::query(
+                "SELECT count(*) AS matched FROM oxide_batch.ob_job_instance instance \
+                 WHERE instance.id = ANY($2) AND NOT EXISTS ( \
+                   SELECT 1 FROM oxide_batch.ob_job_execution execution \
+                   WHERE execution.job_instance_id = instance.id \
+                     AND execution.id <> ALL($1))",
+            )
+            .bind(&executions)
+            .bind(&instances)
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            read_u64(&row, "matched")?
+        };
+        Ok(PurgeCounts::new(
+            flow_decisions,
+            recovery_decisions,
+            operator_requests,
+            step_partitions,
+            step_executions,
+            u64::try_from(candidates.len()).unwrap_or(u64::MAX),
+            job_instances,
+        ))
+    }
 }
 
 impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
@@ -1371,7 +1481,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
     ) -> BoxFuture<'a, Result<JobInstanceSelection, RepositoryError>> {
         Box::pin(async move {
             let encoded = encode_identifying_parameters(key)?;
-            let instance_key = canonical_instance_digest(key)?;
+            let instance_key = key.digest();
             let created_ms = system_time_millis(self.repository.clock.now())?;
             let inserted = sqlx::query(
                 "INSERT INTO oxide_batch.ob_job_instance \
@@ -1942,7 +2052,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         key: &'a JobInstanceKey,
     ) -> BoxFuture<'a, Result<Option<JobInstance>, RepositoryError>> {
         Box::pin(async move {
-            let digest = canonical_instance_digest(key)?;
+            let digest = key.digest();
             let row = sqlx::query(
                 "SELECT id, job_name, identifying_parameters \
                  FROM oxide_batch.ob_job_instance \
@@ -2328,7 +2438,8 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                  (job_execution_id, execution_version, prior_status, resulting_status, \
                   reason_code, operator_reference, evidence_digest, decided_at) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, \
-                  to_timestamp($8::double precision / 1000.0))",
+                  to_timestamp($8::double precision / 1000.0)) \
+                 RETURNING id",
             )
             .bind(database_execution_id)
             .bind(prior_version)
@@ -2338,7 +2449,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             .bind(request.operator_reference())
             .bind(&request.evidence_digest()[..])
             .bind(decided_ms)
-            .execute(&mut **self.transaction()?)
+            .fetch_one(&mut **self.transaction()?)
             .await;
             if insert.is_err() {
                 rollback_recovery_savepoint(&mut **self.transaction()?).await;
@@ -2348,7 +2459,9 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 .execute(&mut **self.transaction()?)
                 .await
                 .map_err(|_| RepositoryError::Unavailable)?;
+            let inserted = insert.map_err(|_| RepositoryError::Unavailable)?;
             let decision = RecoveryDecision::new(
+                RecoveryDecisionId::new(read_u64(&inserted, "id")?)?,
                 id,
                 request.expected_version(),
                 prior.metadata().status(),
@@ -2379,7 +2492,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 return Err(RepositoryError::JobExecutionNotFound { id });
             }
             let row = sqlx::query(
-                "SELECT execution_version, prior_status, resulting_status, reason_code, \
+                "SELECT id, execution_version, prior_status, resulting_status, reason_code, \
                  operator_reference, evidence_digest, \
                  (extract(epoch FROM decided_at) * 1000)::bigint AS decided_ms \
                  FROM oxide_batch.ob_recovery_decision \
@@ -2392,6 +2505,444 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             row.as_ref()
                 .map(|row| decode_recovery_decision(id, row))
                 .transpose()
+        })
+    }
+
+    fn find_operator_request<'a>(
+        &'a mut self,
+        action: OperatorAction,
+        operation_id: &'a OperationId,
+    ) -> BoxFuture<'a, Result<Option<OperatorRecord>, RepositoryError>> {
+        Box::pin(async move {
+            let row = sqlx::query(AssertSqlSafe(operator_request_select(
+                "WHERE request.action = $1 AND request.operation_id = $2",
+            )))
+            .bind(action.as_str())
+            .bind(operation_id.as_str())
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            row.as_ref().map(decode_operator_record).transpose()
+        })
+    }
+
+    fn append_operator_request<'a>(
+        &'a mut self,
+        draft: &'a OperatorRecordDraft,
+    ) -> BoxFuture<'a, Result<OperatorRecord, RepositoryError>> {
+        Box::pin(async move {
+            let instance_id = draft
+                .job_instance_id()
+                .map(|id| database_id(id.get(), IdentifierKind::JobInstance))
+                .transpose()?;
+            let execution_id = draft
+                .job_execution_id()
+                .map(|id| database_id(id.get(), IdentifierKind::JobExecution))
+                .transpose()?;
+            let requested_ms = system_time_millis(draft.requested_at())?;
+            let row = sqlx::query(
+                "INSERT INTO oxide_batch.ob_operator_request \
+                 (job_instance_id, job_execution_id, action, authorization_class, \
+                  operation_id, actor_ref, reason_code, request_digest, observed_version, \
+                  prior_status, result_status, outcome_class, rejection_code, requested_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, \
+                  to_timestamp($14::double precision / 1000.0)) \
+                 RETURNING id",
+            )
+            .bind(instance_id)
+            .bind(execution_id)
+            .bind(draft.action().as_str())
+            .bind(draft.action().authorization_class().as_str())
+            .bind(draft.operation_id().as_str())
+            .bind(draft.actor().as_str())
+            .bind(draft.reason().map(ReasonCode::as_str))
+            .bind(&draft.digest().as_bytes()[..])
+            .bind(draft.observed_version().map(database_version).transpose()?)
+            .bind(draft.prior_status().map(BatchStatus::as_str))
+            .bind(draft.result_status().map(BatchStatus::as_str))
+            .bind(draft.outcome().as_str())
+            .bind(draft.rejection().map(OperatorRejection::as_str))
+            .bind(requested_ms)
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::ConcurrentModification)?;
+            let id = OperatorRequestId::new(read_u64(&row, "id")?)?;
+            Ok(OperatorRecord::from_parts(id, draft.clone()))
+        })
+    }
+
+    fn request_execution_stop<'a>(
+        &'a mut self,
+        id: JobExecutionId,
+        expected_version: ExecutionVersion,
+        actor: &'a ActorRef,
+        requested_at: SystemTime,
+    ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>> {
+        Box::pin(async move {
+            let database_execution_id = database_id(id.get(), IdentifierKind::JobExecution)?;
+            let requested_ms = system_time_millis(requested_at)?;
+            let affected = sqlx::query(
+                "UPDATE oxide_batch.ob_job_execution \
+                 SET stop_requested_at = to_timestamp($1::double precision / 1000.0), \
+                     stop_requested_by = $2, \
+                     updated_at = greatest(updated_at, \
+                        to_timestamp($1::double precision / 1000.0)) \
+                 WHERE id = $3 AND version = $4",
+            )
+            .bind(requested_ms)
+            .bind(actor.as_str())
+            .bind(database_execution_id)
+            .bind(database_version(expected_version)?)
+            .execute(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .rows_affected();
+            if affected != 1 {
+                return Err(self.classify_job_cas(id, expected_version).await);
+            }
+            self.job_execution(id)
+                .await?
+                .ok_or(RepositoryError::JobExecutionNotFound { id })
+        })
+    }
+
+    fn job_instance_hold(
+        &mut self,
+        id: JobInstanceId,
+    ) -> BoxFuture<'_, Result<Option<RetentionHold>, RepositoryError>> {
+        Box::pin(async move {
+            let database_instance_id = database_id(id.get(), IdentifierKind::JobInstance)?;
+            let row = sqlx::query(
+                "SELECT hold_actor, hold_reason, \
+                 (extract(epoch FROM hold_placed_at) * 1000)::bigint AS placed_ms \
+                 FROM oxide_batch.ob_job_instance WHERE id = $1",
+            )
+            .bind(database_instance_id)
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .ok_or(RepositoryError::JobInstanceNotFound { id })?;
+            decode_retention_hold(id, &row)
+        })
+    }
+
+    fn place_instance_hold<'a>(
+        &'a mut self,
+        id: JobInstanceId,
+        actor: &'a ActorRef,
+        reason: &'a ReasonCode,
+        placed_at: SystemTime,
+    ) -> BoxFuture<'a, Result<RetentionHold, RepositoryError>> {
+        Box::pin(async move {
+            let database_instance_id = database_id(id.get(), IdentifierKind::JobInstance)?;
+            let placed_ms = system_time_millis(placed_at)?;
+            let affected = sqlx::query(
+                "UPDATE oxide_batch.ob_job_instance \
+                 SET hold_actor = $1, hold_reason = $2, \
+                     hold_placed_at = to_timestamp($3::double precision / 1000.0) \
+                 WHERE id = $4",
+            )
+            .bind(actor.as_str())
+            .bind(reason.as_str())
+            .bind(placed_ms)
+            .bind(database_instance_id)
+            .execute(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .rows_affected();
+            if affected != 1 {
+                return Err(RepositoryError::JobInstanceNotFound { id });
+            }
+            Ok(RetentionHold::new(
+                id,
+                actor.clone(),
+                reason.clone(),
+                placed_at,
+            ))
+        })
+    }
+
+    fn release_instance_hold(
+        &mut self,
+        id: JobInstanceId,
+    ) -> BoxFuture<'_, Result<Option<RetentionHold>, RepositoryError>> {
+        Box::pin(async move {
+            let existing = self.job_instance_hold(id).await?;
+            let database_instance_id = database_id(id.get(), IdentifierKind::JobInstance)?;
+            sqlx::query(
+                "UPDATE oxide_batch.ob_job_instance \
+                 SET hold_actor = NULL, hold_reason = NULL, hold_placed_at = NULL \
+                 WHERE id = $1",
+            )
+            .bind(database_instance_id)
+            .execute(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            Ok(existing)
+        })
+    }
+
+    fn find_retention_action<'a>(
+        &'a mut self,
+        action: RetentionAction,
+        operation_id: &'a OperationId,
+    ) -> BoxFuture<'a, Result<Option<RetentionRecord>, RepositoryError>> {
+        Box::pin(async move {
+            let row = sqlx::query(AssertSqlSafe(retention_action_select(
+                "WHERE retention.action = $1 AND retention.operation_id = $2",
+            )))
+            .bind(action.as_str())
+            .bind(operation_id.as_str())
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            row.as_ref().map(decode_retention_record).transpose()
+        })
+    }
+
+    fn append_retention_action<'a>(
+        &'a mut self,
+        draft: &'a RetentionRecordDraft,
+    ) -> BoxFuture<'a, Result<RetentionRecord, RepositoryError>> {
+        Box::pin(async move {
+            let instance_id = draft
+                .job_instance_id()
+                .map(|id| database_id(id.get(), IdentifierKind::JobInstance))
+                .transpose()?;
+            let applied_ms = system_time_millis(draft.applied_at())?;
+            let counts = draft.counts();
+            let row = sqlx::query(
+                "INSERT INTO oxide_batch.ob_retention_action \
+                 (job_instance_id, action, operation_id, actor_ref, reason_code, \
+                  plan_digest, batch_bound, deleted_flow_decisions, \
+                  deleted_recovery_decisions, deleted_operator_requests, \
+                  deleted_step_partitions, deleted_step_executions, \
+                  deleted_job_executions, deleted_job_instances, outcome_class, \
+                  applied_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, \
+                  $15, to_timestamp($16::double precision / 1000.0)) \
+                 RETURNING id",
+            )
+            .bind(instance_id)
+            .bind(draft.action().as_str())
+            .bind(draft.operation_id().as_str())
+            .bind(draft.actor().as_str())
+            .bind(draft.reason().as_str())
+            .bind(draft.plan_digest().map(|digest| digest.to_vec()))
+            .bind(
+                draft
+                    .batch_bound()
+                    .map(|bound| i32::try_from(bound.get()))
+                    .transpose()
+                    .map_err(|_| RepositoryError::Unavailable)?,
+            )
+            .bind(retention_count(counts.flow_decisions())?)
+            .bind(retention_count(counts.recovery_decisions())?)
+            .bind(retention_count(counts.operator_requests())?)
+            .bind(retention_count(counts.step_partitions())?)
+            .bind(retention_count(counts.step_executions())?)
+            .bind(retention_count(counts.job_executions())?)
+            .bind(retention_count(counts.job_instances())?)
+            .bind(draft.outcome().as_str())
+            .bind(applied_ms)
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::ConcurrentModification)?;
+            let id = RetentionActionId::new(read_u64(&row, "id")?)?;
+            Ok(RetentionRecord::from_parts(id, draft.clone()))
+        })
+    }
+
+    fn purge_survey<'a>(
+        &'a mut self,
+        request: &'a PurgePlanRequest,
+    ) -> BoxFuture<'a, Result<PurgeSurvey, RepositoryError>> {
+        Box::pin(async move {
+            let statuses = request
+                .statuses()
+                .iter()
+                .map(|status| status.as_str().to_owned())
+                .collect::<Vec<_>>();
+            let now = self.repository.clock.now();
+            let threshold = system_time_millis(
+                now.checked_sub(request.minimum_age())
+                    .ok_or(RepositoryError::Unavailable)?,
+            )?;
+            let limit = i64::from(request.batch().get());
+            let rows = sqlx::query(
+                "SELECT execution.job_instance_id, execution.id, execution.version \
+                 FROM oxide_batch.ob_job_execution execution \
+                 JOIN oxide_batch.ob_job_instance instance \
+                   ON instance.id = execution.job_instance_id \
+                 WHERE instance.job_name = $1 \
+                   AND instance.hold_actor IS NULL \
+                   AND execution.status = ANY($2) \
+                   AND execution.updated_at < to_timestamp($3::double precision / 1000.0) \
+                   AND NOT EXISTS ( \
+                     SELECT 1 FROM oxide_batch.ob_job_execution sibling \
+                     WHERE sibling.job_instance_id = execution.job_instance_id \
+                       AND sibling.status IN ('STARTING', 'STARTED', 'STOPPING', 'UNKNOWN')) \
+                 ORDER BY execution.job_instance_id, execution.id \
+                 LIMIT $4",
+            )
+            .bind(request.job_name().as_str())
+            .bind(&statuses)
+            .bind(threshold)
+            .bind(limit)
+            .fetch_all(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            let mut candidates = Vec::with_capacity(rows.len());
+            for row in &rows {
+                candidates.push(PurgeCandidate::new(
+                    JobInstanceId::new(read_u64(row, "job_instance_id")?)?,
+                    JobExecutionId::new(read_u64(row, "id")?)?,
+                    ExecutionVersion::new(read_u64(row, "version")?),
+                ));
+            }
+            let counts = self.purge_counts(&candidates).await?;
+            Ok(PurgeSurvey::new(candidates, counts))
+        })
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn apply_purge<'a>(
+        &'a mut self,
+        plan: &'a PurgePlan,
+    ) -> BoxFuture<'a, Result<PurgeCounts, RepositoryError>> {
+        Box::pin(async move {
+            let executions = candidate_execution_ids(plan.candidates())?;
+            let instances = candidate_instance_ids(plan.candidates())?;
+            let versions = plan
+                .candidates()
+                .iter()
+                .map(|candidate| database_version(candidate.version()))
+                .collect::<Result<Vec<_>, _>>()?;
+            let statuses = plan
+                .request()
+                .statuses()
+                .iter()
+                .map(|status| status.as_str().to_owned())
+                .collect::<Vec<_>>();
+            let confirmed = sqlx::query(
+                "SELECT count(*) AS matched \
+                 FROM unnest($1::bigint[], $2::bigint[]) AS candidate(id, version) \
+                 JOIN oxide_batch.ob_job_execution execution \
+                   ON execution.id = candidate.id AND execution.version = candidate.version \
+                 JOIN oxide_batch.ob_job_instance instance \
+                   ON instance.id = execution.job_instance_id \
+                 WHERE instance.hold_actor IS NULL \
+                   AND execution.status = ANY($3) \
+                   AND NOT EXISTS ( \
+                     SELECT 1 FROM oxide_batch.ob_job_execution sibling \
+                     WHERE sibling.job_instance_id = execution.job_instance_id \
+                       AND sibling.status IN ('STARTING', 'STARTED', 'STOPPING', 'UNKNOWN'))",
+            )
+            .bind(&executions)
+            .bind(&versions)
+            .bind(&statuses)
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            if read_u64(&confirmed, "matched")?
+                != u64::try_from(executions.len()).unwrap_or(u64::MAX)
+            {
+                return Err(RepositoryError::RetentionPlanStale);
+            }
+            // A surviving decision may cite a purged decision as its reused
+            // provenance. The citation is cleared before the target row is
+            // removed, because the evidence it names no longer exists.
+            sqlx::query(
+                "UPDATE oxide_batch.ob_flow_decision SET reused_decision_id = NULL \
+                 WHERE reused_decision_id IN ( \
+                   SELECT id FROM oxide_batch.ob_flow_decision \
+                   WHERE job_execution_id = ANY($1)) \
+                   AND job_execution_id <> ALL($1)",
+            )
+            .bind(&executions)
+            .execute(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            let flow_decisions = self
+                .purge_delete(
+                    "DELETE FROM oxide_batch.ob_flow_decision WHERE job_execution_id = ANY($1)",
+                    &executions,
+                )
+                .await?;
+            let recovery_decisions = self
+                .purge_delete(
+                    "DELETE FROM oxide_batch.ob_recovery_decision WHERE job_execution_id = ANY($1)",
+                    &executions,
+                )
+                .await?;
+            let operator_requests = self
+                .purge_delete(
+                    "DELETE FROM oxide_batch.ob_operator_request WHERE job_execution_id = ANY($1)",
+                    &executions,
+                )
+                .await?;
+            let step_partitions = self
+                .purge_delete(
+                    "DELETE FROM oxide_batch.ob_step_partition WHERE step_execution_id IN ( \
+                     SELECT id FROM oxide_batch.ob_step_execution \
+                     WHERE job_execution_id = ANY($1))",
+                    &executions,
+                )
+                .await?;
+            let step_executions = self
+                .purge_delete(
+                    "DELETE FROM oxide_batch.ob_step_execution WHERE job_execution_id = ANY($1)",
+                    &executions,
+                )
+                .await?;
+            let job_executions = self
+                .purge_delete(
+                    "DELETE FROM oxide_batch.ob_job_execution WHERE id = ANY($1)",
+                    &executions,
+                )
+                .await?;
+            let orphaned_requests = self
+                .purge_delete(
+                    "DELETE FROM oxide_batch.ob_operator_request \
+                     WHERE job_execution_id IS NULL AND job_instance_id = ANY($1) \
+                       AND NOT EXISTS ( \
+                         SELECT 1 FROM oxide_batch.ob_job_execution execution \
+                         WHERE execution.job_instance_id \
+                           = oxide_batch.ob_operator_request.job_instance_id)",
+                    &instances,
+                )
+                .await?;
+            // Retention audit outlives the instance it protected, so its
+            // reference is cleared rather than cascading the row away.
+            sqlx::query(
+                "UPDATE oxide_batch.ob_retention_action SET job_instance_id = NULL \
+                 WHERE job_instance_id = ANY($1) AND NOT EXISTS ( \
+                   SELECT 1 FROM oxide_batch.ob_job_execution execution \
+                   WHERE execution.job_instance_id \
+                     = oxide_batch.ob_retention_action.job_instance_id)",
+            )
+            .bind(&instances)
+            .execute(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            let job_instances = self
+                .purge_delete(
+                    "DELETE FROM oxide_batch.ob_job_instance WHERE id = ANY($1) \
+                     AND NOT EXISTS ( \
+                       SELECT 1 FROM oxide_batch.ob_job_execution execution \
+                       WHERE execution.job_instance_id = oxide_batch.ob_job_instance.id)",
+                    &instances,
+                )
+                .await?;
+            Ok(PurgeCounts::new(
+                flow_decisions,
+                recovery_decisions,
+                operator_requests.saturating_add(orphaned_requests),
+                step_partitions,
+                step_executions,
+                job_executions,
+                job_instances,
+            ))
         })
     }
 
@@ -2879,66 +3430,6 @@ fn starting_metadata(created_at: SystemTime) -> Result<ExecutionMetadata, Reposi
         ExecutionCounts::default(),
         None,
     )?)
-}
-
-fn canonical_instance_digest(key: &JobInstanceKey) -> Result<[u8; 32], RepositoryError> {
-    let mut encoded = Vec::new();
-    encoded.push(1);
-    push_length_prefixed(&mut encoded, key.job_name().as_str().as_bytes())?;
-    for (name, kind) in key.identifying_fields() {
-        push_length_prefixed(&mut encoded, name.as_str().as_bytes())?;
-        let value = key
-            .identifying_value(name)
-            .ok_or(RepositoryError::Unavailable)?;
-        encoded.push(parameter_tag(kind));
-        match kind {
-            ParameterValueKind::String => push_length_prefixed(
-                &mut encoded,
-                value
-                    .as_str()
-                    .ok_or(RepositoryError::Unavailable)?
-                    .as_bytes(),
-            )?,
-            ParameterValueKind::I64 => encoded.extend_from_slice(
-                &value
-                    .as_i64()
-                    .ok_or(RepositoryError::Unavailable)?
-                    .to_be_bytes(),
-            ),
-            ParameterValueKind::U64 => encoded.extend_from_slice(
-                &value
-                    .as_u64()
-                    .ok_or(RepositoryError::Unavailable)?
-                    .to_be_bytes(),
-            ),
-            ParameterValueKind::Bool => encoded.push(u8::from(
-                value.as_bool().ok_or(RepositoryError::Unavailable)?,
-            )),
-        }
-        if encoded.len() > MAX_INSTANCE_KEY_INPUT {
-            return Err(RepositoryError::Unavailable);
-        }
-    }
-    Ok(Sha256::digest(encoded).into())
-}
-
-fn push_length_prefixed(target: &mut Vec<u8>, value: &[u8]) -> Result<(), RepositoryError> {
-    let length = u32::try_from(value.len()).map_err(|_| RepositoryError::Unavailable)?;
-    target.extend_from_slice(&length.to_be_bytes());
-    target.extend_from_slice(value);
-    if target.len() > MAX_INSTANCE_KEY_INPUT {
-        return Err(RepositoryError::Unavailable);
-    }
-    Ok(())
-}
-
-const fn parameter_tag(kind: ParameterValueKind) -> u8 {
-    match kind {
-        ParameterValueKind::String => 1,
-        ParameterValueKind::I64 => 2,
-        ParameterValueKind::U64 => 3,
-        ParameterValueKind::Bool => 4,
-    }
 }
 
 fn encode_identifying_parameters(key: &JobInstanceKey) -> Result<Value, RepositoryError> {
@@ -3437,6 +3928,7 @@ fn decode_recovery_decision(
         .try_into()
         .map_err(|_| RepositoryError::Unavailable)?;
     Ok(RecoveryDecision::new(
+        RecoveryDecisionId::new(read_u64(row, "id")?)?,
         id,
         ExecutionVersion::new(read_u64(row, "execution_version")?),
         decode_status(
@@ -3618,6 +4110,12 @@ fn read_optional_i64(row: &PgRow, name: &str) -> Result<Option<i64>, RepositoryE
     row.try_get(name).map_err(|_| RepositoryError::Unavailable)
 }
 
+fn read_optional_u64(row: &PgRow, name: &str) -> Result<Option<u64>, RepositoryError> {
+    read_optional_i64(row, name)?
+        .map(|value| u64::try_from(value).map_err(|_| RepositoryError::Unavailable))
+        .transpose()
+}
+
 fn read_u64(row: &PgRow, name: &str) -> Result<u64, RepositoryError> {
     u64::try_from(read_i64(row, name)?).map_err(|_| RepositoryError::Unavailable)
 }
@@ -3678,7 +4176,7 @@ mod tests {
         ])?;
         let key = JobInstanceKey::new(JobName::new("golden_job")?, &parameters);
         assert_eq!(
-            canonical_instance_digest(&key)?,
+            key.digest(),
             [
                 0x71, 0xf1, 0x2d, 0xb9, 0xe3, 0x88, 0x7d, 0xe2, 0xcf, 0x92, 0xe9, 0x3b, 0xb6, 0x3f,
                 0xd4, 0xe9, 0xe7, 0xc5, 0x36, 0xdf, 0x8f, 0xa2, 0x02, 0x21, 0x24, 0x45, 0xd1, 0x8b,
@@ -3686,5 +4184,1031 @@ mod tests {
             ]
         );
         Ok(())
+    }
+}
+
+fn candidate_execution_ids(candidates: &[PurgeCandidate]) -> Result<Vec<i64>, RepositoryError> {
+    candidates
+        .iter()
+        .map(|candidate| {
+            database_id(
+                candidate.job_execution_id().get(),
+                IdentifierKind::JobExecution,
+            )
+        })
+        .collect()
+}
+
+fn candidate_instance_ids(candidates: &[PurgeCandidate]) -> Result<Vec<i64>, RepositoryError> {
+    let mut ids = candidates
+        .iter()
+        .map(|candidate| {
+            database_id(
+                candidate.job_instance_id().get(),
+                IdentifierKind::JobInstance,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    ids.sort_unstable();
+    ids.dedup();
+    Ok(ids)
+}
+
+fn retention_count(value: u64) -> Result<i64, RepositoryError> {
+    i64::try_from(value).map_err(|_| RepositoryError::Unavailable)
+}
+
+fn operator_request_select(suffix: &str) -> String {
+    format!(
+        "SELECT request.id, request.job_instance_id, request.job_execution_id, \
+         request.action, request.operation_id, request.actor_ref, request.reason_code, \
+         request.request_digest, request.observed_version, request.prior_status, \
+         request.result_status, request.outcome_class, request.rejection_code, \
+         (extract(epoch FROM request.requested_at) * 1000)::bigint AS requested_ms \
+         FROM oxide_batch.ob_operator_request request {suffix}"
+    )
+}
+
+fn retention_action_select(suffix: &str) -> String {
+    format!(
+        "SELECT retention.id, retention.job_instance_id, retention.action, \
+         retention.operation_id, retention.actor_ref, retention.reason_code, \
+         retention.plan_digest, retention.batch_bound, \
+         retention.deleted_flow_decisions, retention.deleted_recovery_decisions, \
+         retention.deleted_operator_requests, retention.deleted_step_partitions, \
+         retention.deleted_step_executions, retention.deleted_job_executions, \
+         retention.deleted_job_instances, retention.outcome_class, \
+         (extract(epoch FROM retention.applied_at) * 1000)::bigint AS applied_ms \
+         FROM oxide_batch.ob_retention_action retention {suffix}"
+    )
+}
+
+fn read_text(row: &PgRow, name: &str) -> Result<String, RepositoryError> {
+    row.try_get::<String, _>(name)
+        .map_err(|_| RepositoryError::Unavailable)
+}
+
+fn read_optional_text(row: &PgRow, name: &str) -> Result<Option<String>, RepositoryError> {
+    row.try_get::<Option<String>, _>(name)
+        .map_err(|_| RepositoryError::Unavailable)
+}
+
+fn read_digest(row: &PgRow, name: &str) -> Result<[u8; 32], RepositoryError> {
+    row.try_get::<Vec<u8>, _>(name)
+        .map_err(|_| RepositoryError::Unavailable)?
+        .try_into()
+        .map_err(|_| RepositoryError::Unavailable)
+}
+
+fn decode_operator_action(value: &str) -> Result<OperatorAction, RepositoryError> {
+    Ok(match value {
+        "LAUNCH" => OperatorAction::Launch,
+        "RESTART" => OperatorAction::Restart,
+        "STOP" => OperatorAction::Stop,
+        "ABANDON" => OperatorAction::Abandon,
+        "RECOVER" => OperatorAction::Recover,
+        _ => return Err(RepositoryError::Unavailable),
+    })
+}
+
+fn decode_retention_action(value: &str) -> Result<RetentionAction, RepositoryError> {
+    Ok(match value {
+        "HOLD" => RetentionAction::Hold,
+        "RELEASE_HOLD" => RetentionAction::ReleaseHold,
+        "APPLY_PURGE" => RetentionAction::ApplyPurge,
+        _ => return Err(RepositoryError::Unavailable),
+    })
+}
+
+fn decode_operator_outcome(value: &str) -> Result<OperatorOutcomeClass, RepositoryError> {
+    Ok(match value {
+        "APPLIED" => OperatorOutcomeClass::Applied,
+        "REJECTED" => OperatorOutcomeClass::Rejected,
+        _ => return Err(RepositoryError::Unavailable),
+    })
+}
+
+fn decode_retention_outcome(value: &str) -> Result<RetentionOutcome, RepositoryError> {
+    Ok(match value {
+        "APPLIED" => RetentionOutcome::Applied,
+        "REJECTED" => RetentionOutcome::Rejected,
+        _ => return Err(RepositoryError::Unavailable),
+    })
+}
+
+fn decode_operator_rejection(
+    value: &str,
+    row: &PgRow,
+) -> Result<OperatorRejection, RepositoryError> {
+    Ok(match value {
+        "OPTIMISTIC_CONFLICT" => OperatorRejection::OptimisticConflict {
+            current: ExecutionVersion::new(
+                read_optional_u64(row, "observed_version")?.unwrap_or(0),
+            ),
+        },
+        "INVALID_STATE" => OperatorRejection::InvalidState {
+            status: read_optional_text(row, "prior_status")?
+                .as_deref()
+                .map(decode_status)
+                .transpose()?
+                .unwrap_or(BatchStatus::Unknown),
+        },
+        "INSTANCE_COMPLETED" => OperatorRejection::InstanceCompleted,
+        "INSTANCE_ABANDONED" => OperatorRejection::InstanceAbandoned,
+        "EXECUTION_ALREADY_ACTIVE" => OperatorRejection::ExecutionAlreadyActive {
+            execution_id: JobExecutionId::new(read_u64(row, "job_execution_id")?)?,
+            status: read_optional_text(row, "prior_status")?
+                .as_deref()
+                .map(decode_status)
+                .transpose()?
+                .unwrap_or(BatchStatus::Unknown),
+        },
+        "INCOMPATIBLE_DEFINITION" => OperatorRejection::IncompatibleDefinition,
+        "RESTART_WITHOUT_PRIOR_ATTEMPT" => OperatorRejection::RestartWithoutPriorAttempt,
+        "START_LIMIT_EXCEEDED" => OperatorRejection::StartLimitExceeded,
+        "UNRESOLVED_RECOVERY_REQUIRED" => OperatorRejection::UnresolvedRecoveryRequired,
+        "EXECUTION_NOT_FOUND" => OperatorRejection::ExecutionNotFound,
+        "INSTANCE_NOT_FOUND" => OperatorRejection::InstanceNotFound,
+        _ => return Err(RepositoryError::Unavailable),
+    })
+}
+
+fn decode_operator_record(row: &PgRow) -> Result<OperatorRecord, RepositoryError> {
+    let id = OperatorRequestId::new(read_u64(row, "id")?)?;
+    let action = decode_operator_action(&read_text(row, "action")?)?;
+    let outcome = decode_operator_outcome(&read_text(row, "outcome_class")?)?;
+    let rejection = read_optional_text(row, "rejection_code")?
+        .map(|code| decode_operator_rejection(&code, row))
+        .transpose()?;
+    let draft = OperatorRecordDraft::from_durable(
+        action,
+        OperationId::new(read_text(row, "operation_id")?)
+            .map_err(|_| RepositoryError::Unavailable)?,
+        ActorRef::new(read_text(row, "actor_ref")?).map_err(|_| RepositoryError::Unavailable)?,
+        read_optional_text(row, "reason_code")?
+            .map(ReasonCode::new)
+            .transpose()
+            .map_err(|_| RepositoryError::Unavailable)?,
+        RequestDigest::from_bytes(read_digest(row, "request_digest")?),
+        read_optional_u64(row, "job_instance_id")?
+            .map(JobInstanceId::new)
+            .transpose()?,
+        read_optional_u64(row, "job_execution_id")?
+            .map(JobExecutionId::new)
+            .transpose()?,
+        read_optional_u64(row, "observed_version")?.map(ExecutionVersion::new),
+        read_optional_text(row, "prior_status")?
+            .as_deref()
+            .map(decode_status)
+            .transpose()?,
+        read_optional_text(row, "result_status")?
+            .as_deref()
+            .map(decode_status)
+            .transpose()?,
+        outcome,
+        rejection,
+        millis_system_time(read_i64(row, "requested_ms")?)?,
+    );
+    Ok(OperatorRecord::from_parts(id, draft))
+}
+
+fn decode_retention_record(row: &PgRow) -> Result<RetentionRecord, RepositoryError> {
+    let id = RetentionActionId::new(read_u64(row, "id")?)?;
+    let counts = PurgeCounts::new(
+        read_u64(row, "deleted_flow_decisions")?,
+        read_u64(row, "deleted_recovery_decisions")?,
+        read_u64(row, "deleted_operator_requests")?,
+        read_u64(row, "deleted_step_partitions")?,
+        read_u64(row, "deleted_step_executions")?,
+        read_u64(row, "deleted_job_executions")?,
+        read_u64(row, "deleted_job_instances")?,
+    );
+    let batch_bound = row
+        .try_get::<Option<i32>, _>("batch_bound")
+        .map_err(|_| RepositoryError::Unavailable)?
+        .map(|bound| {
+            u32::try_from(bound)
+                .map_err(|_| RepositoryError::Unavailable)
+                .and_then(|bound| {
+                    PurgeBatchBound::new(bound).map_err(|_| RepositoryError::Unavailable)
+                })
+        })
+        .transpose()?;
+    let plan_digest = row
+        .try_get::<Option<Vec<u8>>, _>("plan_digest")
+        .map_err(|_| RepositoryError::Unavailable)?
+        .map(|digest| <[u8; 32]>::try_from(digest).map_err(|_| RepositoryError::Unavailable))
+        .transpose()?;
+    let draft = RetentionRecordDraft::from_durable(
+        decode_retention_action(&read_text(row, "action")?)?,
+        OperationId::new(read_text(row, "operation_id")?)
+            .map_err(|_| RepositoryError::Unavailable)?,
+        ActorRef::new(read_text(row, "actor_ref")?).map_err(|_| RepositoryError::Unavailable)?,
+        ReasonCode::new(read_text(row, "reason_code")?)
+            .map_err(|_| RepositoryError::Unavailable)?,
+        read_optional_u64(row, "job_instance_id")?
+            .map(JobInstanceId::new)
+            .transpose()?,
+        plan_digest,
+        counts,
+        batch_bound,
+        decode_retention_outcome(&read_text(row, "outcome_class")?)?,
+        millis_system_time(read_i64(row, "applied_ms")?)?,
+    );
+    Ok(RetentionRecord::from_parts(id, draft))
+}
+
+fn decode_retention_hold(
+    id: JobInstanceId,
+    row: &PgRow,
+) -> Result<Option<RetentionHold>, RepositoryError> {
+    let Some(actor) = read_optional_text(row, "hold_actor")? else {
+        return Ok(None);
+    };
+    let reason = read_optional_text(row, "hold_reason")?.ok_or(RepositoryError::Unavailable)?;
+    let placed_ms = read_optional_i64(row, "placed_ms")?.ok_or(RepositoryError::Unavailable)?;
+    Ok(Some(RetentionHold::new(
+        id,
+        ActorRef::new(actor).map_err(|_| RepositoryError::Unavailable)?,
+        ReasonCode::new(reason).map_err(|_| RepositoryError::Unavailable)?,
+        millis_system_time(placed_ms)?,
+    )))
+}
+
+/// The bounded keyset read port of [`PostgresJobRepository`].
+///
+/// Each page is one statement executed under the configured statement timeout
+/// and the adapter's ordinary read committed isolation. No page takes a lock
+/// or participates in a chunk transaction, and cross-page snapshot isolation
+/// is not provided.
+///
+/// The unresolved-execution age bound compares the durable `updated_at` column
+/// against repository server time. It never consults the inspecting process's
+/// wall clock and never updates a row.
+#[derive(Clone)]
+pub struct PostgresExplorer {
+    repository: PostgresJobRepository,
+}
+
+impl PostgresExplorer {
+    /// Binds one durable repository to the bounded read port.
+    #[must_use]
+    pub const fn new(repository: PostgresJobRepository) -> Self {
+        Self { repository }
+    }
+
+    async fn fetch_all(
+        &self,
+        query: sqlx::query::Query<'_, Postgres, PgArguments>,
+    ) -> Result<Vec<PgRow>, ExplorerError> {
+        let mut connection = self
+            .repository
+            .begin_connection()
+            .await
+            .map_err(ExplorerError::Repository)?;
+        let result = query.fetch_all(&mut *connection).await;
+        let _ = sqlx::query("ROLLBACK").execute(&mut *connection).await;
+        result.map_err(|error| classify_explorer_error(&error))
+    }
+
+    async fn fetch_optional(
+        &self,
+        query: sqlx::query::Query<'_, Postgres, PgArguments>,
+    ) -> Result<Option<PgRow>, ExplorerError> {
+        let mut connection = self
+            .repository
+            .begin_connection()
+            .await
+            .map_err(ExplorerError::Repository)?;
+        let result = query.fetch_optional(&mut *connection).await;
+        let _ = sqlx::query("ROLLBACK").execute(&mut *connection).await;
+        result.map_err(|error| classify_explorer_error(&error))
+    }
+}
+
+impl fmt::Debug for PostgresExplorer {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PostgresExplorer")
+            .finish_non_exhaustive()
+    }
+}
+
+fn classify_explorer_error(error: &sqlx::Error) -> ExplorerError {
+    if let sqlx::Error::Database(database) = error
+        && database.code().as_deref() == Some("57014")
+    {
+        return ExplorerError::Timeout;
+    }
+    ExplorerError::Repository(RepositoryError::Unavailable)
+}
+
+const fn ceiling_source(query: &ExplorerQuery) -> &'static str {
+    match query {
+        ExplorerQuery::JobNames => "SELECT max(id) AS ceiling FROM oxide_batch.ob_job_definition",
+        ExplorerQuery::Instances { .. } => {
+            "SELECT max(id) AS ceiling FROM oxide_batch.ob_job_instance WHERE job_name = $1"
+        }
+        ExplorerQuery::Executions { .. } | ExplorerQuery::UnresolvedExecutions { .. } => {
+            "SELECT max(id) AS ceiling FROM oxide_batch.ob_job_execution"
+        }
+        ExplorerQuery::StepExecutions { .. } => {
+            "SELECT max(id) AS ceiling FROM oxide_batch.ob_step_execution"
+        }
+        ExplorerQuery::RecoveryDecisions { .. } => {
+            "SELECT max(id) AS ceiling FROM oxide_batch.ob_recovery_decision"
+        }
+        ExplorerQuery::FlowDecisions { .. } => {
+            "SELECT max(id) AS ceiling FROM oxide_batch.ob_flow_decision"
+        }
+        ExplorerQuery::StepPartitions { .. } => {
+            "SELECT max(id) AS ceiling FROM oxide_batch.ob_step_partition"
+        }
+        ExplorerQuery::OperatorRequests { .. } => {
+            "SELECT max(id) AS ceiling FROM oxide_batch.ob_operator_request"
+        }
+    }
+}
+
+fn window_limit(window: &QueryWindow) -> i64 {
+    i64::from(window.limit())
+}
+
+fn window_ceiling(window: &QueryWindow) -> Result<i64, ExplorerError> {
+    i64::try_from(window.ceiling())
+        .map_err(|_| ExplorerError::Repository(RepositoryError::Unavailable))
+}
+
+fn window_identity(window: &QueryWindow) -> Result<Option<i64>, ExplorerError> {
+    match window.after() {
+        Some(CursorKey::Identity(value)) => i64::try_from(*value)
+            .map(Some)
+            .map_err(|_| ExplorerError::Cursor(CursorError::CursorInvalid)),
+        Some(_) => Err(ExplorerError::Cursor(CursorError::CursorInvalid)),
+        None => Ok(None),
+    }
+}
+
+fn window_ordered(window: &QueryWindow) -> Result<Option<(i64, i64)>, ExplorerError> {
+    match window.after() {
+        Some(CursorKey::Ordered { primary, identity }) => {
+            let primary = i64::try_from(*primary)
+                .map_err(|_| ExplorerError::Cursor(CursorError::CursorInvalid))?;
+            let identity = i64::try_from(*identity)
+                .map_err(|_| ExplorerError::Cursor(CursorError::CursorInvalid))?;
+            Ok(Some((primary, identity)))
+        }
+        Some(_) => Err(ExplorerError::Cursor(CursorError::CursorInvalid)),
+        None => Ok(None),
+    }
+}
+
+fn window_name(window: &QueryWindow) -> Result<Option<String>, ExplorerError> {
+    match window.after() {
+        Some(CursorKey::Name(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(ExplorerError::Cursor(CursorError::CursorInvalid)),
+        None => Ok(None),
+    }
+}
+
+fn explorer_id(value: u64, kind: IdentifierKind) -> Result<i64, ExplorerError> {
+    database_id(value, kind).map_err(ExplorerError::Repository)
+}
+
+fn job_execution_projection_select(suffix: &str) -> String {
+    format!(
+        "SELECT execution.id, execution.job_instance_id, instance.job_name, \
+         execution.attempt, execution.status, execution.exit_code, \
+         execution.failure_category, execution.failure_id, \
+         (extract(epoch FROM execution.created_at) * 1000)::bigint AS created_ms, \
+         (extract(epoch FROM execution.started_at) * 1000)::bigint AS started_ms, \
+         (extract(epoch FROM execution.ended_at) * 1000)::bigint AS ended_ms, \
+         (extract(epoch FROM execution.updated_at) * 1000)::bigint AS updated_ms, \
+         (extract(epoch FROM execution.stop_requested_at) * 1000)::bigint AS stop_ms, \
+         (execution.owner_token IS NOT NULL) AS owner_recorded, execution.version, \
+         definition.definition_revision, definition.manifest_format, \
+         definition.manifest_digest, execution.context_format, \
+         execution.context_schema, execution.context_schema_version, \
+         pg_column_size(execution.context_payload)::bigint AS context_bytes \
+         FROM oxide_batch.ob_job_execution execution \
+         JOIN oxide_batch.ob_job_instance instance \
+           ON instance.id = execution.job_instance_id \
+         JOIN oxide_batch.ob_job_definition definition \
+           ON definition.id = execution.definition_id {suffix}"
+    )
+}
+
+fn step_execution_projection_select(suffix: &str) -> String {
+    format!(
+        "SELECT execution.id, execution.job_execution_id, execution.step_name, \
+         execution.step_logical_id, execution.status, execution.exit_code, \
+         execution.read_count, execution.processed_count, execution.write_count, \
+         execution.filter_count, execution.commit_count, execution.rollback_count, \
+         execution.failure_category, execution.failure_id, execution.version, \
+         (extract(epoch FROM execution.created_at) * 1000)::bigint AS created_ms, \
+         (extract(epoch FROM execution.started_at) * 1000)::bigint AS started_ms, \
+         (extract(epoch FROM execution.ended_at) * 1000)::bigint AS ended_ms, \
+         execution.checkpoint_format, execution.checkpoint_schema, \
+         execution.checkpoint_schema_version, \
+         pg_column_size(execution.checkpoint_payload)::bigint AS checkpoint_bytes, \
+         execution.context_format, execution.context_schema, \
+         execution.context_schema_version, \
+         pg_column_size(execution.context_payload)::bigint AS context_bytes \
+         FROM oxide_batch.ob_step_execution execution {suffix}"
+    )
+}
+
+fn step_partition_projection_select(suffix: &str) -> String {
+    format!(
+        "SELECT partition.id, partition.step_execution_id, \
+         partition.worker_step_execution_id, partition.partition_key, \
+         partition.partition_ordinal, partition.status, partition.exit_code, \
+         partition.read_count, partition.processed_count, partition.write_count, \
+         partition.filter_count, partition.commit_count, partition.rollback_count, \
+         partition.version, partition.context_format, partition.context_schema, \
+         partition.context_schema_version, \
+         pg_column_size(partition.context_payload)::bigint AS context_bytes \
+         FROM oxide_batch.ob_step_partition partition {suffix}"
+    )
+}
+
+fn decode_state_descriptor(
+    row: &PgRow,
+    kind: DurableStateKind,
+    format: &str,
+    schema: &str,
+    schema_version: &str,
+    bytes: &str,
+) -> Result<StateEnvelopeDescriptor, ExplorerError> {
+    let unavailable = || ExplorerError::Repository(RepositoryError::Unavailable);
+    let format_version = row
+        .try_get::<i16, _>(format)
+        .map_err(|_| unavailable())
+        .and_then(|value| u16::try_from(value).map_err(|_| unavailable()))?;
+    let schema_id = StateSchemaId::new(read_text(row, schema).map_err(ExplorerError::Repository)?)
+        .map_err(|_| unavailable())?;
+    let schema_version = row
+        .try_get::<i32, _>(schema_version)
+        .map_err(|_| unavailable())
+        .and_then(|value| u32::try_from(value).map_err(|_| unavailable()))
+        .and_then(|value| StateSchemaVersion::new(value).map_err(|_| unavailable()))?;
+    let encoded_len = read_optional_i64(row, bytes)
+        .map_err(ExplorerError::Repository)?
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(0);
+    Ok(StateEnvelopeDescriptor::new(
+        kind,
+        format_version,
+        schema_id,
+        schema_version,
+        encoded_len,
+    ))
+}
+
+fn decode_projection_counts(row: &PgRow) -> Result<ExecutionCounts, ExplorerError> {
+    let read = |name: &str| read_u64(row, name).map_err(ExplorerError::Repository);
+    Ok(ExecutionCounts::new(
+        read("read_count")?,
+        read("processed_count")?,
+        read("write_count")?,
+        read("filter_count")?,
+        read("commit_count")?,
+        read("rollback_count")?,
+    ))
+}
+
+fn decode_projection_failure(row: &PgRow) -> Result<Option<FailureSummary>, ExplorerError> {
+    let unavailable = || ExplorerError::Repository(RepositoryError::Unavailable);
+    let category =
+        read_optional_text(row, "failure_category").map_err(ExplorerError::Repository)?;
+    let failure_id = read_optional_u64(row, "failure_id").map_err(ExplorerError::Repository)?;
+    match (category, failure_id) {
+        (Some(category), Some(failure_id)) => Ok(Some(FailureSummary::new(
+            decode_failure_category(&category).map_err(|_| unavailable())?,
+            FailureId::new(failure_id).map_err(|_| unavailable())?,
+        ))),
+        (None, None) => Ok(None),
+        _ => Err(unavailable()),
+    }
+}
+
+fn decode_projection_timestamps(row: &PgRow) -> Result<ExecutionTimestamps, ExplorerError> {
+    let unavailable = || ExplorerError::Repository(RepositoryError::Unavailable);
+    let created =
+        millis_system_time(read_i64(row, "created_ms").map_err(ExplorerError::Repository)?)
+            .map_err(|_| unavailable())?;
+    let started = read_optional_i64(row, "started_ms")
+        .map_err(ExplorerError::Repository)?
+        .map(millis_system_time)
+        .transpose()
+        .map_err(|_| unavailable())?;
+    let ended = read_optional_i64(row, "ended_ms")
+        .map_err(ExplorerError::Repository)?
+        .map(millis_system_time)
+        .transpose()
+        .map_err(|_| unavailable())?;
+    ExecutionTimestamps::new(created, started, ended).map_err(|_| unavailable())
+}
+
+fn decode_job_execution_projection(row: &PgRow) -> Result<JobExecutionProjection, ExplorerError> {
+    let unavailable = || ExplorerError::Repository(RepositoryError::Unavailable);
+    let id = JobExecutionId::new(read_u64(row, "id").map_err(ExplorerError::Repository)?)
+        .map_err(|_| unavailable())?;
+    let instance_id =
+        JobInstanceId::new(read_u64(row, "job_instance_id").map_err(ExplorerError::Repository)?)
+            .map_err(|_| unavailable())?;
+    let job_name = JobName::new(read_text(row, "job_name").map_err(ExplorerError::Repository)?)
+        .map_err(|_| unavailable())?;
+    let attempt = row
+        .try_get::<i32, _>("attempt")
+        .map_err(|_| unavailable())
+        .and_then(|value| u32::try_from(value).map_err(|_| unavailable()))?;
+    let status = decode_status(&read_text(row, "status").map_err(ExplorerError::Repository)?)
+        .map_err(|_| unavailable())?;
+    let exit_status = ExitStatus::new(
+        ExitCode::new(read_text(row, "exit_code").map_err(ExplorerError::Repository)?)
+            .map_err(|_| unavailable())?,
+    );
+    let definition = DefinitionDescriptor::new(
+        DefinitionRevision::new(
+            read_text(row, "definition_revision").map_err(ExplorerError::Repository)?,
+        )
+        .map_err(|_| unavailable())?,
+        row.try_get::<i16, _>("manifest_format")
+            .map_err(|_| unavailable())
+            .and_then(|value| u16::try_from(value).map_err(|_| unavailable()))?,
+        read_digest(row, "manifest_digest").map_err(ExplorerError::Repository)?,
+    );
+    let context = decode_state_descriptor(
+        row,
+        DurableStateKind::ExecutionContext,
+        "context_format",
+        "context_schema",
+        "context_schema_version",
+        "context_bytes",
+    )?;
+    let stop_requested_at = read_optional_i64(row, "stop_ms")
+        .map_err(ExplorerError::Repository)?
+        .map(millis_system_time)
+        .transpose()
+        .map_err(|_| unavailable())?;
+    let owner_recorded = row
+        .try_get::<bool, _>("owner_recorded")
+        .map_err(|_| unavailable())?;
+    Ok(JobExecutionProjection::new(
+        id,
+        instance_id,
+        job_name,
+        attempt,
+        status,
+        exit_status,
+        ExecutionCounts::default(),
+        ExecutionVersion::new(read_u64(row, "version").map_err(ExplorerError::Repository)?),
+        decode_projection_timestamps(row)?,
+        millis_system_time(read_i64(row, "updated_ms").map_err(ExplorerError::Repository)?)
+            .map_err(|_| unavailable())?,
+        decode_projection_failure(row)?,
+        Some(definition),
+        Some(context),
+        stop_requested_at,
+        owner_recorded,
+    ))
+}
+
+fn decode_job_instance_projection(row: &PgRow) -> Result<JobInstanceProjection, ExplorerError> {
+    let unavailable = || ExplorerError::Repository(RepositoryError::Unavailable);
+    let id = JobInstanceId::new(read_u64(row, "id").map_err(ExplorerError::Repository)?)
+        .map_err(|_| unavailable())?;
+    let job_name = JobName::new(read_text(row, "job_name").map_err(ExplorerError::Repository)?)
+        .map_err(|_| unavailable())?;
+    let parameters = row
+        .try_get::<Json<Value>, _>("identifying_parameters")
+        .map_err(|_| unavailable())?;
+    let parameters = decode_identifying_parameters(&parameters.0).map_err(|_| unavailable())?;
+    let descriptors = parameters
+        .iter()
+        .map(|(name, parameter)| {
+            ParameterDescriptor::new(
+                name.clone(),
+                parameter.value().kind(),
+                parameter.is_identifying(),
+            )
+        })
+        .collect();
+    let created_at = read_optional_i64(row, "created_ms")
+        .map_err(ExplorerError::Repository)?
+        .map(millis_system_time)
+        .transpose()
+        .map_err(|_| unavailable())?;
+    let hold = decode_retention_hold(id, row).map_err(ExplorerError::Repository)?;
+    Ok(JobInstanceProjection::new(
+        id,
+        job_name,
+        read_digest(row, "instance_key").map_err(ExplorerError::Repository)?,
+        descriptors,
+        created_at,
+        hold,
+    ))
+}
+
+fn decode_step_execution_projection(row: &PgRow) -> Result<StepExecutionProjection, ExplorerError> {
+    let unavailable = || ExplorerError::Repository(RepositoryError::Unavailable);
+    let id = StepExecutionId::new(read_u64(row, "id").map_err(ExplorerError::Repository)?)
+        .map_err(|_| unavailable())?;
+    let job_execution_id =
+        JobExecutionId::new(read_u64(row, "job_execution_id").map_err(ExplorerError::Repository)?)
+            .map_err(|_| unavailable())?;
+    let step_name = StepName::new(read_text(row, "step_name").map_err(ExplorerError::Repository)?)
+        .map_err(|_| unavailable())?;
+    let node_id = read_optional_text(row, "step_logical_id")
+        .map_err(ExplorerError::Repository)?
+        .map(NodeId::new)
+        .transpose()
+        .map_err(|_| unavailable())?;
+    let status = decode_status(&read_text(row, "status").map_err(ExplorerError::Repository)?)
+        .map_err(|_| unavailable())?;
+    let exit_status = ExitStatus::new(
+        ExitCode::new(read_text(row, "exit_code").map_err(ExplorerError::Repository)?)
+            .map_err(|_| unavailable())?,
+    );
+    Ok(StepExecutionProjection::new(
+        id,
+        job_execution_id,
+        step_name,
+        node_id,
+        status,
+        exit_status,
+        decode_projection_counts(row)?,
+        ExecutionVersion::new(read_u64(row, "version").map_err(ExplorerError::Repository)?),
+        decode_projection_timestamps(row)?,
+        decode_projection_failure(row)?,
+        Some(decode_state_descriptor(
+            row,
+            DurableStateKind::Checkpoint,
+            "checkpoint_format",
+            "checkpoint_schema",
+            "checkpoint_schema_version",
+            "checkpoint_bytes",
+        )?),
+        Some(decode_state_descriptor(
+            row,
+            DurableStateKind::ExecutionContext,
+            "context_format",
+            "context_schema",
+            "context_schema_version",
+            "context_bytes",
+        )?),
+    ))
+}
+
+fn decode_step_partition_projection(row: &PgRow) -> Result<StepPartitionProjection, ExplorerError> {
+    let unavailable = || ExplorerError::Repository(RepositoryError::Unavailable);
+    let id = StepPartitionId::new(read_u64(row, "id").map_err(ExplorerError::Repository)?)
+        .map_err(|_| unavailable())?;
+    let step_execution_id = StepExecutionId::new(
+        read_u64(row, "step_execution_id").map_err(ExplorerError::Repository)?,
+    )
+    .map_err(|_| unavailable())?;
+    let worker = read_optional_u64(row, "worker_step_execution_id")
+        .map_err(ExplorerError::Repository)?
+        .map(StepExecutionId::new)
+        .transpose()
+        .map_err(|_| unavailable())?;
+    let status = decode_status(&read_text(row, "status").map_err(ExplorerError::Repository)?)
+        .map_err(|_| unavailable())?;
+    let exit_status = ExitStatus::new(
+        ExitCode::new(
+            read_optional_text(row, "exit_code")
+                .map_err(ExplorerError::Repository)?
+                .unwrap_or_else(|| String::from("UNKNOWN")),
+        )
+        .map_err(|_| unavailable())?,
+    );
+    let ordinal = row
+        .try_get::<i32, _>("partition_ordinal")
+        .map_err(|_| unavailable())
+        .and_then(|value| u32::try_from(value).map_err(|_| unavailable()))?;
+    Ok(StepPartitionProjection::new(
+        id,
+        step_execution_id,
+        read_text(row, "partition_key").map_err(ExplorerError::Repository)?,
+        ordinal,
+        status,
+        exit_status,
+        decode_projection_counts(row)?,
+        ExecutionVersion::new(read_u64(row, "version").map_err(ExplorerError::Repository)?),
+        worker,
+        Some(decode_state_descriptor(
+            row,
+            DurableStateKind::ExecutionContext,
+            "context_format",
+            "context_schema",
+            "context_schema_version",
+            "context_bytes",
+        )?),
+    ))
+}
+
+impl ExplorerRepository for PostgresExplorer {
+    fn identity_ceiling<'a>(
+        &'a self,
+        query: &'a ExplorerQuery,
+    ) -> BoxFuture<'a, Result<u64, ExplorerError>> {
+        Box::pin(async move {
+            let statement = sqlx::query(ceiling_source(query));
+            let statement = match query {
+                ExplorerQuery::Instances { job_name } => statement.bind(job_name.as_str()),
+                _ => statement,
+            };
+            let row = self.fetch_optional(statement).await?;
+            let ceiling = row
+                .as_ref()
+                .map(|row| read_optional_i64(row, "ceiling"))
+                .transpose()
+                .map_err(ExplorerError::Repository)?
+                .flatten()
+                .unwrap_or(0);
+            u64::try_from(ceiling)
+                .map_err(|_| ExplorerError::Repository(RepositoryError::Unavailable))
+        })
+    }
+
+    fn job_names<'a>(
+        &'a self,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<JobName>, ExplorerError>> {
+        Box::pin(async move {
+            let rows = self
+                .fetch_all(
+                    sqlx::query(
+                        "SELECT DISTINCT job_name FROM oxide_batch.ob_job_definition \
+                         WHERE id <= $1 AND ($2::text IS NULL OR job_name > $2) \
+                         ORDER BY job_name LIMIT $3",
+                    )
+                    .bind(window_ceiling(window)?)
+                    .bind(window_name(window)?)
+                    .bind(window_limit(window)),
+                )
+                .await?;
+            rows.iter()
+                .map(|row| {
+                    JobName::new(read_text(row, "job_name").map_err(ExplorerError::Repository)?)
+                        .map_err(|_| ExplorerError::Repository(RepositoryError::Unavailable))
+                })
+                .collect()
+        })
+    }
+
+    fn instances<'a>(
+        &'a self,
+        job_name: &'a JobName,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<JobInstanceProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let rows = self
+                .fetch_all(
+                    sqlx::query(
+                        "SELECT id, job_name, instance_key, identifying_parameters, \
+                         (extract(epoch FROM created_at) * 1000)::bigint AS created_ms, \
+                         hold_actor, hold_reason, \
+                         (extract(epoch FROM hold_placed_at) * 1000)::bigint AS placed_ms \
+                         FROM oxide_batch.ob_job_instance \
+                         WHERE job_name = $1 AND id <= $2 \
+                           AND ($3::bigint IS NULL OR id < $3) \
+                         ORDER BY id DESC LIMIT $4",
+                    )
+                    .bind(job_name.as_str())
+                    .bind(window_ceiling(window)?)
+                    .bind(window_identity(window)?)
+                    .bind(window_limit(window)),
+                )
+                .await?;
+            rows.iter().map(decode_job_instance_projection).collect()
+        })
+    }
+
+    fn executions<'a>(
+        &'a self,
+        job_instance_id: JobInstanceId,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<JobExecutionProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let after = window_ordered(window)?;
+            let rows = self
+                .fetch_all(
+                    sqlx::query(AssertSqlSafe(job_execution_projection_select(
+                        "WHERE execution.job_instance_id = $1 AND execution.id <= $2 \
+                         AND ($3::bigint IS NULL \
+                              OR (execution.attempt, execution.id) < ($3, $4)) \
+                         ORDER BY execution.attempt DESC, execution.id DESC LIMIT $5",
+                    )))
+                    .bind(explorer_id(
+                        job_instance_id.get(),
+                        IdentifierKind::JobInstance,
+                    )?)
+                    .bind(window_ceiling(window)?)
+                    .bind(after.map(|(primary, _)| primary))
+                    .bind(after.map_or(0, |(_, identity)| identity))
+                    .bind(window_limit(window)),
+                )
+                .await?;
+            rows.iter().map(decode_job_execution_projection).collect()
+        })
+    }
+
+    fn execution(
+        &self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Option<JobExecutionProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let row = self
+                .fetch_optional(
+                    sqlx::query(AssertSqlSafe(job_execution_projection_select(
+                        "WHERE execution.id = $1",
+                    )))
+                    .bind(explorer_id(
+                        job_execution_id.get(),
+                        IdentifierKind::JobExecution,
+                    )?),
+                )
+                .await?;
+            row.as_ref()
+                .map(decode_job_execution_projection)
+                .transpose()
+        })
+    }
+
+    fn step_executions<'a>(
+        &'a self,
+        job_execution_id: JobExecutionId,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<StepExecutionProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let rows = self
+                .fetch_all(
+                    sqlx::query(AssertSqlSafe(step_execution_projection_select(
+                        "WHERE execution.job_execution_id = $1 AND execution.id <= $2 \
+                         AND ($3::bigint IS NULL OR execution.id > $3) \
+                         ORDER BY execution.id LIMIT $4",
+                    )))
+                    .bind(explorer_id(
+                        job_execution_id.get(),
+                        IdentifierKind::JobExecution,
+                    )?)
+                    .bind(window_ceiling(window)?)
+                    .bind(window_identity(window)?)
+                    .bind(window_limit(window)),
+                )
+                .await?;
+            rows.iter().map(decode_step_execution_projection).collect()
+        })
+    }
+
+    fn unresolved_executions<'a>(
+        &'a self,
+        minimum_age: Duration,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<JobExecutionProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let seconds = i64::try_from(minimum_age.as_secs())
+                .map_err(|_| ExplorerError::Repository(RepositoryError::Unavailable))?;
+            let rows = self
+                .fetch_all(
+                    sqlx::query(AssertSqlSafe(job_execution_projection_select(
+                        "WHERE execution.status IN \
+                           ('STARTING', 'STARTED', 'STOPPING', 'UNKNOWN') \
+                         AND execution.updated_at \
+                             < CURRENT_TIMESTAMP - make_interval(secs => $1::double precision) \
+                         AND execution.id <= $2 AND ($3::bigint IS NULL OR execution.id > $3) \
+                         ORDER BY execution.id LIMIT $4",
+                    )))
+                    .bind(seconds)
+                    .bind(window_ceiling(window)?)
+                    .bind(window_identity(window)?)
+                    .bind(window_limit(window)),
+                )
+                .await?;
+            rows.iter().map(decode_job_execution_projection).collect()
+        })
+    }
+
+    fn recovery_decisions<'a>(
+        &'a self,
+        job_execution_id: JobExecutionId,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<RecoveryDecision>, ExplorerError>> {
+        Box::pin(async move {
+            let rows = self
+                .fetch_all(
+                    sqlx::query(
+                        "SELECT id, execution_version, prior_status, resulting_status, \
+                         reason_code, operator_reference, evidence_digest, \
+                         (extract(epoch FROM decided_at) * 1000)::bigint AS decided_ms \
+                         FROM oxide_batch.ob_recovery_decision \
+                         WHERE job_execution_id = $1 AND id <= $2 \
+                           AND ($3::bigint IS NULL OR id > $3) \
+                         ORDER BY id LIMIT $4",
+                    )
+                    .bind(explorer_id(
+                        job_execution_id.get(),
+                        IdentifierKind::JobExecution,
+                    )?)
+                    .bind(window_ceiling(window)?)
+                    .bind(window_identity(window)?)
+                    .bind(window_limit(window)),
+                )
+                .await?;
+            rows.iter()
+                .map(|row| {
+                    decode_recovery_decision(job_execution_id, row)
+                        .map_err(ExplorerError::Repository)
+                })
+                .collect()
+        })
+    }
+
+    fn flow_decisions<'a>(
+        &'a self,
+        job_execution_id: JobExecutionId,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<FlowDecision>, ExplorerError>> {
+        Box::pin(async move {
+            let after = window_ordered(window)?;
+            let rows = self
+                .fetch_all(
+                    sqlx::query(AssertSqlSafe(flow_decision_select(
+                        "WHERE decision.job_execution_id = $1 AND decision.id <= $2 \
+                         AND ($3::bigint IS NULL \
+                              OR (decision.sequence, decision.id) > ($3, $4)) \
+                         ORDER BY decision.sequence, decision.id LIMIT $5",
+                    )))
+                    .bind(explorer_id(
+                        job_execution_id.get(),
+                        IdentifierKind::JobExecution,
+                    )?)
+                    .bind(window_ceiling(window)?)
+                    .bind(after.map(|(primary, _)| primary))
+                    .bind(after.map_or(0, |(_, identity)| identity))
+                    .bind(window_limit(window)),
+                )
+                .await?;
+            rows.iter()
+                .map(|row| decode_flow_decision(row).map_err(ExplorerError::Repository))
+                .collect()
+        })
+    }
+
+    fn step_partitions<'a>(
+        &'a self,
+        step_execution_id: StepExecutionId,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<StepPartitionProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let rows = self
+                .fetch_all(
+                    sqlx::query(AssertSqlSafe(step_partition_projection_select(
+                        "WHERE partition.step_execution_id = $1 AND partition.id <= $2 \
+                         AND ($3::bigint IS NULL OR partition.id > $3) \
+                         ORDER BY partition.id LIMIT $4",
+                    )))
+                    .bind(explorer_id(
+                        step_execution_id.get(),
+                        IdentifierKind::StepExecution,
+                    )?)
+                    .bind(window_ceiling(window)?)
+                    .bind(window_identity(window)?)
+                    .bind(window_limit(window)),
+                )
+                .await?;
+            rows.iter().map(decode_step_partition_projection).collect()
+        })
+    }
+
+    fn operator_requests<'a>(
+        &'a self,
+        job_execution_id: JobExecutionId,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<OperatorRecord>, ExplorerError>> {
+        Box::pin(async move {
+            let rows = self
+                .fetch_all(
+                    sqlx::query(AssertSqlSafe(operator_request_select(
+                        "WHERE request.job_execution_id = $1 AND request.id <= $2 \
+                         AND ($3::bigint IS NULL OR request.id > $3) \
+                         ORDER BY request.id LIMIT $4",
+                    )))
+                    .bind(explorer_id(
+                        job_execution_id.get(),
+                        IdentifierKind::JobExecution,
+                    )?)
+                    .bind(window_ceiling(window)?)
+                    .bind(window_identity(window)?)
+                    .bind(window_limit(window)),
+                )
+                .await?;
+            rows.iter()
+                .map(|row| decode_operator_record(row).map_err(ExplorerError::Repository))
+                .collect()
+        })
     }
 }

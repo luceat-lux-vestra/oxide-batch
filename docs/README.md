@@ -84,6 +84,7 @@ decisions own the normative detail.
 - [M3 fault tolerance and flow exit evidence](project/m3-exit-evidence.md)
 - [M4 operations and local scale kickoff gate](project/m4-kickoff-gate.md)
 - [M4 operations and local-scale design-gate evidence](project/m4-design-gate-evidence.md)
+- [M4 operator, explorer, and retention service evidence](project/m4-operator-services-evidence.md)
 - [Historical M0 decision register](product/open-decisions.md)
 
 Historical gates are preserved as records of their date. Later decisions link

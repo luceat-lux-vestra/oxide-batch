@@ -50,11 +50,14 @@ impl BatchStatus {
     pub const fn is_terminal(self) -> bool {
         matches!(self, Self::Completed | Self::Abandoned)
     }
-}
 
-impl fmt::Display for BatchStatus {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
+    /// Returns the stable durable code for this status.
+    ///
+    /// The code is the same value durable adapters store and audit records
+    /// carry, so a projection never renames a status.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
             Self::Starting => "STARTING",
             Self::Started => "STARTED",
             Self::Stopping => "STOPPING",
@@ -63,7 +66,13 @@ impl fmt::Display for BatchStatus {
             Self::Completed => "COMPLETED",
             Self::Abandoned => "ABANDONED",
             Self::Unknown => "UNKNOWN",
-        })
+        }
+    }
+}
+
+impl fmt::Display for BatchStatus {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
     }
 }
 
@@ -290,6 +299,10 @@ pub enum FailureCategory {
     UnsupportedCapability,
     /// A commit outcome is unknown and must never be guessed.
     UnknownCommit,
+    /// A bounded shutdown could not join or resolve every owned child.
+    ShutdownIncomplete,
+    /// An execution was resolved from stale-ownership evidence.
+    StaleRecovered,
 }
 
 impl FailureCategory {
@@ -310,6 +323,8 @@ impl FailureCategory {
             Self::Timeout => "timeout",
             Self::UnsupportedCapability => "unsupported_capability",
             Self::UnknownCommit => "unknown_commit",
+            Self::ShutdownIncomplete => "shutdown_incomplete",
+            Self::StaleRecovered => "stale_recovered",
         }
     }
 
@@ -348,6 +363,8 @@ impl FailureCategory {
             Self::Timeout => "TIMEOUT",
             Self::UnsupportedCapability => "UNSUPPORTED_CAPABILITY",
             Self::UnknownCommit => "UNKNOWN_COMMIT",
+            Self::ShutdownIncomplete => "SHUTDOWN_INCOMPLETE",
+            Self::StaleRecovered => "STALE_RECOVERED",
         }
     }
 
@@ -367,6 +384,8 @@ impl FailureCategory {
             "TIMEOUT" => Self::Timeout,
             "UNSUPPORTED_CAPABILITY" => Self::UnsupportedCapability,
             "UNKNOWN_COMMIT" => Self::UnknownCommit,
+            "SHUTDOWN_INCOMPLETE" => Self::ShutdownIncomplete,
+            "STALE_RECOVERED" => Self::StaleRecovered,
             _ => return None,
         })
     }

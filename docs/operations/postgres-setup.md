@@ -1,6 +1,6 @@
 # PostgreSQL Setup
 
-**State:** Implemented for M2
+**State:** Implemented for M2 and the unreleased M4 schema-3 slice
 
 **Supported M2 matrix:** PostgreSQL 15 through 18 on Linux x86_64 GNU
 
@@ -17,9 +17,12 @@ Use separate deployment identities:
   migrations;
 - **runtime:** receives schema usage, metadata-table DML, and identity-sequence
   use, but no DDL;
-- **operator reader:** receives bounded read-only metadata access;
-- **operator writer:** receives only the recovery reads/inserts/updates needed
-  by the audited recovery path.
+- **operator reader:** receives bounded read-only metadata access, so it can
+  plan a purge but never apply one;
+- **operator writer:** receives the recovery, operator-request, hold, stop, and
+  retention-audit inserts and updates the audited operator paths need, plus the
+  narrowly granted deletes one bounded purge batch requires. The runtime role
+  keeps no metadata `DELETE` privilege and therefore cannot purge.
 
 Deployment tooling creates login credentials, grants database `CONNECT`, and
 rotates secrets. OxideBatch migrations do not create production passwords.
@@ -37,7 +40,7 @@ certificate through `CaCertificate`. There is no invalid-certificate mode.
 isolated test environments. Connection strings and certificate contents or
 paths are redacted from facade diagnostics.
 
-## Initialize schema version 2
+## Initialize schema version 3
 
 Enable the adapter:
 
@@ -47,8 +50,10 @@ oxide-batch = { version = "0.1.0-alpha.1", features = ["postgres"] }
 ```
 
 Apply the released migrations with the migrator identity before starting any
-runtime. `PostgresMigrator::migrate` installs schema `1` and `2` on an empty
-database and applies only the pending migration on an existing one:
+runtime. `PostgresMigrator::migrate` installs schema `1`, `2`, and `3` on an
+empty database and applies only the pending migrations on an existing one.
+Schema 3 is not a rolling upgrade: quiesce every schema-2 runtime first, because
+a schema-2 runtime rejects schema 3 on startup.
 
 ```rust,no_run
 use oxide_batch::{PostgresConfig, PostgresMigrator};
@@ -82,14 +87,14 @@ Runtime startup is fail-closed:
 | --- | --- |
 | Missing schema/version row | `SchemaUninitialized` |
 | Supported older schema | `MigrationRequired` |
-| Exact schema version 2 | connection accepted |
-| Version above 2 | `NewerSchema` |
+| Exact schema version 3 | connection accepted |
+| Version above 3 | `NewerSchema` |
 
 Runtime startup never applies migrations automatically.
 
 ## Verify the installation
 
-As migrator, the singleton query must return exactly `2`:
+As migrator, the singleton query must return exactly `3`:
 
 ```sql
 SELECT version
@@ -119,7 +124,11 @@ backup. Default rollback is restoration of that compatible backup; no released
 schema version has a destructive reverse migration. The schema-1 to schema-2
 consequences, including the loss of executions created after the backup, are
 recorded in
-[the schema-2 migration guide](migrations/0002-fault-tolerance-and-flow.md).
+[the schema-2 migration guide](migrations/0002-fault-tolerance-and-flow.md), and
+the schema-2 to schema-3 consequences in
+[the schema-3 migration guide](migrations/0003-operations-and-local-scale.md).
+Purge has no reverse operation, so an applied purge is recoverable only by
+restoring a verified backup.
 
 The design-gate fixture performs a logical `pg_dump`, restores into a clean
 database of the same major version, and rereads the schema singleton.

@@ -1,17 +1,24 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
 
 use super::{
     BoxFuture, Clock, IdGenerator, JobInstanceSelection, JobRepository, RecoveryDecision,
     RecoveryRequest, RecoveryResult, RepositoryError, RepositoryUnitOfWork, recovered_execution,
 };
 use crate::{
-    BatchStatus, DefinitionIdentity, DefinitionRevision, DefinitionUpgrade, ExecutionCounts,
-    ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitStatus, FlowDecision,
-    FlowDecisionId, FlowDecisionRequest, FlowStepState, FlowTransitionKind, IdentifierKind,
-    JobExecution, JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey, JobName,
-    LifecycleTransition, NodeId, StartLimit, StepExecution, StepExecutionId, StepName,
+    ActorRef, BatchStatus, CursorKey, DefinitionDescriptor, DefinitionIdentity, DefinitionRevision,
+    DefinitionUpgrade, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion,
+    ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, FlowDecision, FlowDecisionId,
+    FlowDecisionRequest, FlowStepState, FlowTransitionKind, IdentifierKind, JobExecution,
+    JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId, JobInstanceKey,
+    JobInstanceProjection, JobName, LifecycleError, LifecycleTransition, NodeId, OperationId,
+    OperatorAction, OperatorRecord, OperatorRecordDraft, OperatorRequestId, ParameterDescriptor,
+    PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode,
+    RecoveryDecisionId, RetentionAction, RetentionActionId, RetentionHold, RetentionRecord,
+    RetentionRecordDraft, StartLimit, StepExecution, StepExecutionId, StepExecutionProjection,
+    StepName, StepPartitionProjection,
 };
 
 /// Deterministic, process-local reference implementation of [`JobRepository`].
@@ -91,6 +98,128 @@ struct MemoryState {
     definitions: BTreeMap<(JobName, DefinitionRevision), DefinitionIdentity>,
     execution_definitions: BTreeMap<JobExecutionId, DefinitionIdentity>,
     definition_upgrades: BTreeMap<(JobName, [u8; 32], [u8; 32]), DefinitionUpgrade>,
+    job_name_order: BTreeMap<JobName, u64>,
+    instance_created_at: BTreeMap<JobInstanceId, SystemTime>,
+    holds: BTreeMap<JobInstanceId, RetentionHold>,
+    stop_requests: BTreeMap<JobExecutionId, SystemTime>,
+    operator_requests: BTreeMap<OperatorRequestId, OperatorRecord>,
+    operator_request_keys: BTreeMap<(&'static str, String), OperatorRequestId>,
+    retention_actions: BTreeMap<RetentionActionId, RetentionRecord>,
+    retention_action_keys: BTreeMap<(&'static str, String), RetentionActionId>,
+}
+
+impl MemoryState {
+    fn register_job_name(&mut self, job_name: &JobName) {
+        if self.job_name_order.contains_key(job_name) {
+            return;
+        }
+        let next = self
+            .job_name_order
+            .values()
+            .copied()
+            .max()
+            .map_or(1, |value| value.saturating_add(1));
+        self.job_name_order.insert(job_name.clone(), next);
+    }
+
+    fn attempt_of(&self, execution: &JobExecution) -> u32 {
+        self.job_executions_by_instance
+            .get(&execution.job_instance_id())
+            .and_then(|executions| {
+                executions
+                    .iter()
+                    .position(|candidate| *candidate == execution.id())
+            })
+            .and_then(|position| u32::try_from(position.saturating_add(1)).ok())
+            .unwrap_or(1)
+    }
+
+    fn job_name_of(&self, instance_id: JobInstanceId) -> Option<JobName> {
+        self.instances_by_id
+            .get(&instance_id)
+            .map(|instance| instance.key().job_name().clone())
+    }
+
+    fn job_execution_projection(
+        &self,
+        execution: &JobExecution,
+    ) -> Result<JobExecutionProjection, ExplorerError> {
+        let job_name =
+            self.job_name_of(execution.job_instance_id())
+                .ok_or(ExplorerError::Repository(
+                    RepositoryError::JobInstanceNotFound {
+                        id: execution.job_instance_id(),
+                    },
+                ))?;
+        let definition = self
+            .execution_definitions
+            .get(&execution.id())
+            .map(|definition| {
+                DefinitionDescriptor::new(
+                    definition.revision().clone(),
+                    definition.manifest_format(),
+                    *definition.manifest_digest(),
+                )
+            });
+        Ok(JobExecutionProjection::new(
+            execution.id(),
+            execution.job_instance_id(),
+            job_name,
+            self.attempt_of(execution),
+            execution.metadata().status(),
+            execution.metadata().exit_status().clone(),
+            execution.metadata().counts(),
+            execution.version(),
+            execution.metadata().timestamps(),
+            updated_at(execution),
+            execution.metadata().failure(),
+            definition,
+            None,
+            self.stop_requests.get(&execution.id()).copied(),
+            false,
+        ))
+    }
+
+    fn job_instance_projection(&self, instance: &JobInstance) -> JobInstanceProjection {
+        let key = instance.key();
+        let parameters = key
+            .identifying_fields()
+            .map(|(name, kind)| ParameterDescriptor::new(name.clone(), kind, true))
+            .collect();
+        JobInstanceProjection::new(
+            instance.id(),
+            key.job_name().clone(),
+            key.digest(),
+            parameters,
+            self.instance_created_at.get(&instance.id()).copied(),
+            self.holds.get(&instance.id()).cloned(),
+        )
+    }
+
+    fn step_execution_projection(&self, execution: &StepExecution) -> StepExecutionProjection {
+        StepExecutionProjection::new(
+            execution.id(),
+            execution.job_execution_id(),
+            execution.step_name().clone(),
+            self.step_logical_ids.get(&execution.id()).cloned(),
+            execution.metadata().status(),
+            execution.metadata().exit_status().clone(),
+            execution.metadata().counts(),
+            execution.version(),
+            execution.metadata().timestamps(),
+            execution.metadata().failure(),
+            None,
+            None,
+        )
+    }
+}
+
+fn updated_at(execution: &JobExecution) -> SystemTime {
+    let timestamps = execution.metadata().timestamps();
+    timestamps
+        .ended_at()
+        .or_else(|| timestamps.started_at())
+        .unwrap_or_else(|| timestamps.created_at())
 }
 
 struct InMemoryUnitOfWork<'repository> {
@@ -152,6 +281,7 @@ impl InMemoryUnitOfWork<'_> {
             }
             return Ok(());
         }
+        self.staged.register_job_name(job_name);
         self.staged.definitions.insert(key, definition.clone());
         Ok(())
     }
@@ -165,6 +295,130 @@ impl InMemoryUnitOfWork<'_> {
             .get(&execution_id)
             .map(JobExecution::job_instance_id)
             .ok_or(RepositoryError::JobExecutionNotFound { id: execution_id })
+    }
+
+    fn next_recovery_decision_id(&self) -> Result<RecoveryDecisionId, RepositoryError> {
+        let next = self
+            .staged
+            .recovery_decisions
+            .values()
+            .flatten()
+            .map(|decision| decision.id().get())
+            .max()
+            .map_or(1, |id| id.checked_add(1).unwrap_or(0));
+        RecoveryDecisionId::new(next).map_err(RepositoryError::from)
+    }
+
+    fn next_operator_request_id(&self) -> Result<OperatorRequestId, RepositoryError> {
+        let next = self
+            .staged
+            .operator_requests
+            .keys()
+            .next_back()
+            .map_or(1, |id| id.get().checked_add(1).unwrap_or(0));
+        OperatorRequestId::new(next).map_err(RepositoryError::from)
+    }
+
+    fn next_retention_action_id(&self) -> Result<RetentionActionId, RepositoryError> {
+        let next = self
+            .staged
+            .retention_actions
+            .keys()
+            .next_back()
+            .map_or(1, |id| id.get().checked_add(1).unwrap_or(0));
+        RetentionActionId::new(next).map_err(RepositoryError::from)
+    }
+
+    fn purge_eligible(&self, request: &PurgePlanRequest, now: SystemTime) -> Vec<PurgeCandidate> {
+        let mut candidates = Vec::new();
+        for (instance_id, instance) in &self.staged.instances_by_id {
+            if instance.key().job_name() != request.job_name()
+                || self.staged.holds.contains_key(instance_id)
+            {
+                continue;
+            }
+            let executions = self
+                .staged
+                .job_executions_by_instance
+                .get(instance_id)
+                .into_iter()
+                .flatten()
+                .filter_map(|id| self.staged.job_executions.get(id))
+                .collect::<Vec<_>>();
+            if executions
+                .iter()
+                .any(|execution| !execution.metadata().status().is_finished())
+            {
+                continue;
+            }
+            for execution in executions {
+                let status = execution.metadata().status();
+                if !request.statuses().contains(status) {
+                    continue;
+                }
+                let age = now
+                    .duration_since(updated_at(execution))
+                    .unwrap_or(Duration::ZERO);
+                if age < request.minimum_age() {
+                    continue;
+                }
+                candidates.push(PurgeCandidate::new(
+                    *instance_id,
+                    execution.id(),
+                    execution.version(),
+                ));
+            }
+        }
+        candidates.sort_unstable();
+        candidates.truncate(usize::try_from(request.batch().get()).unwrap_or(usize::MAX));
+        candidates
+    }
+
+    fn purge_counts(&self, candidates: &[PurgeCandidate]) -> PurgeCounts {
+        let mut flow_decisions = 0_u64;
+        let mut recovery_decisions = 0_u64;
+        let mut operator_requests = 0_u64;
+        let mut step_executions = 0_u64;
+        let mut instances = BTreeMap::new();
+        for candidate in candidates {
+            let execution_id = candidate.job_execution_id();
+            flow_decisions = flow_decisions.saturating_add(count_of(
+                self.staged.flow_decisions_by_job.get(&execution_id),
+            ));
+            recovery_decisions = recovery_decisions
+                .saturating_add(count_of(self.staged.recovery_decisions.get(&execution_id)));
+            step_executions = step_executions.saturating_add(count_of(
+                self.staged.step_executions_by_job.get(&execution_id),
+            ));
+            operator_requests = operator_requests.saturating_add(
+                u64::try_from(
+                    self.staged
+                        .operator_requests
+                        .values()
+                        .filter(|record| record.job_execution_id() == Some(execution_id))
+                        .count(),
+                )
+                .unwrap_or(u64::MAX),
+            );
+            *instances
+                .entry(candidate.job_instance_id())
+                .or_insert(0_u64) += 1;
+        }
+        let job_instances = instances
+            .iter()
+            .filter(|(instance_id, purged)| {
+                count_of(self.staged.job_executions_by_instance.get(instance_id)) == **purged
+            })
+            .count();
+        PurgeCounts::new(
+            flow_decisions,
+            recovery_decisions,
+            operator_requests,
+            0,
+            step_executions,
+            u64::try_from(candidates.len()).unwrap_or(u64::MAX),
+            u64::try_from(job_instances).unwrap_or(u64::MAX),
+        )
     }
 
     fn next_flow_decision_id(&self) -> Result<FlowDecisionId, RepositoryError> {
@@ -260,8 +514,11 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 });
             }
             let instance = JobInstance::new(id, key.clone());
+            let created_at = self.repository.clock.now();
             self.staged.instances_by_key.insert(key.clone(), id);
             self.staged.instances_by_id.insert(id, instance.clone());
+            self.staged.instance_created_at.insert(id, created_at);
+            self.staged.register_job_name(key.job_name());
             self.staged
                 .job_executions_by_instance
                 .insert(id, Vec::new());
@@ -788,7 +1045,9 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
             }
             let decided_at = self.repository.clock.now();
             let recovered = recovered_execution(&prior, request, decided_at)?;
+            let decision_id = self.next_recovery_decision_id()?;
             let decision = RecoveryDecision::new(
+                decision_id,
                 id,
                 request.expected_version(),
                 prior.metadata().status(),
@@ -825,6 +1084,258 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         })
     }
 
+    fn find_operator_request<'a>(
+        &'a mut self,
+        action: OperatorAction,
+        operation_id: &'a OperationId,
+    ) -> BoxFuture<'a, Result<Option<OperatorRecord>, RepositoryError>> {
+        Box::pin(async move {
+            Ok(self
+                .staged
+                .operator_request_keys
+                .get(&(action.as_str(), operation_id.as_str().to_owned()))
+                .and_then(|id| self.staged.operator_requests.get(id))
+                .cloned())
+        })
+    }
+
+    fn append_operator_request<'a>(
+        &'a mut self,
+        draft: &'a OperatorRecordDraft,
+    ) -> BoxFuture<'a, Result<OperatorRecord, RepositoryError>> {
+        Box::pin(async move {
+            let key = (
+                draft.action().as_str(),
+                draft.operation_id().as_str().to_owned(),
+            );
+            if self.staged.operator_request_keys.contains_key(&key) {
+                return Err(RepositoryError::ConcurrentModification);
+            }
+            let id = self.next_operator_request_id()?;
+            let record = OperatorRecord::from_parts(id, draft.clone());
+            self.staged.operator_requests.insert(id, record.clone());
+            self.staged.operator_request_keys.insert(key, id);
+            Ok(record)
+        })
+    }
+
+    fn request_execution_stop<'a>(
+        &'a mut self,
+        id: JobExecutionId,
+        expected_version: ExecutionVersion,
+        _actor: &'a ActorRef,
+        requested_at: SystemTime,
+    ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>> {
+        Box::pin(async move {
+            let execution = self
+                .staged
+                .job_executions
+                .get(&id)
+                .cloned()
+                .ok_or(RepositoryError::JobExecutionNotFound { id })?;
+            if execution.version() != expected_version {
+                return Err(RepositoryError::Lifecycle(LifecycleError::StaleVersion {
+                    expected: expected_version,
+                    actual: execution.version(),
+                }));
+            }
+            self.staged.stop_requests.insert(id, requested_at);
+            Ok(execution)
+        })
+    }
+
+    fn job_instance_hold(
+        &mut self,
+        id: JobInstanceId,
+    ) -> BoxFuture<'_, Result<Option<RetentionHold>, RepositoryError>> {
+        Box::pin(async move {
+            if !self.staged.instances_by_id.contains_key(&id) {
+                return Err(RepositoryError::JobInstanceNotFound { id });
+            }
+            Ok(self.staged.holds.get(&id).cloned())
+        })
+    }
+
+    fn place_instance_hold<'a>(
+        &'a mut self,
+        id: JobInstanceId,
+        actor: &'a ActorRef,
+        reason: &'a ReasonCode,
+        placed_at: SystemTime,
+    ) -> BoxFuture<'a, Result<RetentionHold, RepositoryError>> {
+        Box::pin(async move {
+            if !self.staged.instances_by_id.contains_key(&id) {
+                return Err(RepositoryError::JobInstanceNotFound { id });
+            }
+            let hold = RetentionHold::new(id, actor.clone(), reason.clone(), placed_at);
+            self.staged.holds.insert(id, hold.clone());
+            Ok(hold)
+        })
+    }
+
+    fn release_instance_hold(
+        &mut self,
+        id: JobInstanceId,
+    ) -> BoxFuture<'_, Result<Option<RetentionHold>, RepositoryError>> {
+        Box::pin(async move {
+            if !self.staged.instances_by_id.contains_key(&id) {
+                return Err(RepositoryError::JobInstanceNotFound { id });
+            }
+            Ok(self.staged.holds.remove(&id))
+        })
+    }
+
+    fn find_retention_action<'a>(
+        &'a mut self,
+        action: RetentionAction,
+        operation_id: &'a OperationId,
+    ) -> BoxFuture<'a, Result<Option<RetentionRecord>, RepositoryError>> {
+        Box::pin(async move {
+            Ok(self
+                .staged
+                .retention_action_keys
+                .get(&(action.as_str(), operation_id.as_str().to_owned()))
+                .and_then(|id| self.staged.retention_actions.get(id))
+                .cloned())
+        })
+    }
+
+    fn append_retention_action<'a>(
+        &'a mut self,
+        draft: &'a RetentionRecordDraft,
+    ) -> BoxFuture<'a, Result<RetentionRecord, RepositoryError>> {
+        Box::pin(async move {
+            let key = (
+                draft.action().as_str(),
+                draft.operation_id().as_str().to_owned(),
+            );
+            if self.staged.retention_action_keys.contains_key(&key) {
+                return Err(RepositoryError::ConcurrentModification);
+            }
+            let id = self.next_retention_action_id()?;
+            let record = RetentionRecord::from_parts(id, draft.clone());
+            self.staged.retention_actions.insert(id, record.clone());
+            self.staged.retention_action_keys.insert(key, id);
+            Ok(record)
+        })
+    }
+
+    fn purge_survey<'a>(
+        &'a mut self,
+        request: &'a PurgePlanRequest,
+    ) -> BoxFuture<'a, Result<PurgeSurvey, RepositoryError>> {
+        Box::pin(async move {
+            let now = self.repository.clock.now();
+            let candidates = self.purge_eligible(request, now);
+            let counts = self.purge_counts(&candidates);
+            Ok(PurgeSurvey::new(candidates, counts))
+        })
+    }
+
+    fn apply_purge<'a>(
+        &'a mut self,
+        plan: &'a PurgePlan,
+    ) -> BoxFuture<'a, Result<PurgeCounts, RepositoryError>> {
+        Box::pin(async move {
+            for candidate in plan.candidates() {
+                let execution = self
+                    .staged
+                    .job_executions
+                    .get(&candidate.job_execution_id())
+                    .ok_or(RepositoryError::RetentionPlanStale)?;
+                let status = execution.metadata().status();
+                if execution.version() != candidate.version()
+                    || !plan.request().statuses().contains(status)
+                    || self.staged.holds.contains_key(&candidate.job_instance_id())
+                {
+                    return Err(RepositoryError::RetentionPlanStale);
+                }
+                let siblings_resolved = self
+                    .staged
+                    .job_executions_by_instance
+                    .get(&candidate.job_instance_id())
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|id| self.staged.job_executions.get(id))
+                    .all(|sibling| sibling.metadata().status().is_finished());
+                if !siblings_resolved {
+                    return Err(RepositoryError::RetentionPlanStale);
+                }
+            }
+            let counts = self.purge_counts(plan.candidates());
+            for candidate in plan.candidates() {
+                let execution_id = candidate.job_execution_id();
+                for decision_id in self
+                    .staged
+                    .flow_decisions_by_job
+                    .remove(&execution_id)
+                    .unwrap_or_default()
+                {
+                    self.staged.flow_decisions.remove(&decision_id);
+                }
+                self.staged.recovery_decisions.remove(&execution_id);
+                let request_ids = self
+                    .staged
+                    .operator_requests
+                    .iter()
+                    .filter(|(_, record)| record.job_execution_id() == Some(execution_id))
+                    .map(|(id, _)| *id)
+                    .collect::<Vec<_>>();
+                for request_id in request_ids {
+                    if let Some(record) = self.staged.operator_requests.remove(&request_id) {
+                        self.staged.operator_request_keys.remove(&(
+                            record.action().as_str(),
+                            record.operation_id().as_str().to_owned(),
+                        ));
+                    }
+                }
+                for step_id in self
+                    .staged
+                    .step_executions_by_job
+                    .remove(&execution_id)
+                    .unwrap_or_default()
+                {
+                    self.staged.step_executions.remove(&step_id);
+                    self.staged.step_logical_ids.remove(&step_id);
+                }
+                self.staged.job_executions.remove(&execution_id);
+                self.staged.execution_definitions.remove(&execution_id);
+                self.staged.stop_requests.remove(&execution_id);
+                if let Some(executions) = self
+                    .staged
+                    .job_executions_by_instance
+                    .get_mut(&candidate.job_instance_id())
+                {
+                    executions.retain(|id| *id != execution_id);
+                }
+            }
+            let mut touched = plan
+                .candidates()
+                .iter()
+                .map(PurgeCandidate::job_instance_id)
+                .collect::<Vec<_>>();
+            touched.dedup();
+            for instance_id in touched {
+                if self
+                    .staged
+                    .job_executions_by_instance
+                    .get(&instance_id)
+                    .is_none_or(|executions| !executions.is_empty())
+                {
+                    continue;
+                }
+                let Some(instance) = self.staged.instances_by_id.remove(&instance_id) else {
+                    continue;
+                };
+                self.staged.instances_by_key.remove(instance.key());
+                self.staged.job_executions_by_instance.remove(&instance_id);
+                self.staged.instance_created_at.remove(&instance_id);
+                self.staged.holds.remove(&instance_id);
+            }
+            Ok(counts)
+        })
+    }
+
     fn commit<'a>(self: Box<Self>) -> BoxFuture<'a, Result<(), RepositoryError>>
     where
         Self: 'a,
@@ -853,5 +1364,341 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         Self: 'a,
     {
         Box::pin(async move { Ok(()) })
+    }
+}
+
+fn count_of<T>(values: Option<&Vec<T>>) -> u64 {
+    values.map_or(0, |values| u64::try_from(values.len()).unwrap_or(u64::MAX))
+}
+
+/// The bounded keyset read port of [`InMemoryJobRepository`].
+///
+/// The reference explorer reads a consistent snapshot of process-local state.
+/// It records no durable execution context, checkpoint, or partition, so those
+/// projection fields are absent rather than guessed. Its unresolved-execution
+/// age bound uses the injected facade clock, because a process-local repository
+/// has no separate server time.
+#[derive(Clone)]
+pub struct InMemoryExplorer {
+    state: Arc<Mutex<MemoryState>>,
+    clock: Arc<dyn Clock>,
+}
+
+impl InMemoryExplorer {
+    /// Binds one in-memory repository's state to the explorer port.
+    #[must_use]
+    pub fn new(repository: &InMemoryJobRepository) -> Self {
+        Self {
+            state: Arc::clone(&repository.state),
+            clock: Arc::clone(&repository.clock),
+        }
+    }
+
+    fn snapshot(&self) -> Result<MemoryState, ExplorerError> {
+        self.state
+            .lock()
+            .map(|state| state.clone())
+            .map_err(|_| ExplorerError::Repository(RepositoryError::Unavailable))
+    }
+}
+
+impl fmt::Debug for InMemoryExplorer {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("InMemoryExplorer")
+            .finish_non_exhaustive()
+    }
+}
+
+const fn identity_after(window: &QueryWindow) -> Option<u64> {
+    match window.after() {
+        Some(CursorKey::Identity(value)) => Some(*value),
+        _ => None,
+    }
+}
+
+const fn ordered_after(window: &QueryWindow) -> Option<(u64, u64)> {
+    match window.after() {
+        Some(CursorKey::Ordered { primary, identity }) => Some((*primary, *identity)),
+        _ => None,
+    }
+}
+
+fn name_after(window: &QueryWindow) -> Option<&str> {
+    match window.after() {
+        Some(CursorKey::Name(value)) => Some(value.as_str()),
+        _ => None,
+    }
+}
+
+fn limit_of(window: &QueryWindow) -> usize {
+    usize::from(window.limit())
+}
+
+impl ExplorerRepository for InMemoryExplorer {
+    fn identity_ceiling<'a>(
+        &'a self,
+        query: &'a ExplorerQuery,
+    ) -> BoxFuture<'a, Result<u64, ExplorerError>> {
+        Box::pin(async move {
+            let state = self.snapshot()?;
+            let ceiling = match query {
+                ExplorerQuery::JobNames => state.job_name_order.values().copied().max(),
+                ExplorerQuery::Instances { .. } => {
+                    state.instances_by_id.keys().next_back().map(|id| id.get())
+                }
+                ExplorerQuery::Executions { .. } | ExplorerQuery::UnresolvedExecutions { .. } => {
+                    state.job_executions.keys().next_back().map(|id| id.get())
+                }
+                ExplorerQuery::StepExecutions { .. } => {
+                    state.step_executions.keys().next_back().map(|id| id.get())
+                }
+                ExplorerQuery::RecoveryDecisions { .. } => state
+                    .recovery_decisions
+                    .values()
+                    .flatten()
+                    .map(|decision| decision.id().get())
+                    .max(),
+                ExplorerQuery::FlowDecisions { .. } => {
+                    state.flow_decisions.keys().next_back().map(|id| id.get())
+                }
+                ExplorerQuery::StepPartitions { .. } => None,
+                ExplorerQuery::OperatorRequests { .. } => state
+                    .operator_requests
+                    .keys()
+                    .next_back()
+                    .map(|id| id.get()),
+            };
+            Ok(ceiling.unwrap_or(0))
+        })
+    }
+
+    fn job_names<'a>(
+        &'a self,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<JobName>, ExplorerError>> {
+        Box::pin(async move {
+            let state = self.snapshot()?;
+            let after = name_after(window);
+            Ok(state
+                .job_name_order
+                .iter()
+                .filter(|(_, order)| **order <= window.ceiling())
+                .map(|(name, _)| name)
+                .filter(|name| after.is_none_or(|after| name.as_str() > after))
+                .take(limit_of(window))
+                .cloned()
+                .collect())
+        })
+    }
+
+    fn instances<'a>(
+        &'a self,
+        job_name: &'a JobName,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<JobInstanceProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let state = self.snapshot()?;
+            let after = identity_after(window);
+            let rows = state
+                .instances_by_id
+                .values()
+                .rev()
+                .filter(|instance| instance.key().job_name() == job_name)
+                .filter(|instance| instance.id().get() <= window.ceiling())
+                .filter(|instance| after.is_none_or(|after| instance.id().get() < after))
+                .take(limit_of(window))
+                .map(|instance| state.job_instance_projection(instance))
+                .collect::<Vec<_>>();
+            Ok(rows)
+        })
+    }
+
+    fn executions<'a>(
+        &'a self,
+        job_instance_id: JobInstanceId,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<JobExecutionProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let state = self.snapshot()?;
+            if !state.instances_by_id.contains_key(&job_instance_id) {
+                return Err(ExplorerError::Repository(
+                    RepositoryError::JobInstanceNotFound {
+                        id: job_instance_id,
+                    },
+                ));
+            }
+            let after = ordered_after(window);
+            state
+                .job_executions_by_instance
+                .get(&job_instance_id)
+                .into_iter()
+                .flatten()
+                .rev()
+                .filter_map(|id| state.job_executions.get(id))
+                .filter(|execution| execution.id().get() <= window.ceiling())
+                .filter(|execution| {
+                    after.is_none_or(|after| {
+                        (u64::from(state.attempt_of(execution)), execution.id().get()) < after
+                    })
+                })
+                .take(limit_of(window))
+                .map(|execution| state.job_execution_projection(execution))
+                .collect()
+        })
+    }
+
+    fn execution(
+        &self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Option<JobExecutionProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let state = self.snapshot()?;
+            state
+                .job_executions
+                .get(&job_execution_id)
+                .map(|execution| state.job_execution_projection(execution))
+                .transpose()
+        })
+    }
+
+    fn step_executions<'a>(
+        &'a self,
+        job_execution_id: JobExecutionId,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<StepExecutionProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let state = self.snapshot()?;
+            if !state.job_executions.contains_key(&job_execution_id) {
+                return Err(ExplorerError::Repository(
+                    RepositoryError::JobExecutionNotFound {
+                        id: job_execution_id,
+                    },
+                ));
+            }
+            let after = identity_after(window);
+            Ok(state
+                .step_executions_by_job
+                .get(&job_execution_id)
+                .into_iter()
+                .flatten()
+                .filter_map(|id| state.step_executions.get(id))
+                .filter(|execution| execution.id().get() <= window.ceiling())
+                .filter(|execution| after.is_none_or(|after| execution.id().get() > after))
+                .take(limit_of(window))
+                .map(|execution| state.step_execution_projection(execution))
+                .collect())
+        })
+    }
+
+    fn unresolved_executions<'a>(
+        &'a self,
+        minimum_age: Duration,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<JobExecutionProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let state = self.snapshot()?;
+            let now = self.clock.now();
+            let after = identity_after(window);
+            state
+                .job_executions
+                .values()
+                .filter(|execution| !execution.metadata().status().is_finished())
+                .filter(|execution| execution.id().get() <= window.ceiling())
+                .filter(|execution| after.is_none_or(|after| execution.id().get() > after))
+                .filter(|execution| {
+                    now.duration_since(updated_at(execution))
+                        .unwrap_or(Duration::ZERO)
+                        >= minimum_age
+                })
+                .take(limit_of(window))
+                .map(|execution| state.job_execution_projection(execution))
+                .collect()
+        })
+    }
+
+    fn recovery_decisions<'a>(
+        &'a self,
+        job_execution_id: JobExecutionId,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<RecoveryDecision>, ExplorerError>> {
+        Box::pin(async move {
+            let state = self.snapshot()?;
+            let after = identity_after(window);
+            Ok(state
+                .recovery_decisions
+                .get(&job_execution_id)
+                .into_iter()
+                .flatten()
+                .filter(|decision| decision.id().get() <= window.ceiling())
+                .filter(|decision| after.is_none_or(|after| decision.id().get() > after))
+                .take(limit_of(window))
+                .cloned()
+                .collect())
+        })
+    }
+
+    fn flow_decisions<'a>(
+        &'a self,
+        job_execution_id: JobExecutionId,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<FlowDecision>, ExplorerError>> {
+        Box::pin(async move {
+            let state = self.snapshot()?;
+            let after = ordered_after(window);
+            Ok(state
+                .flow_decisions_by_job
+                .get(&job_execution_id)
+                .into_iter()
+                .flatten()
+                .filter_map(|id| state.flow_decisions.get(id))
+                .filter(|decision| decision.id().get() <= window.ceiling())
+                .filter(|decision| {
+                    after.is_none_or(|after| {
+                        (decision.sequence().get(), decision.id().get()) > after
+                    })
+                })
+                .take(limit_of(window))
+                .cloned()
+                .collect())
+        })
+    }
+
+    fn step_partitions<'a>(
+        &'a self,
+        step_execution_id: StepExecutionId,
+        _window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<StepPartitionProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let state = self.snapshot()?;
+            if !state.step_executions.contains_key(&step_execution_id) {
+                return Err(ExplorerError::Repository(
+                    RepositoryError::StepExecutionNotFound {
+                        id: step_execution_id,
+                    },
+                ));
+            }
+            Ok(Vec::new())
+        })
+    }
+
+    fn operator_requests<'a>(
+        &'a self,
+        job_execution_id: JobExecutionId,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<OperatorRecord>, ExplorerError>> {
+        Box::pin(async move {
+            let state = self.snapshot()?;
+            let after = identity_after(window);
+            Ok(state
+                .operator_requests
+                .values()
+                .filter(|record| record.job_execution_id() == Some(job_execution_id))
+                .filter(|record| record.id().get() <= window.ceiling())
+                .filter(|record| after.is_none_or(|after| record.id().get() > after))
+                .take(limit_of(window))
+                .cloned()
+                .collect())
+        })
     }
 }

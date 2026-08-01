@@ -12,7 +12,7 @@ use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use contract::run_repository_contract;
+use contract::{ServiceBackend, run_repository_contract, run_service_contract};
 use oxide_batch::{
     BackoffPolicy, BatchStatus, BoxFuture, BusinessStatement, BusinessValue, CaCertificate,
     Checkpoint, ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext, ChunkCompletionError,
@@ -25,12 +25,12 @@ use oxide_batch::{
     FaultStateError, FaultStateFormatError, FaultStateStore, ItemProcessor, ItemReader, ItemWriter,
     JobInstanceKey, JobLauncher, JobName, JobParameters, JobRepository, LifecycleTransition,
     PostgresChunkStateError, PostgresChunkStateProvider, PostgresChunkTransactionManager,
-    PostgresConfig, PostgresConfigError, PostgresFaultState, PostgresJobRepository,
-    PostgresMigrator, ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome,
-    ReaderError, RecoveryRequest, RepositoryError, RetryKey, RetryLimit, RetryOrdinal,
-    RetryReservation, RetryStateLimit, SequentialIdGenerator, SkipCounts, SkipLimit, StateLimits,
-    StateSchemaId, StateSchemaVersion, StepDefinitionUpgrade, StepExecutionId, StepName,
-    StopSource, TlsMode, WriteContext, WriteOutcome, WriterError,
+    PostgresConfig, PostgresConfigError, PostgresExplorer, PostgresFaultState,
+    PostgresJobRepository, PostgresMigrator, ProcessContext, ProcessOutcome, ProcessorError,
+    ReadContext, ReadOutcome, ReaderError, RecoveryRequest, RepositoryError, RetryKey, RetryLimit,
+    RetryOrdinal, RetryReservation, RetryStateLimit, SequentialIdGenerator, SkipCounts, SkipLimit,
+    StateLimits, StateSchemaId, StateSchemaVersion, StepDefinitionUpgrade, StepExecutionId,
+    StepName, StopSource, TlsMode, WriteContext, WriteOutcome, WriterError,
 };
 use sqlx::postgres::PgPoolOptions;
 
@@ -61,8 +61,18 @@ fn plaintext_config(url: String) -> Result<PostgresConfig, PostgresConfigError> 
     Ok(PostgresConfig::new(url)?.with_tls_mode(TlsMode::Plaintext))
 }
 
+// Metadata cleanup runs with the administrative identity when one is
+// configured, because the runtime role holds no metadata `DELETE` privilege
+// once least-privilege grants are applied.
+fn cleanup_url(url: &str) -> String {
+    admin_url().unwrap_or_else(|| url.to_owned())
+}
+
 async fn remove_contract_rows(url: &str) -> Result<(), sqlx::Error> {
-    let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&cleanup_url(url))
+        .await?;
     for statement in [
         "DELETE FROM oxide_batch.ob_recovery_decision WHERE job_execution_id IN (\
          SELECT execution.id FROM oxide_batch.ob_job_execution execution \
@@ -193,7 +203,7 @@ fn configuration_bounds_and_diagnostics_are_safe() -> Result<(), Box<dyn Error>>
         CaCertificate::new(Vec::new()).err(),
         Some(PostgresConfigError::EmptyCaCertificate)
     );
-    assert_eq!(PostgresMigrator::supported_schema_version(), 2);
+    assert_eq!(PostgresMigrator::supported_schema_version(), 3);
     Ok(())
 }
 
@@ -222,6 +232,85 @@ fn shared_repository_contract_passes_on_postgres() -> Result<(), Box<dyn Error>>
             .map_err(|_| RepositoryError::Unavailable)
     })?;
     runtime.block_on(remove_contract_rows(&url))?;
+    Ok(())
+}
+
+async fn remove_service_rows(url: &str) -> Result<(), sqlx::Error> {
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&cleanup_url(url))
+        .await?;
+    for job_name in ["service_contract_job", "service_contract_other_job"] {
+        for statement in [
+            "DELETE FROM oxide_batch.ob_operator_request WHERE job_instance_id IN (\
+             SELECT id FROM oxide_batch.ob_job_instance WHERE job_name = $1) \
+             OR job_execution_id IN (\
+             SELECT execution.id FROM oxide_batch.ob_job_execution execution \
+             JOIN oxide_batch.ob_job_instance instance \
+               ON instance.id = execution.job_instance_id WHERE instance.job_name = $1)",
+            "UPDATE oxide_batch.ob_retention_action SET job_instance_id = NULL \
+             WHERE job_instance_id IN (\
+             SELECT id FROM oxide_batch.ob_job_instance WHERE job_name = $1)",
+            "DELETE FROM oxide_batch.ob_step_partition WHERE step_execution_id IN (\
+             SELECT step.id FROM oxide_batch.ob_step_execution step \
+             JOIN oxide_batch.ob_job_execution execution ON execution.id = step.job_execution_id \
+             JOIN oxide_batch.ob_job_instance instance \
+               ON instance.id = execution.job_instance_id WHERE instance.job_name = $1)",
+            "DELETE FROM oxide_batch.ob_flow_decision WHERE job_execution_id IN (\
+             SELECT execution.id FROM oxide_batch.ob_job_execution execution \
+             JOIN oxide_batch.ob_job_instance instance \
+               ON instance.id = execution.job_instance_id WHERE instance.job_name = $1)",
+            "DELETE FROM oxide_batch.ob_recovery_decision WHERE job_execution_id IN (\
+             SELECT execution.id FROM oxide_batch.ob_job_execution execution \
+             JOIN oxide_batch.ob_job_instance instance \
+               ON instance.id = execution.job_instance_id WHERE instance.job_name = $1)",
+            "DELETE FROM oxide_batch.ob_step_execution WHERE job_execution_id IN (\
+             SELECT execution.id FROM oxide_batch.ob_job_execution execution \
+             JOIN oxide_batch.ob_job_instance instance \
+               ON instance.id = execution.job_instance_id WHERE instance.job_name = $1)",
+            "DELETE FROM oxide_batch.ob_job_execution WHERE job_instance_id IN (\
+             SELECT id FROM oxide_batch.ob_job_instance WHERE job_name = $1)",
+            "DELETE FROM oxide_batch.ob_job_instance WHERE job_name = $1",
+            "DELETE FROM oxide_batch.ob_definition_upgrade WHERE from_definition_id IN (\
+             SELECT id FROM oxide_batch.ob_job_definition WHERE job_name = $1)",
+            "DELETE FROM oxide_batch.ob_job_definition WHERE job_name = $1",
+        ] {
+            sqlx::query(statement).bind(job_name).execute(&pool).await?;
+        }
+    }
+    pool.close().await;
+    Ok(())
+}
+
+#[test]
+fn shared_service_contract_passes_on_postgres() -> Result<(), Box<dyn Error>> {
+    let Some(url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let _runtime_guard = runtime.enter();
+    run_service_contract("postgres", |clock| {
+        runtime.block_on(async {
+            remove_service_rows(&url)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
+            let repository = PostgresJobRepository::connect(
+                plaintext_config(url.clone()).map_err(|_| RepositoryError::Unavailable)?,
+                Arc::clone(&clock) as Arc<dyn Clock>,
+            )
+            .await?;
+            let explorer = PostgresExplorer::new(repository.clone());
+            Ok(ServiceBackend {
+                repository,
+                explorer,
+                clock,
+            })
+        })
+    })?;
+    runtime.block_on(remove_service_rows(&url))?;
     Ok(())
 }
 
