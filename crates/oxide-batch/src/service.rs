@@ -16,7 +16,7 @@ use std::fmt;
 
 use sha2::{Digest, Sha256};
 
-use crate::{DefinitionIdentity, ExecutionVersion, FailureSummary, RecoveryDisposition};
+use crate::{DefinitionIdentity, ExecutionVersion};
 
 pub use explorer::{
     Cursor, CursorError, CursorKey, DEFAULT_PAGE_SIZE, DefinitionDescriptor, ExplorerError,
@@ -27,7 +27,7 @@ pub use explorer::{
 };
 pub use operator::{
     JobOperator, OperatorError, OperatorOutcome, OperatorOutcomeClass, OperatorRecord,
-    OperatorRecordDraft, OperatorRejection, OperatorRequest,
+    OperatorRecordDraft, OperatorRejection, OperatorRequest, RecoveryDirective,
 };
 pub use retention::{
     DEFAULT_PURGE_AGE, MAX_PURGE_BATCH, MIN_PURGE_AGE, PurgeBatchBound, PurgeCandidate,
@@ -381,9 +381,8 @@ pub(crate) enum RequestArguments {
     Definition(Box<DefinitionIdentity>),
     None,
     Recovery {
-        disposition: RecoveryDisposition,
+        directive: RecoveryDirective,
         evidence_digest: [u8; 32],
-        failure: Option<FailureSummary>,
     },
 }
 
@@ -407,14 +406,13 @@ pub(crate) fn request_digest(
             writer.push_bytes(definition.manifest_digest());
         }
         RequestArguments::Recovery {
-            disposition,
+            directive,
             evidence_digest,
-            failure,
         } => {
             writer.push_str("RECOVERY");
-            writer.push_str(disposition.resulting_status().as_str());
+            writer.push_str(directive.disposition().resulting_status().as_str());
             writer.push_bytes(evidence_digest);
-            match failure {
+            match directive.failure() {
                 Some(failure) => {
                     writer.push_str(failure.category().as_str());
                     writer.push_u64(failure.failure_id().get());

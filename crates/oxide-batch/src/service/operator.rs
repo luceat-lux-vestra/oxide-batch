@@ -38,6 +38,42 @@ pub struct OperatorRequest {
     digest: RequestDigest,
 }
 
+/// The disposition of one recovery decision together with the evidence that
+/// disposition requires.
+///
+/// Pairing the two makes a `MarkFailed` decision without its stated failure
+/// unrepresentable rather than a deferred validation error, and keeps an
+/// `Abandon` decision from carrying a failure that its durable outcome ignores
+/// but its request digest would still cover.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum RecoveryDirective {
+    /// Make the observed attempt restart-eligible under a stated failure.
+    MarkFailed(FailureSummary),
+    /// Make the logical instance permanently non-restartable.
+    Abandon,
+}
+
+impl RecoveryDirective {
+    /// Returns the durable disposition this directive requests.
+    #[must_use]
+    pub const fn disposition(self) -> RecoveryDisposition {
+        match self {
+            Self::MarkFailed(_) => RecoveryDisposition::MarkFailed,
+            Self::Abandon => RecoveryDisposition::Abandon,
+        }
+    }
+
+    /// Returns the stated failure of a `MarkFailed` directive.
+    #[must_use]
+    pub const fn failure(self) -> Option<FailureSummary> {
+        match self {
+            Self::MarkFailed(failure) => Some(failure),
+            Self::Abandon => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum OperatorTarget {
     InstanceKey(Box<JobInstanceKey>),
@@ -137,16 +173,14 @@ impl OperatorRequest {
 
     /// Requests one evidence-bound recovery decision.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
     pub fn recover(
         operation_id: OperationId,
         actor: ActorRef,
         reason: ReasonCode,
         job_execution_id: JobExecutionId,
         expected_version: ExecutionVersion,
-        disposition: RecoveryDisposition,
+        directive: RecoveryDirective,
         evidence_digest: [u8; 32],
-        failure: Option<FailureSummary>,
     ) -> Self {
         Self::build(
             OperatorAction::Recover,
@@ -156,9 +190,8 @@ impl OperatorRequest {
             OperatorTarget::Execution(job_execution_id),
             Some(expected_version),
             RequestArguments::Recovery {
-                disposition,
+                directive,
                 evidence_digest,
-                failure,
             },
         )
     }
@@ -260,23 +293,22 @@ impl OperatorRequest {
 
     fn recovery_request(&self) -> Option<Result<RecoveryRequest, RecoveryRequestError>> {
         let RequestArguments::Recovery {
-            disposition,
+            directive,
             evidence_digest,
-            failure,
         } = &self.arguments
         else {
             return None;
         };
         let expected_version = self.expected_version?;
         let reason = self.reason.as_ref()?;
-        Some(match (disposition, failure) {
-            (RecoveryDisposition::Abandon, _) => RecoveryRequest::abandon(
+        Some(match directive {
+            RecoveryDirective::Abandon => RecoveryRequest::abandon(
                 expected_version,
                 reason.as_str(),
                 self.actor.as_str(),
                 *evidence_digest,
             ),
-            (RecoveryDisposition::MarkFailed, Some(failure)) => RecoveryRequest::mark_failed(
+            RecoveryDirective::MarkFailed(failure) => RecoveryRequest::mark_failed(
                 expected_version,
                 reason.as_str(),
                 self.actor.as_str(),
@@ -284,9 +316,6 @@ impl OperatorRequest {
                 failure.category(),
                 failure.failure_id(),
             ),
-            (RecoveryDisposition::MarkFailed, None) => Err(RecoveryRequestError::Empty {
-                field: crate::RecoveryField::ReasonCode,
-            }),
         })
     }
 }
@@ -854,11 +883,17 @@ impl<R: JobRepository> JobOperator<R> {
         let effect = match self.apply(unit.as_mut(), request).await {
             Ok(effect) => effect,
             Err(EffectFailure::Rejected(rejection)) => {
-                drop(unit);
+                // A rejection must still be audited, so the rollback is
+                // best-effort: an adapter that cannot roll back discards its
+                // connection, and a genuine outage resurfaces when the audit
+                // opens its own unit of work.
+                let _ = unit.rollback().await;
                 return self.audit_rejection(request, rejection, requested_at).await;
             }
             Err(EffectFailure::Failed(error)) => {
-                drop(unit);
+                // The applied effect is already lost; the failure that caused
+                // it is the informative error, not a secondary rollback fault.
+                let _ = unit.rollback().await;
                 return Err(error);
             }
         };
@@ -877,7 +912,23 @@ impl<R: JobRepository> JobOperator<R> {
             rejection: None,
             requested_at,
         };
-        let record = unit.append_operator_request(&draft).await?;
+        let record = match unit.append_operator_request(&draft).await {
+            Ok(record) => record,
+            Err(RepositoryError::ConcurrentModification) => {
+                // A concurrent caller may have durably recorded this operation
+                // identifier between the replay probe and this append. That
+                // transaction owns the effect; this one contributed nothing, so
+                // a legitimate duplicate returns the recorded outcome rather
+                // than an error that contradicts replay by operation
+                // identifier. A conflict that is not this identifier finds no
+                // record and keeps the original error.
+                let _ = unit.rollback().await;
+                return self.replay(request).await?.ok_or(OperatorError::Repository(
+                    RepositoryError::ConcurrentModification,
+                ));
+            }
+            Err(error) => return Err(error.into()),
+        };
         unit.commit().await?;
         Ok(OperatorOutcome::new(
             OperatorOutcomeClass::Applied,
@@ -895,7 +946,7 @@ impl<R: JobRepository> JobOperator<R> {
         let recorded = unit
             .find_operator_request(request.action, &request.operation_id)
             .await?;
-        drop(unit);
+        unit.rollback().await?;
         let Some(record) = recorded else {
             return Ok(None);
         };
@@ -935,7 +986,19 @@ impl<R: JobRepository> JobOperator<R> {
             requested_at,
         };
         let mut unit = self.repository.begin().await?;
-        let record = unit.append_operator_request(&draft).await?;
+        let record = match unit.append_operator_request(&draft).await {
+            Ok(record) => record,
+            Err(RepositoryError::ConcurrentModification) => {
+                // As in `execute`, a concurrent caller may have recorded this
+                // operation identifier first. The rejection is already audited
+                // by that transaction.
+                let _ = unit.rollback().await;
+                return self.replay(request).await?.ok_or(OperatorError::Repository(
+                    RepositoryError::ConcurrentModification,
+                ));
+            }
+            Err(error) => return Err(error.into()),
+        };
         unit.commit().await?;
         Ok(OperatorOutcome::new(
             OperatorOutcomeClass::Rejected,

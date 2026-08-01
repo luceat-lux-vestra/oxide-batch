@@ -21,7 +21,7 @@ becomes released `Verified` because of this workstream.
 | Bounded list, query, and response paths | `PageSize` accepts only `1..=500`, `JobExplorer` requests one statement per page, truncates a page that would exceed the 256 KiB encoded bound, and rejects an unresolved-execution age below one minute. `keyset_traversal_returns_each_row_once` and `page_and_response_bounds_are_enforced` run on both backends. |
 | Stable cursor behavior | The opaque token carries a format version, query discriminant, immutable ordering key, captured identity ceiling, an 8-byte query binding, and a checksum. `cursor_rejects_a_different_query_or_filter` proves a different filter or page size is `CursorQueryMismatch`; `corrupt_cursor_checksum_is_rejected` proves a damaged token is `CursorInvalid`; `rows_created_after_traversal_start_are_not_returned` proves the ceiling holds. |
 | Redacted projections | Every projection returns names, opaque identifiers, ordinals, statuses, counters, versions, timestamps, digests, framework failure categories, parameter descriptors, and envelope descriptions only. `projection_excludes_parameter_and_context_values` asserts a sentinel parameter value appears in no projection or `Debug` rendering, and the existing `trybuild` fixtures still reject runtime, database, and serializer re-exports. |
-| Duplicate idempotency keys cannot duplicate an effect | `ob_operator_request` is unique on `(action, operation_id)` and commits with its effect. `replayed_operation_id_returns_the_recorded_outcome` proves a replay returns the recorded row and creates no second execution; `operation_id_reuse_with_a_different_digest_is_rejected` proves a reused key with a different canonical request is `OperationIdConflict`. |
+| Duplicate idempotency keys cannot duplicate an effect | `ob_operator_request` is unique on `(action, operation_id)` and commits with its effect. `replayed_operation_id_returns_the_recorded_outcome` proves a replay returns the recorded row and creates no second execution; `operation_id_reuse_with_a_different_digest_is_rejected` proves a reused key with a different canonical request is `OperationIdConflict`; `a_duplicate_operation_identifier_replays_rather_than_reporting_a_conflict` proves that a caller whose replay probe misses a concurrently committed row rolls its own effect back and returns that recorded outcome rather than the collision. |
 | Guards preserve lifecycle, definition, audit, and unknown-outcome rules | `abandon_requires_a_stopped_failed_or_recovered_execution`, `repeat_abandon_changes_nothing`, `abandoned_execution_rejects_restart`, `stop_on_a_stopping_or_terminal_execution_changes_nothing`, `stale_expected_version_loses_the_compare_and_swap`, `operator_request_and_effect_commit_together`, and `rejected_action_is_audited_without_an_effect` run on both backends. `ambiguous_operator_commit_reports_unknown_outcome` proves an ambiguous commit returns `OperationOutcomeUnknown` and records no completed request. |
 | Guarded, audited retention | `held_instance_is_never_purged`, `running_stopping_or_unknown_execution_is_never_purged`, `stale_plan_digest_rejects_apply_without_deleting`, `purge_deletes_in_instance_owned_order_within_batch_bounds`, and `interrupted_purge_leaves_completed_batches_durable` run on both backends. |
 | Separated PostgreSQL privileges | Not satisfied by this workstream. The [schema-3 migration guide](../operations/migrations/0003-operations-and-local-scale.md) specifies the runtime, operator-reader, and operator-writer grants, and the [setup guide](../operations/postgres-setup.md) records them for deployments. The design-gate fixture still runs every PostgreSQL suite as the runtime role, which cleans up its own rows with `DELETE`, so narrowing that role requires the schema-3 release fixture the M4 exit workstream owns. |
@@ -40,6 +40,8 @@ and `projection_excludes_parameter_and_context_values`.
 `operation_id_reuse_with_a_different_digest_is_rejected`,
 `stale_expected_version_loses_the_compare_and_swap`,
 `ambiguous_operator_commit_reports_unknown_outcome`,
+`a_duplicate_operation_identifier_replays_rather_than_reporting_a_conflict`,
+`a_recover_request_carries_the_failure_its_disposition_requires`,
 `operator_request_and_effect_commit_together`, and
 `rejected_action_is_audited_without_an_effect`.
 
@@ -85,6 +87,13 @@ The cursor encoding is also restated: the checksum covers the token body and a
 separate 8-byte query binding covers identity, because a single checksum over
 both cannot distinguish `CursorInvalid` from `CursorQueryMismatch`, which the
 same contract requires.
+
+The recovery request shape is restated too. An accepted disposition paired with
+an optional failure summary admits a `MarkFailed` decision that carries no
+failure, which no durable outcome can satisfy, and an `Abandon` decision that
+carries one its outcome ignores while its request digest still covers it.
+`RecoveryDirective` carries the disposition and its required evidence as one
+value, so neither combination is representable.
 
 ## Reproduction
 

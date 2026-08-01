@@ -189,6 +189,14 @@ timing, request similarity, or client retry behavior.
 Neither `stop` nor `abandon` may skip a state in the accepted lifecycle table
 in [execution semantics](../compatibility/execution-semantics.md).
 
+A `recover` request carries its disposition and that disposition's required
+evidence as one value: marking an attempt `FAILED` carries the stated failure
+category and identifier, and abandoning carries neither. A decision missing
+its evidence is therefore unrepresentable rather than a request that validates
+only once it reaches the repository, and an abandoning decision cannot carry a
+failure that its durable outcome ignores while its request digest still covers
+it.
+
 Stop is durable rather than in-process only. The operator writes
 `stop_requested_at` and `stop_requested_by` under compare-and-swap. The owning
 runtime observes the request at the next chunk-commit boundary and at least
@@ -209,6 +217,18 @@ service does not guess, does not re-issue the statement on a suspect
 connection, and does not mark the operator request completed. The caller
 resolves the ambiguity by replaying the same `operation_id`, which either
 returns the recorded outcome or re-attempts the effect exactly once.
+
+Two callers can pass the same replay probe before either commits. The loser's
+audit append then collides on `(action, operation_id)`. That collision is a
+duplicate rather than a failure: the loser rolls its own effect back, re-reads
+the recorded row, and returns it as a replayed outcome, or reports
+`OperationIdConflict` when the recorded request digest differs. A conflict that
+does not resolve to a recorded row keeps its original repository error.
+
+Every path that abandons a unit of work rolls it back explicitly. Dropping one
+is not a rollback: an adapter that owns a pooled connection discards that
+connection on drop, so an implicit drop turns each read-only probe or rejected
+action into pool churn.
 
 ### Audit
 

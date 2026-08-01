@@ -207,10 +207,10 @@ pub use service::{
     OperatorAction, OperatorError, OperatorOutcome, OperatorOutcomeClass, OperatorRecord,
     OperatorRecordDraft, OperatorRejection, OperatorRequest, Page, PageRequest, PageSize,
     ParameterDescriptor, PurgeBatchBound, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest,
-    PurgeSurvey, QueryWindow, ReasonCode, RequestDigest, RequestField, RequestFieldError,
-    RetentionAction, RetentionError, RetentionHold, RetentionOutcome, RetentionRecord,
-    RetentionRecordDraft, RetentionReport, RetentionService, StateEnvelopeDescriptor,
-    StepExecutionProjection, StepPartitionProjection, TerminalStatusSet,
+    PurgeSurvey, QueryWindow, ReasonCode, RecoveryDirective, RequestDigest, RequestField,
+    RequestFieldError, RetentionAction, RetentionError, RetentionHold, RetentionOutcome,
+    RetentionRecord, RetentionRecordDraft, RetentionReport, RetentionService,
+    StateEnvelopeDescriptor, StepExecutionProjection, StepPartitionProjection, TerminalStatusSet,
 };
 pub use state::{
     Checkpoint, DurableStateKind, ExecutionContext, StateCodecError, StateError, StateLimits,

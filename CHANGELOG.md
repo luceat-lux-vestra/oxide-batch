@@ -93,7 +93,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   replays by operation identifier, rejects a reused identifier that carries a
   different canonical request, reports optimistic conflicts and guard failures
   as audited rejections without an effect, and never guesses an ambiguous
-  commit.
+  commit. An audit append that collides with a concurrently recorded operation
+  identifier rolls its own effect back and returns the recorded outcome instead
+  of surfacing the collision, and every abandoned unit of work is rolled back
+  explicitly rather than dropped.
+- A `RecoveryDirective` that pairs a recovery disposition with the evidence
+  that disposition requires, so a `MarkFailed` decision without its stated
+  failure is unrepresentable rather than a deferred validation error and an
+  abandoning decision carries no failure for its request digest to cover.
 - A portable `RetentionService` with instance holds and a bounded two-phase
   purge: eligibility that never targets a running, stopping, ambiguous, or held
   instance, a plan digest that rejects a stale apply without deleting, deletion

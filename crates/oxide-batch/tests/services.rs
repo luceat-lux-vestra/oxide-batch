@@ -10,15 +10,18 @@ mod ids;
 use std::error::Error;
 use std::num::NonZeroU64;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use contract::{ContractClock, ServiceBackend, run_service_contract};
 use futures_executor::block_on;
 use ids::DeterministicIds;
 use oxide_batch::{
-    ActorRef, ComponentRevision, DefinitionIdentity, DefinitionRevision, InMemoryExplorer,
-    InMemoryJobRepository, JobInstanceKey, JobName, JobOperator, JobParameter, JobParameters,
-    OperationId, OperatorError, OperatorRequest, ParameterName, ParameterRole, ParameterValue,
-    ReasonCode, RepositoryError, RequestField, RequestFieldError, StepName,
+    ActorRef, BatchStatus, Clock, ComponentRevision, DefinitionIdentity, DefinitionRevision,
+    FailureCategory, FailureId, FailureSummary, InMemoryExplorer, InMemoryJobRepository,
+    JobInstanceKey, JobName, JobOperator, JobParameter, JobParameters, JobRepository,
+    LifecycleTransition, OperationId, OperatorAction, OperatorError, OperatorOutcomeClass,
+    OperatorRecordDraft, OperatorRequest, ParameterName, ParameterRole, ParameterValue, ReasonCode,
+    RecoveryDirective, RepositoryError, RequestField, RequestFieldError, StepName,
 };
 
 fn backend(
@@ -114,10 +117,13 @@ fn request_digest_covers_the_target_and_arguments_but_not_the_actor() -> Result<
 fn ambiguous_operator_commit_reports_unknown_outcome() -> Result<(), Box<dyn Error>> {
     let clock = Arc::new(ContractClock::new(1_700_000_000_000));
     let first = NonZeroU64::new(1).ok_or(RepositoryError::Unavailable)?;
-    let repository = AmbiguousCommitRepository(InMemoryJobRepository::new(
-        Arc::clone(&clock) as _,
-        Arc::new(DeterministicIds::new(first)),
-    ));
+    let repository = FaultingRepository::new(
+        InMemoryJobRepository::new(
+            Arc::clone(&clock) as _,
+            Arc::new(DeterministicIds::new(first)),
+        ),
+        Fault::AmbiguousCommit,
+    );
     let operator = JobOperator::new(repository, clock as _);
     let request = OperatorRequest::launch(
         OperationId::new("ambiguous")?,
@@ -128,6 +134,125 @@ fn ambiguous_operator_commit_reports_unknown_outcome() -> Result<(), Box<dyn Err
     assert_eq!(
         block_on(operator.execute(&request)),
         Err(OperatorError::OperationOutcomeUnknown)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_duplicate_operation_identifier_replays_rather_than_reporting_a_conflict()
+-> Result<(), Box<dyn Error>> {
+    let clock = Arc::new(ContractClock::new(1_700_000_000_000));
+    let first = NonZeroU64::new(1).ok_or(RepositoryError::Unavailable)?;
+    let inner = InMemoryJobRepository::new(
+        Arc::clone(&clock) as _,
+        Arc::new(DeterministicIds::new(first)),
+    );
+    let request = OperatorRequest::launch(
+        OperationId::new("racing-launch")?,
+        ActorRef::new("operator:one")?,
+        key("racing")?,
+        definition()?,
+    );
+
+    // A concurrent caller commits the audit row for this operation identifier
+    // while this caller sits between its replay probe and its own append. Only
+    // the row is seeded: the winner's effect belongs to a transaction this test
+    // does not need to reproduce.
+    let seeded = OperatorRecordDraft::from_durable(
+        OperatorAction::Launch,
+        request.operation_id().clone(),
+        ActorRef::new("operator:two")?,
+        None,
+        *request.digest(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        OperatorOutcomeClass::Applied,
+        None,
+        clock.now(),
+    );
+    let mut seed = block_on(inner.begin())?;
+    let winner = block_on(seed.append_operator_request(&seeded))?;
+    block_on(seed.commit())?;
+
+    // The probe misses the seeded row, so the effect applies and the audit
+    // append collides on the operation identifier. The service must roll back
+    // and return the recorded outcome rather than surfacing the collision.
+    let loser = JobOperator::new(
+        FaultingRepository::new(inner.clone(), Fault::MissedReplayProbe),
+        Arc::clone(&clock) as _,
+    );
+    let replayed = block_on(loser.execute(&request))?;
+    assert_eq!(replayed.class(), OperatorOutcomeClass::Replayed);
+    assert_eq!(replayed.record().id(), winner.id());
+    assert_eq!(replayed.record().digest(), request.digest());
+
+    // The rolled-back effect left no instance behind.
+    let mut audit = block_on(inner.begin())?;
+    let instance = block_on(audit.find_job_instance(&key("racing")?))?;
+    block_on(audit.rollback())?;
+    assert!(instance.is_none());
+    Ok(())
+}
+
+#[test]
+fn a_recover_request_carries_the_failure_its_disposition_requires() -> Result<(), Box<dyn Error>> {
+    let clock = Arc::new(ContractClock::new(1_700_000_000_000));
+    let first = NonZeroU64::new(1).ok_or(RepositoryError::Unavailable)?;
+    let repository = InMemoryJobRepository::new(
+        Arc::clone(&clock) as _,
+        Arc::new(DeterministicIds::new(first)),
+    );
+
+    let mut create = block_on(repository.begin())?;
+    let instance = block_on(create.select_or_create_job_instance(&key("recover")?))?
+        .instance()
+        .clone();
+    let execution = block_on(create.create_job_execution(instance.id()))?;
+    block_on(create.commit())?;
+
+    let mut stall = block_on(repository.begin())?;
+    let ambiguous = block_on(stall.transition_job_execution(
+        execution.id(),
+        execution.version(),
+        LifecycleTransition::new(BatchStatus::Unknown, clock.now()),
+    ))?;
+    block_on(stall.commit())?;
+
+    let failure = FailureSummary::new(FailureCategory::PermanentInfrastructure, FailureId::new(7)?);
+    let request = OperatorRequest::recover(
+        OperationId::new("recover-1")?,
+        ActorRef::new("operator:one")?,
+        ReasonCode::new("COMMIT_INSPECTED_NOT_DURABLE")?,
+        execution.id(),
+        ambiguous.version(),
+        RecoveryDirective::MarkFailed(failure),
+        [0xA5; 32],
+    );
+    let operator = JobOperator::new(repository, clock as _);
+    let outcome = block_on(operator.execute(&request))?;
+    assert_eq!(outcome.class(), OperatorOutcomeClass::Applied);
+    assert_eq!(outcome.record().result_status(), Some(BatchStatus::Failed));
+    assert_eq!(outcome.record().prior_status(), Some(BatchStatus::Unknown));
+
+    // The two dispositions are distinct requests, and an abandoning directive
+    // carries no failure for the digest to cover.
+    let abandoning = OperatorRequest::recover(
+        OperationId::new("recover-1")?,
+        ActorRef::new("operator:one")?,
+        ReasonCode::new("COMMIT_INSPECTED_NOT_DURABLE")?,
+        execution.id(),
+        ambiguous.version(),
+        RecoveryDirective::Abandon,
+        [0xA5; 32],
+    );
+    assert_ne!(request.digest(), abandoning.digest());
+    assert_eq!(RecoveryDirective::Abandon.failure(), None);
+    assert_eq!(
+        RecoveryDirective::MarkFailed(failure).failure(),
+        Some(failure)
     );
     Ok(())
 }
@@ -157,11 +282,37 @@ fn definition() -> Result<DefinitionIdentity, Box<dyn Error>> {
     )?)
 }
 
-/// A repository whose commits never report a known outcome.
-#[derive(Clone)]
-struct AmbiguousCommitRepository(InMemoryJobRepository);
+/// The single deterministic fault a wrapped repository injects.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Fault {
+    /// Every commit reports an unknown outcome.
+    AmbiguousCommit,
+    /// The first replay probe misses a record that is durably present.
+    ///
+    /// This reproduces the window between the probe and the append in which a
+    /// concurrent caller records the same operation identifier first.
+    MissedReplayProbe,
+}
 
-impl oxide_batch::JobRepository for AmbiguousCommitRepository {
+/// A repository that injects one deterministic fault into the in-memory one.
+#[derive(Clone)]
+struct FaultingRepository {
+    inner: InMemoryJobRepository,
+    fault: Fault,
+    probes: Arc<AtomicUsize>,
+}
+
+impl FaultingRepository {
+    fn new(inner: InMemoryJobRepository, fault: Fault) -> Self {
+        Self {
+            inner,
+            fault,
+            probes: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+}
+
+impl oxide_batch::JobRepository for FaultingRepository {
     fn begin<'a>(
         &'a self,
     ) -> oxide_batch::BoxFuture<
@@ -169,21 +320,29 @@ impl oxide_batch::JobRepository for AmbiguousCommitRepository {
         Result<Box<dyn oxide_batch::RepositoryUnitOfWork + 'a>, RepositoryError>,
     > {
         Box::pin(async move {
-            let unit = self.0.begin().await?;
-            Ok(Box::new(AmbiguousCommitUnit(unit)) as Box<dyn oxide_batch::RepositoryUnitOfWork>)
+            let unit = self.inner.begin().await?;
+            Ok(Box::new(FaultingUnit {
+                inner: unit,
+                fault: self.fault,
+                probes: Arc::clone(&self.probes),
+            }) as Box<dyn oxide_batch::RepositoryUnitOfWork>)
         })
     }
 }
 
-struct AmbiguousCommitUnit<'a>(Box<dyn oxide_batch::RepositoryUnitOfWork + 'a>);
+struct FaultingUnit<'a> {
+    inner: Box<dyn oxide_batch::RepositoryUnitOfWork + 'a>,
+    fault: Fault,
+    probes: Arc<AtomicUsize>,
+}
 
-impl oxide_batch::RepositoryUnitOfWork for AmbiguousCommitUnit<'_> {
+impl oxide_batch::RepositoryUnitOfWork for FaultingUnit<'_> {
     fn register_definition_upgrade<'a>(
         &'a mut self,
         job_name: &'a JobName,
         upgrade: &'a oxide_batch::DefinitionUpgrade,
     ) -> oxide_batch::BoxFuture<'a, Result<(), RepositoryError>> {
-        self.0.register_definition_upgrade(job_name, upgrade)
+        self.inner.register_definition_upgrade(job_name, upgrade)
     }
 
     fn select_or_create_job_instance<'a>(
@@ -191,14 +350,14 @@ impl oxide_batch::RepositoryUnitOfWork for AmbiguousCommitUnit<'_> {
         key: &'a JobInstanceKey,
     ) -> oxide_batch::BoxFuture<'a, Result<oxide_batch::JobInstanceSelection, RepositoryError>>
     {
-        self.0.select_or_create_job_instance(key)
+        self.inner.select_or_create_job_instance(key)
     }
 
     fn create_job_execution(
         &mut self,
         job_instance_id: oxide_batch::JobInstanceId,
     ) -> oxide_batch::BoxFuture<'_, Result<oxide_batch::JobExecution, RepositoryError>> {
-        self.0.create_job_execution(job_instance_id)
+        self.inner.create_job_execution(job_instance_id)
     }
 
     fn create_job_execution_with_definition<'a>(
@@ -206,7 +365,7 @@ impl oxide_batch::RepositoryUnitOfWork for AmbiguousCommitUnit<'_> {
         job_instance_id: oxide_batch::JobInstanceId,
         definition: &'a DefinitionIdentity,
     ) -> oxide_batch::BoxFuture<'a, Result<oxide_batch::JobExecution, RepositoryError>> {
-        self.0
+        self.inner
             .create_job_execution_with_definition(job_instance_id, definition)
     }
 
@@ -215,7 +374,8 @@ impl oxide_batch::RepositoryUnitOfWork for AmbiguousCommitUnit<'_> {
         job_execution_id: oxide_batch::JobExecutionId,
         step_name: &'a StepName,
     ) -> oxide_batch::BoxFuture<'a, Result<oxide_batch::StepExecution, RepositoryError>> {
-        self.0.create_step_execution(job_execution_id, step_name)
+        self.inner
+            .create_step_execution(job_execution_id, step_name)
     }
 
     fn transition_job_execution(
@@ -224,7 +384,7 @@ impl oxide_batch::RepositoryUnitOfWork for AmbiguousCommitUnit<'_> {
         expected_version: oxide_batch::ExecutionVersion,
         transition: oxide_batch::LifecycleTransition,
     ) -> oxide_batch::BoxFuture<'_, Result<oxide_batch::JobExecution, RepositoryError>> {
-        self.0
+        self.inner
             .transition_job_execution(id, expected_version, transition)
     }
 
@@ -234,7 +394,7 @@ impl oxide_batch::RepositoryUnitOfWork for AmbiguousCommitUnit<'_> {
         expected_version: oxide_batch::ExecutionVersion,
         exit_status: &'a oxide_batch::ExitStatus,
     ) -> oxide_batch::BoxFuture<'a, Result<oxide_batch::JobExecution, RepositoryError>> {
-        self.0
+        self.inner
             .enrich_job_exit_status(id, expected_version, exit_status)
     }
 
@@ -244,7 +404,7 @@ impl oxide_batch::RepositoryUnitOfWork for AmbiguousCommitUnit<'_> {
         expected_version: oxide_batch::ExecutionVersion,
         transition: oxide_batch::LifecycleTransition,
     ) -> oxide_batch::BoxFuture<'_, Result<oxide_batch::StepExecution, RepositoryError>> {
-        self.0
+        self.inner
             .transition_step_execution(id, expected_version, transition)
     }
 
@@ -254,7 +414,7 @@ impl oxide_batch::RepositoryUnitOfWork for AmbiguousCommitUnit<'_> {
         expected_version: oxide_batch::ExecutionVersion,
         exit_status: &'a oxide_batch::ExitStatus,
     ) -> oxide_batch::BoxFuture<'a, Result<oxide_batch::StepExecution, RepositoryError>> {
-        self.0
+        self.inner
             .enrich_step_exit_status(id, expected_version, exit_status)
     }
 
@@ -262,14 +422,14 @@ impl oxide_batch::RepositoryUnitOfWork for AmbiguousCommitUnit<'_> {
         &'a mut self,
         key: &'a JobInstanceKey,
     ) -> oxide_batch::BoxFuture<'a, Result<Option<oxide_batch::JobInstance>, RepositoryError>> {
-        self.0.find_job_instance(key)
+        self.inner.find_job_instance(key)
     }
 
     fn get_job_instance(
         &mut self,
         id: oxide_batch::JobInstanceId,
     ) -> oxide_batch::BoxFuture<'_, Result<Option<oxide_batch::JobInstance>, RepositoryError>> {
-        self.0.get_job_instance(id)
+        self.inner.get_job_instance(id)
     }
 
     fn get_job_execution(
@@ -277,14 +437,14 @@ impl oxide_batch::RepositoryUnitOfWork for AmbiguousCommitUnit<'_> {
         id: oxide_batch::JobExecutionId,
     ) -> oxide_batch::BoxFuture<'_, Result<Option<oxide_batch::JobExecution>, RepositoryError>>
     {
-        self.0.get_job_execution(id)
+        self.inner.get_job_execution(id)
     }
 
     fn job_executions(
         &mut self,
         job_instance_id: oxide_batch::JobInstanceId,
     ) -> oxide_batch::BoxFuture<'_, Result<Vec<oxide_batch::JobExecution>, RepositoryError>> {
-        self.0.job_executions(job_instance_id)
+        self.inner.job_executions(job_instance_id)
     }
 
     fn get_step_execution(
@@ -292,14 +452,14 @@ impl oxide_batch::RepositoryUnitOfWork for AmbiguousCommitUnit<'_> {
         id: oxide_batch::StepExecutionId,
     ) -> oxide_batch::BoxFuture<'_, Result<Option<oxide_batch::StepExecution>, RepositoryError>>
     {
-        self.0.get_step_execution(id)
+        self.inner.get_step_execution(id)
     }
 
     fn step_executions(
         &mut self,
         job_execution_id: oxide_batch::JobExecutionId,
     ) -> oxide_batch::BoxFuture<'_, Result<Vec<oxide_batch::StepExecution>, RepositoryError>> {
-        self.0.step_executions(job_execution_id)
+        self.inner.step_executions(job_execution_id)
     }
 
     fn recover_job_execution<'a>(
@@ -307,7 +467,7 @@ impl oxide_batch::RepositoryUnitOfWork for AmbiguousCommitUnit<'_> {
         id: oxide_batch::JobExecutionId,
         request: &'a oxide_batch::RecoveryRequest,
     ) -> oxide_batch::BoxFuture<'a, Result<oxide_batch::RecoveryResult, RepositoryError>> {
-        self.0.recover_job_execution(id, request)
+        self.inner.recover_job_execution(id, request)
     }
 
     fn recovery_decision(
@@ -315,7 +475,7 @@ impl oxide_batch::RepositoryUnitOfWork for AmbiguousCommitUnit<'_> {
         id: oxide_batch::JobExecutionId,
     ) -> oxide_batch::BoxFuture<'_, Result<Option<oxide_batch::RecoveryDecision>, RepositoryError>>
     {
-        self.0.recovery_decision(id)
+        self.inner.recovery_decision(id)
     }
 
     fn find_operator_request<'a>(
@@ -324,27 +484,34 @@ impl oxide_batch::RepositoryUnitOfWork for AmbiguousCommitUnit<'_> {
         operation_id: &'a OperationId,
     ) -> oxide_batch::BoxFuture<'a, Result<Option<oxide_batch::OperatorRecord>, RepositoryError>>
     {
-        self.0.find_operator_request(action, operation_id)
+        if self.fault == Fault::MissedReplayProbe && self.probes.fetch_add(1, Ordering::SeqCst) == 0
+        {
+            return Box::pin(async { Ok(None) });
+        }
+        self.inner.find_operator_request(action, operation_id)
     }
 
     fn append_operator_request<'a>(
         &'a mut self,
         draft: &'a oxide_batch::OperatorRecordDraft,
     ) -> oxide_batch::BoxFuture<'a, Result<oxide_batch::OperatorRecord, RepositoryError>> {
-        self.0.append_operator_request(draft)
+        self.inner.append_operator_request(draft)
     }
 
     fn commit<'a>(self: Box<Self>) -> oxide_batch::BoxFuture<'a, Result<(), RepositoryError>>
     where
         Self: 'a,
     {
-        Box::pin(async { Err(RepositoryError::CommitOutcomeUnknown) })
+        if self.fault == Fault::AmbiguousCommit {
+            return Box::pin(async { Err(RepositoryError::CommitOutcomeUnknown) });
+        }
+        self.inner.commit()
     }
 
     fn rollback<'a>(self: Box<Self>) -> oxide_batch::BoxFuture<'a, Result<(), RepositoryError>>
     where
         Self: 'a,
     {
-        self.0.rollback()
+        self.inner.rollback()
     }
 }
