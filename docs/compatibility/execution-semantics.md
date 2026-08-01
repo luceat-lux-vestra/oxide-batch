@@ -89,6 +89,20 @@ tokens. Exit status cannot forge lifecycle state.
 - A fork starts a new lineage and does not claim to resume the source
   execution.
 
+M4 makes these rules executable through a portable operator service. Every
+mutating operator action carries a caller-supplied operation ID, an observed
+optimistic version, a bounded actor reference, and, where destructive, a
+bounded reason code. Replaying an operation ID returns the recorded outcome;
+reusing it for a different request is rejected. An ambiguous operator commit is
+an explicit unknown outcome that the caller resolves by replay, never by
+guessing. Read, lifecycle, and destructive actions are separately
+authorizable by the deployment while core guards remain unconditional.
+
+Query surfaces are bounded and keyset paginated over immutable ordering keys,
+and every projection is redacted. The exact M4 query, cursor, idempotency,
+guard, audit, and retention rules are owned by the
+[operator, explorer, and retention contract](../architecture/operator-and-explorer-services.md).
+
 ## Tasklet and chunk restart points
 
 A tasklet may expose a versioned contribution/checkpoint only at a documented
@@ -198,6 +212,33 @@ cancellation, joins children, and never relies on detached work. Mutable state
 is not shared without an explicit merge rule. Ordered readers/writers and
 commit barriers preserve their declared ordering. Resource pools, queues,
 in-flight chunks, memory, and blocking threads have finite budgets.
+
+M4 adds a bounded split node and a bounded partitioned step node. Their
+partition identity is durable, the partitioner runs at most once per
+partitioned step execution, completed partitions are not rerun on restart, and
+aggregation is deterministic in key order rather than completion order. An
+`UNKNOWN` child makes its parent `UNKNOWN`. Running the same plan with a single
+branch or worker is the canonical sequential execution and must produce
+identical normalized observations. The exact subset, budgets, and equivalence
+rules are owned by the
+[M4 bounded local-scale contract](../architecture/local-scale.md).
+
+## Shutdown, stale detection, and recovery
+
+Graceful shutdown stops intake, propagates cancellation, applies the step's
+declared in-flight chunk policy, joins owned children, persists the resulting
+state, and only then flushes telemetry and closes the repository. A missed
+join deadline is reported with the count of unjoined work; it never fabricates
+a terminal status. An ambiguous in-flight commit remains `UNKNOWN`.
+
+Stale detection compares durable inactivity against repository server time and
+a per-process ownership token. It produces evidence and a proposal; it never
+rewrites status, never expires an owner, and confers no takeover authority.
+Recovery binds an evidence digest and an observed version, permits only
+`FAILED` or `ABANDONED`, and never infers whether an ambiguous external effect
+committed. The exact ordering, deadlines, evidence, clock rules, and signal
+matrix are owned by the
+[M4 shutdown and stale-recovery contract](../architecture/shutdown-and-recovery.md).
 
 ## Distributed ownership and equivalence
 

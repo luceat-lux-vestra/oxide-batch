@@ -124,6 +124,22 @@ bytes, fingerprint, normalized repository writes, or callback trace. Moving a
 persisted definition from format 1 to 2 requires a direct compatibility edge;
 schema migration never rewrites manifest identity.
 
+## M4 bounded local-scale slice
+
+M4 adds exactly one split node kind and one partitioned step node kind to the
+M3 acyclic subset, with the branch, partition, budget, ownership, aggregation,
+and thread-safety rules fixed by the
+[M4 bounded local-scale contract](local-scale.md). Compilation rejects nested
+splits, partitioned steps inside a branch, decision nodes inside a branch, and
+any zero, contradictory, or unbounded budget.
+
+Manifest format 3 adds those node kinds, the partitioner and aggregation
+identity, and the budgets that change assignment identity or aggregate meaning,
+which therefore participate in the fingerprint. Formats 1 and 2 remain readable
+and their bytes are never rewritten; moving a persisted definition to format 3
+requires one direct compatibility edge. M4 keeps the accepted ADR-0002 boxed
+component boundary and does not implement the RFC-0005 static hot path.
+
 ## Evidence
 
 Production implementation requires:

@@ -52,6 +52,17 @@ services. Core services still validate lifecycle, version, ownership,
 idempotency, and destructive-operation guards. Credentials and tenant policy
 do not enter definition manifests or execution contexts.
 
+M4 makes this split executable. Every mutating core action declares one
+authorization class of `Read`, `Lifecycle`, or `Destructive` that a deployment
+can grant independently, and requires a deployment-supplied opaque actor
+reference for audit. The core never authenticates a caller, never consults an
+identity provider, and never treats a supplied actor reference as proof of
+authorization. Removing deployment authorization removes no core guard. The
+exact request envelope, guards, and audit records are owned by the
+[operator, explorer, and retention contract](../architecture/operator-and-explorer-services.md),
+and the minimal CLI over them by the
+[M4 operator CLI and configuration contract](operator-cli.md).
+
 ## Extraction gate
 
 A separate repository is created only after:
