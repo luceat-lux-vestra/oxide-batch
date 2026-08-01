@@ -135,7 +135,13 @@ in the [M3 exit evidence](project/m3-exit-evidence.md).
 
 ## M4 — Operations and Local Scale
 
-**Status:** Planned under the accepted near-term program
+**Status:** Active (2026-08-01)
+
+The decision gates, dependency-ordered workstreams, architecture constraints,
+and definition of done are recorded in the
+[M4 kickoff gate](project/m4-kickoff-gate.md). Implementation cannot cross its
+operator/explorer, CLI, shutdown/recovery, telemetry, retention, local-scale,
+schema, manifest, security, or evidence gates before those contracts close.
 
 **Objective:** provide guarded local operation, observability, and bounded
 single-host parallelism.

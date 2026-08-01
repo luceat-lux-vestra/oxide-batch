@@ -49,7 +49,11 @@ in the [M2 exit record](docs/project/m2-exit-evidence.md). M3 adds typed bounded
 retry/skip/rollback, deterministic listener boundaries, schema-2 durable fault
 state, finite compiled flow, durable decisions and start controls, and
 process-kill restart evidence recorded in the
-[M3 exit record](docs/project/m3-exit-evidence.md).
+[M3 exit record](docs/project/m3-exit-evidence.md). **M4 — Operations and Local
+Scale** is active under its [kickoff gate](docs/project/m4-kickoff-gate.md);
+operator, CLI, telemetry, shutdown/recovery, retention, and local-parallel
+capabilities remain planned until their named design and implementation gates
+close.
 
 Start with the [documentation index](docs/README.md) and
 [continuous delivery roadmap](docs/roadmap.md). The M5-M14 full-parity program

@@ -9,7 +9,10 @@ a restart-oriented batch processing framework for Rust inspired by Spring Batch.
 > audited recovery decisions. M2 and M3 process-kill crash/restart and
 > conformance implementation evidence is complete, including typed bounded
 > fault tolerance and the finite durable-flow slice. No production-ready
-> runtime has been released.
+> runtime has been released. M4 operations and bounded local-scale work is
+> active under design gates; this crate does not yet claim its operator CLI,
+> telemetry-export, graceful-shutdown, retention, or local-parallel
+> capabilities.
 
 The facade owns validated job and step names, opaque instance/execution IDs,
 typed and value-redacted job parameters, canonical job-instance keys, lifecycle
