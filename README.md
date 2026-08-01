@@ -7,11 +7,10 @@ OxideBatch is an early-stage Rust-native framework for reliable, restartable
 batch processing, inspired by Spring Batch.
 
 > [!IMPORTANT]
-> OxideBatch has completed the M1 executable kernel and M2 durable PostgreSQL
-> chunk/restart implementation gate. M3 fault tolerance and flow is active at
-> its kickoff/design gate; no M3 runtime capability is claimed yet.
-> Compatibility rows remain unreleased `Implemented` evidence, and no
-> production-ready runtime has been released.
+> OxideBatch has completed the M1 executable kernel, M2 durable PostgreSQL
+> chunk/restart gate, and M3 fault-tolerance and finite-flow implementation
+> gate. Compatibility rows remain unreleased `Implemented` or `Partial`
+> evidence, and no production-ready runtime has been released.
 
 ## Project goals
 
@@ -41,14 +40,16 @@ planned multi-crate strategy.
 
 ## Status
 
-**M0 — Foundation**, **M1 — Executable Kernel**, and
-**M2 — Durable Chunk and Restart** are complete. M2 includes the PostgreSQL
+**M0 — Foundation**, **M1 — Executable Kernel**, **M2 — Durable Chunk and
+Restart**, and **M3 — Fault Tolerance and Flow** are complete implementation
+milestones. M2 includes the PostgreSQL
 schema and repository, atomic enlisted chunks, definition-guarded restart,
 audited recovery, and separate-process pre/post-commit crash evidence recorded
-in the [M2 exit record](docs/project/m2-exit-evidence.md). **M3 — Fault
-Tolerance and Flow** is active under its
-[kickoff gate](docs/project/m3-kickoff-gate.md); implementation remains behind
-the named policy, persistence, listener, compiled-plan, and flow decisions.
+in the [M2 exit record](docs/project/m2-exit-evidence.md). M3 adds typed bounded
+retry/skip/rollback, deterministic listener boundaries, schema-2 durable fault
+state, finite compiled flow, durable decisions and start controls, and
+process-kill restart evidence recorded in the
+[M3 exit record](docs/project/m3-exit-evidence.md).
 
 Start with the [documentation index](docs/README.md) and
 [continuous delivery roadmap](docs/roadmap.md). The M5-M14 full-parity program

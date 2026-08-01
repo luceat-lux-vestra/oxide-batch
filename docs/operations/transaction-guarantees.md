@@ -50,6 +50,10 @@ after commit and are not correctness authorities.
 | Stop after commit | Committed chunk remains authoritative | Restart begins after that checkpoint |
 | Process exit after an acknowledged reservation | The ordinal and its retry/rollback counts remain durable | Restart resumes the persisted ordinal and never refills the budget |
 | Process exit before the reservation commits | No ordinal is consumed | Restart may replay the initial component call |
+| Process exit during a skip callback before its accepting commit | Skip and no-rollback counts remain unchanged | Callback may replay; external callback effects require idempotency or reconciliation |
+| Terminal known rollback | Failed step lifecycle and one rollback count commit together | Restart inherits only committed progress and does not undercount the terminal attempt |
+| Process exit after step result but before flow decision | Completed source step is durable; no decision exists | Restart reuses the source step, records the reuse decision, and then starts the target |
+| Process exit after flow decision but before target start | Source step and selected target are durable | Restart reuses the decision and starts the recorded target |
 | Unusable durable fault state | Nothing is written | The step fails closed before any component runs |
 
 A disconnect before the adapter sends `COMMIT` is known not committed. A
@@ -81,12 +85,15 @@ The release-blocking PostgreSQL 15 and 18 CI axes run:
 - `retry_reservation_is_a_durable_compare_and_swap`;
 - `skips_counters_and_fault_state_commit_with_the_chunk`;
 - `corrupt_fault_state_fails_before_component_work`.
+- `terminal_known_rollback_commits_with_failed_step_lifecycle`;
+- `flow_launcher_persists_a_bound_chunk_terminal_rollback`;
+- `crash_before_reservation_replays_initial_call`;
+- `retry_reservation_survives_process_restart`;
+- `crash_during_skip_callback_replays_before_atomic_skip_commit`;
+- `crash_after_step_result_before_decision_reuses_durable_step`;
+- `crash_after_decision_commit_reuses_durable_decision`.
 
 The crash tests execute the worker as a separate OS process, terminate it
-without running Rust destructors, inspect the database from a new process, and
-resume only from the retained checkpoint.
-
-`rollback_count` currently counts the acknowledged retry-reservation rollback
-only. A terminal known rollback that never reserved a retry does not yet
-increment it, so the durable value is a lower bound until the step-lifecycle
-counter path lands.
+without running Rust destructors, inspect the database through a fresh
+connection, apply an audited recovery decision, and resume only from retained
+durable state.

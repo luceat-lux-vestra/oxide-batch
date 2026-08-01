@@ -271,6 +271,7 @@ pub struct TaskletContext<'a> {
     stop: &'a StopToken,
     correlation: &'a ExecutionCorrelation,
     event_sink: Option<&'a dyn LifecycleEventSink>,
+    terminal_rollback: &'a AtomicBool,
 }
 
 impl<'a> TaskletContext<'a> {
@@ -280,6 +281,7 @@ impl<'a> TaskletContext<'a> {
         step_execution_id: StepExecutionId,
         stop: &'a StopToken,
         correlation: &'a ExecutionCorrelation,
+        terminal_rollback: &'a AtomicBool,
     ) -> Self {
         Self {
             parameters,
@@ -288,6 +290,7 @@ impl<'a> TaskletContext<'a> {
             stop,
             correlation,
             event_sink: None,
+            terminal_rollback,
         }
     }
 
@@ -351,6 +354,10 @@ impl<'a> TaskletContext<'a> {
         let _ = catch_unwind(AssertUnwindSafe(|| sink.emit(&event)));
     }
 
+    pub(crate) fn acknowledge_terminal_rollback(&self) {
+        self.terminal_rollback.store(true, Ordering::Release);
+    }
+
     fn into_blocking(self) -> BlockingTaskletContext {
         BlockingTaskletContext {
             parameters: self.parameters.clone(),
@@ -370,6 +377,10 @@ impl fmt::Debug for TaskletContext<'_> {
             .field("stop_requested", &self.stop.is_stop_requested())
             .field("correlation", &self.correlation)
             .field("event_sink", &self.event_sink.map(|_| "<attached>"))
+            .field(
+                "terminal_rollback",
+                &self.terminal_rollback.load(Ordering::Acquire),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -795,6 +806,7 @@ impl<'a> JobLauncher<'a> {
                     outcome,
                     Some(failure.summary()),
                     None,
+                    false,
                     &graph.correlation,
                 )
                 .await?;
@@ -848,6 +860,7 @@ impl<'a> JobLauncher<'a> {
                     outcome,
                     Some(failure.summary()),
                     None,
+                    false,
                     &graph.correlation,
                 )
                 .await?;
@@ -881,6 +894,7 @@ impl<'a> JobLauncher<'a> {
         let started_step = self
             .start_step(&graph.step_execution, &graph.correlation)
             .await?;
+        let terminal_rollback = AtomicBool::new(false);
         let tasklet_context = TaskletContext {
             parameters,
             job_execution_id: started_job.id(),
@@ -888,6 +902,7 @@ impl<'a> JobLauncher<'a> {
             stop,
             correlation: &graph.correlation,
             event_sink: self.event_sink,
+            terminal_rollback: &terminal_rollback,
         };
         let invocation = invoke_tasklet(job.step.tasklet.as_ref(), tasklet_context).await;
         let mut custom_exit = None;
@@ -942,6 +957,7 @@ impl<'a> JobLauncher<'a> {
                 outcome,
                 step_failure,
                 custom_exit.as_ref(),
+                terminal_rollback.load(Ordering::Acquire),
                 &graph.correlation,
             )
             .await?;
@@ -1102,6 +1118,7 @@ impl<'a> JobLauncher<'a> {
         outcome: TaskletExecutionOutcome,
         failure: Option<FailureSummary>,
         custom_exit: Option<&ExitStatus>,
+        terminal_rollback: bool,
         correlation: &ExecutionCorrelation,
     ) -> Result<StepExecution, LaunchError> {
         let (status, default_exit) = final_status(outcome);
@@ -1111,7 +1128,10 @@ impl<'a> JobLauncher<'a> {
         let step = unit
             .enrich_step_exit_status(step.id(), step.version(), exit_status)
             .await?;
-        let transition = transition_for_outcome(status, now, failure)?;
+        let mut transition = transition_for_outcome(status, now, failure)?;
+        if terminal_rollback {
+            transition = transition.with_terminal_rollback();
+        }
         let step = unit
             .transition_step_execution(step.id(), step.version(), transition)
             .await?;
@@ -1131,7 +1151,7 @@ impl<'a> JobLauncher<'a> {
         let stopping_step = self.mark_step_stopping(step, correlation).await?;
         let outcome = TaskletExecutionOutcome::Stopped(StopTiming::BeforeStart);
         let step = self
-            .finish_step(&stopping_step, outcome, None, None, correlation)
+            .finish_step(&stopping_step, outcome, None, None, false, correlation)
             .await?;
         let status = Self::terminal_status(plan, outcome)?;
         let job = self

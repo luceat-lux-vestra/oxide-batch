@@ -170,11 +170,8 @@ against their own snapshot before scheduling the maintenance window.
 
 ## Residual limitations
 
-- A terminal known rollback does not yet increment `rollback_count` with the
-  terminal step update. Only the acknowledged retry-reservation rollback is
-  durable, so `rollback_count` is a lower bound for steps that failed without
-  reserving a retry. Step-lifecycle counter plumbing is owned by the M3 exit
-  workstream.
-- The M3 flow runtime now writes and reads `ob_flow_decision`. Process-kill
-  certification and released-version verification remain owned by the M3 exit
-  evidence rather than by this migration guide.
+- The M3 exit workstream now commits a terminal known rollback with the failed
+  step lifecycle and provides process-kill certification for retry reservation,
+  skip callback, and flow-decision boundaries. See
+  [M3 exit evidence](../../project/m3-exit-evidence.md).
+- Released-version verification remains separate from this migration guide.

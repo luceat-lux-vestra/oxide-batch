@@ -932,7 +932,7 @@ fn committed_chunk_advances_checkpoint() -> Result<(), Box<dyn Error>> {
         let durable = manager.load_committed_state(rolled_back_scope).await?;
         assert_eq!(
             durable.step_execution().metadata().counts(),
-            oxide_batch::ExecutionCounts::default()
+            oxide_batch::ExecutionCounts::new(0, 0, 0, 0, 0, 1)
         );
         assert_ne!(durable.checkpoint(), &chunk_checkpoint(2)?);
         assert!(
@@ -999,7 +999,7 @@ fn writer_failure_rolls_back_business_and_checkpoint() -> Result<(), Box<dyn Err
         let durable = manager.load_committed_state(scope).await?;
         assert_eq!(
             durable.step_execution().metadata().counts(),
-            oxide_batch::ExecutionCounts::default()
+            oxide_batch::ExecutionCounts::new(0, 0, 0, 0, 0, 1)
         );
         assert_ne!(durable.checkpoint(), &chunk_checkpoint(2)?);
         assert!(business_items(&runtime_url, JOB).await?.is_empty());

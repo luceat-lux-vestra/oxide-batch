@@ -160,9 +160,9 @@ pub use fault_state::{
 };
 pub use flow::{
     DeciderError, DecisionInput, DecisionStepInput, FlowDecision, FlowDecisionId,
-    FlowDecisionRequest, FlowDecisionSequence, FlowExecutionOutcome, FlowFailure, FlowJob,
-    FlowJobError, FlowLaunchReport, FlowLauncher, FlowRuntimeError, FlowStepState,
-    FlowTransitionKind, JobExecutionDecider,
+    FlowDecisionRequest, FlowDecisionSequence, FlowEvent, FlowEventKind, FlowEventSink,
+    FlowExecutionOutcome, FlowFailure, FlowJob, FlowJobError, FlowLaunchReport, FlowLauncher,
+    FlowRuntimeError, FlowStepState, FlowTransitionKind, JobExecutionDecider,
 };
 pub use item_listener::{
     BeforeCallbackOutcome, ItemListenerContext, ItemListenerError, ItemListenerFailure,

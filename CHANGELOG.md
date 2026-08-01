@@ -81,7 +81,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   per-phase retry and skip counters, a no-rollback count, a bounded checksummed
   fault-state envelope holding at most 256 digest-sorted retry entries, backfilled
   step logical IDs, the extended failure-category constraint, and the
-  append-only `ob_flow_decision` table the flow workstream will write.
+  append-only `ob_flow_decision` table used by the finite-flow runtime.
 - `PostgresFaultState`, a durable retry-reservation store whose compare-and-swap
   runs as one short metadata transaction after a known rollback and before
   backoff. It advances the phase retry count, the acknowledged rollback count,
@@ -115,6 +115,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   manifest-validated transition decisions before target start, reconstruct
   logical-step history across attempts, and reuse matching completed-step and
   decider decisions during restart.
+- Post-commit finite-flow events for committed step results and decisions,
+  completed-step reuse, and start-limit rejection through a value-redacted,
+  panic-isolated, non-authoritative `FlowEventSink`.
+- Separate-process PostgreSQL retry-reservation, skip-callback, and flow-decision
+  crash/restart matrices. Each inspects durable state through a fresh
+  connection, applies audited recovery, and proves the accepted replay or reuse
+  boundary in a distinct attempt.
+- M3 fault-tolerance and finite-flow exit evidence mapping the implemented
+  ledger slice, process-kill boundaries, PostgreSQL axes, and residual M6/M7
+  population without promoting unreleased rows to `Verified`.
 - M0 implementation-readiness plan, M0–M5 roadmap, decision records, and
   product, compatibility, architecture, engineering, security, operations, and
   release policy set.
@@ -153,6 +163,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - PostgreSQL design-gate readiness now probes the final TCP listener instead of
   mistaking the official image's socket-only initialization server for a ready
   database.
+- A terminal known chunk rollback now increments `rollback_count` in the same
+  repository transaction that commits the failed step lifecycle, including a
+  chunk executed through the finite-flow launcher.
 
 ## [0.1.0-alpha.1] - 2026-07-29
 

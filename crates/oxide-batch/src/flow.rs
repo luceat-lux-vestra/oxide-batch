@@ -6,6 +6,7 @@ use std::fmt;
 use std::num::NonZeroU64;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
 use futures_util::FutureExt;
@@ -910,6 +911,140 @@ pub struct FlowLaunchReport {
     listener_failures: Vec<ListenerFailure>,
 }
 
+/// Stable, post-commit observations for the bounded M3 flow runtime.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum FlowEventKind {
+    /// One step's terminal lifecycle result committed before transition selection.
+    StepResultCommitted,
+    /// A selected result and target committed before the target starts.
+    DecisionCommitted,
+    /// A completed historical step supplied the source result on restart.
+    CompletedStepReused,
+    /// The instance-wide logical-step start limit rejected another start.
+    StartLimitExceeded,
+}
+
+impl FlowEventKind {
+    /// Returns the stable dotted event name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::StepResultCommitted => "flow.step_result_committed",
+            Self::DecisionCommitted => "flow.decision_committed",
+            Self::CompletedStepReused => "flow.completed_step_reused",
+            Self::StartLimitExceeded => "step.start_limit_exceeded",
+        }
+    }
+}
+
+impl fmt::Display for FlowEventKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// A value-redacted flow observation emitted only after its named decision.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FlowEvent {
+    kind: FlowEventKind,
+    job_name: JobName,
+    job_instance_id: JobInstanceId,
+    job_execution_id: JobExecutionId,
+    job_attempt: ExecutionAttempt,
+    source_node_id: NodeId,
+    source_step_execution_id: Option<StepExecutionId>,
+    target: Option<FlowTarget>,
+    occurred_at: SystemTime,
+}
+
+impl FlowEvent {
+    #[allow(clippy::too_many_arguments)]
+    const fn new(
+        kind: FlowEventKind,
+        job_name: JobName,
+        job_instance_id: JobInstanceId,
+        job_execution_id: JobExecutionId,
+        job_attempt: ExecutionAttempt,
+        source_node_id: NodeId,
+        source_step_execution_id: Option<StepExecutionId>,
+        target: Option<FlowTarget>,
+        occurred_at: SystemTime,
+    ) -> Self {
+        Self {
+            kind,
+            job_name,
+            job_instance_id,
+            job_execution_id,
+            job_attempt,
+            source_node_id,
+            source_step_execution_id,
+            target,
+            occurred_at,
+        }
+    }
+
+    /// Returns the stable event category.
+    #[must_use]
+    pub const fn kind(&self) -> FlowEventKind {
+        self.kind
+    }
+
+    /// Borrows the bounded job definition name.
+    #[must_use]
+    pub const fn job_name(&self) -> &JobName {
+        &self.job_name
+    }
+
+    /// Returns the logical job instance.
+    #[must_use]
+    pub const fn job_instance_id(&self) -> JobInstanceId {
+        self.job_instance_id
+    }
+
+    /// Returns the attempt that emitted this observation.
+    #[must_use]
+    pub const fn job_execution_id(&self) -> JobExecutionId {
+        self.job_execution_id
+    }
+
+    /// Returns the instance-scoped job attempt ordinal.
+    #[must_use]
+    pub const fn job_attempt(&self) -> ExecutionAttempt {
+        self.job_attempt
+    }
+
+    /// Borrows the bounded logical source node.
+    #[must_use]
+    pub const fn source_node_id(&self) -> &NodeId {
+        &self.source_node_id
+    }
+
+    /// Returns the durable source step when this event follows step work.
+    #[must_use]
+    pub const fn source_step_execution_id(&self) -> Option<StepExecutionId> {
+        self.source_step_execution_id
+    }
+
+    /// Borrows the selected target for a committed decision.
+    #[must_use]
+    pub const fn target(&self) -> Option<&FlowTarget> {
+        self.target.as_ref()
+    }
+
+    /// Returns the injected facade-clock observation instant.
+    #[must_use]
+    pub const fn occurred_at(&self) -> SystemTime {
+        self.occurred_at
+    }
+}
+
+/// A non-authoritative observer of committed M3 flow decisions.
+pub trait FlowEventSink: Send + Sync {
+    /// Observes one bounded event. Failure or panic cannot change traversal.
+    fn emit(&self, event: &FlowEvent);
+}
+
 impl FlowLaunchReport {
     /// Borrows the selected logical instance.
     #[must_use]
@@ -999,6 +1134,7 @@ pub struct FlowLauncher<'a> {
     repository: &'a dyn JobRepository,
     clock: &'a dyn Clock,
     ids: &'a dyn IdGenerator,
+    event_sink: Option<&'a dyn FlowEventSink>,
 }
 
 impl<'a> FlowLauncher<'a> {
@@ -1013,7 +1149,15 @@ impl<'a> FlowLauncher<'a> {
             repository,
             clock,
             ids,
+            event_sink: None,
         }
+    }
+
+    /// Attaches a non-authoritative flow-event sink.
+    #[must_use]
+    pub const fn with_event_sink(mut self, event_sink: &'a dyn FlowEventSink) -> Self {
+        self.event_sink = Some(event_sink);
+        self
     }
 
     /// Executes one durable sequential/conditional attempt.
@@ -1112,6 +1256,17 @@ impl<'a> FlowLauncher<'a> {
                             Err(FlowRuntimeError::Repository(
                                 RepositoryError::StartLimitExceeded { limit, .. },
                             )) => {
+                                self.emit_flow_event(&FlowEvent::new(
+                                    FlowEventKind::StartLimitExceeded,
+                                    job.name.clone(),
+                                    instance.id(),
+                                    execution.id(),
+                                    attempt,
+                                    node_id.clone(),
+                                    None,
+                                    None,
+                                    self.clock.now(),
+                                ));
                                 let failure =
                                     self.next_failure_summary(FailureCategory::IllegalTransition)?;
                                 let final_job = self
@@ -1143,7 +1298,14 @@ impl<'a> FlowLauncher<'a> {
                             steps.len(),
                         )?;
                         let run = self
-                            .run_step(tasklet, created, parameters, stop_token, &correlation)
+                            .run_step(
+                                &node_id,
+                                tasklet,
+                                created,
+                                parameters,
+                                stop_token,
+                                &correlation,
+                            )
                             .await?;
                         listener_failures.extend(run.listener_failures);
                         steps.push(run.execution.clone());
@@ -1286,7 +1448,32 @@ impl<'a> FlowLauncher<'a> {
                 reused,
                 self.clock.now(),
             );
-            decisions.push(self.append_decision(&request).await?);
+            let decision = self.append_decision(&request).await?;
+            self.emit_flow_event(&FlowEvent::new(
+                FlowEventKind::DecisionCommitted,
+                job.name.clone(),
+                instance.id(),
+                execution.id(),
+                attempt,
+                node_id.clone(),
+                source_step,
+                Some(target.clone()),
+                decision.decided_at(),
+            ));
+            if kind == FlowTransitionKind::CompletedStepReuse {
+                self.emit_flow_event(&FlowEvent::new(
+                    FlowEventKind::CompletedStepReused,
+                    job.name.clone(),
+                    instance.id(),
+                    execution.id(),
+                    attempt,
+                    node_id.clone(),
+                    source_step,
+                    Some(target.clone()),
+                    decision.decided_at(),
+                ));
+            }
+            decisions.push(decision);
 
             match target {
                 FlowTarget::Node(next) => node_id = next,
@@ -1433,6 +1620,7 @@ impl<'a> FlowLauncher<'a> {
     #[allow(clippy::too_many_lines)]
     async fn run_step(
         &self,
+        node_id: &NodeId,
         step: &TaskletStep,
         created: StepExecution,
         parameters: &JobParameters,
@@ -1450,8 +1638,25 @@ impl<'a> FlowLauncher<'a> {
                     TaskletExecutionOutcome::Failed(TaskletFailure::ListenerError)
                 };
                 let execution = self
-                    .finish_step(&created, outcome, &ExitStatus::failed(), Some(summary))
+                    .finish_step(
+                        &created,
+                        outcome,
+                        &ExitStatus::failed(),
+                        Some(summary),
+                        false,
+                    )
                     .await?;
+                self.emit_flow_event(&FlowEvent::new(
+                    FlowEventKind::StepResultCommitted,
+                    correlation.job_name().clone(),
+                    correlation.job_instance_id(),
+                    correlation.job_execution_id(),
+                    correlation.job_attempt(),
+                    node_id.clone(),
+                    Some(execution.id()),
+                    None,
+                    self.clock.now(),
+                ));
                 return Ok(StepRun {
                     execution,
                     outcome,
@@ -1467,12 +1672,14 @@ impl<'a> FlowLauncher<'a> {
         }
 
         let started = self.start_step(&created).await?;
+        let terminal_rollback = AtomicBool::new(false);
         let tasklet_context = TaskletContext::new_for_flow(
             parameters,
             started.job_execution_id(),
             started.id(),
             stop_token,
             correlation,
+            &terminal_rollback,
         );
         let invoked = invoke_tasklet(step.tasklet(), tasklet_context).await;
         let (mut outcome, mut exit, tasklet_failure) = match invoked {
@@ -1537,7 +1744,26 @@ impl<'a> FlowLauncher<'a> {
             .map(|failure| failure.summary())
             .or(tasklet_summary);
         let durable = self.reload_step(started.id()).await?;
-        let execution = self.finish_step(&durable, outcome, &exit, failure).await?;
+        let execution = self
+            .finish_step(
+                &durable,
+                outcome,
+                &exit,
+                failure,
+                terminal_rollback.load(Ordering::Acquire),
+            )
+            .await?;
+        self.emit_flow_event(&FlowEvent::new(
+            FlowEventKind::StepResultCommitted,
+            correlation.job_name().clone(),
+            correlation.job_instance_id(),
+            correlation.job_execution_id(),
+            correlation.job_attempt(),
+            node_id.clone(),
+            Some(execution.id()),
+            None,
+            self.clock.now(),
+        ));
         Ok(StepRun {
             execution,
             outcome,
@@ -1589,13 +1815,17 @@ impl<'a> FlowLauncher<'a> {
         outcome: TaskletExecutionOutcome,
         exit: &ExitStatus,
         failure: Option<FailureSummary>,
+        terminal_rollback: bool,
     ) -> Result<StepExecution, FlowRuntimeError> {
         let status = status_for_tasklet(outcome);
         let mut unit = self.repository.begin().await?;
         let enriched = unit
             .enrich_step_exit_status(step.id(), step.version(), exit)
             .await?;
-        let transition = terminal_transition(status, self.clock.now(), failure)?;
+        let mut transition = terminal_transition(status, self.clock.now(), failure)?;
+        if terminal_rollback {
+            transition = transition.with_terminal_rollback();
+        }
         let finished = unit
             .transition_step_execution(enriched.id(), enriched.version(), transition)
             .await?;
@@ -1613,6 +1843,13 @@ impl<'a> FlowLauncher<'a> {
                 .next_failure_id()
                 .map_err(RepositoryError::Identifier)?,
         ))
+    }
+
+    fn emit_flow_event(&self, event: &FlowEvent) {
+        let Some(sink) = self.event_sink else {
+            return;
+        };
+        let _ = catch_unwind(AssertUnwindSafe(|| sink.emit(event)));
     }
 }
 

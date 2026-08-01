@@ -3523,7 +3523,7 @@ async fn update_step_execution(
     updated_at: SystemTime,
     expected: ExecutionVersion,
 ) -> Result<u64, RepositoryError> {
-    update_execution(
+    let affected = update_execution(
         transaction,
         "oxide_batch.ob_step_execution",
         execution.id().get(),
@@ -3533,7 +3533,29 @@ async fn update_step_execution(
         updated_at,
         expected,
     )
-    .await
+    .await?;
+    if affected == 1 {
+        let rollback_update = sqlx::query(
+            "UPDATE oxide_batch.ob_step_execution SET rollback_count = $1 \
+             WHERE id = $2 AND version = $3",
+        )
+        .bind(
+            i64::try_from(execution.metadata().counts().rolled_back())
+                .map_err(|_| RepositoryError::Unavailable)?,
+        )
+        .bind(database_id(
+            execution.id().get(),
+            IdentifierKind::StepExecution,
+        )?)
+        .bind(database_version(execution.version())?)
+        .execute(transaction)
+        .await
+        .map_err(|_| RepositoryError::Unavailable)?;
+        if rollback_update.rows_affected() != 1 {
+            return Err(RepositoryError::Unavailable);
+        }
+    }
+    Ok(affected)
 }
 
 #[allow(clippy::too_many_arguments)]

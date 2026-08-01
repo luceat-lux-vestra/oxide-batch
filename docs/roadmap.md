@@ -96,7 +96,7 @@ See the [M2 kickoff gate](project/m2-kickoff-gate.md).
 
 ## M3 — Fault Tolerance and Flow
 
-**Status:** Active (2026-07-31)
+**Status:** Complete (2026-08-01)
 
 The decision gates, dependency-ordered workstreams, architecture constraints,
 and definition of done are recorded in the
@@ -125,6 +125,9 @@ execution, or full Spring Batch parity.
 
 **Exit evidence:** deterministic policy limits across restart, rollback and
 checkpoint fixtures, persisted flow decisions, and mapped conformance rows.
+
+The completed implementation boundary and remaining M6/M7 scope are recorded
+in the [M3 exit evidence](project/m3-exit-evidence.md).
 
 **Documentation:** fault-tolerance, flow, and failure/restart recipes.
 

@@ -44,6 +44,7 @@ pub struct LifecycleTransition {
     target: BatchStatus,
     transitioned_at: SystemTime,
     failure: Option<FailureSummary>,
+    terminal_rollback: bool,
 }
 
 impl LifecycleTransition {
@@ -54,6 +55,7 @@ impl LifecycleTransition {
             target,
             transitioned_at,
             failure: None,
+            terminal_rollback: false,
         }
     }
 
@@ -64,6 +66,7 @@ impl LifecycleTransition {
             target: BatchStatus::Failed,
             transitioned_at,
             failure: Some(failure),
+            terminal_rollback: false,
         }
     }
 
@@ -77,6 +80,15 @@ impl LifecycleTransition {
     #[must_use]
     pub const fn transitioned_at(self) -> SystemTime {
         self.transitioned_at
+    }
+
+    pub(crate) const fn with_terminal_rollback(mut self) -> Self {
+        self.terminal_rollback = true;
+        self
+    }
+
+    pub(crate) const fn terminal_rollback(self) -> bool {
+        self.terminal_rollback
     }
 
     pub(crate) const fn failure(self) -> Option<FailureSummary> {
@@ -126,6 +138,8 @@ pub enum LifecycleError {
         /// The maximum current version.
         version: ExecutionVersion,
     },
+    /// A durable execution counter cannot be incremented.
+    CountExhausted,
 }
 
 impl fmt::Display for LifecycleError {
@@ -165,6 +179,7 @@ impl fmt::Display for LifecycleError {
                     "execution version {version} cannot be incremented"
                 )
             }
+            Self::CountExhausted => formatter.write_str("an execution counter is exhausted"),
         }
     }
 }

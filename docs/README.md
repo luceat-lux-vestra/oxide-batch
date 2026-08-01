@@ -78,6 +78,7 @@ decisions own the normative detail.
 - [M3 PostgreSQL fault-durability evidence](project/m3-postgres-fault-durability-evidence.md)
 - [M3 compiled-plan lowering evidence](project/m3-compiled-plan-evidence.md)
 - [M3 durable flow runtime evidence](project/m3-flow-runtime-evidence.md)
+- [M3 fault tolerance and flow exit evidence](project/m3-exit-evidence.md)
 - [Historical M0 decision register](product/open-decisions.md)
 
 Historical gates are preserved as records of their date. Later decisions link

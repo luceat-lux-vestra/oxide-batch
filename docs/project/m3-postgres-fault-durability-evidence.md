@@ -12,12 +12,10 @@ migration SQL, persists the fault-tolerance counters and retry state the
 [fault-tolerance contract](../architecture/fault-tolerance.md) defines, and
 reconstructs them across restart.
 
-It does not claim compiled-plan lowering, logical-ID semantics beyond the
-format-1 backfill, or flow decisions. `ob_flow_decision` is created and
-constrained by this migration because schema 2 is immutable, but no runtime path
-writes it; issue
-[#64](https://github.com/luceat-lux-vestra/oxide-batch/issues/64) owns its
-queries.
+This workstream did not originally claim compiled-plan lowering, logical-ID
+semantics beyond the format-1 backfill, or flow decisions. Those later M3
+workstreams now write and read `ob_flow_decision`; their evidence is joined by
+the [M3 exit record](m3-exit-evidence.md).
 
 ## Durable model
 
@@ -64,7 +62,7 @@ bounded limits and retry-key generation from
 | `FT-RETRY-001` | `retry_reservation_survives_restart` | `retry_reservation_is_a_durable_compare_and_swap` (a new store resumes the persisted ordinal) |
 | `FT-RETRY-001` | `stale_retry_reservation_loses_cas` | the same test's rejected duplicate ordinal, plus `reservation_requires_the_next_ordinal_of_one_generation` |
 | `FT-SKIP-001` | `skip_count_commits_with_chunk` | `skips_counters_and_fault_state_commit_with_the_chunk` |
-| `FT-ROLLBACK-001` | `crash_before_commit_replays_chunk` | the existing process-kill matrix, now covering the schema-2 row |
+| `FT-ROLLBACK-001` | `crash_before_commit_replays_chunk` | the existing process-kill matrix, now covering the schema-2 row; terminal rollback lifecycle persistence is closed by the [M3 exit record](m3-exit-evidence.md) |
 | `META-UPGRADE-001` | `schema1_upgrades_to_schema2` | `design-gate/verify-schema2-upgrade.sql` |
 | `META-UPGRADE-001` | `schema2_corruption_fails_closed` | `corrupt_fault_state_fails_before_component_work`, `tampered_state_fails_closed`, and the fixture's constraint probes |
 | `META-UPGRADE-001` | `schema2_backup_restores_schema1` | the design-gate dump/restore rehearsal, which restores the migrated schema and verifies version `2` before the forced newer-version rejection |
@@ -99,18 +97,13 @@ a version above the one it supports rather than guessing compatibility.
   encoder cannot drift.
 - `ChunkExecutionReport` fault counters are now cumulative durable totals rather
   than per-attempt counts, because the shared skip limit is defined across every
-  attempt of one job instance. `rollback_count` remains per-attempt; see the
-  limitation below.
+  attempt of one job instance. `rollback_count` remains per-attempt.
 
 ## Residual limitations
 
-- A terminal known rollback does not increment the durable `rollback_count`.
-  Only the acknowledged retry reservation does, so the column is a lower bound
-  for a step that failed without reserving a retry. Recording it requires
-  step-lifecycle counter plumbing from the chunk report to the terminal step
-  update, which is owned by the M3 exit workstream
-  ([#65](https://github.com/luceat-lux-vestra/oxide-batch/issues/65)).
-- `ob_flow_decision` has no runtime writer or read query yet.
+- The M3 exit workstream closed terminal known-rollback persistence and the
+  `ob_flow_decision` runtime paths. See
+  [M3 exit evidence](m3-exit-evidence.md) for their process-kill coverage.
 - Measured migration duration is reported per major by the design-gate fixture
   rather than pinned as a threshold, because it scales with the deployment's
   step-execution history.
