@@ -9,6 +9,7 @@
 
 mod explorer;
 mod operator;
+mod recovery;
 mod retention;
 
 use std::error::Error;
@@ -28,6 +29,13 @@ pub use explorer::{
 pub use operator::{
     JobOperator, OperatorError, OperatorOutcome, OperatorOutcomeClass, OperatorRecord,
     OperatorRecordDraft, OperatorRejection, OperatorRequest, RecoveryDirective,
+};
+pub use recovery::{
+    DEFAULT_MAX_CLOCK_SKEW, DEFAULT_STALE_THRESHOLD, MAX_CLOCK_SKEW, MAX_STALE_THRESHOLD,
+    MIN_CLOCK_SKEW, MIN_STALE_THRESHOLD, MaxClockSkew, MonotonicClock, MonotonicInstant,
+    OwnerObservation, OwnerToken, RecoveryError, RecoveryEvidence, RecoveryMarkers,
+    RecoveryProposal, RecoveryProposer, RecoveryRepository, RecoverySnapshot, RecoveryStepEvidence,
+    StaleThreshold, SystemMonotonicClock,
 };
 pub use retention::{
     DEFAULT_PURGE_AGE, MAX_PURGE_BATCH, MIN_PURGE_AGE, PurgeBatchBound, PurgeCandidate,
@@ -383,6 +391,7 @@ pub(crate) enum RequestArguments {
     Recovery {
         directive: RecoveryDirective,
         evidence_digest: [u8; 32],
+        unknown_commit: bool,
     },
 }
 
@@ -408,10 +417,12 @@ pub(crate) fn request_digest(
         RequestArguments::Recovery {
             directive,
             evidence_digest,
+            unknown_commit,
         } => {
             writer.push_str("RECOVERY");
             writer.push_str(directive.disposition().resulting_status().as_str());
             writer.push_bytes(evidence_digest);
+            writer.push_u64(u64::from(*unknown_commit));
             match directive.failure() {
                 Some(failure) => {
                     writer.push_str(failure.category().as_str());

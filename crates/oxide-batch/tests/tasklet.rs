@@ -19,11 +19,12 @@ use clock::ManualClock;
 use futures_util::future::join_all;
 use ids::DeterministicIds;
 use oxide_batch::{
-    BatchStatus, BlockingTasklet, BlockingTaskletAdapter, BlockingTaskletContext, BoxFuture,
-    ComponentRevision, DefinitionRevision, FailureCategory, InMemoryJobRepository, JobLauncher,
-    JobName, JobParameter, JobParameters, JobRepository, LaunchError, ParameterName, ParameterRole,
-    ParameterValue, RepositoryError, StopSource, StopTiming, StopToken, Tasklet, TaskletContext,
-    TaskletError, TaskletExecutionOutcome, TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep,
+    ActorRef, BatchStatus, BlockingTasklet, BlockingTaskletAdapter, BlockingTaskletContext,
+    BoxFuture, ComponentRevision, DefinitionRevision, FailureCategory, InMemoryJobRepository,
+    JobInstanceKey, JobLauncher, JobName, JobParameter, JobParameters, JobRepository, LaunchError,
+    OwnerToken, ParameterName, ParameterRole, ParameterValue, RepositoryError, ShutdownCoordinator,
+    StopPollInterval, StopSource, StopTiming, StopToken, Tasklet, TaskletContext, TaskletError,
+    TaskletExecutionOutcome, TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep,
 };
 
 struct Fixture {
@@ -397,6 +398,100 @@ async fn cooperative_stop_during_async_work_is_persisted() -> Result<(), Box<dyn
         BatchStatus::Stopped
     );
     assert_report_is_persisted(&fixture.repository, &report).await
+}
+
+#[tokio::test]
+async fn application_shutdown_signal_stops_work_and_rejects_new_intake()
+-> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    let entered = Arc::new(AtomicBool::new(false));
+    let definition = job(Arc::new(CancellableTasklet {
+        entered: Arc::clone(&entered),
+    }))?;
+    let parameters = parameters()?;
+    let (_source, stop) = StopSource::new();
+    let coordinator = ShutdownCoordinator::default();
+    let signal = coordinator.signal();
+    let launcher = fixture.launcher().with_shutdown_signal(&signal);
+
+    let launch = launcher.launch(&definition, &parameters, &stop);
+    let request = async {
+        while !entered.load(Ordering::Acquire) {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            signal.request_shutdown(),
+            oxide_batch::ShutdownRequest::Initiated
+        );
+    };
+    let (report, ()) = tokio::join!(launch, request);
+    let report = report?;
+    assert_eq!(
+        report.outcome(),
+        TaskletExecutionOutcome::Stopped(StopTiming::DuringExecution)
+    );
+
+    let (_next_source, next_stop) = StopSource::new();
+    assert_eq!(
+        launcher.launch(&definition, &parameters, &next_stop).await,
+        Err(LaunchError::ShuttingDown)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn durable_operator_stop_is_polled_by_the_owning_launcher() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    let entered = Arc::new(AtomicBool::new(false));
+    let definition = job(Arc::new(CancellableTasklet {
+        entered: Arc::clone(&entered),
+    }))?;
+    let parameters = parameters()?;
+    let (_source, stop) = StopSource::new();
+    let owner = OwnerToken::from_bytes([3; 16]);
+    let launcher = fixture
+        .launcher()
+        .with_execution_control(owner, StopPollInterval::new(Duration::from_millis(100))?);
+
+    let launch = launcher.launch(&definition, &parameters, &stop);
+    let request = async {
+        while !entered.load(Ordering::Acquire) {
+            tokio::task::yield_now().await;
+        }
+        let key = JobInstanceKey::new(JobName::new("daily_import")?, &parameters);
+        let mut unit = fixture.repository.begin().await?;
+        let instance = unit
+            .find_job_instance(&key)
+            .await?
+            .ok_or(RepositoryError::Unavailable)?;
+        let execution = unit
+            .job_executions(instance.id())
+            .await?
+            .pop()
+            .ok_or(RepositoryError::Unavailable)?;
+        unit.request_execution_stop(
+            execution.id(),
+            execution.version(),
+            &ActorRef::new("operator:test")?,
+            fixture.clock.now(),
+        )
+        .await?;
+        unit.commit().await?;
+        Ok::<(), Box<dyn Error>>(())
+    };
+    let (report, requested) = tokio::join!(launch, request);
+    requested?;
+    let report = report?;
+
+    assert_eq!(
+        report.outcome(),
+        TaskletExecutionOutcome::Stopped(StopTiming::DuringExecution)
+    );
+    assert_eq!(
+        report.job_execution().metadata().status(),
+        BatchStatus::Stopped
+    );
+    Ok(())
 }
 
 #[tokio::test]

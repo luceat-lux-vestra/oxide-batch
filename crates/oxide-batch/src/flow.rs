@@ -20,8 +20,9 @@ use crate::{
     FlowSelectionError, FlowTarget, IdGenerator, JobExecution, JobExecutionId, JobInstance,
     JobInstanceId, JobInstanceKey, JobName, JobParameters, JobRepository, LifecycleTransition,
     ListenerContext, ListenerFailure, ListenerFailureKind, ListenerPhase, NodeId, RepositoryError,
-    StartLimit, StepExecution, StepExecutionId, StepName, StopTiming, StopToken, TaskletContext,
-    TaskletExecutionOutcome, TaskletFailure, TaskletOutcome, TaskletStep, TerminalKind,
+    StartLimit, StepExecution, StepExecutionId, StepName, StopPollInterval, StopTiming, StopToken,
+    TaskletContext, TaskletExecutionOutcome, TaskletFailure, TaskletOutcome, TaskletStep,
+    TerminalKind,
 };
 
 /// Opaque durable identifier of one selected transition.
@@ -1090,6 +1091,8 @@ pub enum FlowRuntimeError {
     DecisionSequenceExhausted,
     /// A facade count could not be represented safely.
     CountExhausted,
+    /// Process shutdown stopped intake before this launch was accepted.
+    ShuttingDown,
 }
 
 impl fmt::Display for FlowRuntimeError {
@@ -1103,6 +1106,7 @@ impl fmt::Display for FlowRuntimeError {
                 formatter.write_str("flow decision sequence is exhausted")
             }
             Self::CountExhausted => formatter.write_str("flow execution count is exhausted"),
+            Self::ShuttingDown => formatter.write_str("runtime intake is shutting down"),
         }
     }
 }
@@ -1112,7 +1116,7 @@ impl Error for FlowRuntimeError {
         match self {
             Self::Job(error) => Some(error),
             Self::Repository(error) => Some(error),
-            Self::DecisionSequenceExhausted | Self::CountExhausted => None,
+            Self::DecisionSequenceExhausted | Self::CountExhausted | Self::ShuttingDown => None,
         }
     }
 }
@@ -1135,6 +1139,8 @@ pub struct FlowLauncher<'a> {
     clock: &'a dyn Clock,
     ids: &'a dyn IdGenerator,
     event_sink: Option<&'a dyn FlowEventSink>,
+    execution_control: Option<(crate::OwnerToken, StopPollInterval)>,
+    shutdown_signal: Option<&'a crate::ShutdownSignal>,
 }
 
 impl<'a> FlowLauncher<'a> {
@@ -1150,6 +1156,8 @@ impl<'a> FlowLauncher<'a> {
             clock,
             ids,
             event_sink: None,
+            execution_control: None,
+            shutdown_signal: None,
         }
     }
 
@@ -1157,6 +1165,24 @@ impl<'a> FlowLauncher<'a> {
     #[must_use]
     pub const fn with_event_sink(mut self, event_sink: &'a dyn FlowEventSink) -> Self {
         self.event_sink = Some(event_sink);
+        self
+    }
+
+    /// Enables durable ownership evidence and operator-stop polling.
+    #[must_use]
+    pub const fn with_execution_control(
+        mut self,
+        owner: crate::OwnerToken,
+        interval: StopPollInterval,
+    ) -> Self {
+        self.execution_control = Some((owner, interval));
+        self
+    }
+
+    /// Attaches the application-owned process-shutdown intake and cancellation signal.
+    #[must_use]
+    pub const fn with_shutdown_signal(mut self, signal: &'a crate::ShutdownSignal) -> Self {
+        self.shutdown_signal = Some(signal);
         self
     }
 
@@ -1178,12 +1204,16 @@ impl<'a> FlowLauncher<'a> {
         parameters: &JobParameters,
         stop_token: &StopToken,
     ) -> Result<FlowLaunchReport, FlowRuntimeError> {
+        self.ensure_accepting()?;
         job.validate()?;
         let key = JobInstanceKey::new(job.name.clone(), parameters);
         let (instance, mut execution, attempt) = self
             .create_job_execution(&key, job.plan.definition_identity())
             .await?;
         execution = self.start_job(&execution).await?;
+        self.poll_execution_control(execution.id(), stop_token)
+            .await?;
+        self.observe_process_shutdown(stop_token);
 
         let mut node_id = job.plan.entry().clone();
         let mut preceding: Option<FlowStepState> = None;
@@ -1192,6 +1222,7 @@ impl<'a> FlowLauncher<'a> {
         let mut listener_failures = Vec::new();
 
         loop {
+            self.observe_process_shutdown(stop_token);
             if stop_token.is_stop_requested() {
                 let final_job = self
                     .finish_job(&execution, BatchStatus::Stopped, None)
@@ -1319,6 +1350,19 @@ impl<'a> FlowLauncher<'a> {
                                 step_executions: steps,
                                 decisions,
                                 outcome: FlowExecutionOutcome::Unknown,
+                                listener_failures,
+                            });
+                        }
+                        if matches!(run.outcome, TaskletExecutionOutcome::Stopped(_)) {
+                            let final_job = self
+                                .finish_job(&execution, BatchStatus::Stopped, None)
+                                .await?;
+                            return Ok(FlowLaunchReport {
+                                instance,
+                                job_execution: final_job,
+                                step_executions: steps,
+                                decisions,
+                                outcome: FlowExecutionOutcome::Stopped,
                                 listener_failures,
                             });
                         }
@@ -1509,6 +1553,82 @@ impl<'a> FlowLauncher<'a> {
         }
     }
 
+    fn ensure_accepting(&self) -> Result<(), FlowRuntimeError> {
+        self.shutdown_signal.map_or(Ok(()), |signal| {
+            signal
+                .ensure_accepting()
+                .map_err(|_| FlowRuntimeError::ShuttingDown)
+        })
+    }
+
+    fn observe_process_shutdown(&self, stop: &StopToken) {
+        if self
+            .shutdown_signal
+            .is_some_and(crate::ShutdownSignal::is_shutdown_requested)
+        {
+            stop.request_stop();
+        }
+    }
+
+    async fn poll_execution_control(
+        &self,
+        execution_id: JobExecutionId,
+        stop: &StopToken,
+    ) -> Result<(), FlowRuntimeError> {
+        let Some((owner, _)) = self.execution_control else {
+            return Ok(());
+        };
+        let mut unit = self.repository.begin().await?;
+        let control = unit
+            .observe_execution_control(execution_id, &owner, self.clock.now())
+            .await?;
+        unit.commit().await?;
+        if !control.owner_matches() {
+            return Err(RepositoryError::ExecutionOwned { id: execution_id }.into());
+        }
+        if control.stop_requested() {
+            stop.request_stop();
+        }
+        Ok(())
+    }
+
+    async fn invoke_with_execution_control(
+        &self,
+        execution_id: JobExecutionId,
+        tasklet: &dyn crate::Tasklet,
+        context: TaskletContext<'_>,
+        stop: &StopToken,
+    ) -> Result<Result<TaskletOutcome, TaskletFailure>, FlowRuntimeError> {
+        if self.execution_control.is_none() && self.shutdown_signal.is_none() {
+            return Ok(invoke_tasklet(tasklet, context).await);
+        }
+        let invocation = invoke_tasklet(tasklet, context);
+        tokio::pin!(invocation);
+        let mut shutdown_observed = false;
+        loop {
+            tokio::select! {
+                result = &mut invocation => return Ok(result),
+                () = async {
+                    match self.execution_control {
+                        Some((_, interval)) => tokio::time::sleep(interval.get()).await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    self.poll_execution_control(execution_id, stop).await?;
+                }
+                () = async {
+                    match self.shutdown_signal {
+                        Some(signal) => signal.cancelled().await,
+                        None => std::future::pending().await,
+                    }
+                }, if !shutdown_observed => {
+                    shutdown_observed = true;
+                    stop.request_stop();
+                }
+            }
+        }
+    }
+
     async fn create_job_execution(
         &self,
         key: &JobInstanceKey,
@@ -1523,6 +1643,17 @@ impl<'a> FlowLauncher<'a> {
         let execution = unit
             .create_job_execution_with_definition(instance.id(), definition)
             .await?;
+        let execution = if let Some((owner, _)) = self.execution_control {
+            unit.claim_execution_owner(
+                execution.id(),
+                execution.version(),
+                &owner,
+                self.clock.now(),
+            )
+            .await?
+        } else {
+            execution
+        };
         let attempt = NonZeroU64::new(
             u64::try_from(unit.job_executions(instance.id()).await?.len())
                 .map_err(|_| FlowRuntimeError::CountExhausted)?,
@@ -1554,6 +1685,13 @@ impl<'a> FlowLauncher<'a> {
     ) -> Result<JobExecution, FlowRuntimeError> {
         let exit = exit_for_status(status);
         let mut unit = self.repository.begin().await?;
+        let execution = if self.execution_control.is_some() {
+            unit.get_job_execution(execution.id())
+                .await?
+                .ok_or(RepositoryError::JobExecutionNotFound { id: execution.id() })?
+        } else {
+            execution.clone()
+        };
         let enriched = unit
             .enrich_job_exit_status(execution.id(), execution.version(), &exit)
             .await?;
@@ -1681,7 +1819,14 @@ impl<'a> FlowLauncher<'a> {
             correlation,
             &terminal_rollback,
         );
-        let invoked = invoke_tasklet(step.tasklet(), tasklet_context).await;
+        let invoked = self
+            .invoke_with_execution_control(
+                correlation.job_execution_id(),
+                step.tasklet(),
+                tasklet_context,
+                stop_token,
+            )
+            .await?;
         let (mut outcome, mut exit, tasklet_failure) = match invoked {
             Ok(TaskletOutcome::Completed) if !stop_token.is_stop_requested() => (
                 TaskletExecutionOutcome::Completed,

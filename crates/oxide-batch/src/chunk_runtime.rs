@@ -16,9 +16,9 @@ use crate::{
     ChunkTransactionManager, CompiledExecutionPlan, DefinitionError, DefinitionIdentity,
     DefinitionRevision, ExecutionCorrelation, FailureCategory, FailureId, FailureSummary,
     FaultDecision, FaultDescriptor, FaultEvidence, FaultPhase, FaultProgress, FaultRuntime,
-    InheritedStepProgress, ItemListenerContext, ItemListenerFailure, ItemListenerSet,
-    ItemProcessor, ItemReader, ItemWriter, JobExecutionListener, JobLauncher, JobName,
-    JobParameters, LaunchError, LaunchReport, LifecycleEventKind, ListenerFailureKind,
+    InFlightPolicy, InheritedStepProgress, ItemListenerContext, ItemListenerFailure,
+    ItemListenerSet, ItemProcessor, ItemReader, ItemWriter, JobExecutionListener, JobLauncher,
+    JobName, JobParameters, LaunchError, LaunchReport, LifecycleEventKind, ListenerFailureKind,
     ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome, ReaderError,
     RetryCounts, RetryKey, RetryOrdinal, RetryOutcome, RetryReservation, RollbackDisposition,
     SkipCounts, StepComponents, StepExecutionListener, StepName, StopToken, Tasklet,
@@ -39,6 +39,7 @@ pub struct ChunkStep<I, O> {
     step_listeners: Vec<Arc<dyn StepExecutionListener>>,
     item_listeners: ItemListenerSet<I, O>,
     fault: Option<FaultRuntime>,
+    in_flight_policy: InFlightPolicy,
     definition_digest: [u8; 32],
 }
 
@@ -68,6 +69,7 @@ impl<I, O> ChunkStep<I, O> {
             step_listeners: Vec::new(),
             item_listeners: ItemListenerSet::new(),
             fault: None,
+            in_flight_policy: InFlightPolicy::FinishChunk,
             definition_digest: [0; 32],
         }
     }
@@ -175,6 +177,7 @@ impl<I, O> ChunkJob<I, O> {
         let step_name = step.name.clone();
         let definition =
             DefinitionIdentity::chunk(&name, &step_name, step.size, revision, components)?;
+        step.in_flight_policy = components.in_flight_policy();
         step.definition_digest = *definition.manifest_digest();
         let mut node = one_step_node(
             &step_name,
@@ -283,6 +286,7 @@ impl crate::FlowJob {
             return Err(crate::FlowJobError::ComponentMismatch { node: node_id });
         }
         step.definition_digest = *self.compiled_plan().fingerprint();
+        step.in_flight_policy = revisions.in_flight_policy();
         let listeners = step.step_listeners.clone();
         let tasklet: Arc<dyn Tasklet> = Arc::new(ChunkTasklet::new(step));
         let mut tasklet_step = TaskletStep::new(compiled.step_name().clone(), tasklet);
@@ -1052,6 +1056,7 @@ where
         listeners,
         item_listeners,
         fault,
+        in_flight_policy,
         definition_digest,
         ..
     } = step;
@@ -1090,17 +1095,15 @@ where
                 return state.report(ChunkExecutionOutcome::Failed(ChunkFailure::Count), None);
             }
         };
-        let scope = AttemptScope {
-            correlation,
-            stop,
-            sequence,
-        };
         let listener_context = ChunkListenerContext::new(sequence, state.committed_counts, stop);
 
         if let Some(failure) = run_before_listeners(listeners, listener_context).await {
             let outcome = listener_failure_outcome(failure.kind());
             state.listener_failures.push(failure);
             return state.report(outcome, None);
+        }
+        if stop.is_stop_requested() {
+            return state.report(ChunkExecutionOutcome::Stopped, None);
         }
 
         let begun = match transaction_context {
@@ -1131,6 +1134,25 @@ where
             }
         };
         emit(ChunkRuntimeEvent::Started(sequence));
+
+        // Once a chunk is open, the definition decides whether a shutdown
+        // request remains visible to component calls. The masked token is
+        // scoped to this attempt; the real token is consulted immediately
+        // after commit so `FinishChunk` never starts another chunk.
+        let masked_stop;
+        let attempt_stop = match in_flight_policy {
+            InFlightPolicy::FinishChunk => {
+                let (_, token) = crate::StopSource::new();
+                masked_stop = token;
+                &masked_stop
+            }
+            InFlightPolicy::RollbackChunk => stop,
+        };
+        let scope = AttemptScope {
+            correlation,
+            stop: attempt_stop,
+            sequence,
+        };
 
         let result = run_attempt(
             &components,

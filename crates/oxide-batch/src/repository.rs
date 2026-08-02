@@ -14,9 +14,9 @@ use crate::{
     FailureId, FailureSummary, FlowDecision, FlowDecisionRequest, FlowStepState,
     FlowTransitionKind, IdentifierKind, JobExecution, JobExecutionId, JobInstance, JobInstanceId,
     JobInstanceKey, JobName, LifecycleError, LifecycleTransition, NodeId, OperationId,
-    OperatorAction, OperatorRecord, OperatorRecordDraft, PurgeCounts, PurgePlan, PurgePlanRequest,
-    PurgeSurvey, ReasonCode, RecoveryDecisionId, RetentionAction, RetentionHold, RetentionRecord,
-    RetentionRecordDraft, StartLimit, StepExecution, StepExecutionId, StepName,
+    OperatorAction, OperatorRecord, OperatorRecordDraft, OwnerToken, PurgeCounts, PurgePlan,
+    PurgePlanRequest, PurgeSurvey, ReasonCode, RecoveryDecisionId, RetentionAction, RetentionHold,
+    RetentionRecord, RetentionRecordDraft, StartLimit, StepExecution, StepExecutionId, StepName,
 };
 
 const MAX_RECOVERY_REASON_BYTES: usize = 64;
@@ -644,6 +644,46 @@ pub trait JobRepository: Send + Sync {
     ) -> BoxFuture<'a, Result<Box<dyn RepositoryUnitOfWork + 'a>, RepositoryError>>;
 }
 
+/// The owning runtime's bounded observation of one durable execution control.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionControl {
+    execution: JobExecution,
+    owner_matches: bool,
+    stop_requested: bool,
+}
+
+impl ExecutionControl {
+    pub(crate) const fn new(
+        execution: JobExecution,
+        owner_matches: bool,
+        stop_requested: bool,
+    ) -> Self {
+        Self {
+            execution,
+            owner_matches,
+            stop_requested,
+        }
+    }
+
+    /// Borrows the durable execution snapshot after the observation.
+    #[must_use]
+    pub const fn execution(&self) -> &JobExecution {
+        &self.execution
+    }
+
+    /// Returns whether the complete durable token matched this process.
+    #[must_use]
+    pub const fn owner_matches(&self) -> bool {
+        self.owner_matches
+    }
+
+    /// Returns whether a durable stop request was observed.
+    #[must_use]
+    pub const fn stop_requested(&self) -> bool {
+        self.stop_requested
+    }
+}
+
 /// Transaction-scoped metadata operations required by the executable kernel.
 ///
 /// Methods borrow the unit of work for the returned future, allowing a future
@@ -871,6 +911,42 @@ pub trait RepositoryUnitOfWork: Send {
         })
     }
 
+    /// Claims one newly created `STARTING` execution for the current process.
+    ///
+    /// The token is evidence rather than a lease. A different recorded token
+    /// rejects the claim and never authorizes takeover of an existing attempt.
+    fn claim_execution_owner<'a>(
+        &'a mut self,
+        _id: JobExecutionId,
+        _expected_version: ExecutionVersion,
+        _owner: &'a OwnerToken,
+        _claimed_at: SystemTime,
+    ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::ExecutionOwnership,
+            })
+        })
+    }
+
+    /// Observes a durable stop request as the owning process.
+    ///
+    /// When the owner matches and an active execution has a request, this call
+    /// moves it to `STOPPING` in the same transaction. It never treats a token
+    /// as a lease or takeover authority.
+    fn observe_execution_control<'a>(
+        &'a mut self,
+        _id: JobExecutionId,
+        _owner: &'a OwnerToken,
+        _observed_at: SystemTime,
+    ) -> BoxFuture<'a, Result<ExecutionControl, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::ExecutionOwnership,
+            })
+        })
+    }
+
     /// Reads the active retention hold of one logical instance.
     fn job_instance_hold(
         &mut self,
@@ -986,6 +1062,8 @@ pub enum RepositoryCapability {
     OperatorRequests,
     /// Durable compare-and-swap stop requests.
     StopRequests,
+    /// Per-process execution ownership evidence and stop observation.
+    ExecutionOwnership,
     /// The single retention hold of a logical instance.
     InstanceHolds,
     /// Bounded two-phase retention purge.
@@ -999,6 +1077,7 @@ impl RepositoryCapability {
         match self {
             Self::OperatorRequests => "operator requests",
             Self::StopRequests => "durable stop requests",
+            Self::ExecutionOwnership => "execution ownership evidence",
             Self::InstanceHolds => "instance holds",
             Self::RetentionPurge => "retention purge",
         }
@@ -1143,6 +1222,18 @@ pub enum RepositoryError {
         /// Durable status observed under lock.
         status: BatchStatus,
     },
+    /// A different process token is already recorded for the execution.
+    ExecutionOwned {
+        /// Execution that remains owned by another process token.
+        id: JobExecutionId,
+    },
+    /// Ownership was requested outside the newly-created `STARTING` boundary.
+    ExecutionOwnershipNotAllowed {
+        /// Execution that was not claimable.
+        id: JobExecutionId,
+        /// Durable status observed under lock.
+        status: BatchStatus,
+    },
     /// A domain value could not be constructed.
     Domain(DomainError),
     /// An injected identifier source failed.
@@ -1271,6 +1362,13 @@ impl fmt::Display for RepositoryError {
                     "job execution {id} in {status} cannot be recovered"
                 )
             }
+            Self::ExecutionOwned { id } => {
+                write!(formatter, "job execution {id} is owned by another process")
+            }
+            Self::ExecutionOwnershipNotAllowed { id, status } => write!(
+                formatter,
+                "job execution {id} in {status} cannot acquire process ownership"
+            ),
             Self::Domain(error) => write!(formatter, "invalid repository domain value: {error}"),
             Self::Identifier(error) => write!(formatter, "identifier generation failed: {error}"),
             Self::Lifecycle(error) => error.fmt(formatter),

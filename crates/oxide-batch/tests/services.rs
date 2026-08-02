@@ -11,6 +11,7 @@ use std::error::Error;
 use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use contract::{ContractClock, ServiceBackend, run_service_contract};
 use futures_executor::block_on;
@@ -19,10 +20,20 @@ use oxide_batch::{
     ActorRef, BatchStatus, Clock, ComponentRevision, DefinitionIdentity, DefinitionRevision,
     FailureCategory, FailureId, FailureSummary, InMemoryExplorer, InMemoryJobRepository,
     JobInstanceKey, JobName, JobOperator, JobParameter, JobParameters, JobRepository,
-    LifecycleTransition, OperationId, OperatorAction, OperatorError, OperatorOutcomeClass,
-    OperatorRecordDraft, OperatorRequest, ParameterName, ParameterRole, ParameterValue, ReasonCode,
-    RecoveryDirective, RepositoryError, RequestField, RequestFieldError, StepName,
+    LifecycleTransition, MonotonicClock, MonotonicInstant, OperationId, OperatorAction,
+    OperatorError, OperatorOutcomeClass, OperatorRecordDraft, OperatorRejection, OperatorRequest,
+    OwnerToken, ParameterName, ParameterRole, ParameterValue, ReasonCode, RecoveryDirective,
+    RecoveryProposer, RepositoryError, RequestField, RequestFieldError, StepName,
 };
+
+#[derive(Debug)]
+struct FixedMonotonic;
+
+impl MonotonicClock for FixedMonotonic {
+    fn now(&self) -> MonotonicInstant {
+        MonotonicInstant::from_duration(Duration::ZERO)
+    }
+}
 
 fn backend(
     clock: Arc<ContractClock>,
@@ -214,24 +225,44 @@ fn a_recover_request_carries_the_failure_its_disposition_requires() -> Result<()
     block_on(create.commit())?;
 
     let mut stall = block_on(repository.begin())?;
-    let ambiguous = block_on(stall.transition_job_execution(
+    let _ambiguous = block_on(stall.transition_job_execution(
         execution.id(),
         execution.version(),
         LifecycleTransition::new(BatchStatus::Unknown, clock.now()),
     ))?;
     block_on(stall.commit())?;
 
+    let proposer = RecoveryProposer::new(
+        InMemoryExplorer::new(&repository),
+        Arc::clone(&clock) as _,
+        Arc::new(FixedMonotonic),
+        OwnerToken::from_bytes([7; 16]),
+    );
+    let proposal = block_on(proposer.propose(execution.id()))?;
+
     let failure = FailureSummary::new(FailureCategory::PermanentInfrastructure, FailureId::new(7)?);
+    let rejected = OperatorRequest::recover(
+        OperationId::new("recover-rejected")?,
+        ActorRef::new("operator:one")?,
+        ReasonCode::new("COMMIT_INSPECTED_NOT_DURABLE")?,
+        RecoveryDirective::MarkFailed(failure),
+        &proposal,
+    );
+    let operator = JobOperator::new(repository, Arc::clone(&clock) as _);
+    let rejected = block_on(operator.execute(&rejected))?;
+    assert_eq!(rejected.class(), OperatorOutcomeClass::Rejected);
+    assert_eq!(
+        rejected.record().rejection(),
+        Some(OperatorRejection::UnresolvedRecoveryRequired)
+    );
+
     let request = OperatorRequest::recover(
         OperationId::new("recover-1")?,
         ActorRef::new("operator:one")?,
-        ReasonCode::new("COMMIT_INSPECTED_NOT_DURABLE")?,
-        execution.id(),
-        ambiguous.version(),
+        ReasonCode::new("UNKNOWN_EFFECT")?,
         RecoveryDirective::MarkFailed(failure),
-        [0xA5; 32],
+        &proposal,
     );
-    let operator = JobOperator::new(repository, clock as _);
     let outcome = block_on(operator.execute(&request))?;
     assert_eq!(outcome.class(), OperatorOutcomeClass::Applied);
     assert_eq!(outcome.record().result_status(), Some(BatchStatus::Failed));
@@ -243,10 +274,8 @@ fn a_recover_request_carries_the_failure_its_disposition_requires() -> Result<()
         OperationId::new("recover-1")?,
         ActorRef::new("operator:one")?,
         ReasonCode::new("COMMIT_INSPECTED_NOT_DURABLE")?,
-        execution.id(),
-        ambiguous.version(),
         RecoveryDirective::Abandon,
-        [0xA5; 32],
+        &proposal,
     );
     assert_ne!(request.digest(), abandoning.digest());
     assert_eq!(RecoveryDirective::Abandon.failure(), None);

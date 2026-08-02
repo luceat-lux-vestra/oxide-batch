@@ -1,11 +1,51 @@
 # Crash, Restart, and Recovery Runbook
 
-**State:** Implemented for M2 and M3
+**State:** Implemented through the M4 shutdown/recovery slice
 
-This runbook covers the embedded M2/M3 PostgreSQL path. It does not provide the
-future M4 operator CLI, automatic stale-worker takeover, or recovery
-authorization. Deployment tooling must authenticate the operator and retain
-the full evidence referenced by the bounded OxideBatch audit record.
+This runbook covers the embedded M2/M3 PostgreSQL path and the M4
+application-owned graceful-shutdown, stale-proposal, and operator-CLI path.
+There is no automatic stale-worker takeover. Deployment tooling must
+authenticate and authorize the operator and retain application evidence
+outside the bounded OxideBatch audit record.
+
+## Graceful process shutdown
+
+Create one `ShutdownCoordinator` in the application runtime and install the
+application's own `SIGINT`/`SIGTERM` adapter against its `ShutdownSignal`.
+OxideBatch installs no handler. Give the same signal to each `JobLauncher` or
+`FlowLauncher` and spawn owned runtime work through the coordinator.
+
+On the first request, verify that intake rejects new work, cancellation reaches
+every owned execution, and the execution progresses through `STOPPING` to a
+durable result. `FinishChunk` commits the already-open chunk before stopping;
+`RollbackChunk` preserves the previous checkpoint. A commit whose response is
+ambiguous remains `UNKNOWN` under either policy.
+
+A second request escalates waiting only. It does not terminate the process,
+abort an in-flight commit, or create a terminal state. If the report is
+`DrainResult::Incomplete`, retain its unjoined task count and phases, keep the
+last durable execution state, and do not exit until the application has made
+an explicit process-level decision. Telemetry failure and repository-close
+failure are reported separately and cannot rewrite the durable result.
+
+`SIGKILL`, host loss, and power loss are crashes, not graceful shutdown. Follow
+the stale-evidence workflow below.
+
+## Produce stale or unknown recovery evidence
+
+Run `execution show --execution <id>` through an operator-reader connection.
+For an eligible `UNKNOWN` execution or active execution older than the
+configured strict stale threshold, the redacted `recovery_proposal` contains
+the observed version and a 64-character evidence digest. A null proposal means
+the current observation is not eligible or its clock evidence is unusable;
+inspect application and repository diagnostics rather than guessing.
+
+Active stale classification requires repository-server inactivity beyond the
+threshold and an absent or different complete owner token. The token is not a
+lease and authorizes no takeover. Local wall time, process liveness, and
+telemetry are never recovery authority. Backwards repository time, negative
+inactivity, excessive local/server skew, or an excessive monotonic observation
+window produces no proposal.
 
 ## Expected crash state
 
@@ -42,13 +82,14 @@ cannot, keep the execution blocked and reconcile manually.
 
 ## Decide
 
-`RecoveryRequest` requires:
+`execution recover` and the underlying typed recovery request require:
 
 - the exact observed execution version;
 - a disposition of `FAILED` or `ABANDONED`;
 - a stable bounded reason code;
 - an opaque authenticated-operator correlation;
-- a SHA-256 digest of evidence retained outside OxideBatch metadata;
+- the current framework-produced SHA-256 proposal digest, with supporting
+  application evidence retained outside OxideBatch metadata;
 - a redacted failure category and correlation ID.
 
 The PostgreSQL repository rereads the execution under lock, appends the
@@ -58,6 +99,30 @@ transaction. A stale version publishes neither mutation.
 Choose `FAILED` only when durable evidence permits restart from the retained
 checkpoint. Choose `ABANDONED` when replay must remain permanently blocked.
 Never use recovery to assert an external effect that cannot be established.
+An unknown commit may become `FAILED` only with reason `UNKNOWN_EFFECT`, which
+records that external-effect confirmation remains an application obligation;
+otherwise choose `ABANDONED` or keep the execution unresolved.
+
+Example guarded application after recording the proposal from `execution
+show`:
+
+```console
+oxide-batch execution recover \
+  --execution 42 \
+  --expected-version 7 \
+  --actor ops:incident-123 \
+  --reason UNKNOWN_EFFECT \
+  --directive mark-failed \
+  --failure-category unknown_commit \
+  --failure-id 900 \
+  --evidence-digest <64-hex-digest> \
+  --operation-id recover-incident-123 \
+  --yes
+```
+
+The CLI regenerates the proposal immediately before application. A changed
+version or digest rejects the command without lifecycle mutation. Every
+service-level rejection or application is append-only audited.
 
 ## Restart
 

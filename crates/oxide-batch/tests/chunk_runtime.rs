@@ -28,7 +28,7 @@ use oxide_batch::{
     ChunkListener, ChunkListenerContext, ChunkListenerError, ChunkRestartContract, ChunkSize,
     ChunkStep, ChunkTransaction, ChunkTransactionError, ChunkTransactionManager, ComponentRevision,
     DefinitionRevision, ExecutionAttempt, ExecutionContext, ExecutionCorrelation,
-    FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget,
+    FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget, InFlightPolicy,
     InMemoryJobRepository, ItemProcessor, ItemReader, ItemWriter, JobExecutionId, JobInstanceId,
     JobLauncher, JobName, JobParameters, LifecycleEvent, LifecycleEventKind, LifecycleEventSink,
     ListenerContext, ListenerError, NodeId, ProcessContext, ProcessOutcome, ProcessorError,
@@ -53,6 +53,10 @@ fn correlation() -> ExecutionCorrelation {
 }
 
 fn chunk_revisions() -> ChunkComponentRevisions {
+    chunk_revisions_with_policy(InFlightPolicy::FinishChunk)
+}
+
+fn chunk_revisions_with_policy(policy: InFlightPolicy) -> ChunkComponentRevisions {
     ChunkComponentRevisions::new(
         ComponentRevision::new("reader-v1").expect("static reader revision is valid"),
         ComponentRevision::new("processor-v1").expect("static processor revision is valid"),
@@ -64,7 +68,8 @@ fn chunk_revisions() -> ChunkComponentRevisions {
             StateSchemaId::new("test.chunk.context").expect("static schema is valid"),
             StateSchemaVersion::new(1).expect("static schema version is valid"),
             ChunkDeliveryMode::AtLeastOnce,
-        ),
+        )
+        .with_in_flight_policy(policy),
     )
 }
 
@@ -109,6 +114,24 @@ impl ItemReader<i32> for Reader {
                 Box::pin(async move { Ok(item.map_or(ReadOutcome::EndOfInput, ReadOutcome::Item)) })
             }
         }
+    }
+}
+
+struct ShutdownRequestingReader {
+    items: VecDeque<i32>,
+    source: Option<StopSource>,
+}
+
+impl ItemReader<i32> for ShutdownRequestingReader {
+    fn read<'a>(
+        &'a mut self,
+        _context: ReadContext<'a>,
+    ) -> BoxFuture<'a, Result<ReadOutcome<i32>, ReaderError>> {
+        if let Some(source) = self.source.take() {
+            source.request_stop();
+        }
+        let item = self.items.pop_front();
+        Box::pin(async move { Ok(item.map_or(ReadOutcome::EndOfInput, ReadOutcome::Item)) })
     }
 }
 
@@ -594,6 +617,61 @@ async fn stop_acknowledged_after_commit_retains_committed_chunk() {
     assert_eq!(report.committed_chunks(), ChunkCount::new(1));
     assert_eq!(report.committed_counts().written(), ChunkCount::new(1));
     assert_eq!(report.rolled_back_chunks(), ChunkCount::ZERO);
+}
+
+#[tokio::test]
+async fn declared_in_flight_policy_commits_or_rolls_back_the_open_chunk() {
+    for (policy, committed, rolled_back) in [
+        (InFlightPolicy::FinishChunk, 1, 0),
+        (InFlightPolicy::RollbackChunk, 0, 1),
+    ] {
+        let (source, stop) = StopSource::new();
+        let (writer, _batches) = Writer::new(Boundary::Normal);
+        let (completion, _calls) = Completion::new(Boundary::Normal);
+        let evidence = Arc::new(TransactionEvidence::default());
+        let transactions = Transactions {
+            receipt: receipt(),
+            evidence: Arc::clone(&evidence),
+            commit_error: None,
+        };
+        let step = ChunkStep::new(
+            StepName::new("import").expect("valid step name"),
+            ChunkSize::new(2).expect("valid chunk size"),
+            Box::new(ShutdownRequestingReader {
+                items: [1].into_iter().collect(),
+                source: Some(source),
+            }),
+            Arc::new(Processor::normal()),
+            Arc::new(writer),
+            Arc::new(transactions),
+            Arc::new(completion),
+        );
+        let mut job = ChunkJob::new(
+            JobName::new(format!("shutdown_{policy:?}")).expect("valid job name"),
+            step,
+            DefinitionRevision::new("test-v1").expect("valid revision"),
+            &chunk_revisions_with_policy(policy),
+        )
+        .expect("valid chunk definition");
+        let clock = ManualClock::new(UNIX_EPOCH + Duration::from_secs(500));
+        let ids = DeterministicIds::new(NonZeroU64::MIN);
+        let repository = InMemoryJobRepository::new(Arc::new(clock.clone()), Arc::new(ids.clone()));
+        let launcher = JobLauncher::new(&repository, &clock, &ids);
+
+        let report = launcher
+            .launch_chunk(&mut job, &JobParameters::new(), &stop)
+            .await
+            .expect("shutdown produces a durable report");
+        let chunk = report.chunk().expect("chunk work started");
+
+        assert_eq!(chunk.outcome(), ChunkExecutionOutcome::Stopped);
+        assert_eq!(chunk.committed_chunks().get(), committed);
+        assert_eq!(chunk.rolled_back_chunks().get(), rolled_back);
+        assert_eq!(
+            evidence.commits.lock().expect("commit evidence lock").len(),
+            usize::try_from(committed).expect("small static count fits usize")
+        );
+    }
 }
 
 struct OrderedListener {

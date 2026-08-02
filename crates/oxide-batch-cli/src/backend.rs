@@ -7,9 +7,9 @@
 use std::sync::Arc;
 
 use oxide_batch::{
-    BoxFuture, CaCertificate, Clock, JobExplorer, JobOperator, PostgresConfig, PostgresExplorer,
-    PostgresJobRepository, PostgresMigrator, RepositoryError, RetentionService, SystemClock,
-    TlsMode,
+    BoxFuture, CaCertificate, Clock, JobExplorer, JobOperator, OwnerToken, PostgresConfig,
+    PostgresExplorer, PostgresJobRepository, PostgresMigrator, RecoveryProposer, RepositoryError,
+    RetentionService, SystemClock, SystemMonotonicClock, TlsMode,
 };
 
 use crate::config::{Configuration, TlsSetting};
@@ -117,7 +117,14 @@ pub async fn connect(config: &Configuration) -> Result<PostgresServices, Backend
             category: crate::failure::repository(&error),
             diagnostic: crate::failure::repository_diagnostic(&error),
         })?;
-    let explorer = JobExplorer::new(PostgresExplorer::new(repository.clone()));
+    let explorer_repository = PostgresExplorer::new(repository.clone());
+    let recovery = RecoveryProposer::new(
+        explorer_repository.clone(),
+        Arc::clone(&clock),
+        Arc::new(SystemMonotonicClock::new()),
+        OwnerToken::from_bytes([0; 16]),
+    );
+    let explorer = JobExplorer::new(explorer_repository);
     let operator = JobOperator::new(repository.clone(), clock.clone());
     let retention = RetentionService::new(repository, clock);
     Ok(Services::new(
@@ -125,5 +132,6 @@ pub async fn connect(config: &Configuration) -> Result<PostgresServices, Backend
         retention,
         explorer,
         Box::new(PostgresSchema { config: connection }),
-    ))
+    )
+    .with_recovery_proposals(Box::new(recovery)))
 }

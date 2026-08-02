@@ -5,8 +5,8 @@ use std::error::Error;
 use oxide_batch::{
     ChunkComponentRevisions, ChunkDeliveryMode, ChunkRestartContract, ChunkSize, ComponentRevision,
     DefinitionError, DefinitionIdentity, DefinitionRevision, DefinitionUpgrade,
-    DefinitionUpgradeKey, JobName, StateSchemaId, StateSchemaVersion, StepDefinitionUpgrade,
-    StepName,
+    DefinitionUpgradeKey, InFlightPolicy, JobName, StateSchemaId, StateSchemaVersion,
+    StepDefinitionUpgrade, StepName,
 };
 
 #[test]
@@ -37,6 +37,48 @@ fn canonical_identity_changes_with_restart_relevant_inputs() -> Result<(), Box<d
     let diagnostic = format!("{v1:?}");
     assert!(diagnostic.contains("digest_prefix"));
     assert!(!diagnostic.contains("tasklet-v1"));
+    Ok(())
+}
+
+#[test]
+fn rollback_chunk_policy_changes_identity_without_changing_the_default_manifest()
+-> Result<(), Box<dyn Error>> {
+    let job = JobName::new("daily_import")?;
+    let step = StepName::new("load")?;
+    let revisions = |policy| -> Result<ChunkComponentRevisions, Box<dyn Error>> {
+        Ok(ChunkComponentRevisions::new(
+            ComponentRevision::new("reader-v1")?,
+            ComponentRevision::new("processor-v1")?,
+            ComponentRevision::new("writer-v1")?,
+            ComponentRevision::new("checkpoint-v1")?,
+            ChunkRestartContract::new(
+                StateSchemaId::new("checkpoint-v1")?,
+                StateSchemaVersion::new(1)?,
+                StateSchemaId::new("context-v1")?,
+                StateSchemaVersion::new(1)?,
+                ChunkDeliveryMode::AtomicSameResource,
+            )
+            .with_in_flight_policy(policy),
+        ))
+    };
+    let default = DefinitionIdentity::chunk(
+        &job,
+        &step,
+        ChunkSize::new(10)?,
+        DefinitionRevision::new("v1")?,
+        &revisions(InFlightPolicy::FinishChunk)?,
+    )?;
+    let rollback = DefinitionIdentity::chunk(
+        &job,
+        &step,
+        ChunkSize::new(10)?,
+        DefinitionRevision::new("v1")?,
+        &revisions(InFlightPolicy::RollbackChunk)?,
+    )?;
+
+    assert!(!std::str::from_utf8(default.canonical_manifest())?.contains("in_flight_policy"));
+    assert!(std::str::from_utf8(rollback.canonical_manifest())?.contains("rollback_chunk"));
+    assert_ne!(default.manifest_digest(), rollback.manifest_digest());
     Ok(())
 }
 

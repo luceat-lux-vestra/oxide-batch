@@ -18,10 +18,10 @@ use oxide_batch::{
     BoxFuture, Clock, ComponentRevision, DefinitionIdentity, DefinitionRevision, ExplorerError,
     ExplorerQuery, ExplorerRepository, FlowDecision, IdGenerationError, IdentifierKind,
     InMemoryExplorer, InMemoryJobRepository, JobExecutionId, JobExecutionProjection, JobExplorer,
-    JobInstanceId, JobInstanceProjection, JobName, JobOperator, JobRepository, OperatorRecord,
-    QueryWindow, RecoveryDecision, RepositoryError, RepositoryUnitOfWork, RetentionService,
-    SequentialIdGenerator, StepExecutionId, StepExecutionProjection, StepName,
-    StepPartitionProjection,
+    JobInstanceId, JobInstanceProjection, JobName, JobOperator, JobRepository, MonotonicClock,
+    MonotonicInstant, OperatorRecord, OwnerToken, QueryWindow, RecoveryDecision, RecoveryProposer,
+    RepositoryError, RepositoryUnitOfWork, RetentionService, SequentialIdGenerator,
+    StepExecutionId, StepExecutionProjection, StepName, StepPartitionProjection,
 };
 use oxide_batch_cli::{DefinitionCatalog, ExitCategory, Host, NoSchema, Services};
 
@@ -49,6 +49,15 @@ impl Default for FixedClock {
 impl Clock for FixedClock {
     fn now(&self) -> SystemTime {
         self.at
+    }
+}
+
+#[derive(Debug)]
+struct FixedMonotonic;
+
+impl MonotonicClock for FixedMonotonic {
+    fn now(&self) -> MonotonicInstant {
+        MonotonicInstant::from_duration(Duration::ZERO)
     }
 }
 
@@ -202,11 +211,19 @@ pub fn services() -> (TestServices, InMemoryJobRepository) {
         Arc::clone(&clock),
         Arc::new(SequentialIdGenerator::new(first)),
     );
-    let explorer = JobExplorer::new(InMemoryExplorer::new(&repository));
+    let explorer_repository = InMemoryExplorer::new(&repository);
+    let recovery = RecoveryProposer::new(
+        explorer_repository.clone(),
+        Arc::clone(&clock),
+        Arc::new(FixedMonotonic),
+        OwnerToken::from_bytes([0; 16]),
+    );
+    let explorer = JobExplorer::new(explorer_repository);
     let operator = JobOperator::new(repository.clone(), Arc::clone(&clock));
     let retention = RetentionService::new(repository.clone(), clock);
     (
-        Services::new(operator, retention, explorer, Box::new(NoSchema)),
+        Services::new(operator, retention, explorer, Box::new(NoSchema))
+            .with_recovery_proposals(Box::new(recovery)),
         repository,
     )
 }

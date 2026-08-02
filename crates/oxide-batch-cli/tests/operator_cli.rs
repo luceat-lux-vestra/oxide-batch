@@ -8,6 +8,10 @@
 
 mod support;
 
+use std::time::{Duration, SystemTime};
+
+use futures_executor::block_on;
+use oxide_batch::{BatchStatus, JobExecutionId, JobRepository, LifecycleTransition};
 use oxide_batch_cli::{ExitCategory, MAX_OUTPUT_BYTES, OUTPUT_SCHEMA_VERSION};
 use serde_json::json;
 use support::{
@@ -16,6 +20,75 @@ use support::{
 };
 
 const CONFIG: &str = "/etc/oxide-batch.json";
+
+#[test]
+fn recovery_proposal_is_visible_and_the_current_digest_guards_apply() {
+    let (services, repository) = services();
+    let mut launch = TestHost::new();
+    assert_eq!(
+        support::run_with_catalog(
+            &mut launch,
+            &services,
+            &support::test_catalog("orders"),
+            "launch --job orders --actor fixture --operation-id launch-recovery --output json",
+        ),
+        ExitCategory::Success
+    );
+    let execution_id = launch.envelope()["data"]["execution"]["execution_id"]
+        .as_u64()
+        .expect("launch returns execution id");
+    let id = JobExecutionId::new(execution_id).expect("execution id is valid");
+    let mut unit = block_on(repository.begin()).expect("begin transition");
+    let execution = block_on(unit.get_job_execution(id))
+        .expect("read execution")
+        .expect("execution exists");
+    block_on(unit.transition_job_execution(
+        id,
+        execution.version(),
+        LifecycleTransition::new(
+            BatchStatus::Unknown,
+            SystemTime::UNIX_EPOCH + Duration::from_hours(500_000),
+        ),
+    ))
+    .expect("mark unknown");
+    block_on(unit.commit()).expect("commit unknown state");
+
+    let mut show = TestHost::new();
+    assert_eq!(
+        run(
+            &mut show,
+            &services,
+            &format!("execution show --execution {execution_id} --output json"),
+        ),
+        ExitCategory::Success
+    );
+    let proposal = &show.envelope()["data"]["recovery_proposal"];
+    let digest = proposal["evidence_digest"]
+        .as_str()
+        .expect("show returns proposal digest");
+    let version = proposal["observed_version"]
+        .as_u64()
+        .expect("show returns observed version");
+
+    let mut recover = TestHost::new();
+    assert_eq!(
+        run(
+            &mut recover,
+            &services,
+            &format!(
+                "execution recover --execution {execution_id} --expected-version {version} \
+                 --actor ops --reason UNKNOWN_EFFECT --directive mark-failed \
+                 --failure-category unknown_commit --failure-id 77 \
+                 --evidence-digest {digest} --operation-id recover-1 --yes --output json"
+            ),
+        ),
+        ExitCategory::Success
+    );
+    assert_eq!(
+        recover.envelope()["data"]["record"]["result_status"],
+        json!("FAILED")
+    );
+}
 
 // ---------------------------------------------------------------------------
 // precedence_resolves_per_value

@@ -86,6 +86,7 @@ decisions own the normative detail.
 - [M4 operations and local-scale design-gate evidence](project/m4-design-gate-evidence.md)
 - [M4 operator, explorer, and retention service evidence](project/m4-operator-services-evidence.md)
 - [M4 operator CLI evidence](project/m4-operator-cli-evidence.md)
+- [M4 shutdown and stale-recovery implementation evidence](project/m4-shutdown-recovery-evidence.md)
 - [Historical M0 decision register](product/open-decisions.md)
 
 Historical gates are preserved as records of their date. Later decisions link

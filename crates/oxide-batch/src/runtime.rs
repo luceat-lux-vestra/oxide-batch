@@ -6,6 +6,7 @@ use std::num::{NonZeroU64, NonZeroUsize};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use futures_util::FutureExt;
 use tokio::sync::{Notify, Semaphore};
@@ -558,6 +559,44 @@ impl StopToken {
             notified.await;
         }
     }
+
+    pub(crate) fn request_stop(&self) {
+        self.state.requested.store(true, Ordering::Release);
+        self.state.notify.notify_waiters();
+    }
+}
+
+/// The maximum interval between durable operator-stop observations.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct StopPollInterval(Duration);
+
+impl StopPollInterval {
+    /// The accepted default of one second.
+    pub const DEFAULT: Self = Self(Duration::from_secs(1));
+
+    /// Validates `100 ms..=60 s`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LaunchError::InvalidStopPollInterval`] outside the bound.
+    pub fn new(value: Duration) -> Result<Self, LaunchError> {
+        if !(Duration::from_millis(100)..=Duration::from_mins(1)).contains(&value) {
+            return Err(LaunchError::InvalidStopPollInterval);
+        }
+        Ok(Self(value))
+    }
+
+    /// Returns the validated duration.
+    #[must_use]
+    pub const fn get(self) -> Duration {
+        self.0
+    }
+}
+
+impl Default for StopPollInterval {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
 }
 
 /// Classifies when a cooperative stop was observed.
@@ -673,6 +712,10 @@ pub enum LaunchError {
     /// [`TaskletJob`] and [`ChunkJob`](crate::ChunkJob) lower into. Multi-node
     /// graphs are executed by the durable-flow runtime.
     UnsupportedPlan,
+    /// The durable stop-poll interval was outside `100 ms..=60 s`.
+    InvalidStopPollInterval,
+    /// Process shutdown stopped intake before this launch was accepted.
+    ShuttingDown,
 }
 
 impl fmt::Display for LaunchError {
@@ -685,6 +728,10 @@ impl fmt::Display for LaunchError {
             Self::UnsupportedPlan => {
                 formatter.write_str("this launcher executes one-step compatibility plans only")
             }
+            Self::InvalidStopPollInterval => {
+                formatter.write_str("stop poll interval must be between 100 ms and 60 seconds")
+            }
+            Self::ShuttingDown => formatter.write_str("runtime intake is shutting down"),
         }
     }
 }
@@ -694,7 +741,7 @@ impl Error for LaunchError {
         match self {
             Self::Repository(error) => Some(error),
             Self::Flow(error) => Some(error),
-            Self::UnsupportedPlan => None,
+            Self::UnsupportedPlan | Self::InvalidStopPollInterval | Self::ShuttingDown => None,
         }
     }
 }
@@ -720,6 +767,8 @@ pub struct JobLauncher<'a> {
     clock: &'a dyn Clock,
     ids: &'a dyn IdGenerator,
     event_sink: Option<&'a dyn LifecycleEventSink>,
+    execution_control: Option<(crate::OwnerToken, StopPollInterval)>,
+    shutdown_signal: Option<&'a crate::ShutdownSignal>,
 }
 
 impl<'a> JobLauncher<'a> {
@@ -735,6 +784,8 @@ impl<'a> JobLauncher<'a> {
             clock,
             ids,
             event_sink: None,
+            execution_control: None,
+            shutdown_signal: None,
         }
     }
 
@@ -742,6 +793,24 @@ impl<'a> JobLauncher<'a> {
     #[must_use]
     pub const fn with_event_sink(mut self, event_sink: &'a dyn LifecycleEventSink) -> Self {
         self.event_sink = Some(event_sink);
+        self
+    }
+
+    /// Enables durable ownership evidence and operator-stop polling.
+    #[must_use]
+    pub const fn with_execution_control(
+        mut self,
+        owner: crate::OwnerToken,
+        interval: StopPollInterval,
+    ) -> Self {
+        self.execution_control = Some((owner, interval));
+        self
+    }
+
+    /// Attaches the application-owned process-shutdown intake and cancellation signal.
+    #[must_use]
+    pub const fn with_shutdown_signal(mut self, signal: &'a crate::ShutdownSignal) -> Self {
+        self.shutdown_signal = Some(signal);
         self
     }
 
@@ -768,6 +837,7 @@ impl<'a> JobLauncher<'a> {
         parameters: &JobParameters,
         stop: &StopToken,
     ) -> Result<LaunchReport, LaunchError> {
+        self.ensure_accepting()?;
         let key = JobInstanceKey::new(job.name.clone(), parameters);
         let plan = job.compiled_plan();
         let graph = self
@@ -776,6 +846,10 @@ impl<'a> JobLauncher<'a> {
         self.emit_event(LifecycleEventKind::LaunchAccepted, &graph.correlation, None);
         self.emit_event(LifecycleEventKind::JobStarting, &graph.correlation, None);
         self.emit_event(LifecycleEventKind::StepStarting, &graph.correlation, None);
+
+        self.poll_execution_control(graph.job_execution.id(), stop)
+            .await?;
+        self.observe_process_shutdown(stop);
 
         if stop.is_stop_requested() {
             let (job_execution, step_execution) = self
@@ -832,6 +906,8 @@ impl<'a> JobLauncher<'a> {
         let started_job = self
             .start_job(&graph.job_execution, &graph.correlation)
             .await?;
+        self.poll_execution_control(started_job.id(), stop).await?;
+        self.observe_process_shutdown(stop);
         if stop.is_stop_requested() {
             let (job_execution, step_execution) = self
                 .stop_graph(
@@ -904,7 +980,14 @@ impl<'a> JobLauncher<'a> {
             event_sink: self.event_sink,
             terminal_rollback: &terminal_rollback,
         };
-        let invocation = invoke_tasklet(job.step.tasklet.as_ref(), tasklet_context).await;
+        let invocation = self
+            .invoke_with_execution_control(
+                started_job.id(),
+                job.step.tasklet.as_ref(),
+                tasklet_context,
+                stop,
+            )
+            .await?;
         let mut custom_exit = None;
         let provisional_outcome = match invocation {
             Ok(TaskletOutcome::Completed) if !stop.is_stop_requested() => {
@@ -1010,6 +1093,82 @@ impl<'a> JobLauncher<'a> {
         Ok(step)
     }
 
+    async fn poll_execution_control(
+        &self,
+        execution_id: JobExecutionId,
+        stop: &StopToken,
+    ) -> Result<(), LaunchError> {
+        let Some((owner, _)) = self.execution_control else {
+            return Ok(());
+        };
+        let mut unit = self.repository.begin().await?;
+        let control = unit
+            .observe_execution_control(execution_id, &owner, self.clock.now())
+            .await?;
+        unit.commit().await?;
+        if !control.owner_matches() {
+            return Err(RepositoryError::ExecutionOwned { id: execution_id }.into());
+        }
+        if control.stop_requested() {
+            stop.request_stop();
+        }
+        Ok(())
+    }
+
+    async fn invoke_with_execution_control(
+        &self,
+        execution_id: JobExecutionId,
+        tasklet: &dyn Tasklet,
+        context: TaskletContext<'_>,
+        stop: &StopToken,
+    ) -> Result<Result<TaskletOutcome, TaskletFailure>, LaunchError> {
+        if self.execution_control.is_none() && self.shutdown_signal.is_none() {
+            return Ok(invoke_tasklet(tasklet, context).await);
+        }
+        let invocation = invoke_tasklet(tasklet, context);
+        tokio::pin!(invocation);
+        let mut shutdown_observed = false;
+        loop {
+            tokio::select! {
+                result = &mut invocation => return Ok(result),
+                () = async {
+                    match self.execution_control {
+                        Some((_, interval)) => tokio::time::sleep(interval.get()).await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    self.poll_execution_control(execution_id, stop).await?;
+                }
+                () = async {
+                    match self.shutdown_signal {
+                        Some(signal) => signal.cancelled().await,
+                        None => std::future::pending().await,
+                    }
+                }, if !shutdown_observed => {
+                    shutdown_observed = true;
+                    stop.request_stop();
+                }
+            }
+        }
+    }
+
+    fn ensure_accepting(&self) -> Result<(), LaunchError> {
+        self.shutdown_signal.map_or(Ok(()), |signal| {
+            signal
+                .ensure_accepting()
+                .map_err(|_| LaunchError::ShuttingDown)
+        })
+    }
+
+    fn observe_process_shutdown(&self, stop: &StopToken) {
+        if self
+            .shutdown_signal
+            .is_some_and(crate::ShutdownSignal::is_shutdown_requested)
+        {
+            stop.request_stop();
+        }
+    }
+
     async fn create_execution_graph(
         &self,
         key: &JobInstanceKey,
@@ -1025,6 +1184,17 @@ impl<'a> JobLauncher<'a> {
         let job_execution = unit
             .create_job_execution_with_definition(instance.id(), definition)
             .await?;
+        let job_execution = if let Some((owner, _)) = self.execution_control {
+            unit.claim_execution_owner(
+                job_execution.id(),
+                job_execution.version(),
+                &owner,
+                self.clock.now(),
+            )
+            .await?
+        } else {
+            job_execution
+        };
         let step_execution = unit
             .create_step_execution(job_execution.id(), step_name)
             .await?;
@@ -1100,8 +1270,15 @@ impl<'a> JobLauncher<'a> {
         let exit_status = status_exit_status(status);
         let now = self.clock.now();
         let mut unit = self.repository.begin().await?;
+        let current = if self.execution_control.is_some() {
+            unit.get_job_execution(job.id())
+                .await?
+                .ok_or(RepositoryError::JobExecutionNotFound { id: job.id() })?
+        } else {
+            job.clone()
+        };
         let job = unit
-            .enrich_job_exit_status(job.id(), job.version(), &exit_status)
+            .enrich_job_exit_status(current.id(), current.version(), &exit_status)
             .await?;
         let transition = transition_for_outcome(status, now, failure)?;
         let job = unit
@@ -1166,10 +1343,22 @@ impl<'a> JobLauncher<'a> {
         correlation: &ExecutionCorrelation,
     ) -> Result<JobExecution, LaunchError> {
         let mut unit = self.repository.begin().await?;
+        let current = if self.execution_control.is_some() {
+            unit.get_job_execution(job.id())
+                .await?
+                .ok_or(RepositoryError::JobExecutionNotFound { id: job.id() })?
+        } else {
+            job.clone()
+        };
+        if current.metadata().status() == BatchStatus::Stopping {
+            unit.rollback().await?;
+            self.emit_event(LifecycleEventKind::JobStopping, correlation, None);
+            return Ok(current);
+        }
         let job = unit
             .transition_job_execution(
-                job.id(),
-                job.version(),
+                current.id(),
+                current.version(),
                 LifecycleTransition::new(BatchStatus::Stopping, self.clock.now()),
             )
             .await?;

@@ -59,7 +59,7 @@ or dynamic discovery, and an unknown word always fails.
 | `instance list` | `Read` | `--job` | List instances of a job |
 | `instance show` | `Read` | `--instance` | Show one instance |
 | `execution list` | `Read` | `--instance` or `--unresolved-age` | List executions, or stale candidates |
-| `execution show` | `Read` | `--execution` | Show one execution projection |
+| `execution show` | `Read` | `--execution` | Show one execution and its current redacted recovery proposal when eligible |
 | `execution steps` | `Read` | `--execution` | List step executions |
 | `execution partitions` | `Read` | `--step` | List partitions of a partitioned step |
 | `execution history` | `Read` | `--execution` | List flow, recovery, or operator records |
@@ -145,6 +145,13 @@ options a command does not accept, and unknown configuration keys all fail.
 
 Durations are an integer and an explicit unit: `ms`, `s`, `m`, `h`, or `d`. A
 bare integer is rejected.
+
+For recovery, first read `data.recovery_proposal` from `execution show`. Use
+its `observed_version` and `evidence_digest` without modification in
+`execution recover`. The command regenerates the proposal and rejects a stale
+version or digest before applying the audited decision. `mark-failed` for an
+unknown commit requires `--reason UNKNOWN_EFFECT`; this records an unresolved
+external-effect obligation and does not assert whether the effect committed.
 
 ## Configuration
 

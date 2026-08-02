@@ -14,9 +14,10 @@ use crate::{
     FlowDecisionRequest, FlowStepState, FlowTransitionKind, IdentifierKind, JobExecution,
     JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId, JobInstanceKey,
     JobInstanceProjection, JobName, LifecycleError, LifecycleTransition, NodeId, OperationId,
-    OperatorAction, OperatorRecord, OperatorRecordDraft, OperatorRequestId, ParameterDescriptor,
-    PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode,
-    RecoveryDecisionId, RetentionAction, RetentionActionId, RetentionHold, RetentionRecord,
+    OperatorAction, OperatorRecord, OperatorRecordDraft, OperatorRequestId, OwnerObservation,
+    OwnerToken, ParameterDescriptor, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest,
+    PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecisionId, RecoveryRepository, RecoverySnapshot,
+    RecoveryStepEvidence, RetentionAction, RetentionActionId, RetentionHold, RetentionRecord,
     RetentionRecordDraft, StartLimit, StepExecution, StepExecutionId, StepExecutionProjection,
     StepName, StepPartitionProjection,
 };
@@ -100,8 +101,10 @@ struct MemoryState {
     definition_upgrades: BTreeMap<(JobName, [u8; 32], [u8; 32]), DefinitionUpgrade>,
     job_name_order: BTreeMap<JobName, u64>,
     instance_created_at: BTreeMap<JobInstanceId, SystemTime>,
+    execution_updated_at: BTreeMap<JobExecutionId, SystemTime>,
     holds: BTreeMap<JobInstanceId, RetentionHold>,
     stop_requests: BTreeMap<JobExecutionId, SystemTime>,
+    owner_tokens: BTreeMap<JobExecutionId, OwnerToken>,
     operator_requests: BTreeMap<OperatorRequestId, OperatorRecord>,
     operator_request_keys: BTreeMap<(&'static str, String), OperatorRequestId>,
     retention_actions: BTreeMap<RetentionActionId, RetentionRecord>,
@@ -171,7 +174,10 @@ impl MemoryState {
             execution.metadata().counts(),
             execution.version(),
             execution.metadata().timestamps(),
-            updated_at(execution),
+            self.execution_updated_at
+                .get(&execution.id())
+                .copied()
+                .unwrap_or_else(|| updated_at(execution)),
             execution.metadata().failure(),
             definition,
             None,
@@ -595,6 +601,9 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
             }
             let execution =
                 JobExecution::new(id, job_instance_id, self.create_starting_metadata()?);
+            self.staged
+                .execution_updated_at
+                .insert(id, execution.metadata().timestamps().created_at());
             self.staged.job_executions.insert(id, execution.clone());
             self.staged.execution_definitions.insert(id, definition);
             self.staged
@@ -714,6 +723,9 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .get_mut(&id)
                 .ok_or(RepositoryError::JobExecutionNotFound { id })?;
             execution.transition(expected_version, transition)?;
+            self.staged
+                .execution_updated_at
+                .insert(id, transition.transitioned_at());
             Ok(execution.clone())
         })
     }
@@ -1058,6 +1070,7 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 decided_at,
             );
             self.staged.job_executions.insert(id, recovered.clone());
+            self.staged.execution_updated_at.insert(id, decided_at);
             self.staged
                 .recovery_decisions
                 .entry(id)
@@ -1140,7 +1153,83 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 }));
             }
             self.staged.stop_requests.insert(id, requested_at);
+            self.staged.execution_updated_at.insert(id, requested_at);
             Ok(execution)
+        })
+    }
+
+    fn claim_execution_owner<'a>(
+        &'a mut self,
+        id: JobExecutionId,
+        expected_version: ExecutionVersion,
+        owner: &'a OwnerToken,
+        claimed_at: SystemTime,
+    ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>> {
+        Box::pin(async move {
+            let execution = self
+                .staged
+                .job_executions
+                .get(&id)
+                .cloned()
+                .ok_or(RepositoryError::JobExecutionNotFound { id })?;
+            if execution.version() != expected_version {
+                return Err(RepositoryError::Lifecycle(LifecycleError::StaleVersion {
+                    expected: expected_version,
+                    actual: execution.version(),
+                }));
+            }
+            if execution.metadata().status() != BatchStatus::Starting {
+                return Err(RepositoryError::ExecutionOwnershipNotAllowed {
+                    id,
+                    status: execution.metadata().status(),
+                });
+            }
+            if self
+                .staged
+                .owner_tokens
+                .get(&id)
+                .is_some_and(|recorded| recorded != owner)
+            {
+                return Err(RepositoryError::ExecutionOwned { id });
+            }
+            self.staged.owner_tokens.insert(id, *owner);
+            self.staged.execution_updated_at.insert(id, claimed_at);
+            Ok(execution)
+        })
+    }
+
+    fn observe_execution_control<'a>(
+        &'a mut self,
+        id: JobExecutionId,
+        owner: &'a OwnerToken,
+        observed_at: SystemTime,
+    ) -> BoxFuture<'a, Result<crate::ExecutionControl, RepositoryError>> {
+        Box::pin(async move {
+            let owner_matches = self.staged.owner_tokens.get(&id) == Some(owner);
+            let stop_requested = self.staged.stop_requests.contains_key(&id);
+            let execution = self
+                .staged
+                .job_executions
+                .get_mut(&id)
+                .ok_or(RepositoryError::JobExecutionNotFound { id })?;
+            if owner_matches
+                && stop_requested
+                && matches!(
+                    execution.metadata().status(),
+                    BatchStatus::Starting | BatchStatus::Started
+                )
+            {
+                execution.transition(
+                    execution.version(),
+                    LifecycleTransition::new(BatchStatus::Stopping, observed_at),
+                )?;
+                self.staged.execution_updated_at.insert(id, observed_at);
+            }
+            Ok(crate::ExecutionControl::new(
+                execution.clone(),
+                owner_matches,
+                stop_requested,
+            ))
         })
     }
 
@@ -1299,6 +1388,8 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                     self.staged.step_logical_ids.remove(&step_id);
                 }
                 self.staged.job_executions.remove(&execution_id);
+                self.staged.execution_updated_at.remove(&execution_id);
+                self.staged.owner_tokens.remove(&execution_id);
                 self.staged.execution_definitions.remove(&execution_id);
                 self.staged.stop_requests.remove(&execution_id);
                 if let Some(executions) = self
@@ -1701,4 +1792,79 @@ impl ExplorerRepository for InMemoryExplorer {
                 .collect())
         })
     }
+}
+
+impl RecoveryRepository for InMemoryExplorer {
+    fn recovery_snapshot<'a>(
+        &'a self,
+        execution_id: JobExecutionId,
+        current_owner: &'a OwnerToken,
+    ) -> BoxFuture<'a, Result<RecoverySnapshot, RepositoryError>> {
+        Box::pin(async move {
+            let state = self
+                .state
+                .lock()
+                .map_err(|_| RepositoryError::Unavailable)?
+                .clone();
+            let execution = state
+                .job_executions
+                .get(&execution_id)
+                .ok_or(RepositoryError::JobExecutionNotFound { id: execution_id })?;
+            let owner = match state.owner_tokens.get(&execution_id) {
+                None => OwnerObservation::Absent,
+                Some(recorded) if recorded == current_owner => OwnerObservation::CurrentProcess,
+                Some(_) => OwnerObservation::OtherProcess,
+            };
+            let latest_step = state
+                .step_executions_by_job
+                .get(&execution_id)
+                .and_then(|ids| ids.last())
+                .and_then(|id| state.step_executions.get(id))
+                .map(|step| RecoveryStepEvidence::new(step.id(), step.metadata().status(), None));
+            let unknown_commit = execution.metadata().status() == BatchStatus::Unknown
+                || execution.metadata().failure().is_some_and(|failure| {
+                    failure.category() == crate::FailureCategory::UnknownCommit
+                })
+                || latest_step
+                    .as_ref()
+                    .is_some_and(|step| step.status() == BatchStatus::Unknown);
+            let committed_flow_decision = state
+                .flow_decisions_by_job
+                .get(&execution_id)
+                .is_some_and(|decisions| !decisions.is_empty());
+            let ambiguous_external_effect = state
+                .execution_definitions
+                .get(&execution_id)
+                .is_none_or(definition_has_ambiguous_effect);
+            Ok(RecoverySnapshot::new(
+                execution_id,
+                execution.metadata().status(),
+                state.attempt_of(execution),
+                execution.version(),
+                owner,
+                state
+                    .execution_updated_at
+                    .get(&execution_id)
+                    .copied()
+                    .unwrap_or_else(|| updated_at(execution)),
+                self.clock.now(),
+                latest_step,
+                crate::service::RecoveryMarkers::new()
+                    .with_unknown_commit(unknown_commit)
+                    .with_committed_flow_decision(committed_flow_decision)
+                    .with_ambiguous_external_effect(ambiguous_external_effect),
+            ))
+        })
+    }
+}
+
+fn definition_has_ambiguous_effect(definition: &DefinitionIdentity) -> bool {
+    let Ok(document) = serde_json::from_slice::<serde_json::Value>(definition.canonical_manifest())
+    else {
+        return true;
+    };
+    document
+        .get("delivery_mode")
+        .and_then(serde_json::Value::as_str)
+        != Some("atomic_same_resource")
 }

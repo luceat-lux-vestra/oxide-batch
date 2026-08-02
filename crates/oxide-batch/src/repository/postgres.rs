@@ -2639,6 +2639,113 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         })
     }
 
+    fn claim_execution_owner<'a>(
+        &'a mut self,
+        id: JobExecutionId,
+        expected_version: ExecutionVersion,
+        owner: &'a crate::OwnerToken,
+        claimed_at: SystemTime,
+    ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>> {
+        Box::pin(async move {
+            let database_execution_id = database_id(id.get(), IdentifierKind::JobExecution)?;
+            let claimed_ms = system_time_millis(claimed_at)?;
+            let affected = sqlx::query(
+                "UPDATE oxide_batch.ob_job_execution \
+                 SET owner_token = $1, updated_at = greatest(updated_at, \
+                       to_timestamp($2::double precision / 1000.0)) \
+                 WHERE id = $3 AND version = $4 AND status = 'STARTING' \
+                   AND (owner_token IS NULL OR owner_token = $1)",
+            )
+            .bind(&owner.as_bytes()[..])
+            .bind(claimed_ms)
+            .bind(database_execution_id)
+            .bind(database_version(expected_version)?)
+            .execute(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .rows_affected();
+            if affected != 1 {
+                let row = sqlx::query(
+                    "SELECT version, owner_token, status \
+                     FROM oxide_batch.ob_job_execution WHERE id = $1",
+                )
+                .bind(database_execution_id)
+                .fetch_optional(&mut **self.transaction()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?
+                .ok_or(RepositoryError::JobExecutionNotFound { id })?;
+                let actual = ExecutionVersion::new(read_u64(&row, "version")?);
+                if actual != expected_version {
+                    return Err(RepositoryError::Lifecycle(LifecycleError::StaleVersion {
+                        expected: expected_version,
+                        actual,
+                    }));
+                }
+                let status = decode_status(&read_text(&row, "status")?)?;
+                if status != BatchStatus::Starting {
+                    return Err(RepositoryError::ExecutionOwnershipNotAllowed { id, status });
+                }
+                return Err(RepositoryError::ExecutionOwned { id });
+            }
+            self.job_execution(id)
+                .await?
+                .ok_or(RepositoryError::JobExecutionNotFound { id })
+        })
+    }
+
+    fn observe_execution_control<'a>(
+        &'a mut self,
+        id: JobExecutionId,
+        owner: &'a crate::OwnerToken,
+        observed_at: SystemTime,
+    ) -> BoxFuture<'a, Result<crate::ExecutionControl, RepositoryError>> {
+        Box::pin(async move {
+            let database_execution_id = database_id(id.get(), IdentifierKind::JobExecution)?;
+            let row = sqlx::query(
+                "SELECT owner_token = $2 AS owner_matches, \
+                        stop_requested_at IS NOT NULL AS stop_requested \
+                 FROM oxide_batch.ob_job_execution WHERE id = $1 FOR UPDATE",
+            )
+            .bind(database_execution_id)
+            .bind(&owner.as_bytes()[..])
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .ok_or(RepositoryError::JobExecutionNotFound { id })?;
+            let owner_matches = row
+                .try_get::<Option<bool>, _>("owner_matches")
+                .map_err(|_| RepositoryError::Unavailable)?
+                .unwrap_or(false);
+            let stop_requested = row
+                .try_get::<bool, _>("stop_requested")
+                .map_err(|_| RepositoryError::Unavailable)?;
+            let mut execution = self
+                .job_execution(id)
+                .await?
+                .ok_or(RepositoryError::JobExecutionNotFound { id })?;
+            if owner_matches
+                && stop_requested
+                && matches!(
+                    execution.metadata().status(),
+                    BatchStatus::Starting | BatchStatus::Started
+                )
+            {
+                execution = self
+                    .transition_job_execution(
+                        id,
+                        execution.version(),
+                        LifecycleTransition::new(BatchStatus::Stopping, observed_at),
+                    )
+                    .await?;
+            }
+            Ok(crate::ExecutionControl::new(
+                execution,
+                owner_matches,
+                stop_requested,
+            ))
+        })
+    }
+
     fn job_instance_hold(
         &mut self,
         id: JobInstanceId,
@@ -5242,6 +5349,126 @@ impl ExplorerRepository for PostgresExplorer {
             rows.iter()
                 .map(|row| decode_operator_record(row).map_err(ExplorerError::Repository))
                 .collect()
+        })
+    }
+}
+
+impl crate::RecoveryRepository for PostgresExplorer {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one bounded snapshot query keeps its redacted decode mapping adjacent"
+    )]
+    fn recovery_snapshot<'a>(
+        &'a self,
+        execution_id: JobExecutionId,
+        current_owner: &'a crate::OwnerToken,
+    ) -> BoxFuture<'a, Result<crate::RecoverySnapshot, RepositoryError>> {
+        Box::pin(async move {
+            let row = self
+                .fetch_optional(
+                    sqlx::query(
+                        "SELECT execution.status, execution.attempt, execution.version, \
+                         (extract(epoch FROM execution.updated_at) * 1000)::bigint AS updated_ms, \
+                         (extract(epoch FROM clock_timestamp()) * 1000)::bigint AS server_ms, \
+                         CASE WHEN execution.owner_token IS NULL THEN 'ABSENT' \
+                              WHEN execution.owner_token = $2 THEN 'CURRENT' ELSE 'OTHER' END \
+                              AS owner_observation, \
+                         latest_step.id AS step_id, latest_step.status AS step_status, \
+                         latest_step.checkpoint_format, latest_step.checkpoint_schema, \
+                         latest_step.checkpoint_schema_version, \
+                         pg_column_size(latest_step.checkpoint_payload)::bigint AS checkpoint_bytes, \
+                         (execution.status = 'UNKNOWN' \
+                           OR COALESCE(execution.failure_category = 'UNKNOWN_COMMIT', false) \
+                           OR COALESCE(latest_step.status = 'UNKNOWN', false)) \
+                           AS unknown_commit, \
+                         EXISTS (SELECT 1 FROM oxide_batch.ob_step_partition partition \
+                           JOIN oxide_batch.ob_step_execution parent \
+                             ON parent.id = partition.step_execution_id \
+                           WHERE parent.job_execution_id = execution.id \
+                             AND partition.status = 'COMPLETED') AS completed_partition, \
+                         EXISTS (SELECT 1 FROM oxide_batch.ob_flow_decision decision \
+                           WHERE decision.job_execution_id = execution.id) \
+                           AS committed_flow_decision, \
+                         COALESCE(definition.manifest ->> 'delivery_mode', 'ambiguous') \
+                           <> 'atomic_same_resource' AS ambiguous_external_effect \
+                         FROM oxide_batch.ob_job_execution execution \
+                         JOIN oxide_batch.ob_job_definition definition \
+                           ON definition.id = execution.definition_id \
+                         LEFT JOIN LATERAL ( \
+                           SELECT step.id, step.status, step.checkpoint_format, \
+                                  step.checkpoint_schema, step.checkpoint_schema_version, \
+                                  step.checkpoint_payload \
+                           FROM oxide_batch.ob_step_execution step \
+                           WHERE step.job_execution_id = execution.id \
+                           ORDER BY step.id DESC LIMIT 1 \
+                         ) latest_step ON true \
+                         WHERE execution.id = $1",
+                    )
+                    .bind(database_id(
+                        execution_id.get(),
+                        IdentifierKind::JobExecution,
+                    )?)
+                    .bind(&current_owner.as_bytes()[..]),
+                )
+                .await
+                .map_err(|error| match error {
+                    ExplorerError::Repository(error) => error,
+                    _ => RepositoryError::Unavailable,
+                })?
+                .ok_or(RepositoryError::JobExecutionNotFound { id: execution_id })?;
+            let owner = match read_text(&row, "owner_observation")?.as_str() {
+                "ABSENT" => crate::OwnerObservation::Absent,
+                "CURRENT" => crate::OwnerObservation::CurrentProcess,
+                "OTHER" => crate::OwnerObservation::OtherProcess,
+                _ => return Err(RepositoryError::Unavailable),
+            };
+            let latest_step = match read_optional_u64(&row, "step_id")? {
+                Some(id) => {
+                    let descriptor = decode_state_descriptor(
+                        &row,
+                        DurableStateKind::Checkpoint,
+                        "checkpoint_format",
+                        "checkpoint_schema",
+                        "checkpoint_schema_version",
+                        "checkpoint_bytes",
+                    )
+                    .map_err(|_| RepositoryError::Unavailable)?;
+                    Some(crate::RecoveryStepEvidence::new(
+                        StepExecutionId::new(id)?,
+                        decode_status(&read_text(&row, "step_status")?)?,
+                        Some(descriptor),
+                    ))
+                }
+                None => None,
+            };
+            Ok(crate::RecoverySnapshot::new(
+                execution_id,
+                decode_status(&read_text(&row, "status")?)?,
+                u32::try_from(read_i64(&row, "attempt")?)
+                    .map_err(|_| RepositoryError::Unavailable)?,
+                ExecutionVersion::new(read_u64(&row, "version")?),
+                owner,
+                millis_system_time(read_i64(&row, "updated_ms")?)?,
+                millis_system_time(read_i64(&row, "server_ms")?)?,
+                latest_step,
+                crate::service::RecoveryMarkers::new()
+                    .with_unknown_commit(
+                        row.try_get::<bool, _>("unknown_commit")
+                            .map_err(|_| RepositoryError::Unavailable)?,
+                    )
+                    .with_completed_partition(
+                        row.try_get::<bool, _>("completed_partition")
+                            .map_err(|_| RepositoryError::Unavailable)?,
+                    )
+                    .with_committed_flow_decision(
+                        row.try_get::<bool, _>("committed_flow_decision")
+                            .map_err(|_| RepositoryError::Unavailable)?,
+                    )
+                    .with_ambiguous_external_effect(
+                        row.try_get::<bool, _>("ambiguous_external_effect")
+                            .map_err(|_| RepositoryError::Unavailable)?,
+                    ),
+            ))
         })
     }
 }
