@@ -51,6 +51,9 @@ jobs:
       - name: Check facade without optional adapters
         run: cargo check -p oxide-batch --no-default-features
 
+      - name: Check operator CLI without optional adapters
+        run: cargo check -p oxide-batch-cli --no-default-features --all-targets
+
       - name: Build documentation
         env:
           RUSTDOCFLAGS: -D warnings

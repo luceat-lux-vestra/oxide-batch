@@ -110,6 +110,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `0003_operations_and_local_scale.sql` and its bounded explorer, operator, and
   retention adapters. The schema-3 least-privilege grants required by purge are
   specified by the migration guide and remain unimplemented fixture work.
+- An optional `oxide-batch-cli` crate shipping the minimal guarded `oxide-batch`
+  operator binary and the embeddable library behind it. The closed
+  noun/verb grammar is parsed without an argument-parsing dependency, so every
+  unknown option, unknown subcommand, and inapplicable option fails rather than
+  being ignored. Configuration resolves per value across option, namespaced
+  environment variable, configuration file, and documented default, rejects
+  unknown keys and out-of-bounds values in one pass before any connection is
+  opened, reads secrets only by environment or `__FILE` indirection, and
+  refuses a group- or world-readable configuration file. Output is a versioned
+  `256 KiB`-bounded JSON envelope or an unversioned human form rendered from
+  the same redacted projection, and both exclude credentials, endpoints,
+  parameters, contexts, checkpoints, SQL, and user error text. Twelve stable
+  exit categories, destructive-action confirmation with a non-interactive
+  `--yes` requirement, mandatory operation identifiers for automated mutations,
+  a plan-digest guard on purge application, dry runs that change nothing, and
+  broken-output handling that repeats no mutation are each covered by a named
+  `OPS-CLI-001` scenario.
+- `PostgresMigrator::installed_schema_version`, a read-only counterpart to
+  `migrate` that takes no advisory lock, applies no migration, and reports an
+  uninitialized schema as an answer rather than a failure, so an unprivileged
+  operator identity can report migration state.
 - A shared in-memory and PostgreSQL service contract suite covering the named
   `REPO-EXPLORE-001`, `REPO-OPERATOR-001`, `REPO-RETENTION-001`, and M4
   `LIFE-ABANDON-001` scenarios, plus `JobInstanceKey::digest`, opaque

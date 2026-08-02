@@ -85,6 +85,7 @@ decisions own the normative detail.
 - [M4 operations and local scale kickoff gate](project/m4-kickoff-gate.md)
 - [M4 operations and local-scale design-gate evidence](project/m4-design-gate-evidence.md)
 - [M4 operator, explorer, and retention service evidence](project/m4-operator-services-evidence.md)
+- [M4 operator CLI evidence](project/m4-operator-cli-evidence.md)
 - [Historical M0 decision register](product/open-decisions.md)
 
 Historical gates are preserved as records of their date. Later decisions link
@@ -154,6 +155,7 @@ to them and record supersession; they do not rewrite history.
 - [Observability contract](operations/observability-contract.md)
 - [Control-plane boundary](operations/control-plane-boundary.md)
 - [M4 operator CLI and configuration contract](operations/operator-cli.md)
+- [Operator CLI reference](operations/operator-cli-reference.md)
 
 ## Release, documentation, and governance
 

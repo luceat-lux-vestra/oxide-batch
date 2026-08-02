@@ -23,6 +23,17 @@ the implementing workstream. The library crate does not gain a binary target, a
 CLI dependency, or an argument-parsing dependency. Removing the CLI crate
 removes no correctness capability.
 
+`launch` and `execution restart` are guarded against the job's canonical
+`DefinitionIdentity`, which is derived from the live component revisions of the
+application that owns the job. A process that only reads metadata cannot
+reconstruct one, and accepting a manifest digest from configuration would let an
+operator assert an identity the application never produced. These two commands
+therefore take their definition from a host-supplied catalog: an application
+embeds the CLI crate and registers the same definitions it launches in process.
+The shipped binary registers none, so it serves every other command and reports
+a guard rejection for these two. The catalog resolves nothing, persists nothing,
+and stores no component; it is not the definition registry that M4 excludes.
+
 ## Command grammar
 
 The grammar is `oxide-batch <noun> <verb> [options]`. Nouns and verbs are
@@ -55,6 +66,10 @@ closed sets; there is no plugin, alias, or dynamic command discovery.
 `stale list` is not a separate command; stale candidates are the age-bounded
 form of `execution list`.
 
+`execution history` selects one record family per invocation. One opaque cursor
+continues exactly one keyset traversal, so merging flow, recovery, and operator
+records into a single page would make a continuation token ambiguous.
+
 ## Global options
 
 | Option | Meaning |
@@ -73,7 +88,15 @@ form of `execution list`.
 | `--no-color` | Disable styling |
 
 Unknown options, unknown subcommands, and unknown configuration keys fail;
-they are never ignored.
+they are never ignored. Because an option is never ignored, `--cursor` is
+accepted only by a paginated command: a cursor names a traversal, and a command
+without one has nothing to continue. `--page-size` remains accepted everywhere,
+because `config show` reports it as an effective configuration value.
+
+Commands additionally accept the bounded target and filter options their
+targets require. The complete list, with the required target of each command,
+is published in the
+[operator CLI reference](operator-cli-reference.md).
 
 ## Configuration precedence
 
@@ -131,8 +154,10 @@ not a machine interface and may be reformatted within a release series.
 - `truncated`, `true` when a bound removed content.
 
 The JSON form obeys the same redaction rules as the explorer. Encoded output is
-bounded to `256 KiB`; exceeding the bound sets `truncated` and never silently
-drops content without the flag. Output is written only after a mutating
+bounded to `256 KiB`. The bound covers the complete written result rather than
+the `data` field alone, so the envelope's own fields cannot carry it past the
+bound. Exceeding the bound sets `truncated` and never silently drops content
+without the flag. Output is written only after a mutating
 command's durable effect is committed, so a display failure cannot lose an
 effect.
 
@@ -176,7 +201,8 @@ defect and always emits a redacted diagnostic.
   executing, and repeats it in the result.
 - `--dry-run` is available for `launch`, `execution restart`,
   `execution recover`, and `retention apply`. It validates guards, prints the
-  plan or evidence digest, and performs no mutation.
+  plan or evidence digest, and performs no mutation. It does not waive the
+  confirmation a destructive command requires.
 - The CLI never prompts when standard input is not a terminal and never treats
   an empty response as confirmation.
 - `retention apply` additionally requires the plan digest from a prior
@@ -190,6 +216,10 @@ named execution. Its contents are specified by the
 [observability contract](observability-contract.md). The CLI adds no data
 beyond that contract, refuses to overwrite an existing target, and reports the
 bundle manifest checksum.
+
+The command is part of the closed grammar but is not yet implemented, because
+its contents depend on the telemetry catalog owned by issue #79. Until that
+lands it reports a guard rejection rather than writing a partial bundle.
 
 ## Evidence
 
