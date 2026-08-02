@@ -110,6 +110,7 @@ mod fault_state;
 mod flow;
 mod item_listener;
 mod listener;
+mod partition;
 mod plan;
 mod repository;
 mod runtime;
@@ -176,6 +177,10 @@ pub use item_listener::{
 pub use listener::{
     JobExecutionListener, ListenerContext, ListenerError, ListenerFailure, ListenerFailureKind,
     ListenerPhase, StepExecutionListener,
+};
+pub use partition::{
+    MAX_PARTITION_CONTEXT_BYTES, MAX_PARTITION_KEY_BYTES, PartitionKey, PartitionPlanEntry,
+    PartitionResult, PartitionValueError, StepPartition,
 };
 pub use plan::{
     CompiledExecutionPlan, DeciderRevision, DecisionInputVersion, DecisionNode, ExitPattern,

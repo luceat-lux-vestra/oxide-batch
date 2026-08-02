@@ -17,7 +17,9 @@ use crate::{
     OperatorAction, OperatorRecord, OperatorRecordDraft, OwnerToken, PurgeCounts, PurgePlan,
     PurgePlanRequest, PurgeSurvey, ReasonCode, RecoveryDecisionId, RetentionAction, RetentionHold,
     RetentionRecord, RetentionRecordDraft, StartLimit, StepExecution, StepExecutionId, StepName,
+    StepPartition, StepPartitionId,
 };
+use crate::{PartitionPlanEntry, PartitionResult};
 
 const MAX_RECOVERY_REASON_BYTES: usize = 64;
 const MAX_OPERATOR_REFERENCE_BYTES: usize = 128;
@@ -851,6 +853,63 @@ pub trait RepositoryUnitOfWork: Send {
         Box::pin(async { Err(RepositoryError::FlowStateCorrupt) })
     }
 
+    /// Inserts one complete bounded partition plan before any worker starts.
+    ///
+    /// Entry order becomes the stable one-based partition ordinal. The method
+    /// rejects an empty, oversized, duplicate-key, or already-created plan
+    /// without publishing a partial plan.
+    fn create_step_partition_plan<'a>(
+        &'a mut self,
+        _step_execution_id: StepExecutionId,
+        _entries: &'a [PartitionPlanEntry],
+    ) -> BoxFuture<'a, Result<Vec<StepPartition>, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::StepPartitions,
+            })
+        })
+    }
+
+    /// Loads the complete partition plan in partition-key byte order.
+    fn step_partition_plan(
+        &mut self,
+        _step_execution_id: StepExecutionId,
+    ) -> BoxFuture<'_, Result<Vec<StepPartition>, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::StepPartitions,
+            })
+        })
+    }
+
+    /// Assigns a new or restart-eligible partition to a worker attempt by CAS.
+    fn assign_step_partition(
+        &mut self,
+        _id: StepPartitionId,
+        _expected_version: ExecutionVersion,
+        _worker_step_execution_id: StepExecutionId,
+    ) -> BoxFuture<'_, Result<StepPartition, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::StepPartitions,
+            })
+        })
+    }
+
+    /// Publishes one assigned worker's terminal result by CAS.
+    fn complete_step_partition<'a>(
+        &'a mut self,
+        _id: StepPartitionId,
+        _expected_version: ExecutionVersion,
+        _result: &'a PartitionResult,
+    ) -> BoxFuture<'a, Result<StepPartition, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::StepPartitions,
+            })
+        })
+    }
+
     /// Atomically resolves one orphaned or ambiguous execution and appends its audit record.
     fn recover_job_execution<'a>(
         &'a mut self,
@@ -1068,6 +1127,8 @@ pub enum RepositoryCapability {
     InstanceHolds,
     /// Bounded two-phase retention purge.
     RetentionPurge,
+    /// Durable local partition plans and compare-and-swap results.
+    StepPartitions,
 }
 
 impl RepositoryCapability {
@@ -1080,6 +1141,7 @@ impl RepositoryCapability {
             Self::ExecutionOwnership => "execution ownership evidence",
             Self::InstanceHolds => "instance holds",
             Self::RetentionPurge => "retention purge",
+            Self::StepPartitions => "durable step partitions",
         }
     }
 }
@@ -1132,6 +1194,51 @@ pub enum RepositoryError {
         /// The missing identifier.
         id: StepExecutionId,
     },
+    /// A referenced durable step partition does not exist.
+    StepPartitionNotFound {
+        /// The missing partition identifier.
+        id: StepPartitionId,
+    },
+    /// A partition plan contained no work.
+    EmptyPartitionPlan,
+    /// A partition plan exceeded the accepted M4 bound.
+    PartitionPlanTooLarge {
+        /// Maximum accepted partition count.
+        max: usize,
+    },
+    /// A partition plan repeated a byte-exact key.
+    DuplicatePartitionKey,
+    /// A durable plan already exists for the parent step execution.
+    PartitionPlanExists {
+        /// Parent partitioned step execution.
+        step_execution_id: StepExecutionId,
+    },
+    /// Worker assignment was attempted before the new plan transaction committed.
+    PartitionPlanNotCommitted {
+        /// Parent partitioned step execution.
+        step_execution_id: StepExecutionId,
+    },
+    /// A partition update was not valid for its durable state.
+    PartitionUpdateNotAllowed {
+        /// Rejected partition.
+        id: StepPartitionId,
+        /// Status observed under compare-and-swap.
+        status: BatchStatus,
+    },
+    /// The worker attempt does not belong to the partition parent's job execution.
+    PartitionWorkerMismatch {
+        /// Rejected partition.
+        partition_id: StepPartitionId,
+        /// Worker attempt from a different job execution.
+        worker_step_execution_id: StepExecutionId,
+    },
+    /// A worker attempt is already bound to another durable partition.
+    PartitionWorkerAlreadyAssigned {
+        /// Reused worker attempt.
+        worker_step_execution_id: StepExecutionId,
+    },
+    /// Durable partition state is contradictory, corrupt, or cannot be decoded.
+    PartitionStateCorrupt,
     /// An injected source reused an existing identifier.
     DuplicateIdentifier {
         /// The duplicated identifier category.
@@ -1289,6 +1396,46 @@ impl fmt::Display for RepositoryError {
             }
             Self::StepExecutionNotFound { id } => {
                 write!(formatter, "step execution {id} was not found")
+            }
+            Self::StepPartitionNotFound { id } => {
+                write!(formatter, "step partition {id} was not found")
+            }
+            Self::EmptyPartitionPlan => {
+                formatter.write_str("partition plan must contain at least one entry")
+            }
+            Self::PartitionPlanTooLarge { max } => {
+                write!(formatter, "partition plan exceeds {max} entries")
+            }
+            Self::DuplicatePartitionKey => {
+                formatter.write_str("partition plan contains a duplicate key")
+            }
+            Self::PartitionPlanExists { step_execution_id } => write!(
+                formatter,
+                "step execution {step_execution_id} already has a partition plan"
+            ),
+            Self::PartitionPlanNotCommitted { step_execution_id } => write!(
+                formatter,
+                "step execution {step_execution_id} partition plan must commit before assignment"
+            ),
+            Self::PartitionUpdateNotAllowed { id, status } => write!(
+                formatter,
+                "step partition {id} cannot be updated from {status}"
+            ),
+            Self::PartitionWorkerMismatch {
+                partition_id,
+                worker_step_execution_id,
+            } => write!(
+                formatter,
+                "worker step execution {worker_step_execution_id} does not belong to partition {partition_id}"
+            ),
+            Self::PartitionWorkerAlreadyAssigned {
+                worker_step_execution_id,
+            } => write!(
+                formatter,
+                "worker step execution {worker_step_execution_id} is already assigned to a partition"
+            ),
+            Self::PartitionStateCorrupt => {
+                formatter.write_str("durable partition state is unusable and no work may begin")
             }
             Self::DuplicateIdentifier { kind, value } => {
                 write!(formatter, "{kind} identifier {value} already exists")

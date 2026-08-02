@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -6,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 use sqlx::migrate::Migrator;
 use sqlx::pool::PoolConnection;
 use sqlx::postgres::{PgArguments, PgConnectOptions, PgPoolOptions, PgRow, PgSslMode};
@@ -16,6 +18,7 @@ use super::{
     BoxFuture, Clock, JobInstanceSelection, JobRepository, RecoveryDecision, RecoveryRequest,
     RecoveryResult, RepositoryError, RepositoryUnitOfWork, recovered_execution,
 };
+use crate::partition::PartitionMutationError;
 use crate::{
     ActorRef, BatchStatus, BusinessStatement, BusinessTransaction, BusinessTransactionError,
     BusinessValueKind, BusinessWriteResult, Checkpoint, ChunkCommitReceipt, ChunkCounts,
@@ -29,16 +32,17 @@ use crate::{
     FlowDecisionRequest, FlowDecisionSequence, FlowStepState, FlowTarget, FlowTransitionKind,
     IdentifierKind, InheritedStepProgress, JobExecution, JobExecutionId, JobExecutionProjection,
     JobInstance, JobInstanceId, JobInstanceKey, JobInstanceProjection, JobName, JobParameter,
-    JobParameters, LifecycleError, LifecycleTransition, NodeId, OperationId, OperatorAction,
-    OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft, OperatorRejection,
-    OperatorRequestId, ParameterDescriptor, ParameterName, ParameterRole, ParameterValue,
-    ParameterValueKind, PurgeBatchBound, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest,
+    JobParameters, LifecycleError, LifecycleTransition, MAX_PARTITION_CONTEXT_BYTES,
+    MAX_PARTITIONS, NodeId, OperationId, OperatorAction, OperatorOutcomeClass, OperatorRecord,
+    OperatorRecordDraft, OperatorRejection, OperatorRequestId, ParameterDescriptor, ParameterName,
+    ParameterRole, ParameterValue, ParameterValueKind, PartitionKey, PartitionPlanEntry,
+    PartitionResult, PurgeBatchBound, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest,
     PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecisionId, RequestDigest, RetentionAction,
     RetentionActionId, RetentionHold, RetentionOutcome, RetentionRecord, RetentionRecordDraft,
     RetryCounts, RetryKey, RetryLimit, RetryOrdinal, RetryReservation, RetryStateLimit, SkipCounts,
     StartLimit, StateEnvelopeDescriptor, StateLimits, StateSchemaId, StateSchemaVersion,
-    StepExecution, StepExecutionId, StepExecutionProjection, StepName, StepPartitionId,
-    StepPartitionProjection, TerminalKind,
+    StepExecution, StepExecutionId, StepExecutionProjection, StepName, StepPartition,
+    StepPartitionId, StepPartitionProjection, TerminalKind,
 };
 
 const SUPPORTED_SCHEMA_VERSION: u32 = 3;
@@ -745,6 +749,7 @@ impl JobRepository for PostgresJobRepository {
                 repository: self,
                 connection: Some(connection),
                 definition_override: None,
+                created_partition_plans: BTreeSet::new(),
             }) as Box<dyn RepositoryUnitOfWork + 'a>)
         })
     }
@@ -1269,6 +1274,7 @@ struct PostgresUnitOfWork<'repository> {
     repository: &'repository PostgresJobRepository,
     connection: Option<PoolConnection<Postgres>>,
     definition_override: Option<DefinitionIdentity>,
+    created_partition_plans: BTreeSet<StepExecutionId>,
 }
 
 impl PostgresUnitOfWork<'_> {
@@ -2427,6 +2433,284 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
             rows.iter().map(decode_flow_decision).collect()
+        })
+    }
+
+    fn create_step_partition_plan<'a>(
+        &'a mut self,
+        step_execution_id: StepExecutionId,
+        entries: &'a [PartitionPlanEntry],
+    ) -> BoxFuture<'a, Result<Vec<StepPartition>, RepositoryError>> {
+        Box::pin(async move {
+            if entries.is_empty() {
+                return Err(RepositoryError::EmptyPartitionPlan);
+            }
+            if entries.len() > usize::from(MAX_PARTITIONS) {
+                return Err(RepositoryError::PartitionPlanTooLarge {
+                    max: usize::from(MAX_PARTITIONS),
+                });
+            }
+            let mut keys = BTreeSet::new();
+            for entry in entries {
+                if !keys.insert(entry.key()) {
+                    return Err(RepositoryError::DuplicatePartitionKey);
+                }
+            }
+
+            let parent_id = database_id(step_execution_id.get(), IdentifierKind::StepExecution)?;
+            let parent_exists = sqlx::query_scalar::<_, i64>(
+                "SELECT job_execution_id FROM oxide_batch.ob_step_execution \
+                 WHERE id = $1 FOR UPDATE",
+            )
+            .bind(parent_id)
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            if parent_exists.is_none() {
+                return Err(RepositoryError::StepExecutionNotFound {
+                    id: step_execution_id,
+                });
+            }
+            let plan_exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_step_partition \
+                 WHERE step_execution_id = $1)",
+            )
+            .bind(parent_id)
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            if plan_exists {
+                return Err(RepositoryError::PartitionPlanExists { step_execution_id });
+            }
+
+            let mut partitions = Vec::with_capacity(entries.len());
+            for (index, entry) in entries.iter().enumerate() {
+                let ordinal = u32::try_from(index.saturating_add(1))
+                    .map_err(|_| RepositoryError::PartitionStateCorrupt)?;
+                let payload = entry
+                    .context()
+                    .payload_json()
+                    .map_err(|_| RepositoryError::PartitionStateCorrupt)?;
+                let payload = serde_json::from_slice::<Value>(&payload)
+                    .map_err(|_| RepositoryError::PartitionStateCorrupt)?;
+                let envelope = entry
+                    .context()
+                    .to_json()
+                    .map_err(|_| RepositoryError::PartitionStateCorrupt)?;
+                let checksum: [u8; 32] = Sha256::digest(&envelope).into();
+                let database_ordinal =
+                    i32::try_from(ordinal).map_err(|_| RepositoryError::PartitionStateCorrupt)?;
+                let format = i16::try_from(entry.context().format_version())
+                    .map_err(|_| RepositoryError::PartitionStateCorrupt)?;
+                let schema_version = i32::try_from(entry.context().schema_version().get())
+                    .map_err(|_| RepositoryError::PartitionStateCorrupt)?;
+                let database_partition_id: i64 = sqlx::query_scalar(
+                    "INSERT INTO oxide_batch.ob_step_partition \
+                     (step_execution_id, partition_key, partition_ordinal, status, \
+                      context_format, context_schema, context_schema_version, \
+                      context_payload, context_checksum, version) \
+                     VALUES ($1, $2, $3, 'STARTING', $4, $5, $6, $7, $8, 0) \
+                     RETURNING id",
+                )
+                .bind(parent_id)
+                .bind(entry.key().as_str())
+                .bind(database_ordinal)
+                .bind(format)
+                .bind(entry.context().schema_id().as_str())
+                .bind(schema_version)
+                .bind(Json(payload))
+                .bind(&checksum[..])
+                .fetch_one(&mut **self.transaction()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
+                let id = StepPartitionId::new(
+                    u64::try_from(database_partition_id)
+                        .map_err(|_| RepositoryError::PartitionStateCorrupt)?,
+                )?;
+                partitions.push(StepPartition::starting(
+                    id,
+                    step_execution_id,
+                    ordinal,
+                    entry.clone(),
+                ));
+            }
+            self.created_partition_plans.insert(step_execution_id);
+            Ok(partitions)
+        })
+    }
+
+    fn step_partition_plan(
+        &mut self,
+        step_execution_id: StepExecutionId,
+    ) -> BoxFuture<'_, Result<Vec<StepPartition>, RepositoryError>> {
+        Box::pin(async move {
+            let parent_id = database_id(step_execution_id.get(), IdentifierKind::StepExecution)?;
+            let parent_exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_step_execution WHERE id = $1)",
+            )
+            .bind(parent_id)
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            if !parent_exists {
+                return Err(RepositoryError::StepExecutionNotFound {
+                    id: step_execution_id,
+                });
+            }
+            let rows = sqlx::query(AssertSqlSafe(partition_select(
+                "WHERE partition.step_execution_id = $1 ORDER BY partition.partition_key",
+            )))
+            .bind(parent_id)
+            .fetch_all(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            rows.iter().map(decode_step_partition).collect()
+        })
+    }
+
+    fn assign_step_partition(
+        &mut self,
+        id: StepPartitionId,
+        expected_version: ExecutionVersion,
+        worker_step_execution_id: StepExecutionId,
+    ) -> BoxFuture<'_, Result<StepPartition, RepositoryError>> {
+        Box::pin(async move {
+            let database_partition_id = database_id(id.get(), IdentifierKind::StepPartition)?;
+            let row = sqlx::query(AssertSqlSafe(partition_select(
+                "WHERE partition.id = $1 FOR UPDATE",
+            )))
+            .bind(database_partition_id)
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .ok_or(RepositoryError::StepPartitionNotFound { id })?;
+            let mut partition = decode_step_partition(&row)?;
+            if self
+                .created_partition_plans
+                .contains(&partition.step_execution_id())
+            {
+                return Err(RepositoryError::PartitionPlanNotCommitted {
+                    step_execution_id: partition.step_execution_id(),
+                });
+            }
+            partition
+                .assign(expected_version, worker_step_execution_id)
+                .map_err(|error| map_partition_mutation(id, error))?;
+            let worker_id = database_id(
+                worker_step_execution_id.get(),
+                IdentifierKind::StepExecution,
+            )?;
+            let same_job: Option<bool> = sqlx::query_scalar(
+                "SELECT parent.job_execution_id = worker.job_execution_id \
+                 FROM oxide_batch.ob_step_execution parent \
+                 CROSS JOIN oxide_batch.ob_step_execution worker \
+                 WHERE parent.id = $1 AND worker.id = $2 FOR UPDATE OF worker",
+            )
+            .bind(database_id(
+                partition.step_execution_id().get(),
+                IdentifierKind::StepExecution,
+            )?)
+            .bind(worker_id)
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            match same_job {
+                None => {
+                    return Err(RepositoryError::StepExecutionNotFound {
+                        id: worker_step_execution_id,
+                    });
+                }
+                Some(same_job)
+                    if !same_job || partition.step_execution_id() == worker_step_execution_id =>
+                {
+                    return Err(RepositoryError::PartitionWorkerMismatch {
+                        partition_id: id,
+                        worker_step_execution_id,
+                    });
+                }
+                Some(true) => {}
+                Some(false) => return Err(RepositoryError::PartitionStateCorrupt),
+            }
+            let worker_assigned: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_step_partition \
+                 WHERE worker_step_execution_id = $1)",
+            )
+            .bind(worker_id)
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            if worker_assigned {
+                return Err(RepositoryError::PartitionWorkerAlreadyAssigned {
+                    worker_step_execution_id,
+                });
+            }
+            let affected = sqlx::query(
+                "UPDATE oxide_batch.ob_step_partition \
+                 SET worker_step_execution_id = $1, status = 'STARTED', exit_code = NULL, \
+                     read_count = 0, processed_count = 0, write_count = 0, filter_count = 0, \
+                     commit_count = 0, rollback_count = 0, version = version + 1 \
+                 WHERE id = $2 AND version = $3",
+            )
+            .bind(worker_id)
+            .bind(database_partition_id)
+            .bind(database_version(expected_version)?)
+            .execute(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .rows_affected();
+            if affected != 1 {
+                return Err(RepositoryError::ConcurrentModification);
+            }
+            Ok(partition)
+        })
+    }
+
+    fn complete_step_partition<'a>(
+        &'a mut self,
+        id: StepPartitionId,
+        expected_version: ExecutionVersion,
+        result: &'a PartitionResult,
+    ) -> BoxFuture<'a, Result<StepPartition, RepositoryError>> {
+        Box::pin(async move {
+            let database_partition_id = database_id(id.get(), IdentifierKind::StepPartition)?;
+            let row = sqlx::query(AssertSqlSafe(partition_select(
+                "WHERE partition.id = $1 FOR UPDATE",
+            )))
+            .bind(database_partition_id)
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .ok_or(RepositoryError::StepPartitionNotFound { id })?;
+            let mut partition = decode_step_partition(&row)?;
+            partition
+                .complete(expected_version, result)
+                .map_err(|error| map_partition_mutation(id, error))?;
+            let counts = result.counts();
+            let affected = sqlx::query(
+                "UPDATE oxide_batch.ob_step_partition \
+                 SET status = $1, exit_code = $2, read_count = $3, processed_count = $4, \
+                     write_count = $5, filter_count = $6, commit_count = $7, \
+                     rollback_count = $8, version = version + 1 \
+                 WHERE id = $9 AND version = $10",
+            )
+            .bind(result.status().as_str())
+            .bind(result.exit_status().code().as_str())
+            .bind(partition_count(counts.read())?)
+            .bind(partition_count(counts.processed())?)
+            .bind(partition_count(counts.written())?)
+            .bind(partition_count(counts.filtered())?)
+            .bind(partition_count(counts.committed())?)
+            .bind(partition_count(counts.rolled_back())?)
+            .bind(database_partition_id)
+            .bind(database_version(expected_version)?)
+            .execute(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .rows_affected();
+            if affected != 1 {
+                return Err(RepositoryError::ConcurrentModification);
+            }
+            Ok(partition)
         })
     }
 
@@ -3795,6 +4079,134 @@ fn flow_decision_select(suffix: &str) -> String {
          (extract(epoch FROM decision.decided_at) * 1000)::bigint AS decided_ms \
          FROM oxide_batch.ob_flow_decision decision {suffix}"
     )
+}
+
+fn partition_select(suffix: &str) -> String {
+    format!(
+        "SELECT partition.id, partition.step_execution_id, \
+         partition.worker_step_execution_id, partition.partition_key, \
+         partition.partition_ordinal, partition.status, partition.exit_code, \
+         partition.read_count, partition.processed_count, partition.write_count, \
+         partition.filter_count, partition.commit_count, partition.rollback_count, \
+         partition.context_format, partition.context_schema, \
+         partition.context_schema_version, partition.context_payload, \
+         partition.context_checksum, partition.version \
+         FROM oxide_batch.ob_step_partition partition {suffix}"
+    )
+}
+
+fn decode_step_partition(row: &PgRow) -> Result<StepPartition, RepositoryError> {
+    let id = StepPartitionId::new(read_u64(row, "id")?)?;
+    let step_execution_id = StepExecutionId::new(read_u64(row, "step_execution_id")?)?;
+    let worker_step_execution_id = read_optional_u64(row, "worker_step_execution_id")?
+        .map(StepExecutionId::new)
+        .transpose()?;
+    let key = PartitionKey::new(read_text(row, "partition_key")?)
+        .map_err(|_| RepositoryError::PartitionStateCorrupt)?;
+    let ordinal = row
+        .try_get::<i32, _>("partition_ordinal")
+        .map_err(|_| RepositoryError::PartitionStateCorrupt)
+        .and_then(|value| {
+            u32::try_from(value).map_err(|_| RepositoryError::PartitionStateCorrupt)
+        })?;
+    if ordinal == 0 || ordinal > u32::from(MAX_PARTITIONS) {
+        return Err(RepositoryError::PartitionStateCorrupt);
+    }
+    let status = decode_status(&read_text(row, "status")?)?;
+    let exit_status = ExitStatus::new(
+        ExitCode::new(
+            read_optional_text(row, "exit_code")?.unwrap_or_else(|| String::from("UNKNOWN")),
+        )
+        .map_err(|_| RepositoryError::PartitionStateCorrupt)?,
+    );
+    let counts = ExecutionCounts::new(
+        read_u64(row, "read_count")?,
+        read_u64(row, "processed_count")?,
+        read_u64(row, "write_count")?,
+        read_u64(row, "filter_count")?,
+        read_u64(row, "commit_count")?,
+        read_u64(row, "rollback_count")?,
+    );
+    let context = decode_partition_context(row)?;
+    let version = ExecutionVersion::new(read_u64(row, "version")?);
+    if matches!(status, BatchStatus::Starting) && worker_step_execution_id.is_some()
+        || !matches!(status, BatchStatus::Starting) && worker_step_execution_id.is_none()
+    {
+        return Err(RepositoryError::PartitionStateCorrupt);
+    }
+    Ok(StepPartition::from_snapshot(
+        id,
+        step_execution_id,
+        worker_step_execution_id,
+        key,
+        ordinal,
+        status,
+        exit_status,
+        counts,
+        context,
+        version,
+    ))
+}
+
+fn decode_partition_context(row: &PgRow) -> Result<ExecutionContext, RepositoryError> {
+    let format_version = u16::try_from(
+        row.try_get::<i16, _>("context_format")
+            .map_err(|_| RepositoryError::PartitionStateCorrupt)?,
+    )
+    .map_err(|_| RepositoryError::PartitionStateCorrupt)?;
+    let schema = read_text(row, "context_schema")?;
+    let schema_version = u32::try_from(
+        row.try_get::<i32, _>("context_schema_version")
+            .map_err(|_| RepositoryError::PartitionStateCorrupt)?,
+    )
+    .map_err(|_| RepositoryError::PartitionStateCorrupt)?;
+    let Json(payload): Json<Value> = row
+        .try_get("context_payload")
+        .map_err(|_| RepositoryError::PartitionStateCorrupt)?;
+    let envelope = json!({
+        "format": "oxide-batch.execution-context",
+        "format_version": format_version,
+        "schema": schema,
+        "schema_version": schema_version,
+        "payload": payload,
+    });
+    let bytes =
+        serde_json::to_vec(&envelope).map_err(|_| RepositoryError::PartitionStateCorrupt)?;
+    let limits = StateLimits::new(MAX_PARTITION_CONTEXT_BYTES, 16)
+        .map_err(|_| RepositoryError::PartitionStateCorrupt)?;
+    let context = ExecutionContext::from_json(&bytes, limits)
+        .map_err(|_| RepositoryError::PartitionStateCorrupt)?;
+    let stored_checksum: [u8; 32] = row
+        .try_get::<Vec<u8>, _>("context_checksum")
+        .map_err(|_| RepositoryError::PartitionStateCorrupt)?
+        .try_into()
+        .map_err(|_| RepositoryError::PartitionStateCorrupt)?;
+    let actual_checksum: [u8; 32] = Sha256::digest(
+        context
+            .to_json()
+            .map_err(|_| RepositoryError::PartitionStateCorrupt)?,
+    )
+    .into();
+    if stored_checksum != actual_checksum {
+        return Err(RepositoryError::PartitionStateCorrupt);
+    }
+    Ok(context)
+}
+
+fn partition_count(value: u64) -> Result<i64, RepositoryError> {
+    i64::try_from(value).map_err(|_| RepositoryError::PartitionStateCorrupt)
+}
+
+fn map_partition_mutation(id: StepPartitionId, error: PartitionMutationError) -> RepositoryError {
+    match error {
+        PartitionMutationError::StaleVersion { expected, actual } => {
+            RepositoryError::Lifecycle(LifecycleError::StaleVersion { expected, actual })
+        }
+        PartitionMutationError::InvalidState { status } => {
+            RepositoryError::PartitionUpdateNotAllowed { id, status }
+        }
+        PartitionMutationError::VersionExhausted => RepositoryError::PartitionStateCorrupt,
+    }
 }
 
 fn flow_target_node(target: &FlowTarget) -> Option<&str> {
