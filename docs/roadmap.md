@@ -5,10 +5,10 @@
 **Program decision:** M5-M14 is accepted by RFC-0001. RFC-0005 and RFC-0009
 remain evidence gates for their specific architectures.
 
-**Last reviewed:** 2026-07-31
+**Last reviewed:** 2026-08-03
 
 Milestones are capability and evidence gates, not calendar promises. M0-M4
-record accepted history and current work. The continuous M5-M14 program is
+record accepted history; M5 is the next gate. The continuous M5-M14 program is
 accepted by [RFC-0001](rfcs/0001-m5-preview-and-project-wide-1-0.md) and the
 topic decisions linked below. Historical M0 decisions remain preserved with
 their supersession record.
@@ -135,7 +135,7 @@ in the [M3 exit evidence](project/m3-exit-evidence.md).
 
 ## M4 — Operations and Local Scale
 
-**Status:** Active (2026-08-01)
+**Status:** Complete (2026-08-03)
 
 The decision gates, dependency-ordered workstreams, architecture constraints,
 and definition of done are recorded in the
@@ -167,8 +167,11 @@ unbounded concurrency.
 **Exit evidence:** idempotent/guarded operator actions, shutdown and recovery
 matrix, telemetry disclosure/cardinality tests, and bounded load/soak results.
 
+The delivered boundary, measured bounded-resource evidence, and residual scope
+are recorded in the [M4 exit evidence](project/m4-exit-evidence.md).
+
 **Documentation:** CLI reference, runbooks, telemetry catalog, configuration,
-and capacity guidance.
+and [capacity guidance](operations/capacity-and-resource-budgets.md).
 
 **Release implication:** local operational claims only; no distributed or
 project-wide readiness claim.

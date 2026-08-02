@@ -41,21 +41,23 @@ planned multi-crate strategy.
 ## Status
 
 **M0 — Foundation**, **M1 — Executable Kernel**, **M2 — Durable Chunk and
-Restart**, and **M3 — Fault Tolerance and Flow** are complete implementation
-milestones. M2 includes the PostgreSQL
+Restart**, **M3 — Fault Tolerance and Flow**, and **M4 — Operations and Local
+Scale** are complete implementation milestones. M2 includes the PostgreSQL
 schema and repository, atomic enlisted chunks, definition-guarded restart,
 audited recovery, and separate-process pre/post-commit crash evidence recorded
 in the [M2 exit record](docs/project/m2-exit-evidence.md). M3 adds typed bounded
 retry/skip/rollback, deterministic listener boundaries, schema-2 durable fault
 state, finite compiled flow, durable decisions and start controls, and
 process-kill restart evidence recorded in the
-[M3 exit record](docs/project/m3-exit-evidence.md). **M4 — Operations and Local
-Scale** is active under its [kickoff gate](docs/project/m4-kickoff-gate.md);
-operator/explorer, CLI, shutdown/recovery, retention, bounded telemetry, the
-local-scale plan, durable partition repository/aggregation, and the first
-tasklet-only bounded parallel-split and local-partition runtime slices are
-implemented but unreleased; M4 process-kill, resource-bound, cancellation,
-PostgreSQL-matrix, and soak exit evidence remains open.
+[M3 exit record](docs/project/m3-exit-evidence.md). M4 adds guarded
+operator/explorer and retention services, the operator CLI and configuration
+diagnostics, graceful shutdown and stale recovery, bounded telemetry and
+diagnostic bundles, and the tasklet-only bounded parallel-split and
+local-partition runtime, with the PostgreSQL process-kill, resource-bound,
+cancellation-latency, telemetry-overhead, and soak evidence recorded in the
+[M4 exit record](docs/project/m4-exit-evidence.md) and the derived
+[capacity guidance](docs/operations/capacity-and-resource-budgets.md). Every M4
+row remains implemented or partial rather than released and verified.
 
 The shipped `oxide-batch` command is a guarded repository operator, not a
 standalone Rust job-definition loader. It can inspect and recover durable
