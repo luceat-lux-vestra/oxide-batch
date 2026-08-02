@@ -26,10 +26,10 @@
     "available_parallelism": 10,
     "os": "macos",
     "profile": "release",
-    "resident_kib": 106880,
+    "resident_kib": 106864,
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "10ebd3eed0cdb6c46bafb8a7c106903140d47daa",
-    "source_tree_clean": false,
+    "source_commit": "0c43a6a8d35e2c5f6a4cf752e3b3d1b98b5cb8dc",
+    "source_tree_clean": true,
     "tokio_worker_threads": 4
   },
   "notes": [
@@ -39,55 +39,55 @@
   "points": [
     {
       "export_disabled_latency": {
-        "max_micros": 13064,
-        "median_micros": 6977,
-        "min_micros": 5518,
+        "max_micros": 13744,
+        "median_micros": 7009,
+        "min_micros": 5496,
         "samples": 64,
-        "total_micros": 471927
+        "total_micros": 480267
       },
       "export_enabled_latency": {
-        "max_micros": 14365,
-        "median_micros": 7529,
-        "min_micros": 5448,
+        "max_micros": 12661,
+        "median_micros": 7041,
+        "min_micros": 5521,
         "samples": 64,
-        "total_micros": 502635
+        "total_micros": 465946
       },
       "iterations": 64,
       "metric_series": 2,
-      "overhead_ratio": 1.0650693857312679,
+      "overhead_ratio": 0.9701811700574888,
       "partitions": 16,
       "peak_queue_depth": 64,
       "queue_bound_records": 64,
       "records_dropped": 1088,
       "records_offered": 1152,
       "records_queued": 64,
-      "resident_kib": 106816,
+      "resident_kib": 106800,
       "workers": 4,
       "workload": "P-010 partitioned attempt"
     },
     {
       "export_disabled_latency": {
-        "max_micros": 62,
+        "max_micros": 57,
         "median_micros": 9,
-        "min_micros": 9,
+        "min_micros": 8,
         "samples": 64,
-        "total_micros": 682
+        "total_micros": 645
       },
       "export_enabled_latency": {
-        "max_micros": 24,
-        "median_micros": 15,
-        "min_micros": 14,
+        "max_micros": 20,
+        "median_micros": 13,
+        "min_micros": 13,
         "samples": 64,
-        "total_micros": 979
+        "total_micros": 898
       },
       "iterations": 64,
-      "overhead_ratio": 1.435483870967742,
+      "overhead_ratio": 1.3922480620155038,
       "peak_queue_depth": 448,
       "queue_bound_records": 1024,
       "records_dropped": 0,
       "records_offered": 448,
       "records_queued": 448,
-      "resident_kib": 106880,
+      "resident_kib": 106864,
       "workload": "P-001 no-op tasklet lifecycle"
     }
   ],

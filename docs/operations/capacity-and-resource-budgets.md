@@ -86,31 +86,35 @@ release profile, one Tokio runtime with four worker threads, in-memory
 repository. Reproduce with the command in
 [the measurement index](../engineering/measurements/m4/README.md).
 
+The committed raw files are **one capture**. Timing figures below are given as
+the range observed across four captures of the same code on the same host,
+because single-sample durations on a shared machine move by tens of percent.
+Structural figures — call counts, cursor sizes, counted drops — did not vary at
+all and are given exactly.
+
 | Observation | Value | Source |
 | --- | --- | --- |
-| Repository units of work per partition | `5.2`, identical at 1, 10, and 64 workers | [P-010](../engineering/measurements/m4/p-010.json) |
-| Partition throughput, 64 partitions of `4 ms` await | `151/s` at 1 worker, `1099/s` at 10, `5774/s` at 64 | P-010 |
-| Scaling efficiency against the one-worker baseline | `0.73` at 10 workers, `0.60` at 64 | P-010 |
-| Aggregation cost after the last child | `0.33–0.41 ms` | P-010 |
-| Explorer rows per page and cursor size | never above the requested size; `59` bytes | [P-012](../engineering/measurements/m4/p-012.json) |
-| Purge plan and apply, `50`-candidate batches | plan `9–124 µs`, apply `94–228 µs` | [Retention](../engineering/measurements/m4/retention.json) |
-| Launch latency interleaved with a purge campaign | `1.9 ms` median against a `3.0 ms` quiet baseline | Retention |
-| Stop request to worker cancellation | `1 µs` | [P-014](../engineering/measurements/m4/p-014.json) |
-| Stop request to durable terminal status | `137 µs` | P-014 |
-| Twelve owned tasks, request to complete drain | `15 µs`, zero unjoined | P-014 |
-| Telemetry export on a no-op lifecycle | `9 µs` quiet against `14 µs` exported, seven records per attempt | [Telemetry overhead](../engineering/measurements/m4/telemetry-overhead.json) |
-| Resident growth across 24 shutdown/restart cycles | `112 KiB` | [P-015](../engineering/measurements/m4/p-015.json) |
+| Repository units of work per partition | `5.2` exactly, identical at 1, 10, and 64 workers | [P-010](../engineering/measurements/m4/p-010.json) |
+| Partition throughput, 64 partitions of `4 ms` await | `135–161/s` at 1 worker, `1.1–1.4 k/s` at 10, `5.8–6.5 k/s` at 64 | P-010 |
+| Scaling efficiency against the one-worker baseline | `0.73–0.93` at 10 workers, `0.60–0.70` at 64 | P-010 |
+| Aggregation cost after the last child | `0.3–2.2 ms` | P-010 |
+| Explorer rows per page and cursor size | never above the requested size; `59` bytes exactly at every history size | [P-012](../engineering/measurements/m4/p-012.json) |
+| Purge plan and apply, `50`-candidate batches | plan `8–125 µs`, apply `89–228 µs` | [Retention](../engineering/measurements/m4/retention.json) |
+| Launch latency interleaved with a purge campaign | `1.9–2.2 ms` median against a `2.8–3.0 ms` quiet baseline | Retention |
+| Stop request to worker cancellation | `1–2 µs` | [P-014](../engineering/measurements/m4/p-014.json) |
+| Stop request to durable terminal status | `135–148 µs` | P-014 |
+| Twelve owned tasks, request to complete drain | `15–147 µs`, zero unjoined in every capture | P-014 |
+| Telemetry export on a no-op lifecycle | `9 µs` quiet against `13–15 µs` exported, seven records per attempt exactly | [Telemetry overhead](../engineering/measurements/m4/telemetry-overhead.json) |
+| Repository units per soak cycle | `68` exactly, constant across all 24 cycles | [P-015](../engineering/measurements/m4/p-015.json) |
+| Resident growth across 24 shutdown/restart cycles | `80–160 KiB` | P-015 |
 
-Scaling efficiency falls from `0.73` at 10 workers to `0.60` at 64 because the
-per-partition durable writes serialize behind the repository, not because the
-worker budget is unmet: peak occupancy equalled the configured budget at every
-scale point. Raising the worker budget beyond the repository's useful write
+Scaling stays sublinear and worsens as workers grow because the per-partition
+durable writes serialize behind the repository, not because the worker budget
+is unmet: peak occupancy equalled the configured budget at every scale point in
+every capture. Raising the worker budget beyond the repository's useful write
 concurrency buys throughput that the metadata writes give back.
 
-These are single-sample figures on a shared host, and they move materially
-between runs: a second capture of the same commit produced `0.93` and `0.70`
-for the same two points. Treat the direction — sublinear scaling that worsens
-as workers grow — as the result, and the exact ratio as one observation. The
+Treat the direction as the result and any single ratio as one observation. The
 plan's regression gates require repeated baselines before any of these numbers
 becomes a binding budget.
 

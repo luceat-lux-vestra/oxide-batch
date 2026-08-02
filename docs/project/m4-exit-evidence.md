@@ -67,12 +67,12 @@ are retained in [`docs/engineering/measurements/m4`](../engineering/measurements
 
 | Measurement | Asserted property | Recorded observation |
 | --- | --- | --- |
-| P-010 local partitions | Peak occupancy never exceeded the worker budget; 1, 10, and 64 workers produced the same durable partition observation; a pool one connection short of the derived budget failed closed before the first worker | `5.2` repository units per partition at every scale point; `0.73` scaling efficiency at 10 workers and `0.60` at 64; `0.33–0.41 ms` aggregation |
+| P-010 local partitions | Peak occupancy never exceeded the worker budget; 1, 10, and 64 workers produced the same durable partition observation; a pool one connection short of the derived budget failed closed before the first worker | `5.2` repository units per partition at every scale point; `0.73–0.93` scaling efficiency at 10 workers and `0.60–0.70` at 64; `0.3–2.2 ms` aggregation |
 | P-012 explorer pagination | No page exceeded its requested size or the `256`-byte cursor bound; each traversal returned every row exactly once | `59`-byte cursors and full-size pages across 1 000, 5 000, and 20 000 instances |
-| Bounded retention | Every plan stayed within its batch bound; the campaign purged exactly the eligible executions; every interleaved launch still committed | plan `9–124 µs`, apply `94–228 µs` per `50`-candidate batch; interleaved launch `1.9 ms` median against a `3.0 ms` quiet baseline |
-| P-014 stop, cancel, and drain | Cancellation reached a worker before the durable terminal status; the stopped attempt persisted `STOPPED`; no worker outlived its parent; the clean drain joined every child; intake closed; escalation reported every task that remained | `1 µs` request-to-cancellation, `137 µs` request-to-durable-terminal, `15 µs` to drain twelve owned tasks with zero unjoined, and an escalated drain that named all three remaining |
-| Telemetry overhead | The exporter queue never exceeded its bound; every rejected record was counted as dropped; export enabled and disabled produced identical durable observations | `9 µs` against `14 µs` per no-op lifecycle attempt for seven exported records; `1 088` counted drops at a deliberately saturated `64`-record queue |
-| P-015 soak | Every cycle joined every owned task, performed the same repository work, and reached the same durable observation; every restart re-ran only the partition that failed | `68` repository units per cycle held constant and `112 KiB` resident growth across 24 launch, fail, restart, and drain cycles |
+| Bounded retention | Every plan stayed within its batch bound; the campaign purged exactly the eligible executions; every interleaved launch still committed | plan `8–125 µs`, apply `89–228 µs` per `50`-candidate batch; interleaved launch `1.9–2.2 ms` median against a `2.8–3.0 ms` quiet baseline |
+| P-014 stop, cancel, and drain | Cancellation reached a worker before the durable terminal status; the stopped attempt persisted `STOPPED`; no worker outlived its parent; the clean drain joined every child; intake closed; escalation reported every task that remained | `1–2 µs` request-to-cancellation, `135–148 µs` request-to-durable-terminal, `15–147 µs` to drain twelve owned tasks with zero unjoined, and an escalated drain that named all three remaining |
+| Telemetry overhead | The exporter queue never exceeded its bound; every rejected record was counted as dropped; export enabled and disabled produced identical durable observations | `9 µs` against `13–15 µs` per no-op lifecycle attempt for seven exported records; `1 088` counted drops at a deliberately saturated `64`-record queue |
+| P-015 soak | Every cycle joined every owned task, performed the same repository work, and reached the same durable observation; every restart re-ran only the partition that failed | `68` repository units per cycle held constant and `80–160 KiB` resident growth across 24 launch, fail, restart, and drain cycles |
 
 ## Reviewed dispositions
 
@@ -82,19 +82,24 @@ are retained in [`docs/engineering/measurements/m4`](../engineering/measurements
   partition observation across all three scale points, and P-015 repeats the
   comparison across cycles.
 - **Falling scaling efficiency is a real result, not a defect.** Efficiency
-  drops from `0.73` at 10 workers to `0.60` at 64 because per-partition durable
-  writes serialize behind the repository while peak occupancy still equals the
-  configured budget. The budget is met; the metadata write path is the limit.
-  Widening it is M8 and M10 work, not an M4 correction. The ratios are one
-  sample on a shared host and move between runs; the sublinear direction, not
-  the exact value, is the result this gate claims.
+  drops from `0.73–0.93` at 10 workers to `0.60–0.70` at 64 because
+  per-partition durable writes serialize behind the repository while peak
+  occupancy still equals the configured budget. The budget is met; the metadata
+  write path is the limit. Widening it is M8 and M10 work, not an M4
+  correction.
+- **Timing figures are ranges, structural figures are exact.** Durations on a
+  shared host moved by tens of percent between captures of the same code, so
+  this record and the capacity guidance quote the range observed across four
+  captures. Call counts, cursor sizes, exported record counts, and counted
+  drops did not vary at all and are quoted exactly. The committed raw files are
+  one capture, not an average.
 - **Peak concurrent connections are bounded by contract, not sampled.** The
   launcher revalidates the derived `children + 1` requirement against the
   repository's declared capacity before creating an execution, and a pool one
   connection short fails closed. The measurement counts units of work per run
   and asserts that closed rejection rather than instrumenting a pool.
 - **Telemetry overhead is reported as a ratio with its sample.** On the no-op
-  lifecycle the export path is resolvable (`9 µs` to `14 µs` for seven
+  lifecycle the export path is resolvable (`9 µs` to `13–15 µs` for seven
   records); on the partitioned workload it is inside run-to-run variance. Both
   are recorded as measured rather than reduced to a single claim.
 - **The in-memory repository is a fixture, not a deployment target.** It clones

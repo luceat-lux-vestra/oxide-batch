@@ -45,9 +45,12 @@ The measurement suite is part of the ordinary workspace test run. Without
 captured in the release profile; a debug run reports the same structure with
 larger durations and records `"profile": "debug"`.
 
-Durations depend on the host and on concurrent load. The assertions do not: the
-suite compares structure, ordering, ceilings, and durable equivalence, never a
-duration against a threshold.
+Durations depend on the host and on concurrent load, and moved by tens of
+percent between captures of the same commit. The assertions do not: the suite
+compares structure, ordering, ceilings, and durable equivalence, never a
+duration against a threshold. Documents that quote these numbers give timings
+as the range observed across repeated captures and structural counts exactly;
+the files here are one capture, not an average.
 
 ## What these files do not establish
 

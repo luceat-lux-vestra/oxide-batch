@@ -30,10 +30,10 @@
     "available_parallelism": 10,
     "os": "macos",
     "profile": "release",
-    "resident_kib": 106496,
+    "resident_kib": 106512,
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "10ebd3eed0cdb6c46bafb8a7c106903140d47daa",
-    "source_tree_clean": false,
+    "source_commit": "0c43a6a8d35e2c5f6a4cf752e3b3d1b98b5cb8dc",
+    "source_tree_clean": true,
     "tokio_worker_threads": 4
   },
   "notes": [
@@ -53,7 +53,7 @@
       "owned_tasks": 12,
       "panicked_tasks": 0,
       "phase": "coordinator_drain",
-      "request_to_drain_complete_micros": 23,
+      "request_to_drain_complete_micros": 21,
       "unjoined_tasks": 0
     },
     {

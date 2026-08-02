@@ -18,10 +18,10 @@
     "available_parallelism": 10,
     "os": "macos",
     "profile": "release",
-    "resident_kib": 106736,
+    "resident_kib": 106720,
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "10ebd3eed0cdb6c46bafb8a7c106903140d47daa",
-    "source_tree_clean": false,
+    "source_commit": "0c43a6a8d35e2c5f6a4cf752e3b3d1b98b5cb8dc",
+    "source_tree_clean": true,
     "tokio_worker_threads": 4
   },
   "notes": [
@@ -30,31 +30,31 @@
   "points": [
     {
       "apply_latency": {
-        "max_micros": 220,
-        "median_micros": 170,
-        "min_micros": 91,
+        "max_micros": 218,
+        "median_micros": 173,
+        "min_micros": 105,
         "samples": 4,
-        "total_micros": 648
+        "total_micros": 649
       },
-      "baseline_launch_micros": 2855,
+      "baseline_launch_micros": 2947,
       "batch_bound": 50,
       "eligible_executions": 200,
       "interleaved_launch_latency": {
-        "max_micros": 2409,
-        "median_micros": 2059,
-        "min_micros": 1499,
+        "max_micros": 2636,
+        "median_micros": 2142,
+        "min_micros": 1426,
         "samples": 4,
-        "total_micros": 7765
+        "total_micros": 8049
       },
       "plan_latency": {
-        "max_micros": 130,
+        "max_micros": 123,
         "median_micros": 65,
-        "min_micros": 12,
+        "min_micros": 8,
         "samples": 5,
-        "total_micros": 342
+        "total_micros": 350
       },
       "purged_executions": 200,
-      "resident_kib": 106736,
+      "resident_kib": 106720,
       "rounds": 4
     }
   ],

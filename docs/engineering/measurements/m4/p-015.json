@@ -22,10 +22,10 @@
     "available_parallelism": 10,
     "os": "macos",
     "profile": "release",
-    "resident_kib": 106672,
+    "resident_kib": 106656,
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "10ebd3eed0cdb6c46bafb8a7c106903140d47daa",
-    "source_tree_clean": false,
+    "source_commit": "0c43a6a8d35e2c5f6a4cf752e3b3d1b98b5cb8dc",
+    "source_tree_clean": true,
     "tokio_worker_threads": 4
   },
   "notes": [
@@ -34,18 +34,18 @@
   "points": [
     {
       "cycle_latency": {
-        "max_micros": 3304,
-        "median_micros": 2988,
-        "min_micros": 2776,
+        "max_micros": 3433,
+        "median_micros": 3074,
+        "min_micros": 2689,
         "samples": 24,
-        "total_micros": 72291
+        "total_micros": 73313
       },
       "cycles": 24,
       "partitions_per_cycle": 8,
       "partitions_reused_on_restart": 7,
       "repository_units_per_cycle": 68,
-      "resident_kib_first_cycle": 106512,
-      "resident_kib_growth": 144,
+      "resident_kib_first_cycle": 106528,
+      "resident_kib_growth": 128,
       "resident_kib_last_cycle": 106656,
       "workers": 4
     }

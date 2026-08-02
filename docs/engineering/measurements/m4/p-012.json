@@ -14,10 +14,10 @@
     "available_parallelism": 10,
     "os": "macos",
     "profile": "release",
-    "resident_kib": 106288,
+    "resident_kib": 106320,
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "10ebd3eed0cdb6c46bafb8a7c106903140d47daa",
-    "source_tree_clean": false,
+    "source_commit": "0c43a6a8d35e2c5f6a4cf752e3b3d1b98b5cb8dc",
+    "source_tree_clean": true,
     "tokio_worker_threads": 4
   },
   "notes": [
@@ -28,15 +28,15 @@
       "cursor_bound_bytes": 256,
       "history_rows": 1000,
       "page_latency": {
-        "max_micros": 1352,
-        "median_micros": 652,
-        "min_micros": 426,
+        "max_micros": 1322,
+        "median_micros": 665,
+        "min_micros": 440,
         "samples": 3,
-        "total_micros": 2432
+        "total_micros": 2427
       },
       "page_size": 500,
       "pages": 3,
-      "resident_kib": 10752,
+      "resident_kib": 10736,
       "rows_returned": 1000,
       "widest_cursor_bytes": 59,
       "widest_page_rows": 500
@@ -45,15 +45,15 @@
       "cursor_bound_bytes": 256,
       "history_rows": 5000,
       "page_latency": {
-        "max_micros": 6351,
-        "median_micros": 2983,
-        "min_micros": 2810,
+        "max_micros": 6750,
+        "median_micros": 3335,
+        "min_micros": 2963,
         "samples": 11,
-        "total_micros": 36291
+        "total_micros": 39614
       },
       "page_size": 500,
       "pages": 11,
-      "resident_kib": 31104,
+      "resident_kib": 31088,
       "rows_returned": 5000,
       "widest_cursor_bytes": 59,
       "widest_page_rows": 500
@@ -62,15 +62,15 @@
       "cursor_bound_bytes": 256,
       "history_rows": 20000,
       "page_latency": {
-        "max_micros": 30029,
-        "median_micros": 14869,
-        "min_micros": 14388,
+        "max_micros": 30734,
+        "median_micros": 14994,
+        "min_micros": 14540,
         "samples": 41,
-        "total_micros": 623909
+        "total_micros": 631485
       },
       "page_size": 500,
       "pages": 41,
-      "resident_kib": 106288,
+      "resident_kib": 106304,
       "rows_returned": 20000,
       "widest_cursor_bytes": 59,
       "widest_page_rows": 500
