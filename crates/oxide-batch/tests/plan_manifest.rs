@@ -139,12 +139,12 @@ fn a_format2_runtime_still_reads_format1_manifests() -> Result<(), Box<dyn Error
 
 #[test]
 fn a_newer_manifest_is_rejected_rather_than_guessed() {
-    let newer = br#"{"entry":"load","format":3,"job":"daily_import","nodes":[],"transitions":[]}"#;
+    let newer = br#"{"entry":"load","format":4,"job":"daily_import","nodes":[],"transitions":[]}"#;
     assert_eq!(
         DefinitionManifest::read(newer),
         Err(ManifestError::UnsupportedFormat {
-            format: 3,
-            supported: 2,
+            format: 4,
+            supported: 3,
         })
     );
 }

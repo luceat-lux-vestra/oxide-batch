@@ -6,10 +6,10 @@
 //! structural error the accepted basic-flow contract names, and produces the
 //! canonical manifest whose SHA-256 digest is the definition fingerprint.
 //!
-//! The M3 slice is deliberately bounded: the graph is acyclic, terminals are
-//! [`TerminalKind::Complete`], [`TerminalKind::Fail`], and
-//! [`TerminalKind::Stop`], and split, nested, and remote nodes are not
-//! expressible. Existing one-step [`TaskletJob`](crate::TaskletJob) and
+//! The M3 graph remains acyclic. M4 adds only the accepted bounded split and
+//! local-partition forms; nested splits, decisions inside branches, dynamic
+//! partitioning, and remote execution remain outside this module's contract.
+//! Existing one-step [`TaskletJob`](crate::TaskletJob) and
 //! [`ChunkJob`](crate::ChunkJob) definitions lower into a compatibility plan
 //! that retains their original format-1 manifest bytes and fingerprint.
 
@@ -34,6 +34,158 @@ pub const MAX_TRANSITIONS: usize = 4_096;
 pub const MAX_OUTGOING_TRANSITIONS: usize = 64;
 /// The maximum length of one exit pattern in UTF-8 bytes.
 pub const MAX_PATTERN_BYTES: usize = 64;
+/// The maximum number of branches in one M4 split.
+pub const MAX_SPLIT_BRANCHES: usize = 8;
+/// The maximum number of linear steps in one split branch.
+pub const MAX_BRANCH_STEPS: usize = 8;
+/// The maximum number of durable local partitions in one partitioned step.
+pub const MAX_PARTITIONS: u16 = 1_024;
+/// The maximum number of concurrent local partition workers.
+pub const MAX_PARTITION_WORKERS: u8 = 64;
+
+/// The sibling behavior selected after one local child fails.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum LocalFailurePolicy {
+    /// Request cooperative cancellation of siblings, then join all children.
+    #[default]
+    CancelSiblings,
+    /// Allow siblings to reach their next boundary, then join all children.
+    DrainSiblings,
+}
+
+impl LocalFailurePolicy {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::CancelSiblings => "cancel_siblings",
+            Self::DrainSiblings => "drain_siblings",
+        }
+    }
+}
+
+/// The finite concurrency and connection budget for one M4 split.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct SplitBudget {
+    max_parallel_branches: u8,
+    repository_pool_size: u32,
+}
+
+impl SplitBudget {
+    /// Constructs validated branch-concurrency and connection bounds.
+    ///
+    /// # Errors
+    ///
+    /// Rejects zero/over-limit concurrency or a pool that cannot supply every
+    /// active branch plus the owning parent connection.
+    pub fn new(max_parallel_branches: u8, repository_pool_size: u32) -> Result<Self, PlanError> {
+        if max_parallel_branches == 0 || usize::from(max_parallel_branches) > MAX_SPLIT_BRANCHES {
+            return Err(PlanError::InvalidParallelBranchBudget {
+                max: MAX_SPLIT_BRANCHES,
+            });
+        }
+        let required = u32::from(max_parallel_branches).saturating_add(1);
+        if repository_pool_size < required {
+            return Err(PlanError::InsufficientPoolCapacity {
+                required,
+                configured: repository_pool_size,
+            });
+        }
+        Ok(Self {
+            max_parallel_branches,
+            repository_pool_size,
+        })
+    }
+
+    /// Returns the maximum concurrent split branches.
+    #[must_use]
+    pub const fn max_parallel_branches(self) -> u8 {
+        self.max_parallel_branches
+    }
+
+    /// Returns the validated repository pool size.
+    #[must_use]
+    pub const fn repository_pool_size(self) -> u32 {
+        self.repository_pool_size
+    }
+
+    fn manifest_value(self) -> Value {
+        json!({
+            "max_parallel_branches": self.max_parallel_branches,
+            "repository_pool_size": self.repository_pool_size
+        })
+    }
+}
+
+impl Default for SplitBudget {
+    fn default() -> Self {
+        Self {
+            max_parallel_branches: 1,
+            repository_pool_size: 2,
+        }
+    }
+}
+
+/// The finite worker and connection budget for one M4 partition manager.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct PartitionBudget {
+    max_partition_workers: u8,
+    repository_pool_size: u32,
+}
+
+impl PartitionBudget {
+    /// Constructs validated worker-concurrency and connection bounds.
+    ///
+    /// # Errors
+    ///
+    /// Rejects zero/over-limit concurrency or a pool that cannot supply every
+    /// active worker plus the owning parent connection.
+    pub fn new(max_partition_workers: u8, repository_pool_size: u32) -> Result<Self, PlanError> {
+        if !(1..=MAX_PARTITION_WORKERS).contains(&max_partition_workers) {
+            return Err(PlanError::InvalidPartitionWorkerBudget {
+                max: MAX_PARTITION_WORKERS,
+            });
+        }
+        let required = u32::from(max_partition_workers).saturating_add(1);
+        if repository_pool_size < required {
+            return Err(PlanError::InsufficientPoolCapacity {
+                required,
+                configured: repository_pool_size,
+            });
+        }
+        Ok(Self {
+            max_partition_workers,
+            repository_pool_size,
+        })
+    }
+
+    /// Returns the maximum concurrent partition workers.
+    #[must_use]
+    pub const fn max_partition_workers(self) -> u8 {
+        self.max_partition_workers
+    }
+
+    /// Returns the validated repository pool size.
+    #[must_use]
+    pub const fn repository_pool_size(self) -> u32 {
+        self.repository_pool_size
+    }
+
+    fn manifest_value(self) -> Value {
+        json!({
+            "max_partition_workers": self.max_partition_workers,
+            "repository_pool_size": self.repository_pool_size
+        })
+    }
+}
+
+impl Default for PartitionBudget {
+    fn default() -> Self {
+        Self {
+            max_partition_workers: 4,
+            repository_pool_size: 5,
+        }
+    }
+}
 
 definition_token!(
     NodeId,
@@ -598,6 +750,289 @@ impl DecisionNode {
     }
 }
 
+/// One declared linear branch of an M4 split.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SplitBranch {
+    steps: Vec<StepNode>,
+}
+
+impl SplitBranch {
+    /// Declares a branch from its ordered tasklet or chunk steps.
+    ///
+    /// Cardinality and identifier uniqueness are checked by
+    /// [`FlowGraph::compile`], so builders can assemble a complete diagnostic
+    /// instead of panicking while under construction.
+    #[must_use]
+    pub fn new(steps: Vec<StepNode>) -> Self {
+        Self { steps }
+    }
+
+    /// Borrows the branch steps in declared execution order.
+    #[must_use]
+    pub fn steps(&self) -> &[StepNode] {
+        &self.steps
+    }
+
+    /// Borrows the branch identity, which is its first logical step ID.
+    #[must_use]
+    pub fn id(&self) -> Option<&NodeId> {
+        self.steps.first().map(StepNode::id)
+    }
+
+    fn manifest_value(&self) -> Value {
+        Value::Array(self.steps.iter().map(StepNode::manifest_value).collect())
+    }
+}
+
+/// A bounded M4 split whose branches converge at exactly one join node.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SplitNode {
+    id: NodeId,
+    branches: Vec<SplitBranch>,
+    join: NodeId,
+    budget: SplitBudget,
+    failure_policy: LocalFailurePolicy,
+}
+
+impl SplitNode {
+    /// Declares a split, its ordered branches, and its unique join.
+    #[must_use]
+    pub fn new(id: NodeId, branches: Vec<SplitBranch>, join: NodeId, budget: SplitBudget) -> Self {
+        Self {
+            id,
+            branches,
+            join,
+            budget,
+            failure_policy: LocalFailurePolicy::default(),
+        }
+    }
+
+    /// Selects sibling failure behavior.
+    #[must_use]
+    pub const fn with_failure_policy(mut self, failure_policy: LocalFailurePolicy) -> Self {
+        self.failure_policy = failure_policy;
+        self
+    }
+
+    /// Borrows the stable split identifier.
+    #[must_use]
+    pub const fn id(&self) -> &NodeId {
+        &self.id
+    }
+
+    /// Borrows branches in deterministic aggregation order.
+    #[must_use]
+    pub fn branches(&self) -> &[SplitBranch] {
+        &self.branches
+    }
+
+    /// Borrows the split's unique join identifier.
+    #[must_use]
+    pub const fn join(&self) -> &NodeId {
+        &self.join
+    }
+
+    /// Returns the finite local resource budget.
+    #[must_use]
+    pub const fn budget(&self) -> SplitBudget {
+        self.budget
+    }
+
+    /// Returns sibling failure behavior.
+    #[must_use]
+    pub const fn failure_policy(&self) -> LocalFailurePolicy {
+        self.failure_policy
+    }
+
+    fn manifest_value(&self) -> Value {
+        json!({
+            "branches": self.branches.iter().map(SplitBranch::manifest_value).collect::<Vec<_>>(),
+            "budget": self.budget.manifest_value(),
+            "failure_policy": self.failure_policy.as_str(),
+            "id": self.id.as_str(),
+            "join": self.join.as_str(),
+            "kind": "split"
+        })
+    }
+}
+
+/// The structural join owned by one M4 split.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JoinNode {
+    id: NodeId,
+}
+
+impl JoinNode {
+    /// Declares a structural join.
+    #[must_use]
+    pub const fn new(id: NodeId) -> Self {
+        Self { id }
+    }
+
+    /// Borrows the stable join identifier.
+    #[must_use]
+    pub const fn id(&self) -> &NodeId {
+        &self.id
+    }
+
+    fn manifest_value(&self) -> Value {
+        json!({
+            "id": self.id.as_str(),
+            "kind": "join"
+        })
+    }
+}
+
+/// A finite durable partition count for one M4 partitioned step.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct PartitionCount(u16);
+
+impl PartitionCount {
+    /// Constructs a count in the accepted `1..=1024` range.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanError::InvalidPartitionCount`] outside that range.
+    pub fn new(value: u16) -> Result<Self, PlanError> {
+        if value == 0 || value > MAX_PARTITIONS {
+            return Err(PlanError::InvalidPartitionCount {
+                max: MAX_PARTITIONS,
+            });
+        }
+        Ok(Self(value))
+    }
+
+    /// Returns the declared partition count.
+    #[must_use]
+    pub const fn get(self) -> u16 {
+        self.0
+    }
+}
+
+/// A bounded local partition manager and its ordinary worker-step definition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PartitionedStepNode {
+    id: NodeId,
+    step_name: StepName,
+    worker: StepNode,
+    partitioner: ComponentRevision,
+    aggregation: ComponentRevision,
+    partitions: PartitionCount,
+    budget: PartitionBudget,
+    failure_policy: LocalFailurePolicy,
+    start: StartControls,
+}
+
+impl PartitionedStepNode {
+    /// Declares the complete restart-relevant local partition shape.
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub fn new(
+        id: NodeId,
+        step_name: StepName,
+        worker: StepNode,
+        partitioner: ComponentRevision,
+        aggregation: ComponentRevision,
+        partitions: PartitionCount,
+        budget: PartitionBudget,
+    ) -> Self {
+        Self {
+            id,
+            step_name,
+            worker,
+            partitioner,
+            aggregation,
+            partitions,
+            budget,
+            failure_policy: LocalFailurePolicy::default(),
+            start: StartControls::default(),
+        }
+    }
+
+    /// Selects sibling failure behavior.
+    #[must_use]
+    pub const fn with_failure_policy(mut self, failure_policy: LocalFailurePolicy) -> Self {
+        self.failure_policy = failure_policy;
+        self
+    }
+
+    /// Declares the partition manager's start controls.
+    #[must_use]
+    pub const fn with_start_controls(mut self, start: StartControls) -> Self {
+        self.start = start;
+        self
+    }
+
+    /// Borrows the stable manager node identifier.
+    #[must_use]
+    pub const fn id(&self) -> &NodeId {
+        &self.id
+    }
+
+    /// Borrows the manager's durable step name.
+    #[must_use]
+    pub const fn step_name(&self) -> &StepName {
+        &self.step_name
+    }
+
+    /// Borrows the ordinary tasklet or chunk worker declaration.
+    #[must_use]
+    pub const fn worker(&self) -> &StepNode {
+        &self.worker
+    }
+
+    /// Borrows the deterministic partitioner revision.
+    #[must_use]
+    pub const fn partitioner(&self) -> &ComponentRevision {
+        &self.partitioner
+    }
+
+    /// Borrows the deterministic aggregation revision.
+    #[must_use]
+    pub const fn aggregation(&self) -> &ComponentRevision {
+        &self.aggregation
+    }
+
+    /// Returns the finite partition count.
+    #[must_use]
+    pub const fn partition_count(&self) -> PartitionCount {
+        self.partitions
+    }
+
+    /// Returns the finite local resource budget.
+    #[must_use]
+    pub const fn budget(&self) -> PartitionBudget {
+        self.budget
+    }
+
+    /// Returns sibling failure behavior.
+    #[must_use]
+    pub const fn failure_policy(&self) -> LocalFailurePolicy {
+        self.failure_policy
+    }
+
+    /// Returns the partition manager's start controls.
+    #[must_use]
+    pub const fn start_controls(&self) -> StartControls {
+        self.start
+    }
+
+    fn manifest_value(&self) -> Value {
+        json!({
+            "aggregation": self.aggregation.as_str(),
+            "budget": self.budget.manifest_value(),
+            "failure_policy": self.failure_policy.as_str(),
+            "id": self.id.as_str(),
+            "kind": "partitioned_step",
+            "partition_count": self.partitions.get(),
+            "partitioner": self.partitioner.as_str(),
+            "start": self.start.manifest_value(),
+            "step_name": self.step_name.as_str(),
+            "worker": self.worker.manifest_value()
+        })
+    }
+}
+
 /// One node of a declared flow graph.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -606,6 +1041,12 @@ pub enum FlowNode {
     Step(Box<StepNode>),
     /// A deterministic decision.
     Decision(DecisionNode),
+    /// A bounded set of linear branches and its structural join.
+    Split(Box<SplitNode>),
+    /// A structural join owned by exactly one split.
+    Join(JoinNode),
+    /// A bounded durable local-partition manager.
+    PartitionedStep(Box<PartitionedStepNode>),
 }
 
 impl FlowNode {
@@ -621,12 +1062,33 @@ impl FlowNode {
         Self::Decision(node)
     }
 
+    /// Declares a bounded split node.
+    #[must_use]
+    pub fn split(node: SplitNode) -> Self {
+        Self::Split(Box::new(node))
+    }
+
+    /// Declares a structural join node.
+    #[must_use]
+    pub const fn join(node: JoinNode) -> Self {
+        Self::Join(node)
+    }
+
+    /// Declares a bounded local partitioned-step node.
+    #[must_use]
+    pub fn partitioned_step(node: PartitionedStepNode) -> Self {
+        Self::PartitionedStep(Box::new(node))
+    }
+
     /// Borrows the node's stable identifier.
     #[must_use]
     pub const fn id(&self) -> &NodeId {
         match self {
             Self::Step(node) => node.id(),
             Self::Decision(node) => node.id(),
+            Self::Split(node) => node.id(),
+            Self::Join(node) => node.id(),
+            Self::PartitionedStep(node) => node.id(),
         }
     }
 
@@ -634,6 +1096,9 @@ impl FlowNode {
         match self {
             Self::Step(node) => node.manifest_value(),
             Self::Decision(node) => node.manifest_value(),
+            Self::Split(node) => node.manifest_value(),
+            Self::Join(node) => node.manifest_value(),
+            Self::PartitionedStep(node) => node.manifest_value(),
         }
     }
 }
@@ -803,6 +1268,7 @@ impl FlowGraph {
                 node: entry.clone(),
             });
         }
+        let local_scale = check_local_scale_subset(&entry, &nodes)?;
 
         let mut outgoing: BTreeMap<NodeId, Vec<FlowTransition>> = BTreeMap::new();
         for transition in self.transitions {
@@ -818,6 +1284,18 @@ impl FlowGraph {
                     node: target.clone(),
                 });
             }
+            if let FlowTarget::Node(target) = transition.target()
+                && matches!(nodes.get(target), Some(FlowNode::Join(_)))
+            {
+                return Err(PlanError::JoinHasExternalEntry {
+                    join: target.clone(),
+                });
+            }
+            if matches!(nodes.get(transition.source()), Some(FlowNode::Split(_))) {
+                return Err(PlanError::SplitHasExplicitTransition {
+                    split: transition.source().clone(),
+                });
+            }
             let edges = outgoing.entry(transition.source().clone()).or_default();
             if edges.len() == MAX_OUTGOING_TRANSITIONS {
                 return Err(PlanError::TooManyOutgoingTransitions {
@@ -828,7 +1306,10 @@ impl FlowGraph {
             edges.push(transition);
         }
 
-        for id in nodes.keys() {
+        for (id, node) in &nodes {
+            if matches!(node, FlowNode::Split(_)) {
+                continue;
+            }
             let edges = outgoing
                 .get(id)
                 .filter(|edges| !edges.is_empty())
@@ -850,7 +1331,7 @@ impl FlowGraph {
 
         check_reachable_and_acyclic(&entry, &nodes, &compiled)?;
 
-        let manifest = flow_manifest(job_name, &entry, &nodes, &compiled);
+        let manifest = flow_manifest(job_name, &entry, &nodes, &compiled, local_scale);
         let definition = DefinitionIdentity::from_flow_manifest(job_name, revision, &manifest)
             .map_err(PlanError::Manifest)?;
         Ok(CompiledExecutionPlan {
@@ -860,6 +1341,89 @@ impl FlowGraph {
             transitions: compiled,
         })
     }
+}
+
+fn check_local_scale_subset(
+    entry: &NodeId,
+    nodes: &BTreeMap<NodeId, FlowNode>,
+) -> Result<bool, PlanError> {
+    let mut embedded_ids = BTreeSet::new();
+    let mut join_owners: BTreeMap<NodeId, NodeId> = BTreeMap::new();
+    let mut local_scale = false;
+    for (id, node) in nodes {
+        match node {
+            FlowNode::Split(split) => {
+                local_scale = true;
+                if id == entry {
+                    return Err(PlanError::SplitIsEntry { split: id.clone() });
+                }
+                if !(2..=MAX_SPLIT_BRANCHES).contains(&split.branches().len()) {
+                    return Err(PlanError::InvalidSplitBranchCount {
+                        split: id.clone(),
+                        min: 2,
+                        max: MAX_SPLIT_BRANCHES,
+                    });
+                }
+                if usize::from(split.budget().max_parallel_branches()) > split.branches().len() {
+                    return Err(PlanError::ParallelBudgetExceedsBranches {
+                        split: id.clone(),
+                        branches: split.branches().len(),
+                    });
+                }
+                if !matches!(nodes.get(split.join()), Some(FlowNode::Join(_))) {
+                    return Err(PlanError::InvalidSplitJoin {
+                        split: id.clone(),
+                        join: split.join().clone(),
+                    });
+                }
+                if let Some(first) = join_owners.insert(split.join().clone(), id.clone()) {
+                    return Err(PlanError::JoinHasMultipleOwners {
+                        join: split.join().clone(),
+                        first,
+                        second: id.clone(),
+                    });
+                }
+                for branch in split.branches() {
+                    if !(1..=MAX_BRANCH_STEPS).contains(&branch.steps().len()) {
+                        return Err(PlanError::InvalidBranchLength {
+                            split: id.clone(),
+                            max: MAX_BRANCH_STEPS,
+                        });
+                    }
+                    for step in branch.steps() {
+                        if nodes.contains_key(step.id()) || !embedded_ids.insert(step.id().clone())
+                        {
+                            return Err(PlanError::DuplicateNodeId {
+                                node: step.id().clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            FlowNode::Join(_) => {
+                local_scale = true;
+            }
+            FlowNode::PartitionedStep(partitioned) => {
+                local_scale = true;
+                let worker = partitioned.worker().id();
+                if nodes.contains_key(worker) || !embedded_ids.insert(worker.clone()) {
+                    return Err(PlanError::DuplicateNodeId {
+                        node: worker.clone(),
+                    });
+                }
+            }
+            FlowNode::Step(_) | FlowNode::Decision(_) => {}
+        }
+    }
+    if nodes.len().saturating_add(embedded_ids.len()) > MAX_NODES {
+        return Err(PlanError::TooManyNodes { max: MAX_NODES });
+    }
+    for (id, node) in nodes {
+        if matches!(node, FlowNode::Join(_)) && !join_owners.contains_key(id) {
+            return Err(PlanError::OrphanJoin { join: id.clone() });
+        }
+    }
+    Ok(local_scale)
 }
 
 fn check_unambiguous(node: &NodeId, edges: &[FlowTransition]) -> Result<(), PlanError> {
@@ -886,7 +1450,7 @@ fn check_reachable_and_acyclic(
 ) -> Result<(), PlanError> {
     let mut visited = BTreeSet::new();
     let mut on_path = BTreeSet::new();
-    visit(entry, transitions, &mut visited, &mut on_path)?;
+    visit(entry, nodes, transitions, &mut visited, &mut on_path)?;
     for id in nodes.keys() {
         if !visited.contains(id) {
             return Err(PlanError::UnreachableNode { node: id.clone() });
@@ -897,6 +1461,7 @@ fn check_reachable_and_acyclic(
 
 fn visit(
     node: &NodeId,
+    nodes: &BTreeMap<NodeId, FlowNode>,
     transitions: &BTreeMap<NodeId, Vec<FlowTransition>>,
     visited: &mut BTreeSet<NodeId>,
     on_path: &mut BTreeSet<NodeId>,
@@ -908,10 +1473,13 @@ fn visit(
         return Ok(());
     }
     on_path.insert(node.clone());
+    if let Some(FlowNode::Split(split)) = nodes.get(node) {
+        visit(split.join(), nodes, transitions, visited, on_path)?;
+    }
     if let Some(edges) = transitions.get(node) {
         for edge in edges {
             if let FlowTarget::Node(target) = edge.target() {
-                visit(target, transitions, visited, on_path)?;
+                visit(target, nodes, transitions, visited, on_path)?;
             }
         }
     }
@@ -959,21 +1527,40 @@ fn flow_manifest(
     entry: &NodeId,
     nodes: &BTreeMap<NodeId, FlowNode>,
     transitions: &BTreeMap<NodeId, Vec<FlowTransition>>,
+    local_scale: bool,
 ) -> Value {
     let node_values: Vec<Value> = nodes.values().map(FlowNode::manifest_value).collect();
     let transition_values: Vec<Value> = transitions
         .values()
         .flat_map(|edges| edges.iter().map(FlowTransition::manifest_value))
         .collect();
-    json!({
-        "bounds": {
+    let bounds = if local_scale {
+        json!({
+            "max_branch_steps": MAX_BRANCH_STEPS,
+            "max_nodes": MAX_NODES,
+            "max_outgoing_transitions": MAX_OUTGOING_TRANSITIONS,
+            "max_partition_workers": MAX_PARTITION_WORKERS,
+            "max_partitions": MAX_PARTITIONS,
+            "max_pattern_bytes": MAX_PATTERN_BYTES,
+            "max_split_branches": MAX_SPLIT_BRANCHES,
+            "max_transitions": MAX_TRANSITIONS
+        })
+    } else {
+        json!({
             "max_nodes": MAX_NODES,
             "max_outgoing_transitions": MAX_OUTGOING_TRANSITIONS,
             "max_pattern_bytes": MAX_PATTERN_BYTES,
             "max_transitions": MAX_TRANSITIONS
-        },
+        })
+    };
+    json!({
+        "bounds": bounds,
         "entry": entry.as_str(),
-        "format": crate::definition::MANIFEST_FORMAT_FLOW,
+        "format": if local_scale {
+            crate::definition::MANIFEST_FORMAT_LOCAL_SCALE
+        } else {
+            crate::definition::MANIFEST_FORMAT_FLOW
+        },
         "job": job_name.as_str(),
         "nodes": node_values,
         "transitions": transition_values
@@ -1186,6 +1773,87 @@ pub enum PlanError {
     ZeroStartLimit,
     /// A decision input-contract version of zero is not a version.
     ZeroDecisionInputVersion,
+    /// A split declared fewer than two or more than eight branches.
+    InvalidSplitBranchCount {
+        /// Split whose branch count was invalid.
+        split: NodeId,
+        /// Minimum accepted branch count.
+        min: usize,
+        /// Maximum accepted branch count.
+        max: usize,
+    },
+    /// A split branch was empty or longer than the accepted bound.
+    InvalidBranchLength {
+        /// Owning split.
+        split: NodeId,
+        /// Maximum accepted branch length.
+        max: usize,
+    },
+    /// A split was declared as the graph entry.
+    SplitIsEntry {
+        /// Rejected split.
+        split: NodeId,
+    },
+    /// A split did not reference a declared structural join.
+    InvalidSplitJoin {
+        /// Owning split.
+        split: NodeId,
+        /// Missing or wrongly typed join.
+        join: NodeId,
+    },
+    /// More than one split tried to own the same join.
+    JoinHasMultipleOwners {
+        /// Multiply owned join.
+        join: NodeId,
+        /// First owning split.
+        first: NodeId,
+        /// Second owning split.
+        second: NodeId,
+    },
+    /// A join was not owned by any split.
+    OrphanJoin {
+        /// Unowned join.
+        join: NodeId,
+    },
+    /// A normal transition attempted to enter a structural join.
+    JoinHasExternalEntry {
+        /// Join with an external incoming edge.
+        join: NodeId,
+    },
+    /// A split tried to bypass its implicit join edge.
+    SplitHasExplicitTransition {
+        /// Split with the explicit edge.
+        split: NodeId,
+    },
+    /// The branch concurrency budget exceeded the declared branch count.
+    ParallelBudgetExceedsBranches {
+        /// Split with the contradictory budget.
+        split: NodeId,
+        /// Declared branch count.
+        branches: usize,
+    },
+    /// A branch concurrency budget was zero or above the M4 ceiling.
+    InvalidParallelBranchBudget {
+        /// Maximum accepted branch concurrency.
+        max: usize,
+    },
+    /// A partition-worker budget was zero or above the M4 ceiling.
+    InvalidPartitionWorkerBudget {
+        /// Maximum accepted worker concurrency.
+        max: u8,
+    },
+    /// The declared pool cannot supply active children plus their parent.
+    InsufficientPoolCapacity {
+        /// Minimum required connection count.
+        required: u32,
+        /// Declared connection count.
+        configured: u32,
+    },
+    /// A durable partition count was zero or above the M4 ceiling.
+    InvalidPartitionCount {
+        /// Maximum accepted partition count.
+        max: u16,
+    },
     /// A logical identifier or revision token was invalid.
     Token(DefinitionError),
     /// The canonical manifest could not be encoded within its bound.
@@ -1193,6 +1861,10 @@ pub enum PlanError {
 }
 
 impl fmt::Display for PlanError {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "each typed plan rejection retains one stable redacted diagnostic"
+    )]
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingEntryNode => formatter.write_str("flow graph has no entry node"),
@@ -1248,6 +1920,74 @@ impl fmt::Display for PlanError {
             Self::ZeroStartLimit => formatter.write_str("start limit must be nonzero"),
             Self::ZeroDecisionInputVersion => {
                 formatter.write_str("decision input version must be nonzero")
+            }
+            Self::InvalidSplitBranchCount { split, min, max } => write!(
+                formatter,
+                "split {} must declare {min} to {max} branches",
+                split.as_str()
+            ),
+            Self::InvalidBranchLength { split, max } => write!(
+                formatter,
+                "split {} branches must declare 1 to {max} steps",
+                split.as_str()
+            ),
+            Self::SplitIsEntry { split } => {
+                write!(
+                    formatter,
+                    "split {} cannot be the entry node",
+                    split.as_str()
+                )
+            }
+            Self::InvalidSplitJoin { split, join } => write!(
+                formatter,
+                "split {} does not own declared join {}",
+                split.as_str(),
+                join.as_str()
+            ),
+            Self::JoinHasMultipleOwners {
+                join,
+                first,
+                second,
+            } => write!(
+                formatter,
+                "join {} is owned by both splits {} and {}",
+                join.as_str(),
+                first.as_str(),
+                second.as_str()
+            ),
+            Self::OrphanJoin { join } => {
+                write!(formatter, "join {} has no owning split", join.as_str())
+            }
+            Self::JoinHasExternalEntry { join } => write!(
+                formatter,
+                "join {} can be entered only by its owning split",
+                join.as_str()
+            ),
+            Self::SplitHasExplicitTransition { split } => write!(
+                formatter,
+                "split {} reaches only its declared join",
+                split.as_str()
+            ),
+            Self::ParallelBudgetExceedsBranches { split, branches } => write!(
+                formatter,
+                "split {} parallel budget exceeds its {branches} branches",
+                split.as_str()
+            ),
+            Self::InvalidParallelBranchBudget { max } => {
+                write!(formatter, "parallel branch budget must be 1 to {max}")
+            }
+            Self::InvalidPartitionWorkerBudget { max } => {
+                write!(formatter, "partition worker budget must be 1 to {max}")
+            }
+            Self::InsufficientPoolCapacity {
+                required,
+                configured,
+            } => write!(
+                formatter,
+                "repository pool size {configured} cannot supply required capacity {required}"
+            ),
+            Self::InvalidPartitionCount { max } => {
+                write!(formatter, "partition count must be 1 to {max}")
             }
             Self::Token(error) => write!(formatter, "flow graph token is invalid: {error}"),
             Self::Manifest(error) => {
