@@ -116,6 +116,7 @@ mod runtime;
 mod service;
 mod shutdown;
 mod state;
+mod telemetry;
 
 pub use chunk::{
     BusinessStatement, BusinessTransaction, BusinessTransactionError, BusinessValue,
@@ -230,6 +231,19 @@ pub use shutdown::{
 pub use state::{
     Checkpoint, DurableStateKind, ExecutionContext, StateCodecError, StateError, StateLimits,
     StateSchemaId, StateSchemaVersion, VersionedStateCodec,
+};
+pub use telemetry::{
+    DEFAULT_DROP_REPORT_WINDOW, DEFAULT_EXPORT_QUEUE_RECORDS, DEFAULT_RETAINED_EVENT_CAPACITY,
+    DEFAULT_RETAINED_EVENTS_PER_EXECUTION, DropReportWindow, EnqueueResult, EventTiming,
+    ExportError, ExportFlushReport, ExportQueueBound, ExporterConfigurationError,
+    IncidentBufferConfigurationError, IncidentEventBuffer, MAX_DROP_REPORT_WINDOW,
+    MAX_EXPORT_QUEUE_RECORDS, MAX_METRIC_NAME_ALLOWLIST, MAX_RETAINED_EVENTS_PER_EXECUTION,
+    METRIC_CARDINALITY_BUDGET, MIN_DROP_REPORT_WINDOW, MIN_EXPORT_QUEUE_RECORDS,
+    MetricCardinalityGuard, MetricConfigurationError, MetricDimensions, MetricFamily,
+    MetricObservation, MetricUnit, OTHER_LABEL_VALUE, TELEMETRY_EVENT_CATALOG,
+    TELEMETRY_SCHEMA_VERSION, TELEMETRY_SPAN_CATALOG, TelemetryEventKind, TelemetryEventSink,
+    TelemetryExportSink, TelemetryExporter, TelemetryQueue, TelemetryRecord, TelemetrySpanKind,
+    TelemetrySpanStatus,
 };
 
 /// The version of the `OxideBatch` facade crate.

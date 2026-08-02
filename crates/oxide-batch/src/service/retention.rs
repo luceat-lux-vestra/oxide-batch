@@ -15,7 +15,7 @@ use std::time::{Duration, SystemTime};
 use super::{ActorRef, CanonicalWriter, OperationId, ReasonCode, hex_digest};
 use crate::{
     BatchStatus, Clock, ExecutionVersion, JobExecutionId, JobInstanceId, JobName, JobRepository,
-    RepositoryError, RetentionActionId,
+    RepositoryError, RetentionActionId, TelemetryEventKind, TelemetryEventSink, TelemetryRecord,
 };
 
 /// Maximum executions one purge batch may target.
@@ -856,6 +856,7 @@ impl From<RepositoryError> for RetentionError {
 pub struct RetentionService<R> {
     repository: R,
     clock: Arc<dyn Clock>,
+    event_sinks: Vec<Arc<dyn TelemetryEventSink>>,
 }
 
 impl<R> fmt::Debug for RetentionService<R> {
@@ -869,7 +870,18 @@ impl<R> fmt::Debug for RetentionService<R> {
 impl<R: JobRepository> RetentionService<R> {
     /// Binds one repository and one injected facade clock.
     pub const fn new(repository: R, clock: Arc<dyn Clock>) -> Self {
-        Self { repository, clock }
+        Self {
+            repository,
+            clock,
+            event_sinks: Vec::new(),
+        }
+    }
+
+    /// Attaches a non-authoritative, panic-isolated telemetry sink.
+    #[must_use]
+    pub fn with_event_sink(mut self, sink: Arc<dyn TelemetryEventSink>) -> Self {
+        self.event_sinks.push(sink);
+        self
     }
 
     /// Borrows the underlying repository.
@@ -905,14 +917,19 @@ impl<R: JobRepository> RetentionService<R> {
         reason: ReasonCode,
         job_instance_id: JobInstanceId,
     ) -> Result<RetentionReport, RetentionError> {
-        self.hold_action(
-            RetentionAction::Hold,
-            operation_id,
-            actor,
-            reason,
-            job_instance_id,
-        )
-        .await
+        let result = self
+            .hold_action(
+                RetentionAction::Hold,
+                operation_id,
+                actor,
+                reason,
+                job_instance_id,
+            )
+            .await;
+        if let Ok(report) = &result {
+            self.emit_report(report);
+        }
+        result
     }
 
     /// Releases the hold on a logical instance.
@@ -928,14 +945,19 @@ impl<R: JobRepository> RetentionService<R> {
         reason: ReasonCode,
         job_instance_id: JobInstanceId,
     ) -> Result<RetentionReport, RetentionError> {
-        self.hold_action(
-            RetentionAction::ReleaseHold,
-            operation_id,
-            actor,
-            reason,
-            job_instance_id,
-        )
-        .await
+        let result = self
+            .hold_action(
+                RetentionAction::ReleaseHold,
+                operation_id,
+                actor,
+                reason,
+                job_instance_id,
+            )
+            .await;
+        if let Ok(report) = &result {
+            self.emit_report(report);
+        }
+        result
     }
 
     async fn hold_action(
@@ -1004,7 +1026,14 @@ impl<R: JobRepository> RetentionService<R> {
         let mut unit = self.repository.begin().await?;
         let survey = unit.purge_survey(request).await?;
         unit.rollback().await?;
-        Ok(PurgePlan::new(request.clone(), survey))
+        let plan = PurgePlan::new(request.clone(), survey);
+        self.emit_record(&TelemetryRecord::retention(
+            TelemetryEventKind::RetentionPlanned,
+            None,
+            None,
+            PurgeCounts::default(),
+        ));
+        Ok(plan)
     }
 
     /// Applies one bounded purge batch under its plan digest.
@@ -1030,11 +1059,9 @@ impl<R: JobRepository> RetentionService<R> {
             .replay(RetentionAction::ApplyPurge, &operation_id)
             .await?
         {
-            return Ok(RetentionReport::new(
-                RetentionOutcome::Replayed,
-                record,
-                None,
-            ));
+            let report = RetentionReport::new(RetentionOutcome::Replayed, record, None);
+            self.emit_report(&report);
+            return Ok(report);
         }
         let applied_at = self.clock.now();
         let mut unit = self.repository.begin().await?;
@@ -1053,11 +1080,9 @@ impl<R: JobRepository> RetentionService<R> {
         };
         let record = unit.append_retention_action(&draft).await?;
         unit.commit().await?;
-        Ok(RetentionReport::new(
-            RetentionOutcome::Applied,
-            record,
-            None,
-        ))
+        let report = RetentionReport::new(RetentionOutcome::Applied, record, None);
+        self.emit_report(&report);
+        Ok(report)
     }
 
     async fn replay(
@@ -1069,5 +1094,20 @@ impl<R: JobRepository> RetentionService<R> {
         let recorded = unit.find_retention_action(action, operation_id).await?;
         unit.rollback().await?;
         Ok(recorded)
+    }
+
+    fn emit_report(&self, report: &RetentionReport) {
+        self.emit_record(&TelemetryRecord::retention(
+            TelemetryEventKind::RetentionApplied,
+            Some(report.record().action()),
+            Some(report.outcome()),
+            report.counts(),
+        ));
+    }
+
+    fn emit_record(&self, record: &TelemetryRecord) {
+        for sink in &self.event_sinks {
+            crate::telemetry::emit_safely(Some(sink), record);
+        }
     }
 }

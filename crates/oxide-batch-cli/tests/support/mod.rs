@@ -67,6 +67,7 @@ pub struct TestHost {
     env: BTreeMap<String, String>,
     files: BTreeMap<PathBuf, Vec<u8>>,
     modes: BTreeMap<PathBuf, u32>,
+    directories: BTreeMap<PathBuf, Vec<String>>,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
     stdin_interactive: bool,
@@ -136,6 +137,25 @@ impl TestHost {
         String::from_utf8_lossy(&self.stderr).into_owned()
     }
 
+    /// Returns one generated file as UTF-8 test text.
+    #[must_use]
+    pub fn file_text(&self, path: &str) -> String {
+        self.files
+            .get(&PathBuf::from(path))
+            .map_or_else(String::new, |bytes| {
+                String::from_utf8_lossy(bytes).into_owned()
+            })
+    }
+
+    /// Returns deterministic file names written below one generated directory.
+    #[must_use]
+    pub fn directory_files(&self, path: &str) -> Vec<String> {
+        self.directories
+            .get(&PathBuf::from(path))
+            .cloned()
+            .unwrap_or_default()
+    }
+
     /// Parses standard output as the versioned JSON envelope.
     #[must_use]
     pub fn envelope(&self) -> serde_json::Value {
@@ -160,6 +180,23 @@ impl Host for TestHost {
             return Err(io::Error::new(io::ErrorKind::NotFound, "no such test file"));
         }
         Ok(self.modes.get(path).copied())
+    }
+
+    fn write_new_directory(&mut self, path: &Path, files: &[(String, Vec<u8>)]) -> io::Result<()> {
+        if self.directories.contains_key(path) {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "target exists",
+            ));
+        }
+        self.directories.insert(
+            path.to_path_buf(),
+            files.iter().map(|(name, _)| name.clone()).collect(),
+        );
+        for (name, bytes) in files {
+            self.files.insert(path.join(name), bytes.clone());
+        }
+        Ok(())
     }
 
     fn write_stdout(&mut self, bytes: &[u8]) -> io::Result<()> {

@@ -18,7 +18,8 @@ use crate::{
     BatchStatus, Clock, DefinitionIdentity, ExecutionVersion, FailureSummary, JobExecution,
     JobExecutionId, JobInstanceId, JobInstanceKey, JobRepository, LifecycleError,
     LifecycleTransition, OperatorRequestId, RecoveryDisposition, RecoveryProposal, RecoveryRequest,
-    RecoveryRequestError, RepositoryError, RepositoryUnitOfWork,
+    RecoveryRequestError, RepositoryError, RepositoryUnitOfWork, TelemetryEventKind,
+    TelemetryEventSink, TelemetryRecord,
 };
 
 /// One validated mutating operator request.
@@ -854,6 +855,7 @@ impl From<RepositoryError> for OperatorError {
 pub struct JobOperator<R> {
     repository: R,
     clock: Arc<dyn Clock>,
+    event_sinks: Vec<Arc<dyn TelemetryEventSink>>,
 }
 
 impl<R> fmt::Debug for JobOperator<R> {
@@ -867,7 +869,18 @@ impl<R> fmt::Debug for JobOperator<R> {
 impl<R: JobRepository> JobOperator<R> {
     /// Binds one repository and one injected facade clock.
     pub const fn new(repository: R, clock: Arc<dyn Clock>) -> Self {
-        Self { repository, clock }
+        Self {
+            repository,
+            clock,
+            event_sinks: Vec::new(),
+        }
+    }
+
+    /// Attaches a non-authoritative, panic-isolated telemetry sink.
+    #[must_use]
+    pub fn with_event_sink(mut self, sink: Arc<dyn TelemetryEventSink>) -> Self {
+        self.event_sinks.push(sink);
+        self
     }
 
     /// Borrows the underlying repository.
@@ -890,6 +903,7 @@ impl<R: JobRepository> JobOperator<R> {
         request: &OperatorRequest,
     ) -> Result<OperatorOutcome, OperatorError> {
         if let Some(recorded) = self.replay(request).await? {
+            self.emit_outcome(request, &recorded);
             return Ok(recorded);
         }
         let requested_at = self.clock.now();
@@ -902,7 +916,11 @@ impl<R: JobRepository> JobOperator<R> {
                 // connection, and a genuine outage resurfaces when the audit
                 // opens its own unit of work.
                 let _ = unit.rollback().await;
-                return self.audit_rejection(request, rejection, requested_at).await;
+                let outcome = self
+                    .audit_rejection(request, rejection, requested_at)
+                    .await?;
+                self.emit_outcome(request, &outcome);
+                return Ok(outcome);
             }
             Err(EffectFailure::Failed(error)) => {
                 // The applied effect is already lost; the failure that caused
@@ -944,12 +962,54 @@ impl<R: JobRepository> JobOperator<R> {
             Err(error) => return Err(error.into()),
         };
         unit.commit().await?;
-        Ok(OperatorOutcome::new(
+        let outcome = OperatorOutcome::new(
             OperatorOutcomeClass::Applied,
             record,
             effect.execution,
             effect.changed,
-        ))
+        );
+        self.emit_outcome(request, &outcome);
+        Ok(outcome)
+    }
+
+    fn emit_outcome(&self, request: &OperatorRequest, outcome: &OperatorOutcome) {
+        let primary = match outcome.class() {
+            OperatorOutcomeClass::Rejected => TelemetryEventKind::OperatorRequestRejected,
+            OperatorOutcomeClass::Applied | OperatorOutcomeClass::Replayed => {
+                TelemetryEventKind::OperatorRequestAccepted
+            }
+        };
+        self.emit_record(&TelemetryRecord::operator(
+            primary,
+            request,
+            Some(outcome.class()),
+            outcome.rejection(),
+        ));
+        if request.action() == OperatorAction::Recover {
+            let recovery = if outcome.class() == OperatorOutcomeClass::Rejected {
+                TelemetryEventKind::RecoveryRejected
+            } else {
+                TelemetryEventKind::RecoveryApplied
+            };
+            self.emit_record(&TelemetryRecord::operator(
+                recovery,
+                request,
+                Some(outcome.class()),
+                outcome.rejection(),
+            ));
+        }
+        self.emit_record(&TelemetryRecord::operator(
+            TelemetryEventKind::OperatorRequestCompleted,
+            request,
+            Some(outcome.class()),
+            outcome.rejection(),
+        ));
+    }
+
+    fn emit_record(&self, record: &TelemetryRecord) {
+        for sink in &self.event_sinks {
+            crate::telemetry::emit_safely(Some(sink), record);
+        }
     }
 
     async fn replay(

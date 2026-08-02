@@ -17,6 +17,8 @@ use futures_util::FutureExt;
 use tokio::sync::Notify;
 use tokio::task::JoinSet;
 
+use crate::{TelemetryEventKind, TelemetryEventSink, TelemetryRecord};
+
 const ACCEPTING: u8 = 0;
 const STOPPING: u8 = 1;
 const ESCALATED: u8 = 2;
@@ -384,6 +386,7 @@ pub struct ShutdownCoordinator {
     telemetry_deadline: TelemetryFlushDeadline,
     tasks: JoinSet<(ShutdownTaskPhase, bool)>,
     phases: BTreeMap<ShutdownTaskPhase, usize>,
+    event_sink: Option<Arc<dyn TelemetryEventSink>>,
 }
 
 impl fmt::Debug for ShutdownCoordinator {
@@ -420,7 +423,15 @@ impl ShutdownCoordinator {
             telemetry_deadline,
             tasks: JoinSet::new(),
             phases: BTreeMap::new(),
+            event_sink: None,
         })
+    }
+
+    /// Attaches a non-authoritative, panic-isolated telemetry sink.
+    #[must_use]
+    pub fn with_event_sink(mut self, sink: Arc<dyn TelemetryEventSink>) -> Self {
+        self.event_sink = Some(sink);
+        self
     }
 
     /// Returns the application-owned handle used by API or signal adapters.
@@ -475,6 +486,14 @@ impl ShutdownCoordinator {
         // Entering coordination starts the first request when necessary, but
         // never turns an already-recorded application request into escalation.
         self.signal.begin_shutdown();
+        crate::telemetry::emit_safely(
+            self.event_sink.as_ref(),
+            &TelemetryRecord::shutdown(TelemetryEventKind::ShutdownRequested, "requested", 0),
+        );
+        crate::telemetry::emit_safely(
+            self.event_sink.as_ref(),
+            &TelemetryRecord::shutdown(TelemetryEventKind::ShutdownIntakeStopped, "stopped", 0),
+        );
         let started = tokio::time::Instant::now();
         let correctness_end = started + self.shutdown_deadline.get();
         let join_end = started + self.task_join_deadline.get();
@@ -514,6 +533,24 @@ impl ShutdownCoordinator {
                 escalated,
             }
         };
+        match &drain {
+            DrainResult::Complete { .. } => crate::telemetry::emit_safely(
+                self.event_sink.as_ref(),
+                &TelemetryRecord::shutdown(
+                    TelemetryEventKind::ShutdownDrainCompleted,
+                    "complete",
+                    0,
+                ),
+            ),
+            DrainResult::Incomplete { unjoined_tasks, .. } => crate::telemetry::emit_safely(
+                self.event_sink.as_ref(),
+                &TelemetryRecord::shutdown(
+                    TelemetryEventKind::ShutdownDeadlineExceeded,
+                    "incomplete",
+                    *unjoined_tasks,
+                ),
+            ),
+        }
 
         // Persistence owns its repository statement/commit timeout. Dropping
         // this future at the process deadline could cancel an in-flight commit
@@ -557,6 +594,7 @@ impl Default for ShutdownCoordinator {
             telemetry_deadline: TelemetryFlushDeadline::default(),
             tasks: JoinSet::new(),
             phases: BTreeMap::new(),
+            event_sink: None,
         }
     }
 }

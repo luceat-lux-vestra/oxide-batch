@@ -674,6 +674,9 @@ fn require_target(command: Command, arguments: &Arguments) -> Result<(), Argumen
             if arguments.execution.is_none() {
                 return Err(missing("--execution"));
             }
+            if command == Command::DiagnosticsBundle && arguments.out.is_none() {
+                return Err(missing("--out"));
+            }
         }
         Command::ExecutionPartitions => {
             if arguments.step.is_none() {

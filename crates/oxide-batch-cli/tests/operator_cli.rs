@@ -690,3 +690,57 @@ fn a_rejected_action_reports_its_outcome_without_driver_text() {
     assert!(!detail.to_lowercase().contains("select"));
     assert!(!detail.to_lowercase().contains("sqlx"));
 }
+
+#[test]
+fn diagnostic_bundle_excludes_every_prohibited_value_class() {
+    let (services, seeded) = seeded_services("bundle-job");
+    let secret = "postgres://batch:bundle-password@private.endpoint/oxide";
+    let certificate = "bundle-private-certificate";
+    let mut host = TestHost::new()
+        .with_env("OXIDE_BATCH_REPOSITORY_URL", secret)
+        .with_env("OXIDE_BATCH_REPOSITORY_CA_CERTIFICATE", certificate);
+    let command = format!(
+        "diagnostics bundle --execution {} --out incident-bundle --output json",
+        seeded.execution_id
+    );
+    assert_eq!(run(&mut host, &services, &command), ExitCategory::Success);
+    let names = host.directory_files("incident-bundle");
+    assert!(names.iter().any(|name| name == "manifest.json"));
+    assert!(names.iter().any(|name| name == "configuration.json"));
+    assert!(names.iter().any(|name| name == "events.json"));
+    let contents = names
+        .iter()
+        .map(|name| host.file_text(&format!("incident-bundle/{name}")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    for prohibited in [
+        secret,
+        "bundle-password",
+        "private.endpoint",
+        certificate,
+        "SELECT sentinel SQL",
+        "context-payload-sentinel",
+        "checkpoint-payload-sentinel",
+        "user-error-text-sentinel",
+    ] {
+        assert!(
+            !contents.contains(prohibited),
+            "bundle leaked prohibited value class: {prohibited}"
+        );
+    }
+    let manifest: serde_json::Value =
+        serde_json::from_str(&host.file_text("incident-bundle/manifest.json"))
+            .expect("manifest is JSON");
+    assert_eq!(manifest["bundle_format_version"], json!(1));
+    assert_eq!(manifest["telemetry_schema_version"], json!(1));
+    assert_eq!(
+        manifest["files"].as_array().map(Vec::len),
+        Some(names.len() - 1)
+    );
+    assert_eq!(
+        host.envelope()["data"]["manifest_checksum"]
+            .as_str()
+            .map(str::len),
+        Some(64)
+    );
+}

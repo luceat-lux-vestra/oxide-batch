@@ -169,6 +169,28 @@ families cover:
 - queue depth and configured/active concurrency;
 - recovery and shutdown outcomes.
 
+The schema-version-1 metric catalog is closed as follows. A unit or label-key
+change is a schema compatibility change; adapters may rename only in their own
+documented mapping layer.
+
+| Family | Unit | Complete label keys |
+| --- | --- | --- |
+| `oxide_batch_active_executions` | executions | `status`, `job`, `step` |
+| `oxide_batch_completed_executions_total` | executions | `status`, `job`, `step` |
+| `oxide_batch_execution_duration_seconds` | seconds | `status`, `job`, `step` |
+| `oxide_batch_item_operations_total` | items | `event` |
+| `oxide_batch_repository_operation_duration_seconds` | seconds | `event` |
+| `oxide_batch_repository_conflicts_total` | events | `event` |
+| `oxide_batch_repository_errors_total` | events | `event` |
+| `oxide_batch_queue_depth_records` | records | `event` |
+| `oxide_batch_concurrency_configured_workers` | workers | `event` |
+| `oxide_batch_concurrency_active_workers` | workers | `event` |
+| `oxide_batch_operator_requests_total` | events | `action`, `authorization`, `outcome` |
+| `oxide_batch_execution_events_total` | events | `event`, `status`, `job`, `step` |
+| `oxide_batch_recovery_outcomes_total` | events | `outcome`, `action` |
+| `oxide_batch_shutdown_outcomes_total` | events | `status` |
+| `oxide_batch_telemetry_export_dropped_total` | events | `reason` |
+
 IDs, job parameters, exception messages, item types, and arbitrary user strings
 are forbidden metric labels. Job/step names require an explicit cardinality
 budget.
@@ -193,7 +215,19 @@ The budget is enforced by the framework, not left to deployment discipline.
 
 ## Traces
 
-Proposed span hierarchy:
+The schema-version-1 span catalog and required direct parents are:
+
+| Span | Direct parent | Complete reviewed field keys |
+| --- | --- | --- |
+| `job.execution` | root | `job.name`, `job.instance.id`, `job.execution.id`, `job.attempt`, `status`, `failure.category`, `failure.id` |
+| `step.execution` | `job.execution` | job fields plus `step.name`, `step.execution.id`, `step.attempt`, `status`, `failure.category`, `failure.id` |
+| `chunk.attempt` | `step.execution` | `job.execution.id`, `step.execution.id`, `chunk.sequence`, `status`, `failure.category`, `failure.id` |
+| `item.read`, `item.process`, `item.write` | `chunk.attempt` | execution IDs, `chunk.sequence`, `outcome`, `failure.category`, `failure.id` |
+| `repository.commit` | `chunk.attempt` | the `chunk.attempt` field set |
+| `retry` | `step.execution` | execution IDs, `retry.ordinal`, `outcome`, `failure.category`, `failure.id` |
+| `backoff` | `retry` | execution IDs, `retry.ordinal`, `backoff.duration_class`, `outcome` |
+
+This produces the fixed hierarchy:
 
 ```text
 job execution
@@ -205,8 +239,11 @@ job execution
 ```
 
 Span status follows documented lifecycle outcomes. Sampling must not change
-execution. Trace context propagation to external writers is opt-in and cannot
-carry sensitive batch context.
+execution. The adapter-neutral status classes are `unset`, `ok`, `error`,
+`cancelled`, and `unknown`. Parameters, context, checkpoints, credentials,
+endpoints, SQL, user error text, item identifiers, and retry keys are forbidden
+span fields. Trace context propagation to external writers is opt-in and
+cannot carry sensitive batch context.
 
 ## Export
 

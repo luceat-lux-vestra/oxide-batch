@@ -11,6 +11,7 @@
 
 use std::future::Future;
 use std::pin::pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::future::{Either, select};
@@ -18,13 +19,13 @@ use serde_json::{Value, json};
 
 use oxide_batch::{
     ActorRef, BatchStatus, BoxFuture, Cursor, DefinitionIdentity, ExecutionVersion,
-    ExplorerRepository, FailureCategory, FailureId, FailureSummary, JobExecutionId, JobExplorer,
-    JobInstanceId, JobInstanceKey, JobName, JobOperator, JobParameter, JobParameters,
-    JobRepository, OperationId, OperatorOutcome, OperatorOutcomeClass, OperatorRequest, Page,
-    PageRequest, PageSize, ParameterName, ParameterRole, ParameterValue, PurgeBatchBound,
-    PurgePlanRequest, ReasonCode, RecoveryDirective, RecoveryError, RecoveryProposal,
-    RecoveryProposer, RecoveryRepository, RepositoryError, RetentionService, StepExecutionId,
-    TerminalStatusSet,
+    ExplorerRepository, FailureCategory, FailureId, FailureSummary, IncidentEventBuffer,
+    JobExecutionId, JobExplorer, JobInstanceId, JobInstanceKey, JobName, JobOperator, JobParameter,
+    JobParameters, JobRepository, OperationId, OperatorOutcome, OperatorOutcomeClass,
+    OperatorRequest, Page, PageRequest, PageSize, ParameterName, ParameterRole, ParameterValue,
+    PurgeBatchBound, PurgePlanRequest, ReasonCode, RecoveryDirective, RecoveryError,
+    RecoveryProposal, RecoveryProposer, RecoveryRepository, RepositoryError, RetentionService,
+    StepExecutionId, TelemetryEventSink, TerminalStatusSet,
 };
 
 use crate::args::{Arguments, DirectiveArg, RecordArg};
@@ -135,6 +136,7 @@ pub struct Services<R, S> {
     explorer: JobExplorer<S>,
     recovery: Box<dyn RecoveryProposalPort>,
     schema: Box<dyn SchemaReport>,
+    events: Arc<IncidentEventBuffer>,
 }
 
 impl<R: JobRepository, S: ExplorerRepository> Services<R, S> {
@@ -146,12 +148,17 @@ impl<R: JobRepository, S: ExplorerRepository> Services<R, S> {
         explorer: JobExplorer<S>,
         schema: Box<dyn SchemaReport>,
     ) -> Self {
+        let events = Arc::new(IncidentEventBuffer::default());
+        let operator_sink: Arc<dyn TelemetryEventSink> = events.clone();
+        let explorer_sink: Arc<dyn TelemetryEventSink> = events.clone();
+        let retention_sink: Arc<dyn TelemetryEventSink> = events.clone();
         Self {
-            operator,
-            retention,
-            explorer,
+            operator: operator.with_event_sink(operator_sink),
+            retention: retention.with_event_sink(retention_sink),
+            explorer: explorer.with_event_sink(explorer_sink),
             recovery: Box::new(NoRecoveryProposals),
             schema,
+            events,
         }
     }
 
@@ -398,19 +405,21 @@ where
     S: ExplorerRepository,
     D: Future<Output = ()>,
 {
-    let work = pin!(run_command(plan, services, catalog));
-    let deadline = pin!(deadline);
-    let response = match select(work, deadline).await {
-        Either::Left((response, _)) => response,
-        Either::Right(((), _)) => Response::failed(
-            plan.command,
-            ExitCategory::DeadlineExceeded,
-            json!({ "operation_id": plan.operation_id }),
-        )
-        .with_diagnostic(Diagnostic::new(
-            "DEADLINE_EXCEEDED",
-            "the client deadline elapsed; the durable outcome is undetermined",
-        )),
+    let response = {
+        let work = pin!(run_command(host, plan, services, catalog));
+        let deadline = pin!(deadline);
+        match select(work, deadline).await {
+            Either::Left((response, _)) => response,
+            Either::Right(((), _)) => Response::failed(
+                plan.command,
+                ExitCategory::DeadlineExceeded,
+                json!({ "operation_id": plan.operation_id }),
+            )
+            .with_diagnostic(Diagnostic::new(
+                "DEADLINE_EXCEEDED",
+                "the client deadline elapsed; the durable outcome is undetermined",
+            )),
+        }
     };
     emit(host, plan, &response)
 }
@@ -473,12 +482,14 @@ fn paged<T>(plan: &Plan, page: &Page<T>, rows: Vec<Value>) -> Response {
 }
 
 #[allow(clippy::too_many_lines)]
-async fn run_command<R, S>(
+async fn run_command<H, R, S>(
+    host: &mut H,
     plan: &Plan,
     services: &Services<R, S>,
     catalog: &DefinitionCatalog,
 ) -> Response
 where
+    H: Host,
     R: JobRepository,
     S: ExplorerRepository,
 {
@@ -501,14 +512,15 @@ where
         Command::JobShow => job_show(plan, services).await,
         Command::InstanceList => match (job_name(plan), page_request(plan)) {
             (Err(response), _) | (Ok(_), Err(response)) => response,
-            (Ok(name), Ok(request)) => match services.explorer.list_instances(&name, &request).await
-            {
-                Ok(page) => {
-                    let rows = page.rows().iter().map(project::instance).collect();
-                    paged(plan, &page, rows)
+            (Ok(name), Ok(request)) => {
+                match services.explorer.list_instances(&name, &request).await {
+                    Ok(page) => {
+                        let rows = page.rows().iter().map(project::instance).collect();
+                        paged(plan, &page, rows)
+                    }
+                    Err(error) => explorer_failure(plan, &error),
                 }
-                Err(error) => explorer_failure(plan, &error),
-            },
+            }
         },
         Command::InstanceShow => instance_show(plan, services).await,
         Command::ExecutionList => execution_list(plan, services).await,
@@ -564,15 +576,62 @@ where
         Command::RetentionApply => retention_apply(plan, services).await,
         Command::RetentionHold | Command::RetentionRelease => retention_hold(plan, services).await,
         Command::SchemaStatus => schema_status(plan, services).await,
-        Command::DiagnosticsBundle => Response::failed(
+        Command::DiagnosticsBundle => diagnostics_bundle(host, plan, services).await,
+    }
+}
+
+async fn diagnostics_bundle<H, R, S>(
+    host: &mut H,
+    plan: &Plan,
+    services: &Services<R, S>,
+) -> Response
+where
+    H: Host,
+    R: JobRepository,
+    S: ExplorerRepository,
+{
+    let execution_id = match execution_id(plan) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    let Some(target) = plan.arguments.out.as_deref() else {
+        return usage(plan, "MISSING_BUNDLE_TARGET", "the command requires --out");
+    };
+    match crate::bundle::write(
+        host,
+        target,
+        &plan.config,
+        &services.explorer,
+        services.schema.as_ref(),
+        &services.events,
+        execution_id,
+    )
+    .await
+    {
+        Ok(bundle) => Response::success(
             plan.command,
-            ExitCategory::GuardRejected,
-            Value::Null,
-        )
-        .with_diagnostic(Diagnostic::new(
-            "BUNDLE_UNAVAILABLE",
-            "the diagnostic bundle requires the telemetry catalog, which this build does not implement",
-        )),
+            json!({
+                "manifest_checksum": bundle.manifest_checksum(),
+                "total_bytes": bundle.total_bytes(),
+            }),
+        ),
+        Err(crate::bundle::BundleError::TargetNotFound) => not_found(plan, "execution"),
+        Err(crate::bundle::BundleError::Explorer(error)) => explorer_failure(plan, &error),
+        Err(crate::bundle::BundleError::Write) => {
+            Response::failed(plan.command, ExitCategory::OutputFailure, Value::Null)
+                .with_diagnostic(Diagnostic::new(
+                    "BUNDLE_WRITE_FAILED",
+                    "the new diagnostics bundle directory could not be written",
+                ))
+        }
+        Err(crate::bundle::BundleError::Encoding) => {
+            Response::failed(plan.command, ExitCategory::Internal, Value::Null).with_diagnostic(
+                Diagnostic::new(
+                    "BUNDLE_ENCODING_FAILED",
+                    "the redacted diagnostics bundle could not be encoded",
+                ),
+            )
+        }
     }
 }
 

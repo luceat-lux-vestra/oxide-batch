@@ -81,6 +81,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   recovery, retention, and local-scale event catalog, an enforced label
   cardinality budget, bounded exporter queues with counted drops, and the
   bounded redacted diagnostic bundle.
+- Executable M4 telemetry with commit/read/evidence-relative events, typed
+  metric names/units/labels, a fixed span hierarchy and reviewed safe fields,
+  a per-family `200`-series budget, explicit name
+  allowlists, an application-owned drop-newest exporter queue, panic-isolated
+  export, bounded incident retention, and a staged non-overwriting `4 MiB`
+  `diagnostics bundle` directory with checksums and recorded omissions.
 - The accepted unreleased schema-3 design adding execution ownership and stop
   evidence, one instance hold, `ob_operator_request`, `ob_retention_action`,
   and `ob_step_partition`, with a backfill-free transactional upgrade and a
