@@ -2288,7 +2288,10 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 if !valid {
                     return Err(RepositoryError::FlowStateCorrupt);
                 }
-            } else if request.kind() != FlowTransitionKind::Decider {
+            } else if !matches!(
+                request.kind(),
+                FlowTransitionKind::Decider | FlowTransitionKind::SplitAggregate
+            ) {
                 return Err(RepositoryError::FlowStateCorrupt);
             }
             if let Some(reused_id) = request.reused_decision_id() {

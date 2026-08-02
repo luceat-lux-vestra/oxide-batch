@@ -68,10 +68,11 @@ as skipped; required PostgreSQL 15/18 execution remains CI and M4 exit evidence.
 
 ## Remaining issue #80 boundary
 
-- branch and partition component factories with `Send` and concurrent-use
-  validation;
-- owned bounded child execution, cancellation, panic isolation, and sibling
-  failure policy;
+- partition component factories plus explicit shared-component concurrent-use
+  validation (tasklet split factories are recorded in the
+  [parallel-split runtime evidence](m4-parallel-split-evidence.md));
+- owned bounded partition-worker execution, cancellation, panic isolation, and
+  sibling failure policy;
 - runtime reuse of the committed plan, including `UNKNOWN` partition blocking;
 - PostgreSQL process-kill, sequential-equivalence, cancellation, contention,
   memory/connection/task ceiling, and soak/leak evidence.

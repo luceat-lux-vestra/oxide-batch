@@ -35,10 +35,11 @@ that partition state is durable, or that either scale ledger row is complete.
   therefore change the SHA-256 definition fingerprint. Builder declaration
   order does not change canonical bytes.
 
-The current `FlowLauncher` intentionally continues to accept format 2 only.
-It fails closed for format 3 until the owned-task runtime, deterministic
-aggregation, and restart behavior are implemented in the remaining issue #80
-slices. The subsequent
+The current `FlowLauncher` now accepts the tasklet-only bounded parallel-split
+runtime recorded in the
+[parallel-split evidence](m4-parallel-split-evidence.md), while format-3 plans
+containing partitioned steps or unbound branch components still fail closed.
+The subsequent
 [durable partition repository evidence](m4-partition-repository-evidence.md)
 records the schema-3 plan and result transaction boundary without claiming
 runtime execution.
@@ -59,10 +60,9 @@ runtime execution.
 
 ## Remaining issue #80 boundary
 
-- branch and partition component factories with `Send` and concurrent-use
-  validation;
-- owned bounded child execution, cancellation, panic isolation, and sibling
-  failure policy;
+- chunk/partition component factories and explicit concurrent-use validation;
+- complete cancellation, panic, sibling-policy, counter, and resource evidence
+  for the new tasklet split runtime;
 - runtime use of the committed single-invocation partition plan and atomic
   aggregate, including completed-result reuse and `UNKNOWN` blocking;
 - in-memory/PostgreSQL, process-kill, sequential-equivalence, and

@@ -10,10 +10,10 @@ a restart-oriented batch processing framework for Rust inspired by Spring Batch.
 > conformance implementation evidence is complete, including typed bounded
 > fault tolerance and the finite durable-flow slice. No production-ready
 > runtime has been released. M4 operator/explorer, CLI, graceful-shutdown,
-> stale-recovery, retention, bounded telemetry, and local-scale plan plus
-> durable partition-repository and atomic aggregation slices are implemented
-> but unreleased; owned local parallel execution and the M4 exit evidence
-> remain open.
+> stale-recovery, retention, bounded telemetry, local-scale plan, durable
+> partition-repository/aggregation, and tasklet-only bounded parallel-split
+> runtime slices are implemented but unreleased; complete local partition
+> execution and the M4 exit evidence remain open.
 
 The facade owns validated job and step names, opaque instance/execution IDs,
 typed and value-redacted job parameters, canonical job-instance keys, lifecycle

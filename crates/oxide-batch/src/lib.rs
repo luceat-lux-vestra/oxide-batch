@@ -167,7 +167,7 @@ pub use flow::{
     DeciderError, DecisionInput, DecisionStepInput, FlowDecision, FlowDecisionId,
     FlowDecisionRequest, FlowDecisionSequence, FlowEvent, FlowEventKind, FlowEventSink,
     FlowExecutionOutcome, FlowFailure, FlowJob, FlowJobError, FlowLaunchReport, FlowLauncher,
-    FlowRuntimeError, FlowStepState, FlowTransitionKind, JobExecutionDecider,
+    FlowRuntimeError, FlowStepState, FlowTransitionKind, JobExecutionDecider, TaskletStepFactory,
 };
 pub use item_listener::{
     BeforeCallbackOutcome, ItemListenerContext, ItemListenerError, ItemListenerFailure,

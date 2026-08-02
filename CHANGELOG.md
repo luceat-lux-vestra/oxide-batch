@@ -91,6 +91,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   exit selection, checked counter sums, incomplete-child rejection, and an
   in-memory/PostgreSQL transaction that publishes the aggregate only with the
   parent step's terminal lifecycle update.
+- Tasklet-only bounded parallel-split execution with launch-scoped component
+  factories, finite owned child polling, cooperative sibling cancellation or
+  draining, declared-order status/exit aggregation, durable
+  `SPLIT_AGGREGATE` join decisions, `UNKNOWN` propagation, and completed-child
+  reuse on restart.
 - Versioned M4 telemetry: schema version 1, the operations, shutdown,
   recovery, retention, and local-scale event catalog, an enforced label
   cardinality budget, bounded exporter queues with counted drops, and the
