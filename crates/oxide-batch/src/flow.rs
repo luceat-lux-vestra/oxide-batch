@@ -755,6 +755,7 @@ impl FlowJob {
             let present = match node {
                 FlowNode::Step(_) => self.steps.contains_key(id),
                 FlowNode::Decision(_) => self.deciders.contains_key(id),
+                FlowNode::Split(_) | FlowNode::Join(_) | FlowNode::PartitionedStep(_) => false,
             };
             if !present {
                 return Err(FlowJobError::MissingBinding { node: id.clone() });
@@ -1466,6 +1467,11 @@ impl<'a> FlowLauncher<'a> {
                             }
                         }
                     }
+                }
+                FlowNode::Split(_) | FlowNode::Join(_) | FlowNode::PartitionedStep(_) => {
+                    return Err(FlowRuntimeError::Job(FlowJobError::UnsupportedManifest {
+                        format: job.plan.manifest_format(),
+                    }));
                 }
             };
 

@@ -77,6 +77,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   single-invocation partitioning, durable partition state, deterministic
   aggregation, finite resource budgets, manifest format 3, and
   sequential-fallback equivalence.
+- Canonical manifest format 3 declarations for the exact M4 split, structural
+  join, and local partitioned-step subset, with globally unique embedded child
+  identities, typed finite concurrency/partition/pool budgets, stable golden
+  fingerprints, and fail-closed format-3 runtime gating until durable local
+  execution is implemented.
 - Versioned M4 telemetry: schema version 1, the operations, shutdown,
   recovery, retention, and local-scale event catalog, an enforced label
   cardinality budget, bounded exporter queues with counted drops, and the

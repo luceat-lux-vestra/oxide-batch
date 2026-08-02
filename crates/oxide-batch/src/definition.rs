@@ -14,8 +14,10 @@ pub(crate) const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 pub(crate) const MANIFEST_FORMAT_ONE_STEP: u16 = 1;
 /// The canonical manifest format that captures a compiled flow graph.
 pub(crate) const MANIFEST_FORMAT_FLOW: u16 = 2;
+/// The canonical manifest format for bounded M4 local-scale plans.
+pub(crate) const MANIFEST_FORMAT_LOCAL_SCALE: u16 = 3;
 /// The newest canonical manifest format this runtime can interpret.
-pub(crate) const SUPPORTED_MANIFEST_FORMAT: u16 = MANIFEST_FORMAT_FLOW;
+pub(crate) const SUPPORTED_MANIFEST_FORMAT: u16 = MANIFEST_FORMAT_LOCAL_SCALE;
 const LEGACY_REVISION: &str = "__m1_repository_port_v1";
 const LEGACY_MANIFEST: &[u8] =
     br#"{"format":1,"repository_port":"m1","revision":"__m1_repository_port_v1"}"#;
@@ -440,7 +442,13 @@ impl DefinitionIdentity {
         revision: DefinitionRevision,
         manifest: &serde_json::Value,
     ) -> Result<Self, DefinitionError> {
-        Self::encode_as(job_name.clone(), revision, manifest, MANIFEST_FORMAT_FLOW)
+        let format = manifest
+            .get("format")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u16::try_from(value).ok())
+            .filter(|value| matches!(*value, MANIFEST_FORMAT_FLOW | MANIFEST_FORMAT_LOCAL_SCALE))
+            .ok_or(DefinitionError::ManifestEncoding)?;
+        Self::encode_as(job_name.clone(), revision, manifest, format)
     }
 
     fn encode(
@@ -652,19 +660,20 @@ impl DefinitionManifest {
             .map(JobName::new)
             .transpose()
             .map_err(|_| ManifestError::InvalidJobName)?;
-        let (node_count, transition_count) = if format == MANIFEST_FORMAT_FLOW {
-            let nodes = array_len(members.get("nodes"))?;
-            let transitions = array_len(members.get("transitions"))?;
-            if nodes > crate::plan::MAX_NODES || transitions > crate::plan::MAX_TRANSITIONS {
-                return Err(ManifestError::GraphOutOfBounds {
-                    max_nodes: crate::plan::MAX_NODES,
-                    max_transitions: crate::plan::MAX_TRANSITIONS,
-                });
-            }
-            (Some(nodes), Some(transitions))
-        } else {
-            (None, None)
-        };
+        let (node_count, transition_count) =
+            if matches!(format, MANIFEST_FORMAT_FLOW | MANIFEST_FORMAT_LOCAL_SCALE) {
+                let nodes = array_len(members.get("nodes"))?;
+                let transitions = array_len(members.get("transitions"))?;
+                if nodes > crate::plan::MAX_NODES || transitions > crate::plan::MAX_TRANSITIONS {
+                    return Err(ManifestError::GraphOutOfBounds {
+                        max_nodes: crate::plan::MAX_NODES,
+                        max_transitions: crate::plan::MAX_TRANSITIONS,
+                    });
+                }
+                (Some(nodes), Some(transitions))
+            } else {
+                (None, None)
+            };
         Ok(Self {
             format,
             digest: Sha256::digest(bytes).into(),

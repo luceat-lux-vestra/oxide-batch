@@ -179,9 +179,12 @@ pub use listener::{
 };
 pub use plan::{
     CompiledExecutionPlan, DeciderRevision, DecisionInputVersion, DecisionNode, ExitPattern,
-    FlowGraph, FlowNode, FlowSelectionError, FlowTarget, FlowTransition, MAX_NODES,
-    MAX_OUTGOING_TRANSITIONS, MAX_PATTERN_BYTES, MAX_TRANSITIONS, NodeId, PatternSpecificity,
-    PlanError, StartControls, StartLimit, StepComponents, StepNode, TerminalKind,
+    FlowGraph, FlowNode, FlowSelectionError, FlowTarget, FlowTransition, JoinNode,
+    LocalFailurePolicy, MAX_BRANCH_STEPS, MAX_NODES, MAX_OUTGOING_TRANSITIONS,
+    MAX_PARTITION_WORKERS, MAX_PARTITIONS, MAX_PATTERN_BYTES, MAX_SPLIT_BRANCHES, MAX_TRANSITIONS,
+    NodeId, PartitionBudget, PartitionCount, PartitionedStepNode, PatternSpecificity, PlanError,
+    SplitBranch, SplitBudget, SplitNode, StartControls, StartLimit, StepComponents, StepNode,
+    TerminalKind,
 };
 pub use repository::{
     BoxFuture, Clock, ExecutionControl, IdGenerationError, IdGenerator, InMemoryExplorer,
