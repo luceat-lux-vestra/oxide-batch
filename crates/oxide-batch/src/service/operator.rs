@@ -17,7 +17,7 @@ use super::{
 use crate::{
     BatchStatus, Clock, DefinitionIdentity, ExecutionVersion, FailureSummary, JobExecution,
     JobExecutionId, JobInstanceId, JobInstanceKey, JobRepository, LifecycleError,
-    LifecycleTransition, OperatorRequestId, RecoveryDisposition, RecoveryRequest,
+    LifecycleTransition, OperatorRequestId, RecoveryDisposition, RecoveryProposal, RecoveryRequest,
     RecoveryRequestError, RepositoryError, RepositoryUnitOfWork,
 };
 
@@ -177,11 +177,12 @@ impl OperatorRequest {
         operation_id: OperationId,
         actor: ActorRef,
         reason: ReasonCode,
-        job_execution_id: JobExecutionId,
-        expected_version: ExecutionVersion,
         directive: RecoveryDirective,
-        evidence_digest: [u8; 32],
+        proposal: &RecoveryProposal,
     ) -> Self {
+        let job_execution_id = proposal.evidence().execution_id();
+        let expected_version = proposal.observed_version();
+        let evidence_digest = *proposal.digest();
         Self::build(
             OperatorAction::Recover,
             operation_id,
@@ -192,6 +193,7 @@ impl OperatorRequest {
             RequestArguments::Recovery {
                 directive,
                 evidence_digest,
+                unknown_commit: proposal.evidence().unknown_commit(),
             },
         )
     }
@@ -295,6 +297,7 @@ impl OperatorRequest {
         let RequestArguments::Recovery {
             directive,
             evidence_digest,
+            ..
         } = &self.arguments
         else {
             return None;
@@ -317,6 +320,17 @@ impl OperatorRequest {
                 failure.failure_id(),
             ),
         })
+    }
+
+    fn recovery_guard(&self) -> Option<(RecoveryDirective, bool)> {
+        match &self.arguments {
+            RequestArguments::Recovery {
+                directive,
+                unknown_commit,
+                ..
+            } => Some((*directive, *unknown_commit)),
+            _ => None,
+        }
     }
 }
 
@@ -1160,7 +1174,34 @@ impl<R: JobRepository> JobOperator<R> {
         unit: &mut dyn RepositoryUnitOfWork,
         request: &OperatorRequest,
     ) -> Result<AppliedEffect, EffectFailure> {
-        let (id, _) = execution_target(request)?;
+        let (id, expected_version) = execution_target(request)?;
+        let execution = unit
+            .get_job_execution(id)
+            .await
+            .map_err(EffectFailure::classify)?
+            .ok_or(EffectFailure::Rejected(
+                OperatorRejection::ExecutionNotFound,
+            ))?;
+        if execution.version() != expected_version {
+            return Err(EffectFailure::Rejected(
+                OperatorRejection::OptimisticConflict {
+                    current: execution.version(),
+                },
+            ));
+        }
+        let (directive, unknown_commit) = request.recovery_guard().ok_or(
+            EffectFailure::Rejected(OperatorRejection::InvalidState {
+                status: execution.metadata().status(),
+            }),
+        )?;
+        if unknown_commit
+            && matches!(directive, RecoveryDirective::MarkFailed(_))
+            && request.reason().map(ReasonCode::as_str) != Some("UNKNOWN_EFFECT")
+        {
+            return Err(EffectFailure::Rejected(
+                OperatorRejection::UnresolvedRecoveryRequired,
+            ));
+        }
         let recovery = request
             .recovery_request()
             .ok_or(EffectFailure::Rejected(OperatorRejection::InvalidState {

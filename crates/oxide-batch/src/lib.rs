@@ -114,6 +114,7 @@ mod plan;
 mod repository;
 mod runtime;
 mod service;
+mod shutdown;
 mod state;
 
 pub use chunk::{
@@ -133,7 +134,7 @@ pub use chunk_runtime::{
 pub use definition::{
     ChunkComponentRevisions, ChunkDeliveryMode, ChunkRestartContract, ClassifierRevision,
     ComponentRevision, DefinitionError, DefinitionIdentity, DefinitionManifest, DefinitionRevision,
-    DefinitionTokenKind, DefinitionUpgrade, DefinitionUpgradeKey, ManifestError,
+    DefinitionTokenKind, DefinitionUpgrade, DefinitionUpgradeKey, InFlightPolicy, ManifestError,
     StepDefinitionUpgrade,
 };
 pub use diagnostics::{
@@ -182,10 +183,11 @@ pub use plan::{
     PlanError, StartControls, StartLimit, StepComponents, StepNode, TerminalKind,
 };
 pub use repository::{
-    BoxFuture, Clock, IdGenerationError, IdGenerator, InMemoryExplorer, InMemoryJobRepository,
-    JobInstanceSelection, JobRepository, RecoveryDecision, RecoveryDisposition, RecoveryField,
-    RecoveryRequest, RecoveryRequestError, RecoveryResult, RepositoryCapability, RepositoryError,
-    RepositoryUnitOfWork, SequentialIdGenerator, SystemClock,
+    BoxFuture, Clock, ExecutionControl, IdGenerationError, IdGenerator, InMemoryExplorer,
+    InMemoryJobRepository, JobInstanceSelection, JobRepository, RecoveryDecision,
+    RecoveryDisposition, RecoveryField, RecoveryRequest, RecoveryRequestError, RecoveryResult,
+    RepositoryCapability, RepositoryError, RepositoryUnitOfWork, SequentialIdGenerator,
+    SystemClock,
 };
 #[cfg(feature = "postgres")]
 pub use repository::{
@@ -195,22 +197,35 @@ pub use repository::{
 };
 pub use runtime::{
     BlockingTasklet, BlockingTaskletAdapter, BlockingTaskletContext, JobLauncher, LaunchError,
-    LaunchReport, StopSource, StopTiming, StopToken, Tasklet, TaskletContext, TaskletError,
-    TaskletExecutionOutcome, TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep,
+    LaunchReport, StopPollInterval, StopSource, StopTiming, StopToken, Tasklet, TaskletContext,
+    TaskletError, TaskletExecutionOutcome, TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep,
 };
 pub use service::{
-    ActorRef, AuthorizationClass, Cursor, CursorError, CursorKey, DEFAULT_PAGE_SIZE,
-    DEFAULT_PURGE_AGE, DefinitionDescriptor, ExplorerError, ExplorerQuery, ExplorerRepository,
-    JobExecutionProjection, JobExplorer, JobInstanceProjection, JobOperator, MAX_ACTOR_REF_BYTES,
-    MAX_CURSOR_BYTES, MAX_OPERATION_ID_BYTES, MAX_PAGE_SIZE, MAX_PURGE_BATCH,
-    MAX_REASON_CODE_BYTES, MAX_RESPONSE_BYTES, MIN_PURGE_AGE, MIN_UNRESOLVED_AGE, OperationId,
+    ActorRef, AuthorizationClass, Cursor, CursorError, CursorKey, DEFAULT_MAX_CLOCK_SKEW,
+    DEFAULT_PAGE_SIZE, DEFAULT_PURGE_AGE, DEFAULT_STALE_THRESHOLD, DefinitionDescriptor,
+    ExplorerError, ExplorerQuery, ExplorerRepository, JobExecutionProjection, JobExplorer,
+    JobInstanceProjection, JobOperator, MAX_ACTOR_REF_BYTES, MAX_CLOCK_SKEW, MAX_CURSOR_BYTES,
+    MAX_OPERATION_ID_BYTES, MAX_PAGE_SIZE, MAX_PURGE_BATCH, MAX_REASON_CODE_BYTES,
+    MAX_RESPONSE_BYTES, MAX_STALE_THRESHOLD, MIN_CLOCK_SKEW, MIN_PURGE_AGE, MIN_STALE_THRESHOLD,
+    MIN_UNRESOLVED_AGE, MaxClockSkew, MonotonicClock, MonotonicInstant, OperationId,
     OperatorAction, OperatorError, OperatorOutcome, OperatorOutcomeClass, OperatorRecord,
-    OperatorRecordDraft, OperatorRejection, OperatorRequest, Page, PageRequest, PageSize,
-    ParameterDescriptor, PurgeBatchBound, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest,
-    PurgeSurvey, QueryWindow, ReasonCode, RecoveryDirective, RequestDigest, RequestField,
+    OperatorRecordDraft, OperatorRejection, OperatorRequest, OwnerObservation, OwnerToken, Page,
+    PageRequest, PageSize, ParameterDescriptor, PurgeBatchBound, PurgeCandidate, PurgeCounts,
+    PurgePlan, PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode, RecoveryDirective,
+    RecoveryError, RecoveryEvidence, RecoveryMarkers, RecoveryProposal, RecoveryProposer,
+    RecoveryRepository, RecoverySnapshot, RecoveryStepEvidence, RequestDigest, RequestField,
     RequestFieldError, RetentionAction, RetentionError, RetentionHold, RetentionOutcome,
-    RetentionRecord, RetentionRecordDraft, RetentionReport, RetentionService,
-    StateEnvelopeDescriptor, StepExecutionProjection, StepPartitionProjection, TerminalStatusSet,
+    RetentionRecord, RetentionRecordDraft, RetentionReport, RetentionService, StaleThreshold,
+    StateEnvelopeDescriptor, StepExecutionProjection, StepPartitionProjection,
+    SystemMonotonicClock, TerminalStatusSet,
+};
+pub use shutdown::{
+    DEFAULT_SHUTDOWN_DEADLINE, DEFAULT_TELEMETRY_FLUSH_DEADLINE, DrainResult,
+    MAX_SHUTDOWN_DEADLINE, MAX_TELEMETRY_FLUSH_DEADLINE, MIN_SHUTDOWN_DEADLINE,
+    MIN_TELEMETRY_FLUSH_DEADLINE, ShutdownCoordinator, ShutdownDeadline, ShutdownError,
+    ShutdownHookError, ShutdownHookStatus, ShutdownReport, ShutdownRequest, ShutdownSignal,
+    ShutdownTaskPhase, TaskJoinDeadline, TelemetryFlushDeadline, TelemetryFlushStatus,
+    UnjoinedPhase,
 };
 pub use state::{
     Checkpoint, DurableStateKind, ExecutionContext, StateCodecError, StateError, StateLimits,

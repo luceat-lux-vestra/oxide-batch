@@ -46,7 +46,10 @@ pub use host::{Host, ProcessHost};
 pub use output::{
     Diagnostic, MAX_OUTPUT_BYTES, OUTPUT_SCHEMA_VERSION, OutputFailure, PageInfo, Response, Writer,
 };
-pub use run::{NoSchema, Plan, SchemaReport, SchemaState, Services, dispatch, local, prepare};
+pub use run::{
+    NoSchema, Plan, RecoveryProposalPort, SchemaReport, SchemaState, Services, dispatch, local,
+    prepare,
+};
 
 #[cfg(feature = "postgres")]
 pub use backend::{BackendFailure, PostgresServices, connect, connection_config};

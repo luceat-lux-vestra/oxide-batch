@@ -160,16 +160,21 @@ record and its 32-byte digest:
 
 - execution identity, status, attempt, and optimistic version;
 - owner-token presence and whether it matches the current process;
-- elapsed durable inactivity and the server-time observation;
+- durable `updated_at`, elapsed inactivity, and the server-time observation;
 - the latest durable step execution, its status, and its committed checkpoint
   presence, format, schema, and size;
 - whether the last durable marker is an unknown commit;
 - whether any completed partition or committed flow decision exists;
 - whether the definition declares an ambiguous external effect.
 
-The digest covers the canonical evidence bytes and the observed execution
-version. Evidence contains no parameter, context, checkpoint, item, error
-text, credential, endpoint, or SQL value.
+The digest covers the canonical durable decision evidence and the observed
+execution version. It includes `updated_at`, but deliberately excludes the
+advancing server-time observation and its derived inactivity, wall-clock
+offset, and monotonic-window values. Those values gate whether a proposal can
+be produced, while excluding them lets a stateless client regenerate the same
+digest exactly when no durable evidence changed. Evidence contains no
+parameter, context, checkpoint, item, error text, credential, endpoint, or SQL
+value.
 
 ### Application
 
@@ -182,7 +187,7 @@ in M2.
 - A digest or version mismatch is rejected as `RecoveryEvidenceStale` and
   changes nothing.
 - An execution whose last durable marker is an unknown commit may become
-  `FAILED` only with the `unknown_effect` reason code, which records that the
+  `FAILED` only with the `UNKNOWN_EFFECT` reason code, which records that the
   application must confirm the external effect before restart. It may
   otherwise become `ABANDONED`.
 - Recovery never infers whether an ambiguous external effect committed, never
@@ -230,6 +235,6 @@ Production implementation requires:
 - stale-detection tests for threshold, owner-token mismatch, unusable clock
   evidence, and the absence of automatic status rewriting;
 - recovery tests for digest staleness, version conflict, permitted results,
-  the `unknown_effect` reason, and audited append-plus-transition atomicity;
+  the `UNKNOWN_EFFECT` reason, and audited append-plus-transition atomicity;
 - soak evidence that repeated shutdown cycles leak no task, connection, or
   handle.

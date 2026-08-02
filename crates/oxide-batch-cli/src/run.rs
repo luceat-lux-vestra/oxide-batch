@@ -22,8 +22,9 @@ use oxide_batch::{
     JobInstanceId, JobInstanceKey, JobName, JobOperator, JobParameter, JobParameters,
     JobRepository, OperationId, OperatorOutcome, OperatorOutcomeClass, OperatorRequest, Page,
     PageRequest, PageSize, ParameterName, ParameterRole, ParameterValue, PurgeBatchBound,
-    PurgePlanRequest, ReasonCode, RecoveryDirective, RepositoryError, RetentionService,
-    StepExecutionId, TerminalStatusSet,
+    PurgePlanRequest, ReasonCode, RecoveryDirective, RecoveryError, RecoveryProposal,
+    RecoveryProposer, RecoveryRepository, RepositoryError, RetentionService, StepExecutionId,
+    TerminalStatusSet,
 };
 
 use crate::args::{Arguments, DirectiveArg, RecordArg};
@@ -74,6 +75,42 @@ pub trait SchemaReport: Send + Sync {
     fn schema_state(&self) -> BoxFuture<'_, Result<SchemaState, RepositoryError>>;
 }
 
+/// Produces the current evidence-bound recovery proposal for the CLI.
+pub trait RecoveryProposalPort: Send + Sync {
+    /// Gathers one proposal without changing durable state.
+    fn propose(
+        &self,
+        execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<RecoveryProposal, RecoveryError>>;
+}
+
+impl<R: RecoveryRepository> RecoveryProposalPort for RecoveryProposer<R> {
+    fn propose(
+        &self,
+        execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<RecoveryProposal, RecoveryError>> {
+        Box::pin(async move { self.propose(execution_id).await })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct NoRecoveryProposals;
+
+impl RecoveryProposalPort for NoRecoveryProposals {
+    fn propose(
+        &self,
+        _execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<RecoveryProposal, RecoveryError>> {
+        Box::pin(async {
+            Err(RecoveryError::Repository(
+                RepositoryError::UnsupportedCapability {
+                    capability: oxide_batch::RepositoryCapability::OperatorRequests,
+                },
+            ))
+        })
+    }
+}
+
 /// A repository that reports no durable schema, such as the in-memory adapter.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NoSchema;
@@ -96,6 +133,7 @@ pub struct Services<R, S> {
     operator: JobOperator<R>,
     retention: RetentionService<R>,
     explorer: JobExplorer<S>,
+    recovery: Box<dyn RecoveryProposalPort>,
     schema: Box<dyn SchemaReport>,
 }
 
@@ -112,8 +150,16 @@ impl<R: JobRepository, S: ExplorerRepository> Services<R, S> {
             operator,
             retention,
             explorer,
+            recovery: Box::new(NoRecoveryProposals),
             schema,
         }
+    }
+
+    /// Attaches the evidence source required by `execution recover`.
+    #[must_use]
+    pub fn with_recovery_proposals(mut self, recovery: Box<dyn RecoveryProposalPort>) -> Self {
+        self.recovery = recovery;
+        self
     }
 }
 
@@ -470,7 +516,15 @@ where
             Err(response) => response,
             Ok(id) => match services.explorer.get_execution(id).await {
                 Ok(Some(execution)) => {
-                    Response::success(plan.command, project::execution(&execution))
+                    let mut projection = project::execution(&execution);
+                    let proposal = services
+                        .recovery
+                        .propose(id)
+                        .await
+                        .ok()
+                        .map_or(Value::Null, |value| project::recovery_proposal(&value));
+                    projection["recovery_proposal"] = proposal;
+                    Response::success(plan.command, projection)
                 }
                 Ok(None) => not_found(plan, "execution"),
                 Err(error) => explorer_failure(plan, &error),
@@ -877,7 +931,15 @@ where
     R: JobRepository,
     S: ExplorerRepository,
 {
-    let request = match build_operator_request(plan, catalog) {
+    let recovery = if matches!(plan.command, Command::ExecutionRecover) {
+        match current_recovery_proposal(plan, services).await {
+            Ok(proposal) => Some(proposal),
+            Err(response) => return response,
+        }
+    } else {
+        None
+    };
+    let request = match build_operator_request(plan, catalog, recovery) {
         Ok(request) => request,
         Err(response) => return response,
     };
@@ -941,6 +1003,7 @@ fn operator_response(plan: &Plan, outcome: &OperatorOutcome) -> Response {
 fn build_operator_request(
     plan: &Plan,
     catalog: &DefinitionCatalog,
+    recovery: Option<RecoveryProposal>,
 ) -> Result<OperatorRequest, Response> {
     let operation = operation_id(plan)?;
     let who = actor(plan)?;
@@ -978,13 +1041,17 @@ fn build_operator_request(
             Ok(OperatorRequest::abandon(operation, who, why, id, version))
         }
         Command::ExecutionRecover => {
-            let id = execution_id(plan)?;
-            let version = expected_version(plan)?;
             let why = reason(plan)?;
             let directive = recovery_directive(plan)?;
-            let evidence = evidence_digest(plan)?;
+            let proposal = recovery.ok_or_else(|| {
+                usage(
+                    plan,
+                    "RECOVERY_EVIDENCE_UNAVAILABLE",
+                    "the command has no current recovery proposal",
+                )
+            })?;
             Ok(OperatorRequest::recover(
-                operation, who, why, id, version, directive, evidence,
+                operation, who, why, directive, &proposal,
             ))
         }
         _ => Err(usage(
@@ -993,6 +1060,86 @@ fn build_operator_request(
             "the command is not an operator action",
         )),
     }
+}
+
+async fn current_recovery_proposal<R, S>(
+    plan: &Plan,
+    services: &Services<R, S>,
+) -> Result<RecoveryProposal, Response>
+where
+    R: JobRepository,
+    S: ExplorerRepository,
+{
+    let id = execution_id(plan)?;
+    let expected = expected_version(plan)?;
+    let supplied = evidence_digest(plan)?;
+    let proposal = services.recovery.propose(id).await.map_err(|error| {
+        let (category, code, message) = match &error {
+            RecoveryError::Repository(RepositoryError::JobExecutionNotFound { .. }) => (
+                ExitCategory::TargetNotFound,
+                "EXECUTION_NOT_FOUND",
+                "the execution does not exist",
+            ),
+            RecoveryError::Repository(repository) => (
+                failure::repository(repository),
+                "RECOVERY_EVIDENCE_UNAVAILABLE",
+                "the repository could not produce recovery evidence",
+            ),
+            RecoveryError::ClockEvidenceUnusable => (
+                ExitCategory::GuardRejected,
+                "CLOCK_EVIDENCE_UNUSABLE",
+                "repository and local clocks cannot provide usable recovery evidence",
+            ),
+            RecoveryError::OwnedByCurrentProcess => (
+                ExitCategory::GuardRejected,
+                "EXECUTION_OWNED",
+                "the execution is owned by the inspecting process",
+            ),
+            RecoveryError::NotStale { .. } => (
+                ExitCategory::GuardRejected,
+                "EXECUTION_NOT_STALE",
+                "the execution has not crossed the configured stale threshold",
+            ),
+            RecoveryError::NotRecoverable { .. } => (
+                ExitCategory::GuardRejected,
+                "RECOVERY_NOT_ALLOWED",
+                "the execution is not a recovery candidate",
+            ),
+            RecoveryError::InvalidStaleThreshold | RecoveryError::InvalidMaxClockSkew => (
+                ExitCategory::ConfigurationInvalid,
+                "RECOVERY_CONFIG_INVALID",
+                "the recovery evidence configuration is invalid",
+            ),
+            _ => (
+                ExitCategory::Internal,
+                "RECOVERY_INTERNAL",
+                "recovery evidence failed with an unrecognized category",
+            ),
+        };
+        Response::failed(plan.command, category, Value::Null)
+            .with_diagnostic(Diagnostic::new(code, message))
+    })?;
+    if proposal.observed_version() != expected {
+        return Err(Response::failed(
+            plan.command,
+            ExitCategory::OptimisticConflict,
+            json!({"current_version": proposal.observed_version().get()}),
+        )
+        .with_diagnostic(Diagnostic::new(
+            "RECOVERY_EVIDENCE_STALE",
+            "the supplied version does not match the recovery evidence",
+        )));
+    }
+    if proposal.digest() != &supplied {
+        return Err(
+            Response::failed(plan.command, ExitCategory::GuardRejected, Value::Null)
+                .with_diagnostic(Diagnostic::new(
+                    "RECOVERY_EVIDENCE_STALE",
+                    "the supplied evidence digest does not match the current proposal",
+                )),
+        );
+    }
+    Ok(proposal)
 }
 
 fn recovery_directive(plan: &Plan) -> Result<RecoveryDirective, Response> {

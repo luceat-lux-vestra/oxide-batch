@@ -21,7 +21,7 @@ use oxide_batch::{
     DefinitionUpgradeKey, ExecutionVersion, ExitCode, ExitStatus, FailureCategory, FailureId,
     FailureSummary, IdGenerationError, IdGenerator, IdentifierKind, InMemoryJobRepository,
     JobInstanceKey, JobName, JobParameter, JobParameters, JobRepository, LifecycleError,
-    LifecycleTransition, ParameterName, ParameterRole, ParameterValue, RecoveryRequest,
+    LifecycleTransition, OwnerToken, ParameterName, ParameterRole, ParameterValue, RecoveryRequest,
     RepositoryError, SequentialIdGenerator, StepDefinitionUpgrade, StepName,
 };
 
@@ -55,6 +55,56 @@ fn instance_key() -> Result<JobInstanceKey, oxide_batch::DomainError> {
         JobName::new("repository_import")?,
         &parameters,
     ))
+}
+
+#[test]
+fn owner_comparison_and_stop_observation_are_atomic() -> Result<(), Box<dyn Error>> {
+    let (repository, _) = repository(time(100))?;
+    let mut create = block_on(repository.begin())?;
+    let instance = block_on(create.select_or_create_job_instance(&instance_key()?))?
+        .instance()
+        .clone();
+    let execution = block_on(create.create_job_execution(instance.id()))?;
+    let owner = OwnerToken::from_bytes([1; 16]);
+    let claimed = block_on(create.claim_execution_owner(
+        execution.id(),
+        execution.version(),
+        &owner,
+        time(101),
+    ))?;
+    block_on(create.commit())?;
+
+    let mut competing = block_on(repository.begin())?;
+    assert_eq!(
+        block_on(competing.claim_execution_owner(
+            execution.id(),
+            claimed.version(),
+            &OwnerToken::from_bytes([2; 16]),
+            time(102),
+        )),
+        Err(RepositoryError::ExecutionOwned { id: execution.id() })
+    );
+    block_on(competing.rollback())?;
+
+    let mut request = block_on(repository.begin())?;
+    block_on(request.request_execution_stop(
+        execution.id(),
+        claimed.version(),
+        &oxide_batch::ActorRef::new("operator:test")?,
+        time(103),
+    ))?;
+    block_on(request.commit())?;
+
+    let mut observe = block_on(repository.begin())?;
+    let control = block_on(observe.observe_execution_control(execution.id(), &owner, time(104)))?;
+    block_on(observe.commit())?;
+    assert!(control.owner_matches());
+    assert!(control.stop_requested());
+    assert_eq!(
+        control.execution().metadata().status(),
+        BatchStatus::Stopping
+    );
+    Ok(())
 }
 
 #[test]

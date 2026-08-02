@@ -231,9 +231,15 @@ impl ChunkComponentRevisions {
         self.restart.delivery_mode
     }
 
+    /// Returns the shutdown policy of an already-open chunk.
+    #[must_use]
+    pub const fn in_flight_policy(&self) -> InFlightPolicy {
+        self.restart.in_flight_policy
+    }
+
     /// Projects the restart-relevant chunk declaration into manifest members.
     pub(crate) fn manifest_value(&self) -> serde_json::Value {
-        json!({
+        let mut value = json!({
             "checkpoint": {
                 "schema": self.restart.checkpoint_schema.as_str(),
                 "version": self.restart.checkpoint_schema_version.get()
@@ -249,8 +255,28 @@ impl ChunkComponentRevisions {
                 "version": self.restart.context_schema_version.get()
             },
             "delivery_mode": self.restart.delivery_mode.manifest_name()
-        })
+        });
+        if self.restart.in_flight_policy == InFlightPolicy::RollbackChunk
+            && let Some(object) = value.as_object_mut()
+        {
+            object.insert(
+                "in_flight_policy".to_owned(),
+                serde_json::Value::String("rollback_chunk".to_owned()),
+            );
+        }
+        value
     }
+}
+
+/// The accepted shutdown behavior for an already-open chunk.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum InFlightPolicy {
+    /// Complete and commit the open chunk, then stop at its boundary.
+    #[default]
+    FinishChunk,
+    /// Roll back the open chunk and preserve the prior checkpoint.
+    RollbackChunk,
 }
 
 /// Declared delivery boundary included in a chunk definition fingerprint.
@@ -280,6 +306,7 @@ pub struct ChunkRestartContract {
     context_schema: StateSchemaId,
     context_schema_version: StateSchemaVersion,
     delivery_mode: ChunkDeliveryMode,
+    in_flight_policy: InFlightPolicy,
 }
 
 impl ChunkRestartContract {
@@ -298,7 +325,15 @@ impl ChunkRestartContract {
             context_schema,
             context_schema_version,
             delivery_mode,
+            in_flight_policy: InFlightPolicy::FinishChunk,
         }
+    }
+
+    /// Selects the restart-relevant open-chunk shutdown policy.
+    #[must_use]
+    pub const fn with_in_flight_policy(mut self, policy: InFlightPolicy) -> Self {
+        self.in_flight_policy = policy;
+        self
     }
 }
 
@@ -362,7 +397,7 @@ impl DefinitionIdentity {
         revision: DefinitionRevision,
         components: &ChunkComponentRevisions,
     ) -> Result<Self, DefinitionError> {
-        let manifest = json!({
+        let mut manifest = json!({
             "chunk_size": chunk_size.get(),
             "components": {
                 "checkpoint": components.checkpoint.as_str(),
@@ -385,6 +420,14 @@ impl DefinitionIdentity {
             "step": step_name.as_str(),
             "transaction_boundary": "chunk"
         });
+        if components.restart.in_flight_policy == InFlightPolicy::RollbackChunk
+            && let Some(object) = manifest.as_object_mut()
+        {
+            object.insert(
+                "in_flight_policy".to_owned(),
+                serde_json::Value::String("rollback_chunk".to_owned()),
+            );
+        }
         Self::encode(job_name.clone(), revision, &manifest)
     }
 

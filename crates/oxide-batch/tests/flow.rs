@@ -4,7 +4,7 @@
 
 use std::error::Error;
 use std::num::NonZeroU64;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
@@ -14,9 +14,9 @@ use oxide_batch::{
     FlowEvent, FlowEventKind, FlowEventSink, FlowExecutionOutcome, FlowFailure, FlowGraph, FlowJob,
     FlowLauncher, FlowNode, FlowTarget, FlowTransition, FlowTransitionKind, InMemoryJobRepository,
     JobExecutionDecider, JobInstanceKey, JobName, JobParameters, JobRepository, NodeId,
-    RepositoryError, SequentialIdGenerator, StartControls, StartLimit, StepComponents, StepName,
-    StepNode, StopSource, Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep,
-    TerminalKind,
+    RepositoryError, SequentialIdGenerator, ShutdownCoordinator, StartControls, StartLimit,
+    StepComponents, StepName, StepNode, StopSource, Tasklet, TaskletContext, TaskletError,
+    TaskletOutcome, TaskletStep, TerminalKind,
 };
 
 #[derive(Debug)]
@@ -78,6 +78,75 @@ impl Tasklet for CountingTasklet {
             }
         })
     }
+}
+
+struct CancellableFlowTasklet {
+    entered: Arc<AtomicBool>,
+}
+
+impl Tasklet for CancellableFlowTasklet {
+    fn execute<'a>(
+        &'a self,
+        context: TaskletContext<'a>,
+    ) -> BoxFuture<'a, Result<TaskletOutcome, TaskletError>> {
+        Box::pin(async move {
+            self.entered.store(true, Ordering::Release);
+            context.stop_token().cancelled().await;
+            Ok(TaskletOutcome::Stopped)
+        })
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn process_shutdown_stops_a_flow_without_selecting_another_target()
+-> Result<(), Box<dyn Error>> {
+    let only = NodeId::new("only")?;
+    let plan = FlowGraph::new(only.clone())
+        .with_node(tasklet_node("only", StartControls::default())?)
+        .with_transition(FlowTransition::new(
+            only.clone(),
+            ExitPattern::new("*")?,
+            FlowTarget::Terminal(TerminalKind::Complete),
+        ))
+        .compile(
+            &JobName::new("shutdown-flow")?,
+            DefinitionRevision::new("v1")?,
+        )?;
+    let entered = Arc::new(AtomicBool::new(false));
+    let job = FlowJob::new(JobName::new("shutdown-flow")?, plan)?.with_tasklet_step(
+        only,
+        TaskletStep::new(
+            StepName::new("only")?,
+            Arc::new(CancellableFlowTasklet {
+                entered: Arc::clone(&entered),
+            }),
+        ),
+    )?;
+    let (clock, ids, repository) = infrastructure();
+    let (_, stop) = StopSource::new();
+    let coordinator = ShutdownCoordinator::default();
+    let signal = coordinator.signal();
+    let launcher =
+        FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref()).with_shutdown_signal(&signal);
+
+    let parameters = JobParameters::new();
+    let launch = launcher.launch(&job, &parameters, &stop);
+    let request = async {
+        while !entered.load(Ordering::Acquire) {
+            tokio::task::yield_now().await;
+        }
+        let _ = signal.request_shutdown();
+    };
+    let (report, ()) = tokio::join!(launch, request);
+    let report = report?;
+
+    assert_eq!(report.outcome(), &FlowExecutionOutcome::Stopped);
+    assert_eq!(
+        report.job_execution().metadata().status(),
+        BatchStatus::Stopped
+    );
+    assert!(report.decisions().is_empty());
+    Ok(())
 }
 
 struct CountingDecider {

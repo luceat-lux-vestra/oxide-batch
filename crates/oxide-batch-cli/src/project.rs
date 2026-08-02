@@ -15,8 +15,9 @@ use serde_json::{Value, json};
 use oxide_batch::{
     DefinitionDescriptor, DurableStateKind, ExecutionCounts, ExecutionTimestamps, FlowDecision,
     FlowTarget, FlowTransitionKind, JobExecutionProjection, JobInstanceProjection, OperatorRecord,
-    ParameterDescriptor, PurgeCounts, PurgePlan, RecoveryDecision, RetentionHold, RetentionRecord,
-    StateEnvelopeDescriptor, StepExecutionProjection, StepPartitionProjection,
+    OwnerObservation, ParameterDescriptor, PurgeCounts, PurgePlan, RecoveryDecision,
+    RecoveryProposal, RetentionHold, RetentionRecord, StateEnvelopeDescriptor,
+    StepExecutionProjection, StepPartitionProjection,
 };
 
 /// Renders an instant as whole seconds since the Unix epoch.
@@ -166,6 +167,42 @@ pub fn execution(value: &JobExecutionProjection) -> Value {
         "context": envelope(value.context()),
         "stop_requested_at": optional_instant(value.stop_requested_at()),
         "owner_recorded": value.owner_recorded(),
+    })
+}
+
+/// Projects bounded recovery evidence and its version-bound digest.
+#[must_use]
+pub fn recovery_proposal(value: &RecoveryProposal) -> Value {
+    let evidence = value.evidence();
+    let owner = match evidence.owner() {
+        OwnerObservation::Absent => "absent",
+        OwnerObservation::CurrentProcess => "current_process",
+        OwnerObservation::OtherProcess => "other_process",
+        _ => "other",
+    };
+    let latest_step = evidence.latest_step().map_or(Value::Null, |step| {
+        json!({
+            "step_execution_id": step.id().get(),
+            "status": step.status().as_str(),
+            "checkpoint": envelope(step.checkpoint()),
+        })
+    });
+    json!({
+        "evidence_digest": value.digest_hex(),
+        "observed_version": value.observed_version().get(),
+        "status": evidence.status().as_str(),
+        "attempt": evidence.attempt(),
+        "owner": owner,
+        "updated_at": instant(evidence.updated_at()),
+        "inactivity_millis": evidence.inactivity().as_millis(),
+        "server_time": instant(evidence.server_time()),
+        "observed_clock_offset_millis": evidence.observed_clock_offset().as_millis(),
+        "observation_window_millis": evidence.observation_window().as_millis(),
+        "latest_step": latest_step,
+        "unknown_commit": evidence.unknown_commit(),
+        "completed_partition": evidence.completed_partition(),
+        "committed_flow_decision": evidence.committed_flow_decision(),
+        "ambiguous_external_effect": evidence.ambiguous_external_effect(),
     })
 }
 

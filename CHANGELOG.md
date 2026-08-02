@@ -67,6 +67,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Accepted M4 contracts for graceful shutdown ordering, in-flight chunk
   policy, deadlines and drain reporting, owner-token and server-time stale
   evidence, evidence-bound recovery, and the process-signal/kill matrix.
+- Application-owned graceful shutdown with intake rejection, cooperative
+  cancellation, structured child joining, escalation and deadline reports,
+  separate telemetry flushing, and ordered repository close; definition-bound
+  `FinishChunk`/`RollbackChunk` behavior; durable execution ownership and stop
+  polling; and server-time, version/digest-bound stale recovery exposed by the
+  operator CLI without payload-bearing evidence.
 - Accepted M4 contracts for the bounded split and local partition subset,
   single-invocation partitioning, durable partition state, deterministic
   aggregation, finite resource budgets, manifest format 3, and
