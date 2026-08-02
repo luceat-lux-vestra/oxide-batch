@@ -51,10 +51,11 @@ state, finite compiled flow, durable decisions and start controls, and
 process-kill restart evidence recorded in the
 [M3 exit record](docs/project/m3-exit-evidence.md). **M4 — Operations and Local
 Scale** is active under its [kickoff gate](docs/project/m4-kickoff-gate.md);
-operator/explorer, CLI, shutdown/recovery, retention, bounded telemetry, and
-the local-scale plan plus durable partition-repository and atomic aggregation
-slices are implemented but unreleased; owned local-parallel execution and M4
-exit evidence remain open.
+operator/explorer, CLI, shutdown/recovery, retention, bounded telemetry, the
+local-scale plan, durable partition repository/aggregation, and the first
+tasklet-only bounded parallel-split runtime slice are implemented but
+unreleased; complete local partition execution and M4 exit evidence remain
+open.
 
 Start with the [documentation index](docs/README.md) and
 [continuous delivery roadmap](docs/roadmap.md). The M5-M14 full-parity program

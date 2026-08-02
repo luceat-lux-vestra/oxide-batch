@@ -49,6 +49,10 @@ The execution failure-category constraint retains every schema-2 value and adds
 columns use checked text rather than PostgreSQL enums so later versions can add
 values transactionally.
 
+The flow-decision transition-kind constraint retains every schema-2 value and
+adds `SPLIT_AGGREGATE` for the durable transition selected by a format-3
+structural join. Existing flow decisions are unchanged.
+
 Every new table uses `RESTRICT` foreign keys and contains no parameter,
 context, item, checkpoint, credential, endpoint, SQL, user error text, or
 free-form operator text.
@@ -61,7 +65,7 @@ PostgreSQL transaction:
 1. require singleton schema version 2;
 2. add nullable columns to `ob_job_execution` and `ob_job_instance`;
 3. create the three new tables, their constraints, and their indexes;
-4. extend the failure-category constraint;
+4. extend the failure-category and flow-decision transition-kind constraints;
 5. validate constraints, foreign keys, and uniqueness;
 6. set the singleton version to 3;
 7. commit.

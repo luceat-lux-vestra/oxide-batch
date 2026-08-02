@@ -1,4 +1,4 @@
-//! Durable execution of the bounded M3 sequential and conditional flow slice.
+//! Durable execution of bounded M3 flows and the M4 local parallel-split slice.
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
-use futures_util::FutureExt;
+use futures_util::{FutureExt, StreamExt};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -89,6 +89,8 @@ pub enum FlowTransitionKind {
     Decider,
     /// Restart reused a completed step without invoking it.
     CompletedStepReuse,
+    /// A bounded local split joined durable branch results in declared order.
+    SplitAggregate,
 }
 
 impl FlowTransitionKind {
@@ -98,6 +100,7 @@ impl FlowTransitionKind {
             Self::StepExit => "STEP_EXIT",
             Self::Decider => "DECIDER",
             Self::CompletedStepReuse => "COMPLETED_STEP_REUSE",
+            Self::SplitAggregate => "SPLIT_AGGREGATE",
         }
     }
 
@@ -107,6 +110,7 @@ impl FlowTransitionKind {
             "STEP_EXIT" => Some(Self::StepExit),
             "DECIDER" => Some(Self::Decider),
             "COMPLETED_STEP_REUSE" => Some(Self::CompletedStepReuse),
+            "SPLIT_AGGREGATE" => Some(Self::SplitAggregate),
             _ => None,
         }
     }
@@ -363,15 +367,19 @@ pub(crate) fn decision_matches_manifest(manifest: &Value, request: &FlowDecision
     let Some(document) = manifest.as_object() else {
         return false;
     };
-    if document.get("format").and_then(Value::as_u64)
-        != Some(u64::from(crate::definition::MANIFEST_FORMAT_FLOW))
-    {
+    let format = document.get("format").and_then(Value::as_u64);
+    if !matches!(
+        format,
+        Some(value)
+            if value == u64::from(crate::definition::MANIFEST_FORMAT_FLOW)
+                || value == u64::from(crate::definition::MANIFEST_FORMAT_LOCAL_SCALE)
+    ) {
         return false;
     }
-    let expected_kind = if request.kind() == FlowTransitionKind::Decider {
-        "decision"
-    } else {
-        "step"
+    let expected_kind = match request.kind() {
+        FlowTransitionKind::Decider => "decision",
+        FlowTransitionKind::SplitAggregate => "join",
+        FlowTransitionKind::StepExit | FlowTransitionKind::CompletedStepReuse => "step",
     };
     let source_is_declared = document
         .get("nodes")
@@ -628,12 +636,57 @@ async fn invoke_decider(
     }
 }
 
-/// An executable binding for one compiled format-2 flow.
+/// A launch-scoped factory for one tasklet inside a bounded split branch.
+///
+/// A factory is invoked once per branch step and launch attempt before durable
+/// work begins. This keeps component instances branch-owned instead of
+/// silently sharing one tasklet across concurrent children.
+#[derive(Clone)]
+pub struct TaskletStepFactory {
+    step_name: StepName,
+    create: Arc<dyn Fn() -> TaskletStep + Send + Sync>,
+}
+
+impl TaskletStepFactory {
+    /// Declares the step name and its launch-scoped constructor.
+    #[must_use]
+    pub fn new(
+        step_name: StepName,
+        create: impl Fn() -> TaskletStep + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            step_name,
+            create: Arc::new(create),
+        }
+    }
+
+    /// Borrows the step name promised by this factory.
+    #[must_use]
+    pub const fn step_name(&self) -> &StepName {
+        &self.step_name
+    }
+
+    fn create(&self) -> TaskletStep {
+        (self.create)()
+    }
+}
+
+impl fmt::Debug for TaskletStepFactory {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TaskletStepFactory")
+            .field("step_name", &self.step_name)
+            .finish_non_exhaustive()
+    }
+}
+
+/// An executable binding for one compiled format-2 or bounded split flow.
 pub struct FlowJob {
     name: JobName,
     plan: CompiledExecutionPlan,
     steps: BTreeMap<NodeId, TaskletStep>,
     deciders: BTreeMap<NodeId, Arc<dyn JobExecutionDecider>>,
+    split_tasklets: BTreeMap<NodeId, TaskletStepFactory>,
 }
 
 impl fmt::Debug for FlowJob {
@@ -644,18 +697,23 @@ impl fmt::Debug for FlowJob {
             .field("definition", self.plan.definition_identity())
             .field("step_count", &self.steps.len())
             .field("decider_count", &self.deciders.len())
+            .field("split_tasklet_count", &self.split_tasklets.len())
             .finish()
     }
 }
 
 impl FlowJob {
-    /// Starts binding executable components to a compiled format-2 plan.
+    /// Starts binding executable components to a compiled format-2 or format-3 plan.
     ///
     /// # Errors
     ///
     /// Rejects a compatibility plan or a plan identified under another job.
     pub fn new(name: JobName, plan: CompiledExecutionPlan) -> Result<Self, FlowJobError> {
-        if plan.manifest_format() != crate::definition::MANIFEST_FORMAT_FLOW {
+        if !matches!(
+            plan.manifest_format(),
+            crate::definition::MANIFEST_FORMAT_FLOW
+                | crate::definition::MANIFEST_FORMAT_LOCAL_SCALE
+        ) {
             return Err(FlowJobError::UnsupportedManifest {
                 format: plan.manifest_format(),
             });
@@ -668,6 +726,7 @@ impl FlowJob {
             plan,
             steps: BTreeMap::new(),
             deciders: BTreeMap::new(),
+            split_tasklets: BTreeMap::new(),
         })
     }
 
@@ -745,6 +804,36 @@ impl FlowJob {
         Ok(self)
     }
 
+    /// Binds a launch-scoped tasklet factory to one embedded split step.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an unknown/non-tasklet branch step, a declared-name mismatch,
+    /// or a second binding for the same logical ID.
+    pub fn with_split_tasklet_factory(
+        mut self,
+        node_id: NodeId,
+        factory: TaskletStepFactory,
+    ) -> Result<Self, FlowJobError> {
+        let Some(compiled) = split_step(&self.plan, &node_id) else {
+            return Err(FlowJobError::WrongNodeKind { node: node_id });
+        };
+        if !matches!(compiled.components(), crate::StepComponents::Tasklet(_)) {
+            return Err(FlowJobError::ComponentMismatch { node: node_id });
+        }
+        if compiled.step_name() != factory.step_name() {
+            return Err(FlowJobError::StepNameMismatch { node: node_id });
+        }
+        if self
+            .split_tasklets
+            .insert(node_id.clone(), factory)
+            .is_some()
+        {
+            return Err(FlowJobError::DuplicateBinding { node: node_id });
+        }
+        Ok(self)
+    }
+
     /// Validates that every compiled node has exactly one executable binding.
     ///
     /// # Errors
@@ -752,16 +841,40 @@ impl FlowJob {
     /// Returns the first missing node in canonical identifier order.
     pub fn validate(&self) -> Result<(), FlowJobError> {
         for (id, node) in self.plan.nodes() {
+            if let FlowNode::Split(split) = node {
+                for step in split.branches().iter().flat_map(crate::SplitBranch::steps) {
+                    if !self.split_tasklets.contains_key(step.id()) {
+                        return Err(FlowJobError::MissingBinding {
+                            node: step.id().clone(),
+                        });
+                    }
+                }
+                continue;
+            }
             let present = match node {
                 FlowNode::Step(_) => self.steps.contains_key(id),
                 FlowNode::Decision(_) => self.deciders.contains_key(id),
-                FlowNode::Split(_) | FlowNode::Join(_) | FlowNode::PartitionedStep(_) => false,
+                FlowNode::Split(_) | FlowNode::Join(_) => true,
+                FlowNode::PartitionedStep(_) => false,
             };
             if !present {
                 return Err(FlowJobError::MissingBinding { node: id.clone() });
             }
         }
         Ok(())
+    }
+
+    fn materialize_split_tasklets(&self) -> Result<BTreeMap<NodeId, TaskletStep>, FlowJobError> {
+        let mut tasklets = BTreeMap::new();
+        for (node, factory) in &self.split_tasklets {
+            let step = catch_unwind(AssertUnwindSafe(|| factory.create()))
+                .map_err(|_| FlowJobError::FactoryPanic { node: node.clone() })?;
+            if step.name() != factory.step_name() {
+                return Err(FlowJobError::StepNameMismatch { node: node.clone() });
+            }
+            tasklets.insert(node.clone(), step);
+        }
+        Ok(tasklets)
     }
 
     /// Borrows the compiled plan.
@@ -807,6 +920,11 @@ pub enum FlowJobError {
         /// Mismatched logical node.
         node: NodeId,
     },
+    /// A branch component factory panicked before durable launch.
+    FactoryPanic {
+        /// Logical branch step whose factory panicked.
+        node: NodeId,
+    },
 }
 
 impl fmt::Display for FlowJobError {
@@ -815,7 +933,7 @@ impl fmt::Display for FlowJobError {
             Self::UnsupportedManifest { format } => {
                 write!(
                     formatter,
-                    "flow execution requires manifest format 2, found {format}"
+                    "flow execution requires manifest format 2 or bounded format 3, found {format}"
                 )
             }
             Self::JobNameMismatch => formatter.write_str("flow job name does not match its plan"),
@@ -852,11 +970,30 @@ impl fmt::Display for FlowJobError {
                 "node {} executable components do not match the compiled declaration",
                 node.as_str()
             ),
+            Self::FactoryPanic { node } => write!(
+                formatter,
+                "node {} component factory panicked",
+                node.as_str()
+            ),
         }
     }
 }
 
 impl Error for FlowJobError {}
+
+fn split_step<'a>(
+    plan: &'a CompiledExecutionPlan,
+    node_id: &NodeId,
+) -> Option<&'a crate::StepNode> {
+    plan.nodes().find_map(|(_, node)| match node {
+        FlowNode::Split(split) => split
+            .branches()
+            .iter()
+            .flat_map(crate::SplitBranch::steps)
+            .find(|step| step.id() == node_id),
+        _ => None,
+    })
+}
 
 /// Why a durable flow attempt ended.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -913,7 +1050,7 @@ pub struct FlowLaunchReport {
     listener_failures: Vec<ListenerFailure>,
 }
 
-/// Stable, post-commit observations for the bounded M3 flow runtime.
+/// Stable, post-commit observations for the bounded flow runtime.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum FlowEventKind {
@@ -1057,7 +1194,7 @@ impl FlowEvent {
     }
 }
 
-/// A non-authoritative observer of committed M3 flow decisions.
+/// A non-authoritative observer of committed flow decisions.
 pub trait FlowEventSink: Send + Sync {
     /// Observes one bounded event. Failure or panic cannot change traversal.
     fn emit(&self, event: &FlowEvent);
@@ -1150,7 +1287,7 @@ impl From<FlowJobError> for FlowRuntimeError {
     }
 }
 
-/// Async-first launcher for durable format-2 flows.
+/// Async-first launcher for durable sequential, conditional, and bounded split flows.
 pub struct FlowLauncher<'a> {
     repository: &'a dyn JobRepository,
     clock: &'a dyn Clock,
@@ -1203,7 +1340,7 @@ impl<'a> FlowLauncher<'a> {
         self
     }
 
-    /// Executes one durable sequential/conditional attempt.
+    /// Executes one durable sequential, conditional, or bounded split attempt.
     ///
     /// The source step result is committed before its transition, and the
     /// transition is committed before the next target starts. Expected user
@@ -1223,6 +1360,7 @@ impl<'a> FlowLauncher<'a> {
     ) -> Result<FlowLaunchReport, FlowRuntimeError> {
         self.ensure_accepting()?;
         job.validate()?;
+        let split_tasklets = job.materialize_split_tasklets()?;
         let key = JobInstanceKey::new(job.name.clone(), parameters);
         let (instance, mut execution, attempt) = self
             .create_job_execution(&key, job.plan.definition_identity())
@@ -1259,7 +1397,15 @@ impl<'a> FlowLauncher<'a> {
                     node: node_id.clone(),
                 })
             })?;
-            let (observed, source_step, kind, input_digest, reused, source_failure) = match node {
+            let (
+                transition_node,
+                observed,
+                source_step,
+                kind,
+                input_digest,
+                reused,
+                source_failure,
+            ) = match node {
                 FlowNode::Step(compiled) => {
                     let historical = self.latest_step(instance.id(), &node_id).await?;
                     if let Some(history) = historical.as_ref()
@@ -1278,6 +1424,7 @@ impl<'a> FlowLauncher<'a> {
                             .await?;
                         preceding = Some(history.clone());
                         (
+                            node_id.clone(),
                             history.execution().metadata().exit_status().clone(),
                             Some(history.execution().id()),
                             FlowTransitionKind::CompletedStepReuse,
@@ -1389,6 +1536,7 @@ impl<'a> FlowLauncher<'a> {
                         let digest = step_input_digest(job.plan.fingerprint(), &state);
                         preceding = Some(state);
                         (
+                            node_id.clone(),
                             run.exit_status,
                             Some(run.execution.id()),
                             FlowTransitionKind::StepExit,
@@ -1419,6 +1567,7 @@ impl<'a> FlowLauncher<'a> {
                         .await?
                     {
                         (
+                            node_id.clone(),
                             ExitStatus::new(prior.observed_outcome().clone()),
                             None,
                             FlowTransitionKind::Decider,
@@ -1443,6 +1592,7 @@ impl<'a> FlowLauncher<'a> {
                         };
                         match invoke_decider(decider.as_ref(), input).await {
                             Ok(outcome) => (
+                                node_id.clone(),
                                 outcome,
                                 None,
                                 FlowTransitionKind::Decider,
@@ -1468,14 +1618,75 @@ impl<'a> FlowLauncher<'a> {
                         }
                     }
                 }
-                FlowNode::Split(_) | FlowNode::Join(_) | FlowNode::PartitionedStep(_) => {
+                FlowNode::Split(split) => {
+                    let run = self
+                        .run_split(
+                            job,
+                            split,
+                            &split_tasklets,
+                            instance.id(),
+                            execution.id(),
+                            attempt,
+                            parameters,
+                            stop_token,
+                        )
+                        .await?;
+                    steps.extend(run.step_executions);
+                    listener_failures.extend(run.listener_failures);
+                    preceding = None;
+                    if run.status == BatchStatus::Unknown {
+                        let final_job = self
+                            .finish_job(&execution, BatchStatus::Unknown, run.failure)
+                            .await?;
+                        return Ok(FlowLaunchReport {
+                            instance,
+                            job_execution: final_job,
+                            step_executions: steps,
+                            decisions,
+                            outcome: FlowExecutionOutcome::Unknown,
+                            listener_failures,
+                        });
+                    }
+                    if run.status == BatchStatus::Stopped {
+                        let final_job = self
+                            .finish_job(&execution, BatchStatus::Stopped, None)
+                            .await?;
+                        return Ok(FlowLaunchReport {
+                            instance,
+                            job_execution: final_job,
+                            step_executions: steps,
+                            decisions,
+                            outcome: FlowExecutionOutcome::Stopped,
+                            listener_failures,
+                        });
+                    }
+                    let reused = self
+                        .reusable_decision(
+                            instance.id(),
+                            split.join(),
+                            job.plan.fingerprint(),
+                            &run.input_digest,
+                            FlowTransitionKind::SplitAggregate,
+                        )
+                        .await?;
+                    (
+                        split.join().clone(),
+                        run.exit_status,
+                        None,
+                        FlowTransitionKind::SplitAggregate,
+                        run.input_digest,
+                        reused.map(|decision| decision.id()),
+                        run.flow_failure,
+                    )
+                }
+                FlowNode::Join(_) | FlowNode::PartitionedStep(_) => {
                     return Err(FlowRuntimeError::Job(FlowJobError::UnsupportedManifest {
                         format: job.plan.manifest_format(),
                     }));
                 }
             };
 
-            let target = match job.plan.select_target(&node_id, observed.code()) {
+            let target = match job.plan.select_target(&transition_node, observed.code()) {
                 Ok(target) => target.clone(),
                 Err(FlowSelectionError::UnmappedExitOutcome { node, code }) => {
                     let failure = self.next_failure_summary(FailureCategory::InvalidDefinition)?;
@@ -1496,7 +1707,7 @@ impl<'a> FlowLauncher<'a> {
                 }
                 Err(FlowSelectionError::UnknownNode { .. }) => {
                     return Err(FlowRuntimeError::Job(FlowJobError::MissingBinding {
-                        node: node_id,
+                        node: transition_node,
                     }));
                 }
             };
@@ -1504,7 +1715,7 @@ impl<'a> FlowLauncher<'a> {
             let request = FlowDecisionRequest::new(
                 execution.id(),
                 sequence,
-                node_id.clone(),
+                transition_node.clone(),
                 source_step,
                 kind,
                 observed.code().clone(),
@@ -1521,7 +1732,7 @@ impl<'a> FlowLauncher<'a> {
                 instance.id(),
                 execution.id(),
                 attempt,
-                node_id.clone(),
+                transition_node.clone(),
                 source_step,
                 Some(target.clone()),
                 decision.decided_at(),
@@ -1533,7 +1744,7 @@ impl<'a> FlowLauncher<'a> {
                     instance.id(),
                     execution.id(),
                     attempt,
-                    node_id.clone(),
+                    transition_node.clone(),
                     source_step,
                     Some(target.clone()),
                     decision.decided_at(),
@@ -1573,6 +1784,240 @@ impl<'a> FlowLauncher<'a> {
                 }
             }
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_split(
+        &self,
+        job: &FlowJob,
+        split: &crate::SplitNode,
+        tasklets: &BTreeMap<NodeId, TaskletStep>,
+        instance_id: JobInstanceId,
+        execution_id: JobExecutionId,
+        attempt: ExecutionAttempt,
+        parameters: &JobParameters,
+        parent_stop: &StopToken,
+    ) -> Result<SplitRun, FlowRuntimeError> {
+        let (split_stop_source, split_stop) = crate::StopSource::new();
+        if parent_stop.is_stop_requested() {
+            split_stop_source.request_stop();
+        }
+
+        let mut ordinal_base = 0_usize;
+        let branches = futures_util::stream::iter(split.branches().iter().enumerate().map(
+            |(index, branch)| {
+                let base = ordinal_base;
+                ordinal_base = ordinal_base.saturating_add(branch.steps().len());
+                let split_stop = split_stop.clone();
+                async move {
+                    self.run_split_branch(
+                        job,
+                        index,
+                        base,
+                        branch,
+                        tasklets,
+                        instance_id,
+                        execution_id,
+                        attempt,
+                        parameters,
+                        &split_stop,
+                    )
+                    .await
+                }
+            },
+        ))
+        .buffer_unordered(usize::from(split.budget().max_parallel_branches()));
+        tokio::pin!(branches);
+
+        let mut joined = Vec::with_capacity(split.branches().len());
+        let mut first_error = None;
+        let mut parent_stop_observed = parent_stop.is_stop_requested();
+        loop {
+            tokio::select! {
+                result = branches.next() => {
+                    let Some(result) = result else { break; };
+                    match result {
+                        Ok(branch) => {
+                            if split.failure_policy() == crate::LocalFailurePolicy::CancelSiblings
+                                && matches!(branch.status, BatchStatus::Failed | BatchStatus::Unknown)
+                            {
+                                split_stop_source.request_stop();
+                            }
+                            joined.push(branch);
+                        }
+                        Err(error) => {
+                            split_stop_source.request_stop();
+                            if first_error.is_none() {
+                                first_error = Some(error);
+                            }
+                        }
+                    }
+                }
+                () = parent_stop.cancelled(), if !parent_stop_observed => {
+                    parent_stop_observed = true;
+                    split_stop_source.request_stop();
+                }
+            }
+        }
+        if let Some(error) = first_error {
+            return Err(error);
+        }
+        joined.sort_by_key(|branch| branch.index);
+        if joined.len() != split.branches().len() {
+            return Err(FlowRuntimeError::Repository(
+                RepositoryError::FlowStateCorrupt,
+            ));
+        }
+
+        let status = joined
+            .iter()
+            .map(|branch| branch.status)
+            .max_by_key(|status| split_status_severity(*status))
+            .ok_or(FlowRuntimeError::Repository(
+                RepositoryError::FlowStateCorrupt,
+            ))?;
+        let selected = joined.iter().find(|branch| branch.status == status).ok_or(
+            FlowRuntimeError::Repository(RepositoryError::FlowStateCorrupt),
+        )?;
+        let exit_status = selected.exit_status.clone();
+        let failure = selected.failure;
+        let flow_failure = selected.flow_failure.clone();
+        let input_digest = split_input_digest(job.plan.fingerprint(), split.join(), &joined);
+        let mut step_executions = Vec::new();
+        let mut listener_failures = Vec::new();
+        for branch in joined {
+            step_executions.extend(branch.step_executions);
+            listener_failures.extend(branch.listener_failures);
+        }
+        Ok(SplitRun {
+            status,
+            exit_status,
+            failure,
+            flow_failure,
+            input_digest,
+            step_executions,
+            listener_failures,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    async fn run_split_branch(
+        &self,
+        job: &FlowJob,
+        index: usize,
+        ordinal_base: usize,
+        branch: &crate::SplitBranch,
+        tasklets: &BTreeMap<NodeId, TaskletStep>,
+        instance_id: JobInstanceId,
+        execution_id: JobExecutionId,
+        attempt: ExecutionAttempt,
+        parameters: &JobParameters,
+        stop: &StopToken,
+    ) -> Result<SplitBranchRun, FlowRuntimeError> {
+        let mut durable_states = Vec::with_capacity(branch.steps().len());
+        let mut step_executions = Vec::new();
+        let mut listener_failures = Vec::new();
+        let mut status = BatchStatus::Completed;
+        let mut exit_status = ExitStatus::completed();
+        let mut failure = None;
+        let mut flow_failure = None;
+
+        for (offset, compiled) in branch.steps().iter().enumerate() {
+            let historical = self.latest_step(instance_id, compiled.id()).await?;
+            if let Some(history) = historical
+                && history.execution().metadata().status() == BatchStatus::Completed
+                && !compiled.start_controls().allow_start_if_complete()
+            {
+                exit_status = history.execution().metadata().exit_status().clone();
+                durable_states.push(history);
+                continue;
+            }
+
+            let tasklet = tasklets.get(compiled.id()).ok_or_else(|| {
+                FlowRuntimeError::Job(FlowJobError::MissingBinding {
+                    node: compiled.id().clone(),
+                })
+            })?;
+            let created = match self
+                .create_step(
+                    execution_id,
+                    compiled.step_name(),
+                    compiled.id(),
+                    compiled.start_controls().start_limit(),
+                )
+                .await
+            {
+                Ok(created) => created,
+                Err(FlowRuntimeError::Repository(RepositoryError::StartLimitExceeded {
+                    limit,
+                    ..
+                })) => {
+                    self.emit_flow_event(&FlowEvent::new(
+                        FlowEventKind::StartLimitExceeded,
+                        job.name.clone(),
+                        instance_id,
+                        execution_id,
+                        attempt,
+                        compiled.id().clone(),
+                        None,
+                        None,
+                        self.clock.now(),
+                    ));
+                    status = BatchStatus::Failed;
+                    exit_status = ExitStatus::failed();
+                    failure = Some(self.next_failure_summary(FailureCategory::IllegalTransition)?);
+                    flow_failure = Some(FlowFailure::StartLimitExceeded {
+                        node: compiled.id().clone(),
+                        limit,
+                    });
+                    break;
+                }
+                Err(error) => return Err(error),
+            };
+            let correlation = correlation(
+                &job.name,
+                instance_id,
+                execution_id,
+                attempt,
+                compiled.step_name(),
+                created.id(),
+                ordinal_base.saturating_add(offset),
+            )?;
+            let run = self
+                .run_step(
+                    compiled.id(),
+                    tasklet,
+                    created,
+                    parameters,
+                    stop,
+                    &correlation,
+                )
+                .await?;
+            status = status_for_tasklet(run.outcome);
+            exit_status = run.exit_status;
+            failure = run.failure;
+            flow_failure = run.flow_failure;
+            listener_failures.extend(run.listener_failures);
+            step_executions.push(run.execution);
+            let state = self.latest_step(instance_id, compiled.id()).await?.ok_or(
+                FlowRuntimeError::Repository(RepositoryError::FlowStateCorrupt),
+            )?;
+            durable_states.push(state);
+            if status != BatchStatus::Completed {
+                break;
+            }
+        }
+
+        Ok(SplitBranchRun {
+            index,
+            status,
+            exit_status,
+            failure,
+            flow_failure,
+            states: durable_states,
+            step_executions,
+            listener_failures,
+        })
     }
 
     fn ensure_accepting(&self) -> Result<(), FlowRuntimeError> {
@@ -2027,6 +2472,64 @@ struct StepRun {
     failure: Option<FailureSummary>,
     flow_failure: Option<FlowFailure>,
     listener_failures: Vec<ListenerFailure>,
+}
+
+struct SplitBranchRun {
+    index: usize,
+    status: BatchStatus,
+    exit_status: ExitStatus,
+    failure: Option<FailureSummary>,
+    flow_failure: Option<FlowFailure>,
+    states: Vec<FlowStepState>,
+    step_executions: Vec<StepExecution>,
+    listener_failures: Vec<ListenerFailure>,
+}
+
+struct SplitRun {
+    status: BatchStatus,
+    exit_status: ExitStatus,
+    failure: Option<FailureSummary>,
+    flow_failure: Option<FlowFailure>,
+    input_digest: [u8; 32],
+    step_executions: Vec<StepExecution>,
+    listener_failures: Vec<ListenerFailure>,
+}
+
+const fn split_status_severity(status: BatchStatus) -> u8 {
+    match status {
+        BatchStatus::Completed => 0,
+        BatchStatus::Stopped => 1,
+        BatchStatus::Failed => 2,
+        BatchStatus::Unknown => 3,
+        BatchStatus::Starting
+        | BatchStatus::Started
+        | BatchStatus::Stopping
+        | BatchStatus::Abandoned => 4,
+    }
+}
+
+fn split_input_digest(
+    fingerprint: &[u8; 32],
+    join: &NodeId,
+    branches: &[SplitBranchRun],
+) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"oxide-batch.split-aggregate-input.v1\0");
+    hash.update(fingerprint);
+    hash_field(&mut hash, join.as_str().as_bytes());
+    for branch in branches {
+        hash.update(
+            u64::try_from(branch.index)
+                .unwrap_or(u64::MAX)
+                .to_be_bytes(),
+        );
+        hash_field(&mut hash, branch.status.to_string().as_bytes());
+        hash_field(&mut hash, branch.exit_status.code().as_str().as_bytes());
+        for state in &branch.states {
+            hash.update(step_input_digest(fingerprint, state));
+        }
+    }
+    hash.finalize().into()
 }
 
 fn next_sequence(length: usize) -> Result<FlowDecisionSequence, FlowRuntimeError> {
