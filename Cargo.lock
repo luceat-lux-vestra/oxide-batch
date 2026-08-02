@@ -713,6 +713,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxide-batch-cli"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "futures-executor",
+ "futures-util",
+ "oxide-batch",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "oxide-batch-m0-spikes"
 version = "0.0.0"
 dependencies = [
