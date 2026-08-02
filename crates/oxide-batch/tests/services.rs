@@ -342,6 +342,10 @@ impl FaultingRepository {
 }
 
 impl oxide_batch::JobRepository for FaultingRepository {
+    fn connection_capacity(&self) -> u32 {
+        self.inner.connection_capacity()
+    }
+
     fn begin<'a>(
         &'a self,
     ) -> oxide_batch::BoxFuture<

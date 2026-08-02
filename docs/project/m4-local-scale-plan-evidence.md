@@ -4,13 +4,13 @@
 
 **Issue:** [#80](https://github.com/luceat-lux-vestra/oxide-batch/issues/80)
 
-**Date:** 2026-08-02
+**Date:** 2026-08-03
 
 This record covers the first reviewable implementation slice of the accepted
 M4 bounded local-scale contract: manifest format 3, the exact split and
 partitioned-step declaration subset, finite plan budgets, and canonical
-definition identity. It does not claim that branches or partitions execute,
-that partition state is durable, or that either scale ledger row is complete.
+definition identity. Later evidence records the implemented execution slices;
+this plan record alone does not claim that either scale ledger row is complete.
 
 ## Implemented boundary
 
@@ -35,14 +35,14 @@ that partition state is durable, or that either scale ledger row is complete.
   therefore change the SHA-256 definition fingerprint. Builder declaration
   order does not change canonical bytes.
 
-The current `FlowLauncher` now accepts the tasklet-only bounded parallel-split
-runtime recorded in the
-[parallel-split evidence](m4-parallel-split-evidence.md), while format-3 plans
-containing partitioned steps or unbound branch components still fail closed.
-The subsequent
+The current `FlowLauncher` accepts the tasklet-only bounded parallel-split and
+local-partition runtimes recorded in the
+[parallel-split evidence](m4-parallel-split-evidence.md) and
+[local-partition evidence](m4-local-partition-runtime-evidence.md). Format-3
+plans with unbound components or partition workers outside the tasklet-only M4
+slice still fail closed. The supporting
 [durable partition repository evidence](m4-partition-repository-evidence.md)
-records the schema-3 plan and result transaction boundary without claiming
-runtime execution.
+records the schema-3 plan and result transaction boundary.
 
 ## Named executable evidence
 
@@ -60,13 +60,9 @@ runtime execution.
 
 ## Remaining issue #80 boundary
 
-- chunk/partition component factories and explicit concurrent-use validation;
-- complete cancellation, panic, sibling-policy, counter, and resource evidence
-  for the new tasklet split runtime;
-- runtime use of the committed single-invocation partition plan and atomic
-  aggregate, including completed-result reuse and `UNKNOWN` blocking;
-- in-memory/PostgreSQL, process-kill, sequential-equivalence, and
-  bounded-resource evidence.
+The tasklet-only execution slice is implemented, but chunk-worker composition
+and the final M4 process-kill, resource, cancellation, PostgreSQL-matrix, and
+soak-evidence judgment remain outside this plan record.
 
 `SCALE-PARSTEP-001` and `SCALE-LOCALPART-001` therefore remain unreleased
 `Partial`, not `Implemented` or `Verified`. RFC-0009 remains proposed, and this

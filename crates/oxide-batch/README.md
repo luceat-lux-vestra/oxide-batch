@@ -12,8 +12,8 @@ a restart-oriented batch processing framework for Rust inspired by Spring Batch.
 > runtime has been released. M4 operator/explorer, CLI, graceful-shutdown,
 > stale-recovery, retention, bounded telemetry, local-scale plan, durable
 > partition-repository/aggregation, and tasklet-only bounded parallel-split
-> runtime slices are implemented but unreleased; complete local partition
-> execution and the M4 exit evidence remain open.
+> and local-partition runtime slices are implemented but unreleased; the M4
+> exit evidence remains open.
 
 The facade owns validated job and step names, opaque instance/execution IDs,
 typed and value-redacted job parameters, canonical job-instance keys, lifecycle
@@ -173,3 +173,35 @@ It prints the tasklet observation and the final persisted job status. The
 in-memory repository is intentionally non-durable; use this M1 example for
 learning, local execution, and deterministic tests rather than restart
 guarantees across process failure.
+
+## PostgreSQL local partitions
+
+The checked-in PostgreSQL example owns a tasklet-only partition definition and
+uses a finite one-worker/two-connection manifest budget. The URLs below are
+local-example credentials; production deployments use separate least-privilege
+migrator and runtime identities with verified TLS.
+
+```console
+export OXIDEBATCH_EXAMPLE_MIGRATOR_URL='postgres://...'
+export OXIDEBATCH_EXAMPLE_RUNTIME_URL='postgres://...'
+cargo run -p oxide-batch --features postgres --example postgres_local_partition -- migrate
+cargo run -p oxide-batch --features postgres --example postgres_local_partition -- launch
+cargo run -p oxide-batch --features postgres --example postgres_local_partition -- inspect
+```
+
+The interruption path exits after `alpha` commits and `beta` starts. Inspect
+the durable rows, record an audited recovery, and restart; `alpha` is carried
+forward and is not invoked again.
+
+```console
+cargo run -p oxide-batch --features postgres --example postgres_local_partition -- interrupt
+cargo run -p oxide-batch --features postgres --example postgres_local_partition -- inspect
+cargo run -p oxide-batch --features postgres --example postgres_local_partition -- recover
+cargo run -p oxide-batch --features postgres --example postgres_local_partition -- restart
+cargo run -p oxide-batch --features postgres --example postgres_local_partition -- inspect
+```
+
+The shipped operator CLI can inspect the same repository and apply guarded
+operator actions, but it is not a standalone job-definition loader. This
+example application constructs the `FlowJob`; a launch-capable CLI host must
+embed `oxide-batch-cli` and supply its own `DefinitionCatalog`.

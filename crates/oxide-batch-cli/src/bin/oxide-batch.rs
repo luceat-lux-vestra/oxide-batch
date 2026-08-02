@@ -11,6 +11,22 @@ use std::process::ExitCode;
 
 use oxide_batch_cli::{DefinitionCatalog, ExitCategory, Host, ProcessHost};
 
+const HELP: &str = "oxide-batch - guarded repository operator\n\
+\n\
+USAGE:\n\
+  oxide-batch <noun> <verb> [options]\n\
+  oxide-batch launch [options]\n\
+\n\
+NOUNS:\n\
+  job  instance  execution  retention  config  schema  diagnostics\n\
+\n\
+BOUNDARY:\n\
+  This binary is not a standalone job-definition loader. It registers no Rust\n\
+  job definitions, so launch and execution restart require an application that\n\
+  embeds oxide-batch-cli and supplies a DefinitionCatalog.\n\
+\n\
+See the Operator CLI Reference for the closed command and option grammar.\n";
+
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let category = run(&arguments);
@@ -20,6 +36,13 @@ fn main() -> ExitCode {
 /// Runs one invocation and returns its exit category.
 fn run(arguments: &[String]) -> ExitCategory {
     let mut host = ProcessHost::new();
+    if matches!(arguments, [argument] if argument == "--help" || argument == "-h") {
+        return if host.write_stdout(HELP.as_bytes()).is_ok() && host.flush_stdout().is_ok() {
+            ExitCategory::Success
+        } else {
+            ExitCategory::OutputFailure
+        };
+    }
     let mut plan = match oxide_batch_cli::prepare(&mut host, arguments) {
         Ok(plan) => plan,
         Err(category) => return category,
@@ -56,4 +79,14 @@ fn run(arguments: &[String]) -> ExitCategory {
         let deadline = tokio::time::sleep(plan.timeout());
         oxide_batch_cli::dispatch(&mut host, &mut plan, &services, &catalog, deadline).await
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn help_is_a_successful_local_command() {
+        assert_eq!(run(&["--help".to_owned()]), ExitCategory::Success);
+    }
 }

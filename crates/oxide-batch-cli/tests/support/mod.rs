@@ -469,6 +469,10 @@ pub enum FaultyBegin {
 }
 
 impl JobRepository for FaultyRepository {
+    fn connection_capacity(&self) -> u32 {
+        1
+    }
+
     fn begin<'a>(
         &'a self,
     ) -> BoxFuture<'a, Result<Box<dyn RepositoryUnitOfWork + 'a>, RepositoryError>> {

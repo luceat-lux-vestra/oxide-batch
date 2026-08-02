@@ -8,6 +8,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
+use crate::PartitionPlanEntry;
 use crate::{
     ActorRef, BatchStatus, DefinitionIdentity, DefinitionRevision, DefinitionUpgrade, DomainError,
     ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitStatus, FailureCategory,
@@ -19,7 +20,6 @@ use crate::{
     RecoveryDecisionId, RetentionAction, RetentionHold, RetentionRecord, RetentionRecordDraft,
     StartLimit, StepExecution, StepExecutionId, StepName, StepPartition, StepPartitionId,
 };
-use crate::{PartitionPlanEntry, PartitionResult};
 
 const MAX_RECOVERY_REASON_BYTES: usize = 64;
 const MAX_OPERATOR_REFERENCE_BYTES: usize = 128;
@@ -638,6 +638,15 @@ pub(crate) fn recovered_execution(
 /// A unit of work does not become visible until it is committed. Dropping one
 /// without committing has rollback semantics.
 pub trait JobRepository: Send + Sync {
+    /// Returns the finite connection budget available to one execution tree.
+    ///
+    /// In-memory adapters report a finite logical budget; durable adapters
+    /// report the configured pool ceiling. Local-scale launch rejects a plan
+    /// whose declared repository budget exceeds this value.
+    fn connection_capacity(&self) -> u32 {
+        1
+    }
+
     /// Begins a repository-owned unit of work.
     ///
     /// The returned object may borrow this repository and cannot outlive it.
@@ -882,6 +891,25 @@ pub trait RepositoryUnitOfWork: Send {
         })
     }
 
+    /// Carries one prior attempt's committed partition plan into a new parent.
+    ///
+    /// Completed results are retained without rerunning their worker. Other
+    /// results become unassigned `STARTING` work only after the source job has
+    /// reached a restartable terminal state through ordinary failure/stop or
+    /// explicit recovery. The operation publishes the complete target plan or
+    /// nothing.
+    fn restart_step_partition_plan(
+        &mut self,
+        _source_step_execution_id: StepExecutionId,
+        _target_step_execution_id: StepExecutionId,
+    ) -> BoxFuture<'_, Result<Vec<StepPartition>, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::StepPartitions,
+            })
+        })
+    }
+
     /// Assigns a new or restart-eligible partition to a worker attempt by CAS.
     fn assign_step_partition(
         &mut self,
@@ -896,13 +924,18 @@ pub trait RepositoryUnitOfWork: Send {
         })
     }
 
-    /// Publishes one assigned worker's terminal result by CAS.
-    fn complete_step_partition<'a>(
-        &'a mut self,
+    /// Publishes one assigned worker's durable terminal snapshot by CAS.
+    ///
+    /// The adapter locks and verifies the exact assigned worker. Status, exit
+    /// status, and counters are derived from that worker rather than accepted
+    /// from a caller-supplied result, so an active or crossed worker cannot
+    /// fabricate a partition result.
+    fn complete_step_partition(
+        &mut self,
         _id: StepPartitionId,
         _expected_version: ExecutionVersion,
-        _result: &'a PartitionResult,
-    ) -> BoxFuture<'a, Result<StepPartition, RepositoryError>> {
+        _worker_step_execution_id: StepExecutionId,
+    ) -> BoxFuture<'_, Result<StepPartition, RepositoryError>> {
         Box::pin(async {
             Err(RepositoryError::UnsupportedCapability {
                 capability: RepositoryCapability::StepPartitions,
@@ -921,7 +954,6 @@ pub trait RepositoryUnitOfWork: Send {
         _step_execution_id: StepExecutionId,
         _expected_version: ExecutionVersion,
         _transitioned_at: SystemTime,
-        _failure: Option<FailureSummary>,
     ) -> BoxFuture<'_, Result<StepExecution, RepositoryError>> {
         Box::pin(async {
             Err(RepositoryError::UnsupportedCapability {
@@ -1257,6 +1289,20 @@ pub enum RepositoryError {
         /// Reused worker attempt.
         worker_step_execution_id: StepExecutionId,
     },
+    /// A completion did not name the currently assigned worker attempt.
+    PartitionWorkerStale {
+        /// Rejected partition.
+        partition_id: StepPartitionId,
+        /// Worker expected by the caller.
+        worker_step_execution_id: StepExecutionId,
+    },
+    /// The partition manager is no longer active and cannot mutate children.
+    PartitionParentNotActive {
+        /// Parent partitioned step execution.
+        step_execution_id: StepExecutionId,
+        /// Current parent lifecycle status.
+        status: BatchStatus,
+    },
     /// At least one durable child has not published a runtime-terminal result.
     PartitionAggregationIncomplete {
         /// Parent partitioned step execution.
@@ -1460,6 +1506,20 @@ impl fmt::Display for RepositoryError {
             } => write!(
                 formatter,
                 "worker step execution {worker_step_execution_id} is already assigned to a partition"
+            ),
+            Self::PartitionWorkerStale {
+                partition_id,
+                worker_step_execution_id,
+            } => write!(
+                formatter,
+                "worker step execution {worker_step_execution_id} is not the current worker for partition {partition_id}"
+            ),
+            Self::PartitionParentNotActive {
+                step_execution_id,
+                status,
+            } => write!(
+                formatter,
+                "partition parent step execution {step_execution_id} cannot mutate children from {status}"
             ),
             Self::PartitionAggregationIncomplete {
                 step_execution_id,

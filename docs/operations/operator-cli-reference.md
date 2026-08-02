@@ -29,8 +29,12 @@ reconstruct one, and accepting a manifest digest from configuration would let an
 operator assert an identity the application never produced.
 
 The shipped binary therefore registers no definitions and serves every command
-a repository alone can answer. An application that wants to launch or restart
-from a command line embeds the crate and supplies a `DefinitionCatalog`:
+a repository alone can answer. It is not a standalone job-definition loader:
+it does not discover Rust jobs from crates, manifest files, or metadata rows.
+`oxide-batch --help` reports this boundary before any configuration is read or
+repository connection is opened. An application that wants to launch or
+restart from a command line embeds the crate and supplies a
+`DefinitionCatalog`:
 
 ```rust,ignore
 use oxide_batch_cli::DefinitionCatalog;

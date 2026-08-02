@@ -1,4 +1,5 @@
-//! Durable execution of bounded M3 flows and the M4 local parallel-split slice.
+//! Durable execution of bounded M3 flows and the M4 tasklet-only local
+//! parallel-split and partition slices.
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -19,10 +20,10 @@ use crate::{
     ExecutionCounts, ExitCode, ExitStatus, FailureCategory, FailureSummary, FlowNode,
     FlowSelectionError, FlowTarget, IdGenerator, JobExecution, JobExecutionId, JobInstance,
     JobInstanceId, JobInstanceKey, JobName, JobParameters, JobRepository, LifecycleTransition,
-    ListenerContext, ListenerFailure, ListenerFailureKind, ListenerPhase, NodeId, RepositoryError,
-    StartLimit, StepExecution, StepExecutionId, StepName, StopPollInterval, StopTiming, StopToken,
-    TaskletContext, TaskletExecutionOutcome, TaskletFailure, TaskletOutcome, TaskletStep,
-    TerminalKind,
+    ListenerContext, ListenerFailure, ListenerFailureKind, ListenerPhase, NodeId, PartitionKey,
+    PartitionPlanEntry, RepositoryError, StartLimit, StepExecution, StepExecutionId, StepName,
+    StepPartition, StopPollInterval, StopTiming, StopToken, TaskletContext,
+    TaskletExecutionOutcome, TaskletFailure, TaskletOutcome, TaskletStep, TerminalKind,
 };
 
 /// Opaque durable identifier of one selected transition.
@@ -376,18 +377,21 @@ pub(crate) fn decision_matches_manifest(manifest: &Value, request: &FlowDecision
     ) {
         return false;
     }
-    let expected_kind = match request.kind() {
-        FlowTransitionKind::Decider => "decision",
-        FlowTransitionKind::SplitAggregate => "join",
-        FlowTransitionKind::StepExit | FlowTransitionKind::CompletedStepReuse => "step",
-    };
     let source_is_declared = document
         .get("nodes")
         .and_then(Value::as_array)
         .is_some_and(|nodes| {
             nodes.iter().any(|node| {
+                let kind = node.get("kind").and_then(Value::as_str);
+                let kind_matches = match request.kind() {
+                    FlowTransitionKind::Decider => kind == Some("decision"),
+                    FlowTransitionKind::SplitAggregate => kind == Some("join"),
+                    FlowTransitionKind::StepExit | FlowTransitionKind::CompletedStepReuse => {
+                        matches!(kind, Some("step" | "partitioned_step"))
+                    }
+                };
                 node.get("id").and_then(Value::as_str) == Some(request.source_node_id().as_str())
-                    && node.get("kind").and_then(Value::as_str) == Some(expected_kind)
+                    && kind_matches
             })
         });
     if !source_is_declared {
@@ -647,6 +651,191 @@ pub struct TaskletStepFactory {
     create: Arc<dyn Fn() -> TaskletStep + Send + Sync>,
 }
 
+/// Deterministic inputs supplied once when a partition plan does not yet exist.
+#[derive(Clone, Copy, Debug)]
+pub struct PartitionPlanRequest<'a> {
+    plan_fingerprint: &'a [u8; 32],
+    job_instance_id: JobInstanceId,
+    node_id: &'a NodeId,
+    partition_count: crate::PartitionCount,
+}
+
+impl<'a> PartitionPlanRequest<'a> {
+    /// Borrows the exact restart-relevant plan fingerprint.
+    #[must_use]
+    pub const fn plan_fingerprint(self) -> &'a [u8; 32] {
+        self.plan_fingerprint
+    }
+
+    /// Returns the stable job-instance identity.
+    #[must_use]
+    pub const fn job_instance_id(self) -> JobInstanceId {
+        self.job_instance_id
+    }
+
+    /// Borrows the partition-manager logical ID.
+    #[must_use]
+    pub const fn node_id(self) -> &'a NodeId {
+        self.node_id
+    }
+
+    /// Returns the exact declared partition count.
+    #[must_use]
+    pub const fn partition_count(self) -> crate::PartitionCount {
+        self.partition_count
+    }
+}
+
+/// Redacted rejection from an application partitioner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum PartitionFactoryError {
+    /// The partitioner could not produce a valid complete plan.
+    Rejected,
+}
+
+impl fmt::Display for PartitionFactoryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("partition factory rejected the requested plan")
+    }
+}
+
+impl Error for PartitionFactoryError {}
+
+/// Launch-scoped deterministic constructor for one complete partition plan.
+type PartitionPlanConstructor = dyn for<'a> Fn(PartitionPlanRequest<'a>) -> Result<Vec<PartitionPlanEntry>, PartitionFactoryError>
+    + Send
+    + Sync;
+
+/// Launch-scoped deterministic constructor for one complete partition plan.
+#[derive(Clone)]
+pub struct PartitionPlanFactory {
+    create: Arc<PartitionPlanConstructor>,
+}
+
+impl PartitionPlanFactory {
+    /// Wraps one deterministic, bounded plan constructor.
+    #[must_use]
+    pub fn new(
+        create: impl for<'a> Fn(
+            PartitionPlanRequest<'a>,
+        ) -> Result<Vec<PartitionPlanEntry>, PartitionFactoryError>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        Self {
+            create: Arc::new(create),
+        }
+    }
+
+    fn create(
+        &self,
+        request: PartitionPlanRequest<'_>,
+    ) -> Result<Vec<PartitionPlanEntry>, PartitionFactoryError> {
+        (self.create)(request)
+    }
+}
+
+impl fmt::Debug for PartitionPlanFactory {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("PartitionPlanFactory(<redacted>)")
+    }
+}
+
+/// Owned, bounded input supplied to one partition worker factory.
+#[derive(Clone, Eq, PartialEq)]
+pub struct PartitionWorkerInput {
+    key: PartitionKey,
+    ordinal: u32,
+    context: crate::ExecutionContext,
+}
+
+impl PartitionWorkerInput {
+    fn from_partition(partition: &StepPartition) -> Self {
+        Self {
+            key: partition.key().clone(),
+            ordinal: partition.ordinal(),
+            context: partition.context().clone(),
+        }
+    }
+
+    /// Borrows the byte-exact durable partition key.
+    #[must_use]
+    pub const fn key(&self) -> &PartitionKey {
+        &self.key
+    }
+
+    /// Returns the stable one-based partition ordinal.
+    #[must_use]
+    pub const fn ordinal(&self) -> u32 {
+        self.ordinal
+    }
+
+    /// Borrows the bounded durable partition context.
+    #[must_use]
+    pub const fn context(&self) -> &crate::ExecutionContext {
+        &self.context
+    }
+}
+
+impl fmt::Debug for PartitionWorkerInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PartitionWorkerInput")
+            .field("key", &self.key)
+            .field("ordinal", &self.ordinal)
+            .field("context", &"<redacted>")
+            .finish()
+    }
+}
+
+/// Per-child constructor that creates an independently owned tasklet step.
+#[derive(Clone)]
+pub struct PartitionTaskletFactory {
+    step_name: StepName,
+    create: Arc<dyn Fn(PartitionWorkerInput) -> TaskletStep + Send + Sync>,
+}
+
+impl PartitionTaskletFactory {
+    /// Declares the worker name and its per-partition constructor.
+    #[must_use]
+    pub fn new(
+        step_name: StepName,
+        create: impl Fn(PartitionWorkerInput) -> TaskletStep + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            step_name,
+            create: Arc::new(create),
+        }
+    }
+
+    /// Borrows the worker step name promised by the factory.
+    #[must_use]
+    pub const fn step_name(&self) -> &StepName {
+        &self.step_name
+    }
+
+    fn create(&self, input: PartitionWorkerInput) -> TaskletStep {
+        (self.create)(input)
+    }
+}
+
+impl fmt::Debug for PartitionTaskletFactory {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PartitionTaskletFactory")
+            .field("step_name", &self.step_name)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PartitionedTaskletBinding {
+    partitioner: PartitionPlanFactory,
+    worker: PartitionTaskletFactory,
+}
+
 impl TaskletStepFactory {
     /// Declares the step name and its launch-scoped constructor.
     #[must_use]
@@ -687,6 +876,7 @@ pub struct FlowJob {
     steps: BTreeMap<NodeId, TaskletStep>,
     deciders: BTreeMap<NodeId, Arc<dyn JobExecutionDecider>>,
     split_tasklets: BTreeMap<NodeId, TaskletStepFactory>,
+    partitioned_tasklets: BTreeMap<NodeId, PartitionedTaskletBinding>,
 }
 
 impl fmt::Debug for FlowJob {
@@ -698,6 +888,10 @@ impl fmt::Debug for FlowJob {
             .field("step_count", &self.steps.len())
             .field("decider_count", &self.deciders.len())
             .field("split_tasklet_count", &self.split_tasklets.len())
+            .field(
+                "partitioned_tasklet_count",
+                &self.partitioned_tasklets.len(),
+            )
             .finish()
     }
 }
@@ -727,6 +921,7 @@ impl FlowJob {
             steps: BTreeMap::new(),
             deciders: BTreeMap::new(),
             split_tasklets: BTreeMap::new(),
+            partitioned_tasklets: BTreeMap::new(),
         })
     }
 
@@ -834,6 +1029,47 @@ impl FlowJob {
         Ok(self)
     }
 
+    /// Binds a deterministic plan factory and independent tasklet factory to
+    /// one compiled local partition manager.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an unknown/non-tasklet partition node, worker-name mismatch,
+    /// or duplicate binding.
+    pub fn with_partitioned_tasklet(
+        mut self,
+        node_id: NodeId,
+        partitioner: PartitionPlanFactory,
+        worker: PartitionTaskletFactory,
+    ) -> Result<Self, FlowJobError> {
+        let Some(FlowNode::PartitionedStep(compiled)) = self.plan.node(&node_id) else {
+            return Err(FlowJobError::WrongNodeKind { node: node_id });
+        };
+        if !matches!(
+            compiled.worker().components(),
+            crate::StepComponents::Tasklet(_)
+        ) {
+            return Err(FlowJobError::ComponentMismatch { node: node_id });
+        }
+        if compiled.worker().step_name() != worker.step_name() {
+            return Err(FlowJobError::StepNameMismatch { node: node_id });
+        }
+        if self
+            .partitioned_tasklets
+            .insert(
+                node_id.clone(),
+                PartitionedTaskletBinding {
+                    partitioner,
+                    worker,
+                },
+            )
+            .is_some()
+        {
+            return Err(FlowJobError::DuplicateBinding { node: node_id });
+        }
+        Ok(self)
+    }
+
     /// Validates that every compiled node has exactly one executable binding.
     ///
     /// # Errors
@@ -855,7 +1091,7 @@ impl FlowJob {
                 FlowNode::Step(_) => self.steps.contains_key(id),
                 FlowNode::Decision(_) => self.deciders.contains_key(id),
                 FlowNode::Split(_) | FlowNode::Join(_) => true,
-                FlowNode::PartitionedStep(_) => false,
+                FlowNode::PartitionedStep(_) => self.partitioned_tasklets.contains_key(id),
             };
             if !present {
                 return Err(FlowJobError::MissingBinding { node: id.clone() });
@@ -1021,6 +1257,12 @@ pub enum FlowFailure {
     DeciderError,
     /// A decider panicked at the framework boundary.
     DeciderPanic,
+    /// The deterministic partitioner rejected its bounded request.
+    PartitionerError,
+    /// The deterministic partitioner panicked at the framework boundary.
+    PartitionerPanic,
+    /// A per-child component factory panicked before tasklet invocation.
+    PartitionFactoryPanic,
     /// A produced exit outcome had no mapping.
     UnmappedExitOutcome {
         /// Source logical node.
@@ -1247,6 +1489,23 @@ pub enum FlowRuntimeError {
     CountExhausted,
     /// Process shutdown stopped intake before this launch was accepted.
     ShuttingDown,
+    /// The connected repository cannot supply the manifest connection budget.
+    InsufficientPoolCapacity {
+        /// Required finite connection count.
+        required: u32,
+        /// Repository-reported finite capacity.
+        configured: u32,
+    },
+    /// A durable ambiguous child blocks assignment and parent aggregation.
+    UnresolvedPartitionOutcome {
+        /// Parent partitioned step execution left non-terminal.
+        step_execution_id: StepExecutionId,
+    },
+    /// The application partitioner failed before a complete plan committed.
+    PartitionerRejected {
+        /// Whether the failure crossed a panic boundary.
+        panicked: bool,
+    },
 }
 
 impl fmt::Display for FlowRuntimeError {
@@ -1261,6 +1520,24 @@ impl fmt::Display for FlowRuntimeError {
             }
             Self::CountExhausted => formatter.write_str("flow execution count is exhausted"),
             Self::ShuttingDown => formatter.write_str("runtime intake is shutting down"),
+            Self::InsufficientPoolCapacity {
+                required,
+                configured,
+            } => write!(
+                formatter,
+                "flow requires {required} repository connections but only {configured} are configured"
+            ),
+            Self::UnresolvedPartitionOutcome { step_execution_id } => write!(
+                formatter,
+                "partition parent step execution {step_execution_id} is blocked by an unknown child outcome"
+            ),
+            Self::PartitionerRejected { panicked } => {
+                if *panicked {
+                    formatter.write_str("partition factory panicked")
+                } else {
+                    formatter.write_str("partition factory rejected the plan")
+                }
+            }
         }
     }
 }
@@ -1270,7 +1547,12 @@ impl Error for FlowRuntimeError {
         match self {
             Self::Job(error) => Some(error),
             Self::Repository(error) => Some(error),
-            Self::DecisionSequenceExhausted | Self::CountExhausted | Self::ShuttingDown => None,
+            Self::DecisionSequenceExhausted
+            | Self::CountExhausted
+            | Self::ShuttingDown
+            | Self::InsufficientPoolCapacity { .. }
+            | Self::UnresolvedPartitionOutcome { .. }
+            | Self::PartitionerRejected { .. } => None,
         }
     }
 }
@@ -1360,6 +1642,7 @@ impl<'a> FlowLauncher<'a> {
     ) -> Result<FlowLaunchReport, FlowRuntimeError> {
         self.ensure_accepting()?;
         job.validate()?;
+        self.validate_repository_capacity(job.compiled_plan())?;
         let split_tasklets = job.materialize_split_tasklets()?;
         let key = JobInstanceKey::new(job.name.clone(), parameters);
         let (instance, mut execution, attempt) = self
@@ -1679,7 +1962,84 @@ impl<'a> FlowLauncher<'a> {
                         run.flow_failure,
                     )
                 }
-                FlowNode::Join(_) | FlowNode::PartitionedStep(_) => {
+                FlowNode::PartitionedStep(compiled) => {
+                    let historical = self.latest_step(instance.id(), &node_id).await?;
+                    if let Some(history) = historical.as_ref()
+                        && history.execution().metadata().status() == BatchStatus::Completed
+                        && !compiled.start_controls().allow_start_if_complete()
+                    {
+                        let digest = step_input_digest(job.plan.fingerprint(), history);
+                        let reused = self
+                            .reusable_decision(
+                                instance.id(),
+                                &node_id,
+                                job.plan.fingerprint(),
+                                &digest,
+                                FlowTransitionKind::StepExit,
+                            )
+                            .await?;
+                        preceding = Some(history.clone());
+                        (
+                            node_id.clone(),
+                            history.execution().metadata().exit_status().clone(),
+                            Some(history.execution().id()),
+                            FlowTransitionKind::CompletedStepReuse,
+                            digest,
+                            reused.map(|decision| decision.id()),
+                            None,
+                        )
+                    } else {
+                        let binding = job.partitioned_tasklets.get(&node_id).ok_or_else(|| {
+                            FlowRuntimeError::Job(FlowJobError::MissingBinding {
+                                node: node_id.clone(),
+                            })
+                        })?;
+                        let run = self
+                            .run_partitioned_step(
+                                job,
+                                compiled,
+                                binding,
+                                historical.as_ref(),
+                                instance.id(),
+                                execution.id(),
+                                attempt,
+                                parameters,
+                                stop_token,
+                            )
+                            .await?;
+                        listener_failures.extend(run.listener_failures);
+                        steps.extend(run.worker_executions);
+                        steps.push(run.parent.clone());
+                        if run.status == BatchStatus::Stopped {
+                            let final_job = self
+                                .finish_job(&execution, BatchStatus::Stopped, None)
+                                .await?;
+                            return Ok(FlowLaunchReport {
+                                instance,
+                                job_execution: final_job,
+                                step_executions: steps,
+                                decisions,
+                                outcome: FlowExecutionOutcome::Stopped,
+                                listener_failures,
+                            });
+                        }
+                        let state = self.latest_step(instance.id(), &node_id).await?.ok_or(
+                            FlowRuntimeError::Repository(RepositoryError::FlowStateCorrupt),
+                        )?;
+                        let digest = step_input_digest(job.plan.fingerprint(), &state);
+                        preceding = Some(state);
+                        (
+                            node_id.clone(),
+                            run.exit_status,
+                            Some(run.parent.id()),
+                            FlowTransitionKind::StepExit,
+                            digest,
+                            None,
+                            run.flow_failure,
+                        )
+                    }
+                }
+                FlowNode::Join(_) => {
                     return Err(FlowRuntimeError::Job(FlowJobError::UnsupportedManifest {
                         format: job.plan.manifest_format(),
                     }));
@@ -1923,6 +2283,11 @@ impl<'a> FlowLauncher<'a> {
         let mut flow_failure = None;
 
         for (offset, compiled) in branch.steps().iter().enumerate() {
+            if stop.is_stop_requested() {
+                status = BatchStatus::Stopped;
+                exit_status = ExitStatus::stopped();
+                break;
+            }
             let historical = self.latest_step(instance_id, compiled.id()).await?;
             if let Some(history) = historical
                 && history.execution().metadata().status() == BatchStatus::Completed
@@ -2020,12 +2385,483 @@ impl<'a> FlowLauncher<'a> {
         })
     }
 
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    async fn run_partitioned_step(
+        &self,
+        job: &FlowJob,
+        compiled: &crate::PartitionedStepNode,
+        binding: &PartitionedTaskletBinding,
+        historical: Option<&FlowStepState>,
+        instance_id: JobInstanceId,
+        execution_id: JobExecutionId,
+        attempt: ExecutionAttempt,
+        parameters: &JobParameters,
+        parent_stop: &StopToken,
+    ) -> Result<PartitionRun, FlowRuntimeError> {
+        let created = self
+            .create_step(
+                execution_id,
+                compiled.step_name(),
+                compiled.id(),
+                compiled.start_controls().start_limit(),
+            )
+            .await?;
+        let parent = self.start_step(&created).await?;
+        let plan_result: Result<Vec<StepPartition>, FlowRuntimeError> =
+            if let Some(history) = historical {
+                let source = self.partition_plan(history.execution().id()).await?;
+                if source.is_empty() {
+                    self.create_partition_plan(
+                        binding,
+                        compiled,
+                        instance_id,
+                        parent.id(),
+                        job.plan.fingerprint(),
+                    )
+                    .await
+                } else {
+                    self.restart_partition_plan(history.execution().id(), parent.id())
+                        .await
+                }
+            } else {
+                self.create_partition_plan(
+                    binding,
+                    compiled,
+                    instance_id,
+                    parent.id(),
+                    job.plan.fingerprint(),
+                )
+                .await
+            };
+        let plan = match plan_result {
+            Ok(plan) => plan,
+            Err(FlowRuntimeError::PartitionerRejected { panicked }) => {
+                let failure = self.next_failure_summary(FailureCategory::UserComponent)?;
+                let parent = self
+                    .finish_step(
+                        &parent,
+                        TaskletExecutionOutcome::Failed(TaskletFailure::Error),
+                        &ExitStatus::failed(),
+                        Some(failure),
+                        false,
+                    )
+                    .await?;
+                self.emit_flow_event(&FlowEvent::new(
+                    FlowEventKind::StepResultCommitted,
+                    job.name.clone(),
+                    instance_id,
+                    execution_id,
+                    attempt,
+                    compiled.id().clone(),
+                    Some(parent.id()),
+                    None,
+                    self.clock.now(),
+                ));
+                return Ok(PartitionRun {
+                    status: BatchStatus::Failed,
+                    exit_status: ExitStatus::failed(),
+                    parent,
+                    flow_failure: Some(if panicked {
+                        FlowFailure::PartitionerPanic
+                    } else {
+                        FlowFailure::PartitionerError
+                    }),
+                    worker_executions: Vec::new(),
+                    listener_failures: Vec::new(),
+                });
+            }
+            Err(error) => return Err(error),
+        };
+
+        if plan
+            .iter()
+            .any(|partition| partition.status() == BatchStatus::Unknown)
+        {
+            return Err(FlowRuntimeError::UnresolvedPartitionOutcome {
+                step_execution_id: parent.id(),
+            });
+        }
+
+        let pending = plan
+            .into_iter()
+            .filter(|partition| partition.status() != BatchStatus::Completed)
+            .collect::<Vec<_>>();
+        let (partition_stop_source, partition_stop) = crate::StopSource::new();
+        if parent_stop.is_stop_requested() {
+            partition_stop_source.request_stop();
+        }
+        let workers = futures_util::stream::iter(pending.into_iter().map(|partition| {
+            let partition_stop = partition_stop.clone();
+            async move {
+                self.run_partition_worker(
+                    job,
+                    compiled,
+                    binding,
+                    partition,
+                    instance_id,
+                    execution_id,
+                    attempt,
+                    parameters,
+                    &partition_stop,
+                )
+                .await
+            }
+        }))
+        .buffer_unordered(usize::from(compiled.budget().max_partition_workers()));
+        tokio::pin!(workers);
+
+        let mut joined = Vec::new();
+        let mut first_error = None;
+        let mut parent_stop_observed = parent_stop.is_stop_requested();
+        loop {
+            tokio::select! {
+                result = workers.next() => {
+                    let Some(result) = result else { break; };
+                    match result {
+                        Ok(worker) => {
+                            if compiled.failure_policy() == crate::LocalFailurePolicy::CancelSiblings
+                                && matches!(worker.partition.status(), BatchStatus::Failed | BatchStatus::Unknown)
+                            {
+                                partition_stop_source.request_stop();
+                            }
+                            joined.push(worker);
+                        }
+                        Err(error) => {
+                            partition_stop_source.request_stop();
+                            if first_error.is_none() {
+                                first_error = Some(error);
+                            }
+                        }
+                    }
+                }
+                () = parent_stop.cancelled(), if !parent_stop_observed => {
+                    parent_stop_observed = true;
+                    partition_stop_source.request_stop();
+                }
+            }
+        }
+        if let Some(error) = first_error {
+            return Err(error);
+        }
+
+        let durable = self.partition_plan(parent.id()).await?;
+        if durable
+            .iter()
+            .any(|partition| partition.status() == BatchStatus::Unknown)
+        {
+            return Err(FlowRuntimeError::UnresolvedPartitionOutcome {
+                step_execution_id: parent.id(),
+            });
+        }
+        let parent = self
+            .aggregate_partition_parent(parent.id(), parent.version())
+            .await?;
+        self.emit_flow_event(&FlowEvent::new(
+            FlowEventKind::StepResultCommitted,
+            job.name.clone(),
+            instance_id,
+            execution_id,
+            attempt,
+            compiled.id().clone(),
+            Some(parent.id()),
+            None,
+            self.clock.now(),
+        ));
+
+        joined.sort_by(|left, right| left.partition.key().cmp(right.partition.key()));
+        let selected = joined
+            .iter()
+            .find(|worker| worker.partition.status() == parent.metadata().status());
+        let flow_failure = selected.and_then(|worker| worker.flow_failure.clone());
+        let mut worker_executions = Vec::with_capacity(joined.len());
+        let mut listener_failures = Vec::new();
+        for worker in joined {
+            worker_executions.push(worker.execution);
+            listener_failures.extend(worker.listener_failures);
+        }
+        Ok(PartitionRun {
+            status: parent.metadata().status(),
+            exit_status: parent.metadata().exit_status().clone(),
+            parent,
+            flow_failure,
+            worker_executions,
+            listener_failures,
+        })
+    }
+
+    async fn create_partition_plan(
+        &self,
+        binding: &PartitionedTaskletBinding,
+        compiled: &crate::PartitionedStepNode,
+        instance_id: JobInstanceId,
+        parent_id: StepExecutionId,
+        fingerprint: &[u8; 32],
+    ) -> Result<Vec<StepPartition>, FlowRuntimeError> {
+        let request = PartitionPlanRequest {
+            plan_fingerprint: fingerprint,
+            job_instance_id: instance_id,
+            node_id: compiled.id(),
+            partition_count: compiled.partition_count(),
+        };
+        let entries = match catch_unwind(AssertUnwindSafe(|| binding.partitioner.create(request))) {
+            Ok(Ok(entries)) => entries,
+            Ok(Err(_)) => return Err(FlowRuntimeError::PartitionerRejected { panicked: false }),
+            Err(_) => return Err(FlowRuntimeError::PartitionerRejected { panicked: true }),
+        };
+        if entries.len() != usize::from(compiled.partition_count().get()) {
+            return Err(FlowRuntimeError::PartitionerRejected { panicked: false });
+        }
+        let mut unit = self.repository.begin().await?;
+        let created = unit.create_step_partition_plan(parent_id, &entries).await?;
+        match unit.commit().await {
+            Ok(()) => Ok(created),
+            Err(RepositoryError::CommitOutcomeUnknown) => {
+                let durable = self.partition_plan(parent_id).await?;
+                if durable == created {
+                    Ok(durable)
+                } else {
+                    Err(RepositoryError::CommitOutcomeUnknown.into())
+                }
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    async fn restart_partition_plan(
+        &self,
+        source_parent_id: StepExecutionId,
+        target_parent_id: StepExecutionId,
+    ) -> Result<Vec<StepPartition>, FlowRuntimeError> {
+        let mut unit = self.repository.begin().await?;
+        let copied = unit
+            .restart_step_partition_plan(source_parent_id, target_parent_id)
+            .await?;
+        match unit.commit().await {
+            Ok(()) => Ok(copied),
+            Err(RepositoryError::CommitOutcomeUnknown) => {
+                let durable = self.partition_plan(target_parent_id).await?;
+                if durable == copied {
+                    Ok(durable)
+                } else {
+                    Err(RepositoryError::CommitOutcomeUnknown.into())
+                }
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_partition_worker(
+        &self,
+        job: &FlowJob,
+        compiled: &crate::PartitionedStepNode,
+        binding: &PartitionedTaskletBinding,
+        partition: StepPartition,
+        instance_id: JobInstanceId,
+        execution_id: JobExecutionId,
+        attempt: ExecutionAttempt,
+        parameters: &JobParameters,
+        stop: &StopToken,
+    ) -> Result<PartitionWorkerRun, FlowRuntimeError> {
+        let (worker, assigned) = self
+            .create_and_assign_partition_worker(execution_id, compiled, &partition)
+            .await?;
+        let correlation = correlation(
+            &job.name,
+            instance_id,
+            execution_id,
+            attempt,
+            compiled.worker().step_name(),
+            worker.id(),
+            usize::try_from(partition.ordinal()).unwrap_or(usize::MAX),
+        )?;
+
+        let run = if stop.is_stop_requested() {
+            self.finish_uninvoked_partition_worker(
+                worker,
+                TaskletExecutionOutcome::Stopped(StopTiming::BeforeStart),
+                ExitStatus::stopped(),
+                None,
+            )
+            .await?
+        } else {
+            let input = PartitionWorkerInput::from_partition(&assigned);
+            match catch_unwind(AssertUnwindSafe(|| binding.worker.create(input))) {
+                Ok(tasklet_step) if tasklet_step.name() == binding.worker.step_name() => {
+                    self.run_step(
+                        compiled.worker().id(),
+                        &tasklet_step,
+                        worker,
+                        parameters,
+                        stop,
+                        &correlation,
+                    )
+                    .await?
+                }
+                Ok(_) | Err(_) => {
+                    let failure = self.next_failure_summary(FailureCategory::UserComponent)?;
+                    let mut run = self
+                        .finish_uninvoked_partition_worker(
+                            worker,
+                            TaskletExecutionOutcome::Failed(TaskletFailure::Panic),
+                            ExitStatus::failed(),
+                            Some(failure),
+                        )
+                        .await?;
+                    run.flow_failure = Some(FlowFailure::PartitionFactoryPanic);
+                    run
+                }
+            }
+        };
+        let completed = self
+            .publish_partition_result(&assigned, run.execution.id())
+            .await?;
+        Ok(PartitionWorkerRun {
+            partition: completed,
+            execution: run.execution,
+            flow_failure: run.flow_failure,
+            listener_failures: run.listener_failures,
+        })
+    }
+
+    async fn create_and_assign_partition_worker(
+        &self,
+        execution_id: JobExecutionId,
+        compiled: &crate::PartitionedStepNode,
+        partition: &StepPartition,
+    ) -> Result<(StepExecution, StepPartition), FlowRuntimeError> {
+        let (worker_name, worker_node_id) = partition_worker_identity(compiled, partition)?;
+        let mut unit = self.repository.begin().await?;
+        let worker = unit
+            .create_flow_step_execution(
+                execution_id,
+                &worker_name,
+                &worker_node_id,
+                compiled.worker().start_controls().start_limit(),
+            )
+            .await?;
+        let assigned = unit
+            .assign_step_partition(partition.id(), partition.version(), worker.id())
+            .await?;
+        unit.commit().await?;
+        Ok((worker, assigned))
+    }
+
+    async fn finish_uninvoked_partition_worker(
+        &self,
+        worker: StepExecution,
+        outcome: TaskletExecutionOutcome,
+        exit_status: ExitStatus,
+        failure: Option<FailureSummary>,
+    ) -> Result<StepRun, FlowRuntimeError> {
+        let started = self.start_step(&worker).await?;
+        let execution = self
+            .finish_step(&started, outcome, &exit_status, failure, false)
+            .await?;
+        Ok(StepRun {
+            execution,
+            outcome,
+            exit_status,
+            failure,
+            flow_failure: match outcome {
+                TaskletExecutionOutcome::Failed(value) => Some(FlowFailure::Tasklet(value)),
+                _ => None,
+            },
+            listener_failures: Vec::new(),
+        })
+    }
+
+    async fn publish_partition_result(
+        &self,
+        partition: &StepPartition,
+        worker_id: StepExecutionId,
+    ) -> Result<StepPartition, FlowRuntimeError> {
+        let mut unit = self.repository.begin().await?;
+        let completed = unit
+            .complete_step_partition(partition.id(), partition.version(), worker_id)
+            .await?;
+        match unit.commit().await {
+            Ok(()) => Ok(completed),
+            Err(RepositoryError::CommitOutcomeUnknown) => {
+                let durable = self.partition_plan(partition.step_execution_id()).await?;
+                let current = durable
+                    .into_iter()
+                    .find(|candidate| candidate.id() == partition.id())
+                    .ok_or(RepositoryError::PartitionStateCorrupt)?;
+                if current == completed {
+                    Ok(current)
+                } else {
+                    Err(RepositoryError::CommitOutcomeUnknown.into())
+                }
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    async fn partition_plan(
+        &self,
+        parent_id: StepExecutionId,
+    ) -> Result<Vec<StepPartition>, FlowRuntimeError> {
+        let mut unit = self.repository.begin().await?;
+        let plan = unit.step_partition_plan(parent_id).await?;
+        unit.rollback().await?;
+        Ok(plan)
+    }
+
+    async fn aggregate_partition_parent(
+        &self,
+        parent_id: StepExecutionId,
+        expected_version: crate::ExecutionVersion,
+    ) -> Result<StepExecution, FlowRuntimeError> {
+        let mut unit = self.repository.begin().await?;
+        let aggregated = unit
+            .aggregate_step_partitions(parent_id, expected_version, self.clock.now())
+            .await?;
+        match unit.commit().await {
+            Ok(()) => Ok(aggregated),
+            Err(RepositoryError::CommitOutcomeUnknown) => {
+                let mut recovery = self.repository.begin().await?;
+                let inspected = recovery
+                    .aggregate_step_partitions(parent_id, expected_version, self.clock.now())
+                    .await?;
+                recovery.commit().await?;
+                Ok(inspected)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
     fn ensure_accepting(&self) -> Result<(), FlowRuntimeError> {
         self.shutdown_signal.map_or(Ok(()), |signal| {
             signal
                 .ensure_accepting()
                 .map_err(|_| FlowRuntimeError::ShuttingDown)
         })
+    }
+
+    fn validate_repository_capacity(
+        &self,
+        plan: &CompiledExecutionPlan,
+    ) -> Result<(), FlowRuntimeError> {
+        let configured = self.repository.connection_capacity();
+        let required = plan
+            .nodes()
+            .filter_map(|(_, node)| match node {
+                FlowNode::Split(split) => Some(split.budget().repository_pool_size()),
+                FlowNode::PartitionedStep(partitioned) => {
+                    Some(partitioned.budget().repository_pool_size())
+                }
+                _ => None,
+            })
+            .max()
+            .unwrap_or(1);
+        if configured < required {
+            return Err(FlowRuntimeError::InsufficientPoolCapacity {
+                required,
+                configured,
+            });
+        }
+        Ok(())
     }
 
     fn observe_process_shutdown(&self, stop: &StopToken) {
@@ -2441,8 +3277,18 @@ impl<'a> FlowLauncher<'a> {
         let finished = unit
             .transition_step_execution(enriched.id(), enriched.version(), transition)
             .await?;
-        unit.commit().await?;
-        Ok(finished)
+        match unit.commit().await {
+            Ok(()) => Ok(finished),
+            Err(RepositoryError::CommitOutcomeUnknown) => {
+                let durable = self.reload_step(finished.id()).await?;
+                if durable == finished {
+                    Ok(durable)
+                } else {
+                    Err(RepositoryError::CommitOutcomeUnknown.into())
+                }
+            }
+            Err(error) => Err(error.into()),
+        }
     }
 
     fn next_failure_summary(
@@ -2463,6 +3309,25 @@ impl<'a> FlowLauncher<'a> {
         };
         let _ = catch_unwind(AssertUnwindSafe(|| sink.emit(event)));
     }
+}
+
+fn partition_worker_identity(
+    compiled: &crate::PartitionedStepNode,
+    partition: &StepPartition,
+) -> Result<(StepName, NodeId), FlowRuntimeError> {
+    let mut digest = Sha256::new();
+    digest.update(b"oxide-batch.local-partition-worker.v1\0");
+    digest.update(compiled.id().as_str().as_bytes());
+    digest.update([0]);
+    digest.update(partition.key().as_str().as_bytes());
+    let token = format!(
+        "__ob_partition_worker_{}",
+        crate::service::hex_digest(&digest.finalize())
+    );
+    let step_name =
+        StepName::new(token.clone()).map_err(|_| RepositoryError::PartitionStateCorrupt)?;
+    let node_id = NodeId::new(token).map_err(|_| RepositoryError::PartitionStateCorrupt)?;
+    Ok((step_name, node_id))
 }
 
 struct StepRun {
@@ -2492,6 +3357,22 @@ struct SplitRun {
     flow_failure: Option<FlowFailure>,
     input_digest: [u8; 32],
     step_executions: Vec<StepExecution>,
+    listener_failures: Vec<ListenerFailure>,
+}
+
+struct PartitionWorkerRun {
+    partition: StepPartition,
+    execution: StepExecution,
+    flow_failure: Option<FlowFailure>,
+    listener_failures: Vec<ListenerFailure>,
+}
+
+struct PartitionRun {
+    status: BatchStatus,
+    exit_status: ExitStatus,
+    parent: StepExecution,
+    flow_failure: Option<FlowFailure>,
+    worker_executions: Vec<StepExecution>,
     listener_failures: Vec<ListenerFailure>,
 }
 
