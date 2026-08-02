@@ -4623,17 +4623,54 @@ async fn update_step_execution(
     updated_at: SystemTime,
     expected: ExecutionVersion,
 ) -> Result<u64, RepositoryError> {
-    update_execution(
-        transaction,
-        "oxide_batch.ob_step_execution",
+    let metadata = execution.metadata();
+    let timestamps = metadata.timestamps();
+    let failure = metadata.failure();
+    let failure_category = failure.map(|value| encode_failure_category(value.category()));
+    let failure_id = failure
+        .map(|value| database_id(value.failure_id().get(), IdentifierKind::Failure))
+        .transpose()?;
+    let counts = metadata.counts();
+    let result = sqlx::query(
+        "UPDATE oxide_batch.ob_step_execution \
+         SET status = $1, exit_code = $2, failure_category = $3, failure_id = $4, \
+             started_at = CASE WHEN $5::bigint IS NULL THEN NULL \
+                 ELSE to_timestamp($5::double precision / 1000.0) END, \
+             ended_at = CASE WHEN $6::bigint IS NULL THEN NULL \
+                 ELSE to_timestamp($6::double precision / 1000.0) END, \
+             read_count = $7, processed_count = $8, write_count = $9, \
+             filter_count = $10, commit_count = $11, rollback_count = $12, \
+             updated_at = to_timestamp($13::double precision / 1000.0), version = $14 \
+         WHERE id = $15 AND version = $16",
+    )
+    .bind(metadata.status().to_string())
+    .bind(metadata.exit_status().code().as_str())
+    .bind(failure_category)
+    .bind(failure_id)
+    .bind(
+        timestamps
+            .started_at()
+            .map(system_time_millis)
+            .transpose()?,
+    )
+    .bind(timestamps.ended_at().map(system_time_millis).transpose()?)
+    .bind(execution_count(counts.read())?)
+    .bind(execution_count(counts.processed())?)
+    .bind(execution_count(counts.written())?)
+    .bind(execution_count(counts.filtered())?)
+    .bind(execution_count(counts.committed())?)
+    .bind(execution_count(counts.rolled_back())?)
+    .bind(system_time_millis(updated_at)?)
+    .bind(database_version(execution.version())?)
+    .bind(database_id(
         execution.id().get(),
         IdentifierKind::StepExecution,
-        execution.metadata(),
-        execution.version(),
-        updated_at,
-        expected,
-    )
+    )?)
+    .bind(database_version(expected)?)
+    .execute(transaction)
     .await
+    .map_err(|_| RepositoryError::Unavailable)?;
+    Ok(result.rows_affected())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4653,10 +4690,8 @@ async fn update_execution(
          ELSE to_timestamp($5::double precision / 1000.0) END, \
          ended_at = CASE WHEN $6::bigint IS NULL THEN NULL \
          ELSE to_timestamp($6::double precision / 1000.0) END, \
-         read_count = $7, processed_count = $8, write_count = $9, filter_count = $10, \
-         commit_count = $11, rollback_count = $12, \
-         updated_at = to_timestamp($13::double precision / 1000.0), version = $14 \
-         WHERE id = $15 AND version = $16"
+         updated_at = to_timestamp($7::double precision / 1000.0), version = $8 \
+         WHERE id = $9 AND version = $10"
     );
     let timestamps = metadata.timestamps();
     let failure = metadata.failure();
@@ -4664,7 +4699,6 @@ async fn update_execution(
     let failure_id = failure
         .map(|value| database_id(value.failure_id().get(), IdentifierKind::Failure))
         .transpose()?;
-    let counts = metadata.counts();
     let result = sqlx::query(AssertSqlSafe(query))
         .bind(metadata.status().to_string())
         .bind(metadata.exit_status().code().as_str())
@@ -4677,12 +4711,6 @@ async fn update_execution(
                 .transpose()?,
         )
         .bind(timestamps.ended_at().map(system_time_millis).transpose()?)
-        .bind(execution_count(counts.read())?)
-        .bind(execution_count(counts.processed())?)
-        .bind(execution_count(counts.written())?)
-        .bind(execution_count(counts.filtered())?)
-        .bind(execution_count(counts.committed())?)
-        .bind(execution_count(counts.rolled_back())?)
         .bind(system_time_millis(updated_at)?)
         .bind(database_version(new_version)?)
         .bind(database_id(id, kind)?)
