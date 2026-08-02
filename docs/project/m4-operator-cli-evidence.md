@@ -126,10 +126,10 @@ always reported before any connection attempt.
 
 ## Residual risk and limitations
 
-- `diagnostics bundle` is in the closed grammar but unimplemented. Its contents
-  belong to the observability contract, whose telemetry catalog is issue #79.
-  The command exits `3` with `BUNDLE_UNAVAILABLE` rather than writing a partial
-  bundle. `OBS-EXEC-001` remains the owner of bundle evidence.
+- At this issue #77 evidence boundary, `diagnostics bundle` was deliberately
+  unavailable. Issue #79 subsequently implemented it; current evidence is the
+  [M4 bounded telemetry record](m4-telemetry-evidence.md), while this historical
+  CLI record continues to describe the earlier merge boundary.
 - `execution partitions` is correct but returns an empty page until bounded
   local partitioning lands in issue #80.
 - `schema status` has no PostgreSQL evidence yet, as recorded above.

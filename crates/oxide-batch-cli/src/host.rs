@@ -31,6 +31,26 @@ pub trait Host {
     /// Returns the underlying metadata failure.
     fn file_mode(&self, path: &Path) -> io::Result<Option<u32>>;
 
+    /// Atomically writes a new diagnostics-bundle directory.
+    ///
+    /// The target must not already exist. File names are framework-owned,
+    /// deterministic base names without path traversal.
+    ///
+    /// # Errors
+    ///
+    /// Returns an input/output failure when the target exists, a name is not
+    /// accepted, or the atomic directory write cannot complete.
+    fn write_new_directory(
+        &mut self,
+        _path: &Path,
+        _files: &[(String, Vec<u8>)],
+    ) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "this host does not support diagnostics bundle output",
+        ))
+    }
+
     /// Writes to standard output.
     ///
     /// # Errors
@@ -123,6 +143,62 @@ impl Host for ProcessHost {
         }
     }
 
+    fn write_new_directory(&mut self, path: &Path, files: &[(String, Vec<u8>)]) -> io::Result<()> {
+        if path.try_exists()? {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "the bundle target already exists",
+            ));
+        }
+        let mut temporary = path.as_os_str().to_owned();
+        temporary.push(format!(".tmp-{}", std::process::id()));
+        let temporary = std::path::PathBuf::from(temporary);
+        if temporary.try_exists()? {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "the bundle temporary target already exists",
+            ));
+        }
+        std::fs::create_dir(&temporary)?;
+        let written = files.iter().try_for_each(|(name, bytes)| {
+            if name.is_empty()
+                || name.contains('/')
+                || name.contains('\\')
+                || matches!(name.as_str(), "." | "..")
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "the bundle file name is not accepted",
+                ));
+            }
+            let target = temporary.join(name);
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(target)?;
+            file.write_all(bytes)?;
+            file.sync_all()
+        });
+        if let Err(error) = written {
+            let _ = std::fs::remove_dir_all(&temporary);
+            return Err(error);
+        }
+        if let Err(error) = std::fs::create_dir(path) {
+            let _ = std::fs::remove_dir_all(&temporary);
+            return Err(error);
+        }
+        let installed = files
+            .iter()
+            .try_for_each(|(name, _)| std::fs::rename(temporary.join(name), path.join(name)));
+        if let Err(error) = installed {
+            let _ = std::fs::remove_dir_all(path);
+            let _ = std::fs::remove_dir_all(&temporary);
+            return Err(error);
+        }
+        std::fs::remove_dir(&temporary)?;
+        Ok(())
+    }
+
     fn write_stdout(&mut self, bytes: &[u8]) -> io::Result<()> {
         self.stdout.write_all(bytes)
     }
@@ -193,6 +269,7 @@ pub(crate) mod testing {
         pub(crate) env: BTreeMap<String, String>,
         pub(crate) files: BTreeMap<PathBuf, Vec<u8>>,
         pub(crate) modes: BTreeMap<PathBuf, u32>,
+        pub(crate) directories: BTreeMap<PathBuf, Vec<String>>,
         pub(crate) stdout: Vec<u8>,
         pub(crate) stderr: Vec<u8>,
         pub(crate) stdin_interactive: bool,
@@ -254,6 +331,27 @@ pub(crate) mod testing {
                 ));
             }
             Ok(self.modes.get(path).copied())
+        }
+
+        fn write_new_directory(
+            &mut self,
+            path: &Path,
+            files: &[(String, Vec<u8>)],
+        ) -> io::Result<()> {
+            if self.directories.contains_key(path) {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "target exists",
+                ));
+            }
+            self.directories.insert(
+                path.to_path_buf(),
+                files.iter().map(|(name, _)| name.clone()).collect(),
+            );
+            for (name, bytes) in files {
+                self.files.insert(path.join(name), bytes.clone());
+            }
+            Ok(())
         }
 
         fn write_stdout(&mut self, bytes: &[u8]) -> io::Result<()> {

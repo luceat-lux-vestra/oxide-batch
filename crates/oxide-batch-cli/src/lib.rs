@@ -24,6 +24,7 @@
 mod args;
 #[cfg(feature = "postgres")]
 mod backend;
+mod bundle;
 mod catalog;
 mod command;
 mod config;

@@ -927,6 +927,17 @@ pub enum FlowEventKind {
 }
 
 impl FlowEventKind {
+    /// Maps this flow observation into telemetry schema version 1.
+    #[must_use]
+    pub const fn telemetry_kind(self) -> crate::TelemetryEventKind {
+        match self {
+            Self::StepResultCommitted => crate::TelemetryEventKind::FlowStepResultCommitted,
+            Self::DecisionCommitted => crate::TelemetryEventKind::FlowDecisionCommitted,
+            Self::CompletedStepReused => crate::TelemetryEventKind::FlowCompletedStepReused,
+            Self::StartLimitExceeded => crate::TelemetryEventKind::StepStartLimitExceeded,
+        }
+    }
+
     /// Returns the stable dotted event name.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -960,6 +971,11 @@ pub struct FlowEvent {
 }
 
 impl FlowEvent {
+    /// Returns the telemetry schema version carried by this event mapping.
+    #[must_use]
+    pub const fn schema_version(&self) -> u16 {
+        crate::TELEMETRY_SCHEMA_VERSION
+    }
     #[allow(clippy::too_many_arguments)]
     const fn new(
         kind: FlowEventKind,

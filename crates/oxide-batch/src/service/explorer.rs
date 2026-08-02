@@ -8,6 +8,7 @@
 
 use std::error::Error;
 use std::fmt;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use sha2::{Digest, Sha256};
@@ -18,7 +19,7 @@ use crate::{
     ExecutionTimestamps, ExecutionVersion, ExitStatus, FailureSummary, FlowDecision,
     JobExecutionId, JobInstanceId, JobName, NodeId, ParameterName, ParameterValueKind,
     RecoveryDecision, RepositoryError, StateSchemaId, StateSchemaVersion, StepExecutionId,
-    StepName, StepPartitionId,
+    StepName, StepPartitionId, TelemetryEventSink, TelemetryRecord,
 };
 
 /// Maximum rows one page may contain.
@@ -1128,15 +1129,36 @@ pub trait ExplorerRepository: Send + Sync {
 ///
 /// The service owns page bounds, cursor identity, traversal ceilings, and the
 /// encoded response bound. The adapter owns one statement per page.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct JobExplorer<S> {
     source: S,
+    event_sinks: Vec<Arc<dyn TelemetryEventSink>>,
+}
+
+impl<S: fmt::Debug> fmt::Debug for JobExplorer<S> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("JobExplorer")
+            .field("source", &self.source)
+            .field("event_sinks", &self.event_sinks.len())
+            .finish()
+    }
 }
 
 impl<S: ExplorerRepository> JobExplorer<S> {
     /// Wraps one bounded read port.
     pub const fn new(source: S) -> Self {
-        Self { source }
+        Self {
+            source,
+            event_sinks: Vec::new(),
+        }
+    }
+
+    /// Attaches a non-authoritative, panic-isolated telemetry sink.
+    #[must_use]
+    pub fn with_event_sink(mut self, sink: Arc<dyn TelemetryEventSink>) -> Self {
+        self.event_sinks.push(sink);
+        self
     }
 
     /// Borrows the underlying read port.
@@ -1156,7 +1178,7 @@ impl<S: ExplorerRepository> JobExplorer<S> {
         let query = ExplorerQuery::JobNames;
         let window = self.window(&query, request).await?;
         let rows = self.source.job_names(&window).await?;
-        page(&query, request, window.ceiling(), rows)
+        self.finish_page(None, page(&query, request, window.ceiling(), rows))
     }
 
     /// Lists instances of one job name, newest identity first.
@@ -1174,7 +1196,7 @@ impl<S: ExplorerRepository> JobExplorer<S> {
         };
         let window = self.window(&query, request).await?;
         let rows = self.source.instances(job_name, &window).await?;
-        page(&query, request, window.ceiling(), rows)
+        self.finish_page(None, page(&query, request, window.ceiling(), rows))
     }
 
     /// Lists executions of one instance, newest attempt first.
@@ -1190,7 +1212,7 @@ impl<S: ExplorerRepository> JobExplorer<S> {
         let query = ExplorerQuery::Executions { job_instance_id };
         let window = self.window(&query, request).await?;
         let rows = self.source.executions(job_instance_id, &window).await?;
-        page(&query, request, window.ceiling(), rows)
+        self.finish_page(None, page(&query, request, window.ceiling(), rows))
     }
 
     /// Reads one execution projection.
@@ -1221,7 +1243,10 @@ impl<S: ExplorerRepository> JobExplorer<S> {
             .source
             .step_executions(job_execution_id, &window)
             .await?;
-        page(&query, request, window.ceiling(), rows)
+        self.finish_page(
+            Some(job_execution_id),
+            page(&query, request, window.ceiling(), rows),
+        )
     }
 
     /// Lists non-terminal executions older than an explicit age bound.
@@ -1246,7 +1271,7 @@ impl<S: ExplorerRepository> JobExplorer<S> {
             .source
             .unresolved_executions(minimum_age, &window)
             .await?;
-        page(&query, request, window.ceiling(), rows)
+        self.finish_page(None, page(&query, request, window.ceiling(), rows))
     }
 
     /// Lists recovery decisions of one job execution.
@@ -1265,7 +1290,10 @@ impl<S: ExplorerRepository> JobExplorer<S> {
             .source
             .recovery_decisions(job_execution_id, &window)
             .await?;
-        page(&query, request, window.ceiling(), rows)
+        self.finish_page(
+            Some(job_execution_id),
+            page(&query, request, window.ceiling(), rows),
+        )
     }
 
     /// Lists flow decisions of one job execution in sequence order.
@@ -1284,7 +1312,10 @@ impl<S: ExplorerRepository> JobExplorer<S> {
             .source
             .flow_decisions(job_execution_id, &window)
             .await?;
-        page(&query, request, window.ceiling(), rows)
+        self.finish_page(
+            Some(job_execution_id),
+            page(&query, request, window.ceiling(), rows),
+        )
     }
 
     /// Lists partitions of one partitioned step execution.
@@ -1303,7 +1334,7 @@ impl<S: ExplorerRepository> JobExplorer<S> {
             .source
             .step_partitions(step_execution_id, &window)
             .await?;
-        page(&query, request, window.ceiling(), rows)
+        self.finish_page(None, page(&query, request, window.ceiling(), rows))
     }
 
     /// Lists audited operator requests for one job execution.
@@ -1322,7 +1353,24 @@ impl<S: ExplorerRepository> JobExplorer<S> {
             .source
             .operator_requests(job_execution_id, &window)
             .await?;
-        page(&query, request, window.ceiling(), rows)
+        self.finish_page(
+            Some(job_execution_id),
+            page(&query, request, window.ceiling(), rows),
+        )
+    }
+
+    fn finish_page<T>(
+        &self,
+        execution_id: Option<JobExecutionId>,
+        result: Result<Page<T>, ExplorerError>,
+    ) -> Result<Page<T>, ExplorerError> {
+        if result.is_ok() {
+            let record = TelemetryRecord::explorer(execution_id);
+            for sink in &self.event_sinks {
+                crate::telemetry::emit_safely(Some(sink), &record);
+            }
+        }
+        result
     }
 
     async fn window(

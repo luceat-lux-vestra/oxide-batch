@@ -336,13 +336,10 @@ oxide-batch config show --output json
 
 ## Known limitations
 
-- `diagnostics bundle` is part of the closed grammar but is not yet
-  implemented. Its contents are owned by the
-  [observability contract](observability-contract.md), whose telemetry catalog
-  is issue
-  [#79](https://github.com/luceat-lux-vestra/oxide-batch/issues/79). Until that
-  lands the command exits `3` with `BUNDLE_UNAVAILABLE` rather than writing a
-  partial bundle.
+- `diagnostics bundle` writes a new deterministic directory and refuses to
+  overwrite an existing path. Its manifest records SHA-256 checksums and any
+  size/record omissions; the complete directory is bounded to `4 MiB` and its
+  contents follow the [observability contract](observability-contract.md).
 - `execution partitions` queries the durable partition rows, which are only
   written once bounded local partitioning lands in issue
   [#80](https://github.com/luceat-lux-vestra/oxide-batch/issues/80). The command

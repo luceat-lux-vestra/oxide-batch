@@ -13,7 +13,7 @@ use std::time::{Duration, Instant, SystemTime};
 use super::{CanonicalWriter, StateEnvelopeDescriptor, hex_digest};
 use crate::{
     BatchStatus, BoxFuture, Clock, ExecutionVersion, JobExecutionId, RepositoryError,
-    StepExecutionId,
+    StepExecutionId, TelemetryEventKind, TelemetryEventSink, TelemetryRecord,
 };
 
 /// Minimum accepted stale-execution threshold.
@@ -559,6 +559,7 @@ pub struct RecoveryProposer<R> {
     stale_threshold: StaleThreshold,
     max_clock_skew: MaxClockSkew,
     server_time_floor: Mutex<Option<SystemTime>>,
+    event_sink: Option<Arc<dyn TelemetryEventSink>>,
 }
 
 impl<R> fmt::Debug for RecoveryProposer<R> {
@@ -590,6 +591,7 @@ impl<R: RecoveryRepository> RecoveryProposer<R> {
             stale_threshold: StaleThreshold::default(),
             max_clock_skew: MaxClockSkew::default(),
             server_time_floor: Mutex::new(None),
+            event_sink: None,
         }
     }
 
@@ -604,6 +606,13 @@ impl<R: RecoveryRepository> RecoveryProposer<R> {
     #[must_use]
     pub const fn with_max_clock_skew(mut self, value: MaxClockSkew) -> Self {
         self.max_clock_skew = value;
+        self
+    }
+
+    /// Attaches a non-authoritative, panic-isolated telemetry sink.
+    #[must_use]
+    pub fn with_event_sink(mut self, sink: Arc<dyn TelemetryEventSink>) -> Self {
+        self.event_sink = Some(sink);
         self
     }
 
@@ -674,7 +683,18 @@ impl<R: RecoveryRepository> RecoveryProposer<R> {
             observation_window,
         };
         let digest = evidence.digest();
-        Ok(RecoveryProposal { evidence, digest })
+        let proposal = RecoveryProposal { evidence, digest };
+        if proposal.evidence().status() != BatchStatus::Unknown {
+            crate::telemetry::emit_safely(
+                self.event_sink.as_ref(),
+                &TelemetryRecord::recovery(TelemetryEventKind::StaleDetected, &proposal),
+            );
+        }
+        crate::telemetry::emit_safely(
+            self.event_sink.as_ref(),
+            &TelemetryRecord::recovery(TelemetryEventKind::RecoveryProposed, &proposal),
+        );
+        Ok(proposal)
     }
 }
 

@@ -116,6 +116,8 @@ impl ExecutionCorrelation {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum EventSeverity {
+    /// High-volume detail disabled by default.
+    Debug,
     /// Normal lifecycle progress.
     Info,
     /// A cooperative stop or recoverable condition.
@@ -129,6 +131,7 @@ impl EventSeverity {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Debug => "debug",
             Self::Info => "info",
             Self::Warn => "warn",
             Self::Error => "error",
@@ -162,6 +165,30 @@ pub enum EventComponent {
     Item,
     /// A rollback or no-rollback classification.
     Fault,
+    /// Durable flow traversal.
+    Flow,
+    /// Repository command/query behavior.
+    Repository,
+    /// Checkpoint lifecycle.
+    Checkpoint,
+    /// Guarded operator services.
+    Operator,
+    /// Bounded explorer services.
+    Explorer,
+    /// Graceful process shutdown.
+    Shutdown,
+    /// Stale detection and recovery.
+    Recovery,
+    /// Guarded retention.
+    Retention,
+    /// Local split execution.
+    Split,
+    /// Local partition execution.
+    Partition,
+    /// Export infrastructure.
+    Telemetry,
+    /// Metadata migration.
+    Migration,
 }
 
 impl EventComponent {
@@ -177,6 +204,18 @@ impl EventComponent {
             Self::Retry => "retry",
             Self::Item => "item",
             Self::Fault => "fault",
+            Self::Flow => "flow",
+            Self::Repository => "repository",
+            Self::Checkpoint => "checkpoint",
+            Self::Operator => "operator",
+            Self::Explorer => "explorer",
+            Self::Shutdown => "shutdown",
+            Self::Recovery => "recovery",
+            Self::Retention => "retention",
+            Self::Split => "split",
+            Self::Partition => "partition",
+            Self::Telemetry => "telemetry",
+            Self::Migration => "migration",
         }
     }
 }
@@ -254,6 +293,43 @@ pub enum LifecycleEventKind {
 }
 
 impl LifecycleEventKind {
+    /// Maps this legacy facade event into telemetry schema version 1.
+    #[must_use]
+    pub const fn telemetry_kind(self) -> crate::TelemetryEventKind {
+        match self {
+            Self::LaunchAccepted => crate::TelemetryEventKind::LaunchAccepted,
+            Self::JobStarting => crate::TelemetryEventKind::JobStarting,
+            Self::StepStarting => crate::TelemetryEventKind::StepStarting,
+            Self::JobStarted => crate::TelemetryEventKind::JobStarted,
+            Self::StepStarted => crate::TelemetryEventKind::StepStarted,
+            Self::JobStopping => crate::TelemetryEventKind::JobStopping,
+            Self::StepStopping => crate::TelemetryEventKind::StepStopping,
+            Self::JobStopped => crate::TelemetryEventKind::JobStopped,
+            Self::StepStopped => crate::TelemetryEventKind::StepStopped,
+            Self::JobCompleted => crate::TelemetryEventKind::JobCompleted,
+            Self::StepCompleted => crate::TelemetryEventKind::StepCompleted,
+            Self::JobFailed => crate::TelemetryEventKind::JobFailed,
+            Self::StepFailed => crate::TelemetryEventKind::StepFailed,
+            Self::JobUnknown => crate::TelemetryEventKind::JobUnknown,
+            Self::StepUnknown => crate::TelemetryEventKind::StepUnknown,
+            Self::ChunkStarted => crate::TelemetryEventKind::ChunkStarted,
+            Self::ChunkCommitted => crate::TelemetryEventKind::ChunkCommitted,
+            Self::ChunkRolledBack => crate::TelemetryEventKind::ChunkRolledBack,
+            Self::ChunkUnknown => crate::TelemetryEventKind::ChunkUnknown,
+            Self::JobBeforeListenerFailed => crate::TelemetryEventKind::JobBeforeListenerFailed,
+            Self::JobAfterListenerFailed => crate::TelemetryEventKind::JobAfterListenerFailed,
+            Self::StepBeforeListenerFailed => crate::TelemetryEventKind::StepBeforeListenerFailed,
+            Self::StepAfterListenerFailed => crate::TelemetryEventKind::StepAfterListenerFailed,
+            Self::RetryReserved => crate::TelemetryEventKind::RetryReserved,
+            Self::RetryBackoffStarted => crate::TelemetryEventKind::RetryBackoffStarted,
+            Self::RetryBackoffCancelled => crate::TelemetryEventKind::RetryBackoffCancelled,
+            Self::RetryExhausted => crate::TelemetryEventKind::RetryExhausted,
+            Self::ItemSkipped => crate::TelemetryEventKind::ItemSkipped,
+            Self::FaultRollbackCommitted => crate::TelemetryEventKind::FaultRollbackCommitted,
+            Self::FaultNoRollbackCommitted => crate::TelemetryEventKind::FaultNoRollbackCommitted,
+        }
+    }
+
     /// Returns the stable dotted event name.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -414,6 +490,11 @@ pub struct LifecycleEvent {
 }
 
 impl LifecycleEvent {
+    /// Returns the telemetry schema version carried by this event mapping.
+    #[must_use]
+    pub const fn schema_version(&self) -> u16 {
+        crate::TELEMETRY_SCHEMA_VERSION
+    }
     pub(crate) const fn new(kind: LifecycleEventKind, correlation: ExecutionCorrelation) -> Self {
         Self {
             kind,
@@ -666,7 +747,7 @@ pub struct DiagnosticField {
 }
 
 impl DiagnosticField {
-    fn new(key: &'static str, value: impl Into<String>) -> Self {
+    pub(crate) fn new(key: &'static str, value: impl Into<String>) -> Self {
         Self {
             key,
             value: value.into(),
@@ -700,7 +781,7 @@ pub struct MetricLabel {
 }
 
 impl MetricLabel {
-    fn new(key: &'static str, value: impl Into<String>) -> Self {
+    pub(crate) fn new(key: &'static str, value: impl Into<String>) -> Self {
         Self {
             key,
             value: value.into(),
@@ -717,6 +798,10 @@ impl MetricLabel {
     #[must_use]
     pub fn value(&self) -> &str {
         &self.value
+    }
+
+    pub(crate) fn replace_value(&mut self, value: &'static str) {
+        value.clone_into(&mut self.value);
     }
 }
 
