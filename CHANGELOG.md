@@ -96,6 +96,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   draining, declared-order status/exit aggregation, durable
   `SPLIT_AGGREGATE` join decisions, `UNKNOWN` propagation, and completed-child
   reuse on restart.
+- Tasklet-only bounded local partition execution with per-child factories,
+  manager-owned finite worker scopes, pre-start and in-flight cancellation,
+  panic isolation, durable completed-child restart reuse, explicit `UNKNOWN`
+  blocking and inspection, manifest-to-repository pool validation, and
+  PostgreSQL 15/18 process-kill recovery evidence.
 - Versioned M4 telemetry: schema version 1, the operations, shutdown,
   recovery, retention, and local-scale event catalog, an enforced label
   cardinality budget, bounded exporter queues with counted drops, and the

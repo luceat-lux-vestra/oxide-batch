@@ -5,7 +5,7 @@ use std::fmt;
 
 use crate::{
     BatchStatus, ExecutionContext, ExecutionCounts, ExecutionVersion, ExitStatus, MAX_PARTITIONS,
-    StepExecutionId, StepPartitionId,
+    StepExecution, StepExecutionId, StepPartitionId,
 };
 
 /// Maximum UTF-8 byte length of one durable partition key.
@@ -322,6 +322,7 @@ pub struct PartitionAggregate {
     status: BatchStatus,
     exit_status: ExitStatus,
     counts: ExecutionCounts,
+    selected_worker_step_execution_id: StepExecutionId,
 }
 
 impl PartitionAggregate {
@@ -341,6 +342,10 @@ impl PartitionAggregate {
     #[must_use]
     pub const fn counts(&self) -> ExecutionCounts {
         self.counts
+    }
+
+    pub(crate) const fn selected_worker_step_execution_id(&self) -> StepExecutionId {
+        self.selected_worker_step_execution_id
     }
 }
 
@@ -397,17 +402,23 @@ pub fn aggregate_step_partitions(
         counts = checked_sum_counts(counts, partition.counts())?;
     }
 
-    let exit_status = ordered
+    let selected = ordered
         .iter()
         .find(|partition| partition.status() == aggregate_status)
-        .map(|partition| partition.exit_status().clone())
         .ok_or(PartitionAggregationError::Incomplete {
             status: aggregate_status,
         })?;
+    let selected_worker_step_execution_id =
+        selected
+            .worker_step_execution_id()
+            .ok_or(PartitionAggregationError::Incomplete {
+                status: aggregate_status,
+            })?;
     Ok(PartitionAggregate {
         status: aggregate_status,
-        exit_status,
+        exit_status: selected.exit_status().clone(),
         counts,
+        selected_worker_step_execution_id,
     })
 }
 
@@ -425,7 +436,7 @@ fn checked_sum_counts(
     left: ExecutionCounts,
     right: ExecutionCounts,
 ) -> Result<ExecutionCounts, PartitionAggregationError> {
-    Ok(ExecutionCounts::new(
+    let counts = ExecutionCounts::new(
         left.read()
             .checked_add(right.read())
             .ok_or(PartitionAggregationError::CountExhausted)?,
@@ -444,7 +455,21 @@ fn checked_sum_counts(
         left.rolled_back()
             .checked_add(right.rolled_back())
             .ok_or(PartitionAggregationError::CountExhausted)?,
-    ))
+    );
+    if [
+        counts.read(),
+        counts.processed(),
+        counts.written(),
+        counts.filtered(),
+        counts.committed(),
+        counts.rolled_back(),
+    ]
+    .into_iter()
+    .any(|value| value > i64::MAX as u64)
+    {
+        return Err(PartitionAggregationError::CountExhausted);
+    }
+    Ok(counts)
 }
 
 /// A deterministic partition plan could not be aggregated safely.
@@ -493,6 +518,13 @@ impl fmt::Display for PartitionAggregationError {
 impl Error for PartitionAggregationError {}
 
 impl PartitionResult {
+    pub(crate) fn from_worker(worker: &StepExecution) -> Result<Self, PartitionValueError> {
+        Self::new(
+            worker.metadata().status(),
+            worker.metadata().exit_status().clone(),
+            worker.metadata().counts(),
+        )
+    }
     /// Validates one known or explicitly ambiguous terminal worker result.
     ///
     /// # Errors
@@ -512,6 +544,19 @@ impl PartitionResult {
                 | BatchStatus::Unknown
         ) {
             return Err(PartitionValueError::NonTerminalResult { status });
+        }
+        if [
+            counts.read(),
+            counts.processed(),
+            counts.written(),
+            counts.filtered(),
+            counts.committed(),
+            counts.rolled_back(),
+        ]
+        .into_iter()
+        .any(|value| value > i64::MAX as u64)
+        {
+            return Err(PartitionValueError::CountTooLarge);
         }
         Ok(Self {
             status,
@@ -560,6 +605,8 @@ pub enum PartitionValueError {
         /// Rejected status.
         status: BatchStatus,
     },
+    /// A counter cannot be represented by every durable adapter.
+    CountTooLarge,
 }
 
 impl fmt::Display for PartitionValueError {
@@ -577,6 +624,9 @@ impl fmt::Display for PartitionValueError {
                     formatter,
                     "partition result status {status} is not terminal"
                 )
+            }
+            Self::CountTooLarge => {
+                formatter.write_str("partition result counter exceeds the portable durable bound")
             }
         }
     }
@@ -648,6 +698,51 @@ mod tests {
             )
             .is_ok()
         );
+        assert_eq!(
+            PartitionResult::new(
+                BatchStatus::Completed,
+                ExitStatus::completed(),
+                ExecutionCounts::new(i64::MAX as u64 + 1, 0, 0, 0, 0, 0),
+            ),
+            Err(PartitionValueError::CountTooLarge)
+        );
+    }
+
+    #[test]
+    fn aggregate_rejects_counts_above_the_postgres_bigint_bound() -> Result<(), Box<dyn Error>> {
+        let context = ExecutionContext::from_json(
+            br#"{"format":"oxide-batch.execution-context","format_version":1,"schema":"partition.aggregate","schema_version":1,"payload":{}}"#,
+            StateLimits::new(MAX_PARTITION_CONTEXT_BYTES, 16)?,
+        )?;
+        let completed = |id: u64, key: &str, count: u64| -> Result<StepPartition, Box<dyn Error>> {
+            let mut partition = StepPartition::starting(
+                StepPartitionId::new(id)?,
+                StepExecutionId::new(1)?,
+                u32::try_from(id)?,
+                PartitionPlanEntry::new(PartitionKey::new(key)?, context.clone())?,
+            );
+            partition
+                .assign(ExecutionVersion::INITIAL, StepExecutionId::new(id + 10)?)
+                .map_err(|_| std::io::Error::other("partition assignment failed"))?;
+            partition
+                .complete(
+                    partition.version(),
+                    &PartitionResult::new(
+                        BatchStatus::Completed,
+                        ExitStatus::completed(),
+                        ExecutionCounts::new(count, 0, 0, 0, 0, 0),
+                    )?,
+                )
+                .map_err(|_| std::io::Error::other("partition completion failed"))?;
+            Ok(partition)
+        };
+        let first = completed(1, "alpha", i64::MAX as u64)?;
+        let second = completed(2, "beta", 1)?;
+        assert_eq!(
+            aggregate_step_partitions(&[first, second]),
+            Err(PartitionAggregationError::CountExhausted)
+        );
+        Ok(())
     }
 
     #[test]

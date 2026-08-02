@@ -11,6 +11,9 @@ before migration, and they reject schema 3 on startup.
 
 **Immutable SQL:** `crates/oxide-batch/migrations/0003_operations_and_local_scale.sql`
 
+**Corrective schema-3 patch:**
+`crates/oxide-batch/migrations/0004_schema3_split_aggregate_patch.sql`
+
 This is the version-specific migration and rollback contract for the M4
 operator, retention, shutdown/stale, and bounded local-scale slices. The
 logical model it installs is owned by the
@@ -49,9 +52,13 @@ The execution failure-category constraint retains every schema-2 value and adds
 columns use checked text rather than PostgreSQL enums so later versions can add
 values transactionally.
 
-The flow-decision transition-kind constraint retains every schema-2 value and
-adds `SPLIT_AGGREGATE` for the durable transition selected by a format-3
-structural join. Existing flow decisions are unchanged.
+The accepted schema-3 model requires the flow-decision transition-kind
+constraint to retain every schema-2 value and accept `SPLIT_AGGREGATE` for a
+format-3 structural join. The already-published `0003` checksum is preserved.
+The idempotent corrective migration `0004_schema3_split_aggregate_patch.sql`
+adds that accepted value after verifying the application schema is exactly 3;
+it does not introduce application schema version 4. Existing flow decisions
+are unchanged.
 
 Every new table uses `RESTRICT` foreign keys and contains no parameter,
 context, item, checkpoint, credential, endpoint, SQL, user error text, or
@@ -65,10 +72,17 @@ PostgreSQL transaction:
 1. require singleton schema version 2;
 2. add nullable columns to `ob_job_execution` and `ob_job_instance`;
 3. create the three new tables, their constraints, and their indexes;
-4. extend the failure-category and flow-decision transition-kind constraints;
+4. extend the failure-category constraint;
 5. validate constraints, foreign keys, and uniqueness;
 6. set the singleton version to 3;
 7. commit.
+
+The migrator then applies the corrective schema-3 patch under its migration
+lock. The patch requires schema version 3, replaces only the named
+flow-decision check constraint, validates it, and commits without changing the
+singleton application schema version. This preserves the immutable `0003`
+checksum for databases that already applied it and gives fresh databases the
+same final schema.
 
 The migration performs no backfill. Every added column is nullable with no
 default, and every new table starts empty, so the lock window is independent of
@@ -166,7 +180,7 @@ restart-relevant partition state and destructive-action audit.
 
 | Requirement | Evidence |
 | --- | --- |
-| Immutable SQL | One migration file applied inside one transaction under the existing advisory lock |
+| Immutable SQL | Preserve the `0003` checksum; apply the bounded corrective `0004` constraint patch under the existing migration lock |
 | Realistic source fixtures | Schema-2 seed with completed, failed-with-active-restart, stopped, and unresolved `UNKNOWN` history |
 | Upgrade verification | A schema-3 verification script asserting every item in the verification list |
 | Reapplication safety | Reapplying the migration must fail with a `schema version 2 is required` guard |

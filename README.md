@@ -53,9 +53,16 @@ process-kill restart evidence recorded in the
 Scale** is active under its [kickoff gate](docs/project/m4-kickoff-gate.md);
 operator/explorer, CLI, shutdown/recovery, retention, bounded telemetry, the
 local-scale plan, durable partition repository/aggregation, and the first
-tasklet-only bounded parallel-split runtime slice are implemented but
-unreleased; complete local partition execution and M4 exit evidence remain
-open.
+tasklet-only bounded parallel-split and local-partition runtime slices are
+implemented but unreleased; M4 process-kill, resource-bound, cancellation,
+PostgreSQL-matrix, and soak exit evidence remains open.
+
+The shipped `oxide-batch` command is a guarded repository operator, not a
+standalone Rust job-definition loader. It can inspect and recover durable
+partition metadata; launching or restarting application work requires a host
+application that embeds `oxide-batch-cli` and supplies its own compiled
+`DefinitionCatalog`. Run `oxide-batch --help` for that boundary and the command
+grammar entry point.
 
 Start with the [documentation index](docs/README.md) and
 [continuous delivery roadmap](docs/roadmap.md). The M5-M14 full-parity program

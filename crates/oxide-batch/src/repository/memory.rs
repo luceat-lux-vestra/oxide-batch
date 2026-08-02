@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
@@ -12,14 +13,14 @@ use crate::partition::PartitionMutationError;
 use crate::{
     ActorRef, BatchStatus, CursorKey, DefinitionDescriptor, DefinitionIdentity, DefinitionRevision,
     DefinitionUpgrade, DurableStateKind, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps,
-    ExecutionVersion, ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, FailureSummary,
-    FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowStepState, FlowTransitionKind,
-    IdentifierKind, JobExecution, JobExecutionId, JobExecutionProjection, JobInstance,
-    JobInstanceId, JobInstanceKey, JobInstanceProjection, JobName, LifecycleError,
-    LifecycleTransition, MAX_PARTITIONS, NodeId, OperationId, OperatorAction, OperatorRecord,
-    OperatorRecordDraft, OperatorRequestId, OwnerObservation, OwnerToken, ParameterDescriptor,
-    PartitionPlanEntry, PartitionResult, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest,
-    PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecisionId, RecoveryRepository, RecoverySnapshot,
+    ExecutionVersion, ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, FlowDecision,
+    FlowDecisionId, FlowDecisionRequest, FlowStepState, FlowTransitionKind, IdentifierKind,
+    JobExecution, JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId,
+    JobInstanceKey, JobInstanceProjection, JobName, LifecycleError, LifecycleTransition,
+    MAX_PARTITIONS, NodeId, OperationId, OperatorAction, OperatorRecord, OperatorRecordDraft,
+    OperatorRequestId, OwnerObservation, OwnerToken, ParameterDescriptor, PartitionPlanEntry,
+    PartitionResult, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey,
+    QueryWindow, ReasonCode, RecoveryDecisionId, RecoveryRepository, RecoverySnapshot,
     RecoveryStepEvidence, RetentionAction, RetentionActionId, RetentionHold, RetentionRecord,
     RetentionRecordDraft, StartLimit, StateEnvelopeDescriptor, StepExecution, StepExecutionId,
     StepExecutionProjection, StepName, StepPartition, StepPartitionId, StepPartitionProjection,
@@ -36,6 +37,7 @@ pub struct InMemoryJobRepository {
     state: Arc<Mutex<MemoryState>>,
     clock: Arc<dyn Clock>,
     ids: Arc<dyn IdGenerator>,
+    fail_next_partition_aggregate_commit: Arc<AtomicBool>,
 }
 
 impl InMemoryJobRepository {
@@ -46,7 +48,17 @@ impl InMemoryJobRepository {
             state: Arc::new(Mutex::new(MemoryState::default())),
             clock,
             ids,
+            fail_next_partition_aggregate_commit: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Injects one lost commit response after the next partition aggregate is published.
+    ///
+    /// This deterministic failure fixture is intended for conformance tests of
+    /// fresh-state inspection after an ambiguous repository commit.
+    pub fn inject_next_partition_aggregate_commit_unknown(&self) {
+        self.fail_next_partition_aggregate_commit
+            .store(true, Ordering::Release);
     }
 }
 
@@ -66,6 +78,10 @@ impl fmt::Debug for InMemoryJobRepository {
 }
 
 impl JobRepository for InMemoryJobRepository {
+    fn connection_capacity(&self) -> u32 {
+        u32::from(crate::MAX_PARTITION_WORKERS) + 1
+    }
+
     fn begin<'a>(
         &'a self,
     ) -> BoxFuture<'a, Result<Box<dyn RepositoryUnitOfWork + 'a>, RepositoryError>> {
@@ -82,6 +98,7 @@ impl JobRepository for InMemoryJobRepository {
                 staged: snapshot,
                 definition_override: None,
                 created_partition_plans: BTreeSet::new(),
+                aggregated_partition_parent: false,
             }) as Box<dyn RepositoryUnitOfWork + 'a>)
         })
     }
@@ -240,6 +257,7 @@ struct InMemoryUnitOfWork<'repository> {
     staged: MemoryState,
     definition_override: Option<DefinitionIdentity>,
     created_partition_plans: BTreeSet<StepExecutionId>,
+    aggregated_partition_parent: bool,
 }
 
 impl InMemoryUnitOfWork<'_> {
@@ -1080,9 +1098,18 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         entries: &'a [PartitionPlanEntry],
     ) -> BoxFuture<'a, Result<Vec<StepPartition>, RepositoryError>> {
         Box::pin(async move {
-            if !self.staged.step_executions.contains_key(&step_execution_id) {
-                return Err(RepositoryError::StepExecutionNotFound {
+            let parent = self.staged.step_executions.get(&step_execution_id).ok_or(
+                RepositoryError::StepExecutionNotFound {
                     id: step_execution_id,
+                },
+            )?;
+            if !matches!(
+                parent.metadata().status(),
+                BatchStatus::Starting | BatchStatus::Started
+            ) {
+                return Err(RepositoryError::PartitionParentNotActive {
+                    step_execution_id,
+                    status: parent.metadata().status(),
                 });
             }
             if entries.is_empty() {
@@ -1154,6 +1181,108 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         })
     }
 
+    fn restart_step_partition_plan(
+        &mut self,
+        source_step_execution_id: StepExecutionId,
+        target_step_execution_id: StepExecutionId,
+    ) -> BoxFuture<'_, Result<Vec<StepPartition>, RepositoryError>> {
+        Box::pin(async move {
+            if self
+                .staged
+                .step_partitions_by_step
+                .contains_key(&target_step_execution_id)
+            {
+                return Err(RepositoryError::PartitionPlanExists {
+                    step_execution_id: target_step_execution_id,
+                });
+            }
+            let source_parent = self
+                .staged
+                .step_executions
+                .get(&source_step_execution_id)
+                .ok_or(RepositoryError::StepExecutionNotFound {
+                    id: source_step_execution_id,
+                })?;
+            let source_job = self
+                .staged
+                .job_executions
+                .get(&source_parent.job_execution_id())
+                .ok_or(RepositoryError::PartitionStateCorrupt)?;
+            if !matches!(
+                source_job.metadata().status(),
+                BatchStatus::Failed | BatchStatus::Stopped
+            ) {
+                return Err(RepositoryError::PartitionStateCorrupt);
+            }
+            let target_parent = self
+                .staged
+                .step_executions
+                .get(&target_step_execution_id)
+                .ok_or(RepositoryError::StepExecutionNotFound {
+                    id: target_step_execution_id,
+                })?;
+            if !matches!(
+                target_parent.metadata().status(),
+                BatchStatus::Starting | BatchStatus::Started
+            ) {
+                return Err(RepositoryError::PartitionParentNotActive {
+                    step_execution_id: target_step_execution_id,
+                    status: target_parent.metadata().status(),
+                });
+            }
+            let source_ids = self
+                .staged
+                .step_partitions_by_step
+                .get(&source_step_execution_id)
+                .cloned()
+                .ok_or(RepositoryError::PartitionStateCorrupt)?;
+            let mut copied = Vec::with_capacity(source_ids.len());
+            for source_id in source_ids {
+                let source = self
+                    .staged
+                    .step_partitions
+                    .get(&source_id)
+                    .cloned()
+                    .ok_or(RepositoryError::PartitionStateCorrupt)?;
+                let id = self.next_step_partition_id()?;
+                let partition = if source.status() == BatchStatus::Completed {
+                    if source.worker_step_execution_id().is_none() {
+                        return Err(RepositoryError::PartitionStateCorrupt);
+                    }
+                    StepPartition::from_snapshot(
+                        id,
+                        target_step_execution_id,
+                        source.worker_step_execution_id(),
+                        source.key().clone(),
+                        source.ordinal(),
+                        source.status(),
+                        source.exit_status().clone(),
+                        source.counts(),
+                        source.context().clone(),
+                        ExecutionVersion::INITIAL,
+                    )
+                } else {
+                    StepPartition::starting(
+                        id,
+                        target_step_execution_id,
+                        source.ordinal(),
+                        PartitionPlanEntry::new(source.key().clone(), source.context().clone())
+                            .map_err(|_| RepositoryError::PartitionStateCorrupt)?,
+                    )
+                };
+                self.staged.step_partitions.insert(id, partition.clone());
+                copied.push(partition);
+            }
+            self.staged.step_partitions_by_step.insert(
+                target_step_execution_id,
+                copied.iter().map(StepPartition::id).collect(),
+            );
+            self.created_partition_plans
+                .insert(target_step_execution_id);
+            Ok(copied)
+        })
+    }
+
     fn assign_step_partition(
         &mut self,
         id: StepPartitionId,
@@ -1175,14 +1304,20 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                     step_execution_id: partition.step_execution_id(),
                 });
             }
-            partition
-                .assign(expected_version, worker_step_execution_id)
-                .map_err(|error| map_partition_mutation(id, error))?;
             let parent = self
                 .staged
                 .step_executions
                 .get(&partition.step_execution_id())
                 .ok_or(RepositoryError::PartitionStateCorrupt)?;
+            if parent.metadata().status() != BatchStatus::Started {
+                return Err(RepositoryError::PartitionParentNotActive {
+                    step_execution_id: parent.id(),
+                    status: parent.metadata().status(),
+                });
+            }
+            partition
+                .assign(expected_version, worker_step_execution_id)
+                .map_err(|error| map_partition_mutation(id, error))?;
             let worker = self
                 .staged
                 .step_executions
@@ -1210,21 +1345,62 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         })
     }
 
-    fn complete_step_partition<'a>(
-        &'a mut self,
+    fn complete_step_partition(
+        &mut self,
         id: StepPartitionId,
         expected_version: ExecutionVersion,
-        result: &'a PartitionResult,
-    ) -> BoxFuture<'a, Result<StepPartition, RepositoryError>> {
+        worker_step_execution_id: StepExecutionId,
+    ) -> BoxFuture<'_, Result<StepPartition, RepositoryError>> {
         Box::pin(async move {
-            let partition = self
+            let mut partition = self
                 .staged
                 .step_partitions
-                .get_mut(&id)
+                .get(&id)
+                .cloned()
                 .ok_or(RepositoryError::StepPartitionNotFound { id })?;
+            let parent = self
+                .staged
+                .step_executions
+                .get(&partition.step_execution_id())
+                .ok_or(RepositoryError::PartitionStateCorrupt)?;
+            if !matches!(
+                parent.metadata().status(),
+                BatchStatus::Started | BatchStatus::Stopping
+            ) {
+                return Err(RepositoryError::PartitionParentNotActive {
+                    step_execution_id: parent.id(),
+                    status: parent.metadata().status(),
+                });
+            }
+            if partition.worker_step_execution_id() != Some(worker_step_execution_id) {
+                return Err(RepositoryError::PartitionWorkerStale {
+                    partition_id: id,
+                    worker_step_execution_id,
+                });
+            }
+            let worker = self
+                .staged
+                .step_executions
+                .get(&worker_step_execution_id)
+                .ok_or(RepositoryError::StepExecutionNotFound {
+                    id: worker_step_execution_id,
+                })?;
+            if worker.job_execution_id() != parent.job_execution_id() {
+                return Err(RepositoryError::PartitionWorkerMismatch {
+                    partition_id: id,
+                    worker_step_execution_id,
+                });
+            }
+            let result = PartitionResult::from_worker(worker).map_err(|_| {
+                RepositoryError::PartitionAggregationIncomplete {
+                    step_execution_id: parent.id(),
+                    status: worker.metadata().status(),
+                }
+            })?;
             partition
-                .complete(expected_version, result)
+                .complete(expected_version, &result)
                 .map_err(|error| map_partition_mutation(id, error))?;
+            self.staged.step_partitions.insert(id, partition.clone());
             Ok(partition.clone())
         })
     }
@@ -1234,12 +1410,30 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         step_execution_id: StepExecutionId,
         expected_version: ExecutionVersion,
         transitioned_at: SystemTime,
-        failure: Option<FailureSummary>,
     ) -> BoxFuture<'_, Result<StepExecution, RepositoryError>> {
         Box::pin(async move {
             let partitions = self.step_partition_plan(step_execution_id).await?;
             let aggregate = crate::aggregate_step_partitions(&partitions)
                 .map_err(|error| map_partition_aggregation(step_execution_id, error))?;
+            for partition in &partitions {
+                let worker_id = partition.worker_step_execution_id().ok_or(
+                    RepositoryError::PartitionAggregationIncomplete {
+                        step_execution_id,
+                        status: partition.status(),
+                    },
+                )?;
+                let worker = self
+                    .staged
+                    .step_executions
+                    .get(&worker_id)
+                    .ok_or(RepositoryError::PartitionStateCorrupt)?;
+                if worker.metadata().status() != partition.status()
+                    || worker.metadata().exit_status() != partition.exit_status()
+                    || worker.metadata().counts() != partition.counts()
+                {
+                    return Err(RepositoryError::PartitionStateCorrupt);
+                }
+            }
             let parent = self
                 .staged
                 .step_executions
@@ -1248,6 +1442,30 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .ok_or(RepositoryError::StepExecutionNotFound {
                     id: step_execution_id,
                 })?;
+            let selected_worker = self
+                .staged
+                .step_executions
+                .get(&aggregate.selected_worker_step_execution_id())
+                .ok_or(RepositoryError::PartitionStateCorrupt)?;
+            let failure = selected_worker.metadata().failure();
+            if let Some(next) = expected_version.get().checked_add(1)
+                && parent.version().get() == next
+                && parent.metadata().status() == aggregate.status()
+                && parent.metadata().exit_status() == aggregate.exit_status()
+                && parent.metadata().counts() == aggregate.counts()
+                && parent.metadata().failure() == failure
+            {
+                return Ok(parent);
+            }
+            if !matches!(
+                parent.metadata().status(),
+                BatchStatus::Started | BatchStatus::Stopping
+            ) {
+                return Err(RepositoryError::PartitionParentNotActive {
+                    step_execution_id,
+                    status: parent.metadata().status(),
+                });
+            }
             let aggregated = aggregate_partition_parent(
                 &parent,
                 expected_version,
@@ -1258,6 +1476,7 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
             self.staged
                 .step_executions
                 .insert(step_execution_id, aggregated.clone());
+            self.aggregated_partition_parent = true;
             Ok(aggregated)
         })
     }
@@ -1676,6 +1895,14 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .checked_add(1)
                 .ok_or(RepositoryError::ConcurrentModification)?;
             *current = staged;
+            if self.aggregated_partition_parent
+                && self
+                    .repository
+                    .fail_next_partition_aggregate_commit
+                    .swap(false, Ordering::AcqRel)
+            {
+                return Err(RepositoryError::CommitOutcomeUnknown);
+            }
             Ok(())
         })
     }

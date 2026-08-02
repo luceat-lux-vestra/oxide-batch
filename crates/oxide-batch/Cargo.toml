@@ -1,13 +1,13 @@
 [package]
 name = "oxide-batch"
-description = "Enterprise-ready batch processing for Rust, inspired by Spring Batch"
+description = "Early-alpha restartable batch processing for Rust, inspired by Spring Batch"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 readme = "README.md"
-keywords = ["batch", "job", "workflow", "processing", "enterprise"]
+keywords = ["batch", "job", "workflow", "processing", "restartable"]
 categories = ["asynchronous", "database"]
 publish = ["crates-io"]
 
@@ -39,3 +39,7 @@ tokio = { version = "1.53.1", features = ["macros", "rt", "sync", "time"] }
 futures-executor = "0.3.31"
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "time"] }
 trybuild = "1.0.118"
+
+[[example]]
+name = "postgres_local_partition"
+required-features = ["postgres"]

@@ -4,13 +4,14 @@
 
 **Issue:** [#80](https://github.com/luceat-lux-vestra/oxide-batch/issues/80)
 
-**Date:** 2026-08-02
+**Date:** 2026-08-03
 
 This record covers the repository and aggregation slices of the accepted M4
 bounded local-scale contract: validated partition-plan values, atomic schema-3
 plan creation, byte-ordered reads, worker assignment, terminal result
-publication, optimistic conflict handling, and atomic parent aggregation. It
-does not claim that the format-3 runtime launches partition workers.
+publication, optimistic conflict handling, atomic parent aggregation, and the
+adversarial corrections required before the format-3 runtime launches local
+partition workers.
 
 ## Implemented boundary
 
@@ -29,18 +30,29 @@ does not claim that the format-3 runtime launches partition workers.
   worker reference and clears its exit status and counters before work. The
   worker attempt must exist under the same job execution, cannot be the parent,
   and cannot be assigned to another partition.
-- Terminal results accept only `COMPLETED`, `FAILED`, `STOPPED`, or `UNKNOWN`
-  and persist exit status and counters under compare-and-swap. A completed
-  partition cannot be assigned again.
+- Terminal publication names the exact assigned worker and derives status,
+  exit, counters, and failure selection from the worker row locked in the same
+  unit of work. Caller-supplied result snapshots cannot forge a child outcome.
+  A completed partition cannot be assigned again.
 - `aggregate_step_partitions` sorts independently supplied snapshots by their
   byte-exact keys, applies `UNKNOWN > FAILED > STOPPED > COMPLETED`, selects the
   first matching exit status, and checks every counter sum. Active children,
   duplicate keys, empty/oversized plans, and overflow fail without an
   aggregate.
-- `RepositoryUnitOfWork::aggregate_step_partitions` locks/reads the complete
-  durable plan and publishes status, exit status, counters, failure metadata,
-  terminal timestamp, and version with the parent step in the same transaction.
-  Rolling back the unit leaves the parent unchanged.
+- `RepositoryUnitOfWork::aggregate_step_partitions` locks the active parent,
+  complete plan, and every referenced terminal worker in a fixed order. It
+  verifies the child snapshots, derives the deterministic failure from the
+  selected key-ordered worker, and publishes status, exit status, counters,
+  failure metadata, terminal timestamp, and version with the parent step in
+  the same transaction. A byte-equivalent duplicate request returns the
+  committed parent; a conflicting or terminal-parent mutation is rejected.
+- Assignment locks and validates the parent before changing a partition, so a
+  terminal manager cannot be reopened by a retry. Restart copies completed
+  partitions into the new manager attempt and resets only incomplete,
+  stopped, failed, or explicitly recovered-unknown partitions for reassignment.
+- Public result and aggregate counts are capped at PostgreSQL's signed `bigint`
+  maximum. Portable in-memory execution therefore cannot create a counter that
+  the durable PostgreSQL adapter cannot represent.
 - In-memory and PostgreSQL adapters implement the same portable repository
   contract. PostgreSQL verifies the stored partition-context checksum before
   returning runtime state; the explorer continues to expose only redacted
@@ -61,21 +73,15 @@ does not claim that the format-3 runtime launches partition workers.
 | Duplicate-key atomic rejection | [`duplicate_partition_key_is_rejected`](../../crates/oxide-batch/tests/contract/mod.rs) |
 | In-memory shared adapter run | [`shared_repository_contract_runs_against_a_test_adapter`](../../crates/oxide-batch/tests/harness.rs) |
 | PostgreSQL shared adapter run | [`shared_repository_contract_passes_on_postgres`](../../crates/oxide-batch/tests/postgres_repository.rs) |
+| Signed durable counter bound | [`aggregate_rejects_counts_above_the_postgres_bigint_bound`](../../crates/oxide-batch/src/partition.rs) |
 
 The PostgreSQL contract is environment-gated. A local run without
 `OXIDEBATCH_POSTGRES_TEST_URL` proves compilation but reports the database case
 as skipped; required PostgreSQL 15/18 execution remains CI and M4 exit evidence.
 
-## Remaining issue #80 boundary
-
-- partition component factories plus explicit shared-component concurrent-use
-  validation (tasklet split factories are recorded in the
-  [parallel-split runtime evidence](m4-parallel-split-evidence.md));
-- owned bounded partition-worker execution, cancellation, panic isolation, and
-  sibling failure policy;
-- runtime reuse of the committed plan, including `UNKNOWN` partition blocking;
-- PostgreSQL process-kill, sequential-equivalence, cancellation, contention,
-  memory/connection/task ceiling, and soak/leak evidence.
+The owned execution slice is recorded separately in the
+[local-partition runtime evidence](m4-local-partition-runtime-evidence.md).
+Issue #80 and M4 remain open until the full exit-evidence judgment is made.
 
 `SCALE-LOCALPART-001` remains unreleased `Partial`. `SCALE-PARSTEP-001` is
 unchanged by this repository slice. No transport, lease, fencing token,

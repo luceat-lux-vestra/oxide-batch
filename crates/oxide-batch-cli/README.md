@@ -42,7 +42,13 @@ std::process::exit(i32::from(category.code()));
 ```
 
 The shipped binary registers no definitions, so it serves every command a
-repository alone can answer and reports a guard rejection for those two.
+repository alone can answer and reports a guard rejection for those two. It is
+not a standalone job-definition loader; it cannot discover a job from a crate,
+manifest file, or database row.
+
+```shell
+oxide-batch --help
+```
 
 ## Documentation
 

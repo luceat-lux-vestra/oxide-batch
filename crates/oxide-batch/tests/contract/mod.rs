@@ -19,8 +19,8 @@ use oxide_batch::{
     BatchStatus, DomainError, ExecutionContext, ExecutionCounts, ExecutionVersion, ExitStatus,
     FailureCategory, FailureId, FailureSummary, JobInstanceKey, JobName, JobParameter,
     JobParameters, JobRepository, LifecycleError, LifecycleTransition, ParameterName,
-    ParameterRole, ParameterValue, PartitionKey, PartitionPlanEntry, PartitionResult,
-    RepositoryError, StateLimits, StepName,
+    ParameterRole, ParameterValue, PartitionKey, PartitionPlanEntry, RepositoryError, StateLimits,
+    StepName,
 };
 
 /// Runs the reusable M1 repository instance-identity contract.
@@ -86,6 +86,12 @@ where
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let parent = block_on(setup.create_step_execution(job.id(), &parent_name))
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let parent = block_on(setup.transition_step_execution(
+        parent.id(),
+        parent.version(),
+        LifecycleTransition::new(BatchStatus::Started, UNIX_EPOCH + Duration::from_secs(1)),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let worker = block_on(setup.create_step_execution(job.id(), &worker_name))
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let retry_worker = block_on(setup.create_step_execution(job.id(), &retry_worker_name))
@@ -170,18 +176,30 @@ where
     block_on(assignment.commit())
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let result = PartitionResult::new(
-        BatchStatus::Completed,
-        ExitStatus::completed(),
-        ExecutionCounts::new(2, 2, 2, 0, 1, 0),
-    )
-    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let mut completion = block_on(repository.begin())
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let worker = block_on(completion.transition_step_execution(
+        worker.id(),
+        worker.version(),
+        LifecycleTransition::new(BatchStatus::Started, UNIX_EPOCH + Duration::from_secs(2)),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let worker = block_on(completion.enrich_step_exit_status(
+        worker.id(),
+        worker.version(),
+        &ExitStatus::completed(),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let worker = block_on(completion.transition_step_execution(
+        worker.id(),
+        worker.version(),
+        LifecycleTransition::new(BatchStatus::Completed, UNIX_EPOCH + Duration::from_secs(3)),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let stale = block_on(completion.complete_step_partition(
         assigned.id(),
         ExecutionVersion::INITIAL,
-        &result,
+        worker.id(),
     ));
     ensure(
         stale
@@ -193,19 +211,42 @@ where
         CASE,
         "stale partition writer did not lose compare-and-swap",
     )?;
-    let completed =
-        block_on(completion.complete_step_partition(assigned.id(), assigned.version(), &result))
-            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let failed_result = PartitionResult::new(
-        BatchStatus::Failed,
-        ExitStatus::failed(),
-        ExecutionCounts::new(1, 1, 0, 0, 0, 1),
-    )
+    let completed = block_on(completion.complete_step_partition(
+        assigned.id(),
+        assigned.version(),
+        worker.id(),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let retry_worker = block_on(completion.transition_step_execution(
+        retry_worker.id(),
+        retry_worker.version(),
+        LifecycleTransition::new(BatchStatus::Started, UNIX_EPOCH + Duration::from_secs(2)),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let retry_worker = block_on(completion.enrich_step_exit_status(
+        retry_worker.id(),
+        retry_worker.version(),
+        &ExitStatus::failed(),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let retry_worker = block_on(completion.transition_step_execution(
+        retry_worker.id(),
+        retry_worker.version(),
+        LifecycleTransition::failed(
+            UNIX_EPOCH + Duration::from_secs(3),
+            FailureSummary::new(
+                FailureCategory::UserComponent,
+                FailureId::new(800).map_err(|error| {
+                    RepositoryContractFailure::new(backend, CASE, error.to_string())
+                })?,
+            ),
+        ),
+    ))
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let failed = block_on(completion.complete_step_partition(
         assigned_for_retry.id(),
         assigned_for_retry.version(),
-        &failed_result,
+        retry_worker.id(),
     ))
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     block_on(completion.commit())
@@ -372,37 +413,63 @@ where
         worker.id(),
     ))
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let alpha_result =
-        PartitionResult::new(
-            BatchStatus::Failed,
-            ExitStatus::new(oxide_batch::ExitCode::new("ALPHA_FAILED").map_err(|error| {
-                RepositoryContractFailure::new(backend, CASE, error.to_string())
-            })?),
-            ExecutionCounts::new(1, 2, 3, 4, 5, 6),
-        )
+    let alpha_exit = ExitStatus::new(
+        oxide_batch::ExitCode::new("ALPHA_FAILED")
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
+    );
+    let worker = block_on(work.transition_step_execution(
+        worker.id(),
+        worker.version(),
+        LifecycleTransition::new(BatchStatus::Started, started_at),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let worker = block_on(work.enrich_step_exit_status(worker.id(), worker.version(), &alpha_exit))
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let zeta_result =
-        PartitionResult::new(
-            BatchStatus::Failed,
-            ExitStatus::new(oxide_batch::ExitCode::new("ZETA_FAILED").map_err(|error| {
-                RepositoryContractFailure::new(backend, CASE, error.to_string())
-            })?),
-            ExecutionCounts::new(10, 20, 30, 40, 50, 60),
-        )
+    let alpha_failure = FailureSummary::new(
+        FailureCategory::UserComponent,
+        FailureId::new(901)
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
+    );
+    let worker = block_on(work.transition_step_execution(
+        worker.id(),
+        worker.version(),
+        LifecycleTransition::failed(ended_at, alpha_failure),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let zeta_exit = ExitStatus::new(
+        oxide_batch::ExitCode::new("ZETA_FAILED")
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
+    );
+    let other_worker = block_on(work.transition_step_execution(
+        other_worker.id(),
+        other_worker.version(),
+        LifecycleTransition::new(BatchStatus::Started, started_at),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let other_worker = block_on(work.enrich_step_exit_status(
+        other_worker.id(),
+        other_worker.version(),
+        &zeta_exit,
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let other_worker = block_on(work.transition_step_execution(
+        other_worker.id(),
+        other_worker.version(),
+        LifecycleTransition::failed(
+            ended_at,
+            FailureSummary::new(
+                FailureCategory::UserComponent,
+                FailureId::new(902).map_err(|error| {
+                    RepositoryContractFailure::new(backend, CASE, error.to_string())
+                })?,
+            ),
+        ),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(work.complete_step_partition(alpha.id(), alpha.version(), worker.id()))
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(work.complete_step_partition(alpha.id(), alpha.version(), &alpha_result))
-        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let incomplete = block_on(work.aggregate_step_partitions(
-        parent.id(),
-        parent.version(),
-        ended_at,
-        Some(FailureSummary::new(
-            FailureCategory::UserComponent,
-            FailureId::new(900).map_err(|error| {
-                RepositoryContractFailure::new(backend, CASE, error.to_string())
-            })?,
-        )),
-    ));
+    let incomplete =
+        block_on(work.aggregate_step_partitions(parent.id(), parent.version(), ended_at));
     ensure(
         incomplete
             == Err(RepositoryError::PartitionAggregationIncomplete {
@@ -413,29 +480,20 @@ where
         CASE,
         "active child allowed a partial parent aggregate",
     )?;
-    block_on(work.complete_step_partition(zeta.id(), zeta.version(), &zeta_result))
+    block_on(work.complete_step_partition(zeta.id(), zeta.version(), other_worker.id()))
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     block_on(work.commit())
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let failure = FailureSummary::new(
-        FailureCategory::UserComponent,
-        FailureId::new(901)
-            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
-    );
     let mut rolled_back = block_on(repository.begin())
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let provisional = block_on(rolled_back.aggregate_step_partitions(
-        parent.id(),
-        parent.version(),
-        ended_at,
-        Some(failure),
-    ))
-    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let provisional =
+        block_on(rolled_back.aggregate_step_partitions(parent.id(), parent.version(), ended_at))
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
         provisional.metadata().status() == BatchStatus::Failed
             && provisional.metadata().exit_status().code().as_str() == "ALPHA_FAILED"
-            && provisional.metadata().counts() == ExecutionCounts::new(11, 22, 33, 44, 55, 66),
+            && provisional.metadata().counts() == ExecutionCounts::default(),
         backend,
         CASE,
         "provisional aggregate did not follow key order and checked counter sums",
@@ -445,23 +503,47 @@ where
 
     let mut commit = block_on(repository.begin())
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let aggregated = block_on(commit.aggregate_step_partitions(
-        parent.id(),
-        parent.version(),
-        ended_at,
-        Some(failure),
-    ))
-    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let aggregated =
+        block_on(commit.aggregate_step_partitions(parent.id(), parent.version(), ended_at))
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     block_on(commit.commit())
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
         aggregated.metadata().status() == BatchStatus::Failed
-            && aggregated.metadata().failure() == Some(failure)
+            && aggregated.metadata().failure() == Some(alpha_failure)
             && aggregated.metadata().timestamps().ended_at() == Some(ended_at),
         backend,
         CASE,
         "parent terminal state did not commit with its aggregate",
-    )
+    )?;
+    let mut retry = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let duplicate =
+        block_on(retry.aggregate_step_partitions(parent.id(), parent.version(), ended_at))
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    ensure(
+        duplicate == aggregated,
+        backend,
+        CASE,
+        "retried aggregation did not return the already committed parent",
+    )?;
+    let reopened = block_on(retry.assign_step_partition(
+        alpha.id(),
+        ExecutionVersion::new(alpha.version().get() + 1),
+        worker.id(),
+    ));
+    ensure(
+        reopened
+            == Err(RepositoryError::PartitionParentNotActive {
+                step_execution_id: parent.id(),
+                status: BatchStatus::Failed,
+            }),
+        backend,
+        CASE,
+        "terminal parent allowed a child retry assignment",
+    )?;
+    block_on(retry.rollback())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))
 }
 
 fn partition_entry(key: &str) -> Result<PartitionPlanEntry, RepositoryContractFailure> {

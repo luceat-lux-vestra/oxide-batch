@@ -227,3 +227,6 @@ jobs:
           cargo test -p oxide-batch --features postgres \
             --test postgres_flow_crash_recovery \
             -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_local_partition_crash_recovery \
+            -- --nocapture --test-threads=1
