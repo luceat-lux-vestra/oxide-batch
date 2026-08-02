@@ -82,6 +82,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   identities, typed finite concurrency/partition/pool budgets, stable golden
   fingerprints, and fail-closed format-3 runtime gating until durable local
   execution is implemented.
+- Portable durable partition repository contracts with bounded byte-exact
+  keys and contexts, atomic plan-before-worker persistence, deterministic
+  key-ordered reads, unique local worker assignment, terminal-result
+  compare-and-swap, restart-safe completed rows, checksum validation, and
+  matching in-memory/PostgreSQL adapters.
 - Versioned M4 telemetry: schema version 1, the operations, shutdown,
   recovery, retention, and local-scale event catalog, an enforced label
   cardinality budget, bounded exporter queues with counted drops, and the

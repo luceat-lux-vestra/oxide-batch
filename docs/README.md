@@ -89,6 +89,7 @@ decisions own the normative detail.
 - [M4 shutdown and stale-recovery implementation evidence](project/m4-shutdown-recovery-evidence.md)
 - [M4 bounded telemetry and diagnostic-bundle evidence](project/m4-telemetry-evidence.md)
 - [M4 bounded local-scale plan evidence](project/m4-local-scale-plan-evidence.md)
+- [M4 durable partition repository evidence](project/m4-partition-repository-evidence.md)
 - [Historical M0 decision register](product/open-decisions.md)
 
 Historical gates are preserved as records of their date. Later decisions link

@@ -36,9 +36,12 @@ that partition state is durable, or that either scale ledger row is complete.
   order does not change canonical bytes.
 
 The current `FlowLauncher` intentionally continues to accept format 2 only.
-It fails closed for format 3 until the owned-task runtime, partition repository
-transactions, deterministic aggregation, and restart behavior are implemented
-in the remaining issue #80 slices.
+It fails closed for format 3 until the owned-task runtime, deterministic
+aggregation, and restart behavior are implemented in the remaining issue #80
+slices. The subsequent
+[durable partition repository evidence](m4-partition-repository-evidence.md)
+records the schema-3 plan and result transaction boundary without claiming
+runtime execution.
 
 ## Named executable evidence
 
@@ -60,10 +63,8 @@ in the remaining issue #80 slices.
   validation;
 - owned bounded child execution, cancellation, panic isolation, and sibling
   failure policy;
-- single-invocation partition planning and schema-3 persistence before worker
-  start;
-- per-partition compare-and-swap results, restart reuse, and `UNKNOWN`
-  blocking;
+- runtime use of the committed single-invocation partition plan;
+- completed-result reuse and `UNKNOWN` blocking in the runtime;
 - deterministic aggregation with the parent terminal update;
 - in-memory/PostgreSQL, process-kill, sequential-equivalence, and
   bounded-resource evidence.

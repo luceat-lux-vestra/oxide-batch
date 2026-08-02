@@ -64,6 +64,11 @@ fn plaintext_config(url: String) -> Result<PostgresConfig, PostgresConfigError> 
 async fn remove_contract_rows(url: &str) -> Result<(), sqlx::Error> {
     let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
     for statement in [
+        "DELETE FROM oxide_batch.ob_step_partition WHERE step_execution_id IN (\
+         SELECT step.id FROM oxide_batch.ob_step_execution step \
+         JOIN oxide_batch.ob_job_execution execution ON execution.id = step.job_execution_id \
+         JOIN oxide_batch.ob_job_instance instance ON instance.id = execution.job_instance_id \
+         WHERE instance.job_name = 'repository_contract_job')",
         "DELETE FROM oxide_batch.ob_recovery_decision WHERE job_execution_id IN (\
          SELECT execution.id FROM oxide_batch.ob_job_execution execution \
          JOIN oxide_batch.ob_job_instance instance ON instance.id = execution.job_instance_id \

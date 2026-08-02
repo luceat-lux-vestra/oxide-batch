@@ -490,9 +490,8 @@ pub struct StateEnvelopeDescriptor {
 }
 
 impl StateEnvelopeDescriptor {
-    // Only durable adapters observe state envelopes; the in-memory reference
-    // adapter records none.
-    #[cfg_attr(not(feature = "postgres"), allow(dead_code))]
+    // Durable adapters and the in-memory partition reference retain only this
+    // redacted envelope description at the explorer boundary.
     pub(crate) const fn new(
         kind: DurableStateKind,
         format_version: u16,
@@ -935,9 +934,8 @@ impl StepExecutionProjection {
 
 /// A redacted durable partition projection.
 ///
-/// The partition runtime is not part of this milestone slice. The query and
-/// its projection exist so the closed explorer query set is complete over the
-/// durable schema.
+/// Payloads remain hidden while plan identity, lifecycle, counters, worker
+/// assignment, and context schema metadata stay inspectable.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StepPartitionProjection {
     id: StepPartitionId,
@@ -953,9 +951,6 @@ pub struct StepPartitionProjection {
 }
 
 impl StepPartitionProjection {
-    // Durable partitions exist only in the `PostgreSQL` schema; the in-memory
-    // reference adapter stores none.
-    #[cfg_attr(not(feature = "postgres"), allow(dead_code))]
     #[allow(clippy::too_many_arguments)]
     pub(crate) const fn new(
         id: StepPartitionId,
