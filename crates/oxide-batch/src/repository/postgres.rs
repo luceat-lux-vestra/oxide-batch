@@ -529,6 +529,39 @@ impl PostgresMigrator {
         SUPPORTED_SCHEMA_VERSION
     }
 
+    /// Reads the installed schema version without changing it.
+    ///
+    /// This is the read-only counterpart of [`PostgresMigrator::migrate`]. It
+    /// takes no advisory lock, applies no migration, and creates no schema, so
+    /// an unprivileged operator identity can report migration state. An
+    /// uninitialized schema is reported as `None` rather than as a failure,
+    /// because "not yet migrated" is an answer rather than an outage.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted configuration or repository failure. The connection
+    /// string, driver message, and SQL text are never included.
+    pub async fn installed_schema_version(
+        config: &PostgresConfig,
+    ) -> Result<Option<u32>, RepositoryError> {
+        config
+            .validate()
+            .map_err(|_| RepositoryError::Unavailable)?;
+        let options = config
+            .connect_options()
+            .map_err(|_| RepositoryError::Unavailable)?;
+        let mut connection =
+            tokio::time::timeout(config.connect_timeout, PgConnection::connect_with(&options))
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?
+                .map_err(|_| RepositoryError::Unavailable)?;
+        match read_schema_version(&mut connection).await {
+            Ok(version) => Ok(Some(version)),
+            Err(RepositoryError::SchemaUninitialized) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Applies pending migrations under a database-scoped advisory lock.
     ///
     /// This operation is intended for a dedicated migrator identity. Runtime
