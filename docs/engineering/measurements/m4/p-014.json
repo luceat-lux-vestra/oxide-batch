@@ -1,0 +1,70 @@
+{
+  "correctness": [
+    {
+      "assertion": "cancellation reached a worker before the durable terminal status",
+      "holds": true
+    },
+    {
+      "assertion": "the stopped attempt persisted a stopped status",
+      "holds": true
+    },
+    {
+      "assertion": "no worker outlived its stopped parent",
+      "holds": true
+    },
+    {
+      "assertion": "the clean drain joined every owned child",
+      "holds": true
+    },
+    {
+      "assertion": "shutdown closed intake to new work",
+      "holds": true
+    },
+    {
+      "assertion": "escalation reported every task that remained owned",
+      "holds": true
+    }
+  ],
+  "environment": {
+    "arch": "aarch64",
+    "available_parallelism": 10,
+    "os": "macos",
+    "profile": "release",
+    "resident_kib": 106512,
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "source_commit": "0c43a6a8d35e2c5f6a4cf752e3b3d1b98b5cb8dc",
+    "source_tree_clean": true,
+    "tokio_worker_threads": 4
+  },
+  "notes": [
+    "The escalation point measures a deliberately unfinished drain: a second request ends waiting, so the coordinator reports the remaining phases instead of waiting out the one-second minimum join deadline."
+  ],
+  "points": [
+    {
+      "active_workers_after_join": 0,
+      "durable_status": "Stopped",
+      "phase": "runtime_stop",
+      "request_to_durable_terminal_micros": 138,
+      "request_to_worker_cancellation_micros": 1,
+      "workers": 8
+    },
+    {
+      "intake_closed": true,
+      "owned_tasks": 12,
+      "panicked_tasks": 0,
+      "phase": "coordinator_drain",
+      "request_to_drain_complete_micros": 21,
+      "unjoined_tasks": 0
+    },
+    {
+      "escalated": true,
+      "owned_tasks": 3,
+      "phase": "coordinator_escalation",
+      "request_to_escalated_report_micros": 1,
+      "unjoined_tasks": 3
+    }
+  ],
+  "report": "P-014",
+  "summary": "Cancellation and shutdown latency separated by phase, with unjoined counts",
+  "workload": "stop/cancel/drain under load"
+}

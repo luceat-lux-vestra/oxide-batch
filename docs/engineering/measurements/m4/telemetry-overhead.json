@@ -1,0 +1,97 @@
+{
+  "correctness": [
+    {
+      "assertion": "the exporter queue never exceeded its configured bound",
+      "holds": true
+    },
+    {
+      "assertion": "every rejected record was counted as dropped",
+      "holds": true
+    },
+    {
+      "assertion": "export enabled and disabled produced identical durable observations",
+      "holds": true
+    },
+    {
+      "assertion": "every instrumented and quiet no-op lifecycle attempt completed",
+      "holds": true
+    },
+    {
+      "assertion": "the lifecycle exporter queue never exceeded its configured bound",
+      "holds": true
+    }
+  ],
+  "environment": {
+    "arch": "aarch64",
+    "available_parallelism": 10,
+    "os": "macos",
+    "profile": "release",
+    "resident_kib": 106864,
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "source_commit": "0c43a6a8d35e2c5f6a4cf752e3b3d1b98b5cb8dc",
+    "source_tree_clean": true,
+    "tokio_worker_threads": 4
+  },
+  "notes": [
+    "The queue is deliberately configured at its 64-record minimum and never drained, so this point measures drop-newest behavior under sustained overflow rather than a steady-state exporter.",
+    "The reported overhead ratios are single-sample comparisons on a shared host. A ratio near one means the export path was not resolvable above run-to-run variance, not that it is free."
+  ],
+  "points": [
+    {
+      "export_disabled_latency": {
+        "max_micros": 13744,
+        "median_micros": 7009,
+        "min_micros": 5496,
+        "samples": 64,
+        "total_micros": 480267
+      },
+      "export_enabled_latency": {
+        "max_micros": 12661,
+        "median_micros": 7041,
+        "min_micros": 5521,
+        "samples": 64,
+        "total_micros": 465946
+      },
+      "iterations": 64,
+      "metric_series": 2,
+      "overhead_ratio": 0.9701811700574888,
+      "partitions": 16,
+      "peak_queue_depth": 64,
+      "queue_bound_records": 64,
+      "records_dropped": 1088,
+      "records_offered": 1152,
+      "records_queued": 64,
+      "resident_kib": 106800,
+      "workers": 4,
+      "workload": "P-010 partitioned attempt"
+    },
+    {
+      "export_disabled_latency": {
+        "max_micros": 57,
+        "median_micros": 9,
+        "min_micros": 8,
+        "samples": 64,
+        "total_micros": 645
+      },
+      "export_enabled_latency": {
+        "max_micros": 20,
+        "median_micros": 13,
+        "min_micros": 13,
+        "samples": 64,
+        "total_micros": 898
+      },
+      "iterations": 64,
+      "overhead_ratio": 1.3922480620155038,
+      "peak_queue_depth": 448,
+      "queue_bound_records": 1024,
+      "records_dropped": 0,
+      "records_offered": 448,
+      "records_queued": 448,
+      "resident_kib": 106864,
+      "workload": "P-001 no-op tasklet lifecycle"
+    }
+  ],
+  "report": "TELEMETRY-OVERHEAD",
+  "summary": "Export cost, queue depth, and dropped records beside identical durable results",
+  "workload": "P-001 and P-010 with export enabled and disabled"
+}

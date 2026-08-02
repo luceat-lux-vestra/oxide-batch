@@ -101,6 +101,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   parent stop, completion-order and sequential-fallback durable equivalence,
   repeated task-scope draining, and PostgreSQL 15/18 process-kill reuse of a
   branch committed before its join decision.
+- Executable M4 bounded-resource measurements covering local partition scaling
+  at 1, 10, and 64 workers, explorer pagination bounds over growing history,
+  bounded retention batches beside interleaved launches, stop and drain latency
+  by phase, telemetry export overhead with counted queue drops, and a
+  launch/fail/restart/drain soak. Each measurement asserts ceilings, ordering,
+  and durable equivalence rather than a duration threshold, and retains raw
+  machine-readable results with their environment.
+- Operational capacity and resource-budget guidance covering the declared M4
+  bounds, the derived connection-pool and memory formulas, the provisional
+  measured budgets, and the limitations of the in-memory fixture.
+- The M4 exit record closing operations and local scale with its
+  exit-criterion map, measured evidence, reviewed dispositions, and named
+  residual PostgreSQL history, retention-grant, and M10/M11 scope.
 - Tasklet-only bounded local partition execution with per-child factories,
   manager-owned finite worker scopes, pre-start and in-flight cancellation,
   panic isolation, durable completed-child restart reuse, explicit `UNKNOWN`

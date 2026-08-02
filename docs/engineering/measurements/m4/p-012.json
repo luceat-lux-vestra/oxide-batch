@@ -1,0 +1,82 @@
+{
+  "correctness": [
+    {
+      "assertion": "no page exceeded its requested size and cursor bound",
+      "holds": true
+    },
+    {
+      "assertion": "every traversal returned each row exactly once",
+      "holds": true
+    }
+  ],
+  "environment": {
+    "arch": "aarch64",
+    "available_parallelism": 10,
+    "os": "macos",
+    "profile": "release",
+    "resident_kib": 106320,
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "source_commit": "0c43a6a8d35e2c5f6a4cf752e3b3d1b98b5cb8dc",
+    "source_tree_clean": true,
+    "tokio_worker_threads": 4
+  },
+  "notes": [
+    "The in-memory adapter is a deterministic fixture that clones its whole state per query, so its per-page latency grows with history and is not a capacity budget. Only the result-set, cursor, and traversal bounds are adapter-independent here; per-page cost, rows examined, and index selection belong to the PostgreSQL campaign."
+  ],
+  "points": [
+    {
+      "cursor_bound_bytes": 256,
+      "history_rows": 1000,
+      "page_latency": {
+        "max_micros": 1322,
+        "median_micros": 665,
+        "min_micros": 440,
+        "samples": 3,
+        "total_micros": 2427
+      },
+      "page_size": 500,
+      "pages": 3,
+      "resident_kib": 10736,
+      "rows_returned": 1000,
+      "widest_cursor_bytes": 59,
+      "widest_page_rows": 500
+    },
+    {
+      "cursor_bound_bytes": 256,
+      "history_rows": 5000,
+      "page_latency": {
+        "max_micros": 6750,
+        "median_micros": 3335,
+        "min_micros": 2963,
+        "samples": 11,
+        "total_micros": 39614
+      },
+      "page_size": 500,
+      "pages": 11,
+      "resident_kib": 31088,
+      "rows_returned": 5000,
+      "widest_cursor_bytes": 59,
+      "widest_page_rows": 500
+    },
+    {
+      "cursor_bound_bytes": 256,
+      "history_rows": 20000,
+      "page_latency": {
+        "max_micros": 30734,
+        "median_micros": 14994,
+        "min_micros": 14540,
+        "samples": 41,
+        "total_micros": 631485
+      },
+      "page_size": 500,
+      "pages": 41,
+      "resident_kib": 106304,
+      "rows_returned": 20000,
+      "widest_cursor_bytes": 59,
+      "widest_page_rows": 500
+    }
+  ],
+  "report": "P-012",
+  "summary": "Keyset explorer pagination stays bounded as history grows",
+  "workload": "execution-history pagination"
+}

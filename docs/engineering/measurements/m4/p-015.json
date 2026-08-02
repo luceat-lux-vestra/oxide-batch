@@ -1,0 +1,56 @@
+{
+  "correctness": [
+    {
+      "assertion": "every cycle joined every owned task",
+      "holds": true
+    },
+    {
+      "assertion": "every cycle performed the same repository work",
+      "holds": true
+    },
+    {
+      "assertion": "every cycle failed, restarted, and reached the same durable observation",
+      "holds": true
+    },
+    {
+      "assertion": "every restart re-ran only the partition that had failed",
+      "holds": true
+    }
+  ],
+  "environment": {
+    "arch": "aarch64",
+    "available_parallelism": 10,
+    "os": "macos",
+    "profile": "release",
+    "resident_kib": 106656,
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "source_commit": "0c43a6a8d35e2c5f6a4cf752e3b3d1b98b5cb8dc",
+    "source_tree_clean": true,
+    "tokio_worker_threads": 4
+  },
+  "notes": [
+    "Each cycle builds its own repository, so resident growth across cycles measures process-level retention rather than a growing history. A restart inside every cycle proves completed partitions are reused rather than rerun."
+  ],
+  "points": [
+    {
+      "cycle_latency": {
+        "max_micros": 3433,
+        "median_micros": 3074,
+        "min_micros": 2689,
+        "samples": 24,
+        "total_micros": 73313
+      },
+      "cycles": 24,
+      "partitions_per_cycle": 8,
+      "partitions_reused_on_restart": 7,
+      "repository_units_per_cycle": 68,
+      "resident_kib_first_cycle": 106528,
+      "resident_kib_growth": 128,
+      "resident_kib_last_cycle": 106656,
+      "workers": 4
+    }
+  ],
+  "report": "P-015",
+  "summary": "Repeated launch, drain, restart, and recovery cycles with resource growth",
+  "workload": "long-running soak"
+}

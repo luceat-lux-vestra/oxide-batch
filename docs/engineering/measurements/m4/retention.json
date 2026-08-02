@@ -1,0 +1,64 @@
+{
+  "correctness": [
+    {
+      "assertion": "every plan stayed within its configured batch bound",
+      "holds": true
+    },
+    {
+      "assertion": "the campaign purged exactly the eligible executions",
+      "holds": true
+    },
+    {
+      "assertion": "every launch interleaved with the campaign still committed",
+      "holds": true
+    }
+  ],
+  "environment": {
+    "arch": "aarch64",
+    "available_parallelism": 10,
+    "os": "macos",
+    "profile": "release",
+    "resident_kib": 106720,
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "source_commit": "0c43a6a8d35e2c5f6a4cf752e3b3d1b98b5cb8dc",
+    "source_tree_clean": true,
+    "tokio_worker_threads": 4
+  },
+  "notes": [
+    "The in-memory adapter serializes writers behind one revision check, so launches are interleaved between purge batches rather than run truly concurrently. Lock-wait behavior under real concurrency belongs to the PostgreSQL campaign."
+  ],
+  "points": [
+    {
+      "apply_latency": {
+        "max_micros": 218,
+        "median_micros": 173,
+        "min_micros": 105,
+        "samples": 4,
+        "total_micros": 649
+      },
+      "baseline_launch_micros": 2947,
+      "batch_bound": 50,
+      "eligible_executions": 200,
+      "interleaved_launch_latency": {
+        "max_micros": 2636,
+        "median_micros": 2142,
+        "min_micros": 1426,
+        "samples": 4,
+        "total_micros": 8049
+      },
+      "plan_latency": {
+        "max_micros": 123,
+        "median_micros": 65,
+        "min_micros": 8,
+        "samples": 5,
+        "total_micros": 350
+      },
+      "purged_executions": 200,
+      "resident_kib": 106720,
+      "rounds": 4
+    }
+  ],
+  "report": "RETENTION",
+  "summary": "Plan and apply throughput per bounded purge batch and its effect on launches",
+  "workload": "bounded metadata retention"
+}

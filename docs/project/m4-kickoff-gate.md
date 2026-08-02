@@ -2,6 +2,8 @@
 
 **State:** Active (2026-08-01)
 
+**Closed by:** the [M4 exit evidence](m4-exit-evidence.md) on 2026-08-03
+
 **Umbrella:** GitHub issue
 [#10](https://github.com/luceat-lux-vestra/oxide-batch/issues/10)
 

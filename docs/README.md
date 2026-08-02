@@ -92,6 +92,7 @@ decisions own the normative detail.
 - [M4 durable partition repository evidence](project/m4-partition-repository-evidence.md)
 - [M4 bounded parallel-split runtime evidence](project/m4-parallel-split-evidence.md)
 - [M4 bounded local-partition runtime evidence](project/m4-local-partition-runtime-evidence.md)
+- [M4 operations and local scale exit evidence](project/m4-exit-evidence.md)
 - [Historical M0 decision register](product/open-decisions.md)
 
 Historical gates are preserved as records of their date. Later decisions link
@@ -145,6 +146,7 @@ to them and record supersession; they do not rewrite history.
 - [Dependency and license policy](engineering/dependency-policy.md)
 - [Test strategy](testing/strategy.md)
 - [Performance and capacity plan](engineering/performance-plan.md)
+- [M4 measurement evidence](engineering/measurements/m4/README.md)
 
 ## Security and operations
 
@@ -162,6 +164,7 @@ to them and record supersession; they do not rewrite history.
 - [Control-plane boundary](operations/control-plane-boundary.md)
 - [M4 operator CLI and configuration contract](operations/operator-cli.md)
 - [Operator CLI reference](operations/operator-cli-reference.md)
+- [Capacity and resource budgets](operations/capacity-and-resource-budgets.md)
 
 ## Release, documentation, and governance
 
