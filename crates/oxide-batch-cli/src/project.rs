@@ -13,9 +13,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::{Value, json};
 
 use oxide_batch::{
-    DefinitionDescriptor, ExecutionCounts, ExecutionTimestamps, FlowDecision,
-    JobExecutionProjection, JobInstanceProjection, OperatorRecord, ParameterDescriptor,
-    PurgeCounts, PurgePlan, RecoveryDecision, RetentionHold, RetentionRecord,
+    DefinitionDescriptor, DurableStateKind, ExecutionCounts, ExecutionTimestamps, FlowDecision,
+    FlowTarget, FlowTransitionKind, JobExecutionProjection, JobInstanceProjection, OperatorRecord,
+    ParameterDescriptor, PurgeCounts, PurgePlan, RecoveryDecision, RetentionHold, RetentionRecord,
     StateEnvelopeDescriptor, StepExecutionProjection, StepPartitionProjection,
 };
 
@@ -60,11 +60,48 @@ fn timestamps(value: ExecutionTimestamps) -> Value {
     })
 }
 
+/// Returns the stable wire name of one durable state category.
+///
+/// The mapping is owned here rather than derived from `Debug`, because the
+/// output schema is this crate's published contract: renaming a library variant
+/// must force a visible decision here instead of silently changing a wire
+/// value. The wildcard keeps a newly added category renderable.
+fn state_kind(value: DurableStateKind) -> &'static str {
+    match value {
+        DurableStateKind::Checkpoint => "checkpoint",
+        DurableStateKind::ExecutionContext => "execution_context",
+        _ => "other",
+    }
+}
+
+/// Returns the stable wire name of one flow transition cause.
+///
+/// Owned here for the same reason as [`state_kind`].
+fn transition_kind(value: FlowTransitionKind) -> &'static str {
+    match value {
+        FlowTransitionKind::StepExit => "step_exit",
+        FlowTransitionKind::Decider => "decider",
+        FlowTransitionKind::CompletedStepReuse => "completed_step_reuse",
+        _ => "other",
+    }
+}
+
+/// Projects the destination one transition selected.
+///
+/// The two destinations are distinct shapes rather than one opaque string, so a
+/// consumer reads a node identifier or a terminal without parsing prose.
+fn flow_target(value: &FlowTarget) -> Value {
+    match value {
+        FlowTarget::Node(id) => json!({ "node": id.as_str() }),
+        FlowTarget::Terminal(kind) => json!({ "terminal": kind.as_str() }),
+    }
+}
+
 /// Projects a durable state envelope without its payload.
 fn envelope(value: Option<&StateEnvelopeDescriptor>) -> Value {
     value.map_or(Value::Null, |envelope| {
         json!({
-            "kind": format!("{:?}", envelope.kind()),
+            "kind": state_kind(envelope.kind()),
             "format_version": envelope.format_version(),
             "schema_id": envelope.schema_id().as_str(),
             "schema_version": envelope.schema_version().get(),
@@ -182,9 +219,9 @@ pub fn flow_decision(value: &FlowDecision) -> Value {
         "source_step_execution_id": value
             .source_step_execution_id()
             .map_or(Value::Null, |id| json!(id.get())),
-        "kind": format!("{:?}", value.kind()),
+        "kind": transition_kind(value.kind()),
         "observed_outcome": value.observed_outcome().as_str(),
-        "target": format!("{:?}", value.target()),
+        "target": flow_target(value.target()),
         "plan_fingerprint": digest(value.plan_fingerprint()),
         "input_digest": digest(value.input_digest()),
         "reused_decision_id": value

@@ -540,7 +540,7 @@ fn json_output_matches_the_published_schema_and_redaction_rules() {
             "the envelope carries an unpublished field {key}"
         );
     }
-    assert!(host.stdout_text().len() <= MAX_OUTPUT_BYTES + 1024);
+    assert!(host.stdout_text().len() <= MAX_OUTPUT_BYTES);
 }
 
 #[test]

@@ -154,8 +154,10 @@ not a machine interface and may be reformatted within a release series.
 - `truncated`, `true` when a bound removed content.
 
 The JSON form obeys the same redaction rules as the explorer. Encoded output is
-bounded to `256 KiB`; exceeding the bound sets `truncated` and never silently
-drops content without the flag. Output is written only after a mutating
+bounded to `256 KiB`. The bound covers the complete written result rather than
+the `data` field alone, so the envelope's own fields cannot carry it past the
+bound. Exceeding the bound sets `truncated` and never silently drops content
+without the flag. Output is written only after a mutating
 command's durable effect is committed, so a display failure cannot lose an
 effect.
 

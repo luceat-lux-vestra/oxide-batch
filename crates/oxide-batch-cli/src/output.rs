@@ -148,8 +148,12 @@ impl Writer {
     /// Returns [`OutputFailure`] when standard output cannot be written.
     pub fn emit<H: Host>(&self, host: &mut H, response: &Response) -> Result<(), OutputFailure> {
         let rendered = match self.form {
-            OutputForm::Json => render_json(response),
-            OutputForm::Human => self.render_human(response),
+            OutputForm::Json => fit(&response.data, |data, truncated| {
+                render_json(response, data, truncated)
+            }),
+            OutputForm::Human => fit(&response.data, |data, truncated| {
+                self.render_human(response, data, truncated)
+            }),
         };
         // Every write failure is the same observable event: the result could
         // not be delivered. The underlying error is deliberately not inspected,
@@ -159,17 +163,16 @@ impl Writer {
             .map_err(|_| OutputFailure)
     }
 
-    /// Renders the unversioned presentation form.
-    fn render_human(self, response: &Response) -> String {
+    /// Renders the unversioned presentation form from already-bounded data.
+    fn render_human(self, response: &Response, data: &Value, truncated: bool) -> String {
         use std::fmt::Write as _;
 
-        let (data, truncated) = bound_data(&response.data);
         let mut text = String::new();
         if !matches!(response.outcome(), Outcome::Success) {
             self.heading(response.category.as_str(), &mut text);
             text.push('\n');
         }
-        render_value(&data, 0, self, &mut text);
+        render_value(data, 0, self, &mut text);
         if let Some(page) = &response.page {
             self.heading("page", &mut text);
             text.push('\n');
@@ -208,14 +211,13 @@ impl Writer {
     }
 }
 
-/// Renders the versioned machine envelope.
-fn render_json(response: &Response) -> String {
-    let (data, truncated) = bound_data(&response.data);
+/// Renders the versioned machine envelope from already-bounded data.
+fn render_json(response: &Response, data: &Value, truncated: bool) -> String {
     let mut envelope = Map::new();
     envelope.insert("schema_version".to_owned(), json!(OUTPUT_SCHEMA_VERSION));
     envelope.insert("command".to_owned(), json!(response.command.as_str()));
     envelope.insert("outcome".to_owned(), json!(response.outcome().as_str()));
-    envelope.insert("data".to_owned(), data);
+    envelope.insert("data".to_owned(), data.clone());
     if let Some(page) = &response.page {
         envelope.insert(
             "page".to_owned(),
@@ -294,42 +296,82 @@ fn scalar(value: &Value) -> String {
     }
 }
 
-/// Applies the encoded response bound.
+/// Applies the response bound to the complete rendered output.
 ///
-/// Rows are dropped from the end of an array until the encoding fits, so a
-/// bounded page degrades to fewer rows rather than to silently missing content
-/// without the flag. A single value that alone exceeds the bound is replaced by
-/// a marker.
-fn bound_data(data: &Value) -> (Value, bool) {
-    if data.to_string().len() <= MAX_OUTPUT_BYTES {
-        return (data.clone(), false);
+/// The bound covers everything written, not only the projection: an envelope
+/// carrying a large page or diagnostic list cannot push the result past the
+/// bound while still reporting `truncated: false`.
+///
+/// Rows are dropped from the end of an array, and keys from the end of an
+/// object, until the rendered output fits, so a bounded page degrades to fewer
+/// rows rather than to silently missing content without the flag. The largest
+/// fitting prefix is found by bisection rather than by removing one element at
+/// a time, so a full page costs a handful of renders instead of one per row.
+fn fit(data: &Value, render: impl Fn(&Value, bool) -> String) -> String {
+    let full = render(data, false);
+    if full.len() <= MAX_OUTPUT_BYTES {
+        return full;
     }
-    if let Value::Array(rows) = data {
-        let mut kept: Vec<Value> = rows.clone();
-        while !kept.is_empty() {
-            kept.pop();
-            let candidate = Value::Array(kept.clone());
-            if candidate.to_string().len() <= MAX_OUTPUT_BYTES {
-                return (candidate, true);
+    match data {
+        Value::Array(rows) => {
+            let keep = largest_fitting(rows.len(), |count| {
+                render(&Value::Array(rows[..count].to_vec()), true).len() <= MAX_OUTPUT_BYTES
+            });
+            match keep {
+                Some(count) => render(&Value::Array(rows[..count].to_vec()), true),
+                None => omitted(&render),
             }
         }
-        return (Value::Array(Vec::new()), true);
-    }
-    if let Value::Object(entries) = data {
-        let mut kept = entries.clone();
-        let keys: Vec<String> = kept.keys().cloned().collect();
-        for key in keys.iter().rev() {
-            kept.remove(key);
-            let candidate = Value::Object(kept.clone());
-            if candidate.to_string().len() <= MAX_OUTPUT_BYTES {
-                return (candidate, true);
+        Value::Object(entries) => {
+            let keys: Vec<String> = entries.keys().cloned().collect();
+            let prefix = |count: usize| {
+                let mut kept = Map::new();
+                for key in keys.iter().take(count) {
+                    if let Some(value) = entries.get(key) {
+                        kept.insert(key.clone(), value.clone());
+                    }
+                }
+                Value::Object(kept)
+            };
+            let keep = largest_fitting(keys.len(), |count| {
+                render(&prefix(count), true).len() <= MAX_OUTPUT_BYTES
+            });
+            match keep {
+                Some(count) => render(&prefix(count), true),
+                None => omitted(&render),
             }
         }
+        _ => omitted(&render),
     }
-    (
-        json!({ "omitted": "the value exceeds the response bound" }),
+}
+
+/// Renders the marker used when nothing of the projection fits.
+fn omitted(render: &impl Fn(&Value, bool) -> String) -> String {
+    render(
+        &json!({ "omitted": "the value exceeds the response bound" }),
         true,
     )
+}
+
+/// Returns the largest `count` in `0..=len` for which `fits` holds.
+///
+/// `fits` is monotonic: a shorter prefix of the same value never renders
+/// larger than a longer one. Returns `None` when even the empty prefix does not
+/// fit, which means the envelope alone exceeds the bound.
+fn largest_fitting(len: usize, fits: impl Fn(usize) -> bool) -> Option<usize> {
+    if !fits(0) {
+        return None;
+    }
+    let (mut low, mut high) = (0_usize, len);
+    while low < high {
+        let middle = low + (high - low).div_ceil(2);
+        if fits(middle) {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+    Some(low)
 }
 
 #[cfg(test)]
@@ -338,7 +380,10 @@ mod tests {
 
     use serde_json::json;
 
-    use super::{Diagnostic, MAX_OUTPUT_BYTES, OUTPUT_SCHEMA_VERSION, PageInfo, Response, Writer};
+    use super::{
+        Diagnostic, MAX_OUTPUT_BYTES, OUTPUT_SCHEMA_VERSION, PageInfo, Response, Writer,
+        render_json,
+    };
     use crate::args::OutputForm;
     use crate::command::Command;
     use crate::exit::ExitCategory;
@@ -415,6 +460,89 @@ mod tests {
         let kept = value["data"].as_array().expect("data is an array").len();
         assert!(kept < 512, "the bound removed no row");
         assert!(value["data"].to_string().len() <= MAX_OUTPUT_BYTES);
+    }
+
+    #[test]
+    fn the_bound_covers_the_whole_envelope_not_only_the_projection() {
+        // The projection alone fits the bound; only the pagination and
+        // diagnostic fields push the rendered envelope past it. Bounding just
+        // the projection would therefore report `truncated: false` while
+        // writing more than the bound allows.
+        let mut host = TestHost::new();
+        let row = "y".repeat(1024);
+        let rows: Vec<serde_json::Value> = (0..250).map(|_| json!(row)).collect();
+        let data = json!(rows);
+        assert!(
+            data.to_string().len() <= MAX_OUTPUT_BYTES,
+            "the fixture is not discriminating: the projection alone already exceeds the bound"
+        );
+
+        let response = Response::success(Command::JobList, data.clone())
+            .with_page(PageInfo {
+                page_size: 500,
+                returned: 250,
+                next_cursor: Some("c".repeat(512)),
+            })
+            .with_diagnostic(Diagnostic::new("NOTE", "z".repeat(12 * 1024)));
+        assert!(
+            render_json(&response, &data, false).len() > MAX_OUTPUT_BYTES,
+            "the fixture is not discriminating: the envelope already fits"
+        );
+
+        json_writer()
+            .emit(&mut host, &response)
+            .expect("the write succeeds");
+
+        let written = host.stdout_text();
+        assert!(
+            written.len() <= MAX_OUTPUT_BYTES,
+            "the envelope exceeded the bound at {} bytes",
+            written.len()
+        );
+        let value: serde_json::Value = serde_json::from_str(&written).expect("the output is JSON");
+        assert_eq!(value["truncated"], json!(true));
+        // The fields that are not the projection survive truncation, because
+        // the page and diagnostics are what a caller needs to continue.
+        assert_eq!(value["page"]["page_size"], json!(500));
+        assert_eq!(value["diagnostics"][0]["code"], json!("NOTE"));
+        assert!(
+            !value["data"]
+                .as_array()
+                .expect("data is an array")
+                .is_empty(),
+            "truncation removed the whole projection"
+        );
+    }
+
+    #[test]
+    fn a_result_within_the_bound_is_never_flagged_truncated() {
+        let mut host = TestHost::new();
+        let response = Response::success(Command::JobList, json!(["orders"])).with_page(PageInfo {
+            page_size: 50,
+            returned: 1,
+            next_cursor: None,
+        });
+        json_writer()
+            .emit(&mut host, &response)
+            .expect("the write succeeds");
+        let value: serde_json::Value =
+            serde_json::from_str(&host.stdout_text()).expect("the output is JSON");
+        assert_eq!(value["truncated"], json!(false));
+        assert_eq!(value["data"], json!(["orders"]));
+    }
+
+    #[test]
+    fn the_human_form_obeys_the_same_bound() {
+        let mut host = TestHost::new();
+        let row = "y".repeat(1024);
+        let rows: Vec<serde_json::Value> = (0..512).map(|_| json!(row)).collect();
+        let response = Response::success(Command::JobList, json!(rows));
+        Writer::new(OutputForm::Human, false)
+            .emit(&mut host, &response)
+            .expect("the write succeeds");
+        let written = host.stdout_text();
+        assert!(written.len() <= MAX_OUTPUT_BYTES);
+        assert!(written.contains("truncated: true"));
     }
 
     #[test]

@@ -235,8 +235,12 @@ a machine interface and may be reformatted within a release series.
 already-redacted projection, so a redaction rule cannot hold in one form and
 leak in the other.
 
-Encoded output is bounded to `256 KiB`. Exceeding the bound drops rows from the
-end of the page and sets `truncated`; content is never removed without the flag.
+Encoded output is bounded to `256 KiB`. The bound covers the complete written
+result, not only `data`, so a large page or diagnostic list cannot push the
+envelope past it while still reporting `truncated: false`. Exceeding the bound
+drops rows from the end of the page and sets `truncated`; content is never
+removed without the flag, and the pagination and diagnostic fields survive
+truncation because they are what a caller needs to continue.
 Output is written only after a mutating command's durable effect is committed,
 so a display failure cannot lose an effect.
 
