@@ -63,9 +63,8 @@ runtime execution.
   validation;
 - owned bounded child execution, cancellation, panic isolation, and sibling
   failure policy;
-- runtime use of the committed single-invocation partition plan;
-- completed-result reuse and `UNKNOWN` blocking in the runtime;
-- deterministic aggregation with the parent terminal update;
+- runtime use of the committed single-invocation partition plan and atomic
+  aggregate, including completed-result reuse and `UNKNOWN` blocking;
 - in-memory/PostgreSQL, process-kill, sequential-equivalence, and
   bounded-resource evidence.
 

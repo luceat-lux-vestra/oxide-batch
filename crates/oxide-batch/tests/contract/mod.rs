@@ -47,7 +47,8 @@ where
     stale_transition_is_typed_and_atomic(backend, &mut factory)?;
     rollback_discards_staged_metadata(backend, &mut factory)?;
     partition_plan_commits_before_any_worker_starts(backend, &mut factory)?;
-    duplicate_partition_key_is_rejected(backend, &mut factory)
+    duplicate_partition_key_is_rejected(backend, &mut factory)?;
+    partition_aggregation_commits_with_parent_terminal_state(backend, &mut factory)
 }
 
 #[allow(
@@ -296,6 +297,171 @@ where
     )?;
     block_on(unit.rollback())
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "the shared scenario proves incomplete, rollback, and committed aggregation boundaries together"
+)]
+fn partition_aggregation_commits_with_parent_terminal_state<R, F>(
+    backend: &'static str,
+    factory: &mut F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository,
+    F: FnMut() -> Result<R, RepositoryError>,
+{
+    const CASE: &str = "partition_aggregation_commits_with_parent_terminal_state";
+    let repository = factory()
+        .map_err(|error| RepositoryContractFailure::new("unavailable", CASE, error.to_string()))?;
+    let key = contract_key("2026-08-04")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let parent_name = StepName::new("aggregate-parent")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let worker_name = StepName::new("aggregate-worker-a")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let other_worker_name = StepName::new("aggregate-worker-z")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let started_at = UNIX_EPOCH + Duration::from_secs(1);
+    let ended_at = UNIX_EPOCH + Duration::from_secs(2);
+
+    let mut setup = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let instance = block_on(setup.select_or_create_job_instance(&key))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
+        .instance()
+        .clone();
+    let job = block_on(setup.create_job_execution(instance.id()))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let parent = block_on(setup.create_step_execution(job.id(), &parent_name))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let parent = block_on(setup.transition_step_execution(
+        parent.id(),
+        parent.version(),
+        LifecycleTransition::new(BatchStatus::Started, started_at),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let worker = block_on(setup.create_step_execution(job.id(), &worker_name))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let other_worker = block_on(setup.create_step_execution(job.id(), &other_worker_name))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(setup.commit())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let mut plan = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let partitions = block_on(plan.create_step_partition_plan(
+        parent.id(),
+        &[partition_entry("zeta")?, partition_entry("alpha")?],
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(plan.commit())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let mut work = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let zeta = block_on(work.assign_step_partition(
+        partitions[0].id(),
+        partitions[0].version(),
+        other_worker.id(),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let alpha = block_on(work.assign_step_partition(
+        partitions[1].id(),
+        partitions[1].version(),
+        worker.id(),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let alpha_result =
+        PartitionResult::new(
+            BatchStatus::Failed,
+            ExitStatus::new(oxide_batch::ExitCode::new("ALPHA_FAILED").map_err(|error| {
+                RepositoryContractFailure::new(backend, CASE, error.to_string())
+            })?),
+            ExecutionCounts::new(1, 2, 3, 4, 5, 6),
+        )
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let zeta_result =
+        PartitionResult::new(
+            BatchStatus::Failed,
+            ExitStatus::new(oxide_batch::ExitCode::new("ZETA_FAILED").map_err(|error| {
+                RepositoryContractFailure::new(backend, CASE, error.to_string())
+            })?),
+            ExecutionCounts::new(10, 20, 30, 40, 50, 60),
+        )
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(work.complete_step_partition(alpha.id(), alpha.version(), &alpha_result))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let incomplete = block_on(work.aggregate_step_partitions(
+        parent.id(),
+        parent.version(),
+        ended_at,
+        Some(FailureSummary::new(
+            FailureCategory::UserComponent,
+            FailureId::new(900).map_err(|error| {
+                RepositoryContractFailure::new(backend, CASE, error.to_string())
+            })?,
+        )),
+    ));
+    ensure(
+        incomplete
+            == Err(RepositoryError::PartitionAggregationIncomplete {
+                step_execution_id: parent.id(),
+                status: BatchStatus::Started,
+            }),
+        backend,
+        CASE,
+        "active child allowed a partial parent aggregate",
+    )?;
+    block_on(work.complete_step_partition(zeta.id(), zeta.version(), &zeta_result))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(work.commit())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let failure = FailureSummary::new(
+        FailureCategory::UserComponent,
+        FailureId::new(901)
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
+    );
+    let mut rolled_back = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let provisional = block_on(rolled_back.aggregate_step_partitions(
+        parent.id(),
+        parent.version(),
+        ended_at,
+        Some(failure),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    ensure(
+        provisional.metadata().status() == BatchStatus::Failed
+            && provisional.metadata().exit_status().code().as_str() == "ALPHA_FAILED"
+            && provisional.metadata().counts() == ExecutionCounts::new(11, 22, 33, 44, 55, 66),
+        backend,
+        CASE,
+        "provisional aggregate did not follow key order and checked counter sums",
+    )?;
+    block_on(rolled_back.rollback())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let mut commit = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let aggregated = block_on(commit.aggregate_step_partitions(
+        parent.id(),
+        parent.version(),
+        ended_at,
+        Some(failure),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(commit.commit())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    ensure(
+        aggregated.metadata().status() == BatchStatus::Failed
+            && aggregated.metadata().failure() == Some(failure)
+            && aggregated.metadata().timestamps().ended_at() == Some(ended_at),
+        backend,
+        CASE,
+        "parent terminal state did not commit with its aggregate",
+    )
 }
 
 fn partition_entry(key: &str) -> Result<PartitionPlanEntry, RepositoryContractFailure> {

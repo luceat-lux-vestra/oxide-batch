@@ -4,8 +4,8 @@ use std::error::Error;
 use std::fmt;
 
 use crate::{
-    BatchStatus, ExecutionContext, ExecutionCounts, ExecutionVersion, ExitStatus, StepExecutionId,
-    StepPartitionId,
+    BatchStatus, ExecutionContext, ExecutionCounts, ExecutionVersion, ExitStatus, MAX_PARTITIONS,
+    StepExecutionId, StepPartitionId,
 };
 
 /// Maximum UTF-8 byte length of one durable partition key.
@@ -316,6 +316,182 @@ pub struct PartitionResult {
     counts: ExecutionCounts,
 }
 
+/// The deterministic result of aggregating one complete durable partition plan.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PartitionAggregate {
+    status: BatchStatus,
+    exit_status: ExitStatus,
+    counts: ExecutionCounts,
+}
+
+impl PartitionAggregate {
+    /// Returns the most severe child status.
+    #[must_use]
+    pub const fn status(&self) -> BatchStatus {
+        self.status
+    }
+
+    /// Borrows the first matching exit status in partition-key byte order.
+    #[must_use]
+    pub const fn exit_status(&self) -> &ExitStatus {
+        &self.exit_status
+    }
+
+    /// Returns the checked sum of every durable child counter.
+    #[must_use]
+    pub const fn counts(&self) -> ExecutionCounts {
+        self.counts
+    }
+}
+
+/// Aggregates a complete partition plan independently of input or completion order.
+///
+/// Children are ordered by their byte-exact partition keys before counters and
+/// exit status are selected. The status severity is fixed as
+/// `UNKNOWN > FAILED > STOPPED > COMPLETED`.
+///
+/// # Errors
+///
+/// Returns [`PartitionAggregationError`] when the plan is empty, contains a
+/// duplicate key, still has an active/non-runtime result, or a counter sum
+/// exceeds the durable representation.
+pub fn aggregate_step_partitions(
+    partitions: &[StepPartition],
+) -> Result<PartitionAggregate, PartitionAggregationError> {
+    if partitions.is_empty() {
+        return Err(PartitionAggregationError::EmptyPlan);
+    }
+    if partitions.len() > usize::from(MAX_PARTITIONS) {
+        return Err(PartitionAggregationError::PlanTooLarge {
+            max: usize::from(MAX_PARTITIONS),
+        });
+    }
+
+    let mut ordered = partitions.iter().collect::<Vec<_>>();
+    ordered.sort_by(|left, right| left.key().cmp(right.key()));
+    if ordered
+        .windows(2)
+        .any(|pair| pair[0].key() == pair[1].key())
+    {
+        return Err(PartitionAggregationError::DuplicateKey);
+    }
+
+    let mut aggregate_status = BatchStatus::Completed;
+    let mut counts = ExecutionCounts::default();
+    for partition in &ordered {
+        let status = partition.status();
+        if partition.worker_step_execution_id().is_none()
+            || !matches!(
+                status,
+                BatchStatus::Completed
+                    | BatchStatus::Failed
+                    | BatchStatus::Stopped
+                    | BatchStatus::Unknown
+            )
+        {
+            return Err(PartitionAggregationError::Incomplete { status });
+        }
+        if partition_severity(status) > partition_severity(aggregate_status) {
+            aggregate_status = status;
+        }
+        counts = checked_sum_counts(counts, partition.counts())?;
+    }
+
+    let exit_status = ordered
+        .iter()
+        .find(|partition| partition.status() == aggregate_status)
+        .map(|partition| partition.exit_status().clone())
+        .ok_or(PartitionAggregationError::Incomplete {
+            status: aggregate_status,
+        })?;
+    Ok(PartitionAggregate {
+        status: aggregate_status,
+        exit_status,
+        counts,
+    })
+}
+
+const fn partition_severity(status: BatchStatus) -> u8 {
+    match status {
+        BatchStatus::Completed => 0,
+        BatchStatus::Stopped => 1,
+        BatchStatus::Failed => 2,
+        BatchStatus::Unknown => 3,
+        _ => 4,
+    }
+}
+
+fn checked_sum_counts(
+    left: ExecutionCounts,
+    right: ExecutionCounts,
+) -> Result<ExecutionCounts, PartitionAggregationError> {
+    Ok(ExecutionCounts::new(
+        left.read()
+            .checked_add(right.read())
+            .ok_or(PartitionAggregationError::CountExhausted)?,
+        left.processed()
+            .checked_add(right.processed())
+            .ok_or(PartitionAggregationError::CountExhausted)?,
+        left.written()
+            .checked_add(right.written())
+            .ok_or(PartitionAggregationError::CountExhausted)?,
+        left.filtered()
+            .checked_add(right.filtered())
+            .ok_or(PartitionAggregationError::CountExhausted)?,
+        left.committed()
+            .checked_add(right.committed())
+            .ok_or(PartitionAggregationError::CountExhausted)?,
+        left.rolled_back()
+            .checked_add(right.rolled_back())
+            .ok_or(PartitionAggregationError::CountExhausted)?,
+    ))
+}
+
+/// A deterministic partition plan could not be aggregated safely.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum PartitionAggregationError {
+    /// No durable child result was supplied.
+    EmptyPlan,
+    /// The supplied plan exceeded the accepted M4 partition bound.
+    PlanTooLarge {
+        /// Maximum accepted partition count.
+        max: usize,
+    },
+    /// More than one child used the same byte-exact key.
+    DuplicateKey,
+    /// At least one child did not have a durable runtime-terminal result.
+    Incomplete {
+        /// The unusable durable status.
+        status: BatchStatus,
+    },
+    /// At least one aggregate counter exceeded `u64`.
+    CountExhausted,
+}
+
+impl fmt::Display for PartitionAggregationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyPlan => formatter.write_str("partition aggregation requires a plan"),
+            Self::PlanTooLarge { max } => {
+                write!(formatter, "partition aggregation exceeds {max} children")
+            }
+            Self::DuplicateKey => {
+                formatter.write_str("partition aggregation found a duplicate key")
+            }
+            Self::Incomplete { status } => write!(
+                formatter,
+                "partition aggregation cannot use a child in {status}"
+            ),
+            Self::CountExhausted => {
+                formatter.write_str("partition aggregate counters are exhausted")
+            }
+        }
+    }
+}
+
+impl Error for PartitionAggregationError {}
+
 impl PartitionResult {
     /// Validates one known or explicitly ambiguous terminal worker result.
     ///
@@ -472,5 +648,87 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn aggregation_is_deterministic_in_partition_key_order() -> Result<(), Box<dyn Error>> {
+        let context = ExecutionContext::from_json(
+            br#"{"format":"oxide-batch.execution-context","format_version":1,"schema":"partition.aggregate","schema_version":1,"payload":{}}"#,
+            StateLimits::new(MAX_PARTITION_CONTEXT_BYTES, 16)?,
+        )?;
+        let mut alpha = StepPartition::starting(
+            StepPartitionId::new(1)?,
+            StepExecutionId::new(1)?,
+            1,
+            PartitionPlanEntry::new(PartitionKey::new("alpha")?, context.clone())?,
+        );
+        alpha
+            .assign(ExecutionVersion::INITIAL, StepExecutionId::new(2)?)
+            .map_err(|_| std::io::Error::other("alpha assignment failed"))?;
+        alpha
+            .complete(
+                alpha.version(),
+                &PartitionResult::new(
+                    BatchStatus::Failed,
+                    ExitStatus::new(crate::ExitCode::new("ALPHA_FAILED")?),
+                    ExecutionCounts::new(1, 2, 3, 4, 5, 6),
+                )?,
+            )
+            .map_err(|_| std::io::Error::other("alpha completion failed"))?;
+        let mut zeta = StepPartition::starting(
+            StepPartitionId::new(2)?,
+            StepExecutionId::new(1)?,
+            2,
+            PartitionPlanEntry::new(PartitionKey::new("zeta")?, context)?,
+        );
+        zeta.assign(ExecutionVersion::INITIAL, StepExecutionId::new(3)?)
+            .map_err(|_| std::io::Error::other("zeta assignment failed"))?;
+        zeta.complete(
+            zeta.version(),
+            &PartitionResult::new(
+                BatchStatus::Failed,
+                ExitStatus::new(crate::ExitCode::new("ZETA_FAILED")?),
+                ExecutionCounts::new(10, 20, 30, 40, 50, 60),
+            )?,
+        )
+        .map_err(|_| std::io::Error::other("zeta completion failed"))?;
+
+        let forward = aggregate_step_partitions(&[alpha.clone(), zeta.clone()])?;
+        let reverse = aggregate_step_partitions(&[zeta.clone(), alpha.clone()])?;
+        assert_eq!(forward, reverse);
+        assert_eq!(forward.status(), BatchStatus::Failed);
+        assert_eq!(forward.exit_status().code().as_str(), "ALPHA_FAILED");
+        assert_eq!(
+            forward.counts(),
+            ExecutionCounts::new(11, 22, 33, 44, 55, 66)
+        );
+
+        let context = ExecutionContext::from_json(
+            br#"{"format":"oxide-batch.execution-context","format_version":1,"schema":"partition.aggregate","schema_version":1,"payload":{}}"#,
+            StateLimits::new(MAX_PARTITION_CONTEXT_BYTES, 16)?,
+        )?;
+        let mut unknown = StepPartition::starting(
+            StepPartitionId::new(3)?,
+            StepExecutionId::new(1)?,
+            3,
+            PartitionPlanEntry::new(PartitionKey::new("middle")?, context)?,
+        );
+        unknown
+            .assign(ExecutionVersion::INITIAL, StepExecutionId::new(4)?)
+            .map_err(|_| std::io::Error::other("unknown assignment failed"))?;
+        unknown
+            .complete(
+                unknown.version(),
+                &PartitionResult::new(
+                    BatchStatus::Unknown,
+                    ExitStatus::unknown(),
+                    ExecutionCounts::default(),
+                )?,
+            )
+            .map_err(|_| std::io::Error::other("unknown completion failed"))?;
+        let ambiguous = aggregate_step_partitions(&[alpha, zeta, unknown])?;
+        assert_eq!(ambiguous.status(), BatchStatus::Unknown);
+        assert_eq!(ambiguous.exit_status(), &ExitStatus::unknown());
+        Ok(())
     }
 }

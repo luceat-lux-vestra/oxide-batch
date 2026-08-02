@@ -179,8 +179,9 @@ pub use listener::{
     ListenerPhase, StepExecutionListener,
 };
 pub use partition::{
-    MAX_PARTITION_CONTEXT_BYTES, MAX_PARTITION_KEY_BYTES, PartitionKey, PartitionPlanEntry,
-    PartitionResult, PartitionValueError, StepPartition,
+    MAX_PARTITION_CONTEXT_BYTES, MAX_PARTITION_KEY_BYTES, PartitionAggregate,
+    PartitionAggregationError, PartitionKey, PartitionPlanEntry, PartitionResult,
+    PartitionValueError, StepPartition, aggregate_step_partitions,
 };
 pub use plan::{
     CompiledExecutionPlan, DeciderRevision, DecisionInputVersion, DecisionNode, ExitPattern,

@@ -5,20 +5,21 @@ use std::time::{Duration, SystemTime};
 
 use super::{
     BoxFuture, Clock, IdGenerator, JobInstanceSelection, JobRepository, RecoveryDecision,
-    RecoveryRequest, RecoveryResult, RepositoryError, RepositoryUnitOfWork, recovered_execution,
+    RecoveryRequest, RecoveryResult, RepositoryError, RepositoryUnitOfWork,
+    aggregate_partition_parent, map_partition_aggregation, recovered_execution,
 };
 use crate::partition::PartitionMutationError;
 use crate::{
     ActorRef, BatchStatus, CursorKey, DefinitionDescriptor, DefinitionIdentity, DefinitionRevision,
     DefinitionUpgrade, DurableStateKind, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps,
-    ExecutionVersion, ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, FlowDecision,
-    FlowDecisionId, FlowDecisionRequest, FlowStepState, FlowTransitionKind, IdentifierKind,
-    JobExecution, JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId,
-    JobInstanceKey, JobInstanceProjection, JobName, LifecycleError, LifecycleTransition,
-    MAX_PARTITIONS, NodeId, OperationId, OperatorAction, OperatorRecord, OperatorRecordDraft,
-    OperatorRequestId, OwnerObservation, OwnerToken, ParameterDescriptor, PartitionPlanEntry,
-    PartitionResult, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey,
-    QueryWindow, ReasonCode, RecoveryDecisionId, RecoveryRepository, RecoverySnapshot,
+    ExecutionVersion, ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, FailureSummary,
+    FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowStepState, FlowTransitionKind,
+    IdentifierKind, JobExecution, JobExecutionId, JobExecutionProjection, JobInstance,
+    JobInstanceId, JobInstanceKey, JobInstanceProjection, JobName, LifecycleError,
+    LifecycleTransition, MAX_PARTITIONS, NodeId, OperationId, OperatorAction, OperatorRecord,
+    OperatorRecordDraft, OperatorRequestId, OwnerObservation, OwnerToken, ParameterDescriptor,
+    PartitionPlanEntry, PartitionResult, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest,
+    PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecisionId, RecoveryRepository, RecoverySnapshot,
     RecoveryStepEvidence, RetentionAction, RetentionActionId, RetentionHold, RetentionRecord,
     RetentionRecordDraft, StartLimit, StateEnvelopeDescriptor, StepExecution, StepExecutionId,
     StepExecutionProjection, StepName, StepPartition, StepPartitionId, StepPartitionProjection,
@@ -1222,6 +1223,39 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .complete(expected_version, result)
                 .map_err(|error| map_partition_mutation(id, error))?;
             Ok(partition.clone())
+        })
+    }
+
+    fn aggregate_step_partitions(
+        &mut self,
+        step_execution_id: StepExecutionId,
+        expected_version: ExecutionVersion,
+        transitioned_at: SystemTime,
+        failure: Option<FailureSummary>,
+    ) -> BoxFuture<'_, Result<StepExecution, RepositoryError>> {
+        Box::pin(async move {
+            let partitions = self.step_partition_plan(step_execution_id).await?;
+            let aggregate = crate::aggregate_step_partitions(&partitions)
+                .map_err(|error| map_partition_aggregation(step_execution_id, error))?;
+            let parent = self
+                .staged
+                .step_executions
+                .get(&step_execution_id)
+                .cloned()
+                .ok_or(RepositoryError::StepExecutionNotFound {
+                    id: step_execution_id,
+                })?;
+            let aggregated = aggregate_partition_parent(
+                &parent,
+                expected_version,
+                &aggregate,
+                transitioned_at,
+                failure,
+            )?;
+            self.staged
+                .step_executions
+                .insert(step_execution_id, aggregated.clone());
+            Ok(aggregated)
         })
     }
 
