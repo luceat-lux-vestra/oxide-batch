@@ -216,6 +216,14 @@ therefore follows the durable boundary:
 - an active or `UNKNOWN` job execution still requires the audited recovery
   procedure above before a new attempt can start.
 
+Bounded local children follow the same rule per child. After an exit inside a
+split or partitioned step, restart reuses every child whose terminal result is
+already durable and reruns only the incomplete ones as new attempts. A split
+whose join decision was never appended re-aggregates from the durable branch
+rows; a partition left `UNKNOWN` blocks reassignment and parent aggregation
+until an audited recovery decision resolves it. The parent never resolves a
+child's ambiguity on its behalf.
+
 Flow events can be lost or duplicated around a crash and are not recovery
 authority. Inspect the step-execution and `ob_flow_decision` rows.
 

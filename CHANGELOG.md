@@ -96,6 +96,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   draining, declared-order status/exit aggregation, durable
   `SPLIT_AGGREGATE` join decisions, `UNKNOWN` propagation, and completed-child
   reuse on restart.
+- Bounded parallel-split evidence for both sibling failure policies, branch
+  panic conversion, the branch-concurrency and repository-connection ceilings,
+  parent stop, completion-order and sequential-fallback durable equivalence,
+  repeated task-scope draining, and PostgreSQL 15/18 process-kill reuse of a
+  branch committed before its join decision.
 - Tasklet-only bounded local partition execution with per-child factories,
   manager-owned finite worker scopes, pre-start and in-flight cancellation,
   panic isolation, durable completed-child restart reuse, explicit `UNKNOWN`
