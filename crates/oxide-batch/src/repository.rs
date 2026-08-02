@@ -14,10 +14,10 @@ use crate::{
     FailureId, FailureSummary, FlowDecision, FlowDecisionRequest, FlowStepState,
     FlowTransitionKind, IdentifierKind, JobExecution, JobExecutionId, JobInstance, JobInstanceId,
     JobInstanceKey, JobName, LifecycleError, LifecycleTransition, NodeId, OperationId,
-    OperatorAction, OperatorRecord, OperatorRecordDraft, OwnerToken, PurgeCounts, PurgePlan,
-    PurgePlanRequest, PurgeSurvey, ReasonCode, RecoveryDecisionId, RetentionAction, RetentionHold,
-    RetentionRecord, RetentionRecordDraft, StartLimit, StepExecution, StepExecutionId, StepName,
-    StepPartition, StepPartitionId,
+    OperatorAction, OperatorRecord, OperatorRecordDraft, OwnerToken, PartitionAggregate,
+    PartitionAggregationError, PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey, ReasonCode,
+    RecoveryDecisionId, RetentionAction, RetentionHold, RetentionRecord, RetentionRecordDraft,
+    StartLimit, StepExecution, StepExecutionId, StepName, StepPartition, StepPartitionId,
 };
 use crate::{PartitionPlanEntry, PartitionResult};
 
@@ -910,6 +910,26 @@ pub trait RepositoryUnitOfWork: Send {
         })
     }
 
+    /// Aggregates every durable child and atomically terminates its parent step.
+    ///
+    /// The adapter reads the complete plan, derives the fixed key-ordered
+    /// aggregate, and updates status, exit status, counters, failure, timestamp,
+    /// and optimistic version in this unit of work. An active child prevents
+    /// any parent mutation.
+    fn aggregate_step_partitions(
+        &mut self,
+        _step_execution_id: StepExecutionId,
+        _expected_version: ExecutionVersion,
+        _transitioned_at: SystemTime,
+        _failure: Option<FailureSummary>,
+    ) -> BoxFuture<'_, Result<StepExecution, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::StepPartitions,
+            })
+        })
+    }
+
     /// Atomically resolves one orphaned or ambiguous execution and appends its audit record.
     fn recover_job_execution<'a>(
         &'a mut self,
@@ -1237,6 +1257,13 @@ pub enum RepositoryError {
         /// Reused worker attempt.
         worker_step_execution_id: StepExecutionId,
     },
+    /// At least one durable child has not published a runtime-terminal result.
+    PartitionAggregationIncomplete {
+        /// Parent partitioned step execution.
+        step_execution_id: StepExecutionId,
+        /// Child status that prevented aggregation.
+        status: BatchStatus,
+    },
     /// Durable partition state is contradictory, corrupt, or cannot be decoded.
     PartitionStateCorrupt,
     /// An injected source reused an existing identifier.
@@ -1434,6 +1461,13 @@ impl fmt::Display for RepositoryError {
                 formatter,
                 "worker step execution {worker_step_execution_id} is already assigned to a partition"
             ),
+            Self::PartitionAggregationIncomplete {
+                step_execution_id,
+                status,
+            } => write!(
+                formatter,
+                "step execution {step_execution_id} cannot aggregate a child in {status}"
+            ),
             Self::PartitionStateCorrupt => {
                 formatter.write_str("durable partition state is unusable and no work may begin")
             }
@@ -1533,6 +1567,59 @@ impl fmt::Display for RepositoryError {
             ),
             Self::Unavailable => formatter.write_str("repository is unavailable"),
         }
+    }
+}
+
+pub(crate) fn aggregate_partition_parent(
+    parent: &StepExecution,
+    expected_version: ExecutionVersion,
+    aggregate: &PartitionAggregate,
+    transitioned_at: SystemTime,
+    failure: Option<FailureSummary>,
+) -> Result<StepExecution, RepositoryError> {
+    let transition = if aggregate.status() == BatchStatus::Failed {
+        LifecycleTransition::failed(
+            transitioned_at,
+            failure.ok_or(LifecycleError::FailedTransitionMissingFailure)?,
+        )
+    } else {
+        LifecycleTransition::new(aggregate.status(), transitioned_at)
+    };
+    let mut transitioned = parent.clone();
+    transitioned.transition(expected_version, transition)?;
+    let metadata = ExecutionMetadata::new(
+        aggregate.status(),
+        aggregate.exit_status().clone(),
+        transitioned.metadata().timestamps(),
+        aggregate.counts(),
+        transitioned.metadata().failure(),
+    )?;
+    Ok(StepExecution::from_snapshot(
+        transitioned.id(),
+        transitioned.job_execution_id(),
+        transitioned.step_name().clone(),
+        metadata,
+        transitioned.version(),
+    ))
+}
+
+pub(crate) fn map_partition_aggregation(
+    step_execution_id: StepExecutionId,
+    error: PartitionAggregationError,
+) -> RepositoryError {
+    match error {
+        PartitionAggregationError::Incomplete { status } => {
+            RepositoryError::PartitionAggregationIncomplete {
+                step_execution_id,
+                status,
+            }
+        }
+        PartitionAggregationError::CountExhausted => {
+            RepositoryError::Lifecycle(LifecycleError::CountExhausted)
+        }
+        PartitionAggregationError::EmptyPlan
+        | PartitionAggregationError::PlanTooLarge { .. }
+        | PartitionAggregationError::DuplicateKey => RepositoryError::PartitionStateCorrupt,
     }
 }
 

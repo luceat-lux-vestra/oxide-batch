@@ -16,7 +16,8 @@ use sqlx::{AssertSqlSafe, Connection, PgConnection, PgPool, Postgres, Row};
 
 use super::{
     BoxFuture, Clock, JobInstanceSelection, JobRepository, RecoveryDecision, RecoveryRequest,
-    RecoveryResult, RepositoryError, RepositoryUnitOfWork, recovered_execution,
+    RecoveryResult, RepositoryError, RepositoryUnitOfWork, aggregate_partition_parent,
+    map_partition_aggregation, recovered_execution,
 };
 use crate::partition::PartitionMutationError;
 use crate::{
@@ -2714,6 +2715,57 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         })
     }
 
+    fn aggregate_step_partitions(
+        &mut self,
+        step_execution_id: StepExecutionId,
+        expected_version: ExecutionVersion,
+        transitioned_at: SystemTime,
+        failure: Option<FailureSummary>,
+    ) -> BoxFuture<'_, Result<StepExecution, RepositoryError>> {
+        Box::pin(async move {
+            let parent = self.step_execution(step_execution_id).await?.ok_or(
+                RepositoryError::StepExecutionNotFound {
+                    id: step_execution_id,
+                },
+            )?;
+            let parent_id = database_id(step_execution_id.get(), IdentifierKind::StepExecution)?;
+            let rows = sqlx::query(AssertSqlSafe(partition_select(
+                "WHERE partition.step_execution_id = $1 \
+                 ORDER BY partition.partition_key FOR UPDATE",
+            )))
+            .bind(parent_id)
+            .fetch_all(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            let partitions = rows
+                .iter()
+                .map(decode_step_partition)
+                .collect::<Result<Vec<_>, _>>()?;
+            let aggregate = crate::aggregate_step_partitions(&partitions)
+                .map_err(|error| map_partition_aggregation(step_execution_id, error))?;
+            let aggregated = aggregate_partition_parent(
+                &parent,
+                expected_version,
+                &aggregate,
+                transitioned_at,
+                failure,
+            )?;
+            let affected = update_step_execution(
+                &mut **self.transaction()?,
+                &aggregated,
+                transitioned_at,
+                expected_version,
+            )
+            .await?;
+            if affected != 1 {
+                return Err(self
+                    .classify_step_cas(step_execution_id, expected_version)
+                    .await);
+            }
+            Ok(aggregated)
+        })
+    }
+
     fn recover_job_execution<'a>(
         &'a mut self,
         id: JobExecutionId,
@@ -4197,6 +4249,10 @@ fn partition_count(value: u64) -> Result<i64, RepositoryError> {
     i64::try_from(value).map_err(|_| RepositoryError::PartitionStateCorrupt)
 }
 
+fn execution_count(value: u64) -> Result<i64, RepositoryError> {
+    i64::try_from(value).map_err(|_| RepositoryError::Unavailable)
+}
+
 fn map_partition_mutation(id: StepPartitionId, error: PartitionMutationError) -> RepositoryError {
     match error {
         PartitionMutationError::StaleVersion { expected, actual } => {
@@ -4567,39 +4623,54 @@ async fn update_step_execution(
     updated_at: SystemTime,
     expected: ExecutionVersion,
 ) -> Result<u64, RepositoryError> {
-    let affected = update_execution(
-        transaction,
-        "oxide_batch.ob_step_execution",
+    let metadata = execution.metadata();
+    let timestamps = metadata.timestamps();
+    let failure = metadata.failure();
+    let failure_category = failure.map(|value| encode_failure_category(value.category()));
+    let failure_id = failure
+        .map(|value| database_id(value.failure_id().get(), IdentifierKind::Failure))
+        .transpose()?;
+    let counts = metadata.counts();
+    let result = sqlx::query(
+        "UPDATE oxide_batch.ob_step_execution \
+         SET status = $1, exit_code = $2, failure_category = $3, failure_id = $4, \
+             started_at = CASE WHEN $5::bigint IS NULL THEN NULL \
+                 ELSE to_timestamp($5::double precision / 1000.0) END, \
+             ended_at = CASE WHEN $6::bigint IS NULL THEN NULL \
+                 ELSE to_timestamp($6::double precision / 1000.0) END, \
+             read_count = $7, processed_count = $8, write_count = $9, \
+             filter_count = $10, commit_count = $11, rollback_count = $12, \
+             updated_at = to_timestamp($13::double precision / 1000.0), version = $14 \
+         WHERE id = $15 AND version = $16",
+    )
+    .bind(metadata.status().to_string())
+    .bind(metadata.exit_status().code().as_str())
+    .bind(failure_category)
+    .bind(failure_id)
+    .bind(
+        timestamps
+            .started_at()
+            .map(system_time_millis)
+            .transpose()?,
+    )
+    .bind(timestamps.ended_at().map(system_time_millis).transpose()?)
+    .bind(execution_count(counts.read())?)
+    .bind(execution_count(counts.processed())?)
+    .bind(execution_count(counts.written())?)
+    .bind(execution_count(counts.filtered())?)
+    .bind(execution_count(counts.committed())?)
+    .bind(execution_count(counts.rolled_back())?)
+    .bind(system_time_millis(updated_at)?)
+    .bind(database_version(execution.version())?)
+    .bind(database_id(
         execution.id().get(),
         IdentifierKind::StepExecution,
-        execution.metadata(),
-        execution.version(),
-        updated_at,
-        expected,
-    )
-    .await?;
-    if affected == 1 {
-        let rollback_update = sqlx::query(
-            "UPDATE oxide_batch.ob_step_execution SET rollback_count = $1 \
-             WHERE id = $2 AND version = $3",
-        )
-        .bind(
-            i64::try_from(execution.metadata().counts().rolled_back())
-                .map_err(|_| RepositoryError::Unavailable)?,
-        )
-        .bind(database_id(
-            execution.id().get(),
-            IdentifierKind::StepExecution,
-        )?)
-        .bind(database_version(execution.version())?)
-        .execute(transaction)
-        .await
-        .map_err(|_| RepositoryError::Unavailable)?;
-        if rollback_update.rows_affected() != 1 {
-            return Err(RepositoryError::Unavailable);
-        }
-    }
-    Ok(affected)
+    )?)
+    .bind(database_version(expected)?)
+    .execute(transaction)
+    .await
+    .map_err(|_| RepositoryError::Unavailable)?;
+    Ok(result.rows_affected())
 }
 
 #[allow(clippy::too_many_arguments)]

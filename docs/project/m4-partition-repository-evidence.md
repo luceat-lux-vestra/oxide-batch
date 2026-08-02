@@ -6,11 +6,11 @@
 
 **Date:** 2026-08-02
 
-This record covers the second reviewable slice of the accepted M4 bounded
-local-scale contract: validated partition-plan values, atomic schema-3 plan
-creation, byte-ordered plan reads, worker assignment, terminal result
-publication, and optimistic conflict handling. It does not claim that the
-format-3 runtime launches partition workers or aggregates a parent result.
+This record covers the repository and aggregation slices of the accepted M4
+bounded local-scale contract: validated partition-plan values, atomic schema-3
+plan creation, byte-ordered reads, worker assignment, terminal result
+publication, optimistic conflict handling, and atomic parent aggregation. It
+does not claim that the format-3 runtime launches partition workers.
 
 ## Implemented boundary
 
@@ -32,6 +32,15 @@ format-3 runtime launches partition workers or aggregates a parent result.
 - Terminal results accept only `COMPLETED`, `FAILED`, `STOPPED`, or `UNKNOWN`
   and persist exit status and counters under compare-and-swap. A completed
   partition cannot be assigned again.
+- `aggregate_step_partitions` sorts independently supplied snapshots by their
+  byte-exact keys, applies `UNKNOWN > FAILED > STOPPED > COMPLETED`, selects the
+  first matching exit status, and checks every counter sum. Active children,
+  duplicate keys, empty/oversized plans, and overflow fail without an
+  aggregate.
+- `RepositoryUnitOfWork::aggregate_step_partitions` locks/reads the complete
+  durable plan and publishes status, exit status, counters, failure metadata,
+  terminal timestamp, and version with the parent step in the same transaction.
+  Rolling back the unit leaves the parent unchanged.
 - In-memory and PostgreSQL adapters implement the same portable repository
   contract. PostgreSQL verifies the stored partition-context checksum before
   returning runtime state; the explorer continues to expose only redacted
@@ -45,7 +54,8 @@ format-3 runtime launches partition workers or aggregates a parent result.
 | --- | --- |
 | Public key/context/result bounds | [`partition_key_and_context_bounds_fail_before_persistence`](../../crates/oxide-batch/src/partition.rs), [`partition_result_accepts_only_runtime_terminal_outcomes`](../../crates/oxide-batch/src/partition.rs) |
 | Plan-before-worker transaction boundary | [`partition_plan_commits_before_any_worker_starts`](../../crates/oxide-batch/tests/contract/mod.rs) |
-| Deterministic aggregation read order | [`partition_plan_commits_before_any_worker_starts`](../../crates/oxide-batch/tests/contract/mod.rs) |
+| Deterministic aggregation order and severity | [`aggregation_is_deterministic_in_partition_key_order`](../../crates/oxide-batch/src/partition.rs) |
+| Parent/aggregate transaction boundary | [`partition_aggregation_commits_with_parent_terminal_state`](../../crates/oxide-batch/tests/contract/mod.rs) |
 | Stale writer loses CAS | [`partition_plan_commits_before_any_worker_starts`](../../crates/oxide-batch/tests/contract/mod.rs) |
 | Persisted plan and completed-result reuse | [`partition_plan_commits_before_any_worker_starts`](../../crates/oxide-batch/tests/contract/mod.rs) |
 | Duplicate-key atomic rejection | [`duplicate_partition_key_is_rejected`](../../crates/oxide-batch/tests/contract/mod.rs) |
@@ -63,7 +73,6 @@ as skipped; required PostgreSQL 15/18 execution remains CI and M4 exit evidence.
 - owned bounded child execution, cancellation, panic isolation, and sibling
   failure policy;
 - runtime reuse of the committed plan, including `UNKNOWN` partition blocking;
-- deterministic child aggregation committed with the parent terminal update;
 - PostgreSQL process-kill, sequential-equivalence, cancellation, contention,
   memory/connection/task ceiling, and soak/leak evidence.
 

@@ -87,6 +87,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   key-ordered reads, unique local worker assignment, terminal-result
   compare-and-swap, restart-safe completed rows, checksum validation, and
   matching in-memory/PostgreSQL adapters.
+- Deterministic partition aggregation with fixed status severity, key-ordered
+  exit selection, checked counter sums, incomplete-child rejection, and an
+  in-memory/PostgreSQL transaction that publishes the aggregate only with the
+  parent step's terminal lifecycle update.
 - Versioned M4 telemetry: schema version 1, the operations, shutdown,
   recovery, retention, and local-scale event catalog, an enforced label
   cardinality budget, bounded exporter queues with counted drops, and the
