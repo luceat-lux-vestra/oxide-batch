@@ -59,6 +59,13 @@ cancellation-latency, telemetry-overhead, and soak evidence recorded in the
 [capacity guidance](docs/operations/capacity-and-resource-budgets.md). Every M4
 row remains implemented or partial rather than released and verified.
 
+**M5 — Embedded Core Production Preview** is the active milestone. It
+stabilizes the delivered M0-M4 embedded scope rather than adding batch
+capability, and its decision gates, workstreams, and exit criteria are recorded
+in the [M5 kickoff gate](docs/project/m5-kickoff-gate.md). M5 is the first
+milestone that may promote advertised embedded-kernel ledger rows to verified,
+and only against a named released version.
+
 The shipped `oxide-batch` command is a guarded repository operator, not a
 standalone Rust job-definition loader. It can inspect and recover durable
 partition metadata; launching or restarting application work requires a host
