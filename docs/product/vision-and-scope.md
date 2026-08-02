@@ -82,11 +82,12 @@ The accepted M0-M4 program remains the active delivery commitment:
   concurrency and partitioning;
 - operator CLI, vendor-neutral telemetry, and failure/conformance evidence.
 
-M2 and M3 are complete implementation milestones; M4 is the active near-term
-milestone under its operator, observability, shutdown/recovery, and bounded
-local-scale design gates. Historical M0-M3 gates remain authoritative evidence
-for completed work, while release and production-readiness claims remain gated
-by their separate evidence.
+M2, M3, and M4 are complete implementation milestones; M5 is the active
+near-term milestone under its compiled-plan/fingerprint, component-boundary,
+crate-extraction, context-codec, transaction-capability, facade/API,
+ledger-promotion, and evidence design gates. Historical M0-M4 gates remain
+authoritative evidence for completed work, while release and
+production-readiness claims remain gated by their separate evidence.
 
 ## Release interpretation
 

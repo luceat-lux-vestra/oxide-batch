@@ -8,7 +8,7 @@ remain evidence gates for their specific architectures.
 **Last reviewed:** 2026-08-03
 
 Milestones are capability and evidence gates, not calendar promises. M0-M4
-record accepted history; M5 is the next gate. The continuous M5-M14 program is
+record accepted history; M5 is the active gate. The continuous M5-M14 program is
 accepted by [RFC-0001](rfcs/0001-m5-preview-and-project-wide-1-0.md) and the
 topic decisions linked below. Historical M0 decisions remain preserved with
 their supersession record.
@@ -184,6 +184,15 @@ boundary, and it closes only when its evidence is attached to an exit record
 and the ledger is updated.
 
 ## M5 — Embedded Core Production Preview
+
+**Status:** Active (2026-08-03)
+
+The decision gates, dependency-ordered workstreams, architecture constraints,
+and definition of done are recorded in the
+[M5 kickoff gate](project/m5-kickoff-gate.md). M5 stabilizes the delivered
+M0-M4 embedded scope; it is the first milestone that may promote advertised
+embedded-kernel ledger rows to `Verified`, and only against a named released
+version.
 
 **Objective:** stabilize a correct, supportable, single-host PostgreSQL batch
 kernel without freezing APIs that M6-M12 must extend.

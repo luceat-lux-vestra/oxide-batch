@@ -114,6 +114,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - The M4 exit record closing operations and local scale with its
   exit-criterion map, measured evidence, reviewed dispositions, and named
   residual PostgreSQL history, retention-grant, and M10/M11 scope.
+- An active M5 kickoff gate with explicit compiled-plan/fingerprint,
+  static-versus-erased component, staged crate-extraction, context-codec,
+  transaction-capability, facade/API, ledger-promotion, preview-support, and
+  evidence-campaign boundaries plus dependency-ordered delivery workstreams.
 - Tasklet-only bounded local partition execution with per-child factories,
   manager-owned finite worker scopes, pre-start and in-flight cancellation,
   panic isolation, durable completed-child restart reuse, explicit `UNKNOWN`
