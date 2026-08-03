@@ -1,9 +1,9 @@
 //! Workspace boundary checks for the staged crate extraction.
 //!
-//! The [staged crate-extraction contract](../../docs/architecture/crate-extraction.md)
-//! forbids named dependency classes per extracted crate and forbids any cycle
-//! between workspace crates. This check is authoritative: a passing manual
-//! review never substitutes for it.
+//! The staged crate-extraction contract in
+//! `docs/architecture/crate-extraction.md` forbids named dependency classes
+//! per extracted crate and forbids any cycle between workspace crates. This
+//! check is authoritative: a passing manual review never substitutes for it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
@@ -57,7 +57,7 @@ const BOUNDARIES: &[Boundary] = &[
             TELEMETRY_SDK,
             "oxide-batch-plan",
             "oxide-batch-cli",
-            "oxide-batch/",
+            "=oxide-batch",
         ],
     },
     Boundary {
@@ -68,7 +68,7 @@ const BOUNDARIES: &[Boundary] = &[
             COMMAND_LINE,
             TELEMETRY_SDK,
             "oxide-batch-cli",
-            "oxide-batch/",
+            "=oxide-batch",
         ],
     },
 ];
@@ -227,17 +227,22 @@ fn check_forbidden(graph: &Graph) -> Vec<String> {
 /// Reports whether `name` is an instance of the forbidden `rule`.
 ///
 /// A rule matches the package itself or any package that extends it with a
-/// separator, so `tokio` covers `tokio-util` but not `tokioesque`. The
-/// governed crate never matches its own rule.
+/// separator, so `tokio` covers `tokio-util` but not `tokioesque`. A rule
+/// written as `=name` matches that package alone. The governed crate never
+/// matches its own rule.
 fn matches(name: &str, rule: &str, crate_name: &str) -> bool {
     if name == crate_name {
         return false;
     }
-    let rule = rule.strip_suffix('/').unwrap_or(rule);
-    name == rule
-        || name
-            .strip_prefix(rule)
-            .is_some_and(|rest| rest.starts_with('-') || rest.starts_with('_'))
+    match rule.strip_prefix('=') {
+        Some(exact) => name == exact,
+        None => {
+            name == rule
+                || name
+                    .strip_prefix(rule)
+                    .is_some_and(|rest| rest.starts_with('-') || rest.starts_with('_'))
+        }
+    }
 }
 
 /// Reports every dependency cycle between workspace crates.
@@ -255,8 +260,18 @@ fn check_cycles(graph: &Graph) -> Vec<String> {
 }
 
 /// Walks workspace-member edges looking for a path back to `target`.
-fn find_cycle(graph: &Graph, target: &str, current: &str, path: &mut Vec<String>) -> Option<String> {
-    for dependency in graph.all.get(current).map(Vec::as_slice).unwrap_or_default() {
+fn find_cycle(
+    graph: &Graph,
+    target: &str,
+    current: &str,
+    path: &mut Vec<String>,
+) -> Option<String> {
+    for dependency in graph
+        .all
+        .get(current)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
         if !graph.members.contains(dependency) {
             continue;
         }
@@ -296,4 +311,175 @@ fn string<'a>(value: &'a Value, field: &str) -> Result<&'a str, String> {
         .get(field)
         .and_then(Value::as_str)
         .ok_or_else(|| format!("cargo metadata field {field} was not a string"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Graph, check_cycles, check_forbidden, matches};
+    use std::collections::{BTreeMap, BTreeSet};
+
+    /// Builds a graph from `(package, shipped deps, dev deps)` triples.
+    ///
+    /// The first `member_count` packages are workspace members.
+    fn graph(packages: &[(&str, &[&str], &[&str])], member_count: usize) -> Graph {
+        let mut names = BTreeMap::new();
+        let mut shipped = BTreeMap::new();
+        let mut all = BTreeMap::new();
+        let mut members = BTreeSet::new();
+
+        for (index, (name, ships, dev)) in packages.iter().enumerate() {
+            let id = (*name).to_owned();
+            names.insert(id.clone(), (*name).to_owned());
+            let ships: Vec<String> = ships.iter().map(|dep| (*dep).to_owned()).collect();
+            let mut every = ships.clone();
+            every.extend(dev.iter().map(|dep| (*dep).to_owned()));
+            shipped.insert(id.clone(), ships);
+            all.insert(id.clone(), every);
+            if index < member_count {
+                members.insert(id);
+            }
+        }
+
+        Graph {
+            names,
+            shipped,
+            all,
+            members,
+        }
+    }
+
+    #[test]
+    fn a_transitive_runtime_dependency_is_a_violation() {
+        let graph = graph(
+            &[
+                ("oxide-batch-core", &["serde_json", "leaky"], &[]),
+                ("leaky", &["tokio"], &[]),
+                ("serde_json", &[], &[]),
+                ("tokio", &[], &[]),
+            ],
+            1,
+        );
+
+        let violations = check_forbidden(&graph);
+
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(violations[0].contains("oxide-batch-core depends on tokio"));
+    }
+
+    #[test]
+    fn an_allowed_dependency_is_not_a_violation() {
+        let graph = graph(
+            &[
+                ("oxide-batch-core", &["serde_json", "sha2"], &[]),
+                ("serde_json", &[], &[]),
+                ("sha2", &[], &[]),
+            ],
+            1,
+        );
+
+        assert!(check_forbidden(&graph).is_empty());
+    }
+
+    #[test]
+    fn a_development_only_dependency_does_not_ship() {
+        let graph = graph(
+            &[("oxide-batch-core", &[], &["tokio"]), ("tokio", &[], &[])],
+            1,
+        );
+
+        assert!(check_forbidden(&graph).is_empty());
+    }
+
+    #[test]
+    fn the_repository_boundary_may_use_the_core_but_not_the_plan() {
+        let graph = graph(
+            &[
+                ("oxide-batch-repository", &["oxide-batch-core"], &[]),
+                ("oxide-batch-core", &[], &[]),
+            ],
+            2,
+        );
+
+        assert!(check_forbidden(&graph).is_empty());
+
+        let inverted = graph_with_plan();
+
+        assert!(check_forbidden(&inverted).iter().any(|violation| {
+            violation.contains("oxide-batch-repository depends on oxide-batch-plan")
+        }));
+    }
+
+    /// A repository crate that wrongly reaches the plan crate.
+    fn graph_with_plan() -> Graph {
+        graph(
+            &[
+                ("oxide-batch-repository", &["oxide-batch-plan"], &[]),
+                ("oxide-batch-plan", &[], &[]),
+            ],
+            2,
+        )
+    }
+
+    #[test]
+    fn a_workspace_cycle_is_a_violation() {
+        let graph = graph(
+            &[
+                ("oxide-batch-core", &["oxide-batch-plan"], &[]),
+                ("oxide-batch-plan", &[], &["oxide-batch-core"]),
+            ],
+            2,
+        );
+
+        let violations = check_cycles(&graph);
+
+        assert!(!violations.is_empty(), "a dev-dependency cycle must fail");
+        assert!(violations[0].contains("oxide-batch-core"));
+        assert!(violations[0].contains("oxide-batch-plan"));
+    }
+
+    #[test]
+    fn an_acyclic_workspace_passes() {
+        let graph = graph(
+            &[
+                ("oxide-batch", &["oxide-batch-core"], &[]),
+                ("oxide-batch-core", &[], &[]),
+            ],
+            2,
+        );
+
+        assert!(check_cycles(&graph).is_empty());
+    }
+
+    #[test]
+    fn a_rule_matches_only_the_package_and_its_extensions() {
+        assert!(matches("tokio", "tokio", "oxide-batch-core"));
+        assert!(matches("tokio-util", "tokio", "oxide-batch-core"));
+        assert!(matches(
+            "opentelemetry_sdk",
+            "opentelemetry",
+            "oxide-batch-core"
+        ));
+        assert!(!matches("tokioesque", "tokio", "oxide-batch-core"));
+        assert!(!matches(
+            "oxide-batch-core",
+            "oxide-batch",
+            "oxide-batch-core"
+        ));
+        assert!(matches("oxide-batch", "oxide-batch", "oxide-batch-core"));
+        assert!(matches(
+            "oxide-batch-plan",
+            "oxide-batch",
+            "oxide-batch-core"
+        ));
+        assert!(!matches(
+            "oxide-batch-core",
+            "=oxide-batch",
+            "oxide-batch-repository"
+        ));
+        assert!(matches(
+            "oxide-batch",
+            "=oxide-batch",
+            "oxide-batch-repository"
+        ));
+    }
 }

@@ -755,6 +755,9 @@ dependencies = [
 [[package]]
 name = "oxide-batch-xtask"
 version = "0.0.0"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "parking"
