@@ -17,6 +17,7 @@ security, release, and governance changes. `Proposed` is not `Accepted`.
 | [0008](0008-core-and-control-plane-boundary.md) | Core and external control-plane boundary | Accepted |
 | [0009](0009-transport-neutral-worker-protocol.md) | Transport-neutral distributed worker protocol | Proposed |
 | [0010](0010-metadata-and-spring-migration.md) | Metadata export/import and Spring Batch migration | Accepted |
+| [0011](0011-publication-of-extracted-implementation-crates.md) | Publication of extracted implementation crates | Accepted |
 
 ## Naming and states
 

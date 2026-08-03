@@ -1,8 +1,19 @@
 //! Repository development tasks.
 
+mod deps;
+
 use std::env;
 use std::ffi::OsStr;
 use std::process::{Command, ExitCode};
+
+/// Every crate the workspace packages and dry-run publishes.
+const PACKAGED_CRATES: &[&str] = &[
+    "oxide-batch-core",
+    "oxide-batch-repository",
+    "oxide-batch-plan",
+    "oxide-batch",
+    "oxide-batch-cli",
+];
 
 struct Task<'a> {
     label: &'a str,

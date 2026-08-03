@@ -2,8 +2,9 @@
 
 **State:** Accepted
 
-**Governing decisions:** [RFC-0003](../rfcs/0003-target-workspace-boundaries.md)
-and [ADR-0001](decisions/0001-workspace-and-facade.md)
+**Governing decisions:** [RFC-0003](../rfcs/0003-target-workspace-boundaries.md),
+[ADR-0001](decisions/0001-workspace-and-facade.md), and
+[ADR-0010](decisions/0010-extracted-crate-publication.md)
 
 This document closes the extraction order, boundary set, forbidden-dependency
 rules, equivalence obligations, packaging checks, measurements, and reversal
@@ -34,9 +35,25 @@ Engine, item, adapter, observability, test-kit, distributed-protocol, and
 integration boundaries are **deferred past M5**. They are named by RFC-0003 as
 target direction and are not authorized by this gate.
 
-Every extracted crate is `publish = false`. Public-crate approval remains a
-separate decision under the
-[crate publishing policy](../governance/crate-publishing.md).
+Every extracted crate is published as an internal crate under
+[ADR-0010](decisions/0010-extracted-crate-publication.md): `publish =
+["crates-io"]`, the workspace version, an exact `=` version requirement from
+every workspace dependent, release only in the facade's release and in
+dependency order, and a rustdoc and README statement that the crate is
+implementation detail with no stability promise and that `oxide-batch` is the
+supported entry point.
+
+This gate originally required `publish = false`, which cargo cannot combine
+with a publishable facade: a published archive's path dependencies are
+rewritten to registry dependencies, so `oxide-batch` cannot depend on an
+unpublished crate.
+[RFC-0011](../rfcs/0011-publication-of-extracted-implementation-crates.md)
+records the conflict and its evidence.
+
+Internal publication is not public-crate approval. Supported-entry-point status
+remains a separate decision under the
+[crate publishing policy](../governance/crate-publishing.md), and no internal
+crate receives a ledger row, support window, or independent cadence.
 
 ## Forbidden dependencies
 
@@ -81,8 +98,8 @@ instead.
 
 Each stage records:
 
-- `cargo xtask package` results, including publish dry-run and packaged file
-  count for every workspace crate;
+- `cargo xtask package` results, including the workspace publish dry-run and
+  packaged file count for every workspace crate;
 - clean and incremental build time for the workspace and for `oxide-batch`
   alone;
 - release binary size of `oxide-batch-cli`;
@@ -100,6 +117,11 @@ module layout and changes no facade path, persisted byte, or metadata value.
 Because a stage may not alter durable state, reversal requires no migration and
 no operator action. A stage that cannot be reverted this way is out of scope for
 this contract and requires a superseding decision.
+
+Reversal is free only until the release that publishes the stage. A published
+crate version is permanent, so a stage reverted after its release leaves an
+orphan version that nothing references, and the reversal itself is a new
+released version. Revert a stage before the release that carries it.
 
 ## Evidence
 

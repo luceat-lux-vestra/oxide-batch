@@ -1,6 +1,8 @@
 # ADR-0001: Workspace and Public Facade
 
-- **State:** Accepted
+- **State:** Accepted; partially superseded by
+  [ADR-0010](0010-extracted-crate-publication.md) for the three M5-authorized
+  implementation crates
 - **Date:** 2026-07-29
 - **Owners:** maintainers
 - **Deciders:** project owner
