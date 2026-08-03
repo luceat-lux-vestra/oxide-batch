@@ -118,6 +118,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   static-versus-erased component, staged crate-extraction, context-codec,
   transaction-capability, facade/API, ledger-promotion, preview-support, and
   evidence-campaign boundaries plus dependency-ordered delivery workstreams.
+- Closed M5 design gates: the stabilized manifest, fingerprint-input, and
+  fail-closed drift boundary; a staged crate-extraction contract with
+  forbidden-dependency, facade-equivalence, durable-invariance, packaging, and
+  reversal rules; the context-codec and transaction-capability direction with
+  its fingerprint participation rule; the preview facade disclosure classes and
+  M6-M12 non-blocking review requirement; the reviewed ledger disposition with
+  its advertised embedded-kernel promotion set; the `0.x` preview support,
+  upgrade, and rollback bounds; and the nine named evidence campaigns.
 - Tasklet-only bounded local partition execution with per-child factories,
   manager-owned finite worker scopes, pre-start and in-flight cancellation,
   panic isolation, durable completed-child restart reuse, explicit `UNKNOWN`
@@ -280,6 +288,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- RFC-0005 stays `Proposed` through M5 by a recorded continued-deferral
+  decision: its own approval gate requires a spike that has not run, and
+  changing the item hot path underneath the M5 fingerprint and extraction work
+  would invalidate their equivalence evidence. M5 keeps the ADR-0002 boxed
+  boundary, the roadmap dependency is satisfied by the recorded decision, and
+  the approval spike and P-002 measurement move to M6.
+- The M5 preview support bounds replace the earlier dimension sketch with
+  decided supported combinations; Linux aarch64, macOS, and Windows are named
+  as outside the preview promise rather than as candidates within it.
 - The PostgreSQL runtime now requires metadata schema version 3 and rejects
   version 4 or higher. Schema 2 to 3 is a quiesced, backfill-free, transactional
   upgrade; a schema-2 runtime sees schema 3 as newer and performs no work.
@@ -326,6 +343,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - A terminal known chunk rollback now increments `rollback_count` in the same
   repository transaction that commits the failed step lifecycle, including a
   chunk executed through the finite-flow launcher.
+- The `SCALE-PARSTEP-001` and `SCALE-LOCALPART-001` ledger rows carried twelve
+  cells against a thirteen-column header, so their notes occupied the canonical
+  owner column and neither row had a reviewable owner. Both now record their
+  owner and notes in the correct columns.
 
 ## [0.1.0-alpha.1] - 2026-07-29
 

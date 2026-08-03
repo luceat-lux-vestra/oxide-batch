@@ -52,19 +52,49 @@ backup/restore checks against every explicit `15`, `16`, `17`, and `18` image.
 Adapter repository, transaction, and crash depth remains release-blocking on
 15 and 18 as shown above.
 
-## M5 production-preview dimensions
+## M5 production-preview support bounds
 
-- Rust: declared MSRV and current stable;
-- Linux x86_64: primary runtime and PostgreSQL integration target;
-- Linux aarch64: production support candidate;
-- macOS x86_64/aarch64: core development support candidate;
-- Windows x86_64 MSVC: core support candidate;
-- PostgreSQL: oldest and newest selected supported major versions;
-- TLS: Rustls-backed PostgreSQL connectivity where supported by the adapter.
+The M5 design gate closes the preview's supported configuration. A combination
+absent from the supported column is not part of the preview promise, however
+well it builds.
 
-The M2 PostgreSQL range is selected above. Other exact platform versions and
-any change to the database range are reviewed against upstream support windows,
-CI availability, and user needs.
+| Dimension | M5 preview decision | Required evidence |
+| --- | --- | --- |
+| Rust | MSRV 1.95 supported; pinned 1.97.1 for development, CI, and releases | Workspace builds and required suites on both, release-blocking |
+| Linux x86_64 GNU | Supported runtime and PostgreSQL integration target | Every release-blocking suite and campaign |
+| Linux aarch64 | Not in the preview promise; candidate | Add required CI before any promotion |
+| macOS arm64/x86_64 | Development only, not supported | Local core checks; no release-blocking claim |
+| Windows x86_64 MSVC | Not in the preview promise; candidate | Resolve signal/filesystem differences and add CI first |
+| PostgreSQL 15 | Supported oldest major, release-blocking | Repository contract, migrations, transactions, TLS, roles, crash/restore/upgrade |
+| PostgreSQL 16-17 | Supported intermediate majors | Connection, migration, and vertical-slice smoke |
+| PostgreSQL 18 | Supported newest major, release-blocking | Repository contract, migrations, transactions, TLS, roles, crash/restore/upgrade |
+| TLS | Certificate-validated Rustls (`verify-full`) is the supported production mode | Validated TLS fixtures on 15 and 18 |
+| Plaintext PostgreSQL | Local and isolated test environments only | Not a supported production configuration |
+| Metadata schema | Schema 3 | Direct upgrade from schemas 1 and 2; newer-schema rejection; restore-based rollback |
+| Deployment shape | Single host, embedded in the application process | No remote, distributed, or multi-host claim |
+
+**Version selection.** The preview is published as a `0.x` release. The exact
+version is selected during release planning from the accepted pre-1.0 policy;
+no preview release is described as stable, 1.0, GA, or enterprise-ready.
+
+**Upgrade and downgrade expectations.** Supported upgrade sources are the
+released schema versions named above, applied quiesced and transactionally.
+Downgrade is restore of a compatible backup unless a tested downgrade is
+explicitly supplied. A schema-2 runtime rejects schema 3 rather than operating
+on it.
+
+**Support commitment.** Preview support follows the pre-1.0 latest-line rule in
+the [support policy](support-policy.md): only the latest preview line receives
+fixes, and the stable support window is finalized before the first M14 release
+candidate.
+
+**Limitations.** The preview publishes an explicit limitations record naming
+every ledger row that is not advertised as verified embedded-kernel capability.
+Rows that remain `Partial` or `Planned` are visible there and prevent any
+full-parity claim.
+
+Other exact platform versions and any change to the database range are reviewed
+against upstream support windows, CI availability, and user needs.
 
 This preview interpretation is accepted by
 [RFC-0001](../rfcs/0001-m5-preview-and-project-wide-1-0.md). It is not a

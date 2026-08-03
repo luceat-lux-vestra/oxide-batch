@@ -91,9 +91,11 @@ accepts the change with migration evidence.
 
 Issue
 [#95](https://github.com/luceat-lux-vestra/oxide-batch/issues/95)
-records this table and the delivery order; a dedicated design-gate issue
-closes the gates in canonical documents and executable fixtures. Any change to
-an accepted contract still requires a superseding RFC or ADR before dependent
+records this table and the delivery order. Issue
+[#97](https://github.com/luceat-lux-vestra/oxide-batch/issues/97) closed every
+gate above on 2026-08-03 in canonical documents, recorded by the
+[M5 design-gate evidence](m5-design-gate-evidence.md). Any change to an
+accepted contract still requires a superseding RFC or ADR before dependent
 implementation.
 
 ## Governing architecture constraints

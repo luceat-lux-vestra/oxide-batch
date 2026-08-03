@@ -92,6 +92,31 @@ Acceptance requires a reproducible spike and measurements for both paths,
 reviewed public ergonomics, and a superseding ADR that updates ADR-0002's
 allocation consequence without weakening cancellation or transaction borrowing.
 
+## M5 gate outcome
+
+**Continued deferral, recorded on 2026-08-03 by the
+[M5 design gate](../project/m5-design-gate-evidence.md).**
+
+The approval gate above requires a reproducible spike and measurements for both
+paths. That spike has not run, so approval is unavailable, and M5 is a
+stabilization milestone whose extraction and fingerprint work must not change
+the item hot path underneath itself. This RFC therefore stays `Proposed`
+through M5.
+
+The consequences are:
+
+- M5 retains the accepted [ADR-0002](../architecture/decisions/0002-execution-model.md)
+  boxed component boundary and introduces no native static hot path;
+- the roadmap's M5 dependency on this RFC is satisfied by this recorded
+  decision rather than by an approval, as the
+  [M5 kickoff gate](../project/m5-kickoff-gate.md) provides;
+- the P-002 static-versus-erased measurement is an M6 obligation, not an M5
+  campaign;
+- M5 exits on the boxed boundary, and no preview claim depends on this RFC.
+
+The decision is revisited at M6 kickoff, where the spike, measurements, and the
+superseding ADR are prerequisites for the item-model work.
+
 ## Current implementation constraint
 
 While this RFC remains `Proposed`, existing M2 boxed component contracts may be

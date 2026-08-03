@@ -92,6 +92,49 @@ are not normal control flow.
 - Safety, restart, transaction, and data-loss implications use explicit
   sections rather than being buried in prose.
 
+## M5 preview surface and disclosure gate
+
+The M5 Production Preview makes a bounded public-API claim. These rules are
+closed for the preview and govern the facade review that precedes it.
+
+**Curated surface.** `oxide-batch` is the only crate whose API the preview
+claims. Extracted implementation crates stay `publish = false`, and their paths
+are not compatibility promises even when Cargo can build them.
+
+**Prohibited disclosure classes.** No public signature, public field, public
+associated type, trait bound, error variant, `Debug` output, or rustdoc
+example may expose:
+
+- an async-runtime type, handle, or executor;
+- a database driver, connection, pool, row, or SQL fragment type;
+- a telemetry-SDK, exporter, or tracing-subscriber type;
+- a credential, secret, token, certificate, or connection string;
+- a deployment authorization or actor-identity implementation type;
+- a sensitive payload: a parameter value, execution context, checkpoint
+  payload, or item value;
+- user-supplied error text.
+
+Redaction failures in `Debug` or `Display` are treated as disclosure, not as
+cosmetic defects.
+
+**Pre-1.0 evolution.** The preview surface remains governed by pre-1.0 policy:
+an incompatible change may occur in a minor release and must be called out in
+the changelog. The preview creates no project-wide stability promise and does
+not shorten the M14 gate.
+
+**M6-M12 non-blocking requirement.** The facade review MUST record, per target
+boundary, why the delivered surface admits the later milestone without a
+breaking change or with an explicitly accepted one. The boundaries reviewed are
+the M6 item and test-kit surface, the M7 flow, registry, and scope surface, the
+M8 repository-portability surface, the M9 integration surface, the M10 and M11
+concurrency and distributed surfaces, and the M12 migration surface. A boundary
+the current surface would block is a finding, not a note.
+
+**Review evidence.** The review runs the compatibility checklist below, plus a
+rustdoc leakage inspection over the complete public surface, the public API
+snapshot, and compile-fail tests for each prohibited disclosure class that can
+be expressed as a type error.
+
 ## Compatibility review
 
 Before releasing a public API:

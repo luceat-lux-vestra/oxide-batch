@@ -137,10 +137,10 @@ the [compatibility contract](spring-batch.md).
 
 | ID | Source | Subcategory | Spring capability and observable semantics | OxideBatch equivalent | Parity | Status | Milestone | Known divergence | Evidence U/I/C/Cr/M/P | Evidence | Owner | Notes/dependencies |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SCALE-PARSTEP-001 | 6.0.4 [scale] | Parallel steps | Independent flow branches execute concurrently and aggregate | Structured bounded split execution | Behavioral | Partial | M4/M10 | Explicit task tree/budget | R/R/R/R/J/R | [M4 local-scale plan](../project/m4-local-scale-plan-evidence.md), [parallel-split runtime](../project/m4-parallel-split-evidence.md), [`local_split_runtime.rs`](../../crates/oxide-batch/tests/local_split_runtime.rs), [`postgres_local_split_crash_recovery.rs`](../../crates/oxide-batch/tests/postgres_local_split_crash_recovery.rs) | Format-3 split/join identity plus tasklet-only launch-scoped factories, bounded owned child polling, deterministic status/exit aggregation, durable join decisions, unknown propagation, completed-child reuse, both sibling policies, panic conversion, branch-concurrency and pool ceilings, parent stop, completion-order and sequential-fallback equivalence, and PostgreSQL process-kill are implemented; chunk branches remain unrequired at this boundary; the bounded load, cancellation-latency, telemetry-overhead, and soak reports are recorded by the [M4 exit evidence](../project/m4-exit-evidence.md), and complete scale remains M10 |
+| SCALE-PARSTEP-001 | 6.0.4 [scale] | Parallel steps | Independent flow branches execute concurrently and aggregate | Structured bounded split execution | Behavioral | Partial | M4/M10 | Explicit task tree/budget | R/R/R/R/J/R | [M4 local-scale plan](../project/m4-local-scale-plan-evidence.md), [parallel-split runtime](../project/m4-parallel-split-evidence.md), [`local_split_runtime.rs`](../../crates/oxide-batch/tests/local_split_runtime.rs), [`postgres_local_split_crash_recovery.rs`](../../crates/oxide-batch/tests/postgres_local_split_crash_recovery.rs) | [M4 bounded local-scale](../architecture/local-scale.md) | Format-3 split/join identity plus tasklet-only launch-scoped factories, bounded owned child polling, deterministic status/exit aggregation, durable join decisions, unknown propagation, completed-child reuse, both sibling policies, panic conversion, branch-concurrency and pool ceilings, parent stop, completion-order and sequential-fallback equivalence, and PostgreSQL process-kill are implemented; chunk branches remain unrequired at this boundary; the bounded load, cancellation-latency, telemetry-overhead, and soak reports are recorded by the [M4 exit evidence](../project/m4-exit-evidence.md), and complete scale remains M10 |
 | SCALE-MTSTEP-001 | 6.0.4 [scale] | Multi-threaded step | Item processing uses concurrent workers under thread-safety rules | Typed concurrent processor path | Behavioral | Planned | M10 | Transaction/thread model differs | R/R/R/R/J/R | — | [Item model](../architecture/item-processing-model.md) | — |
 | SCALE-LOCALCHUNK-001 | 6.0.4 [scale] | Local chunking | Chunks process concurrently on one host with ordered commit rules | Local worker queue and commit barrier | Behavioral | Planned | M10 | Rust structured concurrency | R/R/R/R/J/R | — | [Item model](../architecture/item-processing-model.md) | — |
-| SCALE-LOCALPART-001 | 6.0.4 [scale] | Local partitioning | Durable partitions execute in bounded local workers | Local assignment/aggregation | Behavioral | Partial | M4/M10 | No lease or fencing in the local slice | R/R/R/R/R/R | [M4 local-scale plan](../project/m4-local-scale-plan-evidence.md), [partition repository](../project/m4-partition-repository-evidence.md), [local-partition runtime](../project/m4-local-partition-runtime-evidence.md) | Format-3 identity/budgets, atomic schema-3 planning, durable-worker-derived result CAS, deterministic atomic parent aggregation, owned tasklet-only bounded workers, cancellation/panic conversion, restart carry-forward, runtime `UNKNOWN` blocking, sequential equivalence, PostgreSQL process-kill fixtures, and the [P-010](../engineering/measurements/m4/p-010.json) worker/pool ceiling and scaling measurements are implemented; released verification remains pending and RFC-0009 remote semantics remain proposed |
+| SCALE-LOCALPART-001 | 6.0.4 [scale] | Local partitioning | Durable partitions execute in bounded local workers | Local assignment/aggregation | Behavioral | Partial | M4/M10 | No lease or fencing in the local slice | R/R/R/R/R/R | [M4 local-scale plan](../project/m4-local-scale-plan-evidence.md), [partition repository](../project/m4-partition-repository-evidence.md), [local-partition runtime](../project/m4-local-partition-runtime-evidence.md) | [M4 bounded local-scale](../architecture/local-scale.md) | Format-3 identity/budgets, atomic schema-3 planning, durable-worker-derived result CAS, deterministic atomic parent aggregation, owned tasklet-only bounded workers, cancellation/panic conversion, restart carry-forward, runtime `UNKNOWN` blocking, sequential equivalence, PostgreSQL process-kill fixtures, and the [P-010](../engineering/measurements/m4/p-010.json) worker/pool ceiling and scaling measurements are implemented; released verification remains pending and RFC-0009 remote semantics remain proposed |
 | SCALE-REMOTEPART-001 | 6.0.4 [scale] | Remote partitioning | Remote workers run partitions; restart does not depend on fabric | Fenced durable assignment protocol | Behavioral | Planned | M11 | Stronger lease/fencing rules | R/R/R/R/R/R | — | [Distributed execution](../architecture/distributed-execution.md) | RFC-0009 |
 | SCALE-REMOTECHUNK-001 | 6.0.4 [integration] | Remote chunking | Manager forms work; remote workers process/write with durable delivery | Versioned chunk command/result protocol | Behavioral | Planned | M11 | Broker-neutral envelope | R/R/R/R/R/R | — | [Distributed execution](../architecture/distributed-execution.md) | Delivery profile required |
 | SCALE-REMOTESTEP-001 | 6.0.4 [scale] | Remote step | Whole step executes on a remote compatible worker | Remote step plan node | Behavioral | Planned | M11 | Artifact/capability verification | R/R/R/R/R/R | — | [Distributed execution](../architecture/distributed-execution.md) | Spring 6 feature |
@@ -197,6 +197,49 @@ claim may not.
   release blocker.
 - M12 ledger closure requires zero `Unknown`, `Deferred`, `Planned`,
   `Implemented`, `Partial`, and untested row.
+
+## M5 disposition and promotion set
+
+M5 is the first milestone that may promote a row to `Verified`. The population
+at the M5 design gate is `83` rows: `0` `Verified`, `29` `Implemented`, `13`
+`Partial`, `39` `Planned`, and `2` `Unknown`.
+
+**Advertised embedded-kernel set.** These `29` rows are the capability the
+preview advertises and the only rows M5 may promote to `Verified`:
+
+`DOM-JOB-001`, `DOM-INSTANCE-001`, `DOM-JOBEXEC-001`, `DOM-STEPEXEC-001`,
+`DOM-PARAM-001`, `DOM-STATUS-001`, `DOM-EXIT-001`, `LIFE-LAUNCH-001`,
+`LIFE-COMPLETE-001`, `LIFE-RESTART-001`, `LIFE-ABANDON-001`,
+`LIFE-DEFINITION-001`, `STEP-TASKLET-001`, `STEP-TASKLET-PANIC-001`,
+`STEP-CHUNK-001`, `ITEM-READER-001`, `ITEM-PROCESSOR-001`, `ITEM-WRITER-001`,
+`ITEM-CHECKPOINT-001`, `FT-BACKOFF-001`, `LISTENER-JOBSTEP-001`,
+`REPO-EXPLORE-001`, `REPO-OPERATOR-001`, `OPS-CLI-001`, `OBS-EXEC-001`,
+`OBS-METRICS-001`, `DB-POSTGRES-001`, `META-UPGRADE-001`, `META-CONTEXT-001`.
+
+Promotion requires a named released OxideBatch version and every evidence link
+its profile marks required. Two rows carry a named gap that must close first:
+`META-CONTEXT-001` currently links a spike rather than codec migration tests,
+and `REPO-RETENTION-001`-adjacent least-privilege separation must run on the
+released schema-3 fixture before any repository row is promoted.
+
+**Rows that stay `Partial`.** `LIFE-STOP-001`, `LIFE-RECOVER-001`,
+`STEP-STARTLIMIT-001`, `FT-RETRY-001`, `FT-SKIP-001`, `FT-ROLLBACK-001`,
+`LISTENER-ITEM-001`, `FLOW-SEQUENCE-001`, `FLOW-DECIDER-001`,
+`REPO-COMMAND-001`, `REPO-RETENTION-001`, `SCALE-PARSTEP-001`, and
+`SCALE-LOCALPART-001` are implemented at a bounded M0-M4 boundary and expand in
+M6-M11. They are not advertised as verified capability, and the preview
+limitations record names each one and its bound.
+
+**`ITEM-STREAM-001`** touches M2 but stays `Planned`: the M2 component evidence
+exists, while the ordered open/update/close contract is M6 scope.
+
+**Deferred and unreviewed rows.** The `39` `Planned` rows keep their accepted
+milestone. The `2` `Unknown` rows, `DB-MONGO-001` and `IO-MAILLDAP-001`, are
+M8 and M13 population and are outside the M0-M4 disposition review; they remain
+visible and unreviewed rather than being silently dropped.
+
+The visibility of every non-advertised row prevents any full-parity,
+enterprise-readiness, or project-wide production claim by the preview.
 
 [api]: https://docs.spring.io/spring-batch/reference/api/index.html
 [domain]: https://docs.spring.io/spring-batch/reference/domain.html
