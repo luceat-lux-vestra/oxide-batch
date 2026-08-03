@@ -31,6 +31,16 @@ evidence passes.
 | 2 | `oxide-batch-repository` | repository, explorer, operator, retention, and transaction ports, capability descriptors, and their contract suite | Authorized |
 | 3 | `oxide-batch-plan` | plan compilation, graph normalization, manifest encoding, and fingerprinting | Authorized only after the M5 plan and fingerprint stabilization slice lands |
 
+The moved content above is named in prose, and the delivered code does not
+divide along it: the repository port names plan identities in its signatures
+while the forbidden-dependency rules below forbid that edge.
+[ADR-0011](decisions/0011-extraction-order-and-value-placement.md) proposes the
+per-type placement that resolves it without changing this order or the accepted
+inward dependency rule. Both stages are on hold until that decision is accepted
+or replaced; the
+[crate-extraction evidence](../project/m5-crate-extraction-evidence.md) records
+the measurements behind it.
+
 Engine, item, adapter, observability, test-kit, distributed-protocol, and
 integration boundaries are **deferred past M5**. They are named by RFC-0003 as
 target direction and are not authorized by this gate.

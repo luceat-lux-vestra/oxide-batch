@@ -28,6 +28,7 @@ data, correctness, security, or dependency direction.
 | [0008](0008-item-component-contract.md) | Item component contract and erasure boundary | Accepted; partially supersedes ADR-0002 |
 | [0009](0009-definition-fingerprint-input-set.md) | Definition fingerprint input set | Accepted |
 | [0010](0010-extracted-crate-publication.md) | Extracted implementation crate publication | Accepted; partially supersedes ADR-0001 |
+| [0011](0011-extraction-order-and-value-placement.md) | Durable value placement across extracted boundaries | Proposed |
 
 Copy [template.md](template.md) for a new decision. ADRs are immutable after
 acceptance except for status and links; changed decisions receive a new ADR.
@@ -37,6 +38,10 @@ acceptance except for status and links; changed decisions receive a new ADR.
 [RFC-0009](../../rfcs/0009-transport-neutral-worker-protocol.md) may add the
 distributed protocol decision after its state-machine, threat, migration, and
 equivalence evidence passes. It is not accepted.
+
+[ADR-0011](0011-extraction-order-and-value-placement.md) proposes the value
+placement that M5 crate-extraction stages 2 and 3 require. Those stages cannot
+begin until it is accepted or replaced.
 
 RFC-0005 is no longer pending: it was accepted on 2026-08-03 on the evidence of
 [spike 0004](../spikes/0004-static-and-erased-item-path.md), and its decision

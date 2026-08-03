@@ -344,6 +344,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   supersedes ADR-0001 for the three M5-authorized crates only. The release
   workflows now package, checksum, generate SBOMs for, attest, and publish
   those crates in dependency order.
+- Crate-extraction stages 2 and 3 are on hold behind proposed ADR-0011. The
+  repository port names `NodeId` and `StartLimit` in its signatures while the
+  accepted contract forbids `oxide-batch-repository` from depending on
+  `oxide-batch-plan`, so the named boundary content and the code disagree. The
+  ADR proposes keeping the order and the accepted inward dependency rule, and
+  placing each type in the lowest crate that every crate needing it can depend
+  on.
 - `MAX_NODES` and `MAX_TRANSITIONS` moved with the manifest reader that
   enforces them. Both facade paths resolve unchanged, and neither bound
   participates in a definition fingerprint.
