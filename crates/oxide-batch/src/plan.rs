@@ -20,16 +20,13 @@ use std::num::NonZeroU32;
 
 use serde_json::{Value, json};
 
-use crate::definition::{definition_token, validate_token};
 use crate::{
     ChunkComponentRevisions, ChunkSize, ComponentRevision, DefinitionError, DefinitionIdentity,
-    DefinitionRevision, DefinitionTokenKind, ExitCode, FaultPolicy, JobName, StepName,
+    DefinitionRevision, DefinitionTokenKind, ExitCode, FaultPolicy, FlowTarget, JobName, MAX_NODES,
+    MAX_PARTITIONS, MAX_TRANSITIONS, NodeId, StartControls, StepName, TerminalKind,
 };
+use oxide_batch_core::{definition_token, validate_token};
 
-/// The maximum number of nodes one M3 plan may contain.
-pub const MAX_NODES: usize = 1_024;
-/// The maximum number of transitions one M3 plan may contain.
-pub const MAX_TRANSITIONS: usize = 4_096;
 /// The maximum number of transitions leaving one node.
 pub const MAX_OUTGOING_TRANSITIONS: usize = 64;
 /// The maximum length of one exit pattern in UTF-8 bytes.
@@ -38,8 +35,6 @@ pub const MAX_PATTERN_BYTES: usize = 64;
 pub const MAX_SPLIT_BRANCHES: usize = 8;
 /// The maximum number of linear steps in one split branch.
 pub const MAX_BRANCH_STEPS: usize = 8;
-/// The maximum number of durable local partitions in one partitioned step.
-pub const MAX_PARTITIONS: u16 = 1_024;
 /// The maximum number of concurrent local partition workers.
 pub const MAX_PARTITION_WORKERS: u8 = 64;
 
@@ -174,14 +169,6 @@ impl Default for PartitionBudget {
 }
 
 definition_token!(
-    NodeId,
-    DefinitionTokenKind::Node,
-    "A stable logical identifier for one flow-graph node.
-
-Logical identity survives display-name changes. Runtime and database
-identifiers are never node identifiers."
-);
-definition_token!(
     DeciderRevision,
     DefinitionTokenKind::Decider,
     "An application-owned revision token for one deterministic decider."
@@ -207,79 +194,6 @@ impl DecisionInputVersion {
     #[must_use]
     pub const fn get(self) -> u32 {
         self.0.get()
-    }
-}
-
-/// The maximum number of step executions one logical step may start.
-///
-/// The default is `u32::MAX`: an effectively unrestricted step that remains a
-/// finite typed value rather than an absent bound.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct StartLimit(NonZeroU32);
-
-impl StartLimit {
-    /// The unrestricted default.
-    pub const UNRESTRICTED: Self = Self(NonZeroU32::MAX);
-
-    /// Constructs a nonzero start limit.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PlanError::ZeroStartLimit`] for zero, because a step that can
-    /// never start is a definition mistake rather than a policy.
-    pub fn new(value: u32) -> Result<Self, PlanError> {
-        NonZeroU32::new(value)
-            .map(Self)
-            .ok_or(PlanError::ZeroStartLimit)
-    }
-
-    /// Returns the limit.
-    #[must_use]
-    pub const fn get(self) -> u32 {
-        self.0.get()
-    }
-}
-
-impl Default for StartLimit {
-    fn default() -> Self {
-        Self::UNRESTRICTED
-    }
-}
-
-/// Restart-relevant start controls for one logical step.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct StartControls {
-    start_limit: StartLimit,
-    allow_start_if_complete: bool,
-}
-
-impl StartControls {
-    /// Constructs explicit start controls.
-    #[must_use]
-    pub const fn new(start_limit: StartLimit, allow_start_if_complete: bool) -> Self {
-        Self {
-            start_limit,
-            allow_start_if_complete,
-        }
-    }
-
-    /// Returns the maximum number of starts for one job instance.
-    #[must_use]
-    pub const fn start_limit(&self) -> StartLimit {
-        self.start_limit
-    }
-
-    /// Returns whether a restart path reruns an already completed step.
-    #[must_use]
-    pub const fn allow_start_if_complete(&self) -> bool {
-        self.allow_start_if_complete
-    }
-
-    fn manifest_value(self) -> Value {
-        json!({
-            "allow_start_if_complete": self.allow_start_if_complete,
-            "start_limit": self.start_limit.get()
-        })
     }
 }
 
@@ -481,55 +395,6 @@ impl Ord for PatternSpecificity {
 impl PartialOrd for PatternSpecificity {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
-    }
-}
-
-/// A node that ends the job without starting further work.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[non_exhaustive]
-pub enum TerminalKind {
-    /// The job completes.
-    Complete,
-    /// The job fails.
-    Fail,
-    /// The job stops and remains restartable.
-    Stop,
-}
-
-impl TerminalKind {
-    /// Returns the stable manifest and telemetry name.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Complete => "complete",
-            Self::Fail => "fail",
-            Self::Stop => "stop",
-        }
-    }
-}
-
-/// The destination one transition selects.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum FlowTarget {
-    /// Another graph node starts next.
-    Node(NodeId),
-    /// The job ends at a terminal.
-    Terminal(TerminalKind),
-}
-
-impl FlowTarget {
-    fn manifest_value(&self) -> Value {
-        match self {
-            Self::Node(id) => json!({ "node": id.as_str() }),
-            Self::Terminal(kind) => json!({ "terminal": kind.as_str() }),
-        }
-    }
-
-    fn sort_key(&self) -> (u8, &str) {
-        match self {
-            Self::Node(id) => (0, id.as_str()),
-            Self::Terminal(kind) => (1, kind.as_str()),
-        }
     }
 }
 
@@ -1541,9 +1406,9 @@ fn flow_manifest(
     json!({
         "entry": entry.as_str(),
         "format": if local_scale {
-            crate::definition::MANIFEST_FORMAT_LOCAL_SCALE
+            oxide_batch_core::MANIFEST_FORMAT_LOCAL_SCALE
         } else {
-            crate::definition::MANIFEST_FORMAT_FLOW
+            oxide_batch_core::MANIFEST_FORMAT_FLOW
         },
         "job": job_name.as_str(),
         "nodes": node_values,
@@ -1753,8 +1618,6 @@ pub enum PlanError {
         /// Maximum accepted pattern length in UTF-8 bytes.
         max_bytes: usize,
     },
-    /// A start limit of zero can never start its step.
-    ZeroStartLimit,
     /// A decision input-contract version of zero is not a version.
     ZeroDecisionInputVersion,
     /// A split declared fewer than two or more than eight branches.
@@ -1901,7 +1764,6 @@ impl fmt::Display for PlanError {
                 formatter,
                 "exit pattern must be 1 to {max_bytes} bytes without control characters"
             ),
-            Self::ZeroStartLimit => formatter.write_str("start limit must be nonzero"),
             Self::ZeroDecisionInputVersion => {
                 formatter.write_str("decision input version must be nonzero")
             }

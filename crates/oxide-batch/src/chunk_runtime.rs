@@ -1146,7 +1146,10 @@ where
                 masked_stop = token;
                 &masked_stop
             }
-            InFlightPolicy::RollbackChunk => stop,
+            // `InFlightPolicy::RollbackChunk`, and any policy this build does
+            // not know: `InFlightPolicy` is `#[non_exhaustive]`, and an
+            // unrecognized policy never masks a shutdown request.
+            _ => stop,
         };
         let scope = AttemptScope {
             correlation,
@@ -1602,7 +1605,12 @@ where
                     FaultDecision::Stop => {
                         return Verdict::Terminal(ChunkExecutionOutcome::Stopped);
                     }
-                    FaultDecision::FailAndRollback => {
+                    // `FaultDecision::FailAndRollback`, and any decision this
+                    // build does not know: `FaultDecision` is
+                    // `#[non_exhaustive]`, and an unrecognized decision rolls
+                    // back and fails rather than committing work or claiming an
+                    // unknown commit.
+                    _ => {
                         return Verdict::Terminal(ChunkExecutionOutcome::Failed(terminal));
                     }
                 }
@@ -1809,7 +1817,12 @@ where
                     FaultDecision::Stop => {
                         return Verdict::Terminal(ChunkExecutionOutcome::Stopped);
                     }
-                    FaultDecision::FailAndRollback => {
+                    // `FaultDecision::FailAndRollback`, and any decision this
+                    // build does not know: `FaultDecision` is
+                    // `#[non_exhaustive]`, and an unrecognized decision rolls
+                    // back and fails rather than committing work or claiming an
+                    // unknown commit.
+                    _ => {
                         return Verdict::Terminal(ChunkExecutionOutcome::Failed(terminal));
                     }
                 }
@@ -1978,9 +1991,11 @@ where
                 }
                 FaultDecision::Unknown => Verdict::Terminal(ChunkExecutionOutcome::Unknown),
                 FaultDecision::Stop => Verdict::Terminal(ChunkExecutionOutcome::Stopped),
-                FaultDecision::FailAndRollback => {
-                    Verdict::Terminal(ChunkExecutionOutcome::Failed(terminal))
-                }
+                // `FaultDecision::FailAndRollback`, and any decision this build
+                // does not know: `FaultDecision` is `#[non_exhaustive]`, and an
+                // unrecognized decision rolls back and fails rather than
+                // committing work or claiming an unknown commit.
+                _ => Verdict::Terminal(ChunkExecutionOutcome::Failed(terminal)),
             }
         }
     }

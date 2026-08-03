@@ -78,6 +78,29 @@ The gate's decision row is left as it was decided. The exclusion list it fixed
 is unchanged and is now enforced by an executable member allowlist rather than
 by review.
 
+## Crate publication correction
+
+The staged crate-extraction gate required every extracted crate to be `publish
+= false` while the milestone also publishes the facade as a `0.x` preview.
+Issue [#99](https://github.com/luceat-lux-vestra/oxide-batch/issues/99) found
+the two rules incompatible before moving any code: cargo rewrites a published
+archive's path dependencies to registry dependencies, so `oxide-batch` cannot
+depend on an unpublished crate, and the first extraction stage would have
+failed this gate's own `package_dry_run_succeeds_for_every_workspace_crate`
+scenario.
+
+[RFC-0011](../rfcs/0011-publication-of-extracted-implementation-crates.md)
+records the conflict and the reproduction, and
+[ADR-0010](../architecture/decisions/0010-extracted-crate-publication.md)
+resolves it: the three authorized crates are published as internal crates in
+lockstep with the facade, disclosed as implementation detail, and given no
+independent cadence, support window, or ledger row. The authorized stage set,
+forbidden-dependency rules, equivalence obligations, durable-invariance
+obligation, and per-stage reversal are unchanged, and no additional boundary is
+authorized.
+
+The gate's decision row is left as it was decided.
+
 ## Impact classification
 
 | Area | M5 decision |

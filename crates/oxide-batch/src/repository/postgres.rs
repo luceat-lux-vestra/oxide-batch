@@ -2327,7 +2327,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 .bind(request.input_digest().as_slice())
                 .bind(request.observed_outcome().as_str())
                 .bind(flow_target_node(request.target()))
-                .bind(flow_terminal_code(request.target()))
+                .bind(flow_terminal_code(request.target())?)
                 .fetch_one(&mut **self.transaction()?)
                 .await
                 .map_err(|_| RepositoryError::Unavailable)?;
@@ -2365,7 +2365,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             .bind(request.observed_outcome().as_str())
             .bind(flow_target_node(request.target()))
             .bind(request.kind().durable_code())
-            .bind(flow_terminal_code(request.target()))
+            .bind(flow_terminal_code(request.target())?)
             .bind(request.plan_fingerprint().as_slice())
             .bind(request.input_digest().as_slice())
             .bind(decided_ms)
@@ -4294,6 +4294,10 @@ fn encode_identifying_parameters(key: &JobInstanceKey) -> Result<Value, Reposito
                 "bool",
                 Value::Bool(parameter.as_bool().ok_or(RepositoryError::Unavailable)?),
             ),
+            // `ParameterValueKind` is `#[non_exhaustive]`. A kind this adapter
+            // cannot spell is rejected rather than written under a guessed
+            // durable tag, because the encoding selects the instance key.
+            _ => return Err(RepositoryError::Unavailable),
         };
         object.insert(
             name.as_str().to_owned(),
@@ -4373,7 +4377,7 @@ async fn ensure_definition(
             actual: actual.clone(),
         });
     }
-    crate::definition::check_manifest_format(definition.manifest_format()).map_err(|_| {
+    oxide_batch_core::check_manifest_format(definition.manifest_format()).map_err(|_| {
         RepositoryError::UnsupportedManifestVersion {
             format: definition.manifest_format(),
         }
@@ -4620,13 +4624,16 @@ fn flow_target_node(target: &FlowTarget) -> Option<&str> {
     }
 }
 
-fn flow_terminal_code(target: &FlowTarget) -> Option<&'static str> {
-    match target {
+fn flow_terminal_code(target: &FlowTarget) -> Result<Option<&'static str>, RepositoryError> {
+    Ok(match target {
         FlowTarget::Node(_) => None,
         FlowTarget::Terminal(TerminalKind::Complete) => Some("COMPLETE"),
         FlowTarget::Terminal(TerminalKind::Fail) => Some("FAIL"),
         FlowTarget::Terminal(TerminalKind::Stop) => Some("STOP"),
-    }
+        // `TerminalKind` is `#[non_exhaustive]`. A terminal this adapter cannot
+        // spell is rejected rather than written as neither node nor terminal.
+        FlowTarget::Terminal(_) => return Err(RepositoryError::Unavailable),
+    })
 }
 
 fn decode_flow_decision(row: &PgRow) -> Result<FlowDecision, RepositoryError> {

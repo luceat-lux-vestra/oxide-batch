@@ -1,0 +1,27 @@
+{
+  "label": "baseline",
+  "environment": {
+    "commit": "25dc6857de2e46ec5e4d14d1e2a37a7e444b84dc",
+    "clean_tree": false,
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "host": "Darwin-arm64",
+    "profile": "dev, plus one release build for the operator CLI"
+  },
+  "build_seconds": {
+    "clean_workspace_all_features": 23.0,
+    "clean_facade_all_features": 21.9,
+    "incremental_facade_all_features": 12.2
+  },
+  "release_binary_bytes": {
+    "oxide-batch-cli": 7031488
+  },
+  "packaged_files": {
+    "oxide-batch": 119,
+    "oxide-batch-cli": 21
+  },
+  "workspace_dependency_edges": [
+      "oxide-batch-cli -> oxide-batch",
+      "oxide-batch-m0-spikes -> oxide-batch",
+      "oxide-batch-m6-spikes -> oxide-batch"
+  ]
+}

@@ -212,7 +212,12 @@ impl TelemetrySpanStatus {
             BatchStatus::Stopped => Self::Cancelled,
             BatchStatus::Failed | BatchStatus::Abandoned => Self::Error,
             BatchStatus::Completed => Self::Ok,
-            BatchStatus::Unknown => Self::Unknown,
+            // `BatchStatus` is `#[non_exhaustive]`, so a status this build
+            // does not know reports the outcome it has: unknown.
+            // `BatchStatus::Unknown`, and any status this build does not know:
+            // `BatchStatus` is `#[non_exhaustive]`, and an unrecognized status
+            // reports the outcome it has.
+            _ => Self::Unknown,
         }
     }
 

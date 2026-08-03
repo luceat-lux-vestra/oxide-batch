@@ -10,12 +10,12 @@ Potential future workspace crates include:
 | Package | Intended role | Initial publication |
 | --- | --- | --- |
 | `oxide-batch` | Stable facade and curated re-exports | Public |
-| `oxide-batch-core` | Domain model and execution contracts | Undecided |
-| `oxide-batch-plan` | Definition graph and compiled plan | Undecided |
+| `oxide-batch-core` | Domain model and execution contracts | Internal, published with the facade |
+| `oxide-batch-plan` | Definition graph and compiled plan | Internal, published with the facade |
 | `oxide-batch-engine` | Execution engine | Undecided |
 | `oxide-batch-engine-tokio` | Explicit Tokio engine, if a separate boundary is justified | Undecided |
 | `oxide-batch-item` | Item/chunk/stream contracts | Undecided |
-| `oxide-batch-repository` | Persistence interfaces | Undecided |
+| `oxide-batch-repository` | Persistence interfaces | Internal, published with the facade |
 | `oxide-batch-repository-postgres` | PostgreSQL implementation | Likely public |
 | `oxide-batch-protocol` | Versioned worker/admin protocol | Undecided |
 | `oxide-batch-observability` | Telemetry integration | Undecided |
@@ -31,12 +31,26 @@ boundary still does not authorize publication.
 
 ## Publication rules
 
-- Publish only crates that have a documented user or integration boundary.
-- Mark internal-only packages with `publish = false`.
+- Publish only crates that have a documented user or integration boundary, or
+  that a published crate requires as an internal dependency under
+  [ADR-0010](../architecture/decisions/0010-extracted-crate-publication.md).
+- Mark internal-only packages with `publish = false` unless a published crate
+  depends on them. Cargo rewrites a published archive's path dependencies to
+  registry dependencies, so a publishable crate cannot depend on an
+  unpublished one.
+- An internal published crate states in its rustdoc landing page and README
+  that it is implementation detail with no stability promise and that
+  `oxide-batch` is the supported entry point. It receives no ledger row,
+  support window, or independent release cadence.
 - Never publish secrets, private fixtures, generated credentials, or internal
   incident data.
-- Run `cargo package --list` and `cargo publish --dry-run` before publication.
-- Publish workspace crates in dependency order.
+- Run `cargo package --workspace --list` and `cargo publish --workspace
+  --dry-run --locked` before publication. The workspace dry run resolves
+  unpublished members through a temporary local registry, so it succeeds
+  before the first upload.
+- Publish workspace crates in dependency order: `oxide-batch-core`,
+  `oxide-batch-repository`, `oxide-batch-plan`, `oxide-batch`,
+  `oxide-batch-cli`.
 - Use exact version requirements for workspace dependencies in published
   manifests while retaining local `path` dependencies.
 - Create a reviewed changelog entry and immutable Git tag for every release.

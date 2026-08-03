@@ -157,7 +157,13 @@ extension point is added merely to reserve later scope.
    applies [ADR-0009](../architecture/decisions/0009-definition-fingerprint-input-set.md).
 3. Component-boundary and staged crate-extraction work applies the accepted
    decision behind an unchanged facade with dependency, equivalence, and
-   packaging evidence.
+   packaging evidence. Delivered in part by issue
+   [#99](https://github.com/luceat-lux-vestra/oxide-batch/issues/99) and
+   recorded in the
+   [crate-extraction evidence](m5-crate-extraction-evidence.md), which applies
+   [ADR-0010](../architecture/decisions/0010-extracted-crate-publication.md).
+   Stage 1 is complete; stages 2 and 3 wait on the boundary correction that
+   record names.
 4. Context-codec and transaction-capability work applies the accepted
    direction with migration and rollback evidence where durable formats move.
 5. Facade and public-API review records the preview surface, its disclosure

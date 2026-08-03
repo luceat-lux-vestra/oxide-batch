@@ -14,7 +14,7 @@ additional maintainers join.
 | R-005 | Concurrent launches corrupt instance/execution identity | Medium | High | Repository | Database constraints, locking tests, optimistic versions |
 | R-006 | Execution-context changes make jobs unrestartable | Medium | High | Core | Version format; size bounds; backward-read fixtures |
 | R-007 | Blocking or panicking user code destabilizes Tokio workers | High | High | Runtime | Blocking adapter, panic boundary, resource limits, diagnostics |
-| R-008 | Premature multi-crate/public API split slows design changes | Medium | Medium | Maintainer | Private crates first; facade is the public contract |
+| R-008 | Premature multi-crate/public API split slows design changes | Medium | Medium | Maintainer | Extract only gated boundaries; facade is the only supported contract |
 | R-009 | Dependency/MSRV churn breaks enterprise builds | Medium | Medium | Release | MSRV CI, dependency review, controlled update policy |
 | R-010 | Telemetry leaks job parameters or creates cardinality incidents | Medium | High | Observability | Deny-by-default fields, safe wrappers, cardinality tests |
 | R-011 | PostgreSQL migrations cannot be rolled back safely | Medium | High | Repository | Forward-only policy, backup/restore drills, compatibility checks |
@@ -25,6 +25,7 @@ additional maintainers join.
 | R-016 | Optional features produce unsupported combinations | Medium | Medium | API | Additive feature rules and feature-matrix CI |
 | R-017 | Public error/API types expose replaceable dependencies | Medium | High | API | Facade-owned types and semver review |
 | R-018 | Operator recovery mutates ambiguous state incorrectly | Medium | High | Operations | Guarded commands, audit events, runbooks, confirmation |
+| R-019 | Internal published crates become a de facto support obligation | Medium | Medium | Release | ADR-0010 disclosure in rustdoc/README, no ledger row or support window, lockstep versions; revisit if direct dependents appear |
 
 ## Review rules
 

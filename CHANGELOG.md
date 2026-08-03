@@ -322,9 +322,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   CodeQL workflow scanning, and owned scheduled supply-chain failure reporting.
 - Protected-tag draft Release preparation with locked package verification,
   CycloneDX SBOM, SHA-256 checksums, and package provenance/SBOM attestations.
+- The `oxide-batch-core` implementation crate, holding domain identities, typed
+  parameters, statuses, execution records, lifecycle rules, bounded versioned
+  execution-context and checkpoint state, chunk sizing values, and
+  restart-relevant definition identity. It is implementation detail with no
+  stability promise; `oxide-batch` remains the only supported entry point and
+  re-exports every supported item under its existing path.
+- Staged crate-extraction evidence checks: `cargo xtask deps` fails the build on
+  a forbidden dependency class or a workspace cycle, `cargo xtask package` runs
+  the workspace publish dry run for every publishable crate, and a facade
+  surface test holds all 424 exported paths against a committed snapshot while
+  proving each path still resolves.
 
 ### Changed
 
+- Extracted implementation crates are published in lockstep with the facade
+  rather than kept `publish = false`. Cargo rewrites a published archive's path
+  dependencies to registry dependencies, so a publishable facade cannot depend
+  on an unpublished crate; the first extraction stage would have made
+  `oxide-batch` unpublishable. RFC-0011 records the conflict and ADR-0010
+  supersedes ADR-0001 for the three M5-authorized crates only. The release
+  workflows now package, checksum, generate SBOMs for, attest, and publish
+  those crates in dependency order.
+- **Breaking (pre-1.0):** `StartLimit::new` returns `DefinitionError` instead of
+  `PlanError`. The type is restart-relevant definition data that the repository
+  port names, so ADR-0011 places it in the domain layer, and `PlanError` cannot
+  follow it there because nineteen of its variants carry a `NodeId` and two
+  carry an `ExitPattern`. `PlanError::ZeroStartLimit` is replaced by
+  `DefinitionError::ZeroStartLimit`. No durable byte, fingerprint, or manifest
+  member changes.
+- Durable flow identities and fault-policy values moved into
+  `oxide-batch-core`: `NodeId`, `FlowTarget`, `TerminalKind`, `StartControls`,
+  `StartLimit`, `MAX_PARTITIONS`, and the seventeen runtime-free fault-policy
+  values. Every `oxide-batch` path resolves unchanged. `BackoffSleeper` and
+  `BackoffOutcome` stay with the runtime, and the plan crate keeps the compiler
+  and the graph types only it constructs.
+- Crate-extraction stage 2 was attempted and not landed; the boundary is sound
+  and the repository crate compiles clean, but splitting the service
+  descriptors from their implementations needs public constructors and
+  accessors that are their own reviewed API change. The findings are recorded
+  in the crate-extraction evidence.
+- Crate-extraction stages 2 and 3 are unblocked by accepted ADR-0011. The
+  repository port names `NodeId` and `StartLimit` in its signatures while the
+  accepted contract forbids `oxide-batch-repository` from depending on
+  `oxide-batch-plan`, so the named boundary content and the code disagreed. The
+  ADR places durable data at or below the layer that persists it and keeps
+  compilers, runtimes, and engines above it, which makes the plan and
+  repository crates independent siblings over core.
+- `MAX_NODES` and `MAX_TRANSITIONS` moved with the manifest reader that
+  enforces them. Both facade paths resolve unchanged, and neither bound
+  participates in a definition fingerprint.
+- Facade code that matches `#[non_exhaustive]` domain enums now takes an
+  explicit conservative arm, because exhaustive matching is not available
+  outside the crate that declares an enum. An unknown status reports an unknown
+  span outcome and the highest split severity, an unknown in-flight policy
+  never masks a shutdown request, and an unknown parameter kind is rejected
+  rather than written under a guessed durable tag.
 - RFC-0005 stays `Proposed` through M5 by a recorded continued-deferral
   decision: its own approval gate requires a spike that has not run, and
   changing the item hot path underneath the M5 fingerprint and extraction work

@@ -26,8 +26,9 @@ apply only after additional public crates are approved.
 - [ ] Run required, deep, and release-candidate CI suites.
 - [ ] Record source commit, toolchain, package file list, and checksums.
 - [ ] Generate SBOM, license report, and provenance/attestation.
-- [ ] Run `cargo package --list` and inspect every public package.
-- [ ] Run locked publish dry-runs in dependency order.
+- [ ] Run `cargo package --workspace --list` and inspect every package.
+- [ ] Run `cargo publish --workspace --dry-run --locked`, which orders the
+      dry run by dependency and resolves unpublished members locally.
 - [ ] Install/test from generated package archives, not workspace paths.
 - [ ] Verify no credential, private fixture, or unrelated file is packaged.
 
@@ -38,7 +39,10 @@ apply only after additional public crates are approved.
 - [ ] Review the tag-generated draft Release, `.crate`, checksum, SBOM, and
       package attestations.
 - [ ] Publish the GitHub Release with notes and migration warnings.
-- [ ] Let Trusted Publishing release crates in dependency order, facade last.
+- [ ] Let Trusted Publishing release crates in dependency order:
+      `oxide-batch-core`, `oxide-batch-repository`, `oxide-batch-plan`,
+      `oxide-batch`, then `oxide-batch-cli`. Internal crates carry the facade
+      version and are never released on their own.
 - [ ] Do not retry a partially successful multi-crate publish blindly; inspect
       registry state and prepare compatible remaining versions.
 

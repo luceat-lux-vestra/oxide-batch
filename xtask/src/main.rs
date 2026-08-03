@@ -1,5 +1,7 @@
 //! Repository development tasks.
 
+mod deps;
+
 use std::env;
 use std::ffi::OsStr;
 use std::process::{Command, ExitCode};
@@ -11,98 +13,138 @@ struct Task<'a> {
     rustdoc_warnings: bool,
 }
 
+/// Formatting, lint, test, and documentation tasks.
+const QUALITY: &[Task<'static>] = &[
+    Task {
+        label: "format",
+        program: "cargo",
+        args: &["fmt", "--all", "--", "--check"],
+        rustdoc_warnings: false,
+    },
+    Task {
+        label: "clippy",
+        program: "cargo",
+        args: &[
+            "clippy",
+            "--workspace",
+            "--all-targets",
+            "--all-features",
+            "--",
+            "-D",
+            "warnings",
+        ],
+        rustdoc_warnings: false,
+    },
+    Task {
+        label: "tests",
+        program: "cargo",
+        args: &["test", "--workspace", "--all-features"],
+        rustdoc_warnings: false,
+    },
+    Task {
+        label: "documentation",
+        program: "cargo",
+        args: &["doc", "--workspace", "--all-features", "--no-deps"],
+        rustdoc_warnings: true,
+    },
+];
+
+/// Local tool versions the development environment requires.
+const DOCTOR: &[Task<'static>] = &[
+    Task {
+        label: "Rust compiler",
+        program: "rustc",
+        args: &["--version"],
+        rustdoc_warnings: false,
+    },
+    Task {
+        label: "Cargo",
+        program: "cargo",
+        args: &["--version"],
+        rustdoc_warnings: false,
+    },
+    Task {
+        label: "Git",
+        program: "git",
+        args: &["--version"],
+        rustdoc_warnings: false,
+    },
+];
+
+/// Packaging evidence for every publishable workspace crate.
+///
+/// The workspace dry run orders crates by dependency and resolves unpublished
+/// members through a temporary local registry, so it succeeds before the first
+/// upload of an extracted crate.
+const PACKAGE: &[Task<'static>] = &[
+    Task {
+        label: "package contents",
+        program: "cargo",
+        args: &["package", "--workspace", "--list"],
+        rustdoc_warnings: false,
+    },
+    Task {
+        label: "publish dry run",
+        program: "cargo",
+        args: &["publish", "--workspace", "--locked", "--dry-run"],
+        rustdoc_warnings: false,
+    },
+];
+
 fn main() -> ExitCode {
     let mut args = env::args();
     let _program = args.next();
 
-    match args.next().as_deref() {
-        Some("check") => run_all(&[
-            Task {
-                label: "format",
-                program: "cargo",
-                args: &["fmt", "--all", "--", "--check"],
-                rustdoc_warnings: false,
-            },
-            Task {
-                label: "clippy",
-                program: "cargo",
-                args: &[
-                    "clippy",
-                    "--workspace",
-                    "--all-targets",
-                    "--all-features",
-                    "--",
-                    "-D",
-                    "warnings",
-                ],
-                rustdoc_warnings: false,
-            },
-            Task {
-                label: "tests",
-                program: "cargo",
-                args: &["test", "--workspace", "--all-features"],
-                rustdoc_warnings: false,
-            },
-            Task {
-                label: "documentation",
-                program: "cargo",
-                args: &["doc", "--workspace", "--all-features", "--no-deps"],
-                rustdoc_warnings: true,
-            },
-        ]),
-        Some("doctor") => run_all(&[
-            Task {
-                label: "Rust compiler",
-                program: "rustc",
-                args: &["--version"],
-                rustdoc_warnings: false,
-            },
-            Task {
-                label: "Cargo",
-                program: "cargo",
-                args: &["--version"],
-                rustdoc_warnings: false,
-            },
-            Task {
-                label: "Git",
-                program: "git",
-                args: &["--version"],
-                rustdoc_warnings: false,
-            },
-        ]),
-        Some("package") => run_all(&[
-            Task {
-                label: "package contents",
-                program: "cargo",
-                args: &["package", "--package", "oxide-batch", "--list"],
-                rustdoc_warnings: false,
-            },
-            Task {
-                label: "publish dry run",
-                program: "cargo",
-                args: &[
-                    "publish",
-                    "--package",
-                    "oxide-batch",
-                    "--locked",
-                    "--dry-run",
-                ],
-                rustdoc_warnings: false,
-            },
-        ]),
+    let succeeded = match args.next().as_deref() {
+        Some("check") => run_all(QUALITY) && run_dependency_check(),
+        Some("deps") => run_dependency_check(),
+        Some("doctor") => run_all(DOCTOR),
+        Some("package") => run_all(PACKAGE),
         Some(command) => {
             eprintln!("unknown xtask command: {command}");
             usage();
-            ExitCode::FAILURE
+            false
         }
         None => {
             usage();
-            ExitCode::FAILURE
+            false
+        }
+    };
+
+    if succeeded {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+/// Reports whether the workspace satisfies the crate-extraction boundaries.
+fn run_dependency_check() -> bool {
+    eprintln!("==> workspace boundaries");
+
+    match deps::check() {
+        Ok(violations) if violations.is_empty() => {
+            eprintln!("workspace boundaries hold");
+            true
+        }
+        Ok(violations) => {
+            for violation in &violations {
+                eprintln!("boundary violation: {violation}");
+            }
+            eprintln!(
+                "see docs/architecture/crate-extraction.md for the authorized \
+                 boundaries"
+            );
+            false
+        }
+        Err(error) => {
+            eprintln!("could not check workspace boundaries: {error}");
+            false
         }
     }
 }
 
-fn run_all(tasks: &[Task<'_>]) -> ExitCode {
+fn run_all(tasks: &[Task<'_>]) -> bool {
     for task in tasks {
         eprintln!("==> {}", task.label);
 
@@ -117,16 +159,16 @@ fn run_all(tasks: &[Task<'_>]) -> ExitCode {
             Ok(status) if status.success() => {}
             Ok(status) => {
                 eprintln!("{} failed with {status}", task.label);
-                return ExitCode::FAILURE;
+                return false;
             }
             Err(error) => {
                 eprintln!("could not run {}: {error}", display_command(task));
-                return ExitCode::FAILURE;
+                return false;
             }
         }
     }
 
-    ExitCode::SUCCESS
+    true
 }
 
 fn display_command(task: &Task<'_>) -> String {
@@ -141,8 +183,9 @@ fn usage() {
     eprintln!(
         "usage: cargo xtask <command>\n\n\
          commands:\n\
-           check    run formatting, Clippy, tests, and rustdoc\n\
+           check    run formatting, Clippy, tests, rustdoc, and boundaries\n\
+           deps     check extraction boundaries and workspace cycles\n\
            doctor   show required local tool versions\n\
-           package  inspect and dry-run the public facade package"
+           package  inspect and dry-run every publishable crate"
     );
 }

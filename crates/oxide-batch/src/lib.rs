@@ -89,6 +89,79 @@
 //! exchange JSON object bytes, keeping serializer types out of the public
 //! contract. Their `Debug` output never includes payloads.
 //!
+//! [`DefinitionManifest`] reads canonical definition bytes back without
+//! guessing. A newer format, a non-canonical encoding, a floating-point value,
+//! an out-of-bound graph, or a digest that does not match the supplied bytes
+//! fails closed.
+//!
+//! ```
+//! use oxide_batch::{
+//!     ComponentRevision, DefinitionIdentity, DefinitionManifest, DefinitionRevision, JobName,
+//!     StepName,
+//! };
+//!
+//! let identity = DefinitionIdentity::tasklet(
+//!     &JobName::new("daily_import")?,
+//!     &StepName::new("import")?,
+//!     DefinitionRevision::new("2026-07-31")?,
+//!     &ComponentRevision::new("tasklet-v1")?,
+//! )?;
+//! let manifest = DefinitionManifest::read_verified(
+//!     identity.canonical_manifest(),
+//!     identity.manifest_digest(),
+//! )?;
+//! assert_eq!(manifest.format(), 1);
+//! assert_eq!(manifest.node_count(), None);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! [`FaultPolicy::decide`] is a pure function of the policy, a
+//! framework-owned [`FaultDescriptor`], and [`FaultEvidence`]:
+//!
+//! ```
+//! use std::time::Duration;
+//!
+//! use oxide_batch::{
+//!     BackoffPolicy, ChunkDeliveryMode, ClassifierRevision, FailureCategory, FailureId,
+//!     FailureSummary, FaultAction, FaultClassifier, FaultDecision, FaultDescriptor,
+//!     FaultEvidence, FaultPhase, FaultPolicy, FaultRule, RetryLimit, RetryOrdinal,
+//!     RetryStateLimit, SkipCounts, SkipLimit,
+//! };
+//!
+//! let classifier = FaultClassifier::new(
+//!     ClassifierRevision::new("import_v1")?,
+//!     [FaultRule::new(
+//!         FaultPhase::Write,
+//!         FailureCategory::Timeout,
+//!         FaultAction::retry(),
+//!     )?],
+//! )?;
+//! let policy = FaultPolicy::new(
+//!     classifier,
+//!     RetryLimit::new(3)?,
+//!     RetryStateLimit::new(64)?,
+//!     SkipLimit::NONE,
+//!     BackoffPolicy::exponential(Duration::from_millis(50), 2, Duration::from_secs(5))?,
+//! )?;
+//!
+//! let fault = FaultDescriptor::new(
+//!     FaultPhase::Write,
+//!     FailureSummary::new(FailureCategory::Timeout, FailureId::new(1)?),
+//!     RetryOrdinal::INITIAL,
+//!     SkipCounts::ZERO,
+//!     true,
+//!     ChunkDeliveryMode::AtomicSameResource,
+//! );
+//! assert_eq!(
+//!     policy.decide(&fault, FaultEvidence::NONE),
+//!     FaultDecision::Retry {
+//!         ordinal: RetryOrdinal::new(1)?,
+//!         delay: Duration::from_millis(50),
+//!     }
+//! );
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
 //! Run the complete in-memory example from the workspace root:
 //!
 //! ```text
@@ -102,9 +175,7 @@
 
 mod chunk;
 mod chunk_runtime;
-mod definition;
 mod diagnostics;
-mod domain;
 mod fault;
 mod fault_state;
 mod flow;
@@ -116,48 +187,26 @@ mod repository;
 mod runtime;
 mod service;
 mod shutdown;
-mod state;
 mod telemetry;
 
 pub use chunk::{
     BusinessStatement, BusinessTransaction, BusinessTransactionError, BusinessValue,
     BusinessValueKind, BusinessWriteResult, ChunkCommitReceipt, ChunkCompletion,
-    ChunkCompletionContext, ChunkCompletionError, ChunkCompletionOutcome, ChunkCount, ChunkCounts,
-    ChunkError, ChunkFaultProgress, ChunkProgress, ChunkSize, ChunkTransaction,
-    ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager, InheritedStepProgress,
-    ItemProcessor, ItemReader, ItemWriter, ProcessContext, ProcessOutcome, ProcessorError,
-    ReadContext, ReadOutcome, ReaderError, WriteContext, WriteOutcome, WriterError,
+    ChunkCompletionContext, ChunkCompletionError, ChunkCompletionOutcome, ChunkFaultProgress,
+    ChunkTransaction, ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager,
+    InheritedStepProgress, ItemProcessor, ItemReader, ItemWriter, ProcessContext, ProcessOutcome,
+    ProcessorError, ReadContext, ReadOutcome, ReaderError, WriteContext, WriteOutcome, WriterError,
 };
 pub use chunk_runtime::{
     ChunkAttemptOutcome, ChunkExecutionOutcome, ChunkExecutionReport, ChunkFailure, ChunkJob,
     ChunkLaunchReport, ChunkListener, ChunkListenerContext, ChunkListenerError,
     ChunkListenerFailure, ChunkListenerFailureKind, ChunkListenerPhase, ChunkStep,
 };
-pub use definition::{
-    ChunkComponentRevisions, ChunkDeliveryMode, ChunkRestartContract, ClassifierRevision,
-    ComponentRevision, DefinitionError, DefinitionIdentity, DefinitionManifest, DefinitionRevision,
-    DefinitionTokenKind, DefinitionUpgrade, DefinitionUpgradeKey, InFlightPolicy, ManifestError,
-    StepDefinitionUpgrade,
-};
 pub use diagnostics::{
     DiagnosticField, EventComponent, EventSeverity, ExecutionAttempt, ExecutionCorrelation,
     LifecycleEvent, LifecycleEventKind, LifecycleEventSink, MetricLabel,
 };
-pub use domain::{
-    BatchStatus, DomainError, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps,
-    ExecutionVersion, ExitCode, ExitStatus, FailureCategory, FailureId, FailureSummary,
-    IdentifierKind, JobExecution, JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey,
-    JobName, JobParameter, JobParameters, LifecycleError, LifecycleTransition, NameKind,
-    OperatorRequestId, ParameterName, ParameterRole, ParameterValue, ParameterValueKind,
-    RecoveryDecisionId, RetentionActionId, StepExecution, StepExecutionId, StepName,
-    StepPartitionId,
-};
-pub use fault::{
-    BackoffKind, BackoffOutcome, BackoffPolicy, BackoffSleeper, FaultAction, FaultClassifier,
-    FaultDecision, FaultDescriptor, FaultEvidence, FaultPhase, FaultPolicy, FaultPolicyError,
-    FaultRule, RetryLimit, RetryOrdinal, RetryStateLimit, RollbackDisposition, SkipCounts,
-    SkipLimit,
-};
+pub use fault::{BackoffOutcome, BackoffSleeper};
 pub use fault_state::{
     FaultProgress, FaultRuntime, FaultStateEntry, FaultStateEnvelope, FaultStateError,
     FaultStateFormatError, FaultStateStore, InMemoryFaultState, RetryCounts, RetryKey,
@@ -180,6 +229,24 @@ pub use listener::{
     JobExecutionListener, ListenerContext, ListenerError, ListenerFailure, ListenerFailureKind,
     ListenerPhase, StepExecutionListener,
 };
+pub use oxide_batch_core::{
+    BackoffKind, BackoffPolicy, BatchStatus, Checkpoint, ChunkComponentRevisions, ChunkCount,
+    ChunkCounts, ChunkDeliveryMode, ChunkError, ChunkProgress, ChunkRestartContract, ChunkSize,
+    ClassifierRevision, ComponentRevision, DefinitionError, DefinitionIdentity, DefinitionManifest,
+    DefinitionRevision, DefinitionTokenKind, DefinitionUpgrade, DefinitionUpgradeKey, DomainError,
+    DurableStateKind, ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps,
+    ExecutionVersion, ExitCode, ExitStatus, FailureCategory, FailureId, FailureSummary,
+    FaultAction, FaultClassifier, FaultDecision, FaultDescriptor, FaultEvidence, FaultPhase,
+    FaultPolicy, FaultPolicyError, FaultRule, FlowTarget, IdentifierKind, InFlightPolicy,
+    JobExecution, JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey, JobName,
+    JobParameter, JobParameters, LifecycleError, LifecycleTransition, MAX_NODES, MAX_PARTITIONS,
+    MAX_TRANSITIONS, ManifestError, NameKind, NodeId, OperatorRequestId, ParameterName,
+    ParameterRole, ParameterValue, ParameterValueKind, RecoveryDecisionId, RetentionActionId,
+    RetryLimit, RetryOrdinal, RetryStateLimit, RollbackDisposition, SkipCounts, SkipLimit,
+    StartControls, StartLimit, StateCodecError, StateError, StateLimits, StateSchemaId,
+    StateSchemaVersion, StepDefinitionUpgrade, StepExecution, StepExecutionId, StepName,
+    StepPartitionId, TerminalKind, VersionedStateCodec,
+};
 pub use partition::{
     MAX_PARTITION_CONTEXT_BYTES, MAX_PARTITION_KEY_BYTES, PartitionAggregate,
     PartitionAggregationError, PartitionKey, PartitionPlanEntry, PartitionResult,
@@ -187,12 +254,10 @@ pub use partition::{
 };
 pub use plan::{
     CompiledExecutionPlan, DeciderRevision, DecisionInputVersion, DecisionNode, ExitPattern,
-    FlowGraph, FlowNode, FlowSelectionError, FlowTarget, FlowTransition, JoinNode,
-    LocalFailurePolicy, MAX_BRANCH_STEPS, MAX_NODES, MAX_OUTGOING_TRANSITIONS,
-    MAX_PARTITION_WORKERS, MAX_PARTITIONS, MAX_PATTERN_BYTES, MAX_SPLIT_BRANCHES, MAX_TRANSITIONS,
-    NodeId, PartitionBudget, PartitionCount, PartitionedStepNode, PatternSpecificity, PlanError,
-    SplitBranch, SplitBudget, SplitNode, StartControls, StartLimit, StepComponents, StepNode,
-    TerminalKind,
+    FlowGraph, FlowNode, FlowSelectionError, FlowTransition, JoinNode, LocalFailurePolicy,
+    MAX_BRANCH_STEPS, MAX_OUTGOING_TRANSITIONS, MAX_PARTITION_WORKERS, MAX_PATTERN_BYTES,
+    MAX_SPLIT_BRANCHES, PartitionBudget, PartitionCount, PartitionedStepNode, PatternSpecificity,
+    PlanError, SplitBranch, SplitBudget, SplitNode, StepComponents, StepNode,
 };
 pub use repository::{
     BoxFuture, Clock, ExecutionControl, IdGenerationError, IdGenerator, InMemoryExplorer,
@@ -238,10 +303,6 @@ pub use shutdown::{
     ShutdownHookError, ShutdownHookStatus, ShutdownReport, ShutdownRequest, ShutdownSignal,
     ShutdownTaskPhase, TaskJoinDeadline, TelemetryFlushDeadline, TelemetryFlushStatus,
     UnjoinedPhase,
-};
-pub use state::{
-    Checkpoint, DurableStateKind, ExecutionContext, StateCodecError, StateError, StateLimits,
-    StateSchemaId, StateSchemaVersion, VersionedStateCodec,
 };
 pub use telemetry::{
     DEFAULT_DROP_REPORT_WINDOW, DEFAULT_EXPORT_QUEUE_RECORDS, DEFAULT_RETAINED_EVENT_CAPACITY,

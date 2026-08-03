@@ -550,7 +550,8 @@ impl Checkpoint {
     ///
     /// Retry keys are derived from the generation, so the runtime and every
     /// durable adapter must agree on this exact derivation.
-    pub(crate) fn generation_digest(&self) -> [u8; 32] {
+    #[must_use]
+    pub fn generation_digest(&self) -> [u8; 32] {
         self.to_json()
             .map_or([0; 32], |bytes| Sha256::digest(&bytes).into())
     }
