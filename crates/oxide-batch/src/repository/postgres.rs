@@ -4294,6 +4294,10 @@ fn encode_identifying_parameters(key: &JobInstanceKey) -> Result<Value, Reposito
                 "bool",
                 Value::Bool(parameter.as_bool().ok_or(RepositoryError::Unavailable)?),
             ),
+            // `ParameterValueKind` is `#[non_exhaustive]`. A kind this adapter
+            // cannot spell is rejected rather than written under a guessed
+            // durable tag, because the encoding selects the instance key.
+            _ => return Err(RepositoryError::Unavailable),
         };
         object.insert(
             name.as_str().to_owned(),
@@ -4373,7 +4377,7 @@ async fn ensure_definition(
             actual: actual.clone(),
         });
     }
-    crate::definition::check_manifest_format(definition.manifest_format()).map_err(|_| {
+    oxide_batch_core::check_manifest_format(definition.manifest_format()).map_err(|_| {
         RepositoryError::UnsupportedManifestVersion {
             format: definition.manifest_format(),
         }

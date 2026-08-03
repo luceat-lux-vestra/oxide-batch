@@ -1524,7 +1524,7 @@ impl<'a> JobLauncher<'a> {
         if matches!(outcome, TaskletExecutionOutcome::Unknown) {
             return Ok(BatchStatus::Unknown);
         }
-        if plan.manifest_format() == crate::definition::MANIFEST_FORMAT_ONE_STEP
+        if plan.manifest_format() == oxide_batch_core::MANIFEST_FORMAT_ONE_STEP
             && outcome == TaskletExecutionOutcome::Completed
             && exit_status.code().as_str() != "COMPLETED"
         {

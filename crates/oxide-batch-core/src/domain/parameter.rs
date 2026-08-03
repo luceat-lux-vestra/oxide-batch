@@ -326,7 +326,8 @@ impl JobParameters {
     /// The raw canonical bytes never leave this sensitivity-owning type. Flow
     /// records retain only the domain-separated SHA-256 result, so parameters
     /// are neither copied into repository rows nor exposed through diagnostics.
-    pub(crate) fn flow_input_digest(&self) -> [u8; 32] {
+    #[must_use]
+    pub fn flow_input_digest(&self) -> [u8; 32] {
         let mut hash = Sha256::new();
         hash.update(b"oxide-batch.flow-parameters.v1\0");
         for (name, parameter) in &self.values {

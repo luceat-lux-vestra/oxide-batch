@@ -712,6 +712,7 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "futures-executor",
  "futures-util",
+ "oxide-batch-core",
  "serde_json",
  "sha2 0.11.0",
  "sqlx",
@@ -729,6 +730,14 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "tokio",
+]
+
+[[package]]
+name = "oxide-batch-core"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "serde_json",
+ "sha2 0.11.0",
 ]
 
 [[package]]

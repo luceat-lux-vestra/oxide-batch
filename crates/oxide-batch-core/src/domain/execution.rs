@@ -348,7 +348,8 @@ impl FailureCategory {
     ///
     /// The spelling is durable data: an existing code is never renamed, and a
     /// new variant only ever adds a code.
-    pub(crate) const fn durable_code(self) -> &'static str {
+    #[must_use]
+    pub const fn durable_code(self) -> &'static str {
         match self {
             Self::InvalidDefinition => "INVALID_DEFINITION",
             Self::DuplicateExecution => "DUPLICATE_EXECUTION",
@@ -369,7 +370,8 @@ impl FailureCategory {
     }
 
     /// Returns the category for one durable code, rejecting unknown values.
-    pub(crate) fn from_durable_code(value: &str) -> Option<Self> {
+    #[must_use]
+    pub fn from_durable_code(value: &str) -> Option<Self> {
         Some(match value {
             "INVALID_DEFINITION" => Self::InvalidDefinition,
             "DUPLICATE_EXECUTION" => Self::DuplicateExecution,

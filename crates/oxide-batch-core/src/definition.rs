@@ -10,22 +10,36 @@ use sha2::{Digest, Sha256};
 use crate::{ChunkSize, JobName, StateSchemaId, StateSchemaVersion, StepName};
 
 const MAX_TOKEN_BYTES: usize = 128;
+/// The maximum number of nodes one plan may contain.
+///
+/// The bound is a framework capability rather than durable meaning: the
+/// manifest reader enforces the ceiling of the running build, and raising it
+/// in a later release must not change a fingerprint.
+pub const MAX_NODES: usize = 1_024;
+/// The maximum number of transitions one plan may contain.
+///
+/// The bound is a framework capability, on the same terms as [`MAX_NODES`].
+pub const MAX_TRANSITIONS: usize = 4_096;
 pub(crate) const MAX_MANIFEST_BYTES: usize = 64 * 1024;
-pub(crate) const MANIFEST_FORMAT_ONE_STEP: u16 = 1;
+/// The canonical manifest format for a one-step tasklet or chunk definition.
+pub const MANIFEST_FORMAT_ONE_STEP: u16 = 1;
 /// The canonical manifest format that captures a compiled flow graph.
-pub(crate) const MANIFEST_FORMAT_FLOW: u16 = 2;
+pub const MANIFEST_FORMAT_FLOW: u16 = 2;
 /// The canonical manifest format for bounded M4 local-scale plans.
-pub(crate) const MANIFEST_FORMAT_LOCAL_SCALE: u16 = 3;
+pub const MANIFEST_FORMAT_LOCAL_SCALE: u16 = 3;
 /// The newest canonical manifest format this runtime can interpret.
 pub(crate) const SUPPORTED_MANIFEST_FORMAT: u16 = MANIFEST_FORMAT_LOCAL_SCALE;
 const LEGACY_REVISION: &str = "__m1_repository_port_v1";
 const LEGACY_MANIFEST: &[u8] =
     br#"{"format":1,"repository_port":"m1","revision":"__m1_repository_port_v1"}"#;
 
-pub(crate) fn validate_token(
-    value: &str,
-    kind: DefinitionTokenKind,
-) -> Result<(), DefinitionError> {
+/// Validates one application-owned definition token.
+///
+/// # Errors
+///
+/// Rejects empty values, values longer than 128 UTF-8 bytes, surrounding
+/// whitespace, and control characters.
+pub fn validate_token(value: &str, kind: DefinitionTokenKind) -> Result<(), DefinitionError> {
     if value.is_empty() {
         return Err(DefinitionError::EmptyToken { kind });
     }
@@ -44,6 +58,12 @@ pub(crate) fn validate_token(
     Ok(())
 }
 
+/// Declares one validated, application-owned definition token type.
+///
+/// The generated constructor calls [`validate_token`] and returns
+/// [`DefinitionError`], both of which must be in scope where the macro is
+/// invoked.
+#[macro_export]
 macro_rules! definition_token {
     ($name:ident, $kind:expr, $docs:literal) => {
         #[doc = $docs]
@@ -71,8 +91,6 @@ macro_rules! definition_token {
         }
     };
 }
-
-pub(crate) use definition_token;
 
 definition_token!(
     DefinitionRevision,
@@ -182,8 +200,12 @@ impl DefinitionUpgrade {
         &self.to
     }
 
-    #[cfg(feature = "postgres")]
-    pub(crate) fn step_mapping(&self) -> &BTreeMap<StepName, StepName> {
+    /// Borrows the durable source-to-target step mapping.
+    ///
+    /// Durable adapters replay the mapping when they resolve a compatible
+    /// restart, so the order is the validated declaration order.
+    #[must_use]
+    pub fn step_mapping(&self) -> &BTreeMap<StepName, StepName> {
         &self.step_mapping
     }
 }
@@ -240,7 +262,8 @@ impl ChunkComponentRevisions {
     }
 
     /// Projects the restart-relevant chunk declaration into manifest members.
-    pub(crate) fn manifest_value(&self) -> serde_json::Value {
+    #[must_use]
+    pub fn manifest_value(&self) -> serde_json::Value {
         let mut value = json!({
             "checkpoint": {
                 "schema": self.restart.checkpoint_schema.as_str(),
@@ -350,7 +373,12 @@ pub struct DefinitionIdentity {
 }
 
 impl DefinitionIdentity {
-    pub(crate) fn legacy() -> Self {
+    /// Builds the identity durable rows written before manifests carried one.
+    ///
+    /// The bytes are frozen: a durable row that predates manifest identity
+    /// must keep resolving to exactly this value.
+    #[must_use]
+    pub fn legacy() -> Self {
         Self::from_canonical(
             None,
             DefinitionRevision(LEGACY_REVISION.to_owned()),
@@ -437,7 +465,12 @@ impl DefinitionIdentity {
     ///
     /// The supplied value must already be the manifest the plan compiler
     /// normalized; this constructor only encodes, bounds, and hashes it.
-    pub(crate) fn from_flow_manifest(
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DefinitionError::ManifestEncoding`] when the value is not a
+    /// supported canonical manifest or exceeds the bounded encoding.
+    pub fn from_flow_manifest(
         job_name: &JobName,
         revision: DefinitionRevision,
         manifest: &serde_json::Value,
@@ -541,7 +574,7 @@ impl DefinitionIdentity {
 ///
 /// Returns [`ManifestError::UnsupportedFormat`] for a newer format and
 /// [`ManifestError::MissingFormat`] for zero.
-pub(crate) const fn check_manifest_format(format: u16) -> Result<(), ManifestError> {
+pub const fn check_manifest_format(format: u16) -> Result<(), ManifestError> {
     if format == 0 {
         return Err(ManifestError::MissingFormat);
     }
@@ -594,26 +627,8 @@ impl fmt::Debug for DigestPrefix {
 /// an out-of-bound graph, or a digest that does not match the supplied bytes
 /// fails closed.
 ///
-/// ```
-/// use oxide_batch::{
-///     ComponentRevision, DefinitionIdentity, DefinitionManifest, DefinitionRevision, JobName,
-///     StepName,
-/// };
-///
-/// let identity = DefinitionIdentity::tasklet(
-///     &JobName::new("daily_import")?,
-///     &StepName::new("import")?,
-///     DefinitionRevision::new("2026-07-31")?,
-///     &ComponentRevision::new("tasklet-v1")?,
-/// )?;
-/// let manifest = DefinitionManifest::read_verified(
-///     identity.canonical_manifest(),
-///     identity.manifest_digest(),
-/// )?;
-/// assert_eq!(manifest.format(), 1);
-/// assert_eq!(manifest.node_count(), None);
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
+/// The runnable example lives in the `oxide-batch` facade documentation,
+/// because the supported import path is `oxide_batch`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DefinitionManifest {
     format: u16,
@@ -664,10 +679,10 @@ impl DefinitionManifest {
             if matches!(format, MANIFEST_FORMAT_FLOW | MANIFEST_FORMAT_LOCAL_SCALE) {
                 let nodes = array_len(members.get("nodes"))?;
                 let transitions = array_len(members.get("transitions"))?;
-                if nodes > crate::plan::MAX_NODES || transitions > crate::plan::MAX_TRANSITIONS {
+                if nodes > MAX_NODES || transitions > MAX_TRANSITIONS {
                     return Err(ManifestError::GraphOutOfBounds {
-                        max_nodes: crate::plan::MAX_NODES,
-                        max_transitions: crate::plan::MAX_TRANSITIONS,
+                        max_nodes: MAX_NODES,
+                        max_transitions: MAX_TRANSITIONS,
                     });
                 }
                 (Some(nodes), Some(transitions))

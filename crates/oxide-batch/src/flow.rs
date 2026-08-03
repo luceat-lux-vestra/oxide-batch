@@ -372,8 +372,8 @@ pub(crate) fn decision_matches_manifest(manifest: &Value, request: &FlowDecision
     if !matches!(
         format,
         Some(value)
-            if value == u64::from(crate::definition::MANIFEST_FORMAT_FLOW)
-                || value == u64::from(crate::definition::MANIFEST_FORMAT_LOCAL_SCALE)
+            if value == u64::from(oxide_batch_core::MANIFEST_FORMAT_FLOW)
+                || value == u64::from(oxide_batch_core::MANIFEST_FORMAT_LOCAL_SCALE)
     ) {
         return false;
     }
@@ -905,8 +905,7 @@ impl FlowJob {
     pub fn new(name: JobName, plan: CompiledExecutionPlan) -> Result<Self, FlowJobError> {
         if !matches!(
             plan.manifest_format(),
-            crate::definition::MANIFEST_FORMAT_FLOW
-                | crate::definition::MANIFEST_FORMAT_LOCAL_SCALE
+            oxide_batch_core::MANIFEST_FORMAT_FLOW | oxide_batch_core::MANIFEST_FORMAT_LOCAL_SCALE
         ) {
             return Err(FlowJobError::UnsupportedManifest {
                 format: plan.manifest_format(),
@@ -3382,10 +3381,14 @@ const fn split_status_severity(status: BatchStatus) -> u8 {
         BatchStatus::Stopped => 1,
         BatchStatus::Failed => 2,
         BatchStatus::Unknown => 3,
+        // `BatchStatus` is `#[non_exhaustive]`, so an unrecognized status
+        // takes the highest severity and dominates the aggregate rather than
+        // being mistaken for a completed branch.
         BatchStatus::Starting
         | BatchStatus::Started
         | BatchStatus::Stopping
-        | BatchStatus::Abandoned => 4,
+        | BatchStatus::Abandoned
+        | _ => 4,
     }
 }
 

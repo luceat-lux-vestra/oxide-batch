@@ -20,16 +20,13 @@ use std::num::NonZeroU32;
 
 use serde_json::{Value, json};
 
-use crate::definition::{definition_token, validate_token};
 use crate::{
     ChunkComponentRevisions, ChunkSize, ComponentRevision, DefinitionError, DefinitionIdentity,
-    DefinitionRevision, DefinitionTokenKind, ExitCode, FaultPolicy, JobName, StepName,
+    DefinitionRevision, DefinitionTokenKind, ExitCode, FaultPolicy, JobName, MAX_NODES,
+    MAX_TRANSITIONS, StepName,
 };
+use oxide_batch_core::{definition_token, validate_token};
 
-/// The maximum number of nodes one M3 plan may contain.
-pub const MAX_NODES: usize = 1_024;
-/// The maximum number of transitions one M3 plan may contain.
-pub const MAX_TRANSITIONS: usize = 4_096;
 /// The maximum number of transitions leaving one node.
 pub const MAX_OUTGOING_TRANSITIONS: usize = 64;
 /// The maximum length of one exit pattern in UTF-8 bytes.
@@ -1541,9 +1538,9 @@ fn flow_manifest(
     json!({
         "entry": entry.as_str(),
         "format": if local_scale {
-            crate::definition::MANIFEST_FORMAT_LOCAL_SCALE
+            oxide_batch_core::MANIFEST_FORMAT_LOCAL_SCALE
         } else {
-            crate::definition::MANIFEST_FORMAT_FLOW
+            oxide_batch_core::MANIFEST_FORMAT_FLOW
         },
         "job": job_name.as_str(),
         "nodes": node_values,

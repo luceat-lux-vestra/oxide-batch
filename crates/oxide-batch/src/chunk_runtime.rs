@@ -1146,7 +1146,9 @@ where
                 masked_stop = token;
                 &masked_stop
             }
-            InFlightPolicy::RollbackChunk => stop,
+            // `InFlightPolicy` is `#[non_exhaustive]`, so an unrecognized
+            // policy never masks a shutdown request.
+            InFlightPolicy::RollbackChunk | _ => stop,
         };
         let scope = AttemptScope {
             correlation,

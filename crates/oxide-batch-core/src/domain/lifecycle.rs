@@ -24,7 +24,12 @@ impl ExecutionVersion {
         self.0
     }
 
-    pub(crate) fn next(self) -> Result<Self, LifecycleError> {
+    /// Returns the next optimistic version.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LifecycleError::VersionExhausted`] at the representable limit.
+    pub fn next(self) -> Result<Self, LifecycleError> {
         self.0
             .checked_add(1)
             .map(Self)
@@ -82,7 +87,9 @@ impl LifecycleTransition {
         self.transitioned_at
     }
 
-    pub(crate) const fn with_terminal_rollback(mut self) -> Self {
+    /// Marks the transition as one whose terminal work was rolled back.
+    #[must_use]
+    pub const fn with_terminal_rollback(mut self) -> Self {
         self.terminal_rollback = true;
         self
     }
