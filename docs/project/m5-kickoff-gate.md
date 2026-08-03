@@ -150,7 +150,11 @@ extension point is added merely to reserve later scope.
    crate-extraction, context-codec, transaction-capability, facade/API,
    ledger-promotion, support-bound, and evidence gates in canonical documents.
 2. Plan and definition-fingerprint stabilization delivers the accepted subset,
-   its drift detection, and its restart-identity evidence.
+   its drift detection, and its restart-identity evidence. Delivered by issue
+   [#98](https://github.com/luceat-lux-vestra/oxide-batch/issues/98) and
+   recorded in the
+   [plan and fingerprint evidence](m5-plan-fingerprint-evidence.md), which
+   applies [ADR-0009](../architecture/decisions/0009-definition-fingerprint-input-set.md).
 3. Component-boundary and staged crate-extraction work applies the accepted
    decision behind an unchanged facade with dependency, equivalence, and
    packaging evidence.

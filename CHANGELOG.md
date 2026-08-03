@@ -305,6 +305,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - M3 fault-tolerance and finite-flow exit evidence mapping the implemented
   ledger slice, process-kill boundaries, PostgreSQL axes, and residual M6/M7
   population without promoting unreleased rows to `Verified`.
+- M5 plan and definition-fingerprint stabilization: the canonical restart-relevant
+  input set is fixed by ADR-0009 and enforced by an executable manifest member
+  allowlist, and the design gate's named scenarios are executable — unchanged
+  recompilation, restart-relevant change, excluded storage and runtime values,
+  throughput-only budget invariance, drift and mismatch rejected before any
+  lifecycle write, newer-format rejection, and untouched format-1 and format-2
+  bytes.
 - M0 implementation-readiness plan, M0–M5 roadmap, decision records, and
   product, compatibility, architecture, engineering, security, operations, and
   release policy set.
@@ -367,6 +374,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The definition fingerprint no longer depends on the framework build or on
+  resource tuning. Manifest formats 2 and 3 hashed the framework's own capacity
+  constants, so raising one in a later release would have turned every persisted
+  definition into fail-closed drift, and format 3 hashed the split and partition
+  concurrency and connection budgets, so retuning a pool after a crash blocked
+  restart. Neither class selects or reinterprets durable state, and both left the
+  canonical projection under ADR-0009. Format numbers, encoding rules, readers,
+  and format-1 bytes are unchanged; the format-2 and format-3 golden vectors are
+  re-pinned once, which migrates nothing because no released version emitted the
+  prior bytes. A pre-release definition compiled by an earlier build is rejected
+  as drift until it is recompiled or given a directed edge.
 - PostgreSQL design-gate readiness now probes the final TCP listener instead of
   mistaking the official image's socket-only initialization server for a ready
   database.

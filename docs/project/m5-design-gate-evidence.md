@@ -17,7 +17,7 @@ released `Verified` status because of this document.
 
 | Gate | Decision | Canonical evidence |
 | --- | --- | --- |
-| Compiled plan and definition fingerprint | Stabilize the delivered M2-M4 subset: a canonical restart-relevant manifest with an explicit exclusion list, deterministic fingerprint bytes, direct one-way format edges, and fail-closed drift rejection before any lifecycle write | The [M5 stabilization slice](../architecture/execution-plan.md#m5-stabilization-slice) of the execution-plan architecture |
+| Compiled plan and definition fingerprint | Stabilize the delivered M2-M4 subset: a canonical restart-relevant manifest with an explicit exclusion list, deterministic fingerprint bytes, direct one-way format edges, and fail-closed drift rejection before any lifecycle write. Applying the exclusion list found the delivered projection in breach of it; see [the correction below](#fingerprint-input-set-correction) | The [M5 stabilization slice](../architecture/execution-plan.md#m5-stabilization-slice) of the execution-plan architecture |
 | Static and erased components | Continued deferral of [RFC-0005](../rfcs/0005-static-and-erased-components.md); M5 retains the ADR-0002 boxed boundary | The [M5 gate outcome](../rfcs/0005-static-and-erased-components.md#m5-gate-outcome) recorded in the RFC |
 | Staged crate extraction | Three authorized stages — core, repository contracts, and plan — with forbidden-dependency rules, facade and API equivalence, durable invariance, packaging checks, measurements, and per-stage reversal; every other boundary deferred past M5 | The [staged crate-extraction contract](../architecture/crate-extraction.md) |
 | Context codec and external state | Retain the versioned JSON envelope at framework format `1` with separate application schema versioning, bounded size and depth, typed value-redacted failures, and restore-based rollback; move no durable format in M5 | The [M5 codec and capability direction](../architecture/repository-and-transaction-model.md#m5-context-codec-and-transaction-capability-direction) |
@@ -53,6 +53,30 @@ satisfies the roadmap dependency by the recorded decision rather than by an
 approval, so this closure does not deadlock the milestone. M5 exits on the
 boxed boundary. The decision is revisited at M6 kickoff, where the spike,
 measurements, and superseding ADR become prerequisites for item-model work.
+
+## Fingerprint input set correction
+
+This gate fixed the exclusion list without auditing the delivered projection
+against it. Issue
+[#98](https://github.com/luceat-lux-vestra/oxide-batch/issues/98) ran that audit
+first and found two classes of excluded value inside the canonical bytes:
+framework capacity bounds in formats 2 and 3, and the throughput-only split and
+partition budgets in format 3. Both changed a fingerprint, so a framework
+release that raised a bound, or an operator who retuned a connection pool after
+a crash, would have turned every affected definition into fail-closed drift.
+
+The gate's own statement that formats 1, 2, and 3 keep their existing golden
+vectors cannot hold together with its exclusion list while those values remain
+hashed. [ADR-0009](../architecture/decisions/0009-definition-fingerprint-input-set.md)
+resolves the conflict in favor of the exclusion list: the values leave the
+projection, format numbers and encoding rules do not change, and the format-2
+and format-3 vectors are re-pinned exactly once. No released version emitted the
+prior bytes. The evidence, including both digests, is recorded in the
+[plan and fingerprint evidence](m5-plan-fingerprint-evidence.md).
+
+The gate's decision row is left as it was decided. The exclusion list it fixed
+is unchanged and is now enforced by an executable member allowlist rather than
+by review.
 
 ## Impact classification
 

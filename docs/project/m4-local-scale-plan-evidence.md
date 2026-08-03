@@ -31,9 +31,17 @@ this plan record alone does not claim that either scale ledger row is complete.
   and repository pool capacity must cover the larger active-child budget plus
   one parent connection. Zero, over-limit, and contradictory values fail with
   typed plan errors.
-- Local-scale declarations and budgets are canonical manifest members and
-  therefore change the SHA-256 definition fingerprint. Builder declaration
-  order does not change canonical bytes.
+- Local-scale declarations are canonical manifest members and therefore change
+  the SHA-256 definition fingerprint. Builder declaration order does not change
+  canonical bytes.
+- **Corrected during M5.** This slice also made the concurrency and connection
+  budgets manifest members, which
+  [ADR-0009](../architecture/decisions/0009-definition-fingerprint-input-set.md)
+  later removed: they bound throughput and select no durable state, so hashing
+  them blocked restart after ordinary resource tuning. The partition count,
+  partitioner, and aggregation identity, which do select assignment and
+  aggregate meaning, are unaffected. See the
+  [M5 plan and fingerprint evidence](m5-plan-fingerprint-evidence.md).
 
 The current `FlowLauncher` accepts the tasklet-only bounded parallel-split and
 local-partition runtimes recorded in the
@@ -54,7 +62,7 @@ records the schema-3 plan and result transaction boundary.
 | Finite budgets and pool capacity | [`zero_unbounded_and_contradictory_budgets_are_rejected`](../../crates/oxide-batch/tests/local_scale_plan.rs) |
 | Format-3 golden identity | [`format3_manifest_has_a_golden_fingerprint`](../../crates/oxide-batch/tests/local_scale_plan.rs) |
 | Canonical declaration ordering | [`declaration_order_does_not_change_format3_identity`](../../crates/oxide-batch/tests/local_scale_plan.rs) |
-| Assignment budget identity | [`assignment_budget_changes_the_format3_fingerprint`](../../crates/oxide-batch/tests/local_scale_plan.rs) |
+| Assignment identity | [`partition_count_changes_the_format3_fingerprint`](../../crates/oxide-batch/tests/local_scale_plan.rs), which replaced this slice's `assignment_budget_changes_the_format3_fingerprint` under ADR-0009 |
 | Existing format-2 golden bytes | [`format2_manifest_has_golden_bytes_and_fingerprint`](../../crates/oxide-batch/tests/plan_manifest.rs) |
 | Newer-reader rejection | [`a_newer_manifest_is_rejected_rather_than_guessed`](../../crates/oxide-batch/tests/plan_manifest.rs) |
 

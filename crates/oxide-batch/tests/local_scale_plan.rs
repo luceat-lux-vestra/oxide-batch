@@ -82,7 +82,7 @@ fn format3_manifest_has_a_golden_fingerprint() -> Result<(), Box<dyn Error>> {
     assert_eq!(plan.transition_count(), 6);
     assert_eq!(
         hex(plan.fingerprint()),
-        "022df67b0163557ae0cd13c3522db7bc1b697f69eb8e6c1cb4725a19290cf3a9"
+        "f5ee7c2d6923411c8c068b6c2770b95575256833bddaed1be9c3893324c541a9"
     );
     let decoded = DefinitionManifest::read_verified(
         plan.definition_identity().canonical_manifest(),
@@ -113,8 +113,14 @@ fn declaration_order_does_not_change_format3_identity() -> Result<(), Box<dyn Er
     Ok(())
 }
 
+/// M4 pinned the opposite expectation: it asserted that a worker-count change
+/// altered the format-3 fingerprint. ADR-0009 withdrew that expectation, because
+/// a worker count reaches neither the partitioner's inputs nor the aggregation
+/// order and therefore selects no durable state. The assignment identity that
+/// does participate is asserted by
+/// [`partition_count_changes_the_format3_fingerprint`].
 #[test]
-fn assignment_budget_changes_the_format3_fingerprint() -> Result<(), Box<dyn Error>> {
+fn worker_budget_does_not_change_the_format3_fingerprint() -> Result<(), Box<dyn Error>> {
     let four = local_scale_graph(false, 4)?.compile(
         &JobName::new("bounded_local_scale")?,
         DefinitionRevision::new("v1")?,
@@ -124,7 +130,37 @@ fn assignment_budget_changes_the_format3_fingerprint() -> Result<(), Box<dyn Err
         DefinitionRevision::new("v1")?,
     )?;
 
-    assert_ne!(four.fingerprint(), ten.fingerprint());
+    assert_eq!(four.fingerprint(), ten.fingerprint());
+    assert_eq!(
+        four.definition_identity().canonical_manifest(),
+        ten.definition_identity().canonical_manifest()
+    );
+    Ok(())
+}
+
+#[test]
+fn partition_count_changes_the_format3_fingerprint() -> Result<(), Box<dyn Error>> {
+    let partitioned = |count: u16| -> Result<[u8; 32], Box<dyn Error>> {
+        let partition = NodeId::new("partition_customers")?;
+        let plan = FlowGraph::new(partition.clone())
+            .with_node(FlowNode::partitioned_step(PartitionedStepNode::new(
+                partition.clone(),
+                StepName::new("partition_customers")?,
+                tasklet("customer_worker")?,
+                ComponentRevision::new("customer-partitioner-v1")?,
+                ComponentRevision::new("status-and-counts-v1")?,
+                PartitionCount::new(count)?,
+                PartitionBudget::new(4, 5)?,
+            )))
+            .with_sequence(partition, FlowTarget::Terminal(TerminalKind::Complete))?
+            .compile(
+                &JobName::new("bounded_local_scale")?,
+                DefinitionRevision::new("v1")?,
+            )?;
+        Ok(*plan.fingerprint())
+    };
+
+    assert_ne!(partitioned(10)?, partitioned(11)?);
     Ok(())
 }
 

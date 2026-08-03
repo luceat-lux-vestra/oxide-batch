@@ -31,10 +31,13 @@ protocol.
   tasks and drains every completed, stopped, cancelled, failed, panicked, or
   ambiguous child before returning. Factory and tasklet panics are caught at
   framework boundaries and become durable failures.
-- The manifest limits active workers to `1..=64` and partitions to
+- The compiled plan limits active workers to `1..=64` and partitions to
   `1..=1024`. Launch additionally rejects a repository whose actual connection
-  capacity is below the manifest pool budget. The pending vector, worker
-  futures, and repository use are finite.
+  capacity is below the declared pool budget. The pending vector, worker
+  futures, and repository use are finite. The partition count is a manifest
+  member; the worker and pool budgets are validated plan values that
+  [ADR-0009](../architecture/decisions/0009-definition-fingerprint-input-set.md)
+  keeps out of the manifest.
 - Stop is observed before factory invocation and throughout tasklet execution.
   The default sibling policy requests cooperative stop after the first failed
   or ambiguous child, while retaining and joining every already-owned future.

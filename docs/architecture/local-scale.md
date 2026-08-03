@@ -180,9 +180,18 @@ divergence is a defect in the concurrent path, never an accepted difference.
 ## Manifest and schema impact
 
 - Manifest format 3 adds the split node, the join node, the partitioned step
-  node, the partitioner and aggregation identity, and the budgets above.
-  Budgets that change assignment identity or aggregate meaning are
+  node, the partition count, and the partitioner and aggregation identity.
+  Those select durable assignment or change aggregate meaning, so they are
   restart-relevant and participate in the fingerprint.
+- The budgets above do not participate. `MaxParallelBranches`,
+  `MaxPartitionWorkers`, and the repository connection budget bound throughput:
+  the partitioner never receives a worker count, aggregation orders by
+  `partition_key` and declared branch order, and the sequential fallback
+  equivalence above requires a budget change to leave every normalized durable
+  observation unchanged. Hashing them would block restart after ordinary
+  resource tuning, so
+  [ADR-0009](decisions/0009-definition-fingerprint-input-set.md) excludes them.
+  They remain validated at compilation and re-validated at launch.
 - Formats 1 and 2 remain readable and their bytes are never rewritten. Moving
   a persisted definition to format 3 requires one direct compatibility edge.
 - Schema 3 adds `ob_step_partition` as specified in the

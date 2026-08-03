@@ -27,7 +27,7 @@ use oxide_batch::{
 
 const GOLDEN_MANIFEST: &[u8] =
     include_bytes!("fixtures/LIFE-DEFINITION-001/format2-two-step.manifest.json");
-const GOLDEN_FINGERPRINT: &str = "75305aa3ce1ca2e2f8952e139bb3ee4f308787b547c765da93f8fb5add5e5057";
+const GOLDEN_FINGERPRINT: &str = "c0ea69669657cb8ec425801588a1f042608d8785333ad7d38d8a1f7ed5d8557f";
 
 fn hex(digest: &[u8; 32]) -> String {
     use std::fmt::Write as _;
