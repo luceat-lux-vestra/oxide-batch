@@ -68,13 +68,16 @@ restart-relevant value MUST change the fingerprint.
 manifest and executable assembly. Binding the same pair to a different
 fingerprint is definition drift.
 
-## Proposed static and erased components
+## Static and erased components
 
 The manifest must describe logical components without serializing Rust values
-and remain compatible with either current boxed components or the dual-path
-architecture proposed by [RFC-0005](../rfcs/0005-static-and-erased-components.md).
-RFC-0005 must be accepted before statically lowered and erased component APIs
-become production contracts.
+and remain compatible with either the current boxed components or the contract
+accepted by [RFC-0005](../rfcs/0005-static-and-erased-components.md) and
+recorded as
+[ADR-0008](decisions/0008-item-component-contract.md). Representation is not
+restart-relevant: moving a component between the two forms does not change its
+manifest entry or the definition fingerprint. The contract lands in M6; M5
+manifests continue to describe boxed components.
 
 Erasure does not remove validation. The registry MUST prove that the resolved
 component matches the manifest before launch or assignment.

@@ -13,8 +13,9 @@ This document preserves the accepted long-term product and architecture
 rationale for evolving OxideBatch beyond the original M0-M5 program. It is not
 the sole implementation specification. Detailed normative authority belongs to
 the documents in the [canonical document map](#canonical-document-map).
-RFC-0005 and RFC-0009 remain proposed; every change beyond the accepted
-decisions still requires its named evidence gate or a superseding ADR.
+RFC-0005 was accepted on 2026-08-03 and is recorded as ADR-0008; RFC-0009
+remains proposed. Every change beyond the accepted decisions still requires its
+named evidence gate or a superseding ADR.
 
 ## Strategic conclusion
 

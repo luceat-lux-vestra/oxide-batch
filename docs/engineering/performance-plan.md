@@ -144,8 +144,11 @@ evidence.
 | Cancellation | P-014 request-to-intake-stop and request-to-durable-terminal latency with the count of unjoined tasks at each deadline |
 | Extraction | Build-time, binary-size, and dependency-graph observations per authorized stage of the [crate-extraction contract](../architecture/crate-extraction.md) |
 
-P-002 static-versus-erased measurement is **not** an M5 campaign. It belongs to
-the RFC-0005 spike, which this gate defers past M5.
+P-002 static-versus-erased measurement is **not** an M5 campaign. The RFC-0005
+spike ([0004](../architecture/spikes/0004-static-and-erased-item-path.md))
+measured dispatch on a synthetic workload and closed the approval gate; P-002
+proper — the reference workload with real components, where the code-size
+crossover and the realistic throughput benefit get located — remains M6.
 
 A campaign result that changes a durable observation is invalid regardless of
 its throughput. No campaign result promotes a ledger row on its own; promotion

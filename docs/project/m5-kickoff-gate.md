@@ -100,15 +100,19 @@ implementation.
 
 ## Governing architecture constraints
 
-[RFC-0005](../rfcs/0005-static-and-erased-components.md) remains **proposed**,
-and the roadmap names its approval as an M5 dependency. Until the
-static/erased gate closes, M5 retains the accepted ADR-0002 boxed component
-boundary, does not introduce the proposed native static hot path, and does not
-use stabilization work to preempt M6 item-model scope. Component
-thread-safety and placement constraints remain validated explicitly at every
-concurrent boundary. If the gate closes as continued deferral, M5 still exits
-on the boxed boundary, and the roadmap dependency is satisfied by the recorded
-decision rather than by an approval.
+[RFC-0005](../rfcs/0005-static-and-erased-components.md) was **accepted** on
+2026-08-03, after this gate closed as continued deferral and after its spike
+subsequently ran. Its decision is recorded as
+[ADR-0008](../architecture/decisions/0008-item-component-contract.md), which
+partially supersedes ADR-0002 for the three item component traits.
+
+Acceptance does not move M5. M5 retains the ADR-0002 boxed component boundary,
+introduces no static hot path, and does not use stabilization work to preempt
+M6 item-model scope; the new contract lands in M6 rather than underneath M5's
+fingerprint and crate-extraction work. Component thread-safety and placement
+constraints remain validated explicitly at every concurrent boundary. The
+roadmap's M5 dependency was satisfied by the recorded deferral decision and is
+unaffected by the later approval.
 
 [RFC-0009](../rfcs/0009-transport-neutral-worker-protocol.md) remains
 proposed. M5 cannot add remote envelopes, worker registration, transport

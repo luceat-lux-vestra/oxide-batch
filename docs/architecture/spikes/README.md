@@ -9,3 +9,4 @@ change.
 | [0001](0001-async-public-traits.md) | #6 | Complete | ADR-0002 |
 | [0002](0002-postgres-transactions-and-recovery.md) | #6 | Complete | ADR-0003 |
 | [0003](0003-execution-context-evolution.md) | #6 | Complete | D-007 |
+| [0004](0004-static-and-erased-item-path.md) | — | Complete | RFC-0005, ADR-0008 |

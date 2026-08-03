@@ -2,8 +2,9 @@
 
 **State:** Active
 
-**Program decision:** M5-M14 is accepted by RFC-0001. RFC-0005 and RFC-0009
-remain evidence gates for their specific architectures.
+**Program decision:** M5-M14 is accepted by RFC-0001. RFC-0005 was accepted on
+2026-08-03 and is recorded as ADR-0008. RFC-0009 remains an evidence gate for
+its specific architecture.
 
 **Last reviewed:** 2026-08-03
 
@@ -223,8 +224,9 @@ remain visible and prevent any full-parity claim.
 [RFC-0004](rfcs/0004-compiled-execution-plan.md), and
 [RFC-0007](rfcs/0007-repository-services-and-capabilities.md); and a recorded
 decision on [RFC-0005](rfcs/0005-static-and-erased-components.md), satisfied on
-2026-08-03 by the design gate's continued deferral, which keeps the ADR-0002
-boxed boundary and moves the approval spike to M6.
+2026-08-03 by the design gate's continued deferral. The RFC was accepted later
+the same day on spike evidence; M5 is unaffected and still exits on the
+ADR-0002 boxed boundary.
 
 **Explicit non-goals:** full item/flow/integration/distributed parity,
 additional Tier-1 databases, Spring metadata migration, project-wide API
@@ -268,14 +270,17 @@ components in scope, repeat/fault tolerance, listeners, and testing utilities
 are fully populated and classified; shipped claims are `Verified`.
 
 **Dependencies:** M5 boundary decisions and accepted
-[RFC-0005](rfcs/0005-static-and-erased-components.md).
+[RFC-0005](rfcs/0005-static-and-erased-components.md), satisfied on 2026-08-03
+and recorded as
+[ADR-0008](architecture/decisions/0008-item-component-contract.md).
 
 **Explicit non-goals:** advanced nested/split/job flow, additional repository
 backends, broker integrations, remote execution, or complete ledger closure.
 
 **Executable exit evidence:** component contract suite; state migration;
-native/erased trace equivalence; allocation evidence proving no per-item boxed
-future on the native path; malformed input, partial write, rollback, stop,
+typed/boxed trace equivalence; allocation evidence proving no per-item boxed
+future on the typed path, and a decision with evidence on per-item item-listener
+allocation, which ADR-0008 leaves open; malformed input, partial write, rollback, stop,
 panic, and process-kill matrices; user test-kit examples.
 
 **Documentation:** component reference, extension guide, restart/state guide,

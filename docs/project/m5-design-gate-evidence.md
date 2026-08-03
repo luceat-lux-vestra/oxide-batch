@@ -39,6 +39,15 @@ additionally stabilizes the fingerprint path and repackages crates, and doing
 that on top of a changing item hot path would invalidate the equivalence
 evidence both workstreams depend on.
 
+**Subsequent event, same day.** The spike named as missing above was then run
+and is recorded as
+[spike 0004](../architecture/spikes/0004-static-and-erased-item-path.md).
+RFC-0005 was accepted on its evidence, with the decision recorded as
+[ADR-0008](../architecture/decisions/0008-item-component-contract.md). This
+gate's outcome is left as it was decided: the deferral was correct on the
+information available, and the approval does not move M5. The new contract
+lands in M6, and M5 still exits on the ADR-0002 boxed boundary.
+
 The [M5 kickoff gate](m5-kickoff-gate.md) records that continued deferral
 satisfies the roadmap dependency by the recorded decision rather than by an
 approval, so this closure does not deadlock the milestone. M5 exits on the

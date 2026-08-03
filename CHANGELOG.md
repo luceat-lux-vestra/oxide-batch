@@ -143,6 +143,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   are established by removal, and each contract trait carries
   `#[diagnostic::on_unimplemented]` with the implementer-facing wording pinned
   by compiler fixtures.
+- Accepted RFC-0005 on 2026-08-03, on the evidence of spike 0004, closing the
+  static-versus-erased architecture gate that M5 had deferred. M5 is unaffected
+  and still exits on the ADR-0002 boxed boundary; the contract lands in M6.
+- ADR-0008 replacing the public item component contract: one generic
+  trait per role with an explicit call lifetime, implemented as `async fn`,
+  with erasure delivered as a concrete handle over a sealed dyn-compatible
+  mirror and one chunk loop serving both dispatch forms. It supersedes ADR-0002
+  **in part** — the three item component traits only, with the execution model
+  and the other twenty-one boxed extension points unchanged — and carries
+  forward async-first execution, cooperative stop, the bounded blocking
+  adapter, panic classification, and the borrowed enlisted transaction. Item
+  listeners are explicitly out of scope and keep their per-item boxed future;
+  the zero-allocation result is stated for pipelines without them.
 - Tasklet-only bounded local partition execution with per-child factories,
   manager-owned finite worker scopes, pre-start and in-flight cancellation,
   panic isolation, durable completed-child restart reuse, explicit `UNKNOWN`
