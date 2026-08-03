@@ -23,18 +23,35 @@ jobs:
       - name: Check out release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # ADR-0010 releases the facade together with the internal crates it
+      # requires, so every published crate carries its own archive, SBOM,
+      # checksum, and attestation.
       - name: Verify tag and package
         id: package
+        env:
+          RELEASED_CRATES: oxide-batch-core oxide-batch
         run: |
           package_version="$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[] | select(.name == "oxide-batch") | .version')"
           test "v${package_version}" = "${GITHUB_REF_NAME}"
-          cargo package -p oxide-batch --locked
-          cargo publish -p oxide-batch --locked --dry-run
-          crate_path="target/package/oxide-batch-${package_version}.crate"
-          test -s "${crate_path}"
+          published=""
+          for crate in ${RELEASED_CRATES}; do
+            published="${published} --package ${crate}"
+          done
+          cargo package ${published} --locked
+          cargo publish ${published} --locked --dry-run
+          crate_paths=""
+          for crate in ${RELEASED_CRATES}; do
+            crate_path="target/package/${crate}-${package_version}.crate"
+            test -s "${crate_path}"
+            crate_paths="${crate_paths}${crate_path}"$'\n'
+          done
           echo "version=${package_version}" >> "${GITHUB_OUTPUT}"
-          echo "crate_path=${crate_path}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "crate_paths<<EOF"
+            printf '%s' "${crate_paths}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Install pinned SBOM generator
         run: cargo install cargo-cyclonedx --version 0.5.9 --locked
@@ -43,61 +60,74 @@ jobs:
         id: evidence
         env:
           PACKAGE_VERSION: ${{ steps.package.outputs.version }}
-          CRATE_PATH: ${{ steps.package.outputs.crate_path }}
+          RELEASED_CRATES: oxide-batch-core oxide-batch
         run: |
-          sbom_name="oxide-batch-${PACKAGE_VERSION}.cdx"
-          cargo cyclonedx \
-            --manifest-path crates/oxide-batch/Cargo.toml \
-            --format json \
-            --all-features \
-            --target all \
-            --spec-version 1.5 \
-            --override-filename "${sbom_name}"
-          sbom_source="crates/oxide-batch/${sbom_name}.json"
-          sbom_path="target/package/${sbom_name}.json"
-          test -s "${sbom_source}"
-          cp "${sbom_source}" "${sbom_path}"
+          sbom_paths=""
+          artifacts=""
+          for crate in ${RELEASED_CRATES}; do
+            sbom_name="${crate}-${PACKAGE_VERSION}.cdx"
+            cargo cyclonedx \
+              --manifest-path "crates/${crate}/Cargo.toml" \
+              --format json \
+              --all-features \
+              --target all \
+              --spec-version 1.5 \
+              --override-filename "${sbom_name}"
+            sbom_source="crates/${crate}/${sbom_name}.json"
+            test -s "${sbom_source}"
+            cp "${sbom_source}" "target/package/${sbom_name}.json"
+            sbom_paths="${sbom_paths}target/package/${sbom_name}.json"$'\n'
+            artifacts="${artifacts} ${crate}-${PACKAGE_VERSION}.crate"
+            artifacts="${artifacts} ${sbom_name}.json"
+          done
           checksum_path="target/package/oxide-batch-${PACKAGE_VERSION}.sha256"
           (
             cd target/package
-            sha256sum \
-              "oxide-batch-${PACKAGE_VERSION}.crate" \
-              "${sbom_name}.json" \
-              > "oxide-batch-${PACKAGE_VERSION}.sha256"
+            # shellcheck disable=SC2086
+            sha256sum ${artifacts} > "oxide-batch-${PACKAGE_VERSION}.sha256"
           )
           test -s "${checksum_path}"
-          echo "sbom_path=${sbom_path}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "sbom_paths<<EOF"
+            printf '%s' "${sbom_paths}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
           echo "checksum_path=${checksum_path}" >> "${GITHUB_OUTPUT}"
 
       - name: Attest package provenance
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
-          subject-path: ${{ steps.package.outputs.crate_path }}
+          subject-path: ${{ steps.package.outputs.crate_paths }}
 
       - name: Attest package SBOM
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
-          subject-path: ${{ steps.package.outputs.crate_path }}
-          sbom-path: ${{ steps.evidence.outputs.sbom_path }}
+          subject-path: ${{ steps.package.outputs.crate_paths }}
+          sbom-path: ${{ steps.evidence.outputs.sbom_paths }}
 
       - name: Create or refresh draft release
         env:
           GH_TOKEN: ${{ github.token }}
           PACKAGE_VERSION: ${{ steps.package.outputs.version }}
-          CRATE_PATH: ${{ steps.package.outputs.crate_path }}
-          SBOM_PATH: ${{ steps.evidence.outputs.sbom_path }}
+          CRATE_PATHS: ${{ steps.package.outputs.crate_paths }}
+          SBOM_PATHS: ${{ steps.evidence.outputs.sbom_paths }}
           CHECKSUM_PATH: ${{ steps.evidence.outputs.checksum_path }}
         run: |
+          mapfile -t assets < <(
+            printf '%s\n%s\n%s\n' \
+              "${CRATE_PATHS}" "${SBOM_PATHS}" "${CHECKSUM_PATH}" \
+              | grep -v '^$'
+          )
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             is_draft="$(gh release view "${GITHUB_REF_NAME}" \
               --json isDraft --jq .isDraft)"
             test "${is_draft}" = "true"
             gh release upload "${GITHUB_REF_NAME}" \
-              "${CRATE_PATH}" "${SBOM_PATH}" "${CHECKSUM_PATH}" \
+              "${assets[@]}" \
               --clobber
           else
             gh release create "${GITHUB_REF_NAME}" \
-              "${CRATE_PATH}" "${SBOM_PATH}" "${CHECKSUM_PATH}" \
+              "${assets[@]}" \
               --verify-tag \
               --draft \
               --generate-notes \

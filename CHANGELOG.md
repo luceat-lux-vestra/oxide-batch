@@ -322,9 +322,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   CodeQL workflow scanning, and owned scheduled supply-chain failure reporting.
 - Protected-tag draft Release preparation with locked package verification,
   CycloneDX SBOM, SHA-256 checksums, and package provenance/SBOM attestations.
+- The `oxide-batch-core` implementation crate, holding domain identities, typed
+  parameters, statuses, execution records, lifecycle rules, bounded versioned
+  execution-context and checkpoint state, chunk sizing values, and
+  restart-relevant definition identity. It is implementation detail with no
+  stability promise; `oxide-batch` remains the only supported entry point and
+  re-exports every supported item under its existing path.
+- Staged crate-extraction evidence checks: `cargo xtask deps` fails the build on
+  a forbidden dependency class or a workspace cycle, `cargo xtask package` runs
+  the workspace publish dry run for every publishable crate, and a facade
+  surface test holds all 424 exported paths against a committed snapshot while
+  proving each path still resolves.
 
 ### Changed
 
+- Extracted implementation crates are published in lockstep with the facade
+  rather than kept `publish = false`. Cargo rewrites a published archive's path
+  dependencies to registry dependencies, so a publishable facade cannot depend
+  on an unpublished crate; the first extraction stage would have made
+  `oxide-batch` unpublishable. RFC-0011 records the conflict and ADR-0010
+  supersedes ADR-0001 for the three M5-authorized crates only. The release
+  workflows now package, checksum, generate SBOMs for, attest, and publish
+  those crates in dependency order.
+- `MAX_NODES` and `MAX_TRANSITIONS` moved with the manifest reader that
+  enforces them. Both facade paths resolve unchanged, and neither bound
+  participates in a definition fingerprint.
+- Facade code that matches `#[non_exhaustive]` domain enums now takes an
+  explicit conservative arm, because exhaustive matching is not available
+  outside the crate that declares an enum. An unknown status reports an unknown
+  span outcome and the highest split severity, an unknown in-flight policy
+  never masks a shutdown request, and an unknown parameter kind is rejected
+  rather than written under a guessed durable tag.
 - RFC-0005 stays `Proposed` through M5 by a recorded continued-deferral
   decision: its own approval gate requires a spike that has not run, and
   changing the item hot path underneath the M5 fingerprint and extraction work

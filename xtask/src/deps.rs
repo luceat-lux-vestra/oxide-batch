@@ -315,7 +315,7 @@ fn string<'a>(value: &'a Value, field: &str) -> Result<&'a str, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Graph, check_cycles, check_forbidden, matches};
+    use super::{Graph, check, check_cycles, check_forbidden, matches};
     use std::collections::{BTreeMap, BTreeSet};
 
     /// Builds a graph from `(package, shipped deps, dev deps)` triples.
@@ -346,6 +346,42 @@ mod tests {
             all,
             members,
         }
+    }
+
+    #[test]
+    fn forbidden_dependency_check_fails_the_build_on_violation() {
+        let graph = graph(
+            &[
+                ("oxide-batch-core", &["sqlx"], &[]),
+                ("sqlx", &["tokio"], &[]),
+                ("tokio", &[], &[]),
+            ],
+            1,
+        );
+
+        let violations = check_forbidden(&graph);
+
+        assert_eq!(violations.len(), 2, "{violations:?}");
+        assert!(
+            violations
+                .iter()
+                .all(|violation| violation.contains("the extraction contract forbids"))
+        );
+    }
+
+    #[test]
+    fn workspace_has_no_dependency_cycle() {
+        let violations = match check() {
+            Ok(violations) => violations,
+            Err(error) => {
+                // `cargo metadata` is unavailable in some sandboxes; the same
+                // check runs as `cargo xtask deps` in CI.
+                eprintln!("skipping workspace boundary check: {error}");
+                return;
+            }
+        };
+
+        assert!(violations.is_empty(), "{violations:?}");
     }
 
     #[test]

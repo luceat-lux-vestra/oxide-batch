@@ -96,6 +96,7 @@ decisions own the normative detail.
 - [M5 embedded core production preview kickoff gate](project/m5-kickoff-gate.md)
 - [M5 embedded core production preview design-gate evidence](project/m5-design-gate-evidence.md)
 - [M5 plan and definition-fingerprint stabilization evidence](project/m5-plan-fingerprint-evidence.md)
+- [M5 staged crate-extraction evidence](project/m5-crate-extraction-evidence.md)
 - [Historical M0 decision register](product/open-decisions.md)
 
 Historical gates are preserved as records of their date. Later decisions link
