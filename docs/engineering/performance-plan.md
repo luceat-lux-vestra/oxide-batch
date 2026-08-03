@@ -125,6 +125,32 @@ Each report records the environment, the correctness result, and reproducible
 raw evidence. A concurrency result that changes durable observations relative
 to the sequential fallback is invalid regardless of its throughput.
 
+## M5 production-preview campaigns
+
+The M5 design gate names the reports the preview cannot ship without. Each runs
+on the supported matrix in the [support matrix](../release/support-matrix.md),
+records its environment and correctness result, and retains reproducible raw
+evidence.
+
+| Campaign | Required reports |
+| --- | --- |
+| Reference workload | One published end-to-end workload derived from P-003, run at a fixed dataset size on PostgreSQL 15 and 18, reporting throughput, per-item and per-chunk overhead, metadata write count, peak memory, and connection count |
+| Performance | P-001 fixed overhead and P-003 enlisted-writer throughput against the M4 provisional budgets, plus P-010 at `1`, `10`, and the largest configured worker count |
+| Resource bounds | Declared ceiling proof for every queue, retry cache, page, buffer, worker assignment, and result set, with backpressure propagation under stress |
+| Crash and restore | P-013 restart after many chunks, plus process-kill at each commit phase and logical backup restore on 15 and 18 |
+| Upgrade | Schema 1 and 2 to schema 3 direct upgrade, newer-schema rejection, and restore-based rollback |
+| Security | `verify-full` TLS connectivity, least-privilege role separation for migration, runtime, explorer, operator, and retention, and a redaction sweep over errors, telemetry, CLI output, and diagnostic bundles |
+| Soak | P-015 across repeated launch, shutdown, restart, and recovery cycles, reporting task, connection, handle, and memory growth over the declared duration |
+| Cancellation | P-014 request-to-intake-stop and request-to-durable-terminal latency with the count of unjoined tasks at each deadline |
+| Extraction | Build-time, binary-size, and dependency-graph observations per authorized stage of the [crate-extraction contract](../architecture/crate-extraction.md) |
+
+P-002 static-versus-erased measurement is **not** an M5 campaign. It belongs to
+the RFC-0005 spike, which this gate defers past M5.
+
+A campaign result that changes a durable observation is invalid regardless of
+its throughput. No campaign result promotes a ledger row on its own; promotion
+additionally requires a named released version.
+
 ## Regression gates
 
 - Baselines are established only after correctness assertions pass.

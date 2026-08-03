@@ -134,6 +134,54 @@ Explorer reads are single-statement, keyset paginated, ordered by immutable
 keys, and bounded by page size, response size, and the configured statement
 timeout. They take no lock and never participate in a chunk transaction.
 
+## M5 context-codec and transaction-capability direction
+
+M5 fixes the direction of the durable state envelope and the capability
+surface. It moves no durable format and adds no capability.
+
+**Codec identity.** The framework envelope is versioned JSON at format version
+`1`, carrying a mandatory framework format version and a mandatory application
+schema identifier and version. The schema identifier is bounded at `128` bytes.
+Framework format compatibility and application payload compatibility are
+separate concerns and are versioned separately.
+
+**Schema lifecycle.** An application codec declares its current version and the
+directed upgrades it can apply. Decoding accepts an equal or older recorded
+version and applies one bounded, deterministic upgrade chain. A recorded
+version newer than the codec's current version is rejected; it is never
+truncated, defaulted, or reinterpreted.
+
+**Bounds and corruption.** Encoded state obeys a configured byte and JSON-depth
+limit, defaulting to `64 KiB` and depth `16`, with hard ceilings of `1 MiB` and
+depth `64`. Oversized, over-deep, malformed, wrong-type, unknown-format, and
+newer-version payloads produce typed, value-redacted failures. A corrupt
+payload is a known not-committed outcome; it never advances a checkpoint and
+never degrades to an empty context.
+
+**Upgrade and rollback.** A durable-format move requires a direct compatibility
+edge, migration evidence from every supported prior version, and a documented
+restore-based rollback. Rollback means restoring a compatible backup unless a
+tested downgrade is explicitly supplied. A schema migration never rewrites
+manifest or state identity by itself.
+
+**Transaction capability.** An adapter declares its capabilities in the
+versioned descriptor above. A requirement the deployed adapter does not declare
+fails explicitly at compilation or launch negotiation with a typed rejection;
+it never degrades the delivery guarantee silently. The borrowed adapter-owned
+transaction path stays as accepted: the facade lends a bounded
+OxideBatch-owned transaction port, driver types remain private, and the atomic
+checkpoint and unknown-outcome semantics are unchanged.
+
+**Fingerprint participation.** Only capabilities that change durable meaning
+participate in the definition fingerprint: the declared transaction and
+delivery mode, checkpoint and context codec versions, and the enlistment class.
+Pool sizes, statement timeouts, connection counts, and other throughput
+settings do not participate and MUST NOT change a fingerprint.
+
+**Boundary.** M5 stabilizes direction only. Repository portability, additional
+Tier-1 adapters, archive and export portability remain M8, and Spring metadata
+migration remains M12.
+
 ## Adapter certification
 
 Every adapter runs the same logical contract suite plus adapter-specific

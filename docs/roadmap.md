@@ -189,10 +189,11 @@ and the ledger is updated.
 
 The decision gates, dependency-ordered workstreams, architecture constraints,
 and definition of done are recorded in the
-[M5 kickoff gate](project/m5-kickoff-gate.md). M5 stabilizes the delivered
-M0-M4 embedded scope; it is the first milestone that may promote advertised
-embedded-kernel ledger rows to `Verified`, and only against a named released
-version.
+[M5 kickoff gate](project/m5-kickoff-gate.md), and the nine gates are closed
+by the [M5 design-gate evidence](project/m5-design-gate-evidence.md). M5
+stabilizes the delivered M0-M4 embedded scope; it is the first milestone that
+may promote advertised embedded-kernel ledger rows to `Verified`, and only
+against a named released version.
 
 **Objective:** stabilize a correct, supportable, single-host PostgreSQL batch
 kernel without freezing APIs that M6-M12 must extend.
@@ -207,7 +208,7 @@ kernel without freezing APIs that M6-M12 must extend.
 **Architecture deliverables:**
 
 - approved path to `CompiledExecutionPlan` and definition fingerprinting;
-- approved static/erased component boundary;
+- decided static/erased component boundary;
 - validated staged crate extraction;
 - approved context-codec and transaction-capability direction;
 - no public facade decision that blocks the M6-M12 target.
@@ -220,8 +221,10 @@ remain visible and prevent any full-parity claim.
 [RFC-0001](rfcs/0001-m5-preview-and-project-wide-1-0.md),
 [RFC-0003](rfcs/0003-target-workspace-boundaries.md),
 [RFC-0004](rfcs/0004-compiled-execution-plan.md), and
-[RFC-0007](rfcs/0007-repository-services-and-capabilities.md); approval of
-[RFC-0005](rfcs/0005-static-and-erased-components.md).
+[RFC-0007](rfcs/0007-repository-services-and-capabilities.md); and a recorded
+decision on [RFC-0005](rfcs/0005-static-and-erased-components.md), satisfied on
+2026-08-03 by the design gate's continued deferral, which keeps the ADR-0002
+boxed boundary and moves the approval spike to M6.
 
 **Explicit non-goals:** full item/flow/integration/distributed parity,
 additional Tier-1 databases, Spring metadata migration, project-wide API

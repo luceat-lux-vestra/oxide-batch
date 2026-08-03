@@ -140,6 +140,47 @@ and their bytes are never rewritten; moving a persisted definition to format 3
 requires one direct compatibility edge. M4 keeps the accepted ADR-0002 boxed
 component boundary and does not implement the RFC-0005 static hot path.
 
+## M5 stabilization slice
+
+M5 stabilizes the delivered manifest and fingerprint path. It adds no node
+kind, no manifest format, and no new restart mode.
+
+**Canonical restart-relevant manifest.** The manifest records exactly the
+values that select or reinterpret durable state: node and component logical
+IDs, graph edges and their stable ordering, the parameter schema, checkpoint
+and context codec versions, declared capabilities that change durable meaning,
+delivery mode, start controls, fault-policy identity, and the budgets that
+change assignment identity or aggregate meaning. Display names, storage keys,
+adapter primary keys, runtime execution IDs, telemetry attributes, resource
+budgets that change only throughput, and diagnostic text are excluded and MUST
+NOT change a fingerprint.
+
+**Fingerprint stability.** Canonical bytes are deterministic across processes,
+architectures, and repeated compilation of an unchanged definition. Equivalent
+source builders produce identical bytes; any change to a recorded
+restart-relevant value changes the fingerprint. Formats 1, 2, and 3 keep their
+accepted encodings and their existing golden vectors; M5 adds vectors rather
+than replacing them.
+
+**Compatibility edges.** A persisted definition moves between manifest formats
+only through one direct, bounded, deterministic, one-way edge, as already
+accepted for format 1 to 2 and format 2 to 3. Edges are non-transitive and
+never rewrite the bytes of a stored earlier-format manifest.
+
+**Fail-closed drift detection.** Restart resolves `(definition_id, revision)`
+to its recorded manifest and compares the proposed fingerprint before any
+lifecycle write. A mismatch without an accepted compatibility edge rejects the
+restart with a typed error and changes no durable state. Binding the same
+`(definition_id, revision)` to a different fingerprint is definition drift and
+is rejected rather than reconciled. A runtime rejects a manifest format newer
+than it can read.
+
+**Delivered subset boundary.** M5 stabilizes fingerprinting, drift detection,
+and restart identity over the delivered M2-M4 subset. General compiled-plan
+restart, the M7 `DefinitionRegistry` as a public service, schema-transforming
+upgrade edges, and `Fork` lineage remain M7. M5 keeps the accepted ADR-0002
+boxed component boundary and does not implement the RFC-0005 static hot path.
+
 ## Evidence
 
 Production implementation requires:
