@@ -1,6 +1,7 @@
 # M5 Staged Crate-Extraction Evidence
 
-**State:** Stage 1 complete; stages 2 and 3 in progress under ADR-0011
+**State:** Stage 1 and the ADR-0011 core placement complete; stage 2 attempted
+and not landed; stage 3 not started
 
 **Issue:** [#99](https://github.com/luceat-lux-vestra/oxide-batch/issues/99)
 
@@ -188,65 +189,83 @@ migration and no operator action. Reversal stays free until the release that
 publishes `oxide-batch-core`; after that the published version is permanent, as
 ADR-0010 records.
 
-## Stages 2 and 3 — boundary finding
+## ADR-0011 core placement
 
-Stage 2 is not started. Analysis before starting it found that the authorized
-boundary cannot be moved as written, for the same class of reason the
-publication rule could not hold.
+The twenty-three items ADR-0011 places in the domain layer moved before stage
+2: `NodeId`, `FlowTarget`, `TerminalKind`, `StartControls`, `StartLimit`,
+`MAX_PARTITIONS`, and the seventeen runtime-free fault-policy values.
+`BackoffSleeper` and `BackoffOutcome` stayed with the runtime, and the plan
+module kept the compiler and the graph types only it constructs.
 
-`oxide-batch-repository` must not depend on `oxide-batch-plan` and cannot
-depend on the facade. The repository port in `crates/oxide-batch/src/repository.rs`
-nevertheless references value types that live outside both core and itself:
+The suite keeps its test set at `452` executed tests with no failures, the
+facade export snapshot is unchanged, no fixture moved, and `cargo fmt`,
+`cargo clippy -D warnings`, both no-default-feature checks, the rustdoc build,
+`cargo xtask deps`, and `cargo xtask package` all pass.
 
-- `NodeId` and `StartLimit`, declared in the plan module;
-- `FlowDecision`, `FlowDecisionRequest`, `FlowStepState`, and
-  `FlowTransitionKind`, declared in the flow module, whose engine boundary is
-  deferred past M5;
-- `PartitionPlanEntry`, `PartitionAggregate`, `PartitionAggregationError`, and
-  `StepPartition`, declared in the partition module;
-- operator, explorer, retention, and recovery descriptors that are interleaved
-  in `service/*.rs` with the service implementations, which depend on telemetry
-  types whose observability boundary is also deferred past M5.
+**The one API change.** `StartLimit::new` returns
+`DefinitionError::ZeroStartLimit` instead of `PlanError::ZeroStartLimit`.
+Notably, **the facade export snapshot did not detect it**: the snapshot pins
+exported paths and names, and both error types were already exported. This is
+the documented name-level limitation reaching a real case. The change is caught
+by its test, its changelog entry, and this record instead.
 
-So stage 2 requires a decision about where durable record types live, of the
-same kind stage 1 needed for two constants but an order of magnitude larger:
-roughly sixty public types across six files, including surgical splits of the
-service modules to separate ports and descriptors from implementations that
-must stay behind. Stage 3 inherits the outcome, because `oxide-batch-plan` may
-depend on `oxide-batch-repository` and the placement of `NodeId` and
-`StartLimit` decides both boundaries.
+Four more `#[non_exhaustive]` matches crossed the boundary and take the arm
+that commits nothing: an unrecognized fault decision rolls back and fails, an
+unrecognized terminal fails the job, an unrecognized terminal is rejected
+rather than encoded durably, and an unsupported plan stays unsupported. All
+fallbacks in the workspace now use one idiom — a final `_` arm whose comment
+names the variants it absorbs.
 
-Doing that placement implicitly, inside an implementation commit, is exactly
-what the contract forbids when it says extraction must not become a rewrite.
+## Stage 2 — attempted, not landed
 
-Two further measurements decide the resolution. The plan module needs nothing
-from the repository module: its only non-core dependency is `FaultPolicy`. The
-fault-policy values are runtime-free, because `BoxFuture` and `StopToken`
-appear in the fault module only inside `BackoffSleeper`, which no plan type
-embeds. The dependency the contract forbids therefore runs the opposite way
-from the code.
+Stage 2 was attempted after the core placement and is **not** in the history.
+The move itself completed: `oxide-batch-repository` was created, the ports,
+partition values, durable flow records, and service descriptors moved into it,
+the four service implementations were split back into the facade, and the crate
+compiles clean with `0` warnings. The facade did not reach a compiling state,
+and the work was stopped rather than committed, because the remaining fixes had
+started to require mechanical edits whose behavior-preservation could no longer
+be verified by reading them. The contract's rule that extraction must not
+become a rewrite is the reason for stopping.
 
-The accepted [architecture overview](../architecture/overview.md) settles the
-direction: its inward dependency rule places the compiled execution plan above
-the repository and transaction ports, and `core domain, identities, and state
-rules` at the bottom. A durable identity that a repository port names therefore
-belongs in core rather than above it.
+The attempt is retained as a `git stash` entry, `wip: stage 2 repository
+extraction (incomplete, does not compile)`, and is not a reviewed artifact.
 
-[ADR-0011](../architecture/decisions/0011-extraction-order-and-value-placement.md)
-proposes the correction on the merits: durable data lives at or below the layer
-that persists it, and compilers, runtimes, and engines live above it. `23`
-items move into core — `NodeId`, `FlowTarget`, `TerminalKind`, `StartControls`,
-`StartLimit`, `MAX_PARTITIONS`, and the `17` runtime-free fault-policy values,
-each of them persisted, replayed, or fingerprinted. The plan and repository
-crates then become independent siblings over core, so the persistence layer
-never depends on the compiler. The one public API difference is
-`StartLimit::new`, whose error type changes because `PlanError` carries
-`NodeId` in nineteen variants and cannot follow it down.
+**What the attempt established**, and what the next one does not need to
+rediscover:
 
-Until that decision is accepted or replaced, stages 2 and 3 stay unstarted.
-Stage 1 stands on its own: it is complete, evidenced, and revertible, and the
-contract requires a stage to begin only after the previous stage's evidence
-passes.
+- The boundary itself is sound. `oxide-batch-repository` depends only on
+  `oxide-batch-core`, `serde_json`, and `sha2`, and needs no async runtime,
+  driver, or telemetry type. The plan and repository crates are independent
+  siblings, as ADR-0011 predicted.
+- The four service implementations split out cleanly at contiguous block
+  boundaries; the descriptors and ports below them do not reference telemetry.
+- Three costs appear only when the split is made, and each needs a decision
+  rather than a mechanical fix:
+  - `FlowDecisionSequence::new` returns the flow engine's `FlowRuntimeError`,
+    which cannot follow the record into the repository crate. It becomes a
+    second reviewed API change, on the same terms as `StartLimit::new`.
+  - The services construct `OperatorRecordDraft`, `RetentionRecordDraft`,
+    `RecoveryEvidence`, and `RecoveryProposal` with struct literals over
+    private fields. Each needs a public constructor, which is `29` parameters
+    across four types and is a real API addition.
+  - The services read `36` private fields of `OperatorRequest`,
+    `RecoverySnapshot`, and `FlowStepState`. Most have accessors already;
+    `RecoverySnapshot` needs four and `OperatorRequest` needs one, and the
+    accessors return references where the field reads moved values, so every
+    call site needs review rather than a blanket clone.
+- Six further `#[non_exhaustive]` matches cross the stage-2 boundary:
+  `OperatorAction`, `OperatorOutcomeClass`, `RetentionAction`,
+  `FlowTransitionKind`, and `ExplorerQuery` in both adapters. `OperatorAction`
+  additionally needs a new `OperatorRejection::UnsupportedAction` variant,
+  because there is no existing rejection for an action the build cannot apply.
+
+The next attempt should treat these as its scope, land the API additions as
+their own reviewed change first, and only then move the modules.
+
+## Stage 3 — not started
+
+Stage 3 follows stage 2 and is unchanged by this work.
 
 ## Consequences for the milestone
 

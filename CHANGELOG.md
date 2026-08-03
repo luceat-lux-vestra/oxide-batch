@@ -357,6 +357,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   values. Every `oxide-batch` path resolves unchanged. `BackoffSleeper` and
   `BackoffOutcome` stay with the runtime, and the plan crate keeps the compiler
   and the graph types only it constructs.
+- Crate-extraction stage 2 was attempted and not landed; the boundary is sound
+  and the repository crate compiles clean, but splitting the service
+  descriptors from their implementations needs public constructors and
+  accessors that are their own reviewed API change. The findings are recorded
+  in the crate-extraction evidence.
 - Crate-extraction stages 2 and 3 are unblocked by accepted ADR-0011. The
   repository port names `NodeId` and `StartLimit` in its signatures while the
   accepted contract forbids `oxide-batch-repository` from depending on
