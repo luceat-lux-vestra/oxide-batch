@@ -83,6 +83,18 @@ Downgrade is restore of a compatible backup unless a tested downgrade is
 explicitly supplied. A schema-2 runtime rejects schema 3 rather than operating
 on it.
 
+**Pre-release definition fingerprints.** No preview release has been published,
+so the preview carries no fingerprint compatibility promise for bytes produced
+before it.
+[ADR-0009](../architecture/decisions/0009-definition-fingerprint-input-set.md)
+narrowed the manifest projection during M5 stabilization, which changed the
+format-2 and format-3 fingerprints of definitions compiled by earlier
+pre-release builds. Definition drift is fail-closed, so such a definition is
+rejected on restart until it is recompiled or the application registers its own
+directed compatibility edge. Formats and schema versions are unchanged, and
+format-1 bytes are unaffected. From the first preview release onward, a
+fingerprint change requires a superseding decision and migration evidence.
+
 **Support commitment.** Preview support follows the pre-1.0 latest-line rule in
 the [support policy](support-policy.md): only the latest preview line receives
 fixes, and the stable support window is finalized before the first M14 release

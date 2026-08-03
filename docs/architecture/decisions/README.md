@@ -26,6 +26,7 @@ data, correctness, security, or dependency direction.
 | [0006](0006-repository-capability-model.md) | Repository services and capability model | Accepted |
 | [0007](0007-control-plane-boundary.md) | Core and control-plane boundary | Accepted |
 | [0008](0008-item-component-contract.md) | Item component contract and erasure boundary | Accepted; partially supersedes ADR-0002 |
+| [0009](0009-definition-fingerprint-input-set.md) | Definition fingerprint input set | Accepted |
 
 Copy [template.md](template.md) for a new decision. ADRs are immutable after
 acceptance except for status and links; changed decisions receive a new ADR.

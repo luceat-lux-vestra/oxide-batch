@@ -58,7 +58,7 @@ lease.
 | `SCALE-PARSTEP-001` | `split_outside_the_accepted_subset_is_rejected`, `parent_joins_every_branch_before_aggregating`, `branch_aggregation_is_deterministic_in_declared_order`, `unknown_branch_makes_the_parent_unknown`, `single_branch_budget_matches_the_sequential_observations` |
 | `SCALE-LOCALPART-001` | `partition_plan_commits_before_any_worker_starts`, `partitioner_is_not_reinvoked_on_restart`, `completed_partition_is_not_rerun`, `duplicate_partition_key_is_rejected`, `aggregation_is_deterministic_in_partition_key_order`, `stale_partition_writer_loses_the_compare_and_swap`, `insufficient_pool_capacity_fails_launch` |
 | `META-UPGRADE-001` | `schema2_upgrades_to_schema3`, `schema3_migration_performs_no_backfill`, `schema2_runtime_rejects_schema3`, `schema3_backup_restores_schema2` |
-| `LIFE-DEFINITION-001` | `format2_manifest_is_unchanged_by_schema3`, `format3_manifest_has_a_golden_fingerprint`, `format2_to_format3_requires_a_direct_upgrade`, `budget_change_that_alters_assignment_identity_changes_the_fingerprint` |
+| `LIFE-DEFINITION-001` | `format2_manifest_is_unchanged_by_schema3`, `format3_manifest_has_a_golden_fingerprint`, `format2_to_format3_requires_a_direct_upgrade`, `budget_change_that_alters_assignment_identity_changes_the_fingerprint`, which M4 delivered over the whole budget and [ADR-0009](../architecture/decisions/0009-definition-fingerprint-input-set.md) narrowed to the values that do alter assignment identity |
 
 Required evidence classes are unit/property, PostgreSQL integration, named
 conformance, crash/failure injection, destructive-action, security and

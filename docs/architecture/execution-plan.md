@@ -56,8 +56,9 @@ credentials, item values, or component-private data.
 The neutral definition manifest is a bounded, canonical, versioned
 representation of restart- and deployment-relevant structure. It records node
 and component IDs, graph edges, parameter schema, checkpoint/context codec
-versions, capabilities, delivery mode, and relevant resource policies. It
-does not contain executable Rust code, secrets, endpoints, or user data.
+versions, capabilities, delivery mode, and the resource policies that change
+durable meaning. It does not contain executable Rust code, secrets, endpoints,
+user data, framework capacity bounds, or throughput-only budgets.
 
 Canonical bytes are hashed to produce the fingerprint. Exact encoding remains
 the one accepted by ADR-0004 until a superseding ADR changes it. Equivalent
@@ -136,12 +137,17 @@ and thread-safety rules fixed by the
 splits, partitioned steps inside a branch, decision nodes inside a branch, and
 any zero, contradictory, or unbounded budget.
 
-Manifest format 3 adds those node kinds, the partitioner and aggregation
-identity, and the budgets that change assignment identity or aggregate meaning,
-which therefore participate in the fingerprint. Formats 1 and 2 remain readable
-and their bytes are never rewritten; moving a persisted definition to format 3
-requires one direct compatibility edge. M4 keeps the accepted ADR-0002 boxed
-component boundary and does not implement the RFC-0005 static hot path.
+Manifest format 3 adds those node kinds and the partition count, partitioner,
+and aggregation identity that select durable assignment or change aggregate
+meaning, which therefore participate in the fingerprint. Concurrency and
+connection budgets do not: they bound throughput, and the same contract's
+sequential fallback equivalence requires them to leave every normalized durable
+observation unchanged. The delivered M4 projection hashed them anyway;
+[ADR-0009](decisions/0009-definition-fingerprint-input-set.md) removed them and
+re-pinned the format-3 vector once. Formats 1 and 2 remain readable and their
+bytes are never rewritten; moving a persisted definition to format 3 requires
+one direct compatibility edge. M4 keeps the accepted ADR-0002 boxed component
+boundary and does not implement the RFC-0005 static hot path.
 
 ## M5 stabilization slice
 
@@ -152,18 +158,25 @@ kind, no manifest format, and no new restart mode.
 values that select or reinterpret durable state: node and component logical
 IDs, graph edges and their stable ordering, the parameter schema, checkpoint
 and context codec versions, declared capabilities that change durable meaning,
-delivery mode, start controls, fault-policy identity, and the budgets that
-change assignment identity or aggregate meaning. Display names, storage keys,
-adapter primary keys, runtime execution IDs, telemetry attributes, resource
+delivery mode, start controls, fault-policy identity, and the partition count,
+partitioner, and aggregation identity that select assignment or change
+aggregate meaning. Display names, storage keys, adapter primary keys, runtime
+execution IDs, telemetry attributes, framework capacity bounds, resource
 budgets that change only throughput, and diagnostic text are excluded and MUST
 NOT change a fingerprint.
+[ADR-0009](decisions/0009-definition-fingerprint-input-set.md) is the normative
+input set, and the projection carries an executable member allowlist so a new
+member cannot enter it without a superseding decision.
 
 **Fingerprint stability.** Canonical bytes are deterministic across processes,
-architectures, and repeated compilation of an unchanged definition. Equivalent
-source builders produce identical bytes; any change to a recorded
-restart-relevant value changes the fingerprint. Formats 1, 2, and 3 keep their
-accepted encodings and their existing golden vectors; M5 adds vectors rather
-than replacing them.
+architectures, framework releases, and repeated compilation of an unchanged
+definition. Equivalent source builders produce identical bytes; any change to a
+recorded restart-relevant value changes the fingerprint. Formats 1, 2, and 3
+keep their format identifiers, canonical encoding rules, and readers. ADR-0009
+re-pinned the format-2 and format-3 vectors exactly once when it removed the
+excluded values from the projection; format 1 was unaffected. After that
+re-pin, M5 adds vectors rather than replacing them, and a later change to the
+input set requires a superseding ADR.
 
 **Compatibility edges.** A persisted definition moves between manifest formats
 only through one direct, bounded, deterministic, one-way edge, as already

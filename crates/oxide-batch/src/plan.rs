@@ -107,13 +107,6 @@ impl SplitBudget {
     pub const fn repository_pool_size(self) -> u32 {
         self.repository_pool_size
     }
-
-    fn manifest_value(self) -> Value {
-        json!({
-            "max_parallel_branches": self.max_parallel_branches,
-            "repository_pool_size": self.repository_pool_size
-        })
-    }
 }
 
 impl Default for SplitBudget {
@@ -168,13 +161,6 @@ impl PartitionBudget {
     #[must_use]
     pub const fn repository_pool_size(self) -> u32 {
         self.repository_pool_size
-    }
-
-    fn manifest_value(self) -> Value {
-        json!({
-            "max_partition_workers": self.max_partition_workers,
-            "repository_pool_size": self.repository_pool_size
-        })
     }
 }
 
@@ -844,10 +830,14 @@ impl SplitNode {
         self.failure_policy
     }
 
+    /// Projects the restart-relevant split declaration.
+    ///
+    /// The budget is a throughput bound rather than a durable-meaning value, so
+    /// [ADR-0009](https://github.com/luceat-lux-vestra/oxide-batch/blob/main/docs/architecture/decisions/0009-definition-fingerprint-input-set.md)
+    /// excludes it. Branch membership and order select assignment and remain.
     fn manifest_value(&self) -> Value {
         json!({
             "branches": self.branches.iter().map(SplitBranch::manifest_value).collect::<Vec<_>>(),
-            "budget": self.budget.manifest_value(),
             "failure_policy": self.failure_policy.as_str(),
             "id": self.id.as_str(),
             "join": self.join.as_str(),
@@ -1017,10 +1007,16 @@ impl PartitionedStepNode {
         self.start
     }
 
+    /// Projects the restart-relevant partition declaration.
+    ///
+    /// The partition count selects durable assignment and the partitioner and
+    /// aggregation revisions decide how that assignment and its results are
+    /// interpreted, so all three remain. The worker and connection budget is a
+    /// throughput bound that [ADR-0009](https://github.com/luceat-lux-vestra/oxide-batch/blob/main/docs/architecture/decisions/0009-definition-fingerprint-input-set.md)
+    /// excludes.
     fn manifest_value(&self) -> Value {
         json!({
             "aggregation": self.aggregation.as_str(),
-            "budget": self.budget.manifest_value(),
             "failure_policy": self.failure_policy.as_str(),
             "id": self.id.as_str(),
             "kind": "partitioned_step",
@@ -1522,6 +1518,14 @@ fn fault_manifest_value(policy: &FaultPolicy) -> Value {
     })
 }
 
+/// Projects the compiled graph into its canonical restart-relevant manifest.
+///
+/// The projection carries exactly the values that select or reinterpret durable
+/// state. Framework capacity bounds are deliberately absent: they belong to the
+/// runtime that reads a manifest, not to the definition it identifies, so
+/// raising one in a later release must not change a fingerprint. `MAX_NODES`
+/// and `MAX_TRANSITIONS` are enforced against the graph a manifest declares by
+/// [`DefinitionManifest::read`](crate::DefinitionManifest::read).
 fn flow_manifest(
     job_name: &JobName,
     entry: &NodeId,
@@ -1534,27 +1538,7 @@ fn flow_manifest(
         .values()
         .flat_map(|edges| edges.iter().map(FlowTransition::manifest_value))
         .collect();
-    let bounds = if local_scale {
-        json!({
-            "max_branch_steps": MAX_BRANCH_STEPS,
-            "max_nodes": MAX_NODES,
-            "max_outgoing_transitions": MAX_OUTGOING_TRANSITIONS,
-            "max_partition_workers": MAX_PARTITION_WORKERS,
-            "max_partitions": MAX_PARTITIONS,
-            "max_pattern_bytes": MAX_PATTERN_BYTES,
-            "max_split_branches": MAX_SPLIT_BRANCHES,
-            "max_transitions": MAX_TRANSITIONS
-        })
-    } else {
-        json!({
-            "max_nodes": MAX_NODES,
-            "max_outgoing_transitions": MAX_OUTGOING_TRANSITIONS,
-            "max_pattern_bytes": MAX_PATTERN_BYTES,
-            "max_transitions": MAX_TRANSITIONS
-        })
-    };
     json!({
-        "bounds": bounds,
         "entry": entry.as_str(),
         "format": if local_scale {
             crate::definition::MANIFEST_FORMAT_LOCAL_SCALE
