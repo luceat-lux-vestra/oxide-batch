@@ -31,15 +31,14 @@ evidence passes.
 | 2 | `oxide-batch-repository` | repository, explorer, operator, retention, and transaction ports, capability descriptors, and their contract suite | Authorized |
 | 3 | `oxide-batch-plan` | plan compilation, graph normalization, manifest encoding, and fingerprinting | Authorized only after the M5 plan and fingerprint stabilization slice lands |
 
-The moved content above is named in prose, and the delivered code does not
-divide along it: the repository port names plan identities in its signatures
+The moved content above is named in prose, and the delivered code did not
+divide along it: the repository port named plan identities in its signatures
 while the forbidden-dependency rules below forbid that edge.
-[ADR-0011](decisions/0011-extraction-order-and-value-placement.md) proposes the
-per-type placement that resolves it without changing this order or the accepted
-inward dependency rule. Both stages are on hold until that decision is accepted
-or replaced; the
-[crate-extraction evidence](../project/m5-crate-extraction-evidence.md) records
-the measurements behind it.
+[ADR-0011](decisions/0011-extraction-order-and-value-placement.md) fixes the
+per-type placement that resolves it, by the rule that durable data lives at or
+below the layer that persists it while compilers, runtimes, and engines live
+above it. It moves `23` items into `oxide-batch-core` before stage 2 and makes
+the plan and repository crates independent siblings.
 
 Engine, item, adapter, observability, test-kit, distributed-protocol, and
 integration boundaries are **deferred past M5**. They are named by RFC-0003 as
@@ -71,8 +70,11 @@ crate receives a ledger row, support window, or independent cadence.
   brokers, HTTP or web frameworks, or any other extracted OxideBatch crate.
 - `oxide-batch-repository` MUST NOT depend on SQLx, Clap, OpenTelemetry SDKs,
   or `oxide-batch-plan`. It may depend on `oxide-batch-core`.
-- `oxide-batch-plan` MUST NOT depend on Tokio, SQLx, Clap, or OpenTelemetry
-  SDKs. It may depend on `oxide-batch-core` and `oxide-batch-repository`.
+- `oxide-batch-plan` MUST NOT depend on Tokio, SQLx, Clap, OpenTelemetry SDKs,
+  or `oxide-batch-repository`. It may depend on `oxide-batch-core`. ADR-0011
+  tightened this from an allowance to a prohibition: after its placement the
+  two crates are independent siblings over core, so the persistence layer never
+  depends on the compiler and the compiler never depends on persistence.
 - No cycle may exist between workspace crates.
 - No extracted crate may re-export a driver, runtime, or telemetry-SDK type
   through a public signature.

@@ -1,6 +1,6 @@
 # M5 Staged Crate-Extraction Evidence
 
-**State:** Stage 1 complete; stages 2 and 3 blocked on a boundary decision
+**State:** Stage 1 complete; stages 2 and 3 in progress under ADR-0011
 
 **Issue:** [#99](https://github.com/luceat-lux-vestra/oxide-batch/issues/99)
 

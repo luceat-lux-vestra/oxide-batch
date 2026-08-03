@@ -5,10 +5,10 @@
 use std::error::Error;
 
 use oxide_batch::{
-    ComponentRevision, DeciderRevision, DecisionInputVersion, DecisionNode, DefinitionRevision,
-    ExitCode, ExitPattern, FlowGraph, FlowNode, FlowSelectionError, FlowTarget, FlowTransition,
-    JobName, MAX_OUTGOING_TRANSITIONS, MAX_PATTERN_BYTES, NodeId, PlanError, StartControls,
-    StartLimit, StepComponents, StepName, StepNode, TerminalKind,
+    ComponentRevision, DeciderRevision, DecisionInputVersion, DecisionNode, DefinitionError,
+    DefinitionRevision, ExitCode, ExitPattern, FlowGraph, FlowNode, FlowSelectionError, FlowTarget,
+    FlowTransition, JobName, MAX_OUTGOING_TRANSITIONS, MAX_PATTERN_BYTES, NodeId, PlanError,
+    StartControls, StartLimit, StepComponents, StepName, StepNode, TerminalKind,
 };
 
 fn tasklet_node(id: &str) -> Result<FlowNode, Box<dyn Error>> {
@@ -483,7 +483,7 @@ fn a_decision_node_is_compiled_and_fingerprinted() -> Result<(), Box<dyn Error>>
 
 #[test]
 fn zero_valued_controls_are_rejected() {
-    assert_eq!(StartLimit::new(0), Err(PlanError::ZeroStartLimit));
+    assert_eq!(StartLimit::new(0), Err(DefinitionError::ZeroStartLimit));
     assert_eq!(
         DecisionInputVersion::new(0),
         Err(PlanError::ZeroDecisionInputVersion)

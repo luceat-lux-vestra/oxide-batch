@@ -25,6 +25,8 @@
 mod chunk;
 mod definition;
 mod domain;
+mod fault;
+mod flow;
 mod state;
 
 pub use chunk::{ChunkCount, ChunkCounts, ChunkError, ChunkProgress, ChunkSize};
@@ -47,6 +49,12 @@ pub use domain::{
     RecoveryDecisionId, RetentionActionId, StepExecution, StepExecutionId, StepName,
     StepPartitionId,
 };
+pub use fault::{
+    BackoffKind, BackoffPolicy, FaultAction, FaultClassifier, FaultDecision, FaultDescriptor,
+    FaultEvidence, FaultPhase, FaultPolicy, FaultPolicyError, FaultRule, RetryLimit, RetryOrdinal,
+    RetryStateLimit, RollbackDisposition, SkipCounts, SkipLimit,
+};
+pub use flow::{FlowTarget, MAX_PARTITIONS, NodeId, StartControls, StartLimit, TerminalKind};
 pub use state::{
     Checkpoint, DurableStateKind, ExecutionContext, StateCodecError, StateError, StateLimits,
     StateSchemaId, StateSchemaVersion, VersionedStateCodec,

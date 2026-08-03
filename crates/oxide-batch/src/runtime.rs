@@ -1534,7 +1534,10 @@ impl<'a> JobLauncher<'a> {
             FlowTarget::Terminal(TerminalKind::Complete) => Ok(BatchStatus::Completed),
             FlowTarget::Terminal(TerminalKind::Fail) => Ok(BatchStatus::Failed),
             FlowTarget::Terminal(TerminalKind::Stop) => Ok(BatchStatus::Stopped),
-            FlowTarget::Node(_) => Err(LaunchError::UnsupportedPlan),
+            // A node target, and any terminal this build does not know:
+            // `TerminalKind` is `#[non_exhaustive]`, and an unrecognized
+            // terminal is an unsupported plan, never a guessed status.
+            _ => Err(LaunchError::UnsupportedPlan),
         }
     }
 

@@ -865,6 +865,8 @@ pub enum DefinitionTokenKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum DefinitionError {
+    /// A start limit of zero can never start its step.
+    ZeroStartLimit,
     /// A required token was empty.
     EmptyToken {
         /// Rejected token category.
@@ -916,6 +918,7 @@ pub enum DefinitionError {
 impl fmt::Display for DefinitionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ZeroStartLimit => formatter.write_str("start limit must be nonzero"),
             Self::EmptyToken { kind } => write!(formatter, "{kind:?} token must not be empty"),
             Self::TokenTooLong { kind, max_bytes } => {
                 write!(formatter, "{kind:?} token exceeds {max_bytes} bytes")

@@ -1,6 +1,6 @@
 # ADR-0011: Durable Value Placement Across Extracted Boundaries
 
-- **State:** Proposed
+- **State:** Accepted
 - **Date:** 2026-08-03
 - **Owners:** architecture maintainers
 - **Deciders:** project owner

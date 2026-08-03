@@ -344,13 +344,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   supersedes ADR-0001 for the three M5-authorized crates only. The release
   workflows now package, checksum, generate SBOMs for, attest, and publish
   those crates in dependency order.
-- Crate-extraction stages 2 and 3 are on hold behind proposed ADR-0011. The
+- **Breaking (pre-1.0):** `StartLimit::new` returns `DefinitionError` instead of
+  `PlanError`. The type is restart-relevant definition data that the repository
+  port names, so ADR-0011 places it in the domain layer, and `PlanError` cannot
+  follow it there because nineteen of its variants carry a `NodeId` and two
+  carry an `ExitPattern`. `PlanError::ZeroStartLimit` is replaced by
+  `DefinitionError::ZeroStartLimit`. No durable byte, fingerprint, or manifest
+  member changes.
+- Durable flow identities and fault-policy values moved into
+  `oxide-batch-core`: `NodeId`, `FlowTarget`, `TerminalKind`, `StartControls`,
+  `StartLimit`, `MAX_PARTITIONS`, and the seventeen runtime-free fault-policy
+  values. Every `oxide-batch` path resolves unchanged. `BackoffSleeper` and
+  `BackoffOutcome` stay with the runtime, and the plan crate keeps the compiler
+  and the graph types only it constructs.
+- Crate-extraction stages 2 and 3 are unblocked by accepted ADR-0011. The
   repository port names `NodeId` and `StartLimit` in its signatures while the
   accepted contract forbids `oxide-batch-repository` from depending on
-  `oxide-batch-plan`, so the named boundary content and the code disagree. The
-  ADR proposes keeping the order and the accepted inward dependency rule, and
-  placing each type in the lowest crate that every crate needing it can depend
-  on.
+  `oxide-batch-plan`, so the named boundary content and the code disagreed. The
+  ADR places durable data at or below the layer that persists it and keeps
+  compilers, runtimes, and engines above it, which makes the plan and
+  repository crates independent siblings over core.
 - `MAX_NODES` and `MAX_TRANSITIONS` moved with the manifest reader that
   enforces them. Both facade paths resolve unchanged, and neither bound
   participates in a definition fingerprint.

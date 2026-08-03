@@ -2118,13 +2118,17 @@ impl<'a> FlowLauncher<'a> {
                         TerminalKind::Complete => {
                             (BatchStatus::Completed, FlowExecutionOutcome::Completed)
                         }
-                        TerminalKind::Fail => (
+                        TerminalKind::Stop => (BatchStatus::Stopped, FlowExecutionOutcome::Stopped),
+                        // `TerminalKind::Fail`, and any terminal this build does
+                        // not know: `TerminalKind` is `#[non_exhaustive]`, and an
+                        // unrecognized terminal fails the job rather than
+                        // completing or stopping it.
+                        _ => (
                             BatchStatus::Failed,
                             FlowExecutionOutcome::Failed(
                                 source_failure.unwrap_or(FlowFailure::FailTerminal),
                             ),
                         ),
-                        TerminalKind::Stop => (BatchStatus::Stopped, FlowExecutionOutcome::Stopped),
                     };
                     let failure = if status == BatchStatus::Failed {
                         Some(self.next_failure_summary(FailureCategory::UserComponent)?)
@@ -3381,14 +3385,11 @@ const fn split_status_severity(status: BatchStatus) -> u8 {
         BatchStatus::Stopped => 1,
         BatchStatus::Failed => 2,
         BatchStatus::Unknown => 3,
-        // `BatchStatus` is `#[non_exhaustive]`, so an unrecognized status
-        // takes the highest severity and dominates the aggregate rather than
-        // being mistaken for a completed branch.
-        BatchStatus::Starting
-        | BatchStatus::Started
-        | BatchStatus::Stopping
-        | BatchStatus::Abandoned
-        | _ => 4,
+        // The non-terminal and abandoned statuses, and any status this build
+        // does not know: `BatchStatus` is `#[non_exhaustive]`, and an
+        // unrecognized status takes the highest severity so it dominates the
+        // aggregate rather than being mistaken for a completed branch.
+        _ => 4,
     }
 }
 
