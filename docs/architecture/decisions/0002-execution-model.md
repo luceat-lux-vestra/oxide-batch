@@ -1,6 +1,13 @@
 # ADR-0002: Async Execution Model
 
 - **State:** Accepted
+- **Partially superseded by:**
+  [ADR-0008](0008-item-component-contract.md) replaces the boxed representation
+  for the three item component traits only. Its revisit trigger — boxed-future
+  allocation against a performance budget — fired with
+  [spike 0004](../spikes/0004-static-and-erased-item-path.md). This record
+  stays `Accepted` and continues to govern the execution model and the other
+  twenty-one extension points that use the boxed form.
 - **Date:** 2026-07-29
 - **Owners:** maintainers
 - **Deciders:** project owner

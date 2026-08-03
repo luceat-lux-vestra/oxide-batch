@@ -745,6 +745,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxide-batch-m6-spikes"
+version = "0.0.0"
+dependencies = [
+ "oxide-batch",
+ "tokio",
+]
+
+[[package]]
 name = "oxide-batch-xtask"
 version = "0.0.0"
 

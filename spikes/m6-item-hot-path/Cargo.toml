@@ -1,0 +1,32 @@
+[package]
+name = "oxide-batch-m6-spikes"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+# Deliberately narrow. The native item traits must compile without a runtime,
+# a database driver, or a serializer in scope, so those crates may only ever
+# appear under `dev-dependencies`.
+[dependencies]
+oxide-batch = { version = "0.1.0-alpha.1", path = "../../crates/oxide-batch" }
+
+[dev-dependencies]
+tokio = { version = "1.53.1", features = ["macros", "rt", "time"] }
+
+# The workspace forbids unsafe code. This crate denies it instead so the
+# measurement allocator in `src/allocation.rs` can carry a single documented
+# `unsafe impl GlobalAlloc`, which is the only way to count heap allocations
+# per item without adding a dependency. No other module may allow it, and no
+# published crate inherits this relaxation.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+expect_used = "deny"
+panic = "deny"
+unwrap_used = "deny"

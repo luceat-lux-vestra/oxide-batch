@@ -126,6 +126,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   M6-M12 non-blocking review requirement; the reviewed ledger disposition with
   its advertised embedded-kernel promotion set; the `0.x` preview support,
   upgrade, and rollback bounds; and the nine named evidence campaigns.
+- The RFC-0005 static-versus-erased item hot path spike, supplying the
+  measurement half of that RFC's approval gate ahead of M6 kickoff. It settles
+  a contract shape as well: one public trait per role with an explicit call
+  lifetime, implemented as a plain `async fn`, with erasure delivered as a
+  concrete handle over a sealed dyn-compatible mirror rather than a second
+  public trait, so one chunk loop serves both dispatch forms. Evidence covers
+  trace, counter, outcome, fold, and panic equivalence across thirteen
+  scenarios; a counting allocator showing zero allocations per item against
+  exactly one boxed future per dispatched call; preserved enlisted-transaction
+  borrowing on both forms; a retained path back to the ADR-0002 handles; a
+  runtime-free throughput harness; and one- versus sixteen-pipeline code-size
+  and compile-time comparisons. The ergonomics review is included: M6's
+  decorator and composite shapes are built against the contract and still
+  measure zero allocations per item, the extra bounds a generic composite needs
+  are established by removal, and each contract trait carries
+  `#[diagnostic::on_unimplemented]` with the implementer-facing wording pinned
+  by compiler fixtures.
+- Accepted RFC-0005 on 2026-08-03, on the evidence of spike 0004, closing the
+  static-versus-erased architecture gate that M5 had deferred. M5 is unaffected
+  and still exits on the ADR-0002 boxed boundary; the contract lands in M6.
+- ADR-0008 replacing the public item component contract: one generic
+  trait per role with an explicit call lifetime, implemented as `async fn`,
+  with erasure delivered as a concrete handle over a sealed dyn-compatible
+  mirror and one chunk loop serving both dispatch forms. It supersedes ADR-0002
+  **in part** — the three item component traits only, with the execution model
+  and the other twenty-one boxed extension points unchanged — and carries
+  forward async-first execution, cooperative stop, the bounded blocking
+  adapter, panic classification, and the borrowed enlisted transaction. Item
+  listeners are explicitly out of scope and keep their per-item boxed future;
+  the zero-allocation result is stated for pipelines without them.
 - Tasklet-only bounded local partition execution with per-child factories,
   manager-owned finite worker scopes, pre-start and in-flight cancellation,
   panic isolation, durable completed-child restart reuse, explicit `UNKNOWN`
