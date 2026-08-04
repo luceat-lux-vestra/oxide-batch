@@ -18,12 +18,13 @@ use futures_executor::block_on;
 use ids::DeterministicIds;
 use oxide_batch::{
     ActorRef, BatchStatus, Clock, ComponentRevision, DefinitionIdentity, DefinitionRevision,
-    FailureCategory, FailureId, FailureSummary, InMemoryExplorer, InMemoryJobRepository,
-    JobInstanceKey, JobName, JobOperator, JobParameter, JobParameters, JobRepository,
-    LifecycleTransition, MonotonicClock, MonotonicInstant, OperationId, OperatorAction,
-    OperatorError, OperatorOutcomeClass, OperatorRecordDraft, OperatorRejection, OperatorRequest,
-    OwnerToken, ParameterName, ParameterRole, ParameterValue, ReasonCode, RecoveryDirective,
-    RecoveryProposer, RepositoryError, RequestField, RequestFieldError, StepName,
+    ExecutionVersion, FailureCategory, FailureId, FailureSummary, InMemoryExplorer,
+    InMemoryJobRepository, JobInstanceKey, JobName, JobOperator, JobParameter, JobParameters,
+    JobRepository, LifecycleTransition, MonotonicClock, MonotonicInstant, OperationId,
+    OperatorAction, OperatorError, OperatorOutcomeClass, OperatorRecordDraft, OperatorRejection,
+    OperatorRequest, OwnerToken, ParameterName, ParameterRole, ParameterValue, ReasonCode,
+    RecoveryDirective, RecoveryProposer, RepositoryError, RequestField, RequestFieldError,
+    StepName,
 };
 
 #[derive(Debug)]
@@ -55,6 +56,39 @@ fn backend(
 fn shared_service_contract_passes_in_memory() -> Result<(), Box<dyn Error>> {
     run_service_contract("in-memory", backend)?;
     Ok(())
+}
+
+#[test]
+fn every_rejection_class_has_a_distinct_durable_code() {
+    // The codes are written to the audit row and read back by the PostgreSQL
+    // adapter, so a duplicate or missing code silently reclassifies a
+    // recorded rejection.
+    assert_eq!(
+        OperatorRejection::UnsupportedAction.as_str(),
+        "UNSUPPORTED_ACTION"
+    );
+    let codes = [
+        OperatorRejection::OptimisticConflict {
+            current: ExecutionVersion::new(1),
+        },
+        OperatorRejection::InvalidState {
+            status: BatchStatus::Started,
+        },
+        OperatorRejection::InstanceCompleted,
+        OperatorRejection::InstanceAbandoned,
+        OperatorRejection::IncompatibleDefinition,
+        OperatorRejection::RestartWithoutPriorAttempt,
+        OperatorRejection::StartLimitExceeded,
+        OperatorRejection::UnresolvedRecoveryRequired,
+        OperatorRejection::ExecutionNotFound,
+        OperatorRejection::InstanceNotFound,
+        OperatorRejection::UnsupportedAction,
+    ]
+    .map(OperatorRejection::as_str);
+    let mut unique = codes.to_vec();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(unique.len(), codes.len());
 }
 
 #[test]

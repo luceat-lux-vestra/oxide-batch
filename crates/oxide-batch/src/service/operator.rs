@@ -287,6 +287,18 @@ impl OperatorRequest {
         }
     }
 
+    /// Borrows the identifying key, when the action selects by key.
+    ///
+    /// Only [`OperatorAction::Launch`] names one; every other action names an
+    /// instance or an execution.
+    #[must_use]
+    pub fn job_instance_key(&self) -> Option<&JobInstanceKey> {
+        match &self.target {
+            OperatorTarget::InstanceKey(key) => Some(key),
+            _ => None,
+        }
+    }
+
     fn definition(&self) -> Option<&DefinitionIdentity> {
         match &self.arguments {
             RequestArguments::Definition(definition) => Some(definition),
@@ -399,6 +411,13 @@ pub enum OperatorRejection {
     ExecutionNotFound,
     /// The targeted logical instance does not exist.
     InstanceNotFound,
+    /// This build cannot apply the requested action.
+    ///
+    /// [`OperatorAction`] is `#[non_exhaustive]`, so a caller compiled against
+    /// a newer definition of it can name an action this build has no effect
+    /// for. Rejecting is the conservative arm: the request is audited and
+    /// nothing is applied.
+    UnsupportedAction,
 }
 
 impl OperatorRejection {
@@ -417,6 +436,7 @@ impl OperatorRejection {
             Self::UnresolvedRecoveryRequired => "UNRESOLVED_RECOVERY_REQUIRED",
             Self::ExecutionNotFound => "EXECUTION_NOT_FOUND",
             Self::InstanceNotFound => "INSTANCE_NOT_FOUND",
+            Self::UnsupportedAction => "UNSUPPORTED_ACTION",
         }
     }
 
@@ -608,6 +628,64 @@ pub struct OperatorRecordDraft {
 }
 
 impl OperatorRecordDraft {
+    /// Drafts the audit row for one applied request.
+    ///
+    /// The audited action, actor, reason, and digest are taken from the
+    /// request, so the row cannot disagree with the request it audits. The
+    /// four effect values are what the transaction observed and produced.
+    #[must_use]
+    pub fn applied(
+        request: &OperatorRequest,
+        job_instance_id: Option<JobInstanceId>,
+        job_execution_id: Option<JobExecutionId>,
+        prior_status: Option<BatchStatus>,
+        result_status: Option<BatchStatus>,
+        requested_at: SystemTime,
+    ) -> Self {
+        Self {
+            action: request.action(),
+            operation_id: request.operation_id().clone(),
+            actor: request.actor().clone(),
+            reason: request.reason().cloned(),
+            digest: *request.digest(),
+            job_instance_id,
+            job_execution_id,
+            observed_version: request.expected_version(),
+            prior_status,
+            result_status,
+            outcome: OperatorOutcomeClass::Applied,
+            rejection: None,
+            requested_at,
+        }
+    }
+
+    /// Drafts the audit row for one rejected request.
+    ///
+    /// A rejection applies no effect, so the row carries only the target the
+    /// request already named and no observed or produced status.
+    #[must_use]
+    pub fn rejected(
+        request: &OperatorRequest,
+        rejection: OperatorRejection,
+        requested_at: SystemTime,
+    ) -> Self {
+        Self {
+            action: request.action(),
+            operation_id: request.operation_id().clone(),
+            actor: request.actor().clone(),
+            reason: request.reason().cloned(),
+            digest: *request.digest(),
+            job_instance_id: request.job_instance_id(),
+            job_execution_id: request.job_execution_id(),
+            observed_version: request.expected_version(),
+            prior_status: None,
+            result_status: None,
+            outcome: OperatorOutcomeClass::Rejected,
+            rejection: Some(rejection),
+            requested_at,
+        }
+    }
+
     /// Rebuilds a draft from one durable audit row.
     ///
     /// Durable adapters use this to return a recorded outcome without
@@ -929,21 +1007,14 @@ impl<R: JobRepository> JobOperator<R> {
                 return Err(error);
             }
         };
-        let draft = OperatorRecordDraft {
-            action: request.action,
-            operation_id: request.operation_id.clone(),
-            actor: request.actor.clone(),
-            reason: request.reason.clone(),
-            digest: request.digest,
-            job_instance_id: effect.job_instance_id,
-            job_execution_id: effect.job_execution_id,
-            observed_version: request.expected_version,
-            prior_status: effect.prior_status,
-            result_status: effect.result_status,
-            outcome: OperatorOutcomeClass::Applied,
-            rejection: None,
+        let draft = OperatorRecordDraft::applied(
+            request,
+            effect.job_instance_id,
+            effect.job_execution_id,
+            effect.prior_status,
+            effect.result_status,
             requested_at,
-        };
+        );
         let record = match unit.append_operator_request(&draft).await {
             Ok(record) => record,
             Err(RepositoryError::ConcurrentModification) => {
@@ -1018,16 +1089,16 @@ impl<R: JobRepository> JobOperator<R> {
     ) -> Result<Option<OperatorOutcome>, OperatorError> {
         let mut unit = self.repository.begin().await?;
         let recorded = unit
-            .find_operator_request(request.action, &request.operation_id)
+            .find_operator_request(request.action(), request.operation_id())
             .await?;
         unit.rollback().await?;
         let Some(record) = recorded else {
             return Ok(None);
         };
-        if record.digest() != &request.digest {
+        if record.digest() != request.digest() {
             return Err(OperatorError::OperationIdConflict {
-                action: request.action,
-                operation_id: request.operation_id.clone(),
+                action: request.action(),
+                operation_id: request.operation_id().clone(),
             });
         }
         Ok(Some(OperatorOutcome::new(
@@ -1044,21 +1115,7 @@ impl<R: JobRepository> JobOperator<R> {
         rejection: OperatorRejection,
         requested_at: SystemTime,
     ) -> Result<OperatorOutcome, OperatorError> {
-        let draft = OperatorRecordDraft {
-            action: request.action,
-            operation_id: request.operation_id.clone(),
-            actor: request.actor.clone(),
-            reason: request.reason.clone(),
-            digest: request.digest,
-            job_instance_id: request.job_instance_id(),
-            job_execution_id: request.job_execution_id(),
-            observed_version: request.expected_version,
-            prior_status: None,
-            result_status: None,
-            outcome: OperatorOutcomeClass::Rejected,
-            rejection: Some(rejection),
-            requested_at,
-        };
+        let draft = OperatorRecordDraft::rejected(request, rejection, requested_at);
         let mut unit = self.repository.begin().await?;
         let record = match unit.append_operator_request(&draft).await {
             Ok(record) => record,
@@ -1087,7 +1144,7 @@ impl<R: JobRepository> JobOperator<R> {
         unit: &mut dyn RepositoryUnitOfWork,
         request: &OperatorRequest,
     ) -> Result<AppliedEffect, EffectFailure> {
-        match request.action {
+        match request.action() {
             OperatorAction::Launch => self.launch(unit, request).await,
             OperatorAction::Restart => self.restart(unit, request).await,
             OperatorAction::Stop => self.stop(unit, request).await,
@@ -1101,7 +1158,7 @@ impl<R: JobRepository> JobOperator<R> {
         unit: &mut dyn RepositoryUnitOfWork,
         request: &OperatorRequest,
     ) -> Result<AppliedEffect, EffectFailure> {
-        let OperatorTarget::InstanceKey(key) = &request.target else {
+        let Some(key) = request.job_instance_key() else {
             return Err(EffectFailure::Rejected(OperatorRejection::InstanceNotFound));
         };
         let definition = request
@@ -1127,7 +1184,7 @@ impl<R: JobRepository> JobOperator<R> {
         unit: &mut dyn RepositoryUnitOfWork,
         request: &OperatorRequest,
     ) -> Result<AppliedEffect, EffectFailure> {
-        let OperatorTarget::Instance(instance_id) = request.target else {
+        let Some(instance_id) = request.job_instance_id() else {
             return Err(EffectFailure::Rejected(OperatorRejection::InstanceNotFound));
         };
         let definition = request
@@ -1181,7 +1238,7 @@ impl<R: JobRepository> JobOperator<R> {
             }));
         }
         let execution = unit
-            .request_execution_stop(id, expected_version, &request.actor, self.clock.now())
+            .request_execution_stop(id, expected_version, request.actor(), self.clock.now())
             .await
             .map_err(EffectFailure::classify)?;
         Ok(AppliedEffect::updated(&execution, status))
@@ -1282,12 +1339,12 @@ impl<R: JobRepository> JobOperator<R> {
 fn execution_target(
     request: &OperatorRequest,
 ) -> Result<(JobExecutionId, ExecutionVersion), EffectFailure> {
-    let OperatorTarget::Execution(id) = request.target else {
+    let Some(id) = request.job_execution_id() else {
         return Err(EffectFailure::Rejected(
             OperatorRejection::ExecutionNotFound,
         ));
     };
-    let expected_version = request.expected_version.ok_or(EffectFailure::Rejected(
+    let expected_version = request.expected_version().ok_or(EffectFailure::Rejected(
         OperatorRejection::InvalidState {
             status: BatchStatus::Unknown,
         },

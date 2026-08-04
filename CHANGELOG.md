@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Public constructors and accessors the stage-2 crate boundary needs, landed
+  ahead of the module move so the move itself changes no API:
+  `OperatorRecordDraft::{applied, rejected}`,
+  `RetentionRecordDraft::{instance_action, purge}`, `RecoveryEvidence::new`,
+  `RecoveryProposal::new`, `OperatorRequest::job_instance_key`, and
+  `RecoverySnapshot::{status, owner, updated_at, server_time}`. The draft and
+  proposal constructors are purpose-named rather than one wide constructor per
+  type, so an audit row cannot disagree with the request it audits and a
+  proposal cannot carry a digest its evidence does not produce.
+- `OperatorRejection::UnsupportedAction`, durable code `UNSUPPORTED_ACTION`, for
+  an action a build cannot apply. `OperatorAction` is `#[non_exhaustive]`, so
+  after stage 2 the operator service can no longer match it exhaustively; this
+  is the conservative arm that audits the request and applies nothing. The arm
+  that uses it lands with the module move, because a wildcard arm is
+  unreachable inside the crate that declares the enum.
+- `IdentifierKind::FlowDecisionSequence`.
 - Facade-owned M1 domain types for job and step names, opaque execution
   identifiers, typed identifying parameters, canonical job-instance keys,
   lifecycle metadata, counters, exit statuses, and redacted failure summaries.
@@ -351,6 +367,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   carry an `ExitPattern`. `PlanError::ZeroStartLimit` is replaced by
   `DefinitionError::ZeroStartLimit`. No durable byte, fingerprint, or manifest
   member changes.
+- **Breaking (pre-1.0):** `FlowDecisionSequence::new` returns `DomainError`
+  instead of `FlowRuntimeError`. The sequence is a durable ordinal carried by
+  every persisted flow decision, so it follows the decision record into the
+  repository layer, and `FlowRuntimeError` cannot follow it there because it
+  stays with the flow engine. It now rejects zero as
+  `DomainError::ZeroIdentifier { kind: IdentifierKind::FlowDecisionSequence }`,
+  exactly as the sibling `FlowDecisionId::new` already did. The engine maps the
+  error back to `FlowRuntimeError::DecisionSequenceExhausted` at its one call
+  site, so no caller of the flow runtime observes a different error. This is
+  the second and last reviewed API change ADR-0011 predicts.
 - Durable flow identities and fault-policy values moved into
   `oxide-batch-core`: `NodeId`, `FlowTarget`, `TerminalKind`, `StartControls`,
   `StartLimit`, `MAX_PARTITIONS`, and the seventeen runtime-free fault-policy

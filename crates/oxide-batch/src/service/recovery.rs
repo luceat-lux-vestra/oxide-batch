@@ -332,6 +332,30 @@ impl RecoverySnapshot {
             markers,
         }
     }
+
+    /// Returns the observed lifecycle status.
+    #[must_use]
+    pub const fn status(&self) -> BatchStatus {
+        self.status
+    }
+
+    /// Returns the owner-token observation.
+    #[must_use]
+    pub const fn owner(&self) -> OwnerObservation {
+        self.owner
+    }
+
+    /// Returns the durable timestamp whose age establishes staleness.
+    #[must_use]
+    pub const fn updated_at(&self) -> SystemTime {
+        self.updated_at
+    }
+
+    /// Returns the repository server time this snapshot was gathered with.
+    #[must_use]
+    pub const fn server_time(&self) -> SystemTime {
+        self.server_time
+    }
 }
 
 /// Adapter port for one bounded, server-time recovery observation.
@@ -354,6 +378,27 @@ pub struct RecoveryEvidence {
 }
 
 impl RecoveryEvidence {
+    /// Binds one snapshot to the clock evidence gathered around it.
+    ///
+    /// The three durations are the proposer's own observations: the inactivity
+    /// it measured against repository server time, the offset it observed
+    /// between that server time and its local wall clock, and the monotonic
+    /// window the snapshot read occupied.
+    #[must_use]
+    pub const fn new(
+        snapshot: RecoverySnapshot,
+        inactivity: Duration,
+        observed_clock_offset: Duration,
+        observation_window: Duration,
+    ) -> Self {
+        Self {
+            snapshot,
+            inactivity,
+            observed_clock_offset,
+            observation_window,
+        }
+    }
+
     /// Returns the execution identity.
     #[must_use]
     pub const fn execution_id(&self) -> JobExecutionId {
@@ -515,6 +560,16 @@ pub struct RecoveryProposal {
 }
 
 impl RecoveryProposal {
+    /// Seals one proposal over its evidence.
+    ///
+    /// The digest is computed here rather than supplied, so a proposal cannot
+    /// carry a digest that its evidence does not produce.
+    #[must_use]
+    pub fn new(evidence: RecoveryEvidence) -> Self {
+        let digest = evidence.digest();
+        Self { evidence, digest }
+    }
+
     /// Borrows the bounded redacted evidence.
     #[must_use]
     pub const fn evidence(&self) -> &RecoveryEvidence {
@@ -640,10 +695,10 @@ impl<R: RecoveryRepository> RecoveryProposer<R> {
                 .server_time_floor
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if floor.is_some_and(|previous| snapshot.server_time < previous) {
+            if floor.is_some_and(|previous| snapshot.server_time() < previous) {
                 return Err(RecoveryError::ClockEvidenceUnusable);
             }
-            *floor = Some(snapshot.server_time);
+            *floor = Some(snapshot.server_time());
         }
         let observation_window = after
             .checked_elapsed_since(before)
@@ -651,19 +706,19 @@ impl<R: RecoveryRepository> RecoveryProposer<R> {
         if observation_window > self.max_clock_skew.get() {
             return Err(RecoveryError::ClockEvidenceUnusable);
         }
-        let observed_clock_offset = absolute_system_difference(snapshot.server_time, local_wall);
+        let observed_clock_offset = absolute_system_difference(snapshot.server_time(), local_wall);
         if observed_clock_offset > self.max_clock_skew.get() {
             return Err(RecoveryError::ClockEvidenceUnusable);
         }
         let inactivity = snapshot
-            .server_time
-            .duration_since(snapshot.updated_at)
+            .server_time()
+            .duration_since(snapshot.updated_at())
             .map_err(|_| RecoveryError::ClockEvidenceUnusable)?;
 
-        match snapshot.status {
+        match snapshot.status() {
             BatchStatus::Unknown => {}
             BatchStatus::Starting | BatchStatus::Started | BatchStatus::Stopping => {
-                if snapshot.owner == OwnerObservation::CurrentProcess {
+                if snapshot.owner() == OwnerObservation::CurrentProcess {
                     return Err(RecoveryError::OwnedByCurrentProcess);
                 }
                 if inactivity <= self.stale_threshold.get() {
@@ -676,14 +731,13 @@ impl<R: RecoveryRepository> RecoveryProposer<R> {
             status => return Err(RecoveryError::NotRecoverable { status }),
         }
 
-        let evidence = RecoveryEvidence {
+        let evidence = RecoveryEvidence::new(
             snapshot,
             inactivity,
             observed_clock_offset,
             observation_window,
-        };
-        let digest = evidence.digest();
-        let proposal = RecoveryProposal { evidence, digest };
+        );
+        let proposal = RecoveryProposal::new(evidence);
         if proposal.evidence().status() != BatchStatus::Unknown {
             crate::telemetry::emit_safely(
                 self.event_sink.as_ref(),

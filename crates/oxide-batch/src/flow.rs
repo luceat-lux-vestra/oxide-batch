@@ -66,11 +66,15 @@ impl FlowDecisionSequence {
     ///
     /// # Errors
     ///
-    /// Returns [`FlowRuntimeError::DecisionSequenceExhausted`] for zero.
-    pub fn new(value: u64) -> Result<Self, FlowRuntimeError> {
+    /// Returns [`DomainError::ZeroIdentifier`] for zero.
+    ///
+    /// [`DomainError::ZeroIdentifier`]: crate::DomainError::ZeroIdentifier
+    pub fn new(value: u64) -> Result<Self, crate::DomainError> {
         NonZeroU64::new(value)
             .map(Self)
-            .ok_or(FlowRuntimeError::DecisionSequenceExhausted)
+            .ok_or(crate::DomainError::ZeroIdentifier {
+                kind: crate::IdentifierKind::FlowDecisionSequence,
+            })
     }
 
     /// Returns the numeric sequence.
@@ -483,12 +487,12 @@ pub struct DecisionStepInput {
 impl DecisionStepInput {
     fn from_state(state: &FlowStepState) -> Self {
         Self {
-            node_id: state.node_id.clone(),
-            execution_id: state.execution.id(),
-            status: state.execution.metadata().status(),
-            exit_status: state.execution.metadata().exit_status().clone(),
-            counts: state.execution.metadata().counts(),
-            context: state.context.clone(),
+            node_id: state.node_id().clone(),
+            execution_id: state.execution().id(),
+            status: state.execution().metadata().status(),
+            exit_status: state.execution().metadata().exit_status().clone(),
+            counts: state.execution().metadata().counts(),
+            context: state.context().cloned(),
         }
     }
 
@@ -3422,7 +3426,10 @@ fn next_sequence(length: usize) -> Result<FlowDecisionSequence, FlowRuntimeError
         .ok()
         .and_then(|value| value.checked_add(1))
         .ok_or(FlowRuntimeError::DecisionSequenceExhausted)?;
-    FlowDecisionSequence::new(next)
+    // The engine keeps the runtime error its callers already match on; the
+    // constructor's own domain error never escapes, because `next` is at
+    // least one here.
+    FlowDecisionSequence::new(next).map_err(|_| FlowRuntimeError::DecisionSequenceExhausted)
 }
 
 fn correlation(
