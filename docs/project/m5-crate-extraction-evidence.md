@@ -1,17 +1,17 @@
 # M5 Staged Crate-Extraction Evidence
 
-**State:** Stage 1, the ADR-0011 core placement, and the stage-2 preliminary API
-changes complete; the stage-2 module move not started; stage 3 not started
+**State:** Stage 1, the ADR-0011 core placement, and stage 2 complete; stage 3
+not started
 
 **Issue:** [#99](https://github.com/luceat-lux-vestra/oxide-batch/issues/99)
 
-**Date:** 2026-08-03
+**Date:** 2026-08-04
 
 This record is the per-stage evidence the
 [staged crate-extraction contract](../architecture/crate-extraction.md)
 requires. It covers the publication decision the work forced, the evidence
-checks the contract required and the repository lacked, stage 1, and the
-boundary finding that stops stages 2 and 3.
+checks the contract required and the repository lacked, stage 1, the boundary
+finding that stopped stage 2 and the correction that unblocked it, and stage 2.
 
 Extraction is behavior-preserving repackaging. Nothing in this record changes
 observable batch semantics, persisted bytes, transaction boundaries, lifecycle
@@ -216,7 +216,11 @@ rather than encoded durably, and an unsupported plan stays unsupported. All
 fallbacks in the workspace now use one idiom — a final `_` arm whose comment
 names the variants it absorbs.
 
-## Stage 2 — attempted, not landed
+## Stage 2 — the first attempt, not landed
+
+The attempt below preceded the preliminary API changes and the landed move. It
+is retained because it is what established the boundary, and because the landed
+move is judged against what it predicted.
 
 Stage 2 was attempted after the core placement and is **not** in the history.
 The move itself completed: `oxide-batch-repository` was created, the ports,
@@ -351,20 +355,190 @@ additions either: variants and inherent methods are not exported paths. This is
 the second recorded case of the limitation named above. The changes are caught
 by their tests, their changelog entries, and this record.
 
+## Stage 2 — `oxide-batch-repository`
+
+The module move landed as one commit after the preliminary API changes above.
+
+**Moved.** The metadata repository, unit-of-work, clock, and identifier ports;
+the explorer, operator, retention, and recovery ports; the durable partition
+plan and result values; the durable flow-decision records; the operator audit
+records and guard vocabulary; the durable retention holds, purge plans, and
+audit records; the recovery snapshots, evidence, and proposals; the bounded
+operator request envelope; and the keyset pagination vocabulary. The crate
+depends on `oxide-batch-core`, `sha2`, and nothing else.
+
+**Not moved.** The two metadata adapters, the four services that drive the
+ports, the flow engine, the plan compiler, the runtime, telemetry, and the
+contract suite. `decision_matches_manifest` stayed with the adapters because it
+reads an `ExitPattern`, and the repository crate may not depend on the plan.
+
+### The three placement decisions the move had to make
+
+**The cursor machinery went with the port.** The stage-2 preliminary record left
+`CursorKey`, `QueryWindow`, `decode_cursor`, and the cursor format constants
+unplaced. They are in `oxide-batch-repository` with `Cursor`, `Page`,
+`PageRequest`, `PageSize`, `ExplorerQuery`, and the `ExplorerRow` implementations
+for all eight row types, because every cursor key is an immutable ordering
+column of a row the port returns and every token is bound to a query the port
+defines. `JobExplorer` alone stayed in the facade.
+
+**Service results stayed with their services.** `OperatorOutcome`,
+`OperatorError`, `RetentionReport`, `RecoveryProposer`, and the monotonic-clock
+values are named by no port, so they stayed with the four service
+implementations. `OperatorOutcome::new` and `RetentionReport::new` therefore did
+not need widening, which the stage-2 attempt had predicted they would.
+
+**Error types followed the values that return them.** `ExplorerError`,
+`RetentionError`, and `RecoveryError` moved because moved constructors return
+them. `OperatorError` did not, because nothing moved returns it.
+
+### Equivalence
+
+- The workspace test set is **identical**: `cargo test --workspace
+  --all-features -- --list` produces byte-identical output before and after the
+  move, `454` listed tests. The `453` executed tests pass with no failures. Only
+  the owning binary changed for the moved unit tests, which now run in
+  `oxide-batch-repository`. Unlike stage 1 this move shifted no doctest, because
+  no moved item carries one.
+- The public API snapshot is byte-identical, and every one of the `424` named
+  facade paths still resolves.
+- No fixture changed. The golden fingerprint vectors, canonical manifest bytes,
+  and normalized wrapper traces under `crates/oxide-batch/tests/fixtures/` are
+  unmodified, so the two durable-invariance scenarios hold as in stage 1.
+- `cargo fmt`, `cargo clippy --workspace --all-targets --all-features -D
+  warnings`, `cargo check -p oxide-batch --no-default-features`, `cargo check -p
+  oxide-batch-cli --no-default-features --all-targets`, `RUSTDOCFLAGS="-D
+  warnings" cargo doc --workspace --all-features --no-deps`, `cargo xtask deps`,
+  and `cargo xtask package` all pass.
+- PostgreSQL evidence runs in CI, as it does for every change to this
+  repository.
+
+### The documented surface did not change
+
+Stage 1 recorded crate-public internals as invisible from the facade, and the
+ADR-0011 record corrected that: an inherent `pub` item on a re-exported type is
+reachable through the facade path. Stage 2 answers the correction rather than
+repeating the claim. Every item the split forced open is `#[doc(hidden)]`, so
+the facade's rustdoc discloses none of them, and the crate documents the
+convention. They are still technically callable, which is why each is named
+here.
+
+`34` items were opened. `9` are free items or a trait that the facade does not
+re-export, and are unreachable from `oxide_batch`:
+
+| Item | Why the boundary needs it |
+| --- | --- |
+| `recovered_execution`, `aggregate_partition_parent`, `map_partition_aggregation` | Both adapters apply them |
+| `page`, `start_window`, `resume_window`, `ExplorerRow` | `JobExplorer` bounds and seals every page with them |
+| `hex_digest` | The flow engine and the explorer render digests with it |
+| `PartitionMutationError` | Names the rejection of a partition mutation an adapter applies |
+
+`25` are inherent items on re-exported types, so they are reachable under an
+`oxide_batch` path despite being undocumented:
+
+| Type | Items | Caller |
+| --- | --- | --- |
+| `ExecutionControl` | `new` | Both adapters |
+| `RecoveryDecision`, `RecoveryResult` | `new` | Both adapters |
+| `FlowDecision`, `FlowDecisionRequest` | `new` | Adapters allocate decisions; the engine proposes requests |
+| `FlowTransitionKind` | `durable_code`, `from_durable_code` | The PostgreSQL adapter encodes the kind |
+| `StepPartition` | `from_snapshot`, `starting`, `assign`, `complete` | Both adapters own partition rows |
+| `PartitionAggregate` | `selected_worker_step_execution_id` | Both adapters |
+| `PartitionResult` | `from_worker` | The flow engine reads worker attempts |
+| `ParameterDescriptor`, `StateEnvelopeDescriptor`, `DefinitionDescriptor` | `new` | Both adapters build redacted descriptors |
+| `JobInstanceProjection`, `JobExecutionProjection`, `StepExecutionProjection`, `StepPartitionProjection` | `new` | Both adapters build projections |
+| `OperatorRequest` | `definition`, `recovery_guard`, `recovery_request` | `JobOperator` applies the guards |
+| `OperatorRejection` | `from_repository` | `JobOperator` classifies repository failures |
+| `PurgePlan` | `new` | `RetentionService` seals a plan over its survey |
+| `MonotonicInstant` | `checked_elapsed_since` | `RecoveryProposer` bounds its observation window |
+
+`FlowTransitionKind::{durable_code, from_durable_code}` additionally lost their
+`#[cfg(feature = "postgres")]` gate, because the repository crate has no
+`postgres` feature and must not acquire one.
+
+### Non-exhaustive matching across the boundary
+
+The six crossings the stage-2 attempt predicted are exactly the six that
+appeared. Each takes a final `_` arm whose comment names the variants it
+absorbs, and each is fail-safe rather than silently wrong:
+
+| Site | Enum | Fallback |
+| --- | --- | --- |
+| `decision_matches_manifest` | `FlowTransitionKind` | Matches no declared node, so the decision is rejected rather than accepted against a guessed node |
+| `JobOperator::apply` | `OperatorAction` | Audits `OperatorRejection::UnsupportedAction` and applies nothing |
+| `JobOperator::emit_outcome` | `OperatorOutcomeClass` | Reports the non-accepting event kind; the record still carries the exact class |
+| `RetentionService::hold_action` | `RetentionAction` | Changes no hold state, merged with the existing `ApplyPurge` arm |
+| `InMemoryExplorer::identity_ceiling` | `ExplorerQuery` | Reports `ExplorerError::UnsupportedCapability` |
+| `ceiling_source` (PostgreSQL) | `ExplorerQuery` | Reports `ExplorerError::UnsupportedCapability` |
+
+The `OperatorRejection::UnsupportedAction` variant the preliminary commit added
+for this purpose is now used. The residual limitation stage 1 named applies
+unchanged: adding a variant to one of these enums no longer breaks the facade
+build, and the mitigation is review of this table.
+
+### One test changed shape
+
+Three cases in the `RecoveryProposer` unit tests assigned to private
+`RecoverySnapshot` fields to vary one observation. Private fields do not cross a
+crate boundary, so those cases now build the whole snapshot through
+`RecoverySnapshot::new` with a `snapshot_with` helper. The values are the same;
+no assertion changed.
+
+### Measurements
+
+Provisional development observations from the same macOS host as stage 1, which
+the support matrix lists as development-only. Reported, not gated. The raw
+report is
+[`stage-2-repository.json`](../engineering/measurements/m5/stage-2-repository.json).
+It was captured on the stage-2 working tree before the commit below, so it
+records `clean_tree: false` and the parent commit; `baseline.json` was captured
+the same way.
+
+| Observation | Baseline | Stage 1 | Stage 2 |
+| --- | --- | --- | --- |
+| Clean workspace build, all features | 23.0 s | 26.6 s | 24.9 s |
+| Clean facade build, all features | 21.9 s | 20.9 s | 22.2 s |
+| Incremental facade build | 12.2 s | 12.4 s | 12.1 s |
+| Release `oxide-batch-cli` binary | 7 031 488 B | 7 111 584 B | 7 122 752 B |
+| Packaged files, `oxide-batch` | 119 | 111 | 110 |
+| Packaged files, `oxide-batch-core` | — | 17 | 19 |
+| Packaged files, `oxide-batch-repository` | — | — | 16 |
+
+The facade lost one packaged file: two modules left and the adapter module that
+replaced them arrived. `oxide-batch-core` gained two files between the stage-1
+capture and this one, because the ADR-0011 placement added `flow.rs` and
+`fault.rs` to it; stage 2 did not change that crate. The operator binary grew by
+`11 168` bytes, `0.16 %`, which is crate-boundary overhead rather than new code.
+Build times moved within the noise this host shows between captures of the same
+commit. No budget is crossed and none is binding.
+
+The workspace dependency graph after the move is
+`oxide-batch -> oxide-batch-core`, `oxide-batch -> oxide-batch-repository`,
+`oxide-batch-repository -> oxide-batch-core`, and the three existing edges from
+the CLI and the two spikes into the facade. No cycle exists and no crate reaches
+a forbidden dependency class, which `cargo xtask deps` verifies.
+
+### Reversal
+
+Stage 2 is the single commit that carries this record. Reverting it restores the
+previous module layout and changes no facade path, persisted byte, or metadata
+value, so it requires no migration and no operator action. Reversal stays free
+until the release that publishes `oxide-batch-repository`.
+
 ## Stage 3 — not started
 
 Stage 3 follows stage 2 and is unchanged by this work.
 
 ## Consequences for the milestone
 
-- The M5 workstream that this issue owns is partially delivered. Stage 1 is
-  complete; stages 2 and 3 need the boundary correction above.
+- The M5 workstream that this issue owns is partially delivered. Stages 1 and 2
+  are complete; stage 3 remains.
 - No ledger row moves. Extraction claims no capability and promotes nothing.
 - The release path changed: `release.yml` and `release-draft.yml` now package,
   dry-run, checksum, generate SBOMs for, attest, and publish
-  `oxide-batch-core` alongside the facade, in dependency order. The operator
-  CLI stays outside the release scope, as before.
-- **M5 cannot close until stages 2 and 3 land.** The kickoff gate's "each
+  `oxide-batch-core` and `oxide-batch-repository` alongside the facade, in
+  dependency order. The operator CLI stays outside the release scope, as before.
+- **M5 cannot close until stage 3 lands.** The kickoff gate's "each
   completed crate extraction" clause is the quality bar applied to an
   extraction, not permission to stop after one. The same gate states that exit
   work follows all implementation streams, the design gate makes issue

@@ -1,0 +1,22 @@
+[package]
+name = "oxide-batch-repository"
+description = "Internal OxideBatch implementation crate; use oxide-batch instead"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["batch", "job", "internal"]
+categories = ["asynchronous"]
+publish = ["crates-io"]
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+oxide-batch-core = { path = "../oxide-batch-core", version = "=0.1.0-alpha.1" }
+sha2 = "0.11.0"

@@ -344,6 +344,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   restart-relevant definition identity. It is implementation detail with no
   stability promise; `oxide-batch` remains the only supported entry point and
   re-exports every supported item under its existing path.
+- The `oxide-batch-repository` implementation crate, holding the metadata
+  repository, unit-of-work, clock, identifier, explorer, operator, retention,
+  and recovery ports, the durable partition, flow-decision, audit, retention,
+  and recovery values those ports exchange, the bounded operator request
+  envelope, and the keyset pagination vocabulary the explorer port pages with.
+  It depends only on `oxide-batch-core`. It is implementation detail with no
+  stability promise; `oxide-batch` remains the only supported entry point and
+  re-exports every supported item under its existing path.
 - Staged crate-extraction evidence checks: `cargo xtask deps` fails the build on
   a forbidden dependency class or a workspace cycle, `cargo xtask package` runs
   the workspace publish dry run for every publishable crate, and a facade
@@ -383,6 +391,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   values. Every `oxide-batch` path resolves unchanged. `BackoffSleeper` and
   `BackoffOutcome` stay with the runtime, and the plan crate keeps the compiler
   and the graph types only it constructs.
+- Crate-extraction stage 2 landed: the repository, explorer, operator,
+  retention, and recovery ports, their capability descriptors, and the durable
+  values they exchange moved from `oxide-batch` into `oxide-batch-repository`.
+  The metadata adapters, the four services that drive the ports, the plan
+  compiler, and the execution engines stay in the facade. Every `oxide-batch`
+  path resolves unchanged, the facade export snapshot is byte-identical, and
+  the documented public surface is unchanged: every item the split forced open
+  is `#[doc(hidden)]` and is named in the crate-extraction evidence.
+- Six `#[non_exhaustive]` matches now cross the stage-2 boundary and take a
+  conservative wildcard arm: an unrecognized flow-transition kind matches no
+  declared node, an operator action the build cannot apply is an audited
+  `OperatorRejection::UnsupportedAction`, an unrecognized operator outcome class
+  is reported to telemetry as non-accepting, an unrecognized retention action
+  changes no hold state, and an explorer query neither metadata adapter knows
+  reports `ExplorerError::UnsupportedCapability` instead of paging from a
+  guessed ceiling. No durable byte, fingerprint, transaction boundary, or
+  normalized trace changes.
 - Crate-extraction stage 2 was attempted and not landed; the boundary is sound
   and the repository crate compiles clean, but splitting the service
   descriptors from their implementations needs public constructors and

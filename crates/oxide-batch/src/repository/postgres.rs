@@ -14,31 +14,32 @@ use sqlx::postgres::{PgArguments, PgConnectOptions, PgPoolOptions, PgRow, PgSslM
 use sqlx::types::Json;
 use sqlx::{AssertSqlSafe, Connection, PgConnection, PgPool, Postgres, Row};
 
-use super::{
-    BoxFuture, Clock, JobInstanceSelection, JobRepository, RecoveryDecision, RecoveryRequest,
-    RecoveryResult, RepositoryError, RepositoryUnitOfWork, aggregate_partition_parent,
-    map_partition_aggregation, recovered_execution,
+use oxide_batch_repository::{
+    PartitionMutationError, aggregate_partition_parent, map_partition_aggregation,
+    recovered_execution,
 };
-use crate::partition::PartitionMutationError;
+
 use crate::{
-    ActorRef, BatchStatus, BusinessStatement, BusinessTransaction, BusinessTransactionError,
-    BusinessValueKind, BusinessWriteResult, Checkpoint, ChunkCommitReceipt, ChunkCounts,
-    ChunkFaultProgress, ChunkTransaction, ChunkTransactionContext, ChunkTransactionError,
-    ChunkTransactionManager, ClassifierRevision, CursorError, CursorKey, DefinitionDescriptor,
-    DefinitionIdentity, DefinitionRevision, DefinitionUpgrade, DurableStateKind, ExecutionContext,
-    ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitCode,
-    ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, FailureCategory, FailureId,
-    FailureSummary, FaultPhase, FaultPolicy, FaultProgress, FaultStateEntry, FaultStateEnvelope,
-    FaultStateError, FaultStateFormatError, FaultStateStore, FlowDecision, FlowDecisionId,
-    FlowDecisionRequest, FlowDecisionSequence, FlowStepState, FlowTarget, FlowTransitionKind,
-    IdentifierKind, InheritedStepProgress, JobExecution, JobExecutionId, JobExecutionProjection,
-    JobInstance, JobInstanceId, JobInstanceKey, JobInstanceProjection, JobName, JobParameter,
-    JobParameters, LifecycleError, LifecycleTransition, MAX_PARTITION_CONTEXT_BYTES,
+    ActorRef, BatchStatus, BoxFuture, BusinessStatement, BusinessTransaction,
+    BusinessTransactionError, BusinessValueKind, BusinessWriteResult, Checkpoint,
+    ChunkCommitReceipt, ChunkCounts, ChunkFaultProgress, ChunkTransaction, ChunkTransactionContext,
+    ChunkTransactionError, ChunkTransactionManager, ClassifierRevision, Clock, CursorError,
+    CursorKey, DefinitionDescriptor, DefinitionIdentity, DefinitionRevision, DefinitionUpgrade,
+    DurableStateKind, ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps,
+    ExecutionVersion, ExitCode, ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository,
+    FailureCategory, FailureId, FailureSummary, FaultPhase, FaultPolicy, FaultProgress,
+    FaultStateEntry, FaultStateEnvelope, FaultStateError, FaultStateFormatError, FaultStateStore,
+    FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowDecisionSequence, FlowStepState,
+    FlowTarget, FlowTransitionKind, IdentifierKind, InheritedStepProgress, JobExecution,
+    JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId, JobInstanceKey,
+    JobInstanceProjection, JobInstanceSelection, JobName, JobParameter, JobParameters,
+    JobRepository, LifecycleError, LifecycleTransition, MAX_PARTITION_CONTEXT_BYTES,
     MAX_PARTITIONS, NodeId, OperationId, OperatorAction, OperatorOutcomeClass, OperatorRecord,
     OperatorRecordDraft, OperatorRejection, OperatorRequestId, ParameterDescriptor, ParameterName,
     ParameterRole, ParameterValue, ParameterValueKind, PartitionKey, PartitionPlanEntry,
     PartitionResult, PurgeBatchBound, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest,
-    PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecisionId, RequestDigest, RetentionAction,
+    PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecision, RecoveryDecisionId, RecoveryRequest,
+    RecoveryResult, RepositoryError, RepositoryUnitOfWork, RequestDigest, RetentionAction,
     RetentionActionId, RetentionHold, RetentionOutcome, RetentionRecord, RetentionRecordDraft,
     RetryCounts, RetryKey, RetryLimit, RetryOrdinal, RetryReservation, RetryStateLimit, SkipCounts,
     StartLimit, StateEnvelopeDescriptor, StateLimits, StateSchemaId, StateSchemaVersion,
@@ -5482,8 +5483,8 @@ fn classify_explorer_error(error: &sqlx::Error) -> ExplorerError {
     ExplorerError::Repository(RepositoryError::Unavailable)
 }
 
-const fn ceiling_source(query: &ExplorerQuery) -> &'static str {
-    match query {
+const fn ceiling_source(query: &ExplorerQuery) -> Option<&'static str> {
+    Some(match query {
         ExplorerQuery::JobNames => "SELECT max(id) AS ceiling FROM oxide_batch.ob_job_definition",
         ExplorerQuery::Instances { .. } => {
             "SELECT max(id) AS ceiling FROM oxide_batch.ob_job_instance WHERE job_name = $1"
@@ -5506,7 +5507,11 @@ const fn ceiling_source(query: &ExplorerQuery) -> &'static str {
         ExplorerQuery::OperatorRequests { .. } => {
             "SELECT max(id) AS ceiling FROM oxide_batch.ob_operator_request"
         }
-    }
+        // Absorbs any query added later: this adapter has no statement that
+        // bounds a traversal it does not know, so it reports the missing
+        // capability instead of paging from a guessed ceiling.
+        _ => return None,
+    })
 }
 
 fn window_limit(window: &QueryWindow) -> i64 {
@@ -5894,7 +5899,10 @@ impl ExplorerRepository for PostgresExplorer {
         query: &'a ExplorerQuery,
     ) -> BoxFuture<'a, Result<u64, ExplorerError>> {
         Box::pin(async move {
-            let statement = sqlx::query(ceiling_source(query));
+            let Some(source) = ceiling_source(query) else {
+                return Err(ExplorerError::UnsupportedCapability);
+            };
+            let statement = sqlx::query(source);
             let statement = match query {
                 ExplorerQuery::Instances { job_name } => statement.bind(job_name.as_str()),
                 _ => statement,
@@ -6290,7 +6298,7 @@ impl crate::RecoveryRepository for PostgresExplorer {
                 millis_system_time(read_i64(&row, "updated_ms")?)?,
                 millis_system_time(read_i64(&row, "server_ms")?)?,
                 latest_step,
-                crate::service::RecoveryMarkers::new()
+                crate::RecoveryMarkers::new()
                     .with_unknown_commit(
                         row.try_get::<bool, _>("unknown_commit")
                             .map_err(|_| RepositoryError::Unavailable)?,
