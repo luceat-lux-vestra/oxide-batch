@@ -1606,16 +1606,16 @@ impl ExplorerRow for JobName {
 
 impl ExplorerRow for JobInstanceProjection {
     fn cursor_key(&self) -> CursorKey {
-        CursorKey::Identity(self.id.get())
+        CursorKey::Identity(self.id().get())
     }
 
     fn encoded_len(&self) -> usize {
         let parameters = self
-            .parameters
+            .parameters()
             .iter()
-            .map(|parameter| parameter.name.as_str().len().saturating_add(24))
+            .map(|parameter| parameter.name().as_str().len().saturating_add(24))
             .fold(0_usize, usize::saturating_add);
-        self.job_name
+        self.job_name()
             .as_str()
             .len()
             .saturating_add(160)
@@ -1626,41 +1626,41 @@ impl ExplorerRow for JobInstanceProjection {
 impl ExplorerRow for JobExecutionProjection {
     fn cursor_key(&self) -> CursorKey {
         CursorKey::Ordered {
-            primary: u64::from(self.attempt),
-            identity: self.id.get(),
+            primary: u64::from(self.attempt()),
+            identity: self.id().get(),
         }
     }
 
     fn encoded_len(&self) -> usize {
-        self.job_name
+        self.job_name()
             .as_str()
             .len()
-            .saturating_add(self.exit_status.code().as_str().len())
+            .saturating_add(self.exit_status().code().as_str().len())
             .saturating_add(256)
     }
 }
 
 impl ExplorerRow for StepExecutionProjection {
     fn cursor_key(&self) -> CursorKey {
-        CursorKey::Identity(self.id.get())
+        CursorKey::Identity(self.id().get())
     }
 
     fn encoded_len(&self) -> usize {
-        self.step_name
+        self.step_name()
             .as_str()
             .len()
-            .saturating_add(self.exit_status.code().as_str().len())
+            .saturating_add(self.exit_status().code().as_str().len())
             .saturating_add(256)
     }
 }
 
 impl ExplorerRow for StepPartitionProjection {
     fn cursor_key(&self) -> CursorKey {
-        CursorKey::Identity(self.id.get())
+        CursorKey::Identity(self.id().get())
     }
 
     fn encoded_len(&self) -> usize {
-        self.partition_key.len().saturating_add(192)
+        self.partition_key().len().saturating_add(192)
     }
 }
 

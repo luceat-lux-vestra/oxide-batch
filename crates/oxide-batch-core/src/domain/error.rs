@@ -38,6 +38,8 @@ pub enum IdentifierKind {
     StepExecution,
     /// A durable flow-decision identifier.
     FlowDecision,
+    /// An execution-local flow-decision ordering.
+    FlowDecisionSequence,
     /// A durable recovery-decision identifier.
     RecoveryDecision,
     /// A durable operator-request identifier.
@@ -57,6 +59,7 @@ impl fmt::Display for IdentifierKind {
             Self::JobExecution => "job execution",
             Self::StepExecution => "step execution",
             Self::FlowDecision => "flow decision",
+            Self::FlowDecisionSequence => "flow decision sequence",
             Self::RecoveryDecision => "recovery decision",
             Self::OperatorRequest => "operator request",
             Self::RetentionAction => "retention action",

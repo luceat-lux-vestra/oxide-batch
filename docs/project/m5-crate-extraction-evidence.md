@@ -1,7 +1,7 @@
 # M5 Staged Crate-Extraction Evidence
 
-**State:** Stage 1 and the ADR-0011 core placement complete; stage 2 attempted
-and not landed; stage 3 not started
+**State:** Stage 1, the ADR-0011 core placement, and the stage-2 preliminary API
+changes complete; the stage-2 module move not started; stage 3 not started
 
 **Issue:** [#99](https://github.com/luceat-lux-vestra/oxide-batch/issues/99)
 
@@ -262,6 +262,94 @@ rediscover:
 
 The next attempt should treat these as its scope, land the API additions as
 their own reviewed change first, and only then move the modules.
+
+## Stage 2 preliminary — the API changes, landed alone
+
+The API work the attempt above identified is landed as its own reviewed commit,
+ahead of any module move. Nothing moved between crates in it. The suite holds
+at `453` executed tests — the `452` from the core placement plus one new test —
+with no failures, and `cargo fmt`, `cargo clippy -D warnings`, both
+no-default-feature checks, the rustdoc build, `cargo xtask deps`, and
+`cargo xtask package` all pass.
+
+**What landed.**
+
+| Change | Kind |
+| --- | --- |
+| `OperatorRecordDraft::{applied, rejected}` | Addition |
+| `RetentionRecordDraft::{instance_action, purge}` | Addition |
+| `RecoveryEvidence::new`, `RecoveryProposal::new` | Addition |
+| `OperatorRequest::job_instance_key` | Addition |
+| `RecoverySnapshot::{status, owner, updated_at, server_time}` | Addition |
+| `OperatorRejection::UnsupportedAction`, `IdentifierKind::FlowDecisionSequence` | Addition |
+| `FlowDecisionSequence::new` returns `DomainError` | **Breaking (pre-1.0)** |
+
+The constructors are purpose-named rather than one wide constructor per type.
+The attempt above counted `29` parameters across four constructors; naming them
+for their purpose costs `19` and makes two invariants hold by construction — an
+audit row cannot disagree with the request it audits, and a proposal cannot
+carry a digest its evidence does not produce. `from_durable` is unchanged and
+still belongs to the adapters.
+
+The accessors needed were `5`, exactly as predicted: four on
+`RecoverySnapshot` and one on `OperatorRequest`. Every other field read already
+had one.
+
+The reference-versus-value trap was real and needed a different fix in each of
+its two shapes. Three `Option<T>` reads — `OperatorRequest::reason` twice and
+`FlowStepState::context` once — became `.cloned()` where the field read was
+`.clone()`, because the accessor returns `Option<&T>`. Two `RequestDigest` reads
+needed a `*` deref instead. Neither shape is what a blanket `.clone()` would
+have produced, and the `Option` shape would have compiled as a clone of the
+reference rather than of the value.
+
+**The verification technique.** Private field access inside one crate compiles,
+so converting the call sites proves nothing by itself. It is provable now, with
+no crate created: wrap the moving types in an inline `mod` inside their own
+file and re-export them. Rust privacy is module-based, so the compiler reports
+exactly the crossings the crate split would report. The wrapper is deleted
+before committing.
+
+Run against `flow.rs` it found six crossings in `DecisionStepInput::from_state`
+that neither the stage-2 attempt nor a reading of the code had found. Run
+against `repository.rs` and `service.rs` it found none, which also proves the
+adapters and telemetry never reach into a descriptor: they are already in
+different modules, so the compiler has been enforcing that boundary all along.
+Only same-file code could cross, which bounds the remaining search to the six
+files that declare a moving type beside code that stays.
+
+**What the technique found that this commit does not fix.** Widening a private
+*method* is not the same problem as adding an accessor, and the probe found
+these on the service side of the boundary:
+
+| Item | File |
+| --- | --- |
+| `OperatorOutcome::new` | `service/operator.rs` |
+| `OperatorRequest::{definition, recovery_guard, recovery_request}` | `service/operator.rs` |
+| `OperatorRejection::from_repository` | `service/operator.rs` |
+| `RetentionReport::new` | `service/retention.rs` |
+| `MonotonicInstant::checked_elapsed_since` | `service/recovery.rs` |
+
+Each is private today and must be `pub` after the split, and because each is an
+inherent item on an exported type, `pub` here is a facade API addition rather
+than the crate-internal widening stage 1 recorded. They are not in this commit
+because they need the same review this one had, and because the explorer's
+cursor machinery — `CursorKey`, `QueryWindow`, `decode_cursor`, and the cursor
+format constants — has no placement yet: it is named by the `ExplorerRepository`
+port and used by `JobExplorer`, so stage 2 must decide which side it lands on
+before its visibility can be decided. That decision belongs with the module
+split, not ahead of it.
+
+The `pub(crate)` items in `flow.rs`, `partition.rs`, `repository.rs`, and
+`service/explorer.rs` are a different case and need no separate review: they
+become `pub` on an internal crate that the facade does not re-export, which is
+the crate-public-internals pattern stage 1 established and ADR-0010 exempts.
+
+**Snapshot limitation, again.** The facade export snapshot did not detect the
+`FlowDecisionSequence::new` change, and did not detect any of the seven
+additions either: variants and inherent methods are not exported paths. This is
+the second recorded case of the limitation named above. The changes are caught
+by their tests, their changelog entries, and this record.
 
 ## Stage 3 — not started
 

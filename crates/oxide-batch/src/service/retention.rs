@@ -613,6 +613,62 @@ pub struct RetentionRecordDraft {
 }
 
 impl RetentionRecordDraft {
+    /// Drafts the audit row for one applied instance-scoped action.
+    ///
+    /// A hold or hold release names an instance and deletes nothing, so the
+    /// row carries no plan digest, no batch bound, and default counts.
+    #[must_use]
+    pub fn instance_action(
+        action: RetentionAction,
+        operation_id: OperationId,
+        actor: ActorRef,
+        reason: ReasonCode,
+        job_instance_id: JobInstanceId,
+        applied_at: SystemTime,
+    ) -> Self {
+        Self {
+            action,
+            operation_id,
+            actor,
+            reason,
+            job_instance_id: Some(job_instance_id),
+            plan_digest: None,
+            counts: PurgeCounts::default(),
+            batch_bound: None,
+            outcome: RetentionOutcome::Applied,
+            applied_at,
+        }
+    }
+
+    /// Drafts the audit row for one applied purge batch.
+    ///
+    /// The row is bound to the plan digest the batch was applied under and to
+    /// the bound that limited it, so a replay can tell which plan produced the
+    /// recorded counts.
+    #[must_use]
+    pub const fn purge(
+        operation_id: OperationId,
+        actor: ActorRef,
+        reason: ReasonCode,
+        plan_digest: [u8; 32],
+        counts: PurgeCounts,
+        batch_bound: PurgeBatchBound,
+        applied_at: SystemTime,
+    ) -> Self {
+        Self {
+            action: RetentionAction::ApplyPurge,
+            operation_id,
+            actor,
+            reason,
+            job_instance_id: None,
+            plan_digest: Some(plan_digest),
+            counts,
+            batch_bound: Some(batch_bound),
+            outcome: RetentionOutcome::Applied,
+            applied_at,
+        }
+    }
+
     /// Rebuilds a draft from one durable audit row.
     #[must_use]
     #[allow(clippy::too_many_arguments)]
@@ -988,18 +1044,14 @@ impl<R: JobRepository> RetentionService<R> {
             }
             RetentionAction::ApplyPurge => None,
         };
-        let draft = RetentionRecordDraft {
+        let draft = RetentionRecordDraft::instance_action(
             action,
             operation_id,
             actor,
             reason,
-            job_instance_id: Some(job_instance_id),
-            plan_digest: None,
-            counts: PurgeCounts::default(),
-            batch_bound: None,
-            outcome: RetentionOutcome::Applied,
+            job_instance_id,
             applied_at,
-        };
+        );
         let record = unit.append_retention_action(&draft).await?;
         unit.commit().await?;
         Ok(RetentionReport::new(
@@ -1066,18 +1118,15 @@ impl<R: JobRepository> RetentionService<R> {
         let applied_at = self.clock.now();
         let mut unit = self.repository.begin().await?;
         let counts = unit.apply_purge(plan).await?;
-        let draft = RetentionRecordDraft {
-            action: RetentionAction::ApplyPurge,
+        let draft = RetentionRecordDraft::purge(
             operation_id,
             actor,
             reason,
-            job_instance_id: None,
-            plan_digest: Some(*plan.digest()),
+            *plan.digest(),
             counts,
-            batch_bound: Some(plan.request().batch()),
-            outcome: RetentionOutcome::Applied,
+            plan.request().batch(),
             applied_at,
-        };
+        );
         let record = unit.append_retention_action(&draft).await?;
         unit.commit().await?;
         let report = RetentionReport::new(RetentionOutcome::Applied, record, None);

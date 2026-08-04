@@ -4,10 +4,10 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use oxide_batch::{
     BatchStatus, DomainError, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExitCode,
-    ExitStatus, FailureCategory, FailureId, FailureSummary, IdentifierKind, JobExecution,
-    JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey, JobName, JobParameter,
-    JobParameters, NameKind, ParameterName, ParameterRole, ParameterValue, ParameterValueKind,
-    StepExecution, StepExecutionId, StepName,
+    ExitStatus, FailureCategory, FailureId, FailureSummary, FlowDecisionSequence, IdentifierKind,
+    JobExecution, JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey, JobName,
+    JobParameter, JobParameters, NameKind, ParameterName, ParameterRole, ParameterValue,
+    ParameterValueKind, StepExecution, StepExecutionId, StepName,
 };
 
 fn identifying_string(value: &str) -> Result<JobParameter, DomainError> {
@@ -63,6 +63,14 @@ fn validated_names_and_ids_reject_invalid_construction() -> Result<(), DomainErr
         JobExecutionId::new(0),
         Err(DomainError::ZeroIdentifier {
             kind: IdentifierKind::JobExecution
+        })
+    );
+    // The decision sequence is a positive durable ordinal, so it rejects zero
+    // the same way and through the same error as the identifiers beside it.
+    assert_eq!(
+        FlowDecisionSequence::new(0),
+        Err(DomainError::ZeroIdentifier {
+            kind: IdentifierKind::FlowDecisionSequence
         })
     );
     assert_eq!(

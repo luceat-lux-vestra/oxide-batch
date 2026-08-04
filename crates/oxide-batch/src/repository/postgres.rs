@@ -5307,6 +5307,7 @@ fn decode_operator_rejection(
         "UNRESOLVED_RECOVERY_REQUIRED" => OperatorRejection::UnresolvedRecoveryRequired,
         "EXECUTION_NOT_FOUND" => OperatorRejection::ExecutionNotFound,
         "INSTANCE_NOT_FOUND" => OperatorRejection::InstanceNotFound,
+        "UNSUPPORTED_ACTION" => OperatorRejection::UnsupportedAction,
         _ => return Err(RepositoryError::Unavailable),
     })
 }
