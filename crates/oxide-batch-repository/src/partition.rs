@@ -3,7 +3,7 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::{
+use oxide_batch_core::{
     BatchStatus, ExecutionContext, ExecutionCounts, ExecutionVersion, ExitStatus, MAX_PARTITIONS,
     StepExecution, StepExecutionId, StepPartitionId,
 };
@@ -120,8 +120,11 @@ pub struct StepPartition {
 }
 
 impl StepPartition {
+    /// Reconstructs one durable partition row read by an adapter.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) const fn from_snapshot(
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn from_snapshot(
         id: StepPartitionId,
         step_execution_id: StepExecutionId,
         worker_step_execution_id: Option<StepExecutionId>,
@@ -147,7 +150,10 @@ impl StepPartition {
         }
     }
 
-    pub(crate) fn starting(
+    /// Builds the initial durable row for one planned partition.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn starting(
         id: StepPartitionId,
         step_execution_id: StepExecutionId,
         ordinal: u32,
@@ -227,7 +233,14 @@ impl StepPartition {
         self.version
     }
 
-    pub(crate) fn assign(
+    /// Assigns one worker attempt to this partition.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PartitionMutationError`] for a stale version or a status that
+    /// cannot take an assignment.
+    #[doc(hidden)]
+    pub fn assign(
         &mut self,
         expected_version: ExecutionVersion,
         worker_step_execution_id: StepExecutionId,
@@ -250,7 +263,14 @@ impl StepPartition {
         Ok(())
     }
 
-    pub(crate) fn complete(
+    /// Records one terminal worker result on this partition.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PartitionMutationError`] for a stale version or a partition
+    /// that is not assigned and started.
+    #[doc(hidden)]
+    pub fn complete(
         &mut self,
         expected_version: ExecutionVersion,
         result: &PartitionResult,
@@ -344,7 +364,10 @@ impl PartitionAggregate {
         self.counts
     }
 
-    pub(crate) const fn selected_worker_step_execution_id(&self) -> StepExecutionId {
+    /// Returns the worker attempt whose result the aggregate selected.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn selected_worker_step_execution_id(&self) -> StepExecutionId {
         self.selected_worker_step_execution_id
     }
 }
@@ -518,7 +541,14 @@ impl fmt::Display for PartitionAggregationError {
 impl Error for PartitionAggregationError {}
 
 impl PartitionResult {
-    pub(crate) fn from_worker(worker: &StepExecution) -> Result<Self, PartitionValueError> {
+    /// Reads one terminal worker attempt as a durable partition result.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PartitionValueError::NonTerminalResult`] when the worker has
+    /// not reached a terminal status.
+    #[doc(hidden)]
+    pub fn from_worker(worker: &StepExecution) -> Result<Self, PartitionValueError> {
         Self::new(
             worker.metadata().status(),
             worker.metadata().exit_status().clone(),
@@ -635,7 +665,9 @@ impl fmt::Display for PartitionValueError {
 impl Error for PartitionValueError {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum PartitionMutationError {
+/// A rejected durable partition mutation.
+#[doc(hidden)]
+pub enum PartitionMutationError {
     StaleVersion {
         expected: ExecutionVersion,
         actual: ExecutionVersion,
@@ -649,7 +681,7 @@ pub(crate) enum PartitionMutationError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::StateLimits;
+    use oxide_batch_core::StateLimits;
 
     #[test]
     fn partition_key_and_context_bounds_fail_before_persistence() -> Result<(), Box<dyn Error>> {
@@ -765,7 +797,7 @@ mod tests {
                 alpha.version(),
                 &PartitionResult::new(
                     BatchStatus::Failed,
-                    ExitStatus::new(crate::ExitCode::new("ALPHA_FAILED")?),
+                    ExitStatus::new(oxide_batch_core::ExitCode::new("ALPHA_FAILED")?),
                     ExecutionCounts::new(1, 2, 3, 4, 5, 6),
                 )?,
             )
@@ -782,7 +814,7 @@ mod tests {
             zeta.version(),
             &PartitionResult::new(
                 BatchStatus::Failed,
-                ExitStatus::new(crate::ExitCode::new("ZETA_FAILED")?),
+                ExitStatus::new(oxide_batch_core::ExitCode::new("ZETA_FAILED")?),
                 ExecutionCounts::new(10, 20, 30, 40, 50, 60),
             )?,
         )

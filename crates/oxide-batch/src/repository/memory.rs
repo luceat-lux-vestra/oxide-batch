@@ -4,12 +4,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
-use super::{
-    BoxFuture, Clock, IdGenerator, JobInstanceSelection, JobRepository, RecoveryDecision,
-    RecoveryRequest, RecoveryResult, RepositoryError, RepositoryUnitOfWork,
-    aggregate_partition_parent, map_partition_aggregation, recovered_execution,
+use oxide_batch_repository::{
+    PartitionMutationError, aggregate_partition_parent, map_partition_aggregation,
+    recovered_execution,
 };
-use crate::partition::PartitionMutationError;
+
 use crate::{
     ActorRef, BatchStatus, CursorKey, DefinitionDescriptor, DefinitionIdentity, DefinitionRevision,
     DefinitionUpgrade, DurableStateKind, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps,
@@ -24,6 +23,10 @@ use crate::{
     RecoveryStepEvidence, RetentionAction, RetentionActionId, RetentionHold, RetentionRecord,
     RetentionRecordDraft, StartLimit, StateEnvelopeDescriptor, StepExecution, StepExecutionId,
     StepExecutionProjection, StepName, StepPartition, StepPartitionId, StepPartitionProjection,
+};
+use crate::{
+    BoxFuture, Clock, IdGenerator, JobInstanceSelection, JobRepository, RecoveryDecision,
+    RecoveryRequest, RecoveryResult, RepositoryError, RepositoryUnitOfWork,
 };
 
 /// Deterministic, process-local reference implementation of [`JobRepository`].
@@ -2031,6 +2034,10 @@ impl ExplorerRepository for InMemoryExplorer {
                     .keys()
                     .next_back()
                     .map(|id| id.get()),
+                // Absorbs any query added later: this adapter cannot bound a
+                // traversal it does not know, so it reports the missing
+                // capability instead of paging from a guessed ceiling.
+                _ => return Err(ExplorerError::UnsupportedCapability),
             };
             Ok(ceiling.unwrap_or(0))
         })
@@ -2351,7 +2358,7 @@ impl RecoveryRepository for InMemoryExplorer {
                     .unwrap_or_else(|| updated_at(execution)),
                 self.clock.now(),
                 latest_step,
-                crate::service::RecoveryMarkers::new()
+                crate::RecoveryMarkers::new()
                     .with_unknown_commit(unknown_commit)
                     .with_committed_flow_decision(committed_flow_decision)
                     .with_ambiguous_external_effect(ambiguous_external_effect),

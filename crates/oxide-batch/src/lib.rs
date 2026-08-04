@@ -181,7 +181,6 @@ mod fault_state;
 mod flow;
 mod item_listener;
 mod listener;
-mod partition;
 mod plan;
 mod repository;
 mod runtime;
@@ -213,12 +212,10 @@ pub use fault_state::{
     RetryReservation,
 };
 pub use flow::{
-    DeciderError, DecisionInput, DecisionStepInput, FlowDecision, FlowDecisionId,
-    FlowDecisionRequest, FlowDecisionSequence, FlowEvent, FlowEventKind, FlowEventSink,
+    DeciderError, DecisionInput, DecisionStepInput, FlowEvent, FlowEventKind, FlowEventSink,
     FlowExecutionOutcome, FlowFailure, FlowJob, FlowJobError, FlowLaunchReport, FlowLauncher,
-    FlowRuntimeError, FlowStepState, FlowTransitionKind, JobExecutionDecider,
-    PartitionFactoryError, PartitionPlanFactory, PartitionPlanRequest, PartitionTaskletFactory,
-    PartitionWorkerInput, TaskletStepFactory,
+    FlowRuntimeError, JobExecutionDecider, PartitionFactoryError, PartitionPlanFactory,
+    PartitionPlanRequest, PartitionTaskletFactory, PartitionWorkerInput, TaskletStepFactory,
 };
 pub use item_listener::{
     BeforeCallbackOutcome, ItemListenerContext, ItemListenerError, ItemListenerFailure,
@@ -247,10 +244,30 @@ pub use oxide_batch_core::{
     StateSchemaVersion, StepDefinitionUpgrade, StepExecution, StepExecutionId, StepName,
     StepPartitionId, TerminalKind, VersionedStateCodec,
 };
-pub use partition::{
-    MAX_PARTITION_CONTEXT_BYTES, MAX_PARTITION_KEY_BYTES, PartitionAggregate,
-    PartitionAggregationError, PartitionKey, PartitionPlanEntry, PartitionResult,
-    PartitionValueError, StepPartition, aggregate_step_partitions,
+pub use oxide_batch_repository::{
+    ActorRef, AuthorizationClass, BoxFuture, Clock, Cursor, CursorError, CursorKey,
+    DEFAULT_MAX_CLOCK_SKEW, DEFAULT_PAGE_SIZE, DEFAULT_PURGE_AGE, DEFAULT_STALE_THRESHOLD,
+    DefinitionDescriptor, ExecutionControl, ExplorerError, ExplorerQuery, ExplorerRepository,
+    FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowDecisionSequence, FlowStepState,
+    FlowTransitionKind, IdGenerationError, IdGenerator, JobExecutionProjection,
+    JobInstanceProjection, JobInstanceSelection, JobRepository, MAX_ACTOR_REF_BYTES,
+    MAX_CLOCK_SKEW, MAX_CURSOR_BYTES, MAX_OPERATION_ID_BYTES, MAX_PAGE_SIZE,
+    MAX_PARTITION_CONTEXT_BYTES, MAX_PARTITION_KEY_BYTES, MAX_PURGE_BATCH, MAX_REASON_CODE_BYTES,
+    MAX_RESPONSE_BYTES, MAX_STALE_THRESHOLD, MIN_CLOCK_SKEW, MIN_PURGE_AGE, MIN_STALE_THRESHOLD,
+    MIN_UNRESOLVED_AGE, MaxClockSkew, MonotonicClock, MonotonicInstant, OperationId,
+    OperatorAction, OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft, OperatorRejection,
+    OperatorRequest, OwnerObservation, OwnerToken, Page, PageRequest, PageSize,
+    ParameterDescriptor, PartitionAggregate, PartitionAggregationError, PartitionKey,
+    PartitionPlanEntry, PartitionResult, PartitionValueError, PurgeBatchBound, PurgeCandidate,
+    PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode,
+    RecoveryDecision, RecoveryDirective, RecoveryDisposition, RecoveryError, RecoveryEvidence,
+    RecoveryField, RecoveryMarkers, RecoveryProposal, RecoveryRepository, RecoveryRequest,
+    RecoveryRequestError, RecoveryResult, RecoverySnapshot, RecoveryStepEvidence,
+    RepositoryCapability, RepositoryError, RepositoryUnitOfWork, RequestDigest, RequestField,
+    RequestFieldError, RetentionAction, RetentionError, RetentionHold, RetentionOutcome,
+    RetentionRecord, RetentionRecordDraft, SequentialIdGenerator, StaleThreshold,
+    StateEnvelopeDescriptor, StepExecutionProjection, StepPartition, StepPartitionProjection,
+    SystemClock, SystemMonotonicClock, TerminalStatusSet, aggregate_step_partitions,
 };
 pub use plan::{
     CompiledExecutionPlan, DeciderRevision, DecisionInputVersion, DecisionNode, ExitPattern,
@@ -259,42 +276,21 @@ pub use plan::{
     MAX_SPLIT_BRANCHES, PartitionBudget, PartitionCount, PartitionedStepNode, PatternSpecificity,
     PlanError, SplitBranch, SplitBudget, SplitNode, StepComponents, StepNode,
 };
-pub use repository::{
-    BoxFuture, Clock, ExecutionControl, IdGenerationError, IdGenerator, InMemoryExplorer,
-    InMemoryJobRepository, JobInstanceSelection, JobRepository, RecoveryDecision,
-    RecoveryDisposition, RecoveryField, RecoveryRequest, RecoveryRequestError, RecoveryResult,
-    RepositoryCapability, RepositoryError, RepositoryUnitOfWork, SequentialIdGenerator,
-    SystemClock,
-};
 #[cfg(feature = "postgres")]
 pub use repository::{
     CaCertificate, PostgresChunkStateError, PostgresChunkStateProvider,
     PostgresChunkTransactionManager, PostgresConfig, PostgresConfigError, PostgresDurableStepState,
     PostgresExplorer, PostgresFaultState, PostgresJobRepository, PostgresMigrator, TlsMode,
 };
+pub use repository::{InMemoryExplorer, InMemoryJobRepository};
 pub use runtime::{
     BlockingTasklet, BlockingTaskletAdapter, BlockingTaskletContext, JobLauncher, LaunchError,
     LaunchReport, StopPollInterval, StopSource, StopTiming, StopToken, Tasklet, TaskletContext,
     TaskletError, TaskletExecutionOutcome, TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep,
 };
 pub use service::{
-    ActorRef, AuthorizationClass, Cursor, CursorError, CursorKey, DEFAULT_MAX_CLOCK_SKEW,
-    DEFAULT_PAGE_SIZE, DEFAULT_PURGE_AGE, DEFAULT_STALE_THRESHOLD, DefinitionDescriptor,
-    ExplorerError, ExplorerQuery, ExplorerRepository, JobExecutionProjection, JobExplorer,
-    JobInstanceProjection, JobOperator, MAX_ACTOR_REF_BYTES, MAX_CLOCK_SKEW, MAX_CURSOR_BYTES,
-    MAX_OPERATION_ID_BYTES, MAX_PAGE_SIZE, MAX_PURGE_BATCH, MAX_REASON_CODE_BYTES,
-    MAX_RESPONSE_BYTES, MAX_STALE_THRESHOLD, MIN_CLOCK_SKEW, MIN_PURGE_AGE, MIN_STALE_THRESHOLD,
-    MIN_UNRESOLVED_AGE, MaxClockSkew, MonotonicClock, MonotonicInstant, OperationId,
-    OperatorAction, OperatorError, OperatorOutcome, OperatorOutcomeClass, OperatorRecord,
-    OperatorRecordDraft, OperatorRejection, OperatorRequest, OwnerObservation, OwnerToken, Page,
-    PageRequest, PageSize, ParameterDescriptor, PurgeBatchBound, PurgeCandidate, PurgeCounts,
-    PurgePlan, PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode, RecoveryDirective,
-    RecoveryError, RecoveryEvidence, RecoveryMarkers, RecoveryProposal, RecoveryProposer,
-    RecoveryRepository, RecoverySnapshot, RecoveryStepEvidence, RequestDigest, RequestField,
-    RequestFieldError, RetentionAction, RetentionError, RetentionHold, RetentionOutcome,
-    RetentionRecord, RetentionRecordDraft, RetentionReport, RetentionService, StaleThreshold,
-    StateEnvelopeDescriptor, StepExecutionProjection, StepPartitionProjection,
-    SystemMonotonicClock, TerminalStatusSet,
+    JobExplorer, JobOperator, OperatorError, OperatorOutcome, RecoveryProposer, RetentionReport,
+    RetentionService,
 };
 pub use shutdown::{
     DEFAULT_SHUTDOWN_DEADLINE, DEFAULT_TELEMETRY_FLUSH_DEADLINE, DrainResult,

@@ -2,6 +2,7 @@
 members = [
     "crates/oxide-batch",
     "crates/oxide-batch-core",
+    "crates/oxide-batch-repository",
     "crates/oxide-batch-cli",
     "spikes/m0-architecture",
     "spikes/m6-item-hot-path",
