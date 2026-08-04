@@ -352,6 +352,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   It depends only on `oxide-batch-core`. It is implementation detail with no
   stability promise; `oxide-batch` remains the only supported entry point and
   re-exports every supported item under its existing path.
+- The `oxide-batch-plan` implementation crate, holding the immutable flow graph
+  of step, decision, split, join, and partitioned-step nodes with its
+  exit-pattern transitions, the compiled execution plan those graphs lower
+  into, graph normalization, the structural validation the accepted basic-flow
+  contract names, and the canonical restart-relevant manifest projection the
+  definition fingerprint digests. It depends only on `oxide-batch-core` and is
+  an independent sibling of `oxide-batch-repository`. It is implementation
+  detail with no stability promise; `oxide-batch` remains the only supported
+  entry point and re-exports every supported item under its existing path.
 - Staged crate-extraction evidence checks: `cargo xtask deps` fails the build on
   a forbidden dependency class or a workspace cycle, `cargo xtask package` runs
   the workspace publish dry run for every publishable crate, and a facade
@@ -391,6 +400,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   values. Every `oxide-batch` path resolves unchanged. `BackoffSleeper` and
   `BackoffOutcome` stay with the runtime, and the plan crate keeps the compiler
   and the graph types only it constructs.
+- Crate-extraction stage 3 landed, completing the M5 extraction: the flow
+  graph, the compiled execution plan, graph normalization, and the canonical
+  manifest projection moved from `oxide-batch` into `oxide-batch-plan`. The
+  flow engine that executes a plan, the runtime, the metadata adapters, and the
+  services stay in the facade. Every `oxide-batch` path resolves unchanged, the
+  facade export snapshot is byte-identical, and the workspace test set is
+  identical: only two doctest identities moved, because both examples relocated
+  into the `oxide-batch` crate documentation so that they keep demonstrating
+  the supported import path. `CompiledExecutionPlan::compatibility_one_step` is
+  the single item the split forced open, and it is `#[doc(hidden)]`.
+- Three `#[non_exhaustive]` matches now cross the stage-3 boundary and take a
+  conservative wildcard arm: a flow-node kind the build cannot bind is reported
+  unbound rather than passed as satisfied, a flow-node kind the runtime cannot
+  dispatch is refused as an unsupported manifest exactly as a join node is, and
+  a plan-selection failure the runtime cannot interpret stops the launch
+  instead of following a guessed target. No durable byte, fingerprint,
+  transaction boundary, or normalized trace changes.
+- `cargo xtask deps` now enforces the accepted prohibition on
+  `oxide-batch-plan` depending on `oxide-batch-repository`. The contract has
+  named the two crates independent siblings since ADR-0011; the check carried
+  the rule in only one direction until the plan crate existed.
 - Crate-extraction stage 2 landed: the repository, explorer, operator,
   retention, and recovery ports, their capability descriptors, and the durable
   values they exchange moved from `oxide-batch` into `oxide-batch-repository`.

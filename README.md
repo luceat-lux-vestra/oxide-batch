@@ -23,13 +23,19 @@ batch processing, inspired by Spring Batch.
 
 ## Repository layout
 
-OxideBatch is a Cargo workspace. `oxide-batch` is the public facade crate.
-Additional crates will be introduced only when their boundaries and public
-support commitments are clear.
+OxideBatch is a Cargo workspace. `oxide-batch` is the public facade crate and
+the only supported entry point. The three crates below it are implementation
+detail with no stability promise: they are published only because the facade
+depends on them, and every item the facade supports is re-exported from
+`oxide-batch` under a stable path.
 
 ```text
 crates/
-└── oxide-batch/    Public facade crate
+├── oxide-batch/            Public facade crate
+├── oxide-batch-core/       Internal: domain model and durable values
+├── oxide-batch-plan/       Internal: flow graphs and the plan compiler
+├── oxide-batch-repository/ Internal: metadata ports and their durable values
+└── oxide-batch-cli/        Operator CLI (not part of the library release)
 spikes/
 └── m0-architecture/ Reproducible, non-published architecture evidence
 xtask/              Repository development commands (not published)
