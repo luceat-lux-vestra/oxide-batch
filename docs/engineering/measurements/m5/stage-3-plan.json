@@ -1,0 +1,35 @@
+{
+  "label": "stage-3-plan",
+  "environment": {
+    "commit": "b4dc9a66cea97ac8a10b8ebb97ccb9bd52429975",
+    "clean_tree": false,
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "host": "Darwin-arm64",
+    "profile": "dev, plus one release build for the operator CLI"
+  },
+  "build_seconds": {
+    "clean_workspace_all_features": 25.1,
+    "clean_facade_all_features": 21.3,
+    "incremental_facade_all_features": 12.7
+  },
+  "release_binary_bytes": {
+    "oxide-batch-cli": 7141712
+  },
+  "packaged_files": {
+    "oxide-batch": 109,
+    "oxide-batch-core": 19,
+    "oxide-batch-plan": 8,
+    "oxide-batch-repository": 16,
+    "oxide-batch-cli": 21
+  },
+  "workspace_dependency_edges": [
+      "oxide-batch -> oxide-batch-core",
+      "oxide-batch -> oxide-batch-plan",
+      "oxide-batch -> oxide-batch-repository",
+      "oxide-batch-cli -> oxide-batch",
+      "oxide-batch-m0-spikes -> oxide-batch",
+      "oxide-batch-m6-spikes -> oxide-batch",
+      "oxide-batch-plan -> oxide-batch-core",
+      "oxide-batch-repository -> oxide-batch-core"
+  ]
+}

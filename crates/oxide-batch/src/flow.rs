@@ -713,6 +713,10 @@ impl FlowJob {
                 FlowNode::Decision(_) => self.deciders.contains_key(id),
                 FlowNode::Split(_) | FlowNode::Join(_) => true,
                 FlowNode::PartitionedStep(_) => self.partitioned_tasklets.contains_key(id),
+                // A `FlowNode` variant added after this build accepts no
+                // binding this builder knows how to take, so it is reported
+                // unbound rather than passed as satisfied.
+                _ => false,
             };
             if !present {
                 return Err(FlowJobError::MissingBinding { node: id.clone() });
@@ -1660,7 +1664,10 @@ impl<'a> FlowLauncher<'a> {
                         )
                     }
                 }
-                FlowNode::Join(_) => {
+                // A `FlowNode` variant added after this build cannot be
+                // dispatched here, so it is refused exactly as `Join` is
+                // rather than executed as a guessed node kind.
+                FlowNode::Join(_) | _ => {
                     return Err(FlowRuntimeError::Job(FlowJobError::UnsupportedManifest {
                         format: job.plan.manifest_format(),
                     }));
@@ -1689,6 +1696,15 @@ impl<'a> FlowLauncher<'a> {
                 Err(FlowSelectionError::UnknownNode { .. }) => {
                     return Err(FlowRuntimeError::Job(FlowJobError::MissingBinding {
                         node: transition_node,
+                    }));
+                }
+                // A `FlowSelectionError` variant added after this build names a
+                // selection this runtime cannot interpret. No transition is
+                // taken and no decision is persisted; the launch stops as an
+                // unsupported manifest rather than following a guessed target.
+                Err(_) => {
+                    return Err(FlowRuntimeError::Job(FlowJobError::UnsupportedManifest {
+                        format: job.plan.manifest_format(),
                     }));
                 }
             };

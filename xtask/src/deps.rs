@@ -67,6 +67,7 @@ const BOUNDARIES: &[Boundary] = &[
             DRIVER,
             COMMAND_LINE,
             TELEMETRY_SDK,
+            "oxide-batch-repository",
             "oxide-batch-cli",
             "=oxide-batch",
         ],

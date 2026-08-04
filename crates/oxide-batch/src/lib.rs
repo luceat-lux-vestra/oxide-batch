@@ -115,6 +115,54 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
+//! A multi-step definition is declared as a [`FlowGraph`] of [`FlowNode`]
+//! values joined by exit-pattern [`FlowTransition`] edges and compiled into an
+//! immutable [`CompiledExecutionPlan`] that owns the canonical manifest and
+//! fingerprint:
+//!
+//! ```
+//! use oxide_batch::{
+//!     ComponentRevision, DefinitionRevision, ExitPattern, FlowGraph, FlowNode, FlowTarget,
+//!     FlowTransition, JobName, NodeId, StepComponents, StepNode, StepName, TerminalKind,
+//! };
+//!
+//! let load = NodeId::new("load")?;
+//! let report = NodeId::new("report")?;
+//! let plan = FlowGraph::new(load.clone())
+//!     .with_node(FlowNode::step(StepNode::new(
+//!         load.clone(),
+//!         StepName::new("load")?,
+//!         StepComponents::Tasklet(ComponentRevision::new("load-v1")?),
+//!     )))
+//!     .with_node(FlowNode::step(StepNode::new(
+//!         report.clone(),
+//!         StepName::new("report")?,
+//!         StepComponents::Tasklet(ComponentRevision::new("report-v1")?),
+//!     )))
+//!     .with_sequence(load, FlowTarget::Node(report.clone()))?
+//!     .with_sequence(report, FlowTarget::Terminal(TerminalKind::Complete))?
+//!     .compile(&JobName::new("daily_import")?, DefinitionRevision::new("v1")?)?;
+//!
+//! assert_eq!(plan.manifest_format(), 2);
+//! assert_eq!(plan.node_count(), 2);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! [`ExitPattern`] selects one of those transitions from the bounded
+//! [`ExitCode`] a step reports, never from a [`BatchStatus`]:
+//!
+//! ```
+//! use oxide_batch::{ExitCode, ExitPattern};
+//!
+//! let failed = ExitPattern::new("FAILED")?;
+//! let any = ExitPattern::new("*")?;
+//! assert!(failed.matches(&ExitCode::new("FAILED")?));
+//! assert!(!failed.matches(&ExitCode::new("COMPLETED")?));
+//! assert!(any.matches(&ExitCode::new("COMPLETED")?));
+//! assert!(failed.specificity() > any.specificity());
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
 //! [`FaultPolicy::decide`] is a pure function of the policy, a
 //! framework-owned [`FaultDescriptor`], and [`FaultEvidence`]:
 //!
@@ -181,7 +229,6 @@ mod fault_state;
 mod flow;
 mod item_listener;
 mod listener;
-mod plan;
 mod repository;
 mod runtime;
 mod service;
@@ -244,6 +291,13 @@ pub use oxide_batch_core::{
     StateSchemaVersion, StepDefinitionUpgrade, StepExecution, StepExecutionId, StepName,
     StepPartitionId, TerminalKind, VersionedStateCodec,
 };
+pub use oxide_batch_plan::{
+    CompiledExecutionPlan, DeciderRevision, DecisionInputVersion, DecisionNode, ExitPattern,
+    FlowGraph, FlowNode, FlowSelectionError, FlowTransition, JoinNode, LocalFailurePolicy,
+    MAX_BRANCH_STEPS, MAX_OUTGOING_TRANSITIONS, MAX_PARTITION_WORKERS, MAX_PATTERN_BYTES,
+    MAX_SPLIT_BRANCHES, PartitionBudget, PartitionCount, PartitionedStepNode, PatternSpecificity,
+    PlanError, SplitBranch, SplitBudget, SplitNode, StepComponents, StepNode,
+};
 pub use oxide_batch_repository::{
     ActorRef, AuthorizationClass, BoxFuture, Clock, Cursor, CursorError, CursorKey,
     DEFAULT_MAX_CLOCK_SKEW, DEFAULT_PAGE_SIZE, DEFAULT_PURGE_AGE, DEFAULT_STALE_THRESHOLD,
@@ -268,13 +322,6 @@ pub use oxide_batch_repository::{
     RetentionRecord, RetentionRecordDraft, SequentialIdGenerator, StaleThreshold,
     StateEnvelopeDescriptor, StepExecutionProjection, StepPartition, StepPartitionProjection,
     SystemClock, SystemMonotonicClock, TerminalStatusSet, aggregate_step_partitions,
-};
-pub use plan::{
-    CompiledExecutionPlan, DeciderRevision, DecisionInputVersion, DecisionNode, ExitPattern,
-    FlowGraph, FlowNode, FlowSelectionError, FlowTransition, JoinNode, LocalFailurePolicy,
-    MAX_BRANCH_STEPS, MAX_OUTGOING_TRANSITIONS, MAX_PARTITION_WORKERS, MAX_PATTERN_BYTES,
-    MAX_SPLIT_BRANCHES, PartitionBudget, PartitionCount, PartitionedStepNode, PatternSpecificity,
-    PlanError, SplitBranch, SplitBudget, SplitNode, StepComponents, StepNode,
 };
 #[cfg(feature = "postgres")]
 pub use repository::{

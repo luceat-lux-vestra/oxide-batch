@@ -713,6 +713,7 @@ dependencies = [
  "futures-executor",
  "futures-util",
  "oxide-batch-core",
+ "oxide-batch-plan",
  "oxide-batch-repository",
  "serde_json",
  "sha2 0.11.0",
@@ -760,6 +761,14 @@ version = "0.0.0"
 dependencies = [
  "oxide-batch",
  "tokio",
+]
+
+[[package]]
+name = "oxide-batch-plan"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "oxide-batch-core",
+ "serde_json",
 ]
 
 [[package]]

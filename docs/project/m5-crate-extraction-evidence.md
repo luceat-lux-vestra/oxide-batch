@@ -1,7 +1,7 @@
 # M5 Staged Crate-Extraction Evidence
 
-**State:** Stage 1, the ADR-0011 core placement, and stage 2 complete; stage 3
-not started
+**State:** Complete. Stage 1, the ADR-0011 core placement, stage 2, and stage 3
+have all landed; every authorized extraction stage is delivered.
 
 **Issue:** [#99](https://github.com/luceat-lux-vestra/oxide-batch/issues/99)
 
@@ -11,7 +11,8 @@ This record is the per-stage evidence the
 [staged crate-extraction contract](../architecture/crate-extraction.md)
 requires. It covers the publication decision the work forced, the evidence
 checks the contract required and the repository lacked, stage 1, the boundary
-finding that stopped stage 2 and the correction that unblocked it, and stage 2.
+finding that stopped stage 2 and the correction that unblocked it, stage 2, and
+stage 3.
 
 Extraction is behavior-preserving repackaging. Nothing in this record changes
 observable batch semantics, persisted bytes, transaction boundaries, lifecycle
@@ -525,23 +526,175 @@ previous module layout and changes no facade path, persisted byte, or metadata
 value, so it requires no migration and no operator action. Reversal stays free
 until the release that publishes `oxide-batch-repository`.
 
-## Stage 3 — not started
+## Stage 3 — `oxide-batch-plan`
 
-Stage 3 follows stage 2 and is unchanged by this work.
+Stage 3 was authorized "only after the M5 plan and fingerprint stabilization
+slice lands". That slice closed as issue
+[#98](https://github.com/luceat-lux-vestra/oxide-batch/issues/98) and its
+ADR-0009 implementation is on `main`, and stage 2's evidence passed CI, so both
+preconditions the contract names were met before this work began.
+
+**Moved.** The whole of `crates/oxide-batch/src/plan.rs` — the immutable
+`FlowGraph` of step, decision, split, join, and partitioned-step nodes, its
+exit-pattern `FlowTransition` edges, the `CompiledExecutionPlan` those graphs
+lower into, graph normalization, the structural validation the accepted
+basic-flow contract names, and the canonical restart-relevant manifest
+projection that `oxide-batch-core` digests into the definition fingerprint. The
+crate depends on `oxide-batch-core`, `serde_json`, and nothing else.
+
+**Not moved.** The flow engine that executes a compiled plan, the runtime, the
+two metadata adapters, the four services, telemetry, and the whole contract
+suite. The four plan test files under `crates/oxide-batch/tests/` stayed where
+they are and were not edited: they already exercise the compiler through
+`oxide_batch` paths.
+
+### The move needed no placement decisions
+
+Stages 1 and 2 each had to place types that two layers could plausibly own.
+Stage 3 had none. ADR-0011 had already moved every durable value the repository
+port names — `NodeId`, `FlowTarget`, `TerminalKind`, `StartControls`,
+`StartLimit`, `MAX_PARTITIONS` — into `oxide-batch-core` ahead of stage 2. What
+remained in `plan.rs` was the compiler and the graph types only it constructs,
+which is exactly the crate's content. The file's imports were already
+`oxide_batch_core` types plus `serde_json`; repointing the `use crate::{..}`
+block at `oxide_batch_core` was the entire import change.
+
+Stage 2's first attempt failed because splitting a file left private access
+crossing a crate boundary inside what had been one module. Stage 3 split no
+file: `plan.rs` moved whole and became `crates/oxide-batch-plan/src/lib.rs`, so
+the compiler had already been enforcing the module boundary that the crate
+boundary now enforces.
+
+### Equivalence
+
+- The workspace test set is **identical**: `454` listed tests before and after,
+  the same names, in the same binaries. The `453` executed tests pass with no
+  failures. `plan.rs` carried no `#[cfg(test)]` module, so — unlike stages 1
+  and 2 — the move shifted no unit test into the new crate at all;
+  `oxide_batch_plan` builds an empty test binary.
+- Two doctests moved. `ExitPattern` and `FlowGraph` each carried an example
+  that imports from `oxide_batch`, which a crate below the facade cannot
+  compile. Both examples are now in the `oxide-batch` crate documentation,
+  byte-for-byte, so they keep demonstrating the supported import path exactly
+  as stage 1 did with the `DefinitionManifest` example. Their identities are
+  `file:line` based and therefore changed; nothing else in the inventory did.
+- The public API snapshot is byte-identical, and every named facade path still
+  resolves.
+- No fixture changed. The golden fingerprint vectors, canonical manifest bytes,
+  and normalized wrapper traces under `crates/oxide-batch/tests/fixtures/` are
+  unmodified, so the durable-invariance scenarios hold as in stages 1 and 2.
+  This matters more here than in either earlier stage, because this is the
+  crate that produces the manifest a fingerprint digests.
+- `cargo fmt`, `cargo clippy --workspace --all-targets --all-features -D
+  warnings`, `cargo check -p oxide-batch --no-default-features`, `cargo check -p
+  oxide-batch-cli --no-default-features --all-targets`, `RUSTDOCFLAGS="-D
+  warnings" cargo doc --workspace --all-features --no-deps`, `cargo xtask deps`,
+  and `cargo xtask package` all pass.
+- PostgreSQL evidence runs in CI, as it does for every change to this
+  repository.
+
+### One item was forced open
+
+Stage 2 opened `34` items. Stage 3 opened one:
+
+| Item | Why the boundary needs it | Caller |
+| --- | --- | --- |
+| `CompiledExecutionPlan::compatibility_one_step` | Lowers a validated one-step wrapper into a compatibility plan that retains the wrapper's original format-1 manifest bytes | `runtime::lower_one_step` |
+
+It is `#[doc(hidden)]`, so the facade's rustdoc discloses it, like stage 2's
+items, not at all. It is an inherent item on a re-exported type, so it is
+technically reachable under an `oxide_batch` path, which is why it is named
+here. The facade wrapper `runtime::lower_one_step` stays `pub(crate)` and is
+still the only way the runtime reaches it.
+
+The count is one rather than dozens because `plan.rs` was already a whole
+module: every item the rest of the facade used had to be `pub` in it already,
+and `pub(crate)` items were reachable only from outside the module.
+
+### Non-exhaustive matching across the boundary
+
+Three crossings appeared, all in the flow engine. Each takes a final wildcard
+arm whose comment names what it absorbs, and each is fail-safe rather than
+silently wrong:
+
+| Site | Enum | Fallback |
+| --- | --- | --- |
+| `FlowJob::validate_bindings` | `FlowNode` | A node kind this build cannot bind is reported unbound, so the job is rejected at build time instead of launching with an unbound node |
+| `FlowLauncher` node dispatch | `FlowNode` | A node kind this build cannot dispatch is refused as `FlowJobError::UnsupportedManifest`, exactly as a join node already is, merged with that arm |
+| `FlowLauncher` transition selection | `FlowSelectionError` | A selection failure this build cannot interpret stops the launch as an unsupported manifest; no transition is taken and no decision is persisted |
+
+The residual limitation stages 1 and 2 named applies unchanged: adding a
+variant to `FlowNode` or `FlowSelectionError` no longer breaks the facade
+build, and the mitigation is review of this table.
+
+### The dependency check gained the rule it was missing
+
+The contract has forbidden `oxide-batch-plan` from depending on
+`oxide-batch-repository` since ADR-0011 made the two independent siblings, but
+`xtask/src/deps.rs` carried the prohibition in only one direction: the
+repository boundary refused the plan crate, and the plan boundary did not
+refuse the repository crate. The rule was unenforceable while the plan crate
+did not exist. It is now in the plan boundary's forbidden list, so the check is
+authoritative in both directions, as the contract claims it is.
+
+### Measurements
+
+Provisional development observations from the same macOS host as stages 1 and
+2, which the support matrix lists as development-only. Reported, not gated. The
+raw report is
+[`stage-3-plan.json`](../engineering/measurements/m5/stage-3-plan.json). Like
+`baseline.json` and the stage-2 report, it was captured on the working tree
+before the commit below, so it records `clean_tree: false` and the parent
+commit.
+
+| Observation | Baseline | Stage 1 | Stage 2 | Stage 3 |
+| --- | --- | --- | --- | --- |
+| Clean workspace build, all features | 23.0 s | 26.6 s | 24.9 s | 25.1 s |
+| Clean facade build, all features | 21.9 s | 20.9 s | 22.2 s | 21.3 s |
+| Incremental facade build | 12.2 s | 12.4 s | 12.1 s | 12.7 s |
+| Release `oxide-batch-cli` binary | 7 031 488 B | 7 111 584 B | 7 122 752 B | 7 141 712 B |
+| Packaged files, `oxide-batch` | 119 | 111 | 110 | 109 |
+| Packaged files, `oxide-batch-core` | — | 17 | 19 | 19 |
+| Packaged files, `oxide-batch-repository` | — | — | 16 | 16 |
+| Packaged files, `oxide-batch-plan` | — | — | — | 8 |
+
+The facade lost the one packaged file that `plan.rs` was, and the new crate
+packages eight: one source file plus its manifest, README, licence, notice, and
+the three files cargo generates. The operator binary grew by `18 960` bytes,
+`0.27 %`, which is crate-boundary overhead rather than new code; the extraction
+has now added `110 224` bytes, `1.57 %`, to that binary in total. Build times
+moved within the noise this host shows between captures of the same commit. No
+budget is crossed and none is binding.
+
+The workspace dependency graph after the move adds `oxide-batch ->
+oxide-batch-plan` and `oxide-batch-plan -> oxide-batch-core` to the stage-2
+graph. `oxide-batch-plan` and `oxide-batch-repository` have no edge between
+them in either direction, which is the sibling shape ADR-0011 specifies. No
+cycle exists and no crate reaches a forbidden dependency class, which `cargo
+xtask deps` verifies.
+
+### Reversal
+
+Stage 3 is the single commit that carries this record. Reverting it restores
+the previous module layout and changes no facade path, persisted byte, or
+metadata value, so it requires no migration and no operator action. Reversal
+stays free until the release that publishes `oxide-batch-plan`.
 
 ## Consequences for the milestone
 
-- The M5 workstream that this issue owns is partially delivered. Stages 1 and 2
-  are complete; stage 3 remains.
+- The M5 workstream that this issue owns is fully delivered. Stages 1, 2, and 3
+  are complete, and the contract authorizes no further stage: engine, item,
+  adapter, observability, test-kit, distributed-protocol, and integration
+  boundaries are deferred past M5.
 - No ledger row moves. Extraction claims no capability and promotes nothing.
 - The release path changed: `release.yml` and `release-draft.yml` now package,
   dry-run, checksum, generate SBOMs for, attest, and publish
-  `oxide-batch-core` and `oxide-batch-repository` alongside the facade, in
-  dependency order. The operator CLI stays outside the release scope, as before.
-- **M5 cannot close until stage 3 lands.** The kickoff gate's "each
-  completed crate extraction" clause is the quality bar applied to an
-  extraction, not permission to stop after one. The same gate states that exit
-  work follows all implementation streams, the design gate makes issue
-  [#103](https://github.com/luceat-lux-vestra/oxide-batch/issues/103) follow all
-  implementation and evidence work, and this issue's own exit criteria require
-  every authorized stage. Issue #99 stays open.
+  `oxide-batch-core`, `oxide-batch-repository`, and `oxide-batch-plan`
+  alongside the facade, in dependency order. The operator CLI stays outside the
+  release scope, as before.
+- The blocker this record previously named is cleared. Issue #99's exit
+  criteria required every authorized stage, and every authorized stage has
+  landed with its evidence, so the issue can close and the M5 exit work that
+  follows it — including issue
+  [#103](https://github.com/luceat-lux-vestra/oxide-batch/issues/103) — is
+  unblocked.

@@ -1,17 +1,47 @@
-//! Immutable flow graphs and the compiled execution plans they lower into.
+//! Internal implementation crate for `OxideBatch`.
 //!
-//! An application declares a [`FlowGraph`] of step and decision nodes joined by
-//! exit-pattern transitions, then compiles it into an immutable
+//! **This crate is implementation detail. Use
+//! [`oxide-batch`](https://crates.io/crates/oxide-batch) instead.**
+//!
+//! It exists on crates.io only because the published `oxide-batch` facade
+//! depends on it. Its API carries no stability promise: items may be added,
+//! changed, or removed in any release, without a deprecation period. It has no
+//! supported-configuration matrix, no compatibility ledger row, and no
+//! independent release cadence.
+//!
+//! Everything here that `OxideBatch` supports is re-exported from `oxide-batch`
+//! under a stable path.
+//!
+//! The crate holds immutable flow graphs and the compiled execution plans they
+//! lower into. An application declares a [`FlowGraph`] of step and decision
+//! nodes joined by exit-pattern transitions, then compiles it into an immutable
 //! [`CompiledExecutionPlan`]. Compilation normalizes the graph, rejects every
 //! structural error the accepted basic-flow contract names, and produces the
 //! canonical manifest whose SHA-256 digest is the definition fingerprint.
 //!
 //! The M3 graph remains acyclic. M4 adds only the accepted bounded split and
 //! local-partition forms; nested splits, decisions inside branches, dynamic
-//! partitioning, and remote execution remain outside this module's contract.
-//! Existing one-step [`TaskletJob`](crate::TaskletJob) and
-//! [`ChunkJob`](crate::ChunkJob) definitions lower into a compatibility plan
-//! that retains their original format-1 manifest bytes and fingerprint.
+//! partitioning, and remote execution remain outside this crate's contract.
+//! Existing one-step `TaskletJob` and `ChunkJob` definitions lower into a
+//! compatibility plan that retains their original format-1 manifest bytes and
+//! fingerprint.
+//!
+//! The crate depends on no async runtime, database driver, command-line
+//! framework, telemetry SDK, broker client, or web framework, and on no
+//! `OxideBatch` crate other than `oxide-batch-core`. The flow engine that
+//! executes a compiled plan, the metadata ports that persist its decisions,
+//! and the runtime live above this crate.
+//!
+//! # Items marked `#[doc(hidden)]`
+//!
+//! Some items exist as `#[doc(hidden)] pub` only because the facade's own code
+//! was split from these types by the extraction boundary: private access that
+//! one crate resolved by module privacy now crosses a crate boundary. They are
+//! not part of any surface, supported or otherwise, and the facade never
+//! re-exports one under its own name. The staged crate-extraction contract
+//! records each one.
+
+#![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -20,12 +50,12 @@ use std::num::NonZeroU32;
 
 use serde_json::{Value, json};
 
-use crate::{
+use oxide_batch_core::{
     ChunkComponentRevisions, ChunkSize, ComponentRevision, DefinitionError, DefinitionIdentity,
     DefinitionRevision, DefinitionTokenKind, ExitCode, FaultPolicy, FlowTarget, JobName, MAX_NODES,
     MAX_PARTITIONS, MAX_TRANSITIONS, NodeId, StartControls, StepName, TerminalKind,
+    definition_token, validate_token,
 };
-use oxide_batch_core::{definition_token, validate_token};
 
 /// The maximum number of transitions leaving one node.
 pub const MAX_OUTGOING_TRANSITIONS: usize = 64;
@@ -201,19 +231,10 @@ impl DecisionInputVersion {
 ///
 /// A pattern contains literal characters plus `*` for zero or more characters
 /// and `?` for exactly one character. It matches the bounded
-/// [`ExitCode`], never [`BatchStatus`](crate::BatchStatus).
+/// [`ExitCode`], never [`BatchStatus`](oxide_batch_core::BatchStatus).
 ///
-/// ```
-/// use oxide_batch::{ExitCode, ExitPattern};
-///
-/// let failed = ExitPattern::new("FAILED")?;
-/// let any = ExitPattern::new("*")?;
-/// assert!(failed.matches(&ExitCode::new("FAILED")?));
-/// assert!(!failed.matches(&ExitCode::new("COMPLETED")?));
-/// assert!(any.matches(&ExitCode::new("COMPLETED")?));
-/// assert!(failed.specificity() > any.specificity());
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
+/// The worked example lives in the `oxide-batch` crate documentation, so that
+/// it keeps demonstrating the supported import path.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ExitPattern(String);
 
@@ -1012,33 +1033,8 @@ impl FlowTransition {
 
 /// An immutable declaration of the M3 flow subset.
 ///
-/// ```
-/// use oxide_batch::{
-///     ComponentRevision, DefinitionRevision, ExitPattern, FlowGraph, FlowNode, FlowTarget,
-///     FlowTransition, JobName, NodeId, StepComponents, StepNode, StepName, TerminalKind,
-/// };
-///
-/// let load = NodeId::new("load")?;
-/// let report = NodeId::new("report")?;
-/// let plan = FlowGraph::new(load.clone())
-///     .with_node(FlowNode::step(StepNode::new(
-///         load.clone(),
-///         StepName::new("load")?,
-///         StepComponents::Tasklet(ComponentRevision::new("load-v1")?),
-///     )))
-///     .with_node(FlowNode::step(StepNode::new(
-///         report.clone(),
-///         StepName::new("report")?,
-///         StepComponents::Tasklet(ComponentRevision::new("report-v1")?),
-///     )))
-///     .with_sequence(load, FlowTarget::Node(report.clone()))?
-///     .with_sequence(report, FlowTarget::Terminal(TerminalKind::Complete))?
-///     .compile(&JobName::new("daily_import")?, DefinitionRevision::new("v1")?)?;
-///
-/// assert_eq!(plan.manifest_format(), 2);
-/// assert_eq!(plan.node_count(), 2);
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
+/// The worked example lives in the `oxide-batch` crate documentation, so that
+/// it keeps demonstrating the supported import path.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct FlowGraph {
     entry: Option<NodeId>,
@@ -1390,7 +1386,7 @@ fn fault_manifest_value(policy: &FaultPolicy) -> Value {
 /// runtime that reads a manifest, not to the definition it identifies, so
 /// raising one in a later release must not change a fingerprint. `MAX_NODES`
 /// and `MAX_TRANSITIONS` are enforced against the graph a manifest declares by
-/// [`DefinitionManifest::read`](crate::DefinitionManifest::read).
+/// [`DefinitionManifest::read`](oxide_batch_core::DefinitionManifest::read).
 fn flow_manifest(
     job_name: &JobName,
     entry: &NodeId,
@@ -1437,7 +1433,8 @@ impl CompiledExecutionPlan {
     /// and fingerprint stay exactly what the wrapper persisted. The synthetic
     /// graph maps the framework's own exit codes onto terminals and adds no
     /// node an application could observe as a new durable decision.
-    pub(crate) fn compatibility_one_step(
+    #[doc(hidden)]
+    pub fn compatibility_one_step(
         definition: DefinitionIdentity,
         step: StepNode,
     ) -> Result<Self, PlanError> {

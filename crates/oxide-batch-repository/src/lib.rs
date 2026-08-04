@@ -20,8 +20,9 @@
 //! driver, command-line framework, telemetry SDK, broker client, or web
 //! framework, and on no `OxideBatch` crate other than `oxide-batch-core`.
 //!
-//! Metadata adapters, the services that drive these ports, the plan compiler,
-//! and the execution engines live above this crate.
+//! Metadata adapters, the services that drive these ports, and the execution
+//! engines live above this crate. The plan compiler is an independent sibling
+//! in `oxide-batch-plan`, which this crate may not depend on.
 //!
 //! # Items marked `#[doc(hidden)]`
 //!
