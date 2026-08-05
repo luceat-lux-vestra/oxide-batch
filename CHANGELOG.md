@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `StateSchemaUpgrade`, one declared directed edge between two application
+  schema versions. Edges must strictly increase the version and at most one may
+  leave any version, so a resolved chain is deterministic and bounded. Upgrade
+  output is held to the envelope's JSON-object shape and the durable hard
+  ceilings before it reaches the codec, and `StateError` gains
+  `NonIncreasingUpgrade`, `NoUpgradePath`, `AmbiguousUpgrade`,
+  `UpgradeOvershootsCurrent`, `UpgradeChainTooLong`, and
+  `UpgradeProducedInvalidJson` for the ways a declaration or a transform can
+  fail.
 - Public constructors and accessors the stage-2 crate boundary needs, landed
   ahead of the module move so the move itself changes no API:
   `OperatorRecordDraft::{applied, rejected}`,
@@ -369,6 +378,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Breaking (pre-1.0):** `VersionedStateCodec` now declares the directed
+  schema upgrades it can apply, and the framework applies them. `decode` loses
+  its `StateSchemaVersion` argument and receives a payload already at
+  `current_version`; a codec that has published an older schema returns the
+  edges reaching the current one from the new `upgrades` method, whose default
+  is empty. This applies the accepted M5 codec direction, which requires one
+  bounded, deterministic upgrade chain rather than a codec that inspects a
+  recorded version and guesses what an older field meant. A recorded version
+  with no declared path to the current version is now rejected with
+  `StateError::NoUpgradePath` instead of reaching the codec. No durable byte,
+  envelope format version, or definition fingerprint changes.
 - Extracted implementation crates are published in lockstep with the facade
   rather than kept `publish = false`. Cargo rewrites a published archive's path
   dependencies to registry dependencies, so a publishable facade cannot depend

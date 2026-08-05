@@ -57,5 +57,5 @@ pub use fault::{
 pub use flow::{FlowTarget, MAX_PARTITIONS, NodeId, StartControls, StartLimit, TerminalKind};
 pub use state::{
     Checkpoint, DurableStateKind, ExecutionContext, StateCodecError, StateError, StateLimits,
-    StateSchemaId, StateSchemaVersion, VersionedStateCodec,
+    StateSchemaId, StateSchemaUpgrade, StateSchemaVersion, VersionedStateCodec,
 };

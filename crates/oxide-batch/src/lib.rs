@@ -89,6 +89,14 @@
 //! exchange JSON object bytes, keeping serializer types out of the public
 //! contract. Their `Debug` output never includes payloads.
 //!
+//! A codec declares its current schema version and the [`StateSchemaUpgrade`]
+//! edges it can apply. Decoding an older recorded version walks one bounded,
+//! deterministic chain of those edges and only then calls
+//! [`VersionedStateCodec::decode`], so a codec parses exactly one shape. A
+//! recorded version newer than the codec, or one with no declared path to the
+//! current version, fails closed rather than being truncated, defaulted, or
+//! reinterpreted.
+//!
 //! [`DefinitionManifest`] reads canonical definition bytes back without
 //! guessing. A newer format, a non-canonical encoding, a floating-point value,
 //! an out-of-bound graph, or a digest that does not match the supplied bytes
@@ -288,8 +296,8 @@ pub use oxide_batch_core::{
     ParameterRole, ParameterValue, ParameterValueKind, RecoveryDecisionId, RetentionActionId,
     RetryLimit, RetryOrdinal, RetryStateLimit, RollbackDisposition, SkipCounts, SkipLimit,
     StartControls, StartLimit, StateCodecError, StateError, StateLimits, StateSchemaId,
-    StateSchemaVersion, StepDefinitionUpgrade, StepExecution, StepExecutionId, StepName,
-    StepPartitionId, TerminalKind, VersionedStateCodec,
+    StateSchemaUpgrade, StateSchemaVersion, StepDefinitionUpgrade, StepExecution, StepExecutionId,
+    StepName, StepPartitionId, TerminalKind, VersionedStateCodec,
 };
 pub use oxide_batch_plan::{
     CompiledExecutionPlan, DeciderRevision, DecisionInputVersion, DecisionNode, ExitPattern,

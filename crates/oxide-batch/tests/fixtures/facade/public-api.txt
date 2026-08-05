@@ -370,6 +370,7 @@ oxide_batch::StateEnvelopeDescriptor
 oxide_batch::StateError
 oxide_batch::StateLimits
 oxide_batch::StateSchemaId
+oxide_batch::StateSchemaUpgrade
 oxide_batch::StateSchemaVersion
 oxide_batch::StepComponents
 oxide_batch::StepDefinitionUpgrade

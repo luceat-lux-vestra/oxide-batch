@@ -13,6 +13,12 @@ const DEFAULT_MAXIMUM_BYTES: usize = 64 * 1024;
 const DEFAULT_MAXIMUM_DEPTH: usize = 16;
 const MAXIMUM_BYTES: usize = 1024 * 1024;
 const MAXIMUM_DEPTH: usize = 64;
+/// The most directed upgrades one decode may apply.
+///
+/// Every declared edge strictly increases the version and no version repeats,
+/// so a chain cannot exceed the declared edge count. The ceiling bounds a
+/// codec that declares an unreasonable number of edges.
+const MAX_UPGRADE_CHAIN: usize = 64;
 
 /// The durable state category being encoded or decoded.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -182,18 +188,95 @@ impl Default for StateLimits {
     }
 }
 
+/// One directed application-schema upgrade a codec declares.
+///
+/// An upgrade rewrites a JSON-object payload recorded at [`from`](Self::from)
+/// into the shape [`to`](Self::to) expects. The framework, not the codec,
+/// selects and applies the edges, so a codec never inspects a recorded version
+/// to decide what an older payload meant.
+///
+/// Edges strictly increase the version and at most one edge may leave any
+/// version, which is what makes a resolved chain deterministic and bounded.
+#[derive(Clone, Copy)]
+pub struct StateSchemaUpgrade {
+    from: StateSchemaVersion,
+    to: StateSchemaVersion,
+    apply: fn(&[u8]) -> Result<Vec<u8>, StateCodecError>,
+}
+
+impl StateSchemaUpgrade {
+    /// Declares a directed upgrade between two application schema versions.
+    ///
+    /// `apply` must be deterministic: the same payload bytes must always
+    /// produce the same result, because a restart replays the same chain over
+    /// the same durable bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StateError::NonIncreasingUpgrade`] when `to` does not exceed
+    /// `from`, which would let a chain loop or move backwards.
+    pub fn new(
+        from: StateSchemaVersion,
+        to: StateSchemaVersion,
+        apply: fn(&[u8]) -> Result<Vec<u8>, StateCodecError>,
+    ) -> Result<Self, StateError> {
+        if to <= from {
+            return Err(StateError::NonIncreasingUpgrade { from, to });
+        }
+        Ok(Self { from, to, apply })
+    }
+
+    /// Returns the version this upgrade reads.
+    #[must_use]
+    pub const fn from(&self) -> StateSchemaVersion {
+        self.from
+    }
+
+    /// Returns the version this upgrade produces.
+    #[must_use]
+    pub const fn to(&self) -> StateSchemaVersion {
+        self.to
+    }
+}
+
+impl fmt::Debug for StateSchemaUpgrade {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StateSchemaUpgrade")
+            .field("from", &self.from)
+            .field("to", &self.to)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Serializer-neutral application codec for one durable-state schema.
 ///
 /// Payloads are JSON objects represented as bytes so the public contract does
 /// not expose a particular serializer's types. A codec may use Serde, manual
-/// JSON handling, or another implementation internally. Decode must explicitly
-/// handle every older supported schema version.
+/// JSON handling, or another implementation internally.
+///
+/// A codec declares its current version and the directed upgrades it can
+/// apply. The framework accepts an equal or older recorded version, walks one
+/// bounded deterministic chain of declared upgrades up to the current version,
+/// and only then calls [`decode`](Self::decode). A codec therefore parses
+/// exactly one shape, and a recorded version newer than the current one is
+/// rejected rather than truncated, defaulted, or reinterpreted.
 pub trait VersionedStateCodec<T>: Send + Sync {
     /// Returns the stable schema identifier.
     fn schema_id(&self) -> &StateSchemaId;
 
     /// Returns the version emitted by [`encode`](Self::encode).
     fn current_version(&self) -> StateSchemaVersion;
+
+    /// Declares the directed upgrades this codec can apply.
+    ///
+    /// The default suits a codec whose schema has only ever had one version.
+    /// A codec that has published an older version returns the edges that
+    /// reach the current one; a recorded version with no path to the current
+    /// version is rejected rather than guessed at.
+    fn upgrades(&self) -> &[StateSchemaUpgrade] {
+        &[]
+    }
 
     /// Encodes the current typed value as one JSON object.
     ///
@@ -202,14 +285,14 @@ pub trait VersionedStateCodec<T>: Send + Sync {
     /// Returns a value-redacted codec classification.
     fn encode(&self, value: &T) -> Result<Vec<u8>, StateCodecError>;
 
-    /// Decodes or explicitly upgrades one supported JSON-object payload.
+    /// Decodes one JSON-object payload already at
+    /// [`current_version`](Self::current_version).
     ///
     /// # Errors
     ///
-    /// Returns [`StateCodecError::UnsupportedSchemaVersion`] for an older
-    /// version without an upgrade path, or [`StateCodecError::InvalidPayload`]
-    /// when the payload does not satisfy that version's schema.
-    fn decode(&self, version: StateSchemaVersion, payload: &[u8]) -> Result<T, StateCodecError>;
+    /// Returns [`StateCodecError::InvalidPayload`] when the payload does not
+    /// satisfy the current schema.
+    fn decode(&self, payload: &[u8]) -> Result<T, StateCodecError>;
 }
 
 /// Stable, payload-redacted failures returned by an application codec.
@@ -364,18 +447,67 @@ impl VersionedState {
         if &self.schema_id != codec.schema_id() {
             return Err(StateError::SchemaMismatch { kind });
         }
-        if self.schema_version > codec.current_version() {
+        let current = codec.current_version();
+        if self.schema_version > current {
             return Err(StateError::UnsupportedSchemaVersion {
                 kind,
                 found: self.schema_version,
-                current: codec.current_version(),
+                current,
             });
         }
         let payload =
             serde_json::to_vec(&self.payload).map_err(|_| StateError::Malformed { kind })?;
-        codec
-            .decode(self.schema_version, &payload)
-            .map_err(StateError::Codec)
+        let payload = self.upgrade(kind, codec, payload)?;
+        codec.decode(&payload).map_err(StateError::Codec)
+    }
+
+    /// Walks the declared upgrade edges from the recorded version to `current`.
+    ///
+    /// Each step takes the single edge leaving the position reached so far.
+    /// Two edges leaving one version would make the result depend on
+    /// declaration order, so that is rejected rather than resolved.
+    fn upgrade<T>(
+        &self,
+        kind: DurableStateKind,
+        codec: &(impl VersionedStateCodec<T> + ?Sized),
+        mut payload: Vec<u8>,
+    ) -> Result<Vec<u8>, StateError> {
+        let current = codec.current_version();
+        let upgrades = codec.upgrades();
+        let mut version = self.schema_version;
+        let mut applied = 0_usize;
+        while version < current {
+            let mut edges = upgrades.iter().filter(|upgrade| upgrade.from == version);
+            let edge = edges.next().ok_or(StateError::NoUpgradePath {
+                kind,
+                found: version,
+                current,
+            })?;
+            if edges.next().is_some() {
+                return Err(StateError::AmbiguousUpgrade {
+                    kind,
+                    from: version,
+                });
+            }
+            if edge.to > current {
+                return Err(StateError::UpgradeOvershootsCurrent {
+                    kind,
+                    to: edge.to,
+                    current,
+                });
+            }
+            applied += 1;
+            if applied > MAX_UPGRADE_CHAIN {
+                return Err(StateError::UpgradeChainTooLong {
+                    kind,
+                    max_upgrades: MAX_UPGRADE_CHAIN,
+                });
+            }
+            payload = (edge.apply)(&payload).map_err(StateError::Codec)?;
+            check_upgraded(kind, &payload)?;
+            version = edge.to;
+        }
+        Ok(payload)
     }
 
     fn to_json(&self, kind: DurableStateKind) -> Result<Vec<u8>, StateError> {
@@ -418,6 +550,36 @@ fn envelope(
     );
     object.insert(String::from("payload"), payload);
     Value::Object(object)
+}
+
+/// Holds a payload produced by a declared upgrade to the envelope's own shape
+/// and to the durable hard ceilings.
+///
+/// An upgrade is application code running between two framework checks, so a
+/// transform that returns a non-object, invalid JSON, or an unbounded payload
+/// fails here as a typed state error rather than reaching the codec. The
+/// ceilings rather than the configured limits apply: this value is an
+/// intermediate that is never persisted, and the bytes that are persisted come
+/// from `encode`, which is checked against the configured limits.
+fn check_upgraded(kind: DurableStateKind, payload: &[u8]) -> Result<(), StateError> {
+    if payload.len() > MAXIMUM_BYTES {
+        return Err(StateError::TooLarge {
+            kind,
+            max_bytes: MAXIMUM_BYTES,
+        });
+    }
+    let value: Value = serde_json::from_slice(payload)
+        .map_err(|_| StateError::UpgradeProducedInvalidJson { kind })?;
+    if !value.is_object() {
+        return Err(StateError::PayloadNotObject);
+    }
+    if json_depth(&value) > MAXIMUM_DEPTH {
+        return Err(StateError::TooDeep {
+            kind,
+            max_depth: MAXIMUM_DEPTH,
+        });
+    }
+    Ok(())
 }
 
 fn json_depth(value: &Value) -> usize {
@@ -620,6 +782,51 @@ pub enum StateError {
         /// Durable state category.
         kind: DurableStateKind,
     },
+    /// A declared upgrade did not strictly increase the schema version.
+    NonIncreasingUpgrade {
+        /// Version the rejected edge reads.
+        from: StateSchemaVersion,
+        /// Version the rejected edge claims to produce.
+        to: StateSchemaVersion,
+    },
+    /// The codec declares no directed upgrade reaching its current version.
+    NoUpgradePath {
+        /// Durable state category.
+        kind: DurableStateKind,
+        /// Version the chain stalled at.
+        found: StateSchemaVersion,
+        /// Current version supported by the selected codec.
+        current: StateSchemaVersion,
+    },
+    /// Two declared upgrades leave the same version, so the chain is not
+    /// deterministic.
+    AmbiguousUpgrade {
+        /// Durable state category.
+        kind: DurableStateKind,
+        /// Version left by more than one declared upgrade.
+        from: StateSchemaVersion,
+    },
+    /// A declared upgrade produces a version past the codec's current version.
+    UpgradeOvershootsCurrent {
+        /// Durable state category.
+        kind: DurableStateKind,
+        /// Version the rejected edge produces.
+        to: StateSchemaVersion,
+        /// Current version supported by the selected codec.
+        current: StateSchemaVersion,
+    },
+    /// The resolved upgrade chain exceeded its bound.
+    UpgradeChainTooLong {
+        /// Durable state category.
+        kind: DurableStateKind,
+        /// Most upgrades one decode may apply.
+        max_upgrades: usize,
+    },
+    /// A declared upgrade returned bytes that are not valid JSON.
+    UpgradeProducedInvalidJson {
+        /// Durable state category.
+        kind: DurableStateKind,
+    },
     /// Durable data was produced by a newer application schema.
     UnsupportedSchemaVersion {
         /// Durable state category.
@@ -681,6 +888,30 @@ impl fmt::Display for StateError {
             }
             Self::SchemaMismatch { kind } => {
                 write!(formatter, "{kind} schema does not match the component")
+            }
+            Self::NonIncreasingUpgrade { .. } => {
+                formatter.write_str("state schema upgrade must increase the version")
+            }
+            Self::NoUpgradePath { kind, .. } => {
+                write!(formatter, "{kind} schema version has no upgrade path")
+            }
+            Self::AmbiguousUpgrade { kind, .. } => {
+                write!(formatter, "{kind} schema upgrade is ambiguous")
+            }
+            Self::UpgradeOvershootsCurrent { kind, .. } => {
+                write!(
+                    formatter,
+                    "{kind} schema upgrade passes the current version"
+                )
+            }
+            Self::UpgradeChainTooLong { kind, max_upgrades } => {
+                write!(
+                    formatter,
+                    "{kind} schema upgrade chain exceeds {max_upgrades} upgrades"
+                )
+            }
+            Self::UpgradeProducedInvalidJson { kind } => {
+                write!(formatter, "{kind} schema upgrade produced invalid JSON")
             }
             Self::UnsupportedSchemaVersion { kind, .. } => {
                 write!(formatter, "{kind} schema version is unsupported")
