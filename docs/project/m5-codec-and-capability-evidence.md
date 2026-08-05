@@ -1,10 +1,16 @@
 # M5 Context-Codec and Transaction-Capability Evidence
 
-**State:** Complete for the implementation work this issue owns. The
-PostgreSQL migration and restore campaign remains with issue
-[#102](https://github.com/luceat-lux-vestra/oxide-batch/issues/102); see
-[Migration and rollback](#migration-and-rollback) for why no new migration is
-owed here.
+**State:** Partial. This record covers the codec lifecycle and the launch-time
+repository capability negotiation portion of issue #100.
+
+**Issue #100 remains open.** PostgreSQL migration and restore campaign evidence
+is tracked by issue
+[#102](https://github.com/luceat-lux-vestra/oxide-batch/issues/102). #100 must
+stay open until its migration and restore exit criteria are either completed or
+formally moved to #102 in the issue body. See
+[Migration and rollback](#migration-and-rollback) for why this work owes no new
+migration of its own, which is a different statement from those criteria being
+met.
 
 **Issue:** [#100](https://github.com/luceat-lux-vestra/oxide-batch/issues/100)
 
@@ -48,6 +54,12 @@ accepted a partitioned plan, wrote job and step lifecycle rows, and failed at
 the first partition write. The rejection was typed; it was not negotiation, and
 it was not before any durable write.
 
+A first attempt at this closed only half the gap by deriving requirements from
+the compiled plan alone. That misses `ExecutionOwnership`, which no plan
+mentions because it is enabled by the launcher rather than declared by a
+definition — the same definition needs it or does not depending on how it is
+launched.
+
 ## The codec schema lifecycle
 
 `StateSchemaUpgrade` is one declared directed edge with a deterministic payload
@@ -90,17 +102,27 @@ single version number would conflate them.
 
 Negotiation runs at flow launch, before any durable work:
 
-- the plan's requirements are derived from the compiled plan;
+- the launch's requirements are derived from the compiled plan and from the
+  launcher configuration;
 - each is required against the descriptor;
 - an undeclared requirement is `FlowRuntimeError::UndeclaredCapability`, naming
   the capability and the descriptor version.
 
-**Only requirements the plan itself carries are negotiated.** Today that is
-`StepPartitions`, required by a partitioned step node. Capabilities an operator
-action needs — stop requests, retention purge, instance holds — stay negotiated
-where that action is applied, because a plan that is never stopped or purged
-does not need the deployment to support stopping or purging, and rejecting such
-a launch would be a false negative.
+**A launch requirement has two sources, and both are negotiated.**
+
+| Source | Requirement | Why it is not the other source |
+| --- | --- | --- |
+| The compiled plan | `StepPartitions`, from a partitioned step node | A definition declares it |
+| The launcher configuration | `ExecutionOwnership`, from `FlowLauncher::with_execution_control` | No plan mentions it; the same definition needs it or not depending on how it is launched |
+
+Reading only the plan would have missed `ExecutionOwnership` entirely. The two
+sets are unioned into a `BTreeSet`, so a capability required by both is
+negotiated once and the rejection order is deterministic.
+
+Capabilities that only an operator action needs — stop requests, retention
+purge, instance holds — stay negotiated where that action is applied, because a
+plan that is never stopped or purged does not need the deployment to support
+stopping or purging, and rejecting such a launch would be a false negative.
 
 **The `descriptor` default declares nothing.** An adapter that has not been
 reviewed against a capability is negotiated as not providing it. Failing closed
@@ -145,12 +167,64 @@ pass.
 | `newer_recorded_schema_version_is_rejected` | same |
 | `oversized_or_over_deep_payload_is_a_known_not_committed_outcome` | same |
 | `corrupt_payload_never_advances_a_checkpoint` | same |
-| `undeclared_capability_requirement_is_rejected_with_a_typed_error` | [repository_capabilities.rs](../../crates/oxide-batch/tests/repository_capabilities.rs) |
+| `undeclared_capability_requirement_is_rejected_with_a_typed_error` | [repository_capabilities.rs](../../crates/oxide-batch/tests/repository_capabilities.rs), via a real `FlowLauncher::launch` |
 | `borrowed_transaction_preserves_atomic_checkpoint_and_unknown_outcome` | same |
 | `durable_meaning_capability_change_changes_the_fingerprint` | same |
 | `throughput_capability_change_does_not_change_the_fingerprint` | same |
 
-Two of them are runtime scenarios rather than value scenarios, deliberately. A
+Three supporting tests sit alongside them in the same file:
+`undeclared_execution_ownership_is_rejected_before_any_repository_transaction`
+(the launcher-carried requirement),
+`declared_capabilities_pass_negotiation_and_reach_the_repository` (the positive
+control for both sources), and `descriptor_declares_and_requires_each_capability`
+(the descriptor unit test).
+
+### Rejection before any durable write
+
+`undeclared_capability_requirement_is_rejected_with_a_typed_error` and
+`undeclared_execution_ownership_is_rejected_before_any_repository_transaction`
+call the real `FlowLauncher::launch` rather than `RepositoryDescriptor::require`
+directly. A descriptor-level assertion proves the descriptor works; it proves
+nothing about *when* a launch consults it, which is the whole claim.
+
+Both assert the typed `FlowRuntimeError::UndeclaredCapability` **and**
+`repository.begin_count() == 0`, through a counting repository that wraps the
+reference adapter. The counter is the load-bearing assertion: checking that no
+metadata was stored would only show that nothing was committed, while checking
+that `begin` was never called shows the launch was rejected before it opened a
+repository transaction at all — so no instance, execution, or lifecycle row can
+exist.
+
+`descriptor_declares_and_requires_each_capability` remains as a descriptor unit
+test. It is not the evidence for rejection ordering and is not cited as such.
+
+`declared_capabilities_pass_negotiation_and_reach_the_repository` is the
+positive control for both sources: the same partitioned plan and the same
+execution-controlled launch complete when the descriptor declares what they
+need.
+
+The `ExecutionOwnership` case is worth stating precisely, because a mutation
+check found it is stronger than it first appears. The in-memory adapter beneath
+the test double *does* implement ownership claims. With the launcher requirement
+removed, the job therefore runs to completion under a descriptor that never
+promised ownership — it does not fail late inside `claim_execution_owner`, it
+does not fail at all. The descriptor is the deployment's contract, and honouring
+it cannot depend on what the adapter happens to implement.
+
+### Error contract
+
+The two failure modes stay distinct and must not be collapsed:
+
+| Situation | Result |
+| --- | --- |
+| The descriptor does not declare a launch requirement | `FlowRuntimeError::UndeclaredCapability`, before any transaction |
+| The descriptor declares a capability the adapter does not implement | An adapter defect, surfaced as `RepositoryError::UnsupportedCapability` |
+
+A missing declaration is never converted into a generic
+`FlowRuntimeError::Repository`.
+
+Two of the codec scenarios are runtime scenarios rather than value scenarios,
+deliberately. A
 bound only means something if breaching it stops the commit that would have made
 the bad state authoritative, so
 `oversized_or_over_deep_payload_is_a_known_not_committed_outcome` and
@@ -197,7 +271,9 @@ exercised by the campaign scenarios
 `schema2_runtime_rejects_schema3`, and
 `schema3_backup_restores_the_prior_schema`, which the design gate assigns to
 issue [#102](https://github.com/luceat-lux-vestra/oxide-batch/issues/102) rather
-than to this one. This record does not claim them.
+than to this one. This record does not claim them, and issue #100 stays open
+until those exit criteria are completed or formally reassigned to #102 in its
+issue body.
 
 The application-visible consequence recorded above — a codec that decoded an
 older version inline must now declare the edge — is an application migration,

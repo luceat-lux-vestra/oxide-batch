@@ -1197,11 +1197,12 @@ impl Error for FlowRuntimeError {
 
 /// The repository capabilities a compiled plan requires to run at all.
 ///
-/// Only requirements the plan itself carries appear here. Capabilities an
-/// operator action needs are negotiated where that action is applied, because
-/// a plan that is never stopped or purged does not need the deployment to
-/// support stopping or purging.
-fn required_capabilities(plan: &CompiledExecutionPlan) -> BTreeSet<RepositoryCapability> {
+/// This is the plan half of the requirement set; the launcher half is added by
+/// [`FlowLauncher::required_capabilities`]. Capabilities that only an operator
+/// action needs appear in neither, because they are negotiated where that
+/// action is applied: a plan that is never purged does not need the deployment
+/// to support purging.
+fn plan_capabilities(plan: &CompiledExecutionPlan) -> BTreeSet<RepositoryCapability> {
     plan.nodes()
         .filter_map(|(_, node)| match node {
             FlowNode::PartitionedStep(_) => Some(RepositoryCapability::StepPartitions),
@@ -2521,7 +2522,7 @@ impl<'a> FlowLauncher<'a> {
         plan: &CompiledExecutionPlan,
     ) -> Result<(), FlowRuntimeError> {
         let descriptor = self.repository.descriptor();
-        for capability in required_capabilities(plan) {
+        for capability in self.required_capabilities(plan) {
             descriptor
                 .require(capability)
                 .map_err(|_| FlowRuntimeError::UndeclaredCapability {
@@ -2530,6 +2531,31 @@ impl<'a> FlowLauncher<'a> {
                 })?;
         }
         Ok(())
+    }
+
+    /// The repository capabilities this launch requires.
+    ///
+    /// A requirement has two sources and both must be negotiated: the compiled
+    /// plan, and this launcher's configuration. Reading only the plan would
+    /// miss [`RepositoryCapability::ExecutionOwnership`], which no plan
+    /// mentions because it is enabled by
+    /// [`with_execution_control`](Self::with_execution_control) rather than
+    /// declared by a definition.
+    ///
+    /// The result is a set, so a capability required by both sources is
+    /// negotiated once and the rejection order is deterministic.
+    fn required_capabilities(
+        &self,
+        plan: &CompiledExecutionPlan,
+    ) -> BTreeSet<RepositoryCapability> {
+        let mut required = plan_capabilities(plan);
+        if self.execution_control.is_some() {
+            // Durable ownership claims and stop observation run against every
+            // execution this launcher starts, so the deployment must provide
+            // them before the first of those writes rather than at it.
+            required.insert(RepositoryCapability::ExecutionOwnership);
+        }
+        required
     }
 
     fn validate_repository_capacity(

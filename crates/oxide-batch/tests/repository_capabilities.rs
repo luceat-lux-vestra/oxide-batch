@@ -24,16 +24,23 @@
 
 use std::collections::BTreeSet;
 use std::error::Error;
+use std::num::NonZeroU64;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use oxide_batch::{
     BoxFuture, Checkpoint, ChunkCommitReceipt, ChunkComponentRevisions, ChunkCounts,
     ChunkDeliveryMode, ChunkFaultProgress, ChunkRestartContract, ChunkSize, ChunkTransaction,
-    ChunkTransactionError, ComponentRevision, DefinitionRevision, ExecutionContext, FlowGraph,
-    FlowNode, FlowTarget, InMemoryJobRepository, JobName, JobRepository, NodeId, PartitionBudget,
-    PartitionCount, PartitionedStepNode, RepositoryCapability, RepositoryDescriptor,
-    SequentialIdGenerator, StateCodecError, StateLimits, StateSchemaId, StateSchemaVersion,
-    StepComponents, StepName, StepNode, SystemClock, TerminalKind, VersionedStateCodec,
+    ChunkTransactionError, CompiledExecutionPlan, ComponentRevision, DefinitionRevision,
+    ExecutionContext, FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode,
+    FlowRuntimeError, FlowTarget, InMemoryJobRepository, JobName, JobParameters, JobRepository,
+    NodeId, OwnerToken, PartitionBudget, PartitionCount, PartitionKey, PartitionPlanEntry,
+    PartitionPlanFactory, PartitionTaskletFactory, PartitionedStepNode, RepositoryCapability,
+    RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork, SequentialIdGenerator,
+    StateCodecError, StateLimits, StateSchemaId, StateSchemaVersion, StepComponents, StepName,
+    StepNode, StopPollInterval, StopSource, SystemClock, Tasklet, TaskletContext, TaskletError,
+    TaskletOutcome, TaskletStep, TerminalKind, VersionedStateCodec,
 };
 
 // ---------------------------------------------------------------------------
@@ -63,7 +70,7 @@ fn all_capabilities() -> [RepositoryCapability; 6] {
 }
 
 #[test]
-fn undeclared_capability_requirement_is_rejected_with_a_typed_error() {
+fn descriptor_declares_and_requires_each_capability() {
     // A deployment that declares everything satisfies every requirement.
     let complete = RepositoryDescriptor::new(3, all_capabilities());
     assert_eq!(complete.descriptor_version(), 1);
@@ -76,20 +83,13 @@ fn undeclared_capability_requirement_is_rejected_with_a_typed_error() {
     // A deployment that omits one capability rejects exactly that requirement
     // with a typed error naming it, and keeps honouring the rest.
     for missing in all_capabilities() {
-        let declared: BTreeSet<_> = all_capabilities()
-            .into_iter()
-            .filter(|capability| *capability != missing)
-            .collect();
-        let partial = RepositoryDescriptor::new(3, declared);
-
+        let partial = RepositoryDescriptor::new(3, without(missing));
         assert!(!partial.declares(missing));
         assert_eq!(
             partial.require(missing),
             Err(oxide_batch::RepositoryError::UnsupportedCapability {
                 capability: missing
             }),
-            "an undeclared requirement must be a typed rejection naming the \
-             capability, never a weaker guarantee that lets the launch proceed",
         );
         for other in all_capabilities().into_iter().filter(|c| *c != missing) {
             assert_eq!(partial.require(other), Ok(()));
@@ -114,53 +114,289 @@ fn undeclared_capability_requirement_is_rejected_with_a_typed_error() {
     }
 }
 
-#[test]
-fn undeclared_capability_is_rejected_before_the_launch_writes_anything()
--> Result<(), Box<dyn Error>> {
-    // A plan carrying a partitioned step requires durable step partitions.
-    let settle = NodeId::new("settle")?;
-    let plan = FlowGraph::new(settle.clone())
+/// Every capability except `missing`.
+fn without(missing: RepositoryCapability) -> BTreeSet<RepositoryCapability> {
+    all_capabilities()
+        .into_iter()
+        .filter(|capability| *capability != missing)
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Launch negotiation
+// ---------------------------------------------------------------------------
+
+/// A repository that publishes a chosen descriptor and counts transactions.
+///
+/// Everything else delegates to the reference adapter, so a launch that gets
+/// past negotiation behaves exactly as it normally would. The counter is the
+/// point: asserting that no metadata was stored proves only that nothing was
+/// committed, while asserting that `begin` was never called proves the launch
+/// was rejected before it opened a repository transaction at all.
+struct CountingRepository {
+    inner: InMemoryJobRepository,
+    descriptor: RepositoryDescriptor,
+    begins: AtomicUsize,
+}
+
+impl CountingRepository {
+    fn new(descriptor: RepositoryDescriptor) -> Self {
+        Self {
+            inner: reference_repository(),
+            descriptor,
+            begins: AtomicUsize::new(0),
+        }
+    }
+
+    /// Declares every capability except `missing`.
+    fn lacking(missing: RepositoryCapability) -> Self {
+        Self::new(RepositoryDescriptor::new(0, without(missing)))
+    }
+
+    /// Declares every capability this milestone defines.
+    fn complete() -> Self {
+        Self::new(RepositoryDescriptor::new(0, all_capabilities()))
+    }
+
+    fn begin_count(&self) -> usize {
+        self.begins.load(Ordering::SeqCst)
+    }
+}
+
+impl JobRepository for CountingRepository {
+    fn connection_capacity(&self) -> u32 {
+        self.inner.connection_capacity()
+    }
+
+    fn descriptor(&self) -> RepositoryDescriptor {
+        self.descriptor.clone()
+    }
+
+    fn begin<'a>(
+        &'a self,
+    ) -> BoxFuture<'a, Result<Box<dyn RepositoryUnitOfWork + 'a>, RepositoryError>> {
+        self.begins.fetch_add(1, Ordering::SeqCst);
+        self.inner.begin()
+    }
+}
+
+/// A compiled plan whose partitioned step requires durable step partitions.
+fn partitioned_plan(name: &JobName) -> Result<CompiledExecutionPlan, Box<dyn Error>> {
+    let manager = NodeId::new("partitioned")?;
+    let worker = StepNode::new(
+        NodeId::new("worker")?,
+        StepName::new("worker")?,
+        StepComponents::Tasklet(ComponentRevision::new("worker-v1")?),
+    );
+    Ok(FlowGraph::new(manager.clone())
         .with_node(FlowNode::partitioned_step(PartitionedStepNode::new(
-            settle.clone(),
-            StepName::new("settle")?,
-            StepNode::new(
-                NodeId::new("settle_worker")?,
-                StepName::new("settle_worker")?,
-                StepComponents::Tasklet(ComponentRevision::new("settle-worker-v1")?),
-            ),
-            ComponentRevision::new("settle-partitioner-v1")?,
-            ComponentRevision::new("sum-counts-v1")?,
+            manager.clone(),
+            StepName::new("partitioned")?,
+            worker,
+            ComponentRevision::new("partitioner-v1")?,
+            ComponentRevision::new("canonical-v1")?,
             PartitionCount::new(2)?,
             PartitionBudget::new(2, 3)?,
         )))
-        .with_sequence(settle, FlowTarget::Terminal(TerminalKind::Complete))?
-        .compile(&JobName::new("settlement")?, DefinitionRevision::new("v1")?)?;
+        .with_sequence(manager, FlowTarget::Terminal(TerminalKind::Complete))?
+        .compile(name, DefinitionRevision::new("v1")?)?)
+}
 
-    let required: Vec<_> = plan
-        .nodes()
-        .filter_map(|(_, node)| match node {
-            FlowNode::PartitionedStep(_) => Some(RepositoryCapability::StepPartitions),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        required,
-        vec![RepositoryCapability::StepPartitions],
-        "a partitioned step is the plan-carried requirement negotiation reads",
+/// A compiled plan with one ordinary tasklet step and no partitioning.
+fn tasklet_plan(name: &JobName) -> Result<CompiledExecutionPlan, Box<dyn Error>> {
+    let only = NodeId::new("only")?;
+    Ok(FlowGraph::new(only.clone())
+        .with_node(FlowNode::step(StepNode::new(
+            only.clone(),
+            StepName::new("only")?,
+            StepComponents::Tasklet(ComponentRevision::new("only-v1")?),
+        )))
+        .with_sequence(only, FlowTarget::Terminal(TerminalKind::Complete))?
+        .compile(name, DefinitionRevision::new("v1")?)?)
+}
+
+/// A tasklet that records nothing and completes.
+struct Noop;
+
+impl Tasklet for Noop {
+    fn execute<'a>(
+        &'a self,
+        _context: TaskletContext<'a>,
+    ) -> BoxFuture<'a, Result<TaskletOutcome, TaskletError>> {
+        Box::pin(async { Ok(TaskletOutcome::Completed) })
+    }
+}
+
+/// One partition plan entry carrying its key as bounded durable context.
+fn partition_entry(key: &str) -> Result<PartitionPlanEntry, Box<dyn Error>> {
+    let context = ExecutionContext::from_json(
+        format!(
+            "{{\"format\":\"oxide-batch.execution-context\",\"format_version\":1,\
+             \"schema\":\"local.partition\",\"schema_version\":1,\
+             \"payload\":{{\"key\":\"{key}\"}}}}"
+        )
+        .as_bytes(),
+        StateLimits::new(4 * 1024, 16)?,
+    )?;
+    Ok(PartitionPlanEntry::new(PartitionKey::new(key)?, context)?)
+}
+
+fn partitioned_job(name: &JobName) -> Result<FlowJob, Box<dyn Error>> {
+    let worker_name = StepName::new("worker")?;
+    let factory_name = worker_name.clone();
+    let entries = ["a", "b"]
+        .into_iter()
+        .map(partition_entry)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(
+        FlowJob::new(name.clone(), partitioned_plan(name)?)?.with_partitioned_tasklet(
+            NodeId::new("partitioned")?,
+            PartitionPlanFactory::new(move |_request| Ok(entries.clone())),
+            PartitionTaskletFactory::new(worker_name, move |_input| {
+                TaskletStep::new(factory_name.clone(), Arc::new(Noop))
+            }),
+        )?,
+    )
+}
+
+fn tasklet_job(name: &JobName) -> Result<FlowJob, Box<dyn Error>> {
+    Ok(
+        FlowJob::new(name.clone(), tasklet_plan(name)?)?.with_tasklet_step(
+            NodeId::new("only")?,
+            TaskletStep::new(StepName::new("only")?, Arc::new(Noop)),
+        )?,
+    )
+}
+
+fn owner_control() -> Result<(OwnerToken, StopPollInterval), Box<dyn Error>> {
+    Ok((
+        OwnerToken::from_bytes([7; 16]),
+        StopPollInterval::new(Duration::from_millis(100))?,
+    ))
+}
+
+#[tokio::test]
+async fn undeclared_capability_requirement_is_rejected_with_a_typed_error()
+-> Result<(), Box<dyn Error>> {
+    // A partitioned plan requires durable step partitions, which this
+    // deployment does not declare.
+    let name = JobName::new("settlement")?;
+    let job = partitioned_job(&name)?;
+    let repository = CountingRepository::lacking(RepositoryCapability::StepPartitions);
+    let clock = SystemClock;
+    let ids = SequentialIdGenerator::new(NonZeroU64::MIN);
+    let (_source, stop) = StopSource::new();
+
+    let error = FlowLauncher::new(&repository, &clock, &ids)
+        .launch(&job, &JobParameters::new(), &stop)
+        .await
+        .expect_err("a deployment without durable step partitions cannot run this plan");
+
+    assert!(
+        matches!(
+            error,
+            FlowRuntimeError::UndeclaredCapability {
+                capability: RepositoryCapability::StepPartitions,
+                ..
+            }
+        ),
+        "expected a typed undeclared-capability rejection naming step \
+         partitions, got {error:?}",
     );
+    assert_eq!(
+        repository.begin_count(),
+        0,
+        "negotiation must reject the launch before it opens a repository \
+         transaction, so no instance, execution, or lifecycle row can exist",
+    );
+    Ok(())
+}
 
-    // A deployment without it cannot satisfy the plan.
-    let without = RepositoryDescriptor::new(
-        3,
-        all_capabilities()
-            .into_iter()
-            .filter(|c| *c != RepositoryCapability::StepPartitions),
+#[tokio::test]
+async fn undeclared_execution_ownership_is_rejected_before_any_repository_transaction()
+-> Result<(), Box<dyn Error>> {
+    // No plan mentions execution ownership. It is required because the
+    // launcher was configured with execution control, and negotiating only the
+    // plan would miss it entirely.
+    //
+    // The delegate underneath this double does implement ownership claims, so
+    // without launch-time negotiation this job runs to completion under a
+    // descriptor that never promised them. That is the sharper reason the
+    // declaration has to be negotiated: the descriptor is the deployment's
+    // contract, and honouring it cannot depend on what the adapter happens to
+    // implement.
+    let name = JobName::new("owned")?;
+    let job = tasklet_job(&name)?;
+    let repository = CountingRepository::lacking(RepositoryCapability::ExecutionOwnership);
+    let clock = SystemClock;
+    let ids = SequentialIdGenerator::new(NonZeroU64::MIN);
+    let (_source, stop) = StopSource::new();
+    let (owner, interval) = owner_control()?;
+
+    let error = FlowLauncher::new(&repository, &clock, &ids)
+        .with_execution_control(owner, interval)
+        .launch(&job, &JobParameters::new(), &stop)
+        .await
+        .expect_err("a deployment without ownership evidence cannot run under execution control");
+
+    assert!(
+        matches!(
+            error,
+            FlowRuntimeError::UndeclaredCapability {
+                capability: RepositoryCapability::ExecutionOwnership,
+                ..
+            }
+        ),
+        "an undeclared launcher requirement must be the same typed rejection \
+         as an undeclared plan requirement, not a generic repository error \
+         raised later inside claim_execution_owner; got {error:?}",
+    );
+    assert_eq!(
+        repository.begin_count(),
+        0,
+        "the rejection must precede the transaction that would have claimed \
+         ownership",
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn declared_capabilities_pass_negotiation_and_reach_the_repository()
+-> Result<(), Box<dyn Error>> {
+    // Positive control for the plan-carried requirement: the same partitioned
+    // plan runs when the deployment declares durable step partitions.
+    let name = JobName::new("settlement")?;
+    let job = partitioned_job(&name)?;
+    let repository = CountingRepository::complete();
+    let clock = SystemClock;
+    let ids = SequentialIdGenerator::new(NonZeroU64::MIN);
+    let (_source, stop) = StopSource::new();
+
+    let report = FlowLauncher::new(&repository, &clock, &ids)
+        .launch(&job, &JobParameters::new(), &stop)
+        .await?;
+    assert_eq!(
+        *report.outcome(),
+        FlowExecutionOutcome::Completed,
+        "a declared capability must let the launch proceed to completion",
     );
     assert!(
-        without
-            .require(RepositoryCapability::StepPartitions)
-            .is_err()
+        repository.begin_count() > 0,
+        "the launch reached the repository rather than being rejected",
     );
+
+    // Positive control for the launcher-carried requirement.
+    let name = JobName::new("owned")?;
+    let job = tasklet_job(&name)?;
+    let repository = CountingRepository::complete();
+    let ids = SequentialIdGenerator::new(NonZeroU64::MIN);
+    let (owner, interval) = owner_control()?;
+    let report = FlowLauncher::new(&repository, &clock, &ids)
+        .with_execution_control(owner, interval)
+        .launch(&job, &JobParameters::new(), &stop)
+        .await?;
+    assert_eq!(*report.outcome(), FlowExecutionOutcome::Completed);
+    assert!(repository.begin_count() > 0);
     Ok(())
 }
 
