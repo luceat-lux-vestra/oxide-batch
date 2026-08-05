@@ -1,5 +1,6 @@
 //! Repository, clock, identifier, and unit-of-work contracts.
 
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::future::Future;
@@ -651,6 +652,16 @@ pub trait JobRepository: Send + Sync {
         1
     }
 
+    /// Publishes the versioned capability descriptor for this deployment.
+    ///
+    /// The default declares nothing beyond the always-available lifecycle and
+    /// checkpoint surface, so an adapter that has not been reviewed against a
+    /// capability is negotiated as not providing it. Failing closed here costs
+    /// a rejected launch; failing open would cost a silently weaker guarantee.
+    fn descriptor(&self) -> RepositoryDescriptor {
+        RepositoryDescriptor::new(0, [])
+    }
+
     /// Begins a repository-owned unit of work.
     ///
     /// The returned object may borrow this repository and cannot outlive it.
@@ -1200,6 +1211,86 @@ impl RepositoryCapability {
             Self::InstanceHolds => "instance holds",
             Self::RetentionPurge => "retention purge",
             Self::StepPartitions => "durable step partitions",
+        }
+    }
+}
+
+/// The versioned capability descriptor a durable adapter publishes.
+///
+/// Negotiation reads this descriptor before a launch does any durable work, so
+/// a requirement the deployed adapter does not declare is rejected up front
+/// rather than discovered part-way through an execution. The descriptor is the
+/// adapter's own claim about the deployment it is connected to; it is not
+/// derived from the compiled plan and never weakens a declared guarantee.
+///
+/// `descriptor_version` versions the shape of this declaration. It is distinct
+/// from `schema_version`, which is the durable metadata schema the adapter is
+/// connected to: a runtime can understand a descriptor whose schema it refuses.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RepositoryDescriptor {
+    descriptor_version: u32,
+    schema_version: u32,
+    capabilities: BTreeSet<RepositoryCapability>,
+}
+
+impl RepositoryDescriptor {
+    /// The descriptor shape this runtime publishes and understands.
+    pub const CURRENT_VERSION: u32 = 1;
+
+    /// Declares the capabilities an adapter connected to `schema_version`
+    /// provides.
+    ///
+    /// A capability that is absent is undeclared, which negotiation treats as
+    /// unavailable. Declaring nothing is the conservative claim, not a
+    /// permissive one.
+    #[must_use]
+    pub fn new(
+        schema_version: u32,
+        capabilities: impl IntoIterator<Item = RepositoryCapability>,
+    ) -> Self {
+        Self {
+            descriptor_version: Self::CURRENT_VERSION,
+            schema_version,
+            capabilities: capabilities.into_iter().collect(),
+        }
+    }
+
+    /// Returns the version of this descriptor's shape.
+    #[must_use]
+    pub const fn descriptor_version(&self) -> u32 {
+        self.descriptor_version
+    }
+
+    /// Returns the durable metadata schema version the adapter is connected to.
+    #[must_use]
+    pub const fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
+    /// Reports whether the adapter declared `capability`.
+    #[must_use]
+    pub fn declares(&self, capability: RepositoryCapability) -> bool {
+        self.capabilities.contains(&capability)
+    }
+
+    /// Lists the declared capabilities in a stable order.
+    #[must_use]
+    pub fn capabilities(&self) -> impl ExactSizeIterator<Item = RepositoryCapability> + '_ {
+        self.capabilities.iter().copied()
+    }
+
+    /// Requires `capability`, failing with a typed rejection when undeclared.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RepositoryError::UnsupportedCapability`] naming the
+    /// requirement. The requirement is never silently downgraded to a weaker
+    /// guarantee.
+    pub fn require(&self, capability: RepositoryCapability) -> Result<(), RepositoryError> {
+        if self.declares(capability) {
+            Ok(())
+        } else {
+            Err(RepositoryError::UnsupportedCapability { capability })
         }
     }
 }

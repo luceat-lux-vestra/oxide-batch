@@ -323,6 +323,7 @@ oxide_batch::RecoveryResult
 oxide_batch::RecoverySnapshot
 oxide_batch::RecoveryStepEvidence
 oxide_batch::RepositoryCapability
+oxide_batch::RepositoryDescriptor
 oxide_batch::RepositoryError
 oxide_batch::RepositoryUnitOfWork
 oxide_batch::RequestDigest

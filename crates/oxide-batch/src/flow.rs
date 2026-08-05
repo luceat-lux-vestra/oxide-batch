@@ -1,7 +1,7 @@
 //! Durable execution of bounded M3 flows and the M4 tasklet-only local
 //! parallel-split and partition slices.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::num::NonZeroU64;
@@ -22,9 +22,10 @@ use crate::{
     FlowTarget, FlowTransitionKind, IdGenerator, JobExecution, JobExecutionId, JobInstance,
     JobInstanceId, JobInstanceKey, JobName, JobParameters, JobRepository, LifecycleTransition,
     ListenerContext, ListenerFailure, ListenerFailureKind, ListenerPhase, NodeId, PartitionKey,
-    PartitionPlanEntry, RepositoryError, StartLimit, StepExecution, StepExecutionId, StepName,
-    StepPartition, StopPollInterval, StopTiming, StopToken, TaskletContext,
-    TaskletExecutionOutcome, TaskletFailure, TaskletOutcome, TaskletStep, TerminalKind,
+    PartitionPlanEntry, RepositoryCapability, RepositoryError, StartLimit, StepExecution,
+    StepExecutionId, StepName, StepPartition, StopPollInterval, StopTiming, StopToken,
+    TaskletContext, TaskletExecutionOutcome, TaskletFailure, TaskletOutcome, TaskletStep,
+    TerminalKind,
 };
 
 pub(crate) fn decision_matches_manifest(manifest: &Value, request: &FlowDecisionRequest) -> bool {
@@ -1114,6 +1115,13 @@ pub enum FlowRuntimeError {
     CountExhausted,
     /// Process shutdown stopped intake before this launch was accepted.
     ShuttingDown,
+    /// The connected repository does not declare a capability the plan needs.
+    UndeclaredCapability {
+        /// The requirement the plan carries.
+        capability: RepositoryCapability,
+        /// Shape version of the descriptor that was negotiated.
+        descriptor_version: u32,
+    },
     /// The connected repository cannot supply the manifest connection budget.
     InsufficientPoolCapacity {
         /// Required finite connection count.
@@ -1145,6 +1153,10 @@ impl fmt::Display for FlowRuntimeError {
             }
             Self::CountExhausted => formatter.write_str("flow execution count is exhausted"),
             Self::ShuttingDown => formatter.write_str("runtime intake is shutting down"),
+            Self::UndeclaredCapability { capability, .. } => write!(
+                formatter,
+                "flow requires {capability}, which the connected repository does not declare"
+            ),
             Self::InsufficientPoolCapacity {
                 required,
                 configured,
@@ -1175,11 +1187,27 @@ impl Error for FlowRuntimeError {
             Self::DecisionSequenceExhausted
             | Self::CountExhausted
             | Self::ShuttingDown
+            | Self::UndeclaredCapability { .. }
             | Self::InsufficientPoolCapacity { .. }
             | Self::UnresolvedPartitionOutcome { .. }
             | Self::PartitionerRejected { .. } => None,
         }
     }
+}
+
+/// The repository capabilities a compiled plan requires to run at all.
+///
+/// Only requirements the plan itself carries appear here. Capabilities an
+/// operator action needs are negotiated where that action is applied, because
+/// a plan that is never stopped or purged does not need the deployment to
+/// support stopping or purging.
+fn required_capabilities(plan: &CompiledExecutionPlan) -> BTreeSet<RepositoryCapability> {
+    plan.nodes()
+        .filter_map(|(_, node)| match node {
+            FlowNode::PartitionedStep(_) => Some(RepositoryCapability::StepPartitions),
+            _ => None,
+        })
+        .collect()
 }
 
 impl From<RepositoryError> for FlowRuntimeError {
@@ -1267,6 +1295,7 @@ impl<'a> FlowLauncher<'a> {
     ) -> Result<FlowLaunchReport, FlowRuntimeError> {
         self.ensure_accepting()?;
         job.validate()?;
+        self.validate_repository_capabilities(job.compiled_plan())?;
         self.validate_repository_capacity(job.compiled_plan())?;
         let split_tasklets = job.materialize_split_tasklets()?;
         let key = JobInstanceKey::new(job.name.clone(), parameters);
@@ -2478,6 +2507,29 @@ impl<'a> FlowLauncher<'a> {
                 .ensure_accepting()
                 .map_err(|_| FlowRuntimeError::ShuttingDown)
         })
+    }
+
+    /// Negotiates the plan's capability requirements against the descriptor the
+    /// connected adapter publishes.
+    ///
+    /// This runs before any durable work, so a deployment that cannot provide
+    /// what the plan needs is rejected instead of failing part-way through an
+    /// execution that has already written lifecycle rows. A requirement is
+    /// never downgraded to a weaker guarantee to let the launch proceed.
+    fn validate_repository_capabilities(
+        &self,
+        plan: &CompiledExecutionPlan,
+    ) -> Result<(), FlowRuntimeError> {
+        let descriptor = self.repository.descriptor();
+        for capability in required_capabilities(plan) {
+            descriptor
+                .require(capability)
+                .map_err(|_| FlowRuntimeError::UndeclaredCapability {
+                    capability,
+                    descriptor_version: descriptor.descriptor_version(),
+                })?;
+        }
+        Ok(())
     }
 
     fn validate_repository_capacity(

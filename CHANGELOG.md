@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `RepositoryDescriptor`, the versioned capability declaration an adapter
+  publishes, plus `JobRepository::descriptor`. Flow launch negotiates the
+  capabilities a compiled plan requires against it and rejects an undeclared
+  requirement with `FlowRuntimeError::UndeclaredCapability` before any durable
+  write, instead of failing part-way through an execution that already wrote
+  lifecycle rows. The `descriptor` default declares nothing, so an adapter that
+  has not been reviewed against a capability is negotiated as not providing it.
+  Throughput settings — pool size, connection capacity, statement timeout — are
+  deliberately absent from the descriptor and from the canonical manifest.
 - `StateSchemaUpgrade`, one declared directed edge between two application
   schema versions. Edges must strictly increase the version and at most one may
   leave any version, so a resolved chain is deterministic and bounded. Upgrade

@@ -325,9 +325,9 @@ pub use oxide_batch_repository::{
     RecoveryDecision, RecoveryDirective, RecoveryDisposition, RecoveryError, RecoveryEvidence,
     RecoveryField, RecoveryMarkers, RecoveryProposal, RecoveryRepository, RecoveryRequest,
     RecoveryRequestError, RecoveryResult, RecoverySnapshot, RecoveryStepEvidence,
-    RepositoryCapability, RepositoryError, RepositoryUnitOfWork, RequestDigest, RequestField,
-    RequestFieldError, RetentionAction, RetentionError, RetentionHold, RetentionOutcome,
-    RetentionRecord, RetentionRecordDraft, SequentialIdGenerator, StaleThreshold,
+    RepositoryCapability, RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork,
+    RequestDigest, RequestField, RequestFieldError, RetentionAction, RetentionError, RetentionHold,
+    RetentionOutcome, RetentionRecord, RetentionRecordDraft, SequentialIdGenerator, StaleThreshold,
     StateEnvelopeDescriptor, StepExecutionProjection, StepPartition, StepPartitionProjection,
     SystemClock, SystemMonotonicClock, TerminalStatusSet, aggregate_step_partitions,
 };

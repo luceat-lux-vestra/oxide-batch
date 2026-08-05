@@ -39,11 +39,12 @@ use oxide_batch::{
     PageRequest, PageSize, ParameterName, ParameterRole, ParameterValue, PartitionBudget,
     PartitionCount, PartitionFactoryError, PartitionKey, PartitionPlanEntry, PartitionPlanFactory,
     PartitionTaskletFactory, PartitionedStepNode, PurgeBatchBound, PurgePlanRequest, ReasonCode,
-    RepositoryError, RepositoryUnitOfWork, RetentionService, SequentialIdGenerator,
-    ShutdownCoordinator, ShutdownDeadline, ShutdownRequest, ShutdownTaskPhase, StateLimits,
-    StepComponents, StepName, StepNode, StopSource, TaskJoinDeadline, Tasklet, TaskletContext,
-    TaskletError, TaskletJob, TaskletOutcome, TaskletStep, TelemetryEventKind,
-    TelemetryFlushDeadline, TelemetryQueue, TelemetryRecord, TerminalKind, TerminalStatusSet,
+    RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork, RetentionService,
+    SequentialIdGenerator, ShutdownCoordinator, ShutdownDeadline, ShutdownRequest,
+    ShutdownTaskPhase, StateLimits, StepComponents, StepName, StepNode, StopSource,
+    TaskJoinDeadline, Tasklet, TaskletContext, TaskletError, TaskletJob, TaskletOutcome,
+    TaskletStep, TelemetryEventKind, TelemetryFlushDeadline, TelemetryQueue, TelemetryRecord,
+    TerminalKind, TerminalStatusSet,
 };
 
 /// A clock frozen for durable timestamps so observations stay comparable.
@@ -219,6 +220,12 @@ impl JobRepository for CountingRepository<'_> {
     fn connection_capacity(&self) -> u32 {
         self.capacity
             .unwrap_or_else(|| self.inner.connection_capacity())
+    }
+
+    /// Delegates the capability declaration: this double narrows the
+    /// connection budget, not what the deployment can do.
+    fn descriptor(&self) -> RepositoryDescriptor {
+        self.inner.descriptor()
     }
 
     fn begin<'a>(
