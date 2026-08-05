@@ -387,6 +387,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The workspace version moves to `0.1.0-alpha.2`. `0.1.0-alpha.1` is published,
+  so the API changes above cannot ship under it: `cargo publish --workspace
+  --dry-run` resolves an already-published sibling from the registry rather than
+  from the local archive, and the facade fails to verify against the older
+  `oxide-batch-core` and `oxide-batch-repository`. Under the ADR-0010 lockstep
+  rule every extracted crate moves with the facade. The support matrix is
+  unchanged, because it binds only released versions and `alpha.2` is
+  unreleased.
 - **Breaking (pre-1.0):** `VersionedStateCodec` now declares the directed
   schema upgrades it can apply, and the framework applies them. `decode` loses
   its `StateSchemaVersion` argument and receives a payload already at
