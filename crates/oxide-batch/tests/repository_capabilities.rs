@@ -30,17 +30,23 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use oxide_batch::{
-    BoxFuture, Checkpoint, ChunkCommitReceipt, ChunkComponentRevisions, ChunkCounts,
-    ChunkDeliveryMode, ChunkFaultProgress, ChunkRestartContract, ChunkSize, ChunkTransaction,
-    ChunkTransactionError, CompiledExecutionPlan, ComponentRevision, DefinitionRevision,
-    ExecutionContext, FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode,
-    FlowRuntimeError, FlowTarget, InMemoryJobRepository, JobName, JobParameters, JobRepository,
-    NodeId, OwnerToken, PartitionBudget, PartitionCount, PartitionKey, PartitionPlanEntry,
-    PartitionPlanFactory, PartitionTaskletFactory, PartitionedStepNode, RepositoryCapability,
-    RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork, SequentialIdGenerator,
-    StateCodecError, StateLimits, StateSchemaId, StateSchemaVersion, StepComponents, StepName,
-    StepNode, StopPollInterval, StopSource, SystemClock, Tasklet, TaskletContext, TaskletError,
-    TaskletOutcome, TaskletStep, TerminalKind, VersionedStateCodec,
+    BoxFuture, BusinessStatement, BusinessTransaction, BusinessTransactionError, BusinessValue,
+    BusinessWriteResult, Checkpoint, ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext,
+    ChunkCompletionError, ChunkCompletionOutcome, ChunkComponentRevisions, ChunkCounts,
+    ChunkDeliveryMode, ChunkExecutionOutcome, ChunkFailure, ChunkFaultProgress,
+    ChunkRestartContract, ChunkSize, ChunkStep, ChunkTransaction, ChunkTransactionError,
+    ChunkTransactionManager, CompiledExecutionPlan, ComponentRevision, DefinitionRevision,
+    ExecutionAttempt, ExecutionContext, ExecutionCorrelation, FlowExecutionOutcome, FlowGraph,
+    FlowJob, FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget, InMemoryJobRepository,
+    ItemProcessor, ItemReader, ItemWriter, JobExecutionId, JobInstanceId, JobName, JobParameters,
+    JobRepository, NodeId, OwnerToken, PartitionBudget, PartitionCount, PartitionKey,
+    PartitionPlanEntry, PartitionPlanFactory, PartitionTaskletFactory, PartitionedStepNode,
+    ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome, ReaderError,
+    RepositoryCapability, RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork,
+    SequentialIdGenerator, StateCodecError, StateLimits, StateSchemaId, StateSchemaVersion,
+    StepComponents, StepExecutionId, StepName, StepNode, StopPollInterval, StopSource, SystemClock,
+    Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
+    VersionedStateCodec, WriteContext, WriteOutcome, WriterError,
 };
 
 // ---------------------------------------------------------------------------
@@ -465,26 +471,130 @@ fn empty_context() -> ExecutionContext {
     ExecutionContext::encode(&(), &codec, StateLimits::default()).expect("empty context encodes")
 }
 
-/// What an adapter-owned transaction did with the business writes lent to it.
-#[derive(Default)]
-struct Resource {
-    /// Business writes the transaction accepted but has not published.
-    staged: Mutex<Vec<u64>>,
-    /// Business writes and checkpoint that became durable together.
-    committed: Mutex<Vec<(u64, Checkpoint)>>,
+/// What the writer observed at the moment it finished its enlisted write.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Observation {
+    staged: usize,
+    committed: usize,
 }
 
-/// An adapter-owned transaction that enlists business writes in its own
-/// transaction, as the same-resource path requires.
+/// A resource that only an enlisted [`BusinessTransaction`] can reach.
+///
+/// `staged` holds provisional writes, `committed` holds writes published by a
+/// commit together with the checkpoint of that same commit. Nothing outside
+/// the transaction writes either field, so a business row can only appear here
+/// by travelling the borrowed port.
+#[derive(Default)]
+struct Resource {
+    staged: Mutex<Vec<i64>>,
+    committed: Mutex<Vec<(i64, Checkpoint)>>,
+    /// One entry per enlisted statement, recorded by the borrowed port.
+    observed_at_write: Mutex<Vec<Observation>>,
+}
+
+impl Resource {
+    fn staged_len(&self) -> usize {
+        self.staged.lock().expect("staged lock poisoned").len()
+    }
+
+    fn committed(&self) -> Vec<(i64, Checkpoint)> {
+        self.committed
+            .lock()
+            .expect("committed lock poisoned")
+            .clone()
+    }
+
+    fn observations(&self) -> Vec<Observation> {
+        self.observed_at_write
+            .lock()
+            .expect("observation lock poisoned")
+            .clone()
+    }
+}
+
+/// How a scenario ends the adapter-owned transaction.
+#[derive(Clone, Copy)]
+enum CommitOutcome {
+    Succeed,
+    Ambiguous,
+    KnownRollback,
+}
+
+/// An adapter that owns the concrete transaction and lends a bounded port.
+struct SameResourceManager {
+    resource: Arc<Resource>,
+    outcome: CommitOutcome,
+    cursor: u64,
+}
+
+impl ChunkTransactionManager for SameResourceManager {
+    fn begin(
+        &self,
+    ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>> {
+        let transaction = SameResourceTransaction {
+            resource: Arc::clone(&self.resource),
+            outcome: self.outcome,
+            cursor: self.cursor,
+        };
+        Box::pin(async move { Ok(Box::new(transaction) as Box<dyn ChunkTransaction>) })
+    }
+}
+
+/// One adapter-owned transaction that is also the enlisted business port.
+///
+/// The adapter owns the transaction; `business_transaction` lends it to the
+/// writer as a `&mut dyn BusinessTransaction` for the duration of the write
+/// call only, which is the shape the same-resource path requires.
 struct SameResourceTransaction {
     resource: Arc<Resource>,
+    outcome: CommitOutcome,
     cursor: u64,
-    outcome: Result<(), ChunkTransactionError>,
+}
+
+impl BusinessTransaction for SameResourceTransaction {
+    fn execute<'a>(
+        &'a mut self,
+        statement: BusinessStatement<'a>,
+    ) -> BoxFuture<'a, Result<BusinessWriteResult, BusinessTransactionError>> {
+        // Values are bound separately and never interpolated, so the statement
+        // text is fixed and the item travels as a bound value.
+        let Some(value) = statement
+            .values()
+            .first()
+            .copied()
+            .and_then(BusinessValue::as_i64)
+        else {
+            return Box::pin(async { Err(BusinessTransactionError::Rejected) });
+        };
+        let staged = {
+            let mut staged = self.resource.staged.lock().expect("staged lock poisoned");
+            staged.push(value);
+            staged.len()
+        };
+        // Recorded here rather than in the writer: this is the only place a
+        // business row can enter the resource, so the snapshot is taken at the
+        // moment of the enlisted write and cannot be faked by a writer that
+        // reached around the port.
+        self.resource
+            .observed_at_write
+            .lock()
+            .expect("observation lock poisoned")
+            .push(Observation {
+                staged,
+                committed: self
+                    .resource
+                    .committed
+                    .lock()
+                    .expect("committed lock poisoned")
+                    .len(),
+            });
+        Box::pin(async { Ok(BusinessWriteResult::new(1)) })
+    }
 }
 
 impl ChunkTransaction for SameResourceTransaction {
-    fn business_transaction(&mut self) -> Option<&mut dyn oxide_batch::BusinessTransaction> {
-        None
+    fn business_transaction(&mut self) -> Option<&mut dyn BusinessTransaction> {
+        Some(self)
     }
 
     fn commit(
@@ -493,29 +603,40 @@ impl ChunkTransaction for SameResourceTransaction {
         _fault: ChunkFaultProgress,
     ) -> BoxFuture<'_, Result<ChunkCommitReceipt, ChunkTransactionError>> {
         Box::pin(async move {
-            let staged: Vec<u64> = self
-                .resource
-                .staged
-                .lock()
-                .expect("staged lock poisoned")
-                .drain(..)
-                .collect();
             match self.outcome {
-                Ok(()) => {
+                CommitOutcome::Succeed => {
                     let point = checkpoint(self.cursor);
-                    // Atomic same-resource: the business writes and the
-                    // checkpoint that makes them replayable land together.
+                    let staged: Vec<i64> = self
+                        .resource
+                        .staged
+                        .lock()
+                        .expect("staged lock poisoned")
+                        .drain(..)
+                        .collect();
+                    // One boundary: the provisional writes and the checkpoint
+                    // that makes them replayable become visible together.
                     let mut committed = self
                         .resource
                         .committed
                         .lock()
-                        .expect("commit lock poisoned");
+                        .expect("committed lock poisoned");
                     for write in staged {
                         committed.push((write, point.clone()));
                     }
                     Ok(ChunkCommitReceipt::new(point, empty_context()))
                 }
-                Err(error) => Err(error),
+                // The commit response was lost. The adapter publishes nothing
+                // it could later contradict and reports the outcome as
+                // unknown; it does not inspect the resource and decide.
+                CommitOutcome::Ambiguous => Err(ChunkTransactionError::CommitOutcomeUnknown),
+                CommitOutcome::KnownRollback => {
+                    self.resource
+                        .staged
+                        .lock()
+                        .expect("staged lock poisoned")
+                        .clear();
+                    Err(ChunkTransactionError::NotCommitted)
+                }
             }
         })
     }
@@ -530,106 +651,196 @@ impl ChunkTransaction for SameResourceTransaction {
     }
 }
 
+struct Items(std::cell::RefCell<Vec<i64>>);
+
+impl ItemReader<i64> for Items {
+    fn read<'a>(
+        &'a mut self,
+        _context: ReadContext<'a>,
+    ) -> BoxFuture<'a, Result<ReadOutcome<i64>, ReaderError>> {
+        let item = self.0.borrow_mut().pop();
+        Box::pin(async move { Ok(item.map_or(ReadOutcome::EndOfInput, ReadOutcome::Item)) })
+    }
+}
+
+struct Passthrough;
+
+impl ItemProcessor<i64, i64> for Passthrough {
+    fn process<'a>(
+        &'a self,
+        item: &'a i64,
+        _context: ProcessContext<'a>,
+    ) -> BoxFuture<'a, Result<ProcessOutcome<i64>, ProcessorError>> {
+        let item = *item;
+        Box::pin(async move { Ok(ProcessOutcome::Item(item)) })
+    }
+}
+
+/// A writer whose only route to the resource is the port it is lent.
+///
+/// It deliberately holds no handle to the resource. That is what makes the
+/// evidence hold: a writer that ignored `context.transaction()` could not
+/// reach the business rows by any other means, so the staged and committed
+/// state below can only have been produced by the borrowed port. A
+/// non-enlisted context is a failure rather than a fallback, so an adapter
+/// that stops lending its transaction cannot quietly downgrade same-resource
+/// writes to unenlisted ones.
+struct EnlistedWriter;
+
+impl ItemWriter<i64> for EnlistedWriter {
+    fn write<'a>(
+        &'a self,
+        items: &'a [i64],
+        mut context: WriteContext<'a>,
+    ) -> BoxFuture<'a, Result<WriteOutcome, WriterError>> {
+        Box::pin(async move {
+            let Some(transaction) = context.transaction() else {
+                return Err(WriterError::new());
+            };
+            for item in items {
+                let values = [BusinessValue::i64(*item)];
+                transaction
+                    .execute(BusinessStatement::new(
+                        "INSERT INTO settlement (amount) VALUES ($1)",
+                        &values,
+                    ))
+                    .await
+                    .map_err(|_| WriterError::new())?;
+            }
+            Ok(WriteOutcome::Written)
+        })
+    }
+}
+
+struct NoCompletion;
+
+impl ChunkCompletion for NoCompletion {
+    fn after_commit<'a>(
+        &'a self,
+        _context: ChunkCompletionContext<'a>,
+    ) -> BoxFuture<'a, Result<ChunkCompletionOutcome, ChunkCompletionError>> {
+        Box::pin(async { Ok(ChunkCompletionOutcome::Acknowledged) })
+    }
+}
+
+fn chunk_correlation() -> ExecutionCorrelation {
+    let attempt =
+        |value: u64| ExecutionAttempt::new(NonZeroU64::new(value).expect("attempt is nonzero"));
+    ExecutionCorrelation::new(
+        JobName::new("settlement").expect("static job name is valid"),
+        JobInstanceId::new(1).expect("static instance id is nonzero"),
+        JobExecutionId::new(1).expect("static execution id is nonzero"),
+        attempt(1),
+        StepName::new("write").expect("static step name is valid"),
+        StepExecutionId::new(1).expect("static execution id is nonzero"),
+        attempt(1),
+    )
+}
+
+/// Runs one enlisted chunk through the real runtime and returns its outcome.
+///
+/// The runtime, not this test, calls `business_transaction()` and builds the
+/// `WriteContext` the writer receives, so the borrowed port is exercised on
+/// the same path production uses.
+async fn run_enlisted_chunk(outcome: CommitOutcome) -> (ChunkExecutionOutcome, Arc<Resource>) {
+    let resource = Arc::new(Resource::default());
+    let mut step = ChunkStep::new(
+        StepName::new("write").expect("static step name is valid"),
+        ChunkSize::new(2).expect("static chunk size is nonzero"),
+        Box::new(Items(std::cell::RefCell::new(vec![20, 10]))),
+        Arc::new(Passthrough),
+        Arc::new(EnlistedWriter),
+        Arc::new(SameResourceManager {
+            resource: Arc::clone(&resource),
+            outcome,
+            cursor: 2,
+        }),
+        Arc::new(NoCompletion),
+    );
+    let (_source, stop_token) = StopSource::new();
+    let report = step.execute(&chunk_correlation(), &stop_token).await;
+    (report.outcome(), resource)
+}
+
 #[tokio::test]
 async fn borrowed_transaction_preserves_atomic_checkpoint_and_unknown_outcome() {
-    // A successful same-resource commit publishes business writes and the
-    // checkpoint in one step: no state in which one is durable without the
-    // other is observable.
-    let resource = Arc::new(Resource::default());
-    resource
-        .staged
-        .lock()
-        .expect("staged lock poisoned")
-        .extend([10, 11]);
-    let mut transaction = SameResourceTransaction {
-        resource: Arc::clone(&resource),
-        cursor: 2,
-        outcome: Ok(()),
-    };
-    let receipt = transaction
-        .commit(ChunkCounts::default(), ChunkFaultProgress::NONE)
-        .await
-        .expect("the same-resource commit succeeds");
-    let committed = resource
-        .committed
-        .lock()
-        .expect("commit lock poisoned")
-        .clone();
-    assert_eq!(committed.len(), 2);
+    // ---- Success: one boundary publishes writes and checkpoint together ----
+    let (outcome, resource) = run_enlisted_chunk(CommitOutcome::Succeed).await;
+    assert_eq!(outcome, ChunkExecutionOutcome::Completed);
+
+    assert_eq!(
+        resource.observations(),
+        vec![
+            Observation {
+                staged: 1,
+                committed: 0
+            },
+            Observation {
+                staged: 2,
+                committed: 0
+            },
+        ],
+        "each enlisted write lands as provisional state and nothing is \
+         committed while the transaction is still open; two observations also \
+         show both rows travelled the borrowed port rather than one",
+    );
+
+    let committed = resource.committed();
+    assert_eq!(
+        committed.len(),
+        2,
+        "both writes were published by the commit"
+    );
+    let published = checkpoint(2);
     for (_, point) in &committed {
         assert_eq!(
-            point,
-            receipt.checkpoint(),
-            "every committed business write carries the checkpoint the \
-             receipt reports, so the two cannot diverge",
+            *point, published,
+            "every published write carries the checkpoint of the commit that \
+             published it, so the two cannot land at different boundaries",
         );
     }
-    assert!(
-        resource
-            .staged
-            .lock()
-            .expect("staged lock poisoned")
-            .is_empty()
+    assert_eq!(
+        resource.staged_len(),
+        0,
+        "the commit consumed the provisional state rather than leaving a copy",
     );
 
-    // An ambiguous commit response is reported as unknown. The adapter does
-    // not inspect the resource and infer an outcome, and the caller does not
-    // receive a receipt it could mistake for durable evidence.
-    let ambiguous = Arc::new(Resource::default());
-    ambiguous
-        .staged
-        .lock()
-        .expect("staged lock poisoned")
-        .extend([20]);
-    let mut transaction = SameResourceTransaction {
-        resource: Arc::clone(&ambiguous),
-        cursor: 3,
-        outcome: Err(ChunkTransactionError::CommitOutcomeUnknown),
-    };
+    // ---- Ambiguous commit stays UNKNOWN ----
+    let (outcome, resource) = run_enlisted_chunk(CommitOutcome::Ambiguous).await;
     assert_eq!(
-        transaction
-            .commit(ChunkCounts::default(), ChunkFaultProgress::NONE)
-            .await
-            .err(),
-        Some(ChunkTransactionError::CommitOutcomeUnknown),
-        "an ambiguous commit stays UNKNOWN and is never resolved by guessing",
+        outcome,
+        ChunkExecutionOutcome::Unknown,
+        "a lost commit response is reported as UNKNOWN; the runtime must not \
+         resolve it to Completed or Failed by looking at anything other than \
+         durable state",
     );
-    assert!(
-        ambiguous
-            .committed
-            .lock()
-            .expect("commit lock poisoned")
-            .is_empty(),
-        "an unknown outcome publishes nothing the caller can read back as \
-         committed; only durable state resolves it",
+    assert_eq!(
+        resource.observations().len(),
+        2,
+        "the same enlisted write path ran before the ambiguous commit",
     );
+    // The fixture publishes nothing on an ambiguous commit, which is what an
+    // adapter that lost its response can honestly do. That is deliberately NOT
+    // asserted as proof the transaction did not commit: under UNKNOWN the
+    // outcome is unknown until a healthy connection reads durable state, and
+    // in-memory fixture contents are not that state.
 
-    // A known rollback is distinct from an unknown outcome: it publishes
-    // nothing and says so.
-    let rolled_back = Arc::new(Resource::default());
-    rolled_back
-        .staged
-        .lock()
-        .expect("staged lock poisoned")
-        .extend([30]);
-    let mut transaction = SameResourceTransaction {
-        resource: Arc::clone(&rolled_back),
-        cursor: 4,
-        outcome: Err(ChunkTransactionError::NotCommitted),
-    };
+    // ---- Known rollback discards provisional work ----
+    let (outcome, resource) = run_enlisted_chunk(CommitOutcome::KnownRollback).await;
     assert_eq!(
-        transaction
-            .commit(ChunkCounts::default(), ChunkFaultProgress::NONE)
-            .await
-            .err(),
-        Some(ChunkTransactionError::NotCommitted),
+        outcome,
+        ChunkExecutionOutcome::Failed(ChunkFailure::TransactionCommit),
+        "a known rollback is a typed failure, distinct from UNKNOWN",
     );
+    assert_eq!(resource.observations().len(), 2);
     assert!(
-        rolled_back
-            .committed
-            .lock()
-            .expect("commit lock poisoned")
-            .is_empty()
+        resource.committed().is_empty(),
+        "a known rollback publishes no business write and no checkpoint",
+    );
+    assert_eq!(
+        resource.staged_len(),
+        0,
+        "a known rollback discards the provisional writes",
     );
 }
 

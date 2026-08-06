@@ -211,6 +211,50 @@ promised ownership — it does not fail late inside `claim_execution_owner`, it
 does not fail at all. The descriptor is the deployment's contract, and honouring
 it cannot depend on what the adapter happens to implement.
 
+### The borrowed adapter-owned transaction
+
+`borrowed_transaction_preserves_atomic_checkpoint_and_unknown_outcome` drives a
+real chunk through `ChunkStep::execute`. The runtime, not the test, calls
+`business_transaction()` and builds the `WriteContext` the writer receives, so
+the path exercised is the one production uses:
+
+- **the adapter owns the concrete transaction.** One value implements both
+  `ChunkTransaction` and `BusinessTransaction`; it decides when work is
+  published and when it is discarded.
+- **the writer is lent only a bounded port.** It receives
+  `&mut dyn BusinessTransaction` for the duration of its write call. It holds
+  no handle to the resource, so a business row cannot reach the resource by any
+  route except that port — which is what makes the state assertions evidence
+  rather than coincidence.
+- **business writes are staged only through the port.** Each statement binds
+  its value separately and is recorded by the port itself, together with a
+  snapshot showing nothing committed while the transaction is open.
+- **writes and checkpoint publish at one boundary.** On commit the staged rows
+  and the checkpoint of that same commit become visible together, and every
+  published row carries the checkpoint the receipt reports.
+- **an ambiguous commit stays `UNKNOWN`.** The runtime reports
+  `ChunkExecutionOutcome::Unknown` and returns no receipt. The test does not
+  read the fixture's contents and conclude the transaction did not commit:
+  under `UNKNOWN` the outcome is unknown until a healthy connection reads
+  durable state, and in-memory fixture contents are not that state. A known
+  rollback is asserted separately as the distinct, typed `NotCommitted` case.
+
+The scenario is held to detecting five specific regressions, each confirmed to
+fail the test:
+
+| Mutation | Detected |
+| --- | --- |
+| `business_transaction()` returns `None` | Yes |
+| The writer ignores `context.transaction()` | Yes |
+| A business write is visible as committed before the commit | Yes |
+| Writes publish with a checkpoint from another boundary | Yes |
+| `CommitOutcomeUnknown` is downgraded to `NotCommitted` | Yes |
+
+The second of these is the reason the writer holds no resource handle. An
+earlier version of this test gave the writer one and staged rows directly from
+the test body; it passed whether or not the borrowing path ran at all, so it
+was evidence of nothing.
+
 ### Error contract
 
 The two failure modes stay distinct and must not be collapsed:
