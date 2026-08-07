@@ -27,7 +27,7 @@ recorded as `Verified` under the accepted conformance strategy.
 | Listener nesting and reverse after-order are deterministic | `listeners_nest_and_reverse_after_order` in `tests/listeners.rs` |
 | Every status pair follows the accepted transition policy | `all_status_pairs_follow_the_accepted_transition_policy` in `tests/lifecycle_property/cases.rs` |
 | Repository duplicate, stale, illegal, and rollback behavior is reusable | `run_repository_contract` in `tests/contract/mod.rs` |
-| Executor and PostgreSQL concrete types do not leak through the facade | `public_facade_does_not_reexport_executor_or_postgres_driver_types` in `tests/ui.rs` |
+| Executor and PostgreSQL concrete types do not leak through the facade | `public_facade_does_not_reexport_executor_or_postgres_driver_types` in `tests/ui.rs`, renamed to `facade_exposes_no_runtime_database_or_telemetry_sdk_type` by the [M5 facade review](m5-facade-api-review-evidence.md) when the telemetry-SDK fixture joined it |
 | A supported public API launches one in-memory job | `examples/first_job.rs` |
 
 All lifecycle-sensitive runtime scenarios inject a controlled clock and

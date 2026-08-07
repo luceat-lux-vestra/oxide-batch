@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `cargo xtask surface`, the facade disclosure inspection the M5 preview
+  surface gate requires. It renders the facade with every feature and every
+  dependency documented, then reports any foreign crate a public signature,
+  bound, associated type, or declared implementation links to. Documenting the
+  dependencies is what makes it sound: under `--no-deps` a crate that declares
+  no `html_root_url` renders as unlinked text, and a `tokio::runtime::Handle`
+  in a public signature was invisible until the dependencies were documented.
+  The four known occurrences are carried as accepted findings and the check
+  fails in both directions, so neither a new disclosure nor a stale exception
+  survives. CI runs it next to the boundary check.
+
 - `RepositoryDescriptor`, the versioned capability declaration an adapter
   publishes, plus `JobRepository::descriptor`. Flow launch negotiates the
   capabilities a compiled plan requires against it and rejects an undeclared

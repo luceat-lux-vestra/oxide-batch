@@ -5,19 +5,25 @@
 //! fixes four observable rules for the durable state envelope, and this file
 //! carries one scenario for each:
 //!
-//! - an older recorded version is upgraded through one bounded, deterministic
-//!   chain of declared directed edges;
-//! - a recorded version newer than the codec is rejected rather than
-//!   truncated, defaulted, or reinterpreted;
-//! - an oversized or over-deep payload is a known not-committed outcome;
-//! - a corrupt payload never advances a checkpoint.
+//! 1. an older recorded version is upgraded through one bounded, deterministic
+//!    chain of declared directed edges;
+//! 2. a recorded version newer than the codec is rejected rather than
+//!    truncated, defaulted, or reinterpreted;
+//! 3. an oversized or over-deep payload is a known not-committed outcome;
+//! 4. a corrupt payload never advances a checkpoint.
 //!
-//! The last two are runtime scenarios rather than value scenarios: a bound is
+//! Rules 3 and 4 are runtime scenarios rather than value scenarios: a bound is
 //! only meaningful if breaching it stops the commit that would have made the
 //! bad state authoritative. They drive the chunk runtime through a transaction
 //! manager that prepares durable state at the commit boundary exactly as the
 //! `PostgreSQL` adapter does, and assert both the typed outcome and that the
 //! retained checkpoint generation did not move.
+//!
+//! A fifth scenario holds that a retained payload never reaches a diagnostic.
+//! It belongs here rather than with the
+//! [facade review](../../../docs/project/m5-facade-api-review-evidence.md) it
+//! was added for: the payload is a sensitive value the envelope owns, so the
+//! type that retains it is the one that has to withhold it.
 
 #![allow(clippy::expect_used, clippy::panic)]
 
@@ -287,6 +293,50 @@ fn newer_recorded_schema_version_is_rejected() {
             current: StateSchemaVersion::new(3).expect("static version is nonzero"),
         }),
         "an unreachable recorded version fails closed",
+    );
+}
+
+#[test]
+fn retained_payloads_never_reach_a_diagnostic() {
+    let codec = PositionCodec::new().expect("static codec is valid");
+    let limits = StateLimits::default();
+    let sentinel = "oxide-batch-sentinel-payload-9c41";
+    let position = Position {
+        cursor: 11,
+        label: sentinel.to_owned(),
+    };
+
+    let checkpoint = Checkpoint::encode(&position, &codec, limits)
+        .expect("the position encodes as a checkpoint");
+    let context = ExecutionContext::encode(&position, &codec, limits)
+        .expect("the position encodes as a context");
+
+    // The assertion below is only meaningful if the value really is retained.
+    // A codec that dropped the label would produce a clean diagnostic for the
+    // wrong reason, so the durable form is checked to carry it first.
+    let durable = String::from_utf8(
+        checkpoint
+            .to_json()
+            .expect("a retained checkpoint serializes"),
+    )
+    .expect("the envelope is UTF-8");
+    assert!(
+        durable.contains(sentinel),
+        "the payload must reach durable state, or this scenario proves nothing",
+    );
+
+    let diagnostics = format!("{checkpoint:?}\n{context:?}");
+    assert!(
+        !diagnostics.contains(sentinel),
+        "a retained payload must never reach a diagnostic",
+    );
+    assert!(
+        diagnostics.contains("<redacted>"),
+        "the payload is named as withheld rather than silently omitted",
+    );
+    assert!(
+        diagnostics.contains("schema_version") && diagnostics.contains("encoded_bytes"),
+        "the diagnostic still carries the structure an operator needs",
     );
 }
 
