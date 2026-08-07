@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `RepositoryDescriptor`, the versioned capability declaration an adapter
+  publishes, plus `JobRepository::descriptor`. Flow launch negotiates the
+  capabilities a compiled plan requires against it and rejects an undeclared
+  requirement with `FlowRuntimeError::UndeclaredCapability` before any durable
+  write, instead of failing part-way through an execution that already wrote
+  lifecycle rows. The `descriptor` default declares nothing, so an adapter that
+  has not been reviewed against a capability is negotiated as not providing it.
+  Throughput settings — pool size, connection capacity, statement timeout — are
+  deliberately absent from the descriptor and from the canonical manifest.
+- `StateSchemaUpgrade`, one declared directed edge between two application
+  schema versions. Edges must strictly increase the version and at most one may
+  leave any version, so a resolved chain is deterministic and bounded. Upgrade
+  output is held to the envelope's JSON-object shape and the durable hard
+  ceilings before it reaches the codec, and `StateError` gains
+  `NonIncreasingUpgrade`, `NoUpgradePath`, `AmbiguousUpgrade`,
+  `UpgradeOvershootsCurrent`, `UpgradeChainTooLong`, and
+  `UpgradeProducedInvalidJson` for the ways a declaration or a transform can
+  fail.
 - Public constructors and accessors the stage-2 crate boundary needs, landed
   ahead of the module move so the move itself changes no API:
   `OperatorRecordDraft::{applied, rejected}`,
@@ -369,6 +387,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The workspace version moves to `0.1.0-alpha.2`. `0.1.0-alpha.1` is published,
+  so the API changes above cannot ship under it: `cargo publish --workspace
+  --dry-run` resolves an already-published sibling from the registry rather than
+  from the local archive, and the facade fails to verify against the older
+  `oxide-batch-core` and `oxide-batch-repository`. Under the ADR-0010 lockstep
+  rule every extracted crate moves with the facade. The support matrix is
+  unchanged, because it binds only released versions and `alpha.2` is
+  unreleased.
+- **Breaking (pre-1.0):** `VersionedStateCodec` now declares the directed
+  schema upgrades it can apply, and the framework applies them. `decode` loses
+  its `StateSchemaVersion` argument and receives a payload already at
+  `current_version`; a codec that has published an older schema returns the
+  edges reaching the current one from the new `upgrades` method, whose default
+  is empty. This applies the accepted M5 codec direction, which requires one
+  bounded, deterministic upgrade chain rather than a codec that inspects a
+  recorded version and guesses what an older field meant. A recorded version
+  with no declared path to the current version is now rejected with
+  `StateError::NoUpgradePath` instead of reaching the codec. No durable byte,
+  envelope format version, or definition fingerprint changes.
 - Extracted implementation crates are published in lockstep with the facade
   rather than kept `publish = false`. Cargo rewrites a published archive's path
   dependencies to registry dependencies, so a publishable facade cannot depend

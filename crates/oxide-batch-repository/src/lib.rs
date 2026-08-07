@@ -76,8 +76,8 @@ pub use recovery::{
 pub use repository::{
     BoxFuture, Clock, ExecutionControl, IdGenerationError, IdGenerator, JobInstanceSelection,
     JobRepository, RecoveryDecision, RecoveryDisposition, RecoveryField, RecoveryRequest,
-    RecoveryRequestError, RecoveryResult, RepositoryCapability, RepositoryError,
-    RepositoryUnitOfWork, SequentialIdGenerator, SystemClock,
+    RecoveryRequestError, RecoveryResult, RepositoryCapability, RepositoryDescriptor,
+    RepositoryError, RepositoryUnitOfWork, SequentialIdGenerator, SystemClock,
 };
 pub use repository::{aggregate_partition_parent, map_partition_aggregation, recovered_execution};
 pub use request::hex_digest;

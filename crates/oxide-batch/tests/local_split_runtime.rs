@@ -12,10 +12,10 @@ use oxide_batch::{
     BatchStatus, BoxFuture, Clock, ComponentRevision, DefinitionRevision, ExecutionCounts,
     ExitCode, ExitStatus, FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode,
     FlowRuntimeError, FlowTarget, FlowTransitionKind, InMemoryJobRepository, JobName,
-    JobParameters, JobRepository, JoinNode, LocalFailurePolicy, NodeId, RepositoryError,
-    RepositoryUnitOfWork, SequentialIdGenerator, SplitBranch, SplitBudget, SplitNode,
-    StepComponents, StepName, StepNode, StopSource, Tasklet, TaskletContext, TaskletError,
-    TaskletOutcome, TaskletStep, TaskletStepFactory, TerminalKind,
+    JobParameters, JobRepository, JoinNode, LocalFailurePolicy, NodeId, RepositoryDescriptor,
+    RepositoryError, RepositoryUnitOfWork, SequentialIdGenerator, SplitBranch, SplitBudget,
+    SplitNode, StepComponents, StepName, StepNode, StopSource, Tasklet, TaskletContext,
+    TaskletError, TaskletOutcome, TaskletStep, TaskletStepFactory, TerminalKind,
 };
 use tokio::sync::{Barrier, Notify};
 
@@ -175,6 +175,12 @@ struct LimitedRepository<'a>(&'a InMemoryJobRepository);
 impl JobRepository for LimitedRepository<'_> {
     fn connection_capacity(&self) -> u32 {
         1
+    }
+
+    /// Delegates the capability declaration: this double narrows the
+    /// connection budget, not what the deployment can do.
+    fn descriptor(&self) -> RepositoryDescriptor {
+        self.0.descriptor()
     }
 
     fn begin<'a>(

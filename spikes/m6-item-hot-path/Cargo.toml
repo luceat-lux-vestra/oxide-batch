@@ -10,7 +10,7 @@ publish = false
 # a database driver, or a serializer in scope, so those crates may only ever
 # appear under `dev-dependencies`.
 [dependencies]
-oxide-batch = { version = "0.1.0-alpha.1", path = "../../crates/oxide-batch" }
+oxide-batch = { version = "0.1.0-alpha.2", path = "../../crates/oxide-batch" }
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["macros", "rt", "time"] }

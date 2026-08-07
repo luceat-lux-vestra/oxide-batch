@@ -39,12 +39,13 @@ use crate::{
     ParameterRole, ParameterValue, ParameterValueKind, PartitionKey, PartitionPlanEntry,
     PartitionResult, PurgeBatchBound, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest,
     PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecision, RecoveryDecisionId, RecoveryRequest,
-    RecoveryResult, RepositoryError, RepositoryUnitOfWork, RequestDigest, RetentionAction,
-    RetentionActionId, RetentionHold, RetentionOutcome, RetentionRecord, RetentionRecordDraft,
-    RetryCounts, RetryKey, RetryLimit, RetryOrdinal, RetryReservation, RetryStateLimit, SkipCounts,
-    StartLimit, StateEnvelopeDescriptor, StateLimits, StateSchemaId, StateSchemaVersion,
-    StepExecution, StepExecutionId, StepExecutionProjection, StepName, StepPartition,
-    StepPartitionId, StepPartitionProjection, TerminalKind,
+    RecoveryResult, RepositoryCapability, RepositoryDescriptor, RepositoryError,
+    RepositoryUnitOfWork, RequestDigest, RetentionAction, RetentionActionId, RetentionHold,
+    RetentionOutcome, RetentionRecord, RetentionRecordDraft, RetryCounts, RetryKey, RetryLimit,
+    RetryOrdinal, RetryReservation, RetryStateLimit, SkipCounts, StartLimit,
+    StateEnvelopeDescriptor, StateLimits, StateSchemaId, StateSchemaVersion, StepExecution,
+    StepExecutionId, StepExecutionProjection, StepName, StepPartition, StepPartitionId,
+    StepPartitionProjection, TerminalKind,
 };
 
 const SUPPORTED_SCHEMA_VERSION: u32 = 3;
@@ -750,6 +751,23 @@ impl fmt::Debug for PostgresJobRepository {
 impl JobRepository for PostgresJobRepository {
     fn connection_capacity(&self) -> u32 {
         self.config.pool_size
+    }
+
+    /// Schema 3 provides every capability this milestone defines. The pool
+    /// size above is a throughput setting and is deliberately absent here:
+    /// capabilities describe what the deployment can do, not how fast.
+    fn descriptor(&self) -> RepositoryDescriptor {
+        RepositoryDescriptor::new(
+            SUPPORTED_SCHEMA_VERSION,
+            [
+                RepositoryCapability::ExecutionOwnership,
+                RepositoryCapability::InstanceHolds,
+                RepositoryCapability::OperatorRequests,
+                RepositoryCapability::RetentionPurge,
+                RepositoryCapability::StepPartitions,
+                RepositoryCapability::StopRequests,
+            ],
+        )
     }
 
     fn begin<'a>(

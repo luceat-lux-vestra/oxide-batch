@@ -162,10 +162,16 @@ extension point is added merely to reserve later scope.
    recorded in the
    [crate-extraction evidence](m5-crate-extraction-evidence.md), which applies
    [ADR-0010](../architecture/decisions/0010-extracted-crate-publication.md).
-   Stage 1 is complete; stages 2 and 3 wait on the boundary correction that
-   record names.
+   All three authorized stages are complete, including the ADR-0011 core
+   placement that the boundary correction in that record required.
 4. Context-codec and transaction-capability work applies the accepted
    direction with migration and rollback evidence where durable formats move.
+   Delivered by issue
+   [#100](https://github.com/luceat-lux-vestra/oxide-batch/issues/100) and
+   recorded in the
+   [codec and capability evidence](m5-codec-and-capability-evidence.md). No
+   durable format moved, so no new migration is owed; the schema upgrade and
+   restore campaign stays with issue #102.
 5. Facade and public-API review records the preview surface, its disclosure
    rules, and its M6-M12 compatibility argument.
 6. The evidence campaigns run full embedded conformance and the PostgreSQL

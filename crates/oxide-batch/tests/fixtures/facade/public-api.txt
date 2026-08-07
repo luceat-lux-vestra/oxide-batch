@@ -323,6 +323,7 @@ oxide_batch::RecoveryResult
 oxide_batch::RecoverySnapshot
 oxide_batch::RecoveryStepEvidence
 oxide_batch::RepositoryCapability
+oxide_batch::RepositoryDescriptor
 oxide_batch::RepositoryError
 oxide_batch::RepositoryUnitOfWork
 oxide_batch::RequestDigest
@@ -370,6 +371,7 @@ oxide_batch::StateEnvelopeDescriptor
 oxide_batch::StateError
 oxide_batch::StateLimits
 oxide_batch::StateSchemaId
+oxide_batch::StateSchemaUpgrade
 oxide_batch::StateSchemaVersion
 oxide_batch::StepComponents
 oxide_batch::StepDefinitionUpgrade

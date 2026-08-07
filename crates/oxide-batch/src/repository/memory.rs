@@ -26,7 +26,8 @@ use crate::{
 };
 use crate::{
     BoxFuture, Clock, IdGenerator, JobInstanceSelection, JobRepository, RecoveryDecision,
-    RecoveryRequest, RecoveryResult, RepositoryError, RepositoryUnitOfWork,
+    RecoveryRequest, RecoveryResult, RepositoryCapability, RepositoryDescriptor, RepositoryError,
+    RepositoryUnitOfWork,
 };
 
 /// Deterministic, process-local reference implementation of [`JobRepository`].
@@ -83,6 +84,23 @@ impl fmt::Debug for InMemoryJobRepository {
 impl JobRepository for InMemoryJobRepository {
     fn connection_capacity(&self) -> u32 {
         u32::from(crate::MAX_PARTITION_WORKERS) + 1
+    }
+
+    /// The reference adapter implements every capability this milestone
+    /// defines. It reports schema version `0` because it holds no durable
+    /// metadata schema.
+    fn descriptor(&self) -> RepositoryDescriptor {
+        RepositoryDescriptor::new(
+            0,
+            [
+                RepositoryCapability::ExecutionOwnership,
+                RepositoryCapability::InstanceHolds,
+                RepositoryCapability::OperatorRequests,
+                RepositoryCapability::RetentionPurge,
+                RepositoryCapability::StepPartitions,
+                RepositoryCapability::StopRequests,
+            ],
+        )
     }
 
     fn begin<'a>(

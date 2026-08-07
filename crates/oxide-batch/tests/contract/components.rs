@@ -12,7 +12,8 @@ use oxide_batch::{
     ChunkCompletionOutcome, ChunkCount, ChunkCounts, ChunkSize, ExecutionContext, ItemProcessor,
     ItemReader, ItemWriter, ProcessContext, ProcessOutcome, ProcessorError, ReadContext,
     ReadOutcome, ReaderError, StateCodecError, StateError, StateLimits, StateSchemaId,
-    StateSchemaVersion, StopSource, VersionedStateCodec, WriteContext, WriteOutcome, WriterError,
+    StateSchemaUpgrade, StateSchemaVersion, StopSource, VersionedStateCodec, WriteContext,
+    WriteOutcome, WriterError,
 };
 use serde_json::{Map, Value, json};
 
@@ -272,6 +273,7 @@ fn writer_borrows_enlisted_transaction_and_redacts_values() -> Result<(), Compon
 struct InventoryCodec {
     schema: StateSchemaId,
     current: StateSchemaVersion,
+    upgrades: [StateSchemaUpgrade; 1],
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -286,8 +288,25 @@ impl InventoryCodec {
         Ok(Self {
             schema: StateSchemaId::new("inventory-import")?,
             current: StateSchemaVersion::new(2)?,
+            upgrades: [StateSchemaUpgrade::new(
+                StateSchemaVersion::new(1)?,
+                StateSchemaVersion::new(2)?,
+                rename_next_index_to_cursor,
+            )?],
         })
     }
+}
+
+/// The declared version 1 to version 2 upgrade: the reader position was
+/// renamed and nothing else about the payload changed.
+fn rename_next_index_to_cursor(payload: &[u8]) -> Result<Vec<u8>, StateCodecError> {
+    let mut value: Map<String, Value> =
+        serde_json::from_slice(payload).map_err(|_| StateCodecError::InvalidPayload)?;
+    let cursor = value
+        .remove("next_index")
+        .ok_or(StateCodecError::InvalidPayload)?;
+    value.insert(String::from("cursor"), cursor);
+    serde_json::to_vec(&Value::Object(value)).map_err(|_| StateCodecError::InvalidPayload)
 }
 
 impl VersionedStateCodec<InventoryState> for InventoryCodec {
@@ -311,22 +330,15 @@ impl VersionedStateCodec<InventoryState> for InventoryCodec {
         serde_json::to_vec(&Value::Object(payload)).map_err(|_| StateCodecError::InvalidPayload)
     }
 
-    fn decode(
-        &self,
-        version: StateSchemaVersion,
-        payload: &[u8],
-    ) -> Result<InventoryState, StateCodecError> {
+    fn upgrades(&self) -> &[StateSchemaUpgrade] {
+        &self.upgrades
+    }
+
+    fn decode(&self, payload: &[u8]) -> Result<InventoryState, StateCodecError> {
         let mut value: Map<String, Value> =
             serde_json::from_slice(payload).map_err(|_| StateCodecError::InvalidPayload)?;
-        let cursor_field = if version.get() == 1 {
-            "next_index"
-        } else if version == self.current {
-            "cursor"
-        } else {
-            return Err(StateCodecError::UnsupportedSchemaVersion);
-        };
         let cursor = value
-            .remove(cursor_field)
+            .remove("cursor")
             .and_then(|field| field.as_u64())
             .ok_or(StateCodecError::InvalidPayload)?;
         let source_checksum = value
