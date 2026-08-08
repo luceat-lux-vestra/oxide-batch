@@ -106,6 +106,13 @@ test process.
    through cargo rather than executing the built binary matters: the
    compile-fail suite needs the environment cargo supplies, and executing its
    binary directly fails for a reason that has nothing to do with the facade.
+
+   The prefix and the outcome are read separately, because they do not always
+   arrive together. libtest writes `test <path> ... ` before the test runs and
+   the outcome after; a test that re-executes its own binary — which is how
+   every process-kill scenario works — lets the child's libtest header land
+   between the two halves. Reading only whole lines lost all nine
+   crash-recovery results as "did not run", which is how the split was found.
 4. It runs the workspace documentation tests as one target.
 5. It reconciles: every assigned scenario must have reported `ok`. A scenario
    that reported `ignored`, reported `FAILED`, or never ran is a violation, as

@@ -207,14 +207,30 @@ fn run_suite(root: &Path, targets: &[Target]) -> Result<Suite, String> {
             .stdout
             .take()
             .ok_or_else(|| format!("{} produced no output", target.name))?;
+        let mut running: Option<String> = None;
         for line in BufReader::new(reader).lines() {
             let line = line.map_err(|error| format!("could not read {}: {error}", target.name))?;
             eprintln!("{line}");
-            if let Some((name, result)) = test_result(&line) {
-                suite
-                    .results
-                    .insert((target.package.clone(), target.name.clone(), name), result);
-            }
+
+            let (name, outcome) = match observe(&line) {
+                Some(Observation::Started(name)) => {
+                    running = Some(name);
+                    continue;
+                }
+                Some(Observation::Finished(name, outcome)) => {
+                    running = None;
+                    (name, outcome)
+                }
+                Some(Observation::Outcome(outcome)) => match running.take() {
+                    Some(name) => (name, outcome),
+                    None => continue,
+                },
+                None => continue,
+            };
+
+            suite
+                .results
+                .insert((target.package.clone(), target.name.clone(), name), outcome);
         }
 
         let status = child
@@ -259,22 +275,47 @@ fn run_documentation_tests(root: &Path) -> Result<bool, String> {
 /// The outcomes libtest reports for one test.
 const OUTCOMES: &[&str] = &["ok", "FAILED", "ignored"];
 
-/// Parses one libtest result line into a test path and its outcome.
+/// What one line of a test target's output says about a test.
+enum Observation {
+    /// A test started and its outcome has not been printed yet.
+    Started(String),
+    /// A test started and finished on the same line.
+    Finished(String, String),
+    /// The outcome of the test that is still running.
+    Outcome(String),
+}
+
+/// Reads one line of a test target's output.
 ///
-/// Only the three outcomes libtest reports are accepted, so an ordinary line
-/// of program output that happens to begin with `test ` cannot be recorded as
-/// a result.
-fn test_result(line: &str) -> Option<(String, String)> {
-    let rest = line.strip_prefix("test ")?;
-    let (name, outcome) = rest.rsplit_once(" ... ")?;
-    if name.contains(' ') {
+/// libtest writes `test <name> ... ` before the test runs and its outcome
+/// after, on one line, so ordinarily the two arrive together. They do not when
+/// the test spawns a child that writes to the same descriptor: the
+/// crash-recovery scenarios re-execute their own binary, and the child's
+/// libtest header lands between the prefix and the outcome. Reading the two
+/// halves separately is what makes those results attributable rather than
+/// missing.
+fn observe(line: &str) -> Option<Observation> {
+    if let Some(rest) = line.strip_prefix("test ") {
+        if let Some((name, outcome)) = rest.rsplit_once(" ... ") {
+            if name.contains(' ') {
+                return None;
+            }
+            let name = name.to_owned();
+            return match outcome.split_whitespace().next() {
+                None => Some(Observation::Started(name)),
+                Some(outcome) if OUTCOMES.contains(&outcome) => {
+                    Some(Observation::Finished(name, outcome.to_lowercase()))
+                }
+                Some(_) => None,
+            };
+        }
         return None;
     }
-    let outcome = outcome.split_whitespace().next()?;
-    if !OUTCOMES.contains(&outcome) {
-        return None;
-    }
-    Some((name.to_owned(), outcome.to_lowercase()))
+
+    let trimmed = line.trim();
+    OUTCOMES
+        .contains(&trimmed)
+        .then(|| Observation::Outcome(trimmed.to_lowercase()))
 }
 
 /// Reports every accepted scenario the suite did not prove.
@@ -562,4 +603,101 @@ fn metadata() -> Result<Value, String> {
 
     serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("could not parse cargo metadata: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Observation, observe};
+
+    /// Replays one target's output and returns what the runner recorded.
+    fn record(lines: &[&str]) -> Vec<(String, String)> {
+        let mut results = Vec::new();
+        let mut running: Option<String> = None;
+
+        for line in lines {
+            match observe(line) {
+                Some(Observation::Started(name)) => running = Some(name),
+                Some(Observation::Finished(name, outcome)) => {
+                    running = None;
+                    results.push((name, outcome));
+                }
+                Some(Observation::Outcome(outcome)) => {
+                    if let Some(name) = running.take() {
+                        results.push((name, outcome));
+                    }
+                }
+                None => {}
+            }
+        }
+
+        results
+    }
+
+    #[test]
+    fn an_ordinary_result_is_read_from_one_line() {
+        assert_eq!(
+            record(&[
+                "running 2 tests",
+                "test cases::restart_creates_new_execution ... ok",
+                "test a_skipped_case ... ignored",
+                "test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out",
+            ]),
+            vec![
+                (
+                    "cases::restart_creates_new_execution".to_owned(),
+                    "ok".to_owned()
+                ),
+                ("a_skipped_case".to_owned(), "ignored".to_owned()),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_result_split_by_a_child_process_is_still_attributed() {
+        assert_eq!(
+            record(&[
+                "running 3 tests",
+                "test crash_after_commit_does_not_replay_chunk ... ",
+                "",
+                "running 1 test",
+                "ok",
+                "test crash_worker_process ... ok",
+            ]),
+            vec![
+                (
+                    "crash_after_commit_does_not_replay_chunk".to_owned(),
+                    "ok".to_owned()
+                ),
+                ("crash_worker_process".to_owned(), "ok".to_owned()),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_failure_split_by_a_child_process_is_not_read_as_a_pass() {
+        assert_eq!(
+            record(&[
+                "test crash_before_commit_replays_chunk ... ",
+                "running 1 test",
+                "FAILED",
+            ]),
+            vec![(
+                "crash_before_commit_replays_chunk".to_owned(),
+                "failed".to_owned()
+            )],
+        );
+    }
+
+    #[test]
+    fn program_output_is_never_read_as_a_result() {
+        assert!(
+            record(&[
+                "test the operator command with two words ... ok",
+                "test something ... maybe",
+                "ok",
+                "testing the connection",
+            ])
+            .is_empty()
+        );
+    }
 }
