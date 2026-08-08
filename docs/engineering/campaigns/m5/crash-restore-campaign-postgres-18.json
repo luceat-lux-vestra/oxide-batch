@@ -1,0 +1,1325 @@
+{
+  "campaign": "M5 crash and restore",
+  "environment": {
+    "arch": "x86_64",
+    "matrix": "postgres-18",
+    "os": "linux",
+    "profile": "debug",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "source_commit": "8ec060b646518b763e2084de48702066da959cdb",
+    "source_tree_clean": true
+  },
+  "fixtures": {
+    "postgres": true,
+    "postgres-backup": true
+  },
+  "notes": [
+    "Every scenario is run on its own so its result is attributable: several campaign scenarios re-execute their own test binary, and a shared invocation could not say which one produced a line.",
+    "A passing scenario is not sufficient on its own. Each report also retains an observation into a directory this runner creates empty, and a missing observation, a phase that did not end in SIGKILL, or a recorded violation fails the campaign.",
+    "The reused M2-M4 scenarios are run rather than cited. The campaign does not rewrite the evidence those milestones delivered, and it does not take their passing on trust either."
+  ],
+  "passed": true,
+  "phases": [
+    {
+      "expected": "the enlisted rows were never committed, so the chunk replays whole",
+      "id": "business-written",
+      "protocol": "chunk commit",
+      "report": "commit-phase-process-kill",
+      "termination": "SIGKILL"
+    },
+    {
+      "expected": "durable state was produced inside the commit and never bound, so the chunk replays whole",
+      "id": "state-provided",
+      "protocol": "chunk commit",
+      "report": "commit-phase-process-kill",
+      "termination": "SIGKILL"
+    },
+    {
+      "expected": "the progress write was issued and blocked, so neither it nor the enlisted rows are durable and the chunk replays whole",
+      "id": "progress-blocked",
+      "protocol": "chunk commit",
+      "report": "commit-phase-process-kill",
+      "termination": "SIGKILL"
+    },
+    {
+      "expected": "the server completed the commit the killed process never saw acknowledged, so the chunk is durable and must not replay",
+      "id": "commit-in-flight",
+      "protocol": "chunk commit",
+      "report": "commit-phase-process-kill",
+      "termination": "SIGKILL"
+    },
+    {
+      "expected": "the commit was acknowledged before the kill, so the chunk is durable and must not replay",
+      "id": "commit-acknowledged",
+      "protocol": "chunk commit",
+      "report": "commit-phase-process-kill",
+      "termination": "SIGKILL"
+    }
+  ],
+  "report": "crash-restore",
+  "reports": [
+    {
+      "id": "commit-phase-process-kill",
+      "observation": {
+        "canonical": {
+          "business_items": [
+            10,
+            20,
+            30,
+            40,
+            50,
+            60
+          ],
+          "checkpoint_position": 6,
+          "counts": {
+            "committed": 3,
+            "filtered": 0,
+            "processed": 6,
+            "read": 6,
+            "rolled_back": 0,
+            "written": 6
+          },
+          "job": "m5_commit_phase_canonical",
+          "job_status": "COMPLETED",
+          "step_status": "COMPLETED"
+        },
+        "passed": true,
+        "phases": [
+          {
+            "child_pid": 7463,
+            "decision": {
+              "class": "APPLIED",
+              "path": "operator recover",
+              "prior_status": "STARTED",
+              "reason_code": "PROCESS_KILL_INSPECTED",
+              "resulting_status": "FAILED"
+            },
+            "discovery": {
+              "observed_status": "STARTED",
+              "observed_version": 1,
+              "proposal_digest": "bcaa826530a1541b49377209fdb49aa239dde982797c2d238e4e43d1f75b7139",
+              "unknown_commit": false
+            },
+            "durations_ms": {
+              "discovery": 2,
+              "reach_phase": 20,
+              "resume": 16
+            },
+            "expected": "the enlisted rows were never committed, so the chunk replays whole",
+            "fixture": "postgres",
+            "observed": {
+              "business_items": [
+                10,
+                20
+              ],
+              "checkpoint_position": 2,
+              "counts": {
+                "committed": 1,
+                "filtered": 0,
+                "processed": 2,
+                "read": 2,
+                "rolled_back": 0,
+                "written": 2
+              },
+              "crashed_attempt_status": "STARTED",
+              "crashed_step_status": "STARTED",
+              "durable_chunks": 1
+            },
+            "passed": true,
+            "phase": "business-written",
+            "protocol": "chunk commit",
+            "restart": {
+              "inherited_position": 2,
+              "resumed_chunks": 2
+            },
+            "terminal": {
+              "attempt_statuses": [
+                "FAILED",
+                "COMPLETED"
+              ],
+              "attempt_versions": [
+                2,
+                2
+              ],
+              "attempts": 2,
+              "checkpoint_positions": [
+                [
+                  2
+                ],
+                [
+                  6
+                ]
+              ],
+              "definition_digests": [
+                "604a77472db4a25a55ade99a5aebe733b35e7c084947b82aea50a00312ca35ee",
+                "604a77472db4a25a55ade99a5aebe733b35e7c084947b82aea50a00312ca35ee"
+              ],
+              "durable_counts": [
+                [
+                  {
+                    "committed": 1,
+                    "filtered": 0,
+                    "processed": 2,
+                    "read": 2,
+                    "rolled_back": 0,
+                    "written": 2
+                  }
+                ],
+                [
+                  {
+                    "committed": 3,
+                    "filtered": 0,
+                    "processed": 6,
+                    "read": 6,
+                    "rolled_back": 0,
+                    "written": 6
+                  }
+                ]
+              ],
+              "flow_decisions": [
+                0,
+                0
+              ],
+              "instance_present": true,
+              "partitions": [
+                [
+                  0
+                ],
+                [
+                  0
+                ]
+              ],
+              "recovery_decisions": [
+                "PROCESS_KILL_INSPECTED",
+                null
+              ],
+              "step_statuses": [
+                [
+                  "STARTED"
+                ],
+                [
+                  "COMPLETED"
+                ]
+              ]
+            },
+            "termination": {
+              "exit_code": null,
+              "signal": "SIGKILL",
+              "signal_number": 9
+            },
+            "violations": []
+          },
+          {
+            "child_pid": 7500,
+            "decision": {
+              "class": "APPLIED",
+              "path": "operator recover",
+              "prior_status": "STARTED",
+              "reason_code": "PROCESS_KILL_INSPECTED",
+              "resulting_status": "FAILED"
+            },
+            "discovery": {
+              "observed_status": "STARTED",
+              "observed_version": 1,
+              "proposal_digest": "136eb007f8d392164a4fdd2c76723bb850ab380ec914c94e6b8dea4b44b5d8c6",
+              "unknown_commit": false
+            },
+            "durations_ms": {
+              "discovery": 2,
+              "reach_phase": 21,
+              "resume": 18
+            },
+            "expected": "durable state was produced inside the commit and never bound, so the chunk replays whole",
+            "fixture": "postgres",
+            "observed": {
+              "business_items": [
+                10,
+                20
+              ],
+              "checkpoint_position": 2,
+              "counts": {
+                "committed": 1,
+                "filtered": 0,
+                "processed": 2,
+                "read": 2,
+                "rolled_back": 0,
+                "written": 2
+              },
+              "crashed_attempt_status": "STARTED",
+              "crashed_step_status": "STARTED",
+              "durable_chunks": 1
+            },
+            "passed": true,
+            "phase": "state-provided",
+            "protocol": "chunk commit",
+            "restart": {
+              "inherited_position": 2,
+              "resumed_chunks": 2
+            },
+            "terminal": {
+              "attempt_statuses": [
+                "FAILED",
+                "COMPLETED"
+              ],
+              "attempt_versions": [
+                2,
+                2
+              ],
+              "attempts": 2,
+              "checkpoint_positions": [
+                [
+                  2
+                ],
+                [
+                  6
+                ]
+              ],
+              "definition_digests": [
+                "34d468dc598fbc44653d60c35eb4b30895cbc1c32c19226eeee4f460f9ee72ca",
+                "34d468dc598fbc44653d60c35eb4b30895cbc1c32c19226eeee4f460f9ee72ca"
+              ],
+              "durable_counts": [
+                [
+                  {
+                    "committed": 1,
+                    "filtered": 0,
+                    "processed": 2,
+                    "read": 2,
+                    "rolled_back": 0,
+                    "written": 2
+                  }
+                ],
+                [
+                  {
+                    "committed": 3,
+                    "filtered": 0,
+                    "processed": 6,
+                    "read": 6,
+                    "rolled_back": 0,
+                    "written": 6
+                  }
+                ]
+              ],
+              "flow_decisions": [
+                0,
+                0
+              ],
+              "instance_present": true,
+              "partitions": [
+                [
+                  0
+                ],
+                [
+                  0
+                ]
+              ],
+              "recovery_decisions": [
+                "PROCESS_KILL_INSPECTED",
+                null
+              ],
+              "step_statuses": [
+                [
+                  "STARTED"
+                ],
+                [
+                  "COMPLETED"
+                ]
+              ]
+            },
+            "termination": {
+              "exit_code": null,
+              "signal": "SIGKILL",
+              "signal_number": 9
+            },
+            "violations": []
+          },
+          {
+            "child_pid": 7516,
+            "decision": {
+              "class": "APPLIED",
+              "path": "operator recover",
+              "prior_status": "STARTED",
+              "reason_code": "PROCESS_KILL_INSPECTED",
+              "resulting_status": "FAILED"
+            },
+            "discovery": {
+              "observed_status": "STARTED",
+              "observed_version": 1,
+              "proposal_digest": "3f336ebd5bc7cd1fca7adcd3450367c599a7077352ee80b0b5d4b6a588663558",
+              "unknown_commit": false
+            },
+            "durations_ms": {
+              "discovery": 2,
+              "reach_phase": 26,
+              "resume": 17
+            },
+            "expected": "the progress write was issued and blocked, so neither it nor the enlisted rows are durable and the chunk replays whole",
+            "fixture": "postgres",
+            "observed": {
+              "business_items": [
+                10,
+                20
+              ],
+              "checkpoint_position": 2,
+              "counts": {
+                "committed": 1,
+                "filtered": 0,
+                "processed": 2,
+                "read": 2,
+                "rolled_back": 0,
+                "written": 2
+              },
+              "crashed_attempt_status": "STARTED",
+              "crashed_step_status": "STARTED",
+              "durable_chunks": 1
+            },
+            "passed": true,
+            "phase": "progress-blocked",
+            "protocol": "chunk commit",
+            "restart": {
+              "inherited_position": 2,
+              "resumed_chunks": 2
+            },
+            "terminal": {
+              "attempt_statuses": [
+                "FAILED",
+                "COMPLETED"
+              ],
+              "attempt_versions": [
+                2,
+                2
+              ],
+              "attempts": 2,
+              "checkpoint_positions": [
+                [
+                  2
+                ],
+                [
+                  6
+                ]
+              ],
+              "definition_digests": [
+                "cc7bc8efd1ada9aa272950f1429c53f0484c9bb47e3cca488d927902c2c9737b",
+                "cc7bc8efd1ada9aa272950f1429c53f0484c9bb47e3cca488d927902c2c9737b"
+              ],
+              "durable_counts": [
+                [
+                  {
+                    "committed": 1,
+                    "filtered": 0,
+                    "processed": 2,
+                    "read": 2,
+                    "rolled_back": 0,
+                    "written": 2
+                  }
+                ],
+                [
+                  {
+                    "committed": 3,
+                    "filtered": 0,
+                    "processed": 6,
+                    "read": 6,
+                    "rolled_back": 0,
+                    "written": 6
+                  }
+                ]
+              ],
+              "flow_decisions": [
+                0,
+                0
+              ],
+              "instance_present": true,
+              "partitions": [
+                [
+                  0
+                ],
+                [
+                  0
+                ]
+              ],
+              "recovery_decisions": [
+                "PROCESS_KILL_INSPECTED",
+                null
+              ],
+              "step_statuses": [
+                [
+                  "STARTED"
+                ],
+                [
+                  "COMPLETED"
+                ]
+              ]
+            },
+            "termination": {
+              "exit_code": null,
+              "signal": "SIGKILL",
+              "signal_number": 9
+            },
+            "violations": []
+          },
+          {
+            "child_pid": 7534,
+            "decision": {
+              "class": "APPLIED",
+              "path": "operator recover",
+              "prior_status": "STARTED",
+              "reason_code": "PROCESS_KILL_INSPECTED",
+              "resulting_status": "FAILED"
+            },
+            "discovery": {
+              "observed_status": "STARTED",
+              "observed_version": 1,
+              "proposal_digest": "89ea782cb206769d0dd4dd95876a8d195e6ea31bb695e57d577ba6eef103c05c",
+              "unknown_commit": false
+            },
+            "durations_ms": {
+              "discovery": 2,
+              "reach_phase": 27,
+              "resume": 15
+            },
+            "expected": "the server completed the commit the killed process never saw acknowledged, so the chunk is durable and must not replay",
+            "fixture": "postgres",
+            "observed": {
+              "business_items": [
+                10,
+                20,
+                30,
+                40
+              ],
+              "checkpoint_position": 4,
+              "counts": {
+                "committed": 2,
+                "filtered": 0,
+                "processed": 4,
+                "read": 4,
+                "rolled_back": 0,
+                "written": 4
+              },
+              "crashed_attempt_status": "STARTED",
+              "crashed_step_status": "STARTED",
+              "durable_chunks": 2
+            },
+            "passed": true,
+            "phase": "commit-in-flight",
+            "protocol": "chunk commit",
+            "restart": {
+              "inherited_position": 4,
+              "resumed_chunks": 1
+            },
+            "terminal": {
+              "attempt_statuses": [
+                "FAILED",
+                "COMPLETED"
+              ],
+              "attempt_versions": [
+                2,
+                2
+              ],
+              "attempts": 2,
+              "checkpoint_positions": [
+                [
+                  4
+                ],
+                [
+                  6
+                ]
+              ],
+              "definition_digests": [
+                "fb886a60ce40dec63853d1d34c6874911baa68523fbcd03409ad953874767e28",
+                "fb886a60ce40dec63853d1d34c6874911baa68523fbcd03409ad953874767e28"
+              ],
+              "durable_counts": [
+                [
+                  {
+                    "committed": 2,
+                    "filtered": 0,
+                    "processed": 4,
+                    "read": 4,
+                    "rolled_back": 0,
+                    "written": 4
+                  }
+                ],
+                [
+                  {
+                    "committed": 3,
+                    "filtered": 0,
+                    "processed": 6,
+                    "read": 6,
+                    "rolled_back": 0,
+                    "written": 6
+                  }
+                ]
+              ],
+              "flow_decisions": [
+                0,
+                0
+              ],
+              "instance_present": true,
+              "partitions": [
+                [
+                  0
+                ],
+                [
+                  0
+                ]
+              ],
+              "recovery_decisions": [
+                "PROCESS_KILL_INSPECTED",
+                null
+              ],
+              "step_statuses": [
+                [
+                  "STARTED"
+                ],
+                [
+                  "COMPLETED"
+                ]
+              ]
+            },
+            "termination": {
+              "exit_code": null,
+              "signal": "SIGKILL",
+              "signal_number": 9
+            },
+            "violations": []
+          },
+          {
+            "child_pid": 7552,
+            "decision": {
+              "class": "APPLIED",
+              "path": "operator recover",
+              "prior_status": "STARTED",
+              "reason_code": "PROCESS_KILL_INSPECTED",
+              "resulting_status": "FAILED"
+            },
+            "discovery": {
+              "observed_status": "STARTED",
+              "observed_version": 1,
+              "proposal_digest": "90bfb03ee4e5b90320d93ad24bcababc38d7b8c36b205df66cbd755a14fe06a8",
+              "unknown_commit": false
+            },
+            "durations_ms": {
+              "discovery": 2,
+              "reach_phase": 20,
+              "resume": 13
+            },
+            "expected": "the commit was acknowledged before the kill, so the chunk is durable and must not replay",
+            "fixture": "postgres",
+            "observed": {
+              "business_items": [
+                10,
+                20,
+                30,
+                40
+              ],
+              "checkpoint_position": 4,
+              "counts": {
+                "committed": 2,
+                "filtered": 0,
+                "processed": 4,
+                "read": 4,
+                "rolled_back": 0,
+                "written": 4
+              },
+              "crashed_attempt_status": "STARTED",
+              "crashed_step_status": "STARTED",
+              "durable_chunks": 2
+            },
+            "passed": true,
+            "phase": "commit-acknowledged",
+            "protocol": "chunk commit",
+            "restart": {
+              "inherited_position": 4,
+              "resumed_chunks": 1
+            },
+            "terminal": {
+              "attempt_statuses": [
+                "FAILED",
+                "COMPLETED"
+              ],
+              "attempt_versions": [
+                2,
+                2
+              ],
+              "attempts": 2,
+              "checkpoint_positions": [
+                [
+                  4
+                ],
+                [
+                  6
+                ]
+              ],
+              "definition_digests": [
+                "0c465f1be0afa2e4b5f2b79ab75679c7030b7aa036b6551eaea58dc9f193ba80",
+                "0c465f1be0afa2e4b5f2b79ab75679c7030b7aa036b6551eaea58dc9f193ba80"
+              ],
+              "durable_counts": [
+                [
+                  {
+                    "committed": 2,
+                    "filtered": 0,
+                    "processed": 4,
+                    "read": 4,
+                    "rolled_back": 0,
+                    "written": 4
+                  }
+                ],
+                [
+                  {
+                    "committed": 3,
+                    "filtered": 0,
+                    "processed": 6,
+                    "read": 6,
+                    "rolled_back": 0,
+                    "written": 6
+                  }
+                ]
+              ],
+              "flow_decisions": [
+                0,
+                0
+              ],
+              "instance_present": true,
+              "partitions": [
+                [
+                  0
+                ],
+                [
+                  0
+                ]
+              ],
+              "recovery_decisions": [
+                "PROCESS_KILL_INSPECTED",
+                null
+              ],
+              "step_statuses": [
+                [
+                  "STARTED"
+                ],
+                [
+                  "COMPLETED"
+                ]
+              ]
+            },
+            "termination": {
+              "exit_code": null,
+              "signal": "SIGKILL",
+              "signal_number": 9
+            },
+            "violations": []
+          }
+        ],
+        "protocol": "chunk commit",
+        "report": "process kill at each commit phase",
+        "scenario": "process_kill_at_each_commit_phase_recovers_without_a_forged_status",
+        "signal": "SIGKILL",
+        "violations": []
+      },
+      "owes": "process_kill_at_each_commit_phase_recovers_without_a_forged_status",
+      "scenario": {
+        "fixture": "postgres",
+        "name": "process_kill_at_each_commit_phase_recovers_without_a_forged_status",
+        "package": "oxide-batch",
+        "result": "ok",
+        "target": "postgres_commit_phase_process_kill"
+      },
+      "title": "Process kill at each commit phase"
+    },
+    {
+      "id": "p013-restart-after-many-chunks",
+      "observation": {
+        "canonical": {
+          "business_rows": 1000,
+          "checkpoint_position": 1000,
+          "counts": {
+            "committed": 200,
+            "filtered": 0,
+            "processed": 1000,
+            "read": 1000,
+            "rolled_back": 0,
+            "written": 1000
+          },
+          "job_status": "COMPLETED",
+          "step_status": "COMPLETED"
+        },
+        "child_pid": 7840,
+        "decision": {
+          "class": "APPLIED",
+          "path": "operator recover",
+          "prior_status": "STARTED",
+          "reason_code": "PROCESS_KILL_INSPECTED",
+          "resulting_status": "FAILED"
+        },
+        "discovery": {
+          "agrees_with_durable_metadata": true,
+          "observed_status": "STARTED",
+          "observed_version": 1,
+          "proposal_digest": "83973dee1a0636d366d1e860f5c7884e63c106477e32410629d7f3602ccb1e9e",
+          "unknown_commit": false
+        },
+        "durations_ms": {
+          "commit_chunks_before_kill": 443,
+          "discovery": 38,
+          "resume": 266,
+          "uninterrupted_run": 759
+        },
+        "expected": "the durable checkpoint names exactly the committed chunks, the restart inherits it, and the finished job matches an uninterrupted run",
+        "fixture": "postgres",
+        "observed": {
+          "business_rows": 650,
+          "checkpoint_position": 650,
+          "counts": {
+            "committed": 130,
+            "filtered": 0,
+            "processed": 650,
+            "read": 650,
+            "rolled_back": 0,
+            "written": 650
+          },
+          "crashed_attempt_status": "STARTED"
+        },
+        "passed": true,
+        "report": "P-013 restart after many chunks",
+        "restart": {
+          "inherited_position": 650,
+          "resumed_chunks": 70
+        },
+        "scenario": "restart_after_many_chunks_matches_an_uninterrupted_run",
+        "terminal": {
+          "attempt_statuses": [
+            "FAILED",
+            "COMPLETED"
+          ],
+          "attempt_versions": [
+            2,
+            2
+          ],
+          "attempts": 2,
+          "checkpoint_positions": [
+            [
+              650
+            ],
+            [
+              1000
+            ]
+          ],
+          "definition_digests": [
+            "32d73850dfa85f5023ff06b9340792fb997672a189941f0db44fec1cde7db2d6",
+            "32d73850dfa85f5023ff06b9340792fb997672a189941f0db44fec1cde7db2d6"
+          ],
+          "durable_counts": [
+            [
+              {
+                "committed": 130,
+                "filtered": 0,
+                "processed": 650,
+                "read": 650,
+                "rolled_back": 0,
+                "written": 650
+              }
+            ],
+            [
+              {
+                "committed": 200,
+                "filtered": 0,
+                "processed": 1000,
+                "read": 1000,
+                "rolled_back": 0,
+                "written": 1000
+              }
+            ]
+          ],
+          "flow_decisions": [
+            0,
+            0
+          ],
+          "instance_present": true,
+          "partitions": [
+            [
+              0
+            ],
+            [
+              0
+            ]
+          ],
+          "recovery_decisions": [
+            "PROCESS_KILL_INSPECTED",
+            null
+          ],
+          "step_statuses": [
+            [
+              "STARTED"
+            ],
+            [
+              "COMPLETED"
+            ]
+          ]
+        },
+        "termination": {
+          "exit_code": null,
+          "signal": "SIGKILL",
+          "signal_number": 9
+        },
+        "violations": [],
+        "workload": {
+          "chunk_size": 5,
+          "chunks": 200,
+          "chunks_before_kill": 130,
+          "delivery": "atomic same resource",
+          "items": 1000
+        }
+      },
+      "owes": "P-013 restart after many chunks",
+      "scenario": {
+        "fixture": "postgres",
+        "name": "restart_after_many_chunks_matches_an_uninterrupted_run",
+        "package": "oxide-batch",
+        "result": "ok",
+        "target": "postgres_restart_after_many_chunks"
+      },
+      "title": "P-013 restart after many chunks"
+    },
+    {
+      "id": "logical-backup-restore",
+      "observation": {
+        "canonical": {
+          "business_rows": 25,
+          "checkpoint_position": 25,
+          "counts": {
+            "committed": 5,
+            "filtered": 0,
+            "processed": 25,
+            "read": 25,
+            "rolled_back": 0,
+            "written": 25
+          },
+          "job_status": "COMPLETED",
+          "step_status": "COMPLETED"
+        },
+        "compared": [
+          "job instance identity",
+          "job executions and their explorer projections",
+          "definition revision and manifest fingerprint",
+          "optimistic versions",
+          "step executions",
+          "durable checkpoints and execution contexts",
+          "durable counters",
+          "recovery decisions",
+          "flow decisions",
+          "partition metadata",
+          "enlisted business rows"
+        ],
+        "databases": {
+          "restored_into": "oxide_batch_m5_restore"
+        },
+        "fixture": "postgres-backup",
+        "passed": true,
+        "report": "logical backup and restore",
+        "restart_on_restored": {
+          "duration_ms": 77,
+          "resumed_chunks": 2,
+          "terminal": {
+            "business_rows": 25,
+            "checkpoint_position": 25,
+            "counts": {
+              "committed": 5,
+              "filtered": 0,
+              "processed": 25,
+              "read": 25,
+              "rolled_back": 0,
+              "written": 25
+            },
+            "job_status": "COMPLETED",
+            "step_status": "COMPLETED"
+          }
+        },
+        "restored_matches_source": true,
+        "scenario": "logical_backup_restores_the_durable_state_and_the_job_restarts_on_it",
+        "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+        "state_at_backup": {
+          "chunk_job": {
+            "attempts": 2,
+            "checkpoint_position": 15,
+            "chunks_committed": 3,
+            "counts": {
+              "committed": 3,
+              "filtered": 0,
+              "processed": 15,
+              "read": 15,
+              "rolled_back": 0,
+              "written": 15
+            },
+            "job": "m5_backup_restore",
+            "summary": {
+              "attempt_statuses": [
+                "FAILED",
+                "STARTED"
+              ],
+              "attempt_versions": [
+                2,
+                1
+              ],
+              "attempts": 2,
+              "checkpoint_positions": [
+                [
+                  5
+                ],
+                [
+                  15
+                ]
+              ],
+              "definition_digests": [
+                "7948d75df1a50f98bfd62f88c79f705cf012314c7567658c99699955f65c73ec",
+                "7948d75df1a50f98bfd62f88c79f705cf012314c7567658c99699955f65c73ec"
+              ],
+              "durable_counts": [
+                [
+                  {
+                    "committed": 1,
+                    "filtered": 0,
+                    "processed": 5,
+                    "read": 5,
+                    "rolled_back": 0,
+                    "written": 5
+                  }
+                ],
+                [
+                  {
+                    "committed": 3,
+                    "filtered": 0,
+                    "processed": 15,
+                    "read": 15,
+                    "rolled_back": 0,
+                    "written": 15
+                  }
+                ]
+              ],
+              "flow_decisions": [
+                0,
+                0
+              ],
+              "instance_present": true,
+              "partitions": [
+                [
+                  0
+                ],
+                [
+                  0
+                ]
+              ],
+              "recovery_decisions": [
+                "PROCESS_KILL_INSPECTED",
+                null
+              ],
+              "step_statuses": [
+                [
+                  "STARTED"
+                ],
+                [
+                  "STARTED"
+                ]
+              ]
+            }
+          },
+          "flow_job": {
+            "attempts": 1,
+            "flow_decisions": [
+              1
+            ],
+            "job": "m5_backup_restore_flow",
+            "summary": {
+              "attempt_statuses": [
+                "COMPLETED"
+              ],
+              "attempt_versions": [
+                3
+              ],
+              "attempts": 1,
+              "checkpoint_positions": [
+                [
+                  null,
+                  null,
+                  null
+                ]
+              ],
+              "definition_digests": [
+                "16f03a93653f36e5b440cbc8fcda0507939f8ff4fbe5f1d9e86060a73ff589e5"
+              ],
+              "durable_counts": [
+                [
+                  {
+                    "committed": 0,
+                    "filtered": 0,
+                    "processed": 0,
+                    "read": 0,
+                    "rolled_back": 0,
+                    "written": 0
+                  },
+                  {
+                    "committed": 0,
+                    "filtered": 0,
+                    "processed": 0,
+                    "read": 0,
+                    "rolled_back": 0,
+                    "written": 0
+                  },
+                  {
+                    "committed": 0,
+                    "filtered": 0,
+                    "processed": 0,
+                    "read": 0,
+                    "rolled_back": 0,
+                    "written": 0
+                  }
+                ]
+              ],
+              "flow_decisions": [
+                1
+              ],
+              "instance_present": true,
+              "partitions": [
+                [
+                  2,
+                  0,
+                  0
+                ]
+              ],
+              "recovery_decisions": [
+                null
+              ],
+              "step_statuses": [
+                [
+                  "COMPLETED",
+                  "COMPLETED",
+                  "COMPLETED"
+                ]
+              ]
+            }
+          }
+        },
+        "terminal": {
+          "attempt_statuses": [
+            "FAILED",
+            "FAILED",
+            "COMPLETED"
+          ],
+          "attempt_versions": [
+            2,
+            2,
+            2
+          ],
+          "attempts": 3,
+          "checkpoint_positions": [
+            [
+              5
+            ],
+            [
+              15
+            ],
+            [
+              25
+            ]
+          ],
+          "definition_digests": [
+            "7948d75df1a50f98bfd62f88c79f705cf012314c7567658c99699955f65c73ec",
+            "7948d75df1a50f98bfd62f88c79f705cf012314c7567658c99699955f65c73ec",
+            "7948d75df1a50f98bfd62f88c79f705cf012314c7567658c99699955f65c73ec"
+          ],
+          "durable_counts": [
+            [
+              {
+                "committed": 1,
+                "filtered": 0,
+                "processed": 5,
+                "read": 5,
+                "rolled_back": 0,
+                "written": 5
+              }
+            ],
+            [
+              {
+                "committed": 3,
+                "filtered": 0,
+                "processed": 15,
+                "read": 15,
+                "rolled_back": 0,
+                "written": 15
+              }
+            ],
+            [
+              {
+                "committed": 5,
+                "filtered": 0,
+                "processed": 25,
+                "read": 25,
+                "rolled_back": 0,
+                "written": 25
+              }
+            ]
+          ],
+          "flow_decisions": [
+            0,
+            0,
+            0
+          ],
+          "instance_present": true,
+          "partitions": [
+            [
+              0
+            ],
+            [
+              0
+            ],
+            [
+              0
+            ]
+          ],
+          "recovery_decisions": [
+            "PROCESS_KILL_INSPECTED",
+            "PROCESS_KILL_INSPECTED",
+            null
+          ],
+          "step_statuses": [
+            [
+              "STARTED"
+            ],
+            [
+              "STARTED"
+            ],
+            [
+              "COMPLETED"
+            ]
+          ]
+        },
+        "tooling": {
+          "archive_bytes": 78716,
+          "format": "custom",
+          "pg_dump": "pg_dump (PostgreSQL) 18.4 (Ubuntu 18.4-1.pgdg24.04+1)",
+          "pg_restore": "pg_restore (PostgreSQL) 18.4 (Ubuntu 18.4-1.pgdg24.04+1)",
+          "schemas": [
+            "oxide_batch",
+            "oxide_batch_business"
+          ]
+        },
+        "violations": []
+      },
+      "owes": "logical backup restore",
+      "scenario": {
+        "fixture": "postgres-backup",
+        "name": "logical_backup_restores_the_durable_state_and_the_job_restarts_on_it",
+        "package": "oxide-batch",
+        "result": "ok",
+        "target": "postgres_logical_backup_restore"
+      },
+      "title": "Logical backup and restore"
+    }
+  ],
+  "reused": [
+    {
+      "fixture": "postgres",
+      "milestone": "M2",
+      "name": "crash_before_commit_replays_chunk",
+      "package": "oxide-batch",
+      "protocol": "chunk commit",
+      "result": "ok",
+      "target": "postgres_crash_recovery"
+    },
+    {
+      "fixture": "postgres",
+      "milestone": "M2",
+      "name": "crash_after_commit_does_not_replay_chunk",
+      "package": "oxide-batch",
+      "protocol": "chunk commit",
+      "result": "ok",
+      "target": "postgres_crash_recovery"
+    },
+    {
+      "fixture": "postgres",
+      "milestone": "M3",
+      "name": "crash_before_reservation_replays_initial_call",
+      "package": "oxide-batch",
+      "protocol": "retry reservation",
+      "result": "ok",
+      "target": "postgres_fault_crash_recovery"
+    },
+    {
+      "fixture": "postgres",
+      "milestone": "M3",
+      "name": "retry_reservation_survives_process_restart",
+      "package": "oxide-batch",
+      "protocol": "retry reservation",
+      "result": "ok",
+      "target": "postgres_fault_crash_recovery"
+    },
+    {
+      "fixture": "postgres",
+      "milestone": "M3",
+      "name": "crash_during_skip_callback_replays_before_atomic_skip_commit",
+      "package": "oxide-batch",
+      "protocol": "skip commit",
+      "result": "ok",
+      "target": "postgres_fault_crash_recovery"
+    },
+    {
+      "fixture": "postgres",
+      "milestone": "M3",
+      "name": "crash_after_step_result_before_decision_reuses_durable_step",
+      "package": "oxide-batch",
+      "protocol": "flow decision",
+      "result": "ok",
+      "target": "postgres_flow_crash_recovery"
+    },
+    {
+      "fixture": "postgres",
+      "milestone": "M3",
+      "name": "crash_after_decision_commit_reuses_durable_decision",
+      "package": "oxide-batch",
+      "protocol": "flow decision",
+      "result": "ok",
+      "target": "postgres_flow_crash_recovery"
+    },
+    {
+      "fixture": "postgres",
+      "milestone": "M4",
+      "name": "committed_partition_is_reused_after_process_kill_and_recovery",
+      "package": "oxide-batch",
+      "protocol": "partition aggregation",
+      "result": "ok",
+      "target": "postgres_local_partition_crash_recovery"
+    },
+    {
+      "fixture": "postgres",
+      "milestone": "M4",
+      "name": "committed_branch_is_reused_after_process_kill_and_recovery",
+      "package": "oxide-batch",
+      "protocol": "split join",
+      "result": "ok",
+      "target": "postgres_local_split_crash_recovery"
+    },
+    {
+      "fixture": "postgres",
+      "milestone": "M2",
+      "name": "disconnect_during_commit_never_guesses_outcome",
+      "package": "oxide-batch",
+      "protocol": "unknown commit outcome",
+      "result": "ok",
+      "target": "postgres_repository"
+    },
+    {
+      "fixture": "postgres",
+      "milestone": "M2",
+      "name": "postgres_chunk_disconnect_is_known_not_committed_before_commit",
+      "package": "oxide-batch",
+      "protocol": "unknown commit outcome",
+      "result": "ok",
+      "target": "postgres_repository"
+    }
+  ],
+  "scenarios": [
+    "process_kill_at_each_commit_phase_recovers_without_a_forged_status",
+    "restart_after_many_chunks_matches_an_uninterrupted_run",
+    "logical_backup_restores_the_durable_state_and_the_job_restarts_on_it"
+  ],
+  "violations": []
+}
