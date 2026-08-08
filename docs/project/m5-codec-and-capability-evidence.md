@@ -1,13 +1,15 @@
 # M5 Context-Codec and Transaction-Capability Evidence
 
-**State:** Partial. This record covers the codec lifecycle and the launch-time
-repository capability negotiation portion of issue #100.
+**State:** Complete for the codec lifecycle and the launch-time repository
+capability negotiation portion of issue #100. The migration and restore portion
+was reassigned rather than delivered here.
 
-**Issue #100 remains open.** PostgreSQL migration and restore campaign evidence
-is tracked by issue
-[#102](https://github.com/luceat-lux-vestra/oxide-batch/issues/102). #100 must
-stay open until its migration and restore exit criteria are either completed or
-formally moved to #102 in the issue body. See
+**Issue #100 is closed.** It opened with two criteria this work could not
+satisfy — migration from every supported prior version, and retained
+reproducible PostgreSQL migration and restore evidence — and those are now
+formally moved to issue
+[#102](https://github.com/luceat-lux-vestra/oxide-batch/issues/102) in both
+issue bodies, which is the condition this record set for closing #100. See
 [Migration and rollback](#migration-and-rollback) for why this work owes no new
 migration of its own, which is a different statement from those criteria being
 met.
@@ -315,9 +317,9 @@ exercised by the campaign scenarios
 `schema2_runtime_rejects_schema3`, and
 `schema3_backup_restores_the_prior_schema`, which the design gate assigns to
 issue [#102](https://github.com/luceat-lux-vestra/oxide-batch/issues/102) rather
-than to this one. This record does not claim them, and issue #100 stays open
-until those exit criteria are completed or formally reassigned to #102 in its
-issue body.
+than to this one. This record does not claim them. The two exit criteria that
+depended on them were reassigned to #102 in both issue bodies, and #100 closed
+on that reassignment rather than on their evidence.
 
 The application-visible consequence recorded above — a codec that decoded an
 older version inline must now declare the edge — is an application migration,
