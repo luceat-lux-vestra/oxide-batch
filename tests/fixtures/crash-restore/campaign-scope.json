@@ -1,0 +1,174 @@
+{
+  "campaign": "M5 crash and restore",
+  "issue": "https://github.com/luceat-lux-vestra/oxide-batch/issues/102",
+  "gate": "docs/project/m5-design-gate-evidence.md",
+  "plan": "docs/engineering/performance-plan.md",
+  "note": "This document is the campaign's denominator. The runner reads it to decide what must run, and the in-process reconciliation in crates/oxide-batch/tests/m5_crash_restore_campaign.rs reads it to decide whether it still says what the accepted documents require.",
+  "fixtures": {
+    "postgres": [
+      "OXIDEBATCH_POSTGRES_TEST_URL",
+      "OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL"
+    ],
+    "postgres-backup": [
+      "OXIDEBATCH_POSTGRES_TEST_URL",
+      "OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL",
+      "OXIDEBATCH_POSTGRES_BACKUP_TEST_URL"
+    ]
+  },
+  "reports": [
+    {
+      "id": "commit-phase-process-kill",
+      "title": "Process kill at each commit phase",
+      "owes": "process_kill_at_each_commit_phase_recovers_without_a_forged_status",
+      "package": "oxide-batch",
+      "target": "postgres_commit_phase_process_kill",
+      "name": "process_kill_at_each_commit_phase_recovers_without_a_forged_status",
+      "fixture": "postgres"
+    },
+    {
+      "id": "p013-restart-after-many-chunks",
+      "title": "P-013 restart after many chunks",
+      "owes": "P-013 restart after many chunks",
+      "package": "oxide-batch",
+      "target": "postgres_restart_after_many_chunks",
+      "name": "restart_after_many_chunks_matches_an_uninterrupted_run",
+      "fixture": "postgres"
+    },
+    {
+      "id": "logical-backup-restore",
+      "title": "Logical backup and restore",
+      "owes": "logical backup restore",
+      "package": "oxide-batch",
+      "target": "postgres_logical_backup_restore",
+      "name": "logical_backup_restores_the_durable_state_and_the_job_restarts_on_it",
+      "fixture": "postgres-backup"
+    }
+  ],
+  "phases": [
+    {
+      "id": "business-written",
+      "protocol": "chunk commit",
+      "report": "commit-phase-process-kill",
+      "termination": "SIGKILL",
+      "expected": "the enlisted rows were never committed, so the chunk replays whole"
+    },
+    {
+      "id": "state-provided",
+      "protocol": "chunk commit",
+      "report": "commit-phase-process-kill",
+      "termination": "SIGKILL",
+      "expected": "durable state was produced inside the commit and never bound, so the chunk replays whole"
+    },
+    {
+      "id": "progress-blocked",
+      "protocol": "chunk commit",
+      "report": "commit-phase-process-kill",
+      "termination": "SIGKILL",
+      "expected": "the progress write was issued and blocked, so neither it nor the enlisted rows are durable and the chunk replays whole"
+    },
+    {
+      "id": "commit-in-flight",
+      "protocol": "chunk commit",
+      "report": "commit-phase-process-kill",
+      "termination": "SIGKILL",
+      "expected": "the server completed the commit the killed process never saw acknowledged, so the chunk is durable and must not replay"
+    },
+    {
+      "id": "commit-acknowledged",
+      "protocol": "chunk commit",
+      "report": "commit-phase-process-kill",
+      "termination": "SIGKILL",
+      "expected": "the commit was acknowledged before the kill, so the chunk is durable and must not replay"
+    }
+  ],
+  "reused": [
+    {
+      "package": "oxide-batch",
+      "target": "postgres_crash_recovery",
+      "name": "crash_before_commit_replays_chunk",
+      "protocol": "chunk commit",
+      "milestone": "M2",
+      "fixture": "postgres"
+    },
+    {
+      "package": "oxide-batch",
+      "target": "postgres_crash_recovery",
+      "name": "crash_after_commit_does_not_replay_chunk",
+      "protocol": "chunk commit",
+      "milestone": "M2",
+      "fixture": "postgres"
+    },
+    {
+      "package": "oxide-batch",
+      "target": "postgres_fault_crash_recovery",
+      "name": "crash_before_reservation_replays_initial_call",
+      "protocol": "retry reservation",
+      "milestone": "M3",
+      "fixture": "postgres"
+    },
+    {
+      "package": "oxide-batch",
+      "target": "postgres_fault_crash_recovery",
+      "name": "retry_reservation_survives_process_restart",
+      "protocol": "retry reservation",
+      "milestone": "M3",
+      "fixture": "postgres"
+    },
+    {
+      "package": "oxide-batch",
+      "target": "postgres_fault_crash_recovery",
+      "name": "crash_during_skip_callback_replays_before_atomic_skip_commit",
+      "protocol": "skip commit",
+      "milestone": "M3",
+      "fixture": "postgres"
+    },
+    {
+      "package": "oxide-batch",
+      "target": "postgres_flow_crash_recovery",
+      "name": "crash_after_step_result_before_decision_reuses_durable_step",
+      "protocol": "flow decision",
+      "milestone": "M3",
+      "fixture": "postgres"
+    },
+    {
+      "package": "oxide-batch",
+      "target": "postgres_flow_crash_recovery",
+      "name": "crash_after_decision_commit_reuses_durable_decision",
+      "protocol": "flow decision",
+      "milestone": "M3",
+      "fixture": "postgres"
+    },
+    {
+      "package": "oxide-batch",
+      "target": "postgres_local_partition_crash_recovery",
+      "name": "committed_partition_is_reused_after_process_kill_and_recovery",
+      "protocol": "partition aggregation",
+      "milestone": "M4",
+      "fixture": "postgres"
+    },
+    {
+      "package": "oxide-batch",
+      "target": "postgres_local_split_crash_recovery",
+      "name": "committed_branch_is_reused_after_process_kill_and_recovery",
+      "protocol": "split join",
+      "milestone": "M4",
+      "fixture": "postgres"
+    },
+    {
+      "package": "oxide-batch",
+      "target": "postgres_repository",
+      "name": "disconnect_during_commit_never_guesses_outcome",
+      "protocol": "unknown commit outcome",
+      "milestone": "M2",
+      "fixture": "postgres"
+    },
+    {
+      "package": "oxide-batch",
+      "target": "postgres_repository",
+      "name": "postgres_chunk_disconnect_is_known_not_committed_before_commit",
+      "protocol": "unknown commit outcome",
+      "milestone": "M2",
+      "fixture": "postgres"
+    }
+  ]
+}
