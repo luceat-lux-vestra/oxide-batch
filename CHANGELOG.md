@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `cargo xtask conformance`, the M5 conformance campaign. It runs the whole
+  workspace suite one target at a time, attributes every result to the target
+  that produced it, and requires each of the 42 accepted M0-M4 ledger rows to
+  be proved by a scenario that ran and reported `ok`. The row-to-scenario
+  assignment is committed as `tests/fixtures/conformance/accepted-scope.json`
+  and reconciled against the ledger by ordinary tests, so a status change or a
+  renamed scenario fails in review. The runner resolves its database fixtures
+  before running anything and refuses to start without them, because a
+  PostgreSQL scenario skips silently and would otherwise report a campaign pass
+  on a host with no database. CI runs it on PostgreSQL 15 and 18 and retains
+  each report.
 - `cargo xtask surface`, the facade disclosure inspection the M5 preview
   surface gate requires. It renders the facade with every feature and every
   dependency documented, then reports any foreign crate a rendered declaration

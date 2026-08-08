@@ -98,6 +98,8 @@ decisions own the normative detail.
 - [M5 plan and definition-fingerprint stabilization evidence](project/m5-plan-fingerprint-evidence.md)
 - [M5 staged crate-extraction evidence](project/m5-crate-extraction-evidence.md)
 - [M5 context-codec and transaction-capability evidence](project/m5-codec-and-capability-evidence.md)
+- [M5 public facade and preview API review evidence](project/m5-facade-api-review-evidence.md)
+- [M5 evidence campaign record](project/m5-campaign-evidence.md)
 - [Historical M0 decision register](product/open-decisions.md)
 
 Historical gates are preserved as records of their date. Later decisions link
@@ -153,6 +155,8 @@ to them and record supersession; they do not rewrite history.
 - [Test strategy](testing/strategy.md)
 - [Performance and capacity plan](engineering/performance-plan.md)
 - [M4 measurement evidence](engineering/measurements/m4/README.md)
+- [M5 measurement evidence](engineering/measurements/m5/README.md)
+- [M5 campaign evidence](engineering/campaigns/m5/README.md)
 
 ## Security and operations
 
