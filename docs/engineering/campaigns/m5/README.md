@@ -20,14 +20,23 @@ a pass or failure that does not.
 
 | File | Campaign | What it records |
 | --- | --- | --- |
-| [`conformance-campaign.json`](conformance-campaign.json) | Conformance | Every accepted M0-M4 ledger row, the scenarios assigned to it, and the outcome each one reported |
+| [`conformance-campaign-postgres-15.json`](conformance-campaign-postgres-15.json) | Conformance | Every accepted M0-M4 ledger row, the scenarios assigned to it, and the outcome each one reported, on PostgreSQL 15 |
+| [`conformance-campaign-postgres-18.json`](conformance-campaign-postgres-18.json) | Conformance | The same, on PostgreSQL 18 |
+
+A file carries the matrix point in its name because one run produces one
+report: the runner always writes `conformance-campaign.json`, and the two jobs
+that produce it differ only in the database behind the fixture. The point is
+also inside the file, as `environment.matrix`, so a copied report still says
+which run it came from.
 
 ## Document shape
 
 Every report carries the same envelope:
 
 - `environment` — source commit, working-tree cleanliness, `rustc`, profile,
-  and OS/architecture;
+  OS/architecture, and the supported-matrix point. On a pull request the
+  recorded commit is the merge commit the workflow checked out rather than the
+  branch tip;
 - `fixtures` — which declared fixture the run had, so a record produced without
   a database can never be read as one produced with it;
 - the campaign's own body;

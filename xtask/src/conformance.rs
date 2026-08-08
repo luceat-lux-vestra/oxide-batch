@@ -453,8 +453,16 @@ fn environment() -> Value {
     map.insert("os".into(), json!(env::consts::OS));
     map.insert("arch".into(), json!(env::consts::ARCH));
     map.insert("profile".into(), json!("debug"));
+    map.insert("matrix".into(), json!(env::var(MATRIX).ok()));
     Value::Object(map)
 }
+
+/// The supported-matrix point this run covers.
+///
+/// The runner cannot see the database version through the fixture, which is a
+/// connection string it never opens. Without this, two reports from two
+/// matrix points are byte-identical and neither says which one it is.
+const MATRIX: &str = "OXIDEBATCH_CAMPAIGN_MATRIX";
 
 /// Runs one environment-describing command, tolerating an absent tool.
 fn command(program: &str, args: &[&str]) -> Option<String> {
