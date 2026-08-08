@@ -25,17 +25,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
-/// Directory used when no explicit campaign directory is configured.
-///
-/// Retained evidence is written only when `OXIDEBATCH_CAMPAIGN_DIR` names a
-/// destination, so an ordinary run never rewrites a committed record.
-const DEFAULT_DIRECTORY: &str = "target/m5-campaigns";
+use crate::suite::{self, TargetCommand};
 
 /// The report this campaign retains.
 const REPORT: &str = "conformance-campaign.json";
@@ -59,7 +54,7 @@ pub struct Campaign {
 /// result at all, such as an unreadable scope document or a suite that could
 /// not be built.
 pub fn run() -> Result<Campaign, String> {
-    let root = workspace_root()?;
+    let root = suite::workspace_root()?;
     let scope = Scope::read(&root)?;
 
     let mut violations = Vec::new();
@@ -115,7 +110,7 @@ fn resolve_fixtures(scope: &Scope, violations: &mut Vec<String>) -> BTreeMap<Str
 /// because a build is not needed to know what exists and building the whole
 /// workspace only to rebuild it per package wastes the larger part of the run.
 fn suite_targets() -> Result<Vec<Target>, String> {
-    let metadata = metadata()?;
+    let metadata = suite::metadata()?;
     let packages = metadata
         .get("packages")
         .and_then(Value::as_array)
@@ -190,55 +185,25 @@ fn run_suite(root: &Path, targets: &[Target]) -> Result<Suite, String> {
     for target in targets {
         eprintln!("==> {} {}", target.package, target.name);
 
-        let mut command = Command::new("cargo");
-        command
-            .current_dir(root)
-            .args(["test", "--package", &target.package, "--all-features"])
-            .args(&target.selector)
-            .args(["--", "--test-threads", "1"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
+        let run = suite::run_target(
+            root,
+            &TargetCommand {
+                package: &target.package,
+                selector: &target.selector,
+                filters: &[],
+                environment: &[],
+                nocapture: false,
+            },
+        )?;
 
-        let mut child = command
-            .spawn()
-            .map_err(|error| format!("could not run {}: {error}", target.name))?;
-
-        let reader = child
-            .stdout
-            .take()
-            .ok_or_else(|| format!("{} produced no output", target.name))?;
-        let mut running: Option<String> = None;
-        for line in BufReader::new(reader).lines() {
-            let line = line.map_err(|error| format!("could not read {}: {error}", target.name))?;
-            eprintln!("{line}");
-
-            let (name, outcome) = match observe(&line) {
-                Some(Observation::Started(name)) => {
-                    running = Some(name);
-                    continue;
-                }
-                Some(Observation::Finished(name, outcome)) => {
-                    running = None;
-                    (name, outcome)
-                }
-                Some(Observation::Outcome(outcome)) => match running.take() {
-                    Some(name) => (name, outcome),
-                    None => continue,
-                },
-                None => continue,
-            };
-
+        for (name, outcome) in run.results {
             suite
                 .results
                 .insert((target.package.clone(), target.name.clone(), name), outcome);
         }
-
-        let status = child
-            .wait()
-            .map_err(|error| format!("could not wait for {}: {error}", target.name))?;
-        if !status.success() {
+        if !run.succeeded {
             suite.failed_targets.push(format!(
-                "{} {} exited with {status}",
+                "{} {} exited unsuccessfully",
                 target.package, target.name
             ));
         }
@@ -270,52 +235,6 @@ fn run_documentation_tests(root: &Path) -> Result<bool, String> {
         .map_err(|error| format!("could not run the documentation tests: {error}"))?;
 
     Ok(status.success())
-}
-
-/// The outcomes libtest reports for one test.
-const OUTCOMES: &[&str] = &["ok", "FAILED", "ignored"];
-
-/// What one line of a test target's output says about a test.
-enum Observation {
-    /// A test started and its outcome has not been printed yet.
-    Started(String),
-    /// A test started and finished on the same line.
-    Finished(String, String),
-    /// The outcome of the test that is still running.
-    Outcome(String),
-}
-
-/// Reads one line of a test target's output.
-///
-/// libtest writes `test <name> ... ` before the test runs and its outcome
-/// after, on one line, so ordinarily the two arrive together. They do not when
-/// the test spawns a child that writes to the same descriptor: the
-/// crash-recovery scenarios re-execute their own binary, and the child's
-/// libtest header lands between the prefix and the outcome. Reading the two
-/// halves separately is what makes those results attributable rather than
-/// missing.
-fn observe(line: &str) -> Option<Observation> {
-    if let Some(rest) = line.strip_prefix("test ") {
-        if let Some((name, outcome)) = rest.rsplit_once(" ... ") {
-            if name.contains(' ') {
-                return None;
-            }
-            let name = name.to_owned();
-            return match outcome.split_whitespace().next() {
-                None => Some(Observation::Started(name)),
-                Some(outcome) if OUTCOMES.contains(&outcome) => {
-                    Some(Observation::Finished(name, outcome.to_lowercase()))
-                }
-                Some(_) => None,
-            };
-        }
-        return None;
-    }
-
-    let trimmed = line.trim();
-    OUTCOMES
-        .contains(&trimmed)
-        .then(|| Observation::Outcome(trimmed.to_lowercase()))
 }
 
 /// Reports every accepted scenario the suite did not prove.
@@ -354,7 +273,7 @@ fn write_report(
     suite: &Suite,
     violations: &[String],
 ) -> Result<PathBuf, String> {
-    let directory = directory(root);
+    let directory = suite::directory(root);
     fs::create_dir_all(&directory)
         .map_err(|error| format!("could not create {}: {error}", directory.display()))?;
     let path = directory.join(REPORT);
@@ -393,7 +312,7 @@ fn write_report(
         "report": "conformance",
         "campaign": "full embedded conformance on the accepted M0-M4 scope",
         "scenario": "full_embedded_conformance_suite_passes_on_the_accepted_scope",
-        "environment": environment(),
+        "environment": suite::environment(),
         "fixtures": fixtures,
         "suite": {
             "targets": suite.targets,
@@ -425,52 +344,6 @@ fn write_report(
     .map_err(|error| format!("could not write {}: {error}", path.display()))?;
 
     Ok(path)
-}
-
-/// Resolves the report directory against the workspace root.
-fn directory(root: &Path) -> PathBuf {
-    let configured =
-        env::var("OXIDEBATCH_CAMPAIGN_DIR").unwrap_or_else(|_| DEFAULT_DIRECTORY.to_owned());
-    let configured = PathBuf::from(configured);
-    if configured.is_absolute() {
-        return configured;
-    }
-    root.join(configured)
-}
-
-/// Records the environment the campaign result depends on.
-fn environment() -> Value {
-    let mut map = Map::new();
-    map.insert(
-        "source_commit".into(),
-        json!(command("git", &["rev-parse", "HEAD"])),
-    );
-    map.insert(
-        "source_tree_clean".into(),
-        json!(command("git", &["status", "--porcelain"]).map(|status| status.is_empty())),
-    );
-    map.insert("rustc".into(), json!(command("rustc", &["--version"])));
-    map.insert("os".into(), json!(env::consts::OS));
-    map.insert("arch".into(), json!(env::consts::ARCH));
-    map.insert("profile".into(), json!("debug"));
-    map.insert("matrix".into(), json!(env::var(MATRIX).ok()));
-    Value::Object(map)
-}
-
-/// The supported-matrix point this run covers.
-///
-/// The runner cannot see the database version through the fixture, which is a
-/// connection string it never opens. Without this, two reports from two
-/// matrix points are byte-identical and neither says which one it is.
-const MATRIX: &str = "OXIDEBATCH_CAMPAIGN_MATRIX";
-
-/// Runs one environment-describing command, tolerating an absent tool.
-fn command(program: &str, args: &[&str]) -> Option<String> {
-    let output = Command::new(program).args(args).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 /// One test target the suite runs.
@@ -553,7 +426,7 @@ impl Scope {
             .and_then(Value::as_array)
             .ok_or_else(|| "the scope document declares no rows".to_owned())?
         {
-            let id = string(row, "id")?;
+            let id = suite::string(row, "id")?;
             let mut scenarios = Vec::new();
             for scenario in row
                 .get("scenarios")
@@ -561,151 +434,16 @@ impl Scope {
                 .ok_or_else(|| format!("{id} declares no scenario"))?
             {
                 scenarios.push(Scenario {
-                    package: string(scenario, "package")?,
-                    target: string(scenario, "target")?,
-                    name: string(scenario, "name")?,
-                    class: string(scenario, "class")?,
-                    fixture: string(scenario, "fixture")?,
+                    package: suite::string(scenario, "package")?,
+                    target: suite::string(scenario, "target")?,
+                    name: suite::string(scenario, "name")?,
+                    class: suite::string(scenario, "class")?,
+                    fixture: suite::string(scenario, "fixture")?,
                 });
             }
             rows.insert(id, scenarios);
         }
 
         Ok(Self { rows, fixtures })
-    }
-}
-
-/// Reads one required string field.
-fn string(value: &Value, name: &str) -> Result<String, String> {
-    value
-        .get(name)
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .ok_or_else(|| format!("a scope entry has no {name}"))
-}
-
-/// Returns the workspace root.
-fn workspace_root() -> Result<PathBuf, String> {
-    let metadata = metadata()?;
-    metadata
-        .get("workspace_root")
-        .and_then(Value::as_str)
-        .map(PathBuf::from)
-        .ok_or_else(|| "cargo metadata returned no workspace root".to_owned())
-}
-
-/// Reads the workspace metadata.
-fn metadata() -> Result<Value, String> {
-    let output = Command::new("cargo")
-        .args(["metadata", "--format-version", "1", "--no-deps"])
-        .output()
-        .map_err(|error| format!("could not run cargo metadata: {error}"))?;
-
-    if !output.status.success() {
-        return Err(format!(
-            "cargo metadata failed with {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-
-    serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("could not parse cargo metadata: {error}"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Observation, observe};
-
-    /// Replays one target's output and returns what the runner recorded.
-    fn record(lines: &[&str]) -> Vec<(String, String)> {
-        let mut results = Vec::new();
-        let mut running: Option<String> = None;
-
-        for line in lines {
-            match observe(line) {
-                Some(Observation::Started(name)) => running = Some(name),
-                Some(Observation::Finished(name, outcome)) => {
-                    running = None;
-                    results.push((name, outcome));
-                }
-                Some(Observation::Outcome(outcome)) => {
-                    if let Some(name) = running.take() {
-                        results.push((name, outcome));
-                    }
-                }
-                None => {}
-            }
-        }
-
-        results
-    }
-
-    #[test]
-    fn an_ordinary_result_is_read_from_one_line() {
-        assert_eq!(
-            record(&[
-                "running 2 tests",
-                "test cases::restart_creates_new_execution ... ok",
-                "test a_skipped_case ... ignored",
-                "test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out",
-            ]),
-            vec![
-                (
-                    "cases::restart_creates_new_execution".to_owned(),
-                    "ok".to_owned()
-                ),
-                ("a_skipped_case".to_owned(), "ignored".to_owned()),
-            ],
-        );
-    }
-
-    #[test]
-    fn a_result_split_by_a_child_process_is_still_attributed() {
-        assert_eq!(
-            record(&[
-                "running 3 tests",
-                "test crash_after_commit_does_not_replay_chunk ... ",
-                "",
-                "running 1 test",
-                "ok",
-                "test crash_worker_process ... ok",
-            ]),
-            vec![
-                (
-                    "crash_after_commit_does_not_replay_chunk".to_owned(),
-                    "ok".to_owned()
-                ),
-                ("crash_worker_process".to_owned(), "ok".to_owned()),
-            ],
-        );
-    }
-
-    #[test]
-    fn a_failure_split_by_a_child_process_is_not_read_as_a_pass() {
-        assert_eq!(
-            record(&[
-                "test crash_before_commit_replays_chunk ... ",
-                "running 1 test",
-                "FAILED",
-            ]),
-            vec![(
-                "crash_before_commit_replays_chunk".to_owned(),
-                "failed".to_owned()
-            )],
-        );
-    }
-
-    #[test]
-    fn program_output_is_never_read_as_a_result() {
-        assert!(
-            record(&[
-                "test the operator command with two words ... ok",
-                "test something ... maybe",
-                "ok",
-                "testing the connection",
-            ])
-            .is_empty()
-        );
     }
 }

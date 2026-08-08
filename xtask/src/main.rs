@@ -1,7 +1,9 @@
 //! Repository development tasks.
 
 mod conformance;
+mod crash_restore;
 mod deps;
+mod suite;
 mod surface;
 
 use std::env;
@@ -100,6 +102,7 @@ fn main() -> ExitCode {
     let succeeded = match args.next().as_deref() {
         Some("check") => run_all(QUALITY) && run_dependency_check() && run_surface_check(),
         Some("conformance") => run_conformance_campaign(),
+        Some("crash-restore") => run_crash_restore_campaign(),
         Some("deps") => run_dependency_check(),
         Some("doctor") => run_all(DOCTOR),
         Some("package") => run_all(PACKAGE),
@@ -175,6 +178,36 @@ fn run_conformance_campaign() -> bool {
     }
 }
 
+/// Reports whether the crash and restore campaign observed what it requires.
+fn run_crash_restore_campaign() -> bool {
+    eprintln!("==> crash and restore campaign");
+
+    match crash_restore::run() {
+        Ok(campaign) => {
+            eprintln!("campaign report: {}", campaign.report.display());
+            if campaign.violations.is_empty() {
+                eprintln!(
+                    "every commit phase killed a live process and recovered without a forged \
+                     status, and every reused scenario still passes"
+                );
+                return true;
+            }
+            for violation in &campaign.violations {
+                eprintln!("campaign gap: {violation}");
+            }
+            eprintln!(
+                "see the campaign scope in \
+                 tests/fixtures/crash-restore/campaign-scope.json"
+            );
+            false
+        }
+        Err(error) => {
+            eprintln!("could not run the crash and restore campaign: {error}");
+            false
+        }
+    }
+}
+
 /// Reports whether the rendered facade surface discloses only what the
 /// facade review accepted.
 fn run_surface_check() -> bool {
@@ -245,11 +278,12 @@ fn usage() {
     eprintln!(
         "usage: cargo xtask <command>\n\n\
          commands:\n\
-           check        run formatting, Clippy, tests, rustdoc, and boundaries\n\
-           conformance  run the full suite over the accepted M0-M4 scope\n\
-           deps         check extraction boundaries and workspace cycles\n\
-           doctor   show required local tool versions\n\
-           package  inspect and dry-run every publishable crate\n\
-           surface  inspect the rendered facade for disclosed dependencies"
+           check          run formatting, Clippy, tests, rustdoc, and boundaries\n\
+           conformance    run the full suite over the accepted M0-M4 scope\n\
+           crash-restore  run the crash, restart, and logical restore campaign\n\
+           deps           check extraction boundaries and workspace cycles\n\
+           doctor         show required local tool versions\n\
+           package        inspect and dry-run every publishable crate\n\
+           surface        inspect the rendered facade for disclosed dependencies"
     );
 }
