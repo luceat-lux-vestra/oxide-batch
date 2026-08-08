@@ -52,9 +52,18 @@ impl CountingAllocator {
     }
 }
 
-// SAFETY: every method forwards to the system allocator with the same pointer
-// and layout it received, and the counters are plain atomics that never
-// allocate or reenter.
+// SAFETY: every method forwards allocation and deallocation to the system
+// allocator with the same pointer and layout it received, and returns what
+// that allocator returned; the bookkeeping reads only the requested size.
+//
+// The bookkeeping is three const-initialized thread-local `Cell`s holding a
+// `bool` and two `u64`s. Reading and writing them performs no heap allocation,
+// so recording an allocation cannot reenter this allocator. Const
+// initialization means access needs no lazy setup that would allocate, and
+// neither `Cell<bool>` nor `Cell<u64>` has a destructor, so thread teardown
+// registers and runs nothing here. The gate still reads through `try_with`, so
+// an access that did find the state unavailable would skip counting rather
+// than panic.
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         Self::record(layout.size());

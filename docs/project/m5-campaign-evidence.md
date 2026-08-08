@@ -47,7 +47,7 @@ The assignment is committed as
 [`tests/fixtures/conformance/accepted-scope.json`](../../tests/fixtures/conformance/accepted-scope.json).
 Each row lists one or more scenarios, and each scenario records the package,
 the test target, the test path libtest reports, the ledger evidence class it
-contributes, and the fixture it needs. `132` scenario assignments cover the
+contributes, and the fixture it needs. `133` scenario assignments cover the
 `42` rows.
 
 The document is data rather than prose for one reason: two consumers need the
@@ -132,8 +132,25 @@ from those jobs.
 
 ### Results
 
-The retained reports are
-[`conformance-campaign.json`](../engineering/campaigns/m5/conformance-campaign.json).
+Both matrix points pass. Each run executed `66` test targets and `473` tests,
+every one reporting `ok`, with the workspace documentation tests passing and
+all three fixtures present. All `42` accepted rows are proved.
+
+| Report | Matrix | Targets | Tests | Outcomes | Result |
+| --- | --- | --- | --- | --- | --- |
+| [`conformance-campaign-postgres-15.json`](../engineering/campaigns/m5/conformance-campaign-postgres-15.json) | PostgreSQL 15 | 66 | 473 | 473 `ok` | Passed |
+| [`conformance-campaign-postgres-18.json`](../engineering/campaigns/m5/conformance-campaign-postgres-18.json) | PostgreSQL 18 | 66 | 473 | 473 `ok` | Passed |
+
+Both were produced by commit `0f41aad`, which is the merge commit the workflow
+checked out rather than a branch tip.
+
+The `133` scenario assignments break down by ledger evidence class as `42`
+conformance, `53` unit, `20` integration, `9` crash, `5` performance, and `4`
+migration. Every row has at least one conformance-class scenario, which the
+in-process reconciliation requires.
+
+No correctness P0 or P1 is open against this campaign. The two findings below
+are recorded and both are closed.
 
 ### What this campaign does not establish
 
