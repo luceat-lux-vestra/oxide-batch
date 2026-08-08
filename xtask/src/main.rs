@@ -1,6 +1,7 @@
 //! Repository development tasks.
 
 mod deps;
+mod surface;
 
 use std::env;
 use std::ffi::OsStr;
@@ -96,10 +97,11 @@ fn main() -> ExitCode {
     let _program = args.next();
 
     let succeeded = match args.next().as_deref() {
-        Some("check") => run_all(QUALITY) && run_dependency_check(),
+        Some("check") => run_all(QUALITY) && run_dependency_check() && run_surface_check(),
         Some("deps") => run_dependency_check(),
         Some("doctor") => run_all(DOCTOR),
         Some("package") => run_all(PACKAGE),
+        Some("surface") => run_surface_check(),
         Some(command) => {
             eprintln!("unknown xtask command: {command}");
             usage();
@@ -139,6 +141,37 @@ fn run_dependency_check() -> bool {
         }
         Err(error) => {
             eprintln!("could not check workspace boundaries: {error}");
+            false
+        }
+    }
+}
+
+/// Reports whether the rendered facade surface discloses only what the
+/// facade review accepted.
+fn run_surface_check() -> bool {
+    eprintln!("==> facade surface disclosure");
+
+    for finding in surface::accepted() {
+        eprintln!("accepted finding: {finding}");
+    }
+
+    match surface::check() {
+        Ok(violations) if violations.is_empty() => {
+            eprintln!("facade surface discloses nothing further");
+            true
+        }
+        Ok(violations) => {
+            for violation in &violations {
+                eprintln!("disclosure: {violation}");
+            }
+            eprintln!(
+                "see the M5 preview surface and disclosure gate in \
+                 docs/api/design-guidelines.md"
+            );
+            false
+        }
+        Err(error) => {
+            eprintln!("could not inspect the facade surface: {error}");
             false
         }
     }
@@ -186,6 +219,7 @@ fn usage() {
            check    run formatting, Clippy, tests, rustdoc, and boundaries\n\
            deps     check extraction boundaries and workspace cycles\n\
            doctor   show required local tool versions\n\
-           package  inspect and dry-run every publishable crate"
+           package  inspect and dry-run every publishable crate\n\
+           surface  inspect the rendered facade for disclosed dependencies"
     );
 }

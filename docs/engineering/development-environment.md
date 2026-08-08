@@ -33,15 +33,19 @@ remain thin adapters and must support the stated platform matrix.
 | --- | --- |
 | `cargo xtask doctor` | Verify toolchain, container runtime, ports, and tools |
 | `cargo xtask check` | Run the required fast local quality suite |
+| `cargo xtask deps` | Check extraction boundaries and workspace cycles |
+| `cargo xtask surface` | Inspect the rendered facade for disclosed dependencies |
 | `cargo xtask test integration` | Start isolated PostgreSQL and run contracts |
 | `cargo xtask test conformance` | Run compatibility scenarios |
 | `cargo xtask test crash` | Run subprocess failure-injection scenarios |
 | `cargo xtask docs` | Build rustdoc and validate documentation links/examples |
 | `cargo xtask package` | Verify publish content without publishing |
 
-`doctor`, `check`, and `package` are available now. Integration, conformance,
-crash, and documentation-specific commands are added with their corresponding
-test infrastructure.
+`doctor`, `check`, `deps`, `surface`, and `package` are available now.
+Integration, conformance, crash, and documentation-specific commands are added
+with their corresponding test infrastructure. `surface` documents every
+dependency before it inspects the rendered surface, so a cold run costs a few
+minutes; `check` includes it.
 
 ## Environment and secrets
 

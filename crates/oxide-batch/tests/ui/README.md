@@ -12,3 +12,9 @@ The M2 facade boundary fixtures reject executor (`tokio`), database-driver
 (`sqlx`), and serializer (`serde_json`) re-exports. This complements signature
 review of the facade-owned boxed future, business transaction, and durable-state
 codec contracts.
+
+The M5 facade review added the telemetry-SDK fixture, which rejects
+`opentelemetry` and `tracing-subscriber` re-exports. Each fixture covers one
+prohibited disclosure class from the M5 preview surface gate in
+`docs/api/design-guidelines.md`. A re-export is only one way to disclose a
+class, so `cargo xtask surface` inspects the rendered surface for the rest.

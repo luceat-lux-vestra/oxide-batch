@@ -261,35 +261,52 @@ impl ChunkComponentRevisions {
         self.restart.in_flight_policy
     }
 
-    /// Projects the restart-relevant chunk declaration into manifest members.
+    /// Borrows the revision of the component that reads items.
     #[must_use]
-    pub fn manifest_value(&self) -> serde_json::Value {
-        let mut value = json!({
-            "checkpoint": {
-                "schema": self.restart.checkpoint_schema.as_str(),
-                "version": self.restart.checkpoint_schema_version.get()
-            },
-            "components": {
-                "checkpoint": self.checkpoint.as_str(),
-                "processor": self.processor.as_str(),
-                "reader": self.reader.as_str(),
-                "writer": self.writer.as_str()
-            },
-            "context": {
-                "schema": self.restart.context_schema.as_str(),
-                "version": self.restart.context_schema_version.get()
-            },
-            "delivery_mode": self.restart.delivery_mode.manifest_name()
-        });
-        if self.restart.in_flight_policy == InFlightPolicy::RollbackChunk
-            && let Some(object) = value.as_object_mut()
-        {
-            object.insert(
-                "in_flight_policy".to_owned(),
-                serde_json::Value::String("rollback_chunk".to_owned()),
-            );
-        }
-        value
+    pub const fn reader(&self) -> &ComponentRevision {
+        &self.reader
+    }
+
+    /// Borrows the revision of the component that processes items.
+    #[must_use]
+    pub const fn processor(&self) -> &ComponentRevision {
+        &self.processor
+    }
+
+    /// Borrows the revision of the component that writes items.
+    #[must_use]
+    pub const fn writer(&self) -> &ComponentRevision {
+        &self.writer
+    }
+
+    /// Borrows the revision of the component that produces checkpoints.
+    #[must_use]
+    pub const fn checkpoint(&self) -> &ComponentRevision {
+        &self.checkpoint
+    }
+
+    /// Borrows the declared checkpoint schema.
+    #[must_use]
+    pub const fn checkpoint_schema(&self) -> &StateSchemaId {
+        &self.restart.checkpoint_schema
+    }
+
+    /// Returns the declared checkpoint schema version.
+    #[must_use]
+    pub const fn checkpoint_schema_version(&self) -> StateSchemaVersion {
+        self.restart.checkpoint_schema_version
+    }
+
+    /// Borrows the declared execution-context schema.
+    #[must_use]
+    pub const fn context_schema(&self) -> &StateSchemaId {
+        &self.restart.context_schema
+    }
+
+    /// Returns the declared execution-context schema version.
+    #[must_use]
+    pub const fn context_schema_version(&self) -> StateSchemaVersion {
+        self.restart.context_schema_version
     }
 }
 
@@ -315,7 +332,12 @@ pub enum ChunkDeliveryMode {
 }
 
 impl ChunkDeliveryMode {
-    const fn manifest_name(self) -> &'static str {
+    /// Returns the stable name this mode is recorded under in a manifest.
+    ///
+    /// The name is durable: it is hashed into a definition fingerprint, so it
+    /// is fixed for the life of the mode rather than a display string.
+    #[must_use]
+    pub const fn manifest_name(self) -> &'static str {
         match self {
             Self::AtomicSameResource => "atomic_same_resource",
             Self::AtLeastOnce => "at_least_once",
@@ -463,40 +485,54 @@ impl DefinitionIdentity {
 
     /// Builds the canonical identity for a compiled flow graph.
     ///
-    /// The supplied value must already be the manifest the plan compiler
-    /// normalized; this constructor only encodes, bounds, and hashes it.
+    /// The bytes must already be the canonical manifest the plan compiler
+    /// normalized and encoded; this constructor validates, bounds, and hashes
+    /// them. Taking bytes rather than a parsed document keeps the serializer
+    /// out of this contract and makes the encoding the caller is responsible
+    /// for explicit rather than implied.
     ///
     /// # Errors
     ///
-    /// Returns [`DefinitionError::ManifestEncoding`] when the value is not a
-    /// supported canonical manifest or exceeds the bounded encoding.
+    /// Returns [`DefinitionError::ManifestEncoding`] when the bytes exceed the
+    /// bounded encoding, are not a canonical JSON object, or do not declare a
+    /// supported flow manifest format.
     pub fn from_flow_manifest(
         job_name: &JobName,
         revision: DefinitionRevision,
-        manifest: &serde_json::Value,
+        canonical: &[u8],
     ) -> Result<Self, DefinitionError> {
-        let format = manifest
+        if canonical.len() > MAX_MANIFEST_BYTES {
+            return Err(DefinitionError::ManifestTooLarge {
+                max_bytes: MAX_MANIFEST_BYTES,
+            });
+        }
+        let document: serde_json::Value =
+            serde_json::from_slice(canonical).map_err(|_| DefinitionError::ManifestEncoding)?;
+        let reencoded =
+            serde_json::to_vec(&document).map_err(|_| DefinitionError::ManifestEncoding)?;
+        if !document.is_object() || reencoded != canonical {
+            return Err(DefinitionError::ManifestEncoding);
+        }
+        let format = document
             .get("format")
             .and_then(serde_json::Value::as_u64)
             .and_then(|value| u16::try_from(value).ok())
             .filter(|value| matches!(*value, MANIFEST_FORMAT_FLOW | MANIFEST_FORMAT_LOCAL_SCALE))
             .ok_or(DefinitionError::ManifestEncoding)?;
-        Self::encode_as(job_name.clone(), revision, manifest, format)
+
+        Ok(Self::from_canonical(
+            Some(job_name.clone()),
+            revision,
+            canonical.to_vec(),
+            format,
+        ))
     }
 
+    /// Encodes a one-step manifest this crate composed itself.
     fn encode(
         job_name: JobName,
         revision: DefinitionRevision,
         manifest: &serde_json::Value,
-    ) -> Result<Self, DefinitionError> {
-        Self::encode_as(job_name, revision, manifest, MANIFEST_FORMAT_ONE_STEP)
-    }
-
-    fn encode_as(
-        job_name: JobName,
-        revision: DefinitionRevision,
-        manifest: &serde_json::Value,
-        format: u16,
     ) -> Result<Self, DefinitionError> {
         let canonical =
             serde_json::to_vec(manifest).map_err(|_| DefinitionError::ManifestEncoding)?;
@@ -509,7 +545,7 @@ impl DefinitionIdentity {
             Some(job_name),
             revision,
             canonical,
-            format,
+            MANIFEST_FORMAT_ONE_STEP,
         ))
     }
 

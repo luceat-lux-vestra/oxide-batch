@@ -1,0 +1,11 @@
+error[E0433]: cannot find `opentelemetry` in `oxide_batch`
+ --> tests/ui/telemetry_type_leakage.rs:3:18
+  |
+3 | use oxide_batch::opentelemetry::metrics::Meter;
+  |                  ^^^^^^^^^^^^^ could not find `opentelemetry` in `oxide_batch`
+
+error[E0432]: unresolved import `oxide_batch::tracing_subscriber`
+ --> tests/ui/telemetry_type_leakage.rs:4:18
+  |
+4 | use oxide_batch::tracing_subscriber::Registry;
+  |                  ^^^^^^^^^^^^^^^^^^ could not find `tracing_subscriber` in `oxide_batch`

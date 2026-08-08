@@ -133,7 +133,14 @@ the current surface would block is a finding, not a note.
 **Review evidence.** The review runs the compatibility checklist below, plus a
 rustdoc leakage inspection over the complete public surface, the public API
 snapshot, and compile-fail tests for each prohibited disclosure class that can
-be expressed as a type error.
+be expressed as a type error. The leakage inspection is `cargo xtask surface`,
+and the review it produced is recorded in the
+[M5 facade and API review evidence](../project/m5-facade-api-review-evidence.md).
+
+**Exceptions.** The inspection carries a list of disclosures it accepts. That
+list records where an approved exception already applies and names the ADR that
+approved it; it is not itself a way to approve one. A disclosure with no
+accepted ADR is removed rather than listed.
 
 ## Compatibility review
 

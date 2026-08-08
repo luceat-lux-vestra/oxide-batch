@@ -13,6 +13,7 @@ expensive and probabilistic checks run on a schedule or release candidate.
 | Clippy, all targets/features | Static correctness and repository lint policy | Now |
 | Unit and documentation tests | Behavior and examples | Now |
 | Rustdoc warnings denied | Public documentation integrity | Now |
+| Facade surface disclosure | No forbidden dependency class in the rendered public surface | Now |
 | Dependency review | New vulnerability/license risk | Now |
 | MSRV build/test | Enforce declared Rust support | Before M1 |
 | Dependency/license/source policy | RustSec, license, bans, source control | Before M1 |

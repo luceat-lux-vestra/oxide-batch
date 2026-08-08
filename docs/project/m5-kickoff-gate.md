@@ -173,7 +173,14 @@ extension point is added merely to reserve later scope.
    durable format moved, so no new migration is owed; the schema upgrade and
    restore campaign stays with issue #102.
 5. Facade and public-API review records the preview surface, its disclosure
-   rules, and its M6-M12 compatibility argument.
+   rules, and its M6-M12 compatibility argument. Delivered by issue
+   [#101](https://github.com/luceat-lux-vestra/oxide-batch/issues/101) and
+   recorded in the
+   [facade and API review evidence](m5-facade-api-review-evidence.md). The
+   surface holds every prohibited disclosure class and blocks no M6-M12
+   boundary. The review found one violation of the wider public-boundary rule
+   and removed it, and recorded one M8 extension finding as issue
+   [#114](https://github.com/luceat-lux-vestra/oxide-batch/issues/114).
 6. The evidence campaigns run full embedded conformance and the PostgreSQL
    crash, restore, upgrade, security, performance, soak, and resource-bound
    matrices, plus the reference workload.

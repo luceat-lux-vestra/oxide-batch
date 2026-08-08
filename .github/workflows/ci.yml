@@ -62,6 +62,9 @@ jobs:
       - name: Check extraction boundaries and workspace cycles
         run: cargo run --package oxide-batch-xtask -- deps
 
+      - name: Inspect the facade surface for disclosed dependencies
+        run: cargo run --package oxide-batch-xtask -- surface
+
   packaging:
     name: packaging
     runs-on: ubuntu-latest
