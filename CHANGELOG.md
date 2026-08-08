@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `cargo xtask crash-restore`, the M5 crash and restore campaign. It kills a
+  live process with `SIGKILL` at every phase of the chunk commit protocol,
+  reports P-013 restart after many chunks, and takes a real `pg_dump` archive
+  that it restores into a separate database and restarts the job on. Two of the
+  five commit phases are inside the adapter, where no application hook exists;
+  they are reached without changing the adapter by holding the lock the commit
+  is about to need, so the progress write blocks before it can commit and
+  `COMMIT` blocks while the server finishes it after the process is gone. Every
+  report requires the restarted run to be indistinguishable from an
+  uninterrupted one, compared as the committed position, the durable counters,
+  the exact set of enlisted rows, and the terminal statuses. The runner
+  resolves its fixtures before starting, requires each report to retain an
+  observation into a directory it creates empty, and fails on a phase that did
+  not end in `SIGKILL`. It also runs the eleven M2-M4 crash scenarios it
+  reuses, rather than citing them. CI runs it on PostgreSQL 15 and 18 and
+  retains each report.
 - `cargo xtask conformance`, the M5 conformance campaign. It runs the whole
   workspace suite one target at a time, attributes every result to the target
   that produced it, and requires each of the 42 accepted M0-M4 ledger rows to
@@ -591,6 +607,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Evidence-bound recovery discovery works against PostgreSQL. The recovery
+  snapshot read the `attempt` column, which is an `integer`, as an `i64`, so
+  every proposal failed with a redacted `Unavailable` before it observed
+  anything, and the operator CLI's recovery workflow could not produce a
+  proposal on the only supported database. No PostgreSQL test reached that
+  port; the proposer's coverage ran against the in-memory explorer. The column
+  is now read the way the execution projection already reads it, and the crash
+  and restore campaign exercises it on both matrix points.
 - The definition fingerprint no longer depends on the framework build or on
   resource tuning. Manifest formats 2 and 3 hashed the framework's own capacity
   constants, so raising one in a later release would have turned every persisted
