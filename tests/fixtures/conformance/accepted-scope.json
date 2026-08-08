@@ -1,0 +1,1212 @@
+{
+  "scope": "M0-M4 embedded kernel, as the M5 design gate dispositioned it",
+  "ledger": "docs/compatibility/conformance-matrix.md",
+  "gate": "docs/project/m5-design-gate-evidence.md",
+  "statuses": [
+    "Implemented",
+    "Partial"
+  ],
+  "classes": {
+    "unit": "U",
+    "integration": "I",
+    "conformance": "C",
+    "crash": "Cr",
+    "migration": "M",
+    "performance": "P"
+  },
+  "fixtures": {
+    "none": [],
+    "postgres": [
+      "OXIDEBATCH_POSTGRES_TEST_URL"
+    ],
+    "postgres-migrator": [
+      "OXIDEBATCH_POSTGRES_TEST_URL",
+      "OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL"
+    ]
+  },
+  "rows": [
+    {
+      "id": "DOM-JOB-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "repository",
+          "name": "first_launch_creates_execution_graph",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "plan",
+          "name": "sequential_edges_continue_on_success_and_terminate_on_failure",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_repository",
+          "name": "shared_repository_contract_passes_on_postgres",
+          "class": "integration",
+          "fixture": "postgres"
+        }
+      ]
+    },
+    {
+      "id": "DOM-INSTANCE-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "domain",
+          "name": "job_instance_same_identifying_parameters",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "domain",
+          "name": "non_identifying_parameters_do_not_change_instance_identity",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_repository",
+          "name": "concurrent_launch_creates_single_instance",
+          "class": "integration",
+          "fixture": "postgres"
+        }
+      ]
+    },
+    {
+      "id": "DOM-JOBEXEC-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "lifecycle_conformance",
+          "name": "cases::restart_creates_new_execution",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "repository",
+          "name": "failed_instance_restart_creates_distinct_execution",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "lifecycle_property",
+          "name": "cases::stopped_and_failed_restart_as_fresh_step_and_job_attempts",
+          "class": "unit",
+          "fixture": "none"
+        }
+      ]
+    },
+    {
+      "id": "DOM-STEPEXEC-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "domain",
+          "name": "execution_records_expose_structured_redacted_metadata",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "repository",
+          "name": "job_and_step_exit_status_updates_preserve_lifecycle_status",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "lifecycle_property",
+          "name": "cases::step_restart_rejects_reuse_of_either_attempt_identifier",
+          "class": "unit",
+          "fixture": "none"
+        }
+      ]
+    },
+    {
+      "id": "DOM-PARAM-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "domain",
+          "name": "job_instance_same_identifying_parameters",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "domain",
+          "name": "duplicate_parameters_are_rejected_without_replacement",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "domain",
+          "name": "instance_identity_uses_typed_values_not_redacted_display",
+          "class": "unit",
+          "fixture": "none"
+        }
+      ]
+    },
+    {
+      "id": "DOM-STATUS-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "lifecycle_conformance",
+          "name": "cases::exit_status_does_not_forge_batch_status",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "lifecycle_property",
+          "name": "cases::all_status_pairs_follow_the_accepted_transition_policy",
+          "class": "unit",
+          "fixture": "none"
+        }
+      ]
+    },
+    {
+      "id": "DOM-EXIT-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "lifecycle_conformance",
+          "name": "cases::exit_status_does_not_forge_batch_status",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "plan",
+          "name": "exit_patterns_are_bounded_and_printable",
+          "class": "unit",
+          "fixture": "none"
+        }
+      ]
+    },
+    {
+      "id": "LIFE-LAUNCH-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "repository",
+          "name": "first_launch_creates_execution_graph",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "repository",
+          "name": "rollback_leaves_no_visible_metadata",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_repository",
+          "name": "shared_repository_contract_passes_on_postgres",
+          "class": "integration",
+          "fixture": "postgres"
+        }
+      ]
+    },
+    {
+      "id": "LIFE-COMPLETE-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "lifecycle_conformance",
+          "name": "cases::completed_instance_rejects_launch",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "repository",
+          "name": "completed_instance_rejects_launch",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "tasklet",
+          "name": "completed_instance_is_rejected_before_user_work_runs",
+          "class": "unit",
+          "fixture": "none"
+        }
+      ]
+    },
+    {
+      "id": "LIFE-RESTART-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "lifecycle_conformance",
+          "name": "cases::direct_restart_transition_requires_a_new_attempt",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "repository",
+          "name": "restart_definition_drift_and_direct_compatibility_are_typed",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_repository",
+          "name": "durable_restart_requires_compatible_definition_and_inherits_checkpoint",
+          "class": "integration",
+          "fixture": "postgres"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_crash_recovery",
+          "name": "crash_after_commit_does_not_replay_chunk",
+          "class": "crash",
+          "fixture": "postgres-migrator"
+        }
+      ]
+    },
+    {
+      "id": "LIFE-STOP-001",
+      "status": "Partial",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "tasklet",
+          "name": "cooperative_stop_during_async_work_is_persisted",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "tasklet",
+          "name": "durable_operator_stop_is_polled_by_the_owning_launcher",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "chunk_runtime",
+          "name": "declared_in_flight_policy_commits_or_rolls_back_the_open_chunk",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "m4_exit_measurements",
+          "name": "p014_cancellation_and_shutdown_latency",
+          "class": "performance",
+          "fixture": "none"
+        }
+      ]
+    },
+    {
+      "id": "LIFE-ABANDON-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "repository",
+          "name": "audited_abandon_makes_an_orphaned_instance_terminal",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "services",
+          "name": "shared_service_contract_passes_in_memory",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_repository",
+          "name": "shared_service_contract_passes_on_postgres",
+          "class": "integration",
+          "fixture": "postgres"
+        }
+      ]
+    },
+    {
+      "id": "LIFE-RECOVER-001",
+      "status": "Partial",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "repository",
+          "name": "explicit_recovery_is_audited_before_restart",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_repository",
+          "name": "unknown_execution_requires_audited_postgres_recovery",
+          "class": "integration",
+          "fixture": "postgres"
+        },
+        {
+          "package": "oxide-batch-cli",
+          "target": "operator_cli",
+          "name": "recovery_proposal_is_visible_and_the_current_digest_guards_apply",
+          "class": "conformance",
+          "fixture": "none"
+        }
+      ]
+    },
+    {
+      "id": "LIFE-DEFINITION-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "plan_fingerprint",
+          "name": "fingerprint_mismatch_without_an_edge_rejects_restart_before_any_write",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "plan_fingerprint",
+          "name": "unchanged_definition_recompiles_to_the_same_fingerprint",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "definition",
+          "name": "directed_upgrade_rejects_incomplete_or_ambiguous_mapping",
+          "class": "migration",
+          "fixture": "none"
+        }
+      ]
+    },
+    {
+      "id": "STEP-TASKLET-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "tasklet",
+          "name": "successful_launch_borrows_context_and_persists_final_graph",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "tasklet",
+          "name": "started_state_is_committed_before_user_work",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "plan_equivalence",
+          "name": "one_step_tasklet_completion_matches_the_wrapper_trace",
+          "class": "unit",
+          "fixture": "none"
+        }
+      ]
+    },
+    {
+      "id": "STEP-TASKLET-PANIC-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "tasklet",
+          "name": "tasklet_panic_is_classified_and_runtime_remains_usable",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "tasklet",
+          "name": "blocking_panic_is_classified_at_the_tasklet_boundary",
+          "class": "unit",
+          "fixture": "none"
+        }
+      ]
+    },
+    {
+      "id": "STEP-CHUNK-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "chunk_runtime",
+          "name": "partial_final_chunk_commits_checked_counts",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "chunk_runtime",
+          "name": "empty_input_completes_without_committed_or_rolled_back_counts",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_repository",
+          "name": "committed_chunk_advances_checkpoint",
+          "class": "integration",
+          "fixture": "postgres"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_crash_recovery",
+          "name": "crash_before_commit_replays_chunk",
+          "class": "crash",
+          "fixture": "postgres-migrator"
+        }
+      ]
+    },
+    {
+      "id": "STEP-STARTLIMIT-001",
+      "status": "Partial",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "flow",
+          "name": "failed_start_consumes_limit",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "flow",
+          "name": "start_limit_is_atomic_per_instance_and_logical_step",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "flow",
+          "name": "allow_start_if_complete_reruns_on_restart_path",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_flow",
+          "name": "postgres_start_controls_survive_restart",
+          "class": "integration",
+          "fixture": "postgres"
+        }
+      ]
+    },
+    {
+      "id": "ITEM-READER-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "chunk_runtime",
+          "name": "reader_failure_preserves_checkpoint",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "harness",
+          "name": "shared_component_contract_covers_typed_outcomes_and_durable_state",
+          "class": "unit",
+          "fixture": "none"
+        }
+      ]
+    },
+    {
+      "id": "ITEM-PROCESSOR-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "chunk_runtime",
+          "name": "processor_failure_rolls_back_chunk",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "harness",
+          "name": "shared_component_contract_covers_typed_outcomes_and_durable_state",
+          "class": "unit",
+          "fixture": "none"
+        }
+      ]
+    },
+    {
+      "id": "ITEM-WRITER-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "chunk_runtime",
+          "name": "writer_failure_rolls_back_open_chunk",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_repository",
+          "name": "writer_failure_rolls_back_business_and_checkpoint",
+          "class": "integration",
+          "fixture": "postgres"
+        }
+      ]
+    },
+    {
+      "id": "ITEM-CHECKPOINT-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "chunk_runtime",
+          "name": "late_completion_failure_cannot_undo_committed_chunk",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_repository",
+          "name": "committed_chunk_advances_checkpoint",
+          "class": "integration",
+          "fixture": "postgres"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_crash_recovery",
+          "name": "crash_after_commit_does_not_replay_chunk",
+          "class": "crash",
+          "fixture": "postgres-migrator"
+        }
+      ]
+    },
+    {
+      "id": "FT-RETRY-001",
+      "status": "Partial",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "chunk_fault_runtime",
+          "name": "retryable_failure_succeeds_within_limit",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "chunk_fault_runtime",
+          "name": "retry_exhaustion_uses_initial_plus_reserved_retries",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_repository",
+          "name": "retry_reservation_is_a_durable_compare_and_swap",
+          "class": "integration",
+          "fixture": "postgres"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_fault_crash_recovery",
+          "name": "retry_reservation_survives_process_restart",
+          "class": "crash",
+          "fixture": "postgres-migrator"
+        }
+      ]
+    },
+    {
+      "id": "FT-BACKOFF-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "chunk_fault_runtime",
+          "name": "backoff_uses_injected_monotonic_time",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "fault_policy",
+          "name": "backoff_schedules_are_monotonic_and_bounded_for_random_ordinals",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "item_listeners",
+          "name": "stop_during_backoff_cancels_the_wait_without_wall_clock_time",
+          "class": "unit",
+          "fixture": "none"
+        }
+      ]
+    },
+    {
+      "id": "FT-SKIP-001",
+      "status": "Partial",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "chunk_fault_runtime",
+          "name": "skip_count_commits_with_chunk",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "chunk_fault_runtime",
+          "name": "accepted_skips_are_committed_as_one_delta",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_repository",
+          "name": "skips_counters_and_fault_state_commit_with_the_chunk",
+          "class": "integration",
+          "fixture": "postgres"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_fault_crash_recovery",
+          "name": "crash_during_skip_callback_replays_before_atomic_skip_commit",
+          "class": "crash",
+          "fixture": "postgres-migrator"
+        }
+      ]
+    },
+    {
+      "id": "FT-ROLLBACK-001",
+      "status": "Partial",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "chunk_fault_runtime",
+          "name": "retry_rolls_back_before_reinvoke",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "fault_policy",
+          "name": "unmatched_and_fail_closed_faults_roll_back",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "chunk_fault_runtime",
+          "name": "unknown_commit_category_is_never_retried_or_skipped",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_repository",
+          "name": "corrupt_fault_state_fails_before_component_work",
+          "class": "integration",
+          "fixture": "postgres"
+        }
+      ]
+    },
+    {
+      "id": "LISTENER-JOBSTEP-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "listeners",
+          "name": "listeners_nest_and_reverse_after_order",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "listeners",
+          "name": "after_listener_failure_retains_original_outcome_and_work",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "listeners",
+          "name": "listener_panic_uses_the_same_redacted_boundary",
+          "class": "unit",
+          "fixture": "none"
+        }
+      ]
+    },
+    {
+      "id": "LISTENER-ITEM-001",
+      "status": "Partial",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "item_listeners",
+          "name": "item_listeners_nest_and_reverse_after_order",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "item_listeners",
+          "name": "every_entered_reverse_callback_runs_so_failures_aggregate",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "chunk_fault_runtime",
+          "name": "item_error_precedes_policy_decision",
+          "class": "unit",
+          "fixture": "none"
+        }
+      ]
+    },
+    {
+      "id": "FLOW-SEQUENCE-001",
+      "status": "Partial",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "flow",
+          "name": "exit_status_selects_most_specific_transition",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "plan",
+          "name": "pattern_matching_agrees_with_an_exhaustive_reference",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_flow",
+          "name": "postgres_flow_persists_custom_exit_mapping",
+          "class": "integration",
+          "fixture": "postgres"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_flow_crash_recovery",
+          "name": "crash_after_step_result_before_decision_reuses_durable_step",
+          "class": "crash",
+          "fixture": "postgres-migrator"
+        }
+      ]
+    },
+    {
+      "id": "FLOW-DECIDER-001",
+      "status": "Partial",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "flow",
+          "name": "decider_result_and_target_commit_together",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "flow",
+          "name": "committed_decider_is_not_reinvoked",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_flow",
+          "name": "decisions_and_completed_step_reuse_survive_postgres_restart",
+          "class": "integration",
+          "fixture": "postgres"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_flow_crash_recovery",
+          "name": "crash_after_decision_commit_reuses_durable_decision",
+          "class": "crash",
+          "fixture": "postgres-migrator"
+        }
+      ]
+    },
+    {
+      "id": "REPO-COMMAND-001",
+      "status": "Partial",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "repository",
+          "name": "repository_rejects_stale_and_illegal_transitions_atomically",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "harness",
+          "name": "shared_repository_contract_runs_against_a_test_adapter",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_repository",
+          "name": "shared_repository_contract_passes_on_postgres",
+          "class": "integration",
+          "fixture": "postgres"
+        }
+      ]
+    },
+    {
+      "id": "REPO-EXPLORE-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "listeners",
+          "name": "inspection_redacts_record_contents",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "services",
+          "name": "shared_service_contract_passes_in_memory",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_repository",
+          "name": "shared_service_contract_passes_on_postgres",
+          "class": "integration",
+          "fixture": "postgres"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "m4_exit_measurements",
+          "name": "p012_explorer_pagination_bounds",
+          "class": "performance",
+          "fixture": "none"
+        }
+      ]
+    },
+    {
+      "id": "REPO-OPERATOR-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "services",
+          "name": "shared_service_contract_passes_in_memory",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "services",
+          "name": "a_duplicate_operation_identifier_replays_rather_than_reporting_a_conflict",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_repository",
+          "name": "shared_service_contract_passes_on_postgres",
+          "class": "integration",
+          "fixture": "postgres"
+        }
+      ]
+    },
+    {
+      "id": "REPO-RETENTION-001",
+      "status": "Partial",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "services",
+          "name": "shared_service_contract_passes_in_memory",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_repository",
+          "name": "shared_service_contract_passes_on_postgres",
+          "class": "integration",
+          "fixture": "postgres"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "m4_exit_measurements",
+          "name": "retention_bounded_batch_throughput",
+          "class": "performance",
+          "fixture": "none"
+        }
+      ]
+    },
+    {
+      "id": "OPS-CLI-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch-cli",
+          "target": "operator_cli",
+          "name": "every_exit_category_is_returned_by_its_named_case",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch-cli",
+          "target": "operator_cli",
+          "name": "destructive_command_without_yes_exits_confirmation_required",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch-cli",
+          "target": "operator_cli",
+          "name": "dry_run_makes_no_durable_change",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch-cli",
+          "target": "operator_cli",
+          "name": "json_output_matches_the_published_schema_and_redaction_rules",
+          "class": "unit",
+          "fixture": "none"
+        }
+      ]
+    },
+    {
+      "id": "OBS-EXEC-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "listeners",
+          "name": "telemetry_correlates_execution",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "telemetry",
+          "name": "m4_events_match_the_published_catalog_and_schema_version",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "telemetry",
+          "name": "operator_and_recovery_events_follow_their_durable_commit",
+          "class": "unit",
+          "fixture": "none"
+        }
+      ]
+    },
+    {
+      "id": "OBS-METRICS-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "telemetry",
+          "name": "metric_labels_stay_within_the_family_cardinality_budget",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "telemetry",
+          "name": "full_exporter_queue_drops_newest_and_counts",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "m4_exit_measurements",
+          "name": "telemetry_export_overhead",
+          "class": "performance",
+          "fixture": "none"
+        }
+      ]
+    },
+    {
+      "id": "SCALE-PARSTEP-001",
+      "status": "Partial",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "local_split_runtime",
+          "name": "parent_joins_every_branch_before_aggregating",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "local_split_runtime",
+          "name": "branch_concurrency_never_exceeds_manifest_bound",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_local_split_crash_recovery",
+          "name": "committed_branch_is_reused_after_process_kill_and_recovery",
+          "class": "crash",
+          "fixture": "postgres-migrator"
+        }
+      ]
+    },
+    {
+      "id": "SCALE-LOCALPART-001",
+      "status": "Partial",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "local_partition_runtime",
+          "name": "concurrency_one_matches_parallel_durable_observations",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "local_partition_runtime",
+          "name": "worker_concurrency_never_exceeds_manifest_bound",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_local_partition_crash_recovery",
+          "name": "committed_partition_is_reused_after_process_kill_and_recovery",
+          "class": "crash",
+          "fixture": "postgres-migrator"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "m4_exit_measurements",
+          "name": "p010_local_partition_scaling",
+          "class": "performance",
+          "fixture": "none"
+        }
+      ]
+    },
+    {
+      "id": "DB-POSTGRES-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "postgres_repository",
+          "name": "disconnect_during_commit_never_guesses_outcome",
+          "class": "conformance",
+          "fixture": "postgres"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_repository",
+          "name": "optimistic_conflict_has_one_winner",
+          "class": "unit",
+          "fixture": "postgres"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_repository",
+          "name": "shared_repository_contract_passes_on_postgres",
+          "class": "integration",
+          "fixture": "postgres"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_repository",
+          "name": "migration_is_idempotent_when_migrator_fixture_is_available",
+          "class": "migration",
+          "fixture": "postgres-migrator"
+        }
+      ]
+    },
+    {
+      "id": "META-UPGRADE-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "postgres_repository",
+          "name": "newer_schema_is_rejected_without_guessing_compatibility",
+          "class": "conformance",
+          "fixture": "postgres"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "postgres_repository",
+          "name": "migration_is_idempotent_when_migrator_fixture_is_available",
+          "class": "migration",
+          "fixture": "postgres-migrator"
+        }
+      ]
+    },
+    {
+      "id": "META-CONTEXT-001",
+      "status": "Implemented",
+      "scenarios": [
+        {
+          "package": "oxide-batch",
+          "target": "durable_state_codec",
+          "name": "newer_recorded_schema_version_is_rejected",
+          "class": "conformance",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "durable_state_codec",
+          "name": "older_recorded_schema_version_upgrades_through_one_directed_chain",
+          "class": "migration",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "durable_state_codec",
+          "name": "corrupt_payload_never_advances_a_checkpoint",
+          "class": "unit",
+          "fixture": "none"
+        },
+        {
+          "package": "oxide-batch",
+          "target": "durable_state_codec",
+          "name": "oversized_or_over_deep_payload_is_a_known_not_committed_outcome",
+          "class": "unit",
+          "fixture": "none"
+        }
+      ]
+    }
+  ]
+}

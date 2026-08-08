@@ -1,5 +1,6 @@
 //! Repository development tasks.
 
+mod conformance;
 mod deps;
 mod surface;
 
@@ -98,6 +99,7 @@ fn main() -> ExitCode {
 
     let succeeded = match args.next().as_deref() {
         Some("check") => run_all(QUALITY) && run_dependency_check() && run_surface_check(),
+        Some("conformance") => run_conformance_campaign(),
         Some("deps") => run_dependency_check(),
         Some("doctor") => run_all(DOCTOR),
         Some("package") => run_all(PACKAGE),
@@ -141,6 +143,33 @@ fn run_dependency_check() -> bool {
         }
         Err(error) => {
             eprintln!("could not check workspace boundaries: {error}");
+            false
+        }
+    }
+}
+
+/// Reports whether the full suite proved every accepted M0-M4 ledger row.
+fn run_conformance_campaign() -> bool {
+    eprintln!("==> conformance campaign");
+
+    match conformance::run() {
+        Ok(campaign) => {
+            eprintln!("campaign report: {}", campaign.report.display());
+            if campaign.violations.is_empty() {
+                eprintln!("every accepted row was proved by a scenario that ran and passed");
+                return true;
+            }
+            for violation in &campaign.violations {
+                eprintln!("campaign gap: {violation}");
+            }
+            eprintln!(
+                "see the accepted scope in \
+                 tests/fixtures/conformance/accepted-scope.json"
+            );
+            false
+        }
+        Err(error) => {
+            eprintln!("could not run the conformance campaign: {error}");
             false
         }
     }
@@ -216,8 +245,9 @@ fn usage() {
     eprintln!(
         "usage: cargo xtask <command>\n\n\
          commands:\n\
-           check    run formatting, Clippy, tests, rustdoc, and boundaries\n\
-           deps     check extraction boundaries and workspace cycles\n\
+           check        run formatting, Clippy, tests, rustdoc, and boundaries\n\
+           conformance  run the full suite over the accepted M0-M4 scope\n\
+           deps         check extraction boundaries and workspace cycles\n\
            doctor   show required local tool versions\n\
            package  inspect and dry-run every publishable crate\n\
            surface  inspect the rendered facade for disclosed dependencies"

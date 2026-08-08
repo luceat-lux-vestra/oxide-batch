@@ -262,8 +262,13 @@ stop.
   of two implementations kept in sync.
 - Faults are positional, not time-based, so both runs see the identical
   sequence and results are deterministic.
-- The counting allocator is process-global. The measuring test is the only test
-  in its binary, and the timing phase runs with counting disabled.
+- The counting allocator is installed process-wide but counts per thread: a
+  window belongs to the thread that opened it, and only that thread's
+  allocations are recorded. Counting globally also counted the test harness's
+  own bookkeeping from another thread, which reported `2` allocations of `144`
+  bytes for an otherwise identical run on a loaded CI host. The measuring test
+  is still the only test in its binary, and the timing phase runs with counting
+  disabled.
 - The harness uses a `block_on` that panics on `Pending` rather than an async
   runtime, so no scheduler work is attributed to either path. Valid only
   because no spike component yields.

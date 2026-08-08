@@ -21,6 +21,7 @@ expensive and probabilistic checks run on a schedule or release candidate.
 | Feature matrix | Default/minimal/all and approved combinations | Active: facade-only and `postgres`/all |
 | Core platform matrix | Supported OS and architecture | Before first public runtime API |
 | PostgreSQL contracts | Real transaction and migration semantics | Before M2 |
+| Conformance campaign | Every accepted ledger row proved by a scenario that ran and passed | Active: M5 |
 | SemVer API check | Detect public API breakage | After first public runtime API |
 
 Required check names remain stable because rulesets bind to names. A workflow
@@ -60,6 +61,15 @@ feature against the released migration, atomic transaction suite, disconnect
 classification, and separate-process pre/post-commit crash/restart matrix.
 PostgreSQL 15–18 run TLS, role, migration, repository-contract, and
 vertical-slice smoke evidence.
+
+PostgreSQL 15 and 18 additionally run the M5 conformance campaign, which runs
+the whole workspace suite one target at a time and requires every accepted
+M0-M4 ledger row to be proved by a scenario that ran and reported `ok`. The
+campaign resolves its database fixtures before running anything and fails when
+one is absent, because a database-backed scenario skips silently and would
+otherwise report a pass without a database. Each job retains its report as a
+build artifact, and the retained copies live in
+`docs/engineering/campaigns/m5`.
 
 ## Release gates
 

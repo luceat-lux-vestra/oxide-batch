@@ -1,11 +1,19 @@
-//! Stable compatibility-matrix identifiers and executable scenario names.
+//! Stable first-vertical-slice identifiers and executable scenario names.
 
 use crate::support::{ScenarioId, ScenarioIdError};
 
-/// Matrix rows known to the harness.
+/// The acceptance criteria of the first vertical slice, with the scenario that
+/// observes each one.
 ///
-/// Keeping row IDs beside executable names makes missing or renamed scenarios
-/// visible in ordinary review. Status remains authoritative in the matrix.
+/// These identifiers come from
+/// [the first vertical slice](../../../../docs/product/first-vertical-slice.md)
+/// and are **not** feature-ledger rows. The ledger's own coverage is
+/// reconciled by the M5 conformance campaign, which is keyed by ledger row
+/// identifier and lives in
+/// `tests/fixtures/conformance/accepted-scope.json`.
+///
+/// Keeping identifiers beside executable names makes missing or renamed
+/// scenarios visible in ordinary review.
 pub const MATRIX_SCENARIOS: &[(&str, &str)] = &[
     ("VS-LAUNCH-001", "first_launch_creates_execution_graph"),
     (
