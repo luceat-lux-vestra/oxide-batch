@@ -473,6 +473,12 @@ pub struct DurableStep {
 
 /// Reads everything the durable contracts report about one job.
 ///
+/// Flow decisions and partition plans are read as absent when the port rejects
+/// the reading, because a chunk step has neither and the campaign compares jobs
+/// that do and jobs that do not. That cannot weaken a comparison: the side the
+/// backup is taken from asserts both are present before the archive is written,
+/// so a reading that lost them on the restored side compares unequal.
+///
 /// # Errors
 ///
 /// Returns the repository, explorer, or state failure that prevented a
