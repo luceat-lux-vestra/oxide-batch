@@ -6309,8 +6309,15 @@ impl crate::RecoveryRepository for PostgresExplorer {
             Ok(crate::RecoverySnapshot::new(
                 execution_id,
                 decode_status(&read_text(&row, "status")?)?,
-                u32::try_from(read_i64(&row, "attempt")?)
-                    .map_err(|_| RepositoryError::Unavailable)?,
+                // `attempt` is an `integer` column, which decodes as `i32`. It
+                // is read here the way the execution projection reads it,
+                // because reading it as `i64` failed every snapshot with a
+                // redacted `Unavailable` and no PostgreSQL test called this.
+                u32::try_from(
+                    row.try_get::<i32, _>("attempt")
+                        .map_err(|_| RepositoryError::Unavailable)?,
+                )
+                .map_err(|_| RepositoryError::Unavailable)?,
                 ExecutionVersion::new(read_u64(&row, "version")?),
                 owner,
                 millis_system_time(read_i64(&row, "updated_ms")?)?,
