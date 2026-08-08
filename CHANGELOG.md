@@ -16,9 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   dependencies is what makes it sound: under `--no-deps` a crate that declares
   no `html_root_url` renders as unlinked text, and a `tokio::runtime::Handle`
   in a public signature was invisible until the dependencies were documented.
-  The four known occurrences are carried as accepted findings and the check
-  fails in both directions, so neither a new disclosure nor a stale exception
-  survives. CI runs it next to the boundary check.
+  The check fails both on an unlisted disclosure and on an accepted exception
+  that no longer occurs, and the accepted list is empty. CI runs it next to the
+  boundary check.
+- Eight domain accessors on `ChunkComponentRevisions` — `reader`, `processor`,
+  `writer`, `checkpoint`, `checkpoint_schema`, `checkpoint_schema_version`,
+  `context_schema`, and `context_schema_version` — and a public
+  `ChunkDeliveryMode::manifest_name`. They let the plan crate compose the
+  canonical chunk declaration from typed values instead of receiving it
+  pre-serialized. `manifest_name` returns the durable name the mode is recorded
+  under, which is fixed for the life of the mode rather than a display string.
 
 - `RepositoryDescriptor`, the versioned capability declaration an adapter
   publishes, plus `JobRepository::descriptor`. Flow launch negotiates the
@@ -398,6 +405,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Breaking (pre-1.0):** the canonical-manifest seam between the core and plan
+  crates no longer exchanges `serde_json::Value`.
+  `ChunkComponentRevisions::manifest_value`, `FlowTarget::manifest_value`, and
+  `StartControls::manifest_value` are removed, and
+  `DefinitionIdentity::from_flow_manifest` takes canonical manifest bytes
+  instead of a parsed document. The projections move into `oxide-batch-plan`,
+  which owns the canonical manifest, beside the fault-policy projection that
+  was already written that way; the accessors listed above replace what the
+  removed methods reached for. The M5 facade review found these four items in
+  violation of the accepted rule that keeps Serde types out of core public
+  signatures — every one of them was private before the staged crate extraction
+  turned an intra-crate call into a cross-crate one. Taking bytes also lets the
+  constructor check that they re-encode to themselves, which the value-taking
+  form could not. No manifest byte and no definition fingerprint changes: the
+  same `serde_json::to_vec` call runs on the same document, one crate earlier.
 - The workspace version moves to `0.1.0-alpha.2`. `0.1.0-alpha.1` is published,
   so the API changes above cannot ship under it: `cargo publish --workspace
   --dry-run` resolves an already-published sibling from the registry rather than

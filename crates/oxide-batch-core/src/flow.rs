@@ -6,8 +6,6 @@
 
 use std::num::NonZeroU32;
 
-use serde_json::{Value, json};
-
 use crate::{DefinitionError, DefinitionTokenKind, definition_token, validate_token};
 
 /// The maximum number of durable local partitions in one partitioned step.
@@ -84,15 +82,6 @@ impl StartControls {
     pub const fn allow_start_if_complete(&self) -> bool {
         self.allow_start_if_complete
     }
-
-    /// Projects the start controls into their canonical manifest member.
-    #[must_use]
-    pub fn manifest_value(self) -> Value {
-        json!({
-            "allow_start_if_complete": self.allow_start_if_complete,
-            "start_limit": self.start_limit.get()
-        })
-    }
 }
 
 /// A node that ends the job without starting further work.
@@ -129,15 +118,6 @@ pub enum FlowTarget {
 }
 
 impl FlowTarget {
-    /// Projects the target into its canonical manifest member.
-    #[must_use]
-    pub fn manifest_value(&self) -> Value {
-        match self {
-            Self::Node(id) => json!({ "node": id.as_str() }),
-            Self::Terminal(kind) => json!({ "terminal": kind.as_str() }),
-        }
-    }
-
     /// Returns the deterministic ordering key for canonical output.
     #[must_use]
     pub fn sort_key(&self) -> (u8, &str) {

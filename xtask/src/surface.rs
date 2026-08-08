@@ -63,44 +63,24 @@ const CLASSES: &[(&str, &str)] = &[
     ("tracing", "telemetry SDK"),
 ];
 
-/// One disclosure the facade review recorded as a finding rather than a pass.
+/// One disclosure an accepted decision record permits.
 struct Accepted {
     /// The rendered item the occurrence belongs to.
     item: &'static str,
     /// The dependency that item discloses.
     dependency: &'static str,
-    /// Why the surface still carries it.
+    /// The ADR that approved the exception, and its removal plan.
     reason: &'static str,
 }
 
-/// The disclosures the M5 facade review accepted as open findings.
+/// The disclosures the facade review accepted as open findings.
 ///
-/// Recorded by `docs/project/m5-facade-api-review-evidence.md`. Every entry is
-/// a cross-crate seam the staged crate extraction widened from crate-private to
-/// public. None is a documented application path, but each is callable, so
-/// removing one is a pre-1.0 breaking change rather than a private cleanup.
-const ACCEPTED: &[Accepted] = &[
-    Accepted {
-        item: "oxide_batch::ChunkComponentRevisions::manifest_value",
-        dependency: "serde_json",
-        reason: "core-to-plan canonical manifest seam, finding F1",
-    },
-    Accepted {
-        item: "oxide_batch::DefinitionIdentity::from_flow_manifest",
-        dependency: "serde_json",
-        reason: "core-to-plan canonical manifest seam, finding F1",
-    },
-    Accepted {
-        item: "oxide_batch::FlowTarget::manifest_value",
-        dependency: "serde_json",
-        reason: "core-to-plan canonical manifest seam, finding F1",
-    },
-    Accepted {
-        item: "oxide_batch::StartControls::manifest_value",
-        dependency: "serde_json",
-        reason: "core-to-plan canonical manifest seam, finding F1",
-    },
-];
+/// The list is empty, and adding to it is not how a disclosure gets approved.
+/// The API design guidelines require an accepted ADR before a forbidden class
+/// appears in a public signature; an entry here only records where an approved
+/// exception already applies, and carries the ADR that approved it. An entry
+/// without one is the exception approving itself.
+const ACCEPTED: &[Accepted] = &[];
 
 /// Runs the rendered-surface disclosure inspection.
 ///
@@ -479,15 +459,12 @@ mod tests {
     }
 
     #[test]
-    fn an_accepted_finding_that_is_gone_fails_as_loudly_as_a_new_one() {
-        let repaired = BTreeSet::new();
-        let violations = reconcile(&repaired);
+    fn an_unlisted_disclosure_is_a_violation() {
+        let found = BTreeSet::from([("oxide_batch::New::member".to_owned(), "tokio".to_owned())]);
 
-        assert_eq!(violations.len(), super::ACCEPTED.len());
-        assert!(
-            violations
-                .iter()
-                .all(|line| line.contains("remove its accepted entry"))
-        );
+        let violations = reconcile(&found);
+
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].contains("async runtime"));
     }
 }

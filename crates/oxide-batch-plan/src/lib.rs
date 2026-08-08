@@ -52,9 +52,9 @@ use serde_json::{Value, json};
 
 use oxide_batch_core::{
     ChunkComponentRevisions, ChunkSize, ComponentRevision, DefinitionError, DefinitionIdentity,
-    DefinitionRevision, DefinitionTokenKind, ExitCode, FaultPolicy, FlowTarget, JobName, MAX_NODES,
-    MAX_PARTITIONS, MAX_TRANSITIONS, NodeId, StartControls, StepName, TerminalKind,
-    definition_token, validate_token,
+    DefinitionRevision, DefinitionTokenKind, ExitCode, FaultPolicy, FlowTarget, InFlightPolicy,
+    JobName, MAX_NODES, MAX_PARTITIONS, MAX_TRANSITIONS, NodeId, StartControls, StepName,
+    TerminalKind, definition_token, validate_token,
 };
 
 /// The maximum number of transitions leaving one node.
@@ -450,7 +450,7 @@ impl StepComponents {
                 "transaction_boundary": "tasklet_completion"
             }),
             Self::Chunk { size, revisions } => {
-                let mut chunk = revisions.manifest_value();
+                let mut chunk = chunk_declaration_manifest(revisions);
                 if let Some(members) = chunk.as_object_mut() {
                     members.insert("size".to_owned(), json!(size.get()));
                     members.insert(
@@ -556,7 +556,7 @@ impl StepNode {
                 .map(|revision| Value::String(revision.as_str().to_owned()))
                 .collect::<Vec<_>>(),
             "policy": self.fault.as_ref().map_or(Value::Null, fault_manifest_value),
-            "start": self.start.manifest_value(),
+            "start": start_controls_manifest(self.start),
             "step": {
                 "declaration": self.components.manifest_value(),
                 "kind": self.components.kind_name(),
@@ -908,7 +908,7 @@ impl PartitionedStepNode {
             "kind": "partitioned_step",
             "partition_count": self.partitions.get(),
             "partitioner": self.partitioner.as_str(),
-            "start": self.start.manifest_value(),
+            "start": start_controls_manifest(self.start),
             "step_name": self.step_name.as_str(),
             "worker": self.worker.manifest_value()
         })
@@ -1026,7 +1026,7 @@ impl FlowTransition {
         json!({
             "pattern": self.pattern.as_str(),
             "source": self.source.as_str(),
-            "target": self.target.manifest_value()
+            "target": flow_target_manifest(&self.target)
         })
     }
 }
@@ -1189,7 +1189,9 @@ impl FlowGraph {
         check_reachable_and_acyclic(&entry, &nodes, &compiled)?;
 
         let manifest = flow_manifest(job_name, &entry, &nodes, &compiled, local_scale);
-        let definition = DefinitionIdentity::from_flow_manifest(job_name, revision, &manifest)
+        let canonical = serde_json::to_vec(&manifest)
+            .map_err(|_| PlanError::Manifest(DefinitionError::ManifestEncoding))?;
+        let definition = DefinitionIdentity::from_flow_manifest(job_name, revision, &canonical)
             .map_err(PlanError::Manifest)?;
         Ok(CompiledExecutionPlan {
             definition,
@@ -1342,6 +1344,61 @@ fn visit(
     }
     on_path.remove(node);
     Ok(())
+}
+
+/// Projects restart-relevant start controls into their manifest member.
+///
+/// The projection lives here rather than on the value because the canonical
+/// manifest is this crate's contract. Keeping it here is also what keeps the
+/// serializer out of the core's public signatures, and out of the facade that
+/// re-exports them.
+fn start_controls_manifest(controls: StartControls) -> Value {
+    json!({
+        "allow_start_if_complete": controls.allow_start_if_complete(),
+        "start_limit": controls.start_limit().get()
+    })
+}
+
+/// Projects one transition target into its manifest member.
+fn flow_target_manifest(target: &FlowTarget) -> Value {
+    match target {
+        FlowTarget::Node(id) => json!({ "node": id.as_str() }),
+        FlowTarget::Terminal(kind) => json!({ "terminal": kind.as_str() }),
+    }
+}
+
+/// Projects the restart-relevant chunk declaration into manifest members.
+///
+/// `in_flight_policy` is present only when it is the non-default rollback
+/// policy, because format 1 recorded nothing for the default and the two
+/// formats must agree on what a chunk declaration means.
+fn chunk_declaration_manifest(revisions: &ChunkComponentRevisions) -> Value {
+    let mut value = json!({
+        "checkpoint": {
+            "schema": revisions.checkpoint_schema().as_str(),
+            "version": revisions.checkpoint_schema_version().get()
+        },
+        "components": {
+            "checkpoint": revisions.checkpoint().as_str(),
+            "processor": revisions.processor().as_str(),
+            "reader": revisions.reader().as_str(),
+            "writer": revisions.writer().as_str()
+        },
+        "context": {
+            "schema": revisions.context_schema().as_str(),
+            "version": revisions.context_schema_version().get()
+        },
+        "delivery_mode": revisions.delivery_mode().manifest_name()
+    });
+    if revisions.in_flight_policy() == InFlightPolicy::RollbackChunk
+        && let Some(object) = value.as_object_mut()
+    {
+        object.insert(
+            "in_flight_policy".to_owned(),
+            Value::String("rollback_chunk".to_owned()),
+        );
+    }
+    value
 }
 
 fn fault_manifest_value(policy: &FaultPolicy) -> Value {
