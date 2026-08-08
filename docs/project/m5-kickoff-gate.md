@@ -178,9 +178,9 @@ extension point is added merely to reserve later scope.
    recorded in the
    [facade and API review evidence](m5-facade-api-review-evidence.md). The
    surface holds every prohibited disclosure class and blocks no M6-M12
-   boundary; the review's two open findings are recorded there, and the
-   disclosure inspection fails when either is repaired without its exception
-   being removed.
+   boundary. The review found one violation of the wider public-boundary rule
+   and removed it, and recorded one M8 extension finding as issue
+   [#114](https://github.com/luceat-lux-vestra/oxide-batch/issues/114).
 6. The evidence campaigns run full embedded conformance and the PostgreSQL
    crash, restore, upgrade, security, performance, soak, and resource-bound
    matrices, plus the reference workload.

@@ -1,0 +1,36 @@
+//! Rustdoc fixture for the facade surface inspection.
+//!
+//! Every item here places a foreign type in one signature position the
+//! inspection must read. See <https://docs.rs/serde_json> for the crate this
+//! prose deliberately links to without disclosing anything.
+
+/// A struct with a foreign type in a public field, an argument, and a return.
+pub struct Positions {
+    /// A public field whose type is foreign.
+    pub retained: serde_json::Value,
+}
+
+impl Positions {
+    /// Takes a foreign type as an argument.
+    #[must_use]
+    pub fn accept(value: &serde_json::Value) -> Self {
+        Self {
+            retained: value.clone(),
+        }
+    }
+
+    /// Returns a foreign type.
+    #[must_use]
+    pub fn produce(&self) -> serde_json::Value {
+        self.retained.clone()
+    }
+}
+
+/// A trait with a foreign associated type and a foreign bound.
+pub trait Bounded {
+    /// An associated type that is foreign.
+    type Document: Into<serde_json::Value>;
+
+    /// A method whose bound names a foreign type.
+    fn describe<T: AsRef<serde_json::Value>>(&self, value: T) -> usize;
+}

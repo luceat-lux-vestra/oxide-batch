@@ -185,10 +185,13 @@ fn item_prefix(page: &Path) -> String {
     }
 }
 
-/// Returns the item and dependency of every foreign link on one page.
+/// Returns the item and dependency of every foreign link one page declares.
 ///
-/// The owning item is the nearest anchor identifier before the link, which is
-/// the method, associated item, or implementation block rustdoc rendered.
+/// Only rendered declarations are read — the item signature block and the
+/// code headers of members and implementations. Prose is deliberately out of
+/// scope: a documentation comment may link anywhere, and a link in a sentence
+/// discloses nothing. The owning item is the nearest anchor identifier before
+/// the declaration.
 fn disclosures(prefix: &str, page: &str) -> BTreeSet<(String, String)> {
     const ANCHOR: &str = "id=\"";
     const LINK: &str = "href=\"";
@@ -200,26 +203,62 @@ fn disclosures(prefix: &str, page: &str) -> BTreeSet<(String, String)> {
 
     while cursor < rendered.len() {
         let next_anchor = rendered[cursor..].find(ANCHOR).map(|at| cursor + at);
-        let next_link = rendered[cursor..].find(LINK).map(|at| cursor + at);
+        let next_block =
+            declaration(&rendered[cursor..]).map(|(at, end)| (cursor + at, cursor + end));
 
-        let (start, is_anchor) = match (next_anchor, next_link) {
-            (Some(at), Some(link)) if at < link => (at + ANCHOR.len(), true),
-            (_, Some(link)) => (link + LINK.len(), false),
-            (Some(at), None) => (at + ANCHOR.len(), true),
+        match (next_anchor, next_block) {
+            (Some(at), Some((start, _))) if at < start => {
+                let value = at + ANCHOR.len();
+                member(until(&rendered[value..], '"'))
+                    .unwrap_or_default()
+                    .clone_into(&mut anchor);
+                cursor = value;
+            }
+            (_, Some((start, end))) => {
+                let block = &rendered[start..end];
+                for link in block.split(LINK).skip(1) {
+                    if let Some(dependency) = foreign(until(link, '"')) {
+                        found.insert((item(prefix, &anchor), dependency));
+                    }
+                }
+                cursor = end;
+            }
+            (Some(at), None) => {
+                let value = at + ANCHOR.len();
+                member(until(&rendered[value..], '"'))
+                    .unwrap_or_default()
+                    .clone_into(&mut anchor);
+                cursor = value;
+            }
             (None, None) => break,
-        };
-
-        if is_anchor {
-            member(until(&rendered[start..], '"'))
-                .unwrap_or_default()
-                .clone_into(&mut anchor);
-        } else if let Some(dependency) = foreign_crate(until(&rendered[start..], '"')) {
-            found.insert((item(prefix, &anchor), dependency));
         }
-        cursor = start;
     }
 
     found
+}
+
+/// Locates the next rendered declaration as a `(start, end)` byte range.
+///
+/// Rustdoc renders an item's own signature in an `item-decl` block and every
+/// member, trait item, and implementation header in a `code-header` element.
+/// Between them they carry the argument types, return types, public fields,
+/// associated types, and bounds a signature can disclose.
+fn declaration(rest: &str) -> Option<(usize, usize)> {
+    const BLOCKS: [(&str, &str); 2] = [
+        ("class=\"rust item-decl\"", "</pre>"),
+        ("class=\"code-header\"", "</h"),
+    ];
+
+    BLOCKS
+        .iter()
+        .filter_map(|(open, close)| {
+            let start = rest.find(open)?;
+            let end = rest[start..]
+                .find(close)
+                .map_or(rest.len(), |at| start + at + close.len());
+            Some((start, end))
+        })
+        .min_by_key(|(start, _)| *start)
 }
 
 /// Borrows the part of a page that documents what this surface declares.
@@ -241,37 +280,60 @@ fn declared(page: &str) -> &str {
     &page[..end]
 }
 
-/// Returns the foreign crate one rendered link resolves to, if it is foreign.
+/// Returns what a link inside a declaration resolves to, if not to this crate.
 ///
 /// Rustdoc addresses a documented dependency relatively and a dependency that
-/// declares an `html_root_url` absolutely, so both forms are read.
-fn foreign_crate(href: &str) -> Option<String> {
-    const ABSOLUTE: &str = "https://docs.rs/";
+/// declares an `html_root_url` absolutely, so both forms are read. An absolute
+/// link to any other host is reported under that host's name rather than
+/// ignored: a rendered declaration should reach this crate, the standard
+/// library, or a dependency, and a fourth kind of destination is something the
+/// review has not seen. Failing on it costs one allowlist entry; ignoring it
+/// would hide the next disclosure that arrives in an unfamiliar form.
+fn foreign(href: &str) -> Option<String> {
+    const DOCS_RS: &str = "https://docs.rs/";
+    const RUST: &str = "https://doc.rust-lang.org/";
 
-    let name = if let Some(rest) = href.strip_prefix(ABSOLUTE) {
-        until(rest, '/')
-    } else {
-        let mut rest = href;
-        while let Some(parent) = rest.strip_prefix("../") {
-            rest = parent;
-        }
-        if rest == href {
-            return None;
-        }
-        let name = until(rest, '/');
-        if name.len() == rest.len() {
-            return None;
-        }
-        name
-    };
+    if let Some(rest) = href.strip_prefix(DOCS_RS) {
+        return crate_name(until(rest, '/'));
+    }
+    if let Some(rest) = href.strip_prefix(RUST) {
+        // The first segment is the toolchain version, the second the crate.
+        return crate_name(until(
+            rest.split_once('/').map_or(rest, |(_, tail)| tail),
+            '/',
+        ));
+    }
+    if let Some(host) = absolute_host(href) {
+        return Some(host.to_owned());
+    }
 
-    let is_crate = !name.is_empty()
-        && name
+    let mut rest = href;
+    while let Some(parent) = rest.strip_prefix("../") {
+        rest = parent;
+    }
+    if rest == href || !rest.contains('/') {
+        return None;
+    }
+    crate_name(until(rest, '/'))
+}
+
+/// Borrows the host of an absolute link, when the link is absolute.
+fn absolute_host(href: &str) -> Option<&str> {
+    let rest = href
+        .strip_prefix("https://")
+        .or_else(|| href.strip_prefix("http://"))?;
+    Some(until(rest, '/'))
+}
+
+/// Returns a crate-directory segment, when it names a crate this scan reports.
+fn crate_name(segment: &str) -> Option<String> {
+    let names_a_crate = !segment.is_empty()
+        && segment
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || character == '_');
 
-    if is_crate && !NOT_FOREIGN.contains(&name) {
-        Some(name.to_owned())
+    if names_a_crate && !NOT_FOREIGN.contains(&segment) {
+        Some(segment.to_owned())
     } else {
         None
     }
@@ -339,13 +401,20 @@ pub fn accepted() -> Vec<String> {
 
 /// Reports every unaccepted disclosure and every accepted one that is gone.
 fn reconcile(found: &BTreeSet<(String, String)>) -> Vec<String> {
-    let accepted: BTreeSet<(String, String)> = ACCEPTED
+    let accepted = ACCEPTED
         .iter()
         .map(|entry| (entry.item.to_owned(), entry.dependency.to_owned()))
         .collect();
+    against(found, &accepted)
+}
 
+/// Reconciles what was found against a given set of accepted disclosures.
+fn against(
+    found: &BTreeSet<(String, String)>,
+    accepted: &BTreeSet<(String, String)>,
+) -> Vec<String> {
     let mut violations = Vec::new();
-    for (item, dependency) in found.difference(&accepted) {
+    for (item, dependency) in found.difference(accepted) {
         violations.push(format!(
             "{item} discloses the {} crate {dependency}",
             class_of(dependency)
@@ -361,11 +430,14 @@ fn reconcile(found: &BTreeSet<(String, String)>) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{declared, disclosures, foreign_crate, item_prefix, reconcile};
-    use std::collections::BTreeSet;
-    use std::path::Path;
+    #![allow(clippy::expect_used, clippy::panic)]
 
-    /// Renders one method section the way rustdoc lays one out.
+    use super::{against, declared, disclosures, foreign, item_prefix};
+    use std::collections::BTreeSet;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    /// Renders one member declaration the way rustdoc lays one out.
     fn method(anchor: &str, href: &str) -> String {
         format!(
             "<section id=\"{anchor}\" class=\"method\">\
@@ -374,11 +446,19 @@ mod tests {
         )
     }
 
+    /// Collects the dependencies one page discloses, without their items.
+    fn dependencies(prefix: &str, page: &str) -> BTreeSet<String> {
+        disclosures(prefix, page)
+            .into_iter()
+            .map(|(_, dependency)| dependency)
+            .collect()
+    }
+
     #[test]
-    fn a_foreign_type_in_a_signature_is_attributed_to_its_member() {
+    fn an_absolute_dependency_link_is_attributed_to_its_member() {
         let page = method(
             "method.manifest_value",
-            "https://docs.rs/serde_json/1/x.html",
+            "https://docs.rs/serde_json/1/serde_json/value/enum.Value.html",
         );
 
         assert_eq!(
@@ -404,18 +484,50 @@ mod tests {
     }
 
     #[test]
-    fn page_furniture_never_owns_a_link() {
-        let page = format!(
-            "<a id=\"copy-path\"></a>{}",
-            method("", "../tokio/runtime/struct.Handle.html")
+    fn an_unknown_documentation_host_is_reported_rather_than_ignored() {
+        let page = method(
+            "method.session",
+            "https://internal-docs.example/vendor_sdk/struct.Session.html",
         );
 
         assert_eq!(
-            disclosures("oxide_batch::disclosure_probe", &page),
-            BTreeSet::from([(
-                "oxide_batch::disclosure_probe".to_owned(),
-                "tokio".to_owned()
-            )])
+            dependencies("oxide_batch::JobOperator", &page),
+            BTreeSet::from(["internal-docs.example".to_owned()]),
+            "a rendered declaration that leaves for an unfamiliar host is a \
+             destination the review has not seen, not a link to skip",
+        );
+    }
+
+    #[test]
+    fn local_and_standard_library_links_are_not_disclosure() {
+        assert_eq!(foreign("struct.JobName.html"), None);
+        assert_eq!(foreign("#method.new"), None);
+        assert_eq!(foreign("../oxide_batch/struct.JobName.html"), None);
+        assert_eq!(foreign("../src/oxide_batch/lib.rs.html"), None);
+        assert_eq!(foreign("../static.files/main.js"), None);
+        assert_eq!(
+            foreign("https://doc.rust-lang.org/1.97.1/core/option/enum.Option.html"),
+            None
+        );
+        assert_eq!(
+            foreign("https://doc.rust-lang.org/1.97.1/std/vec/struct.Vec.html"),
+            None
+        );
+        assert_eq!(
+            foreign("../sqlx/postgres/struct.PgPool.html"),
+            Some("sqlx".to_owned())
+        );
+    }
+
+    #[test]
+    fn prose_never_discloses() {
+        let page = "<div class=\"docblock\"><p>See \
+                    <a href=\"https://docs.rs/tokio/1/tokio/index.html\">tokio</a> \
+                    for the executor this crate does not own.</p></div>";
+
+        assert!(
+            disclosures("oxide_batch::JobLauncher", page).is_empty(),
+            "a link in a sentence is a reference, not a signature",
         );
     }
 
@@ -431,22 +543,6 @@ mod tests {
     }
 
     #[test]
-    fn the_standard_library_and_this_crate_are_not_foreign() {
-        assert_eq!(foreign_crate("struct.JobName.html"), None);
-        assert_eq!(foreign_crate("../oxide_batch/struct.JobName.html"), None);
-        assert_eq!(foreign_crate("../src/oxide_batch/lib.rs.html"), None);
-        assert_eq!(
-            foreign_crate("https://doc.rust-lang.org/1.97.1/core/option/enum.Option.html"),
-            None
-        );
-        assert_eq!(foreign_crate("../static.files/main.js"), None);
-        assert_eq!(
-            foreign_crate("../sqlx/postgres/struct.PgPool.html"),
-            Some("sqlx".to_owned())
-        );
-    }
-
-    #[test]
     fn a_page_names_the_item_it_documents() {
         assert_eq!(
             item_prefix(Path::new("target/doc/oxide_batch/struct.JobName.html")),
@@ -459,12 +555,92 @@ mod tests {
     }
 
     #[test]
-    fn an_unlisted_disclosure_is_a_violation() {
+    fn an_accepted_finding_that_is_gone_fails_as_loudly_as_a_new_one() {
+        let accepted = BTreeSet::from([(
+            "oxide_batch::Repaired::member".to_owned(),
+            "serde_json".to_owned(),
+        )]);
+
+        let violations = against(&BTreeSet::new(), &accepted);
+
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].contains("remove its accepted entry"));
+    }
+
+    #[test]
+    fn an_unlisted_disclosure_fails_against_an_allowlist() {
         let found = BTreeSet::from([("oxide_batch::New::member".to_owned(), "tokio".to_owned())]);
 
-        let violations = reconcile(&found);
+        let violations = against(&found, &BTreeSet::new());
 
         assert_eq!(violations.len(), 1);
         assert!(violations[0].contains("async runtime"));
+    }
+
+    #[test]
+    fn every_signature_position_is_read_from_real_rustdoc_output() {
+        let expected = [
+            (
+                "struct.Positions.html",
+                "surface_fixture::Positions",
+                // The item declaration carries the public field, and the two
+                // members carry an argument type and a return type.
+                vec![
+                    "surface_fixture::Positions",
+                    "surface_fixture::Positions::accept",
+                    "surface_fixture::Positions::produce",
+                ],
+            ),
+            (
+                "trait.Bounded.html",
+                "surface_fixture::Bounded",
+                // The associated type carries a bound, and the required method
+                // carries one on its own type parameter.
+                vec![
+                    "surface_fixture::Bounded::Document",
+                    "surface_fixture::Bounded::describe",
+                ],
+            ),
+        ];
+
+        for (page, prefix, items) in expected {
+            let rendered = fs::read_to_string(fixture(page))
+                .unwrap_or_else(|error| panic!("could not read the {page} fixture: {error}"));
+            let found = disclosures(prefix, &rendered);
+
+            for item in items {
+                assert!(
+                    found.contains(&(item.to_owned(), "serde_json".to_owned())),
+                    "{item} discloses serde_json in real rustdoc output; \
+                     the scan reported {found:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn real_rustdoc_prose_and_blanket_sections_stay_out_of_the_scan() {
+        let rendered = fs::read_to_string(fixture("struct.Positions.html"))
+            .unwrap_or_else(|error| panic!("could not read the fixture: {error}"));
+
+        assert!(
+            rendered.contains("blanket-implementations"),
+            "the fixture must contain the sections it proves are excluded",
+        );
+        assert_eq!(
+            dependencies("surface_fixture::Positions", &rendered),
+            BTreeSet::from(["serde_json".to_owned()]),
+            "the ecosystem's blanket implementations and the crate-level prose \
+             link contribute nothing",
+        );
+    }
+
+    /// Locates one committed rustdoc fixture page.
+    fn fixture(page: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("rustdoc")
+            .join(page)
     }
 }

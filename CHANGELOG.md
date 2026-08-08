@@ -11,14 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - `cargo xtask surface`, the facade disclosure inspection the M5 preview
   surface gate requires. It renders the facade with every feature and every
-  dependency documented, then reports any foreign crate a public signature,
-  bound, associated type, or declared implementation links to. Documenting the
-  dependencies is what makes it sound: under `--no-deps` a crate that declares
-  no `html_root_url` renders as unlinked text, and a `tokio::runtime::Handle`
-  in a public signature was invisible until the dependencies were documented.
-  The check fails both on an unlisted disclosure and on an accepted exception
-  that no longer occurs, and the accepted list is empty. CI runs it next to the
-  boundary check.
+  dependency documented, then reports any foreign crate a rendered declaration
+  links to — argument and return types, public fields, associated types,
+  bounds, and implementation headers. Prose is out of scope, and a link that
+  leaves for a host the review has not seen is reported rather than skipped.
+  Documenting the dependencies is what makes it sound: under `--no-deps` a
+  crate that declares no `html_root_url` renders as unlinked text, and a
+  `tokio::runtime::Handle` in a public signature was invisible until the
+  dependencies were documented. The check fails both on an unlisted disclosure
+  and on an accepted exception that no longer occurs, and the accepted list is
+  empty. CI runs it next to the boundary check.
 - Eight domain accessors on `ChunkComponentRevisions` — `reader`, `processor`,
   `writer`, `checkpoint`, `checkpoint_schema`, `checkpoint_schema_version`,
   `context_schema`, and `context_schema_version` — and a public
