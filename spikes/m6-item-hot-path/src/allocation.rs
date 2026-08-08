@@ -7,30 +7,48 @@
 //! A counting global allocator used to measure per-item heap traffic.
 //!
 //! Counting is off until [`begin`] is called, so process startup, workload
-//! construction, and the test harness are excluded. The counters are global,
-//! so a measuring test must be the only test in its binary, or the binary must
-//! run with `--test-threads=1`.
+//! construction, and the test harness are excluded.
+//!
+//! A window belongs to the thread that opened it. Global counters would also
+//! count the test harness's own bookkeeping, which runs on another thread
+//! while the measured run is in flight: an otherwise identical run reported
+//! `2` allocations of `144` bytes on a loaded CI host and `0` everywhere else.
+//! A measurement that depends on what a different thread happened to do is not
+//! reproducible, so the window, the counters, and the allocations they see all
+//! belong to one thread.
+//!
+//! The thread-local state is const-initialized and holds no destructor, so
+//! reading it inside the allocator cannot allocate and cannot reenter.
 //!
 //! Measurement windows are opened inside the asynchronous body rather than
 //! around the executor. The spike components never yield, so a whole run
 //! completes within one poll and no scheduler traffic is attributed to a path.
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::cell::Cell;
 
-static ENABLED: AtomicBool = AtomicBool::new(false);
-static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
-static BYTES: AtomicU64 = AtomicU64::new(0);
+thread_local! {
+    static ENABLED: Cell<bool> = const { Cell::new(false) };
+    static ALLOCATIONS: Cell<u64> = const { Cell::new(0) };
+    static BYTES: Cell<u64> = const { Cell::new(0) };
+}
 
 /// A pass-through allocator that counts allocations while a window is open.
 pub struct CountingAllocator;
 
 impl CountingAllocator {
     fn record(size: usize) {
-        if ENABLED.load(Ordering::Relaxed) {
-            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-            BYTES.fetch_add(u64::try_from(size).unwrap_or(u64::MAX), Ordering::Relaxed);
+        if !ENABLED.try_with(Cell::get).unwrap_or(false) {
+            return;
         }
+        ALLOCATIONS.with(|allocations| allocations.set(allocations.get().saturating_add(1)));
+        BYTES.with(|bytes| {
+            bytes.set(
+                bytes
+                    .get()
+                    .saturating_add(u64::try_from(size).unwrap_or(u64::MAX)),
+            );
+        });
     }
 }
 
@@ -79,19 +97,19 @@ impl Measurement {
     }
 }
 
-/// Resets the counters and opens a measurement window.
+/// Resets the counters and opens a measurement window on this thread.
 pub fn begin() {
-    ALLOCATIONS.store(0, Ordering::Relaxed);
-    BYTES.store(0, Ordering::Relaxed);
-    ENABLED.store(true, Ordering::Relaxed);
+    ALLOCATIONS.with(|allocations| allocations.set(0));
+    BYTES.with(|bytes| bytes.set(0));
+    ENABLED.with(|enabled| enabled.set(true));
 }
 
-/// Closes the window and returns what was counted.
+/// Closes this thread's window and returns what was counted.
 #[must_use]
 pub fn end() -> Measurement {
-    ENABLED.store(false, Ordering::Relaxed);
+    ENABLED.with(|enabled| enabled.set(false));
     Measurement {
-        allocations: ALLOCATIONS.load(Ordering::Relaxed),
-        bytes: BYTES.load(Ordering::Relaxed),
+        allocations: ALLOCATIONS.with(Cell::get),
+        bytes: BYTES.with(Cell::get),
     }
 }

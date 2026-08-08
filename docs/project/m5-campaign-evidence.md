@@ -150,7 +150,24 @@ The retained reports are
 
 ### Findings
 
-**F1. The harness's matrix identifiers were never ledger identifiers.**
+**F1. The RFC-0005 spike's allocation counter measured other threads.**
+The first campaign run that reached the whole suite failed on PostgreSQL 18
+and passed on 15, with `the_typed_pipeline_allocates_nothing_per_item`
+reporting `2` allocations of `144` bytes where every other run reported `0`.
+The counting allocator in `spikes/m6-item-hot-path/src/allocation.rs` enabled
+its window with a process-global flag, so it counted whatever the test
+harness's own thread allocated while the measured run was in flight.
+
+That makes the central [spike 0004](../architecture/spikes/0004-static-and-erased-item-path.md)
+measurement depend on what an unrelated thread happened to do, which is not a
+reproducible measurement. The window, the counters, and the allocations they
+see now all belong to one thread; the assertions are unchanged and still
+require exactly zero. The spike record's limitation note is corrected.
+
+This is the campaign working: the flake existed before this issue and no gate
+had run the whole suite in one place often enough to see it.
+
+**F2. The harness's matrix identifiers were never ledger identifiers.**
 `crates/oxide-batch/tests/conformance/mod.rs` carries `MATRIX_SCENARIOS`,
 documented as "matrix rows known to the harness" with the note that "status
 remains authoritative in the matrix". Its `20` identifiers are the acceptance
