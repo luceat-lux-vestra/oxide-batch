@@ -30,10 +30,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oxide_batch::{
-    BatchStatus, ChunkTransactionContext, ExecutionContext, ExitCode, FlowDecisionRequest,
-    FlowDecisionSequence, FlowTarget, FlowTransitionKind, JobRepository, NodeId, PartitionKey,
-    PartitionPlanEntry, PostgresJobRepository, PostgresMigrator, StateLimits, StepName,
-    TerminalKind,
+    BatchStatus, BoxFuture, ChunkTransactionContext, ComponentRevision, DefinitionRevision,
+    ExecutionContext, FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget,
+    JobInstanceKey, JobName, JobParameters, NodeId, PartitionBudget, PartitionCount,
+    PartitionFactoryError, PartitionKey, PartitionPlanEntry, PartitionPlanFactory,
+    PartitionTaskletFactory, PartitionedStepNode, PostgresJobRepository, PostgresMigrator,
+    SequentialIdGenerator, StateLimits, StepComponents, StepName, StepNode, StopSource, Tasklet,
+    TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
 };
 use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
@@ -63,6 +66,16 @@ const RESTORED_JOB: &str = "m5_backup_restore";
 
 /// The job the uninterrupted comparison run uses.
 const CANONICAL_JOB: &str = "m5_backup_restore_canonical";
+
+/// The partitioned flow job that supplies flow and partition metadata.
+///
+/// A chunk job carries checkpoints, contexts, counters, and versions, and it
+/// carries no flow decision or partition plan, because those belong to a flow
+/// definition and the repository refuses to record one against a manifest that
+/// does not declare it. The backup therefore covers a completed flow job too,
+/// so the restore is compared over every durable class rather than the ones a
+/// single job happens to write.
+const FLOW_JOB: &str = "m5_backup_restore_flow";
 
 /// The database the archive is restored into.
 const RESTORE_DATABASE: &str = "oxide_batch_m5_restore";
@@ -117,7 +130,7 @@ async fn run_report(fixture: Fixture) -> Result<(), Box<dyn Error>> {
     let server_version = server_version(&fixture.runtime).await?;
 
     let canonical = run_uninterrupted(&fixture).await?;
-    let source = build_restart_relevant_state(&fixture).await?;
+    let (source_chunk, source_flow) = build_restart_relevant_state(&fixture).await?;
 
     let archive = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("m5-backup.dump");
     let dump = run_tool(
@@ -153,14 +166,20 @@ async fn run_report(fixture: Fixture) -> Result<(), Box<dyn Error>> {
 
     let restored_repository = PostgresJobRepository::connect(
         config(restored_url.clone())?,
-        Arc::new(FixedClock(epoch(902))),
+        Arc::new(FixedClock(epoch(905))),
     )
     .await?;
     let key = instance_key(RESTORED_JOB)?;
-    let restored = observe(&restored_repository, &key).await?;
+    let flow_key = JobInstanceKey::new(JobName::new(FLOW_JOB)?, &JobParameters::new());
     assert_eq!(
-        restored, source,
+        observe(&restored_repository, &key).await?,
+        source_chunk,
         "the restored database must report the same durable state the backup was taken from",
+    );
+    assert_eq!(
+        observe(&restored_repository, &flow_key).await?,
+        source_flow,
+        "the restored database must report the same flow decisions and partition metadata",
     );
     assert_eq!(
         business_items(&restored_url, RESTORED_JOB).await?,
@@ -197,6 +216,7 @@ async fn run_report(fixture: Fixture) -> Result<(), Box<dyn Error>> {
     drop_database(&fixture.admin, RESTORE_DATABASE).await?;
     remove_job(&fixture.migrator, RESTORED_JOB).await?;
     remove_job(&fixture.migrator, CANONICAL_JOB).await?;
+    remove_job(&fixture.migrator, FLOW_JOB).await?;
 
     retain_observation(
         "logical-backup-restore",
@@ -216,11 +236,26 @@ async fn run_report(fixture: Fixture) -> Result<(), Box<dyn Error>> {
                 "restored_into": RESTORE_DATABASE,
             },
             "state_at_backup": {
-                "attempts": source.executions.len(),
-                "chunks_committed": CHUNKS_AT_BACKUP,
-                "checkpoint_position": source.latest_step_state().map(|state| state.position),
-                "counts": source.latest_step_state().map(|state| counts(state.counts)),
-                "summary": source.summary(),
+                "chunk_job": {
+                    "job": RESTORED_JOB,
+                    "attempts": source_chunk.executions.len(),
+                    "chunks_committed": CHUNKS_AT_BACKUP,
+                    "checkpoint_position": source_chunk
+                        .latest_step_state()
+                        .and_then(|state| state.position),
+                    "counts": source_chunk.latest_step_state().map(|state| counts(state.counts)),
+                    "summary": source_chunk.summary(),
+                },
+                "flow_job": {
+                    "job": FLOW_JOB,
+                    "attempts": source_flow.executions.len(),
+                    "flow_decisions": source_flow
+                        .flow_decisions
+                        .iter()
+                        .map(Vec::len)
+                        .collect::<Vec<_>>(),
+                    "summary": source_flow.summary(),
+                },
             },
             "compared": [
                 "job instance identity",
@@ -284,54 +319,49 @@ async fn run_uninterrupted(fixture: &Fixture) -> Result<TerminalShape, Box<dyn E
 
 /// Builds every class of restart-relevant durable state the report compares.
 ///
-/// The first attempt is resolved rather than abandoned, so the backup carries a
-/// recovery decision, a flow decision, and a partition plan alongside the live
-/// attempt's checkpoint and counters. A backup of a job that only ever ran
-/// straight through would not exercise what a restore has to bring back.
+/// The chunk job's first attempt is resolved rather than abandoned, so the
+/// backup carries a recovery decision alongside the live attempt's checkpoint,
+/// context, counters, and optimistic version. The flow job runs to completion,
+/// so the backup also carries flow decisions and a partition plan with its
+/// results. A backup of a job that only ever ran straight through would not
+/// exercise what a restore has to bring back.
 async fn build_restart_relevant_state(
     fixture: &Fixture,
-) -> Result<DurableObservation, Box<dyn Error>> {
+) -> Result<(DurableObservation, DurableObservation), Box<dyn Error>> {
     prepare_fixture(&fixture.migrator, RESTORED_JOB).await?;
+    remove_job(&fixture.migrator, FLOW_JOB).await?;
 
-    let repository = PostgresJobRepository::connect(
+    // Two connections with two fixed clocks, because a resolution is timed by
+    // the repository that applies it and must not land before the attempt it
+    // resolves started. This is the same shape a crashed process and the
+    // process that recovers it have.
+    let running = PostgresJobRepository::connect(
         config(fixture.runtime.clone())?,
         Arc::new(FixedClock(epoch(900))),
+    )
+    .await?;
+    let repository = PostgresJobRepository::connect(
+        config(fixture.runtime.clone())?,
+        Arc::new(FixedClock(epoch(902))),
     )
     .await?;
     let manager = transaction_manager(&repository, None);
     let key = instance_key(RESTORED_JOB)?;
 
-    let (first, first_step) = create_attempt(&repository, &key, RESTORED_JOB, CHUNK_SIZE).await?;
-    let (first, first_step) = start_attempt(&repository, &first, &first_step, epoch(901)).await?;
+    let (first, first_step) = create_attempt(&running, &key, RESTORED_JOB, CHUNK_SIZE).await?;
+    let (first, first_step) = start_attempt(&running, &first, &first_step, epoch(901)).await?;
     let first_scope = ChunkTransactionContext::new(first.id(), first_step.id());
+    let running_manager = transaction_manager(&running, None);
     for chunk in 0..FIRST_ATTEMPT_CHUNKS {
-        commit_chunk(&manager, first_scope, RESTORED_JOB, &chunk_items(chunk)).await?;
-    }
-
-    let mut unit = repository.begin().await?;
-    let partitioned = unit
-        .create_step_execution(first.id(), &StepName::new("partitioned")?)
+        commit_chunk(
+            &running_manager,
+            first_scope,
+            RESTORED_JOB,
+            &chunk_items(chunk),
+        )
         .await?;
-    unit.create_step_partition_plan(
-        partitioned.id(),
-        &[partition_entry("alpha")?, partition_entry("beta")?],
-    )
-    .await?;
-    unit.append_flow_decision(&FlowDecisionRequest::new(
-        first.id(),
-        FlowDecisionSequence::new(1)?,
-        NodeId::new(crash_restore::STEP_NAME)?,
-        Some(first_step.id()),
-        FlowTransitionKind::StepExit,
-        ExitCode::new("COMPLETED")?,
-        FlowTarget::Terminal(TerminalKind::Complete),
-        [7; 32],
-        [9; 32],
-        None,
-        epoch(901),
-    ))
-    .await?;
-    unit.commit().await?;
+    }
+    running.close().await?;
 
     let proposal = discover(&repository, first.id()).await?;
     resolve(
@@ -343,7 +373,7 @@ async fn build_restart_relevant_state(
     .await?;
 
     let (second, second_step) = create_attempt(&repository, &key, RESTORED_JOB, CHUNK_SIZE).await?;
-    let (_, _) = start_attempt(&repository, &second, &second_step, epoch(903)).await?;
+    start_attempt(&repository, &second, &second_step, epoch(903)).await?;
     let second_scope = ChunkTransactionContext::new(second.id(), second_step.id());
     let inherited = manager.load_committed_state(second_scope).await?;
     assert_eq!(
@@ -355,14 +385,111 @@ async fn build_restart_relevant_state(
         commit_chunk(&manager, second_scope, RESTORED_JOB, &chunk_items(chunk)).await?;
     }
 
-    let observation = observe(&repository, &key).await?;
+    let chunk_state = observe(&repository, &key).await?;
     assert_eq!(
-        observation.latest_step_state().map(|state| state.position),
+        chunk_state
+            .latest_step_state()
+            .and_then(|state| state.position),
         Some(CHUNKS_AT_BACKUP * u64::from(CHUNK_SIZE)),
         "the backup is taken with a live attempt part way through its work",
     );
+    assert!(
+        chunk_state.recovery_decisions.iter().any(Option::is_some),
+        "the backup must carry a recovery decision, or the restore is not compared over one",
+    );
+    repository.close().await?;
+
+    let flow_state = run_flow_job(fixture).await?;
+    Ok((chunk_state, flow_state))
+}
+
+/// Runs the partitioned flow job to completion and reads back what it wrote.
+async fn run_flow_job(fixture: &Fixture) -> Result<DurableObservation, Box<dyn Error>> {
+    let clock = FixedClock(epoch(900));
+    let repository =
+        PostgresJobRepository::connect(config(fixture.runtime.clone())?, Arc::new(clock)).await?;
+    let ids = SequentialIdGenerator::new(std::num::NonZeroU64::MIN);
+    let (_source, stop) = StopSource::new();
+    let outcome = FlowLauncher::new(&repository, &clock, &ids)
+        .launch(&partitioned_job()?, &JobParameters::new(), &stop)
+        .await?;
+    assert!(
+        matches!(outcome.outcome(), FlowExecutionOutcome::Completed),
+        "the flow job must complete before it can be backed up as durable state",
+    );
+
+    let key = JobInstanceKey::new(JobName::new(FLOW_JOB)?, &JobParameters::new());
+    let observation = observe(&repository, &key).await?;
+    assert!(
+        observation
+            .flow_decisions
+            .iter()
+            .any(|decisions| !decisions.is_empty()),
+        "the flow job must leave a durable flow decision to compare across the restore",
+    );
+    assert!(
+        observation
+            .partitions
+            .iter()
+            .flatten()
+            .any(|plan| plan.len() == 2),
+        "the flow job must leave a durable partition plan to compare across the restore",
+    );
     repository.close().await?;
     Ok(observation)
+}
+
+/// Builds the bounded partitioned flow job the backup covers.
+fn partitioned_job() -> Result<FlowJob, Box<dyn Error>> {
+    let name = JobName::new(FLOW_JOB)?;
+    let manager = NodeId::new("partitioned")?;
+    let worker_name = StepName::new("worker")?;
+    let worker = StepNode::new(
+        NodeId::new("worker")?,
+        worker_name.clone(),
+        StepComponents::Tasklet(ComponentRevision::new("worker-v1")?),
+    );
+    let plan = FlowGraph::new(manager.clone())
+        .with_node(FlowNode::partitioned_step(PartitionedStepNode::new(
+            manager.clone(),
+            StepName::new("partitioned")?,
+            worker,
+            ComponentRevision::new("partitioner-v1")?,
+            ComponentRevision::new("canonical-v1")?,
+            PartitionCount::new(2)?,
+            PartitionBudget::new(1, 2)?,
+        )))
+        .with_sequence(
+            manager.clone(),
+            FlowTarget::Terminal(TerminalKind::Complete),
+        )?
+        .compile(&name, DefinitionRevision::new("m5-crash-restore-v1")?)?;
+
+    let entries = vec![partition_entry("alpha")?, partition_entry("beta")?];
+    let partitioner = PartitionPlanFactory::new(move |request| {
+        if request.partition_count().get() == 2 {
+            Ok(entries.clone())
+        } else {
+            Err(PartitionFactoryError::Rejected)
+        }
+    });
+    let factory_name = worker_name.clone();
+    let factory = PartitionTaskletFactory::new(worker_name, move |_input| {
+        TaskletStep::new(factory_name.clone(), Arc::new(CompleteTasklet))
+    });
+    Ok(FlowJob::new(name, plan)?.with_partitioned_tasklet(manager, partitioner, factory)?)
+}
+
+/// The worker every partition of the backed-up flow job runs.
+struct CompleteTasklet;
+
+impl Tasklet for CompleteTasklet {
+    fn execute<'a>(
+        &'a self,
+        _context: TaskletContext<'a>,
+    ) -> BoxFuture<'a, Result<TaskletOutcome, TaskletError>> {
+        Box::pin(async { Ok(TaskletOutcome::Completed) })
+    }
 }
 
 /// Resolves the restored live attempt, restarts it, and finishes the workload.
@@ -379,12 +506,12 @@ async fn restart_on_restored(
         repository,
         &proposal,
         "m5-crash-restore-backup-restored",
-        epoch(903),
+        epoch(905),
     )
     .await?;
 
     let (execution, step) = create_attempt(repository, &key, RESTORED_JOB, CHUNK_SIZE).await?;
-    let (execution, _) = start_attempt(repository, &execution, &step, epoch(903)).await?;
+    let (execution, _) = start_attempt(repository, &execution, &step, epoch(906)).await?;
     let scope = ChunkTransactionContext::new(execution.id(), step.id());
     let inherited = manager.load_committed_state(scope).await?;
     assert_eq!(
@@ -403,7 +530,7 @@ async fn restart_on_restored(
         job_name: RESTORED_JOB,
         key,
     };
-    complete_and_shape(&job, scope, execution.version(), epoch(904)).await
+    complete_and_shape(&job, scope, execution.version(), epoch(907)).await
 }
 
 /// Builds one bounded partition plan entry.

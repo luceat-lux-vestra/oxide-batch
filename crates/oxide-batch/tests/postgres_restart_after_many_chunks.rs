@@ -160,7 +160,8 @@ async fn run_report(runtime_url: String, migrator_url: String) -> Result<(), Box
         "a killed process must not leave a terminal status behind",
     );
     assert_eq!(
-        killed_state.position, committed_position,
+        killed_state.position,
+        Some(committed_position),
         "the durable checkpoint names the last chunk that committed and no later work",
     );
     assert_eq!(
@@ -333,7 +334,7 @@ async fn run_uninterrupted(
     let shape = complete_and_shape(&job, scope, execution.version(), epoch(904)).await?;
     assert_eq!(
         shape.position,
-        TOTAL_CHUNKS * u64::from(CHUNK_SIZE),
+        Some(TOTAL_CHUNKS * u64::from(CHUNK_SIZE)),
         "the uninterrupted run must commit the whole workload before it is a comparison",
     );
     repository.close().await?;

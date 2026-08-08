@@ -404,7 +404,7 @@ async fn drive_phase(
         .ok_or_else(|| Failure("the killed attempt has no durable state".to_owned()))?;
     assert_eq!(
         killed_state.position,
-        durable_position,
+        Some(durable_position),
         "{}: {}",
         phase.id(),
         phase.expectation(),

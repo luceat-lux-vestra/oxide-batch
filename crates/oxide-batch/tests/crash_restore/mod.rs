@@ -455,8 +455,14 @@ pub struct DurableObservation {
 /// The durable chunk state of one step attempt.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DurableStep {
-    /// The committed reader position the checkpoint encodes.
-    pub position: u64,
+    /// The committed reader position the checkpoint encodes, when it encodes
+    /// one.
+    ///
+    /// A step that carries a checkpoint of another schema — a flow or tasklet
+    /// step, for instance — reports `None`. The campaign compares the whole
+    /// envelope bytes either way, so an absent position is compared as
+    /// faithfully as a present one.
+    pub position: Option<u64>,
     /// The canonical checkpoint envelope bytes.
     pub checkpoint: Vec<u8>,
     /// The canonical execution-context envelope bytes.
@@ -532,7 +538,7 @@ pub async fn observe(
                 continue;
             };
             attempt_state.push(Some(DurableStep {
-                position: checkpoint_position(state.checkpoint())?,
+                position: checkpoint_position(state.checkpoint()).ok(),
                 checkpoint: state.checkpoint().to_json()?,
                 context: state.execution_context().to_json()?,
                 counts: state.step_execution().metadata().counts(),
@@ -644,7 +650,7 @@ impl DurableObservation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TerminalShape {
     /// The committed reader position of the final attempt.
-    pub position: u64,
+    pub position: Option<u64>,
     /// The durable counters of the final attempt.
     pub counts: ExecutionCounts,
     /// The business rows the job durably wrote.
