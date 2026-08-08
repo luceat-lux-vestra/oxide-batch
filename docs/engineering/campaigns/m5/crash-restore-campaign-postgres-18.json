@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "e9036a00f3e97a0382087904f6ddd26d3b4f25f0",
+    "source_commit": "8ec060b646518b763e2084de48702066da959cdb",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -86,7 +86,7 @@
         "passed": true,
         "phases": [
           {
-            "child_pid": 8332,
+            "child_pid": 7463,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -101,9 +101,9 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 3,
-              "reach_phase": 21,
-              "resume": 22
+              "discovery": 2,
+              "reach_phase": 20,
+              "resume": 16
             },
             "expected": "the enlisted rows were never committed, so the chunk replays whole",
             "fixture": "postgres",
@@ -210,7 +210,7 @@
             "violations": []
           },
           {
-            "child_pid": 8348,
+            "child_pid": 7500,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -225,9 +225,9 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 3,
+              "discovery": 2,
               "reach_phase": 21,
-              "resume": 26
+              "resume": 18
             },
             "expected": "durable state was produced inside the commit and never bound, so the chunk replays whole",
             "fixture": "postgres",
@@ -334,7 +334,7 @@
             "violations": []
           },
           {
-            "child_pid": 8385,
+            "child_pid": 7516,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -349,9 +349,9 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 4,
-              "reach_phase": 51,
-              "resume": 23
+              "discovery": 2,
+              "reach_phase": 26,
+              "resume": 17
             },
             "expected": "the progress write was issued and blocked, so neither it nor the enlisted rows are durable and the chunk replays whole",
             "fixture": "postgres",
@@ -458,7 +458,7 @@
             "violations": []
           },
           {
-            "child_pid": 8404,
+            "child_pid": 7534,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -473,9 +473,9 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 3,
-              "reach_phase": 51,
-              "resume": 19
+              "discovery": 2,
+              "reach_phase": 27,
+              "resume": 15
             },
             "expected": "the server completed the commit the killed process never saw acknowledged, so the chunk is durable and must not replay",
             "fixture": "postgres",
@@ -584,7 +584,7 @@
             "violations": []
           },
           {
-            "child_pid": 8423,
+            "child_pid": 7552,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -599,9 +599,9 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 4,
-              "reach_phase": 41,
-              "resume": 19
+              "discovery": 2,
+              "reach_phase": 20,
+              "resume": 13
             },
             "expected": "the commit was acknowledged before the kill, so the chunk is durable and must not replay",
             "fixture": "postgres",
@@ -743,7 +743,7 @@
           "job_status": "COMPLETED",
           "step_status": "COMPLETED"
         },
-        "child_pid": 8708,
+        "child_pid": 7840,
         "decision": {
           "class": "APPLIED",
           "path": "operator recover",
@@ -759,10 +759,10 @@
           "unknown_commit": false
         },
         "durations_ms": {
-          "commit_chunks_before_kill": 613,
-          "discovery": 67,
-          "resume": 275,
-          "uninterrupted_run": 1051
+          "commit_chunks_before_kill": 443,
+          "discovery": 38,
+          "resume": 266,
+          "uninterrupted_run": 759
         },
         "expected": "the durable checkpoint names exactly the committed chunks, the restart inherits it, and the finished job matches an uninterrupted run",
         "fixture": "postgres",
@@ -917,7 +917,7 @@
         "passed": true,
         "report": "logical backup and restore",
         "restart_on_restored": {
-          "duration_ms": 110,
+          "duration_ms": 77,
           "resumed_chunks": 2,
           "terminal": {
             "business_rows": 25,
@@ -1193,7 +1193,7 @@
           ]
         },
         "tooling": {
-          "archive_bytes": 78676,
+          "archive_bytes": 78716,
           "format": "custom",
           "pg_dump": "pg_dump (PostgreSQL) 18.4 (Ubuntu 18.4-1.pgdg24.04+1)",
           "pg_restore": "pg_restore (PostgreSQL) 18.4 (Ubuntu 18.4-1.pgdg24.04+1)",

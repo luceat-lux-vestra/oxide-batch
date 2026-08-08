@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "e9036a00f3e97a0382087904f6ddd26d3b4f25f0",
+    "source_commit": "8ec060b646518b763e2084de48702066da959cdb",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -86,7 +86,7 @@
         "passed": true,
         "phases": [
           {
-            "child_pid": 7949,
+            "child_pid": 7806,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -101,8 +101,8 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 4,
-              "reach_phase": 21,
+              "discovery": 3,
+              "reach_phase": 41,
               "resume": 24
             },
             "expected": "the enlisted rows were never committed, so the chunk replays whole",
@@ -210,7 +210,7 @@
             "violations": []
           },
           {
-            "child_pid": 7986,
+            "child_pid": 7822,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -226,8 +226,8 @@
             },
             "durations_ms": {
               "discovery": 3,
-              "reach_phase": 42,
-              "resume": 23
+              "reach_phase": 21,
+              "resume": 24
             },
             "expected": "durable state was produced inside the commit and never bound, so the chunk replays whole",
             "fixture": "postgres",
@@ -334,7 +334,7 @@
             "violations": []
           },
           {
-            "child_pid": 8002,
+            "child_pid": 7839,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -350,7 +350,7 @@
             },
             "durations_ms": {
               "discovery": 3,
-              "reach_phase": 51,
+              "reach_phase": 52,
               "resume": 23
             },
             "expected": "the progress write was issued and blocked, so neither it nor the enlisted rows are durable and the chunk replays whole",
@@ -458,7 +458,7 @@
             "violations": []
           },
           {
-            "child_pid": 8020,
+            "child_pid": 7878,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -473,8 +473,8 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 4,
-              "reach_phase": 55,
+              "discovery": 3,
+              "reach_phase": 52,
               "resume": 20
             },
             "expected": "the server completed the commit the killed process never saw acknowledged, so the chunk is durable and must not replay",
@@ -584,7 +584,7 @@
             "violations": []
           },
           {
-            "child_pid": 8059,
+            "child_pid": 7896,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -743,7 +743,7 @@
           "job_status": "COMPLETED",
           "step_status": "COMPLETED"
         },
-        "child_pid": 8345,
+        "child_pid": 8181,
         "decision": {
           "class": "APPLIED",
           "path": "operator recover",
@@ -761,8 +761,8 @@
         "durations_ms": {
           "commit_chunks_before_kill": 634,
           "discovery": 68,
-          "resume": 290,
-          "uninterrupted_run": 1077
+          "resume": 291,
+          "uninterrupted_run": 1083
         },
         "expected": "the durable checkpoint names exactly the committed chunks, the restart inherits it, and the finished job matches an uninterrupted run",
         "fixture": "postgres",
@@ -1193,7 +1193,7 @@
           ]
         },
         "tooling": {
-          "archive_bytes": 78162,
+          "archive_bytes": 78160,
           "format": "custom",
           "pg_dump": "pg_dump (PostgreSQL) 15.18 (Ubuntu 15.18-1.pgdg24.04+1)",
           "pg_restore": "pg_restore (PostgreSQL) 15.18 (Ubuntu 15.18-1.pgdg24.04+1)",

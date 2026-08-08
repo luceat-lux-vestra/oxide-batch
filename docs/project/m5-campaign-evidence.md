@@ -319,7 +319,7 @@ scenarios ran and reported `ok`.
 | [`crash-restore-campaign-postgres-15.json`](../engineering/campaigns/m5/crash-restore-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
 | [`crash-restore-campaign-postgres-18.json`](../engineering/campaigns/m5/crash-restore-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
 
-Both were produced by commit `e9036a0`, which is the merge commit the workflow
+Both were produced by commit `8ec060b`, which is the merge commit the workflow
 checked out rather than a branch tip, on `rustc 1.97.1` and Linux `x86_64`.
 
 **Commit phases.** All five phases behaved as the accepted contract requires,
@@ -352,8 +352,12 @@ first `650`.
 
 | Matrix | Uninterrupted run | Chunks before the kill | Discovery | Resume |
 | --- | --- | --- | --- | --- |
-| PostgreSQL 15 | `1077 ms` | `634 ms` | `68 ms` | `290 ms` |
-| PostgreSQL 18 | `1051 ms` | `613 ms` | `67 ms` | `275 ms` |
+| PostgreSQL 15 | `1083 ms` | `634 ms` | `68 ms` | `291 ms` |
+| PostgreSQL 18 | `759 ms` | `443 ms` | `38 ms` | `266 ms` |
+
+The two matrix points ran on different runners, so the gap between them is a
+host difference rather than a database one and no comparison between the rows
+is claimed.
 
 Discovery is the durable reading plus the evidence-bound proposal. Resume is
 the restart attempt plus the `70` remaining chunk commits. These are
@@ -362,7 +366,7 @@ observations from one CI runner, not budgets.
 **Logical backup and restore.** The backup was taken with the client matching
 each matrix point — `pg_dump` and `pg_restore` `15.18` against server `15.18`,
 and `18.4` against server `18.4` — as a custom-format archive of the metadata
-and business schemas, `78162` and `78676` bytes respectively. It was restored
+and business schemas, `78160` and `78716` bytes respectively. It was restored
 into a database created for the run, and everything afterwards ran against the
 restored copy.
 
@@ -375,7 +379,7 @@ attempts, durable checkpoints and execution contexts, counters, recovery
 decisions, flow decisions, partition metadata, and enlisted business rows —
 compared as equality over one reading, not row by row. The job then restarted
 on the restored database, resumed its remaining `2` chunks in `114 ms` and
-`110 ms`, and reached the same terminal observation as the uninterrupted run.
+`77 ms`, and reached the same terminal observation as the uninterrupted run.
 
 No correctness P0 or P1 is open against this campaign. The two findings below
 are recorded; the first is a defect and it is closed.
