@@ -351,14 +351,20 @@ async fn drive_phase(
 
     child.kill()?;
     let status = child.wait()?;
+    // Read before asserting, so the retained observation records what the
+    // child actually reported rather than what the assertion demanded. The
+    // runner cross-checks the recorded value, and a cross-check of a constant
+    // the scenario wrote unconditionally would check nothing.
+    let signal = status.signal();
+    let exit_code = status.code();
     assert_eq!(
-        status.signal(),
+        signal,
         Some(SIGKILL),
         "{}: the campaign must observe a process that was killed rather than one that exited",
         phase.id(),
     );
     assert_eq!(
-        status.code(),
+        exit_code,
         None,
         "{}: a killed process reports no exit code",
         phase.id(),
@@ -521,9 +527,9 @@ async fn drive_phase(
         "expected": phase.expectation(),
         "fixture": "postgres",
         "termination": {
-            "signal": "SIGKILL",
-            "signal_number": SIGKILL,
-            "exit_code": Option::<i32>::None,
+            "signal": signal.map(|signal| if signal == SIGKILL { "SIGKILL" } else { "OTHER" }),
+            "signal_number": signal,
+            "exit_code": exit_code,
         },
         "observed": {
             "durable_chunks": phase.durable_chunks(),
@@ -551,7 +557,14 @@ async fn drive_phase(
             "resume": millis(resume_in),
         },
         "violations": Vec::<String>::new(),
-        "passed": true,
+        // Derived from what was observed rather than asserted as a constant.
+        // Every one of these is checked above; recording them again is what
+        // gives the runner something of its own to disagree with.
+        "passed": signal == Some(SIGKILL)
+            && exit_code.is_none()
+            && killed_state.position == Some(durable_position)
+            && durable_items == expected_items(phase.durable_chunks())
+            && shape == *canonical,
     }))
 }
 

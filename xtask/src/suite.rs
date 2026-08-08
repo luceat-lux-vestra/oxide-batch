@@ -94,27 +94,14 @@ pub fn run_target(root: &Path, target: &TargetCommand<'_>) -> Result<TargetRun, 
         .ok_or_else(|| format!("{} produced no output", target.package))?;
 
     let mut run = TargetRun::default();
-    let mut running: Option<String> = None;
+    let mut attribution = Attribution::default();
     for line in BufReader::new(reader).lines() {
         let line = line.map_err(|error| format!("could not read {}: {error}", target.package))?;
         eprintln!("{line}");
 
-        let (name, outcome) = match observe(&line) {
-            Some(Observation::Started(name)) => {
-                running = Some(name);
-                continue;
-            }
-            Some(Observation::Finished(name, outcome)) => {
-                running = None;
-                (name, outcome)
-            }
-            Some(Observation::Outcome(outcome)) => match running.take() {
-                Some(name) => (name, outcome),
-                None => continue,
-            },
-            None => continue,
-        };
-        run.results.insert(name, outcome);
+        if let Some((name, outcome)) = attribution.read(&line) {
+            run.results.insert(name, outcome);
+        }
     }
 
     let status = child
@@ -122,6 +109,42 @@ pub fn run_target(root: &Path, target: &TargetCommand<'_>) -> Result<TargetRun, 
         .map_err(|error| format!("could not wait for {}: {error}", target.package))?;
     run.succeeded = status.success();
     Ok(run)
+}
+
+/// Attributes libtest output to test names as the lines arrive.
+///
+/// The state is one pending name, because libtest writes a prefix before a test
+/// runs and its outcome after. Both runners read through this, and so do its
+/// own tests, so what review checks is what the campaigns use.
+#[derive(Default)]
+pub struct Attribution {
+    /// The test whose prefix has been seen and whose outcome has not.
+    running: Option<String>,
+}
+
+impl Attribution {
+    /// Reads one line and returns the result it completes, if any.
+    pub fn read(&mut self, line: &str) -> Option<(String, String)> {
+        match observe(line)? {
+            Observation::Started(name) => {
+                self.running = Some(name);
+                None
+            }
+            Observation::Finished(name, outcome) => {
+                // A pending prefix is only resolved by a result that names it.
+                // A differently named one is a splice: a child that printed its
+                // own prefix and was killed before its outcome leaves that
+                // prefix open, and this target's later outcome completes the
+                // child's line instead. Clearing the pending name there would
+                // throw away the result the campaign is attributing.
+                if self.running.as_deref() == Some(name.as_str()) {
+                    self.running = None;
+                }
+                Some((name, outcome))
+            }
+            Observation::Outcome(outcome) => Some((self.running.take()?, outcome)),
+        }
+    }
 }
 
 /// The outcomes libtest reports for one test.
@@ -149,7 +172,7 @@ pub fn observe(line: &str) -> Option<Observation> {
                 return None;
             }
             let name = name.to_owned();
-            return match outcome.split_whitespace().next() {
+            return match outcome.split_whitespace().next().map(outcome_token) {
                 None => Some(Observation::Started(name)),
                 Some(outcome) if OUTCOMES.contains(&outcome) => {
                     Some(Observation::Finished(name, outcome.to_lowercase()))
@@ -160,10 +183,20 @@ pub fn observe(line: &str) -> Option<Observation> {
         return None;
     }
 
-    let trimmed = line.trim();
+    let trimmed = outcome_token(line.trim());
     OUTCOMES
         .contains(&trimmed)
         .then(|| Observation::Outcome(trimmed.to_lowercase()))
+}
+
+/// Strips the punctuation libtest appends to an outcome it qualifies.
+///
+/// An ignored test with a reason reports `ignored, <reason>`, whose first word
+/// is `ignored,`. Without this the outcome is unrecognized and the result is
+/// reported as never having run, which is a different failure from the one it
+/// is.
+fn outcome_token(value: &str) -> &str {
+    value.trim_end_matches([',', '.'])
 }
 
 /// Resolves the report directory against the workspace root.
@@ -260,30 +293,15 @@ pub fn string(value: &Value, name: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Observation, observe};
+    use super::Attribution;
 
-    /// Replays one target's output and returns what a runner recorded.
+    /// Replays one target's output through the runners' own attribution.
     fn record(lines: &[&str]) -> Vec<(String, String)> {
-        let mut results = Vec::new();
-        let mut running: Option<String> = None;
-
-        for line in lines {
-            match observe(line) {
-                Some(Observation::Started(name)) => running = Some(name),
-                Some(Observation::Finished(name, outcome)) => {
-                    running = None;
-                    results.push((name, outcome));
-                }
-                Some(Observation::Outcome(outcome)) => {
-                    if let Some(name) = running.take() {
-                        results.push((name, outcome));
-                    }
-                }
-                None => {}
-            }
-        }
-
-        results
+        let mut attribution = Attribution::default();
+        lines
+            .iter()
+            .filter_map(|line| attribution.read(line))
+            .collect()
     }
 
     #[test]
@@ -338,6 +356,39 @@ mod tests {
                 "crash_before_commit_replays_chunk".to_owned(),
                 "failed".to_owned()
             )],
+        );
+    }
+
+    #[test]
+    fn a_result_named_by_a_killed_child_does_not_consume_the_pending_one() {
+        // A child that printed its prefix and was killed leaves the line open,
+        // and this target's own outcome completes it. The pending name must
+        // survive that so its real outcome is still attributed.
+        assert_eq!(
+            record(&[
+                "test process_kill_at_each_commit_phase ... ",
+                "running 1 test",
+                "test commit_phase_kill_worker_process ... ok",
+                "ok",
+            ]),
+            vec![
+                (
+                    "commit_phase_kill_worker_process".to_owned(),
+                    "ok".to_owned()
+                ),
+                (
+                    "process_kill_at_each_commit_phase".to_owned(),
+                    "ok".to_owned()
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn an_ignored_test_with_a_reason_is_not_read_as_never_having_run() {
+        assert_eq!(
+            record(&["test a_skipped_case ... ignored, needs a database"]),
+            vec![("a_skipped_case".to_owned(), "ignored".to_owned())],
         );
     }
 
