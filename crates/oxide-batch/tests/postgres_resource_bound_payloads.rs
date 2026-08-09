@@ -193,6 +193,17 @@ fn resource_rollup(cells: &[Cell]) -> Vec<Value> {
             .count();
         let ceiling = cell.ceiling;
         let offered = mine.clone().map(|other| other.value).max().unwrap_or(0);
+        // The peak is the largest value the framework actually accepted, not
+        // the ceiling it declares: for a resource whose only proof is a pair of
+        // constructor calls, those two are the same number only when the
+        // declared ceiling is reachable, and the definition graph is where they
+        // are not.
+        let peak = mine
+            .clone()
+            .filter(|other| other.expected && other.accepted)
+            .map(|other| other.value)
+            .max()
+            .unwrap_or(0);
         let violations = mine.clone().filter_map(Cell::violation).collect::<Vec<_>>();
 
         rollup.push(json!({
@@ -200,7 +211,7 @@ fn resource_rollup(cells: &[Cell]) -> Vec<Value> {
             "overload_policy": "fail-closed",
             "configured_ceiling": ceiling,
             "offered_load": offered,
-            "observed_peak_occupancy": ceiling,
+            "observed_peak_occupancy": peak,
             "accepted_at_boundary": accepted,
             "rejections": refused,
             "waits": 0,
@@ -401,7 +412,9 @@ fn definition_cells(largest_chain: usize) -> Result<Vec<Cell>, Box<dyn Error>> {
             "definition-manifest",
             MANIFEST_CEILING as u64,
             "one node past the largest chain that fits",
-            manifest_bytes(largest_chain + 1).unwrap_or(usize::MAX) as u64,
+            // The refused graph has no manifest to measure, so the cell records
+            // the chain length rather than a size that does not exist.
+            largest_chain as u64 + 1,
             chain_of(largest_chain + 1).is_ok(),
             false,
         ),

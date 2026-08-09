@@ -28,6 +28,14 @@ a pass or failure that does not.
 | [`upgrade-campaign-postgres-18.json`](upgrade-campaign-postgres-18.json) | Upgrade | The same, on PostgreSQL 18 |
 | [`security-campaign-postgres-15.json`](security-campaign-postgres-15.json) | Security | The TLS attempts and the reason each refusal carried, the privilege matrix and the code every refusal was refused under, and the surfaces and value classes the redaction sweep covered, on PostgreSQL 15 |
 | [`security-campaign-postgres-18.json`](security-campaign-postgres-18.json) | Security | The same, on PostgreSQL 18 |
+| `resource-bounds-campaign-postgres-15.json` | Resource bounds | Every declared bounded resource, the ceiling each report checked, the load it was offered, the occupancy it reached, and what it shed or refused, on PostgreSQL 15 |
+| `resource-bounds-campaign-postgres-18.json` | Resource bounds | The same, on PostgreSQL 18 |
+
+The two resource-bound files are produced by the
+`postgres-<version>-resource-bound-campaign` CI axes added with the campaign
+and are committed here once that job has run on the branch. Until then the
+axes' build artifacts are the retained evidence, and the development-host
+figures quoted in the gate are labelled as such.
 
 A file carries the matrix point in its name because one run produces one
 report: the runner always writes `conformance-campaign.json`, and the two jobs
@@ -84,6 +92,29 @@ injected, the surfaces collected from, the artifact and string counts, and the
 occurrence count. It records no canary, no credential, no connection string,
 and no certificate: the classes appear by name and the roles by role name.
 
+## The resource-bound campaign
+
+The resource-bound report carries one row per declared bounded resource, under
+`resource_ledger`, and each row says which report proved it, the ceiling that
+report checked, the load it was offered, the occupancy it reached, and how much
+it shed or refused. The row exists whether or not a report covered the
+resource, because `covered` being `false` is the finding.
+
+The report is shaped that way because of the failure mode this campaign has and
+the others do not: a bound can be reported as holding by a run that never
+approached it. A worker budget of `64` whose observed peak was `3` and a page
+bound checked against four rows are both green and neither is evidence about a
+ceiling. So `offered_load` and `observed_peak_occupancy` are recorded beside
+`declared_ceiling` on every row, and the runner requires the three to be in the
+relation the resource's overload policy implies.
+
+`declared_ceiling` and `configured_ceiling` are separate fields and are
+sometimes different numbers. The declared one is what the denominator says the
+framework enforces; the configured one is what the run was set up with, which is
+lower wherever running at the declared ceiling would leave nothing to hold back.
+The report also carries `out_of_scope`, so a reader can tell a resource the
+campaign examined and excluded from one it never looked at.
+
 ## Reproducing
 
 ```bash
@@ -95,6 +126,9 @@ OXIDEBATCH_CAMPAIGN_DIR=docs/engineering/campaigns/m5 \
 
 OXIDEBATCH_CAMPAIGN_DIR=docs/engineering/campaigns/m5 \
   cargo run --package oxide-batch-xtask -- upgrade
+
+OXIDEBATCH_CAMPAIGN_DIR=docs/engineering/campaigns/m5 \
+  cargo run --package oxide-batch-xtask -- resource-bounds
 ```
 
 Without `OXIDEBATCH_CAMPAIGN_DIR` the runner writes to `target/m5-campaigns`,
@@ -124,6 +158,14 @@ the repository's full history and `git`, because the rejection report builds the
 runtime that shipped against schema 2 from the revision before schema 3 was
 added; a shallow clone fails the campaign rather than skipping that report. Its
 committed files come from the `postgres-<version>-upgrade-campaign` CI jobs.
+
+The resource-bound campaign requires `OXIDEBATCH_POSTGRES_TEST_URL` and
+`OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL`, and fails before running anything when
+either is absent. It needs a server that will grant it `65` connections at once,
+because the worker report saturates a partition budget of `64` and the derived
+requirement is one connection per child plus the parent's; the official image's
+default of `100` is enough and the CI axes do not raise it. Its committed files
+come from the `postgres-<version>-resource-bound-campaign` CI jobs.
 
 The security campaign needs more than a connection string, so it is reproduced
 through the fixture script that builds what a URL cannot carry:

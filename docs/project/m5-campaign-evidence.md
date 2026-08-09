@@ -1,12 +1,12 @@
 # M5 Evidence Campaign Record
 
-**State:** In progress. The conformance, crash-and-restore, upgrade, and
-security campaigns are delivered; the resource-bound, soak, cancellation,
+**State:** In progress. The conformance, crash-and-restore, upgrade, security,
+and resource-bound campaigns are delivered; the soak, cancellation,
 performance, and reference-workload campaigns are not.
 
 **Issue:** [#102](https://github.com/luceat-lux-vestra/oxide-batch/issues/102)
 
-**Date:** 2026-08-09
+**Date:** 2026-08-10
 
 This record is the evidence for the sixth M5 workstream: running the campaigns
 the [design gate](m5-design-gate-evidence.md) named and retaining reproducible
@@ -28,7 +28,7 @@ named released version, and that stays with
 | Crash and restore | `process_kill_at_each_commit_phase_recovers_without_a_forged_status`, plus the P-013 and logical-restore reports | Delivered |
 | Upgrade | `schema1_and_schema2_upgrade_directly_to_schema3`, `schema2_runtime_rejects_schema3`, `schema3_backup_restores_the_prior_schema` | Delivered |
 | Security | `verify_full_tls_is_required_in_the_supported_mode`, `least_privilege_role_cannot_exceed_its_class`, `redaction_sweep_finds_no_prohibited_value_class` | Delivered |
-| Resource bounds | `declared_ceilings_hold_under_stress_with_backpressure` | Not started |
+| Resource bounds | `declared_ceilings_hold_under_stress_with_backpressure`, plus the bounded query-path, payload, and shedding reports | Delivered |
 | Soak | `soak_reports_no_task_connection_handle_or_memory_growth` | Not started |
 | Cancellation | P-014 report | Not started |
 | Performance | P-001, P-003, P-010 reports | Not started |
@@ -994,3 +994,310 @@ PostgreSQL requires `UPDATE` on at least one column to take that lock. The grant
 is confined to the identity columns the runtime writes when it creates the
 instance, which leaves the hold columns to retention and keeps the boundary the
 matrix checks in both directions.
+
+## Resource-bound campaign
+
+### What the campaign owes
+
+The performance plan's resource-bounds row promises a declared-ceiling proof
+for every queue, retry cache, page, buffer, worker assignment, and result set
+the framework owns, with backpressure propagation under stress. The design gate
+names one scenario for it; the campaign delivers that one and three more,
+because those six words name six different kinds of resource and no single
+scenario can be about all of them.
+
+| Report | Scenario | What it must show |
+| --- | --- | --- |
+| Worker assignment | `declared_ceilings_hold_under_stress_with_backpressure` | The worker and branch sets fill to their ceilings and no further under a load several times their size, a pool one connection short is refused before any child exists, and the stressed run leaves the sequential baseline's durable record. |
+| Bounded query paths | `bounded_query_paths_stay_bounded_as_history_grows` | Pages, encoded responses, cursors, and purge batches stay bounded against a history several times larger than any of them, and a bounded traversal loses and repeats nothing. |
+| Bounded payloads | `bounded_payloads_are_refused_one_byte_over_the_ceiling` | Every buffer and the retry cache accept their declared ceiling and refuse one unit past it, and the durable ones come back byte-identical. |
+| Bounded shedding | `bounded_queues_shed_under_overload_without_blocking_batch_work` | Every queue keeps its bound under an offered overload, sheds under the rule it contracts for, and does not block batch work while doing it. |
+
+### The denominator is most of the work
+
+Every campaign on this page needs a denominator. This one needs a different
+kind, and it is worth being explicit about why.
+
+The other campaigns enumerate obligations that are written down somewhere:
+ledger rows, commit phases, schema paths, privilege classes. A document can
+list them and review can check the list against its source. The obligation here
+is *every bounded resource the framework owns*, and that set is defined by the
+code rather than by any document. A campaign that proved nine ceilings out of an
+unstated number of them would look exactly like a complete one.
+
+So the denominator is committed as
+[`tests/fixtures/resource-bounds/campaign-scope.json`](../../tests/fixtures/resource-bounds/campaign-scope.json)
+and reconciled in **both directions** by an ordinary `cargo test`, in
+[`m5_resource_bounds_campaign.rs`](../../crates/oxide-batch/tests/m5_resource_bounds_campaign.rs).
+
+From the code outward, the reconciliation scans every library crate for the
+bounds it declares — matching on how a bound is *named* rather than on a marker
+attribute, because a bound nobody remembered to mark is exactly the one the scan
+is for — and requires each to be classified: as a resource with a proving
+report, or as out of scope with a reason a reviewer can disagree with. A bounded
+resource added later cannot reach a release without either entering the campaign
+or being argued out of it in writing.
+
+From the operator's document inward, it requires the
+[capacity budget](../operations/capacity-and-resource-budgets.md#declared-bounds)
+table and the scope to say the same thing about the same resources, and the
+scope's numbers to be the numbers the code holds. That table is what a
+deployment is sized from; a number there the code does not hold is worse than
+no number.
+
+Both directions found something, recorded below as F10 and F11.
+
+The current denominator is `36` resources across the six classes, plus five
+explicit exclusions. The exclusions carry reasons rather than silence, because a
+reader cannot otherwise tell an unexamined resource from an out-of-boundary one:
+operation timeouts and staleness thresholds bound *when* something happens
+rather than *how much* is held; retry and backoff limits bound a policy a
+definition declares rather than a resource the framework holds; and application
+readers, writers, and item buffers are outside the framework boundary, which the
+capacity budget already says.
+
+### Four overload policies, not one
+
+The campaign does not force one shape onto every resource, and could not
+without breaking a contract.
+
+- **Fail-closed** refuses before work starts, and nothing may be partially
+  launched behind it.
+- **Bounded concurrency** admits the work and holds occupancy at the ceiling, so
+  a backlog waits rather than growing the worker set.
+- **Bounded shedding** keeps the bound and discards under a stated rule while
+  never blocking batch progress.
+- **Bounded truncation** returns less than was asked for and says so, through a
+  continuation cursor or a recorded truncation.
+
+The telemetry exporter queue is where the distinction is load-bearing.
+Telemetry may not block batch work — that is the accepted contract — so a full
+queue cannot apply backpressure the way a bounded worker set does. Making it do
+so to keep the campaign uniform would break the contract rather than strengthen
+the evidence.
+
+The shedding rules differ from each other too, and the scope records which one
+each queue contracts for, because dropping the wrong record would otherwise
+reconcile. The exporter queue drops the **newest**, since it exists to shed a
+burst and the records already in it are the ones about to be exported. The
+incident buffer evicts the **oldest**, since it exists to be read after a
+failure. The cardinality guard collapses an unseen combination into one reserved
+series and counts it, so the series count stays finite while the observation is
+still made.
+
+### Reaching a ceiling is the evidence; respecting one is not
+
+This is the failure mode the campaign is shaped around, and the other campaigns
+do not have it.
+
+A bound can be *reported* as holding by a run that never approached it. A worker
+budget of `64` whose observed peak was `3`, a page bound checked against four
+rows, a queue that was never filled and therefore dropped nothing — all three
+are green, and none is evidence about a ceiling.
+
+So every report records what it offered and what the framework held, and the
+runner requires the two to be in the relation the resource's policy implies:
+peak equal to ceiling for a live occupancy, offered greater than ceiling with a
+non-zero shed count for a queue, and more available rows than the page or batch
+bound admits for a bounded query.
+
+Reaching a live ceiling deterministically needs a device. Each wave of workers
+is held at a barrier sized to the ceiling, so a framework that admitted fewer
+never completes a wave, times out, and fails on the peak it actually saw rather
+than hanging; a framework that admitted more trips the gauge.
+
+Two ceilings could not be saturated in the ordinary sense, and both are recorded
+as what they are rather than papered over — F13 and F14.
+
+### The stressed run is compared, not just counted
+
+The performance plan holds that a concurrency result which changes a durable
+observation is invalid regardless of its throughput. So the worker report runs
+the same `128` partitions twice — once with a budget of `64` and once one child
+at a time — and compares the durable record field by field. Thirteen fields:
+the job and step statuses and exit statuses, the aggregate counters and the six
+individual ones, the step-execution count, the partition key set, the
+per-partition status, counters, and context, and the partition count.
+
+Nothing here is timed, and no duration is compared against a threshold.
+Throughput at these scale points is the P-010 measurement's and is not claimed.
+
+### Why it is a runner as well as a test
+
+Three of the four reports need a real database and return green without one,
+because they skip. `cargo xtask resource-bounds` resolves the fixtures first
+and fails before any target starts when one is absent.
+
+Passing reports are not sufficient either, for the reason above, so each retains
+an observation into a directory the runner creates empty and the runner requires
+the substance: that every declared resource was observed by some report, that
+the ceiling each report checked is the one the denominator declares, that every
+live ceiling was reached and every shedding resource shed, that the fail-closed
+rejection left no row behind, and that the durable comparison ran and agreed.
+
+Writing those checks found five gaps in the reports as first drafted — two
+resources proved by nothing, two comparison fields the denominator named and the
+report did not compare, and a split run reported as saturated when it had
+nothing to hold back. That is the argument for the runner in one sentence.
+
+Each database report must also name the PostgreSQL major it ran against, because
+a matrix point is invisible in a connection string and an observation from one
+supported major would otherwise reconcile perfectly inside a run of another.
+
+### Where it runs
+
+`postgres-15-resource-bound-campaign` and `postgres-18-resource-bound-campaign`
+in `.github/workflows/ci.yml`, on the two ends of the supported PostgreSQL
+`15`-`18` range, each retaining its report as a build artifact on success and
+failure alike.
+
+### Results
+
+The figures below are from the development run recorded in
+[the measurement index](../engineering/campaigns/m5/README.md#the-resource-bound-campaign):
+PostgreSQL `18.4` on macOS `aarch64`. The release-blocking results are the two
+CI axes, whose reports are retained as build artifacts and committed here once
+that job has run on this branch. Everything the campaign asserts is structural,
+so the two differ in the server they ran against and not in what they prove.
+
+All four reports ran and none skipped. `36` declared resources, `36` observed.
+
+**Worker and connection ceilings.** `128` partitions were offered against a
+worker budget of `64` through a pool of exactly `65` connections. Peak
+occupancy: `64`, in two full waves, with all `128` admitted — the ceiling held
+by bounding concurrency rather than by dropping work — and zero workers still
+holding when the step finished.
+
+The branch set was run twice for the reason in F13: budgeted at `4` with `8`
+branches offered, where the peak was `4`, and budgeted at the declared ceiling
+of `8`, where the peak was `8`.
+
+A pool one connection short of the derived `concurrent_children + 1` was refused
+as `InsufficientPoolCapacity { required: 9, configured: 8 }`, and the refusal
+was confirmed as an absence: zero rows in `ob_job_instance`, `ob_job_execution`,
+and `ob_job_definition` afterwards. The same step against a pool of exactly `9`
+completed.
+
+The stressed run and the one-child-at-a-time baseline agreed on all thirteen
+compared fields over all `128` partitions.
+
+**Bounded query paths.** Against `1200` seeded instances, six pages returned all
+`1200` rows with `0` duplicates. The largest page held `202` rows against a
+`500`-row bound, because the encoded response bound bound first: the largest
+page encoded `261994` bytes against `262144`, and five of the six pages were
+truncated by it and handed back a continuation cursor. Cursors were `59` bytes
+against a `256`-byte bound at every point in the traversal. A purge planned
+against `1200` eligible candidates with a batch bound of `100` took exactly
+`100` and deleted exactly `100` instances and `100` executions.
+
+**Bounded payloads.** Every buffer and every retry-cache bound accepted its
+declared ceiling and refused one unit past it. The durable ones round-tripped:
+a `128`-byte partition key and a `4096`-byte partition context were written
+through the adapter and came back identical. An instance key digested from
+`1310720` bytes of identifying parameters was refused against the `1048576`-byte
+input ceiling. A `64`-edge upgrade chain was walked and a `65`-edge one refused.
+
+**Bounded shedding.** `256` records offered to a `64`-record queue: peak depth
+`64`, `192` dropped — the excess exactly — with the queue's own counter agreeing
+and the drop report throttled rather than emitted per drop. `400` label
+combinations offered to a `200`-series family budget: `200` series retained,
+`201` collapsed into the reserved series and counted. `600` events emitted for
+one execution against a `200`-event buffer: `200` returned. A `1072043`-byte
+response was truncated to `261750` bytes and said so.
+
+A launch then ran with its exporter queue full from the first record and left
+the same durable record as one with room, which is what makes shedding
+acceptable rather than data loss with a counter attached.
+
+No correctness P0 or P1 was found by this campaign, and none is open against it.
+Two P2 documentation defects were found and fixed, recorded as F10 and F11.
+
+### What this campaign does not establish
+
+- **Any throughput, latency, or memory number.** Nothing here is timed and no
+  duration is compared against a threshold. Per-page latency, rows examined,
+  index selection, scaling efficiency, and peak resident memory belong to the
+  performance campaign and the P-010 and P-012 measurements.
+- **That the bounds are the right bounds.** The campaign proves the framework
+  holds the ceilings it declares. Whether `64` concurrent workers or a `4 KiB`
+  partition context is the right ceiling for a deployment is a sizing question
+  the capacity budget answers, provisionally.
+- **Behaviour above the largest configured value.** Every ceiling is proved at
+  its declared maximum. A deployment configured below one is bounded by its own
+  configuration, which the campaign checks only at the values it runs.
+- **That a bound holds under a fault.** The stressed runs complete. What a
+  bounded worker set does when a child panics, a connection drops, or the
+  process is killed mid-wave is the crash-and-restore campaign's, and the
+  cancellation campaign owns the drain.
+- **Resource behaviour over time.** No leak, growth, or accumulation claim is
+  made. Twelve minutes of stress says nothing about twelve hours; that is the
+  soak campaign's report.
+- **The `4 MiB` diagnostic bundle ceiling as a truncation.** No M5 input
+  produces a bundle anywhere near it, so it is proved as an upper limit that
+  held rather than as a truncation that happened. See F14.
+- **Skip and retry counter equivalence under concurrency.** The compared
+  counters are the six an execution carries. Skip and retry counters live in the
+  durable fault state, and this campaign's workers are tasklets that produce
+  none, so a field comparing them would agree between two runs that both
+  produced nothing.
+
+### Findings
+
+No defect was found in the product. Two documentation defects were found and
+fixed, and four observations changed the campaign and are recorded because they
+are the reason it is shaped the way it is.
+
+**F10 (P2). The capacity budget declared a partition-key bound the code has
+never held.** The declared-bounds table gave the partition key as `256` bytes.
+`MAX_PARTITION_KEY_BYTES` has been `128` since the bound was introduced in
+[#89](https://github.com/luceat-lux-vestra/oxide-batch/pull/89), so the number
+an operator would have sized against was never the number the framework
+enforces. The document is corrected. This is the drift the code-outward and
+document-inward halves of the reconciliation exist to catch, and it is now
+caught by an ordinary `cargo test` rather than by reading.
+
+**F11 (P2). The capacity budget had no row for the retry cache.** The
+performance plan names six resource classes that must have a finite bound, and
+"retry cache" is one of them. The declared-bounds table had a row for none of
+it. The durable fault state *is* that cache — a bounded envelope of unresolved
+retry keys that commits with the chunk — with a `256`-entry and `64 KiB`
+ceiling, and both are now declared where an operator will look for them, with a
+note that it is a durable-format ceiling rather than a cache in front of a
+store.
+
+**F12. The declared node and transition ceilings are not independently
+reachable.** `MAX_NODES` is `1024` and `MAX_TRANSITIONS` is `4096`, and a
+definition author meets neither: the canonical manifest crosses its own `64 KiB`
+ceiling first, at a chain of `158` steps whose manifest is `65248` bytes. All
+three bounds are real and all three refuse, and none of them is wrong. But the
+node count is not the capability it reads as, so the campaign finds the binding
+bound by bisection rather than assuming it, and records which one an author
+actually meets.
+
+**F13. The split-branch ceiling cannot be saturated in the ordinary sense.** A
+split may declare at most eight branches and its budget may admit at most eight,
+so at the declared ceiling there is nothing left over to hold back. A run there
+proves the branches all ran, not that the budget bounds anything. The report
+therefore runs twice — budgeted at four with eight offered, which is a real
+backlog, and budgeted at the ceiling, which shows the declared ceiling is
+reachable — and the evidence carries both with the budgeted run as the
+observation.
+
+**F14. The diagnostic bundle's ceiling is not reachable through any M5 input.** A
+bundle is built from a bounded configuration, a bounded execution projection,
+and a bounded incident buffer, and all three together came to `4546` bytes
+against a `4 MiB` ceiling. The campaign records the observed size beside the
+ceiling and claims an upper limit that held rather than a truncation that
+happened, because a report that claimed saturation here would be claiming
+something it did not produce.
+
+**F15. A telemetry record cannot be given an execution identifier from
+outside.** The incident buffer's per-execution bound is defined in terms of the
+identifier a record carries, and no public constructor attaches one — only the
+services that already know an execution emit records that carry it. Fabricated
+records would have filled the buffer with events belonging to no execution, and
+`events_for` would have returned nothing for any identifier: a bound that looks
+held because nothing was ever offered to it. The report drives `600` real
+paginated reads instead. This is not a defect — a record's execution identity
+should come from whatever observed the execution — but it is the reason that one
+report is more expensive than it looks.
