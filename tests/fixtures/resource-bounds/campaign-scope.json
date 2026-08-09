@@ -130,6 +130,7 @@
   },
   "durable_equivalence": {
     "note": "The performance plan holds that a concurrency result that changes a durable observation is invalid regardless of its throughput. Each report that runs work concurrently therefore runs the same work sequentially and compares the durable record, and the runner requires the comparison rather than trusting the concurrent run alone.",
+    "counter_note": "The counters compared are the six an execution carries: read, processed, written, filtered, committed, and rolled back. Skip and retry counters are not among them, and saying so is deliberate: they live in the durable fault state, and this campaign's workers are tasklets that produce none, so a field comparing them would agree between two runs that both produced nothing. Retry and skip divergence under concurrency belongs to the fault-tolerance scenarios that inject faults.",
     "checkpoint_note": "The per-partition durable state compared is the partition context, which is what a restart resumes a child from. A chunk checkpoint proper is not compared, and saying so is deliberate: this campaign's workers are tasklets, which write no checkpoint, so a field comparing them would agree between two runs that both produced nothing. That is the shape of assertion this repository keeps finding stale, and the chunk checkpoint under concurrency belongs to the crash-and-restore campaign, where a killed process leaves one worth comparing.",
     "comparisons": [
       {
@@ -142,7 +143,7 @@
           "partition-key-set",
           "partition-status-per-key",
           "aggregate-execution-counts",
-          "read-write-commit-skip-counters",
+          "read-write-commit-rollback-counters",
           "partition-context-per-key",
           "partition-execution-count"
         ],

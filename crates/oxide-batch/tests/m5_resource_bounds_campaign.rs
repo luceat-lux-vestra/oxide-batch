@@ -499,6 +499,8 @@ fn the_stressed_run_is_compared_against_a_sequential_baseline() -> Result<(), Bo
             "partition-key-set",
             "partition-status-per-key",
             "aggregate-execution-counts",
+            "read-write-commit-rollback-counters",
+            "partition-execution-count",
             "partition-context-per-key",
         ] {
             assert!(

@@ -47,16 +47,17 @@ use oxide_batch::BoxFuture;
 use oxide_batch::{
     ActorRef, CaCertificate, ClassifierRevision, ComponentRevision, DefinitionRevision,
     ExecutionContext, ExitCode, ExitPattern, FailureCategory, FaultPhase, FaultStateEntry,
-    FaultStateEnvelope, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget, JobInstanceKey,
-    JobName, JobParameter, JobParameters, JobRepository, MAX_CURSOR_BYTES, MAX_NODES,
-    MAX_OPERATION_ID_BYTES, MAX_OUTGOING_TRANSITIONS, MAX_PARTITION_CONTEXT_BYTES,
+    FaultStateEnvelope, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget, ItemListenerSet,
+    JobInstanceKey, JobName, JobParameter, JobParameters, JobRepository, MAX_CURSOR_BYTES,
+    MAX_NODES, MAX_OPERATION_ID_BYTES, MAX_OUTGOING_TRANSITIONS, MAX_PARTITION_CONTEXT_BYTES,
     MAX_PARTITION_KEY_BYTES, MAX_PATTERN_BYTES, MAX_REASON_CODE_BYTES, MAX_TRANSITIONS, NodeId,
     OperationId, ParameterName, ParameterRole, ParameterValue, PartitionBudget, PartitionCount,
     PartitionKey, PartitionPlanEntry, PartitionPlanFactory, PartitionTaskletFactory,
-    PartitionedStepNode, PostgresJobRepository, PostgresMigrator, ReasonCode, RetryKey,
-    RetryOrdinal, RetryStateLimit, SequentialIdGenerator, StateLimits, StepComponents, StepName,
-    StepNode, StopSource, Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep,
-    TerminalKind,
+    PartitionedStepNode, PostgresJobRepository, PostgresMigrator, ReadListener, ReasonCode,
+    RetryKey, RetryOrdinal, RetryStateLimit, SequentialIdGenerator, StateCodecError, StateLimits,
+    StateSchemaId, StateSchemaUpgrade, StateSchemaVersion, StepComponents, StepName, StepNode,
+    StopSource, Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
+    VersionedStateCodec,
 };
 use serde_json::{Value, json};
 
@@ -85,6 +86,9 @@ const CA_CERTIFICATE_CEILING: usize = 1024 * 1024;
 
 /// The declared ceiling on one durable definition manifest.
 const MANIFEST_CEILING: usize = 64 * 1024;
+
+/// The declared ceiling on one resolved state-upgrade chain.
+const UPGRADE_CHAIN_CEILING: usize = 64;
 
 #[test]
 fn bounded_payloads_are_refused_one_byte_over_the_ceiling() -> Result<(), Box<dyn Error>> {
@@ -117,6 +121,8 @@ async fn report(runtime: String, migrator: String) -> Result<(), Box<dyn Error>>
     let largest_chain = largest_manifest_chain();
     cells.extend(definition_cells(largest_chain)?);
     cells.extend(state_cells());
+    cells.extend(upgrade_chain_cells());
+    cells.extend(listener_cells());
     cells.extend(identifier_cells());
 
     let mut violations: Vec<String> = cells.iter().filter_map(Cell::violation).collect();
@@ -440,6 +446,56 @@ fn state_cells() -> Vec<Cell> {
     ]
 }
 
+/// Reports the bounded upgrade chain a codec may declare.
+///
+/// The chain is walked for real rather than counted: a payload recorded at the
+/// oldest version is decoded through every declared edge, so the bound is the
+/// number of upgrades the framework will actually apply rather than the number
+/// a codec is allowed to list.
+fn upgrade_chain_cells() -> Vec<Cell> {
+    vec![
+        Cell::new(
+            "state-upgrade-chain",
+            UPGRADE_CHAIN_CEILING as u64,
+            "a chain of exactly the ceiling",
+            UPGRADE_CHAIN_CEILING as u64,
+            walks_chain(UPGRADE_CHAIN_CEILING),
+            true,
+        ),
+        Cell::new(
+            "state-upgrade-chain",
+            UPGRADE_CHAIN_CEILING as u64,
+            "one edge past the ceiling",
+            UPGRADE_CHAIN_CEILING as u64 + 1,
+            walks_chain(UPGRADE_CHAIN_CEILING + 1),
+            false,
+        ),
+    ]
+}
+
+/// Reports the bounded item-listener registration.
+fn listener_cells() -> Vec<Cell> {
+    let ceiling = ItemListenerSet::<(), ()>::MAX_LISTENERS;
+    vec![
+        Cell::new(
+            "item-listeners",
+            ceiling as u64,
+            "at the ceiling",
+            ceiling as u64,
+            registers_listeners(ceiling),
+            true,
+        ),
+        Cell::new(
+            "item-listeners",
+            ceiling as u64,
+            "one past the ceiling",
+            ceiling as u64 + 1,
+            registers_listeners(ceiling + 1),
+            false,
+        ),
+    ]
+}
+
 /// Reports every bounded identifier and reference, as one table.
 fn identifier_cells() -> Vec<Cell> {
     let mut cells = Vec::new();
@@ -640,6 +696,85 @@ async fn instance_key_bound(url: &str) -> Result<InstanceKey, Box<dyn Error>> {
         violations,
     })
 }
+
+/// Reports whether a payload survives a chain of `edges` declared upgrades.
+fn walks_chain(edges: usize) -> bool {
+    fn walk(edges: usize) -> Result<(), Box<dyn Error>> {
+        let schema = StateSchemaId::new("m5.resource-bounds.chain")?;
+        let mut upgrades = Vec::with_capacity(edges);
+        for edge in 0..edges {
+            let from = StateSchemaVersion::new(u32::try_from(edge)? + 1)?;
+            let to = StateSchemaVersion::new(u32::try_from(edge)? + 2)?;
+            upgrades.push(StateSchemaUpgrade::new(from, to, |payload| {
+                Ok(payload.to_vec())
+            })?);
+        }
+        let codec = ChainCodec {
+            schema: schema.clone(),
+            current: StateSchemaVersion::new(u32::try_from(edges)? + 1)?,
+            upgrades,
+        };
+
+        // The payload is recorded at the oldest version the chain starts from,
+        // so decoding it is what walks every edge.
+        let recorded = ExecutionContext::from_json(
+            b"{\"format\":\"oxide-batch.execution-context\",\"format_version\":1,\
+              \"schema\":\"m5.resource-bounds.chain\",\"schema_version\":1,\
+              \"payload\":{}}",
+            StateLimits::new(DURABLE_STATE_CEILING, 16)?,
+        )?;
+        recorded.decode(&codec)?;
+        Ok(())
+    }
+
+    walk(edges).is_ok()
+}
+
+/// Reports whether `count` read listeners may be registered on one step.
+fn registers_listeners(count: usize) -> bool {
+    let mut listeners = ItemListenerSet::<(), ()>::new();
+    for _ in 0..count {
+        listeners = match listeners.with_read_listener(Arc::new(SilentListener)) {
+            Ok(next) => next,
+            Err(_) => return false,
+        };
+    }
+    true
+}
+
+/// A codec whose only interesting property is the length of its chain.
+struct ChainCodec {
+    schema: StateSchemaId,
+    current: StateSchemaVersion,
+    upgrades: Vec<StateSchemaUpgrade>,
+}
+
+impl VersionedStateCodec<()> for ChainCodec {
+    fn schema_id(&self) -> &StateSchemaId {
+        &self.schema
+    }
+
+    fn current_version(&self) -> StateSchemaVersion {
+        self.current
+    }
+
+    fn upgrades(&self) -> &[StateSchemaUpgrade] {
+        &self.upgrades
+    }
+
+    fn encode(&self, (): &()) -> Result<Vec<u8>, StateCodecError> {
+        Ok(b"{}".to_vec())
+    }
+
+    fn decode(&self, _payload: &[u8]) -> Result<(), StateCodecError> {
+        Ok(())
+    }
+}
+
+/// A listener that observes nothing, so only its registration is measured.
+struct SilentListener;
+
+impl ReadListener<()> for SilentListener {}
 
 /// Builds one durable partition entry whose context envelope is `bytes` long.
 fn plan_entry(bytes: usize) -> Result<PartitionPlanEntry, Box<dyn Error>> {

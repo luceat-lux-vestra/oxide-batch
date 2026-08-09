@@ -111,9 +111,7 @@ fn declared_ceilings_hold_under_stress_with_backpressure() -> Result<(), Box<dyn
 /// Runs every worker-assignment obligation and retains one observation.
 async fn report(runtime: String, migrator: String) -> Result<(), Box<dyn Error>> {
     PostgresMigrator::migrate(&config(migrator.clone())?).await?;
-    for job in [STRESSED_JOB, BASELINE_JOB, SPLIT_JOB, SHORT_POOL_JOB] {
-        remove_job(&migrator, job).await?;
-    }
+    clear(&migrator).await?;
 
     let server = server_version(&runtime).await?;
     let mut violations = Vec::new();
@@ -154,14 +152,27 @@ async fn report(runtime: String, migrator: String) -> Result<(), Box<dyn Error>>
     });
     retain_observation(REPORT, &document)?;
 
-    for job in [STRESSED_JOB, BASELINE_JOB, SPLIT_JOB, SHORT_POOL_JOB] {
-        remove_job(&migrator, job).await?;
-    }
+    clear(&migrator).await?;
 
     assert!(
         violations.is_empty(),
         "the worker-assignment report observed {violations:#?}",
     );
+    Ok(())
+}
+
+/// Removes every durable trace this report leaves behind.
+///
+/// The split runs under one job name per budget, so the names are derived the
+/// same way they are built rather than listed twice.
+async fn clear(url: &str) -> Result<(), Box<dyn Error>> {
+    let ceiling = u8::try_from(MAX_SPLIT_BRANCHES).unwrap_or(u8::MAX);
+    for job in [STRESSED_JOB, BASELINE_JOB, SHORT_POOL_JOB] {
+        remove_job(url, job).await?;
+    }
+    for budget in [ceiling / 2, ceiling] {
+        remove_job(url, &format!("{SPLIT_JOB}_{budget}")).await?;
+    }
     Ok(())
 }
 
@@ -203,6 +214,7 @@ async fn saturate_partition_workers(url: &str) -> Result<(Stressed, Observation)
         Stressed {
             resource: "concurrent-partition-workers",
             policy: "bounded-concurrency",
+            declared: u64::from(ceiling),
             ceiling: u64::from(ceiling),
             offered: u64::from(OFFERED_PARTITIONS),
             peak: peak as u64,
@@ -218,15 +230,33 @@ async fn saturate_partition_workers(url: &str) -> Result<(Stressed, Observation)
     ))
 }
 
-/// Fills the branch set to its ceiling and reads what was held.
+/// Fills the branch set to its budget and reads what was held.
+///
+/// This resource is the one place where the declared ceiling cannot be
+/// saturated in the ordinary sense, and it is worth being explicit about why: a
+/// split may declare at most `MAX_SPLIT_BRANCHES` branches and its budget may
+/// admit at most the same number, so at the declared ceiling there is nothing
+/// left over to hold back. Running only there would prove the branches all ran
+/// and nothing about the budget bounding anything.
+///
+/// So the report runs twice. The budgeted run admits half the branches, which
+/// is a real backlog: eight are offered, four run at a time, and the peak has
+/// to be four. The ceiling run then admits all eight, which is what shows the
+/// declared ceiling itself is reachable. The evidence records the budgeted run
+/// as the observation, because that is the one with something to hold back, and
+/// carries the ceiling run beside it.
 async fn saturate_split_branches(url: &str) -> Result<Stressed, Box<dyn Error>> {
     let ceiling = u8::try_from(MAX_SPLIT_BRANCHES)
         .map_err(|_| Failure::boxed("the split branch ceiling does not fit a branch budget"))?;
+    let budget = ceiling / 2;
     let occupancy = Arc::new(Occupancy::new());
-    let barrier = Arc::new(Barrier::new(OFFERED_BRANCHES));
+    // The wave is the budget rather than the branch count: only `budget`
+    // branches can be in flight, so a barrier sized to the branch count would
+    // never complete.
+    let barrier = Arc::new(Barrier::new(usize::from(budget)));
     let connections = u32::from(ceiling) + 1;
 
-    let job = saturated_split_job(ceiling, connections, &occupancy, &barrier)?;
+    let job = saturated_split_job(budget, connections, &occupancy, &barrier)?;
 
     let clock = FixedClock::default();
     let repository = PostgresJobRepository::connect(
@@ -246,18 +276,18 @@ async fn saturate_split_branches(url: &str) -> Result<Stressed, Box<dyn Error>> 
     let mut violations = Vec::new();
     if outcome.outcome() != &FlowExecutionOutcome::Completed {
         violations.push(format!(
-            "the saturated split ended as {:?} rather than completing",
+            "the budgeted split ended as {:?} rather than completing",
             outcome.outcome(),
         ));
     }
-    if peak > usize::from(ceiling) {
+    if peak > usize::from(budget) {
         violations.push(format!(
-            "the branch budget is {ceiling} and {peak} branches were active at once",
+            "the branch budget is {budget} and {peak} branches were active at once",
         ));
     }
-    if peak < usize::from(ceiling) {
+    if peak < usize::from(budget) {
         violations.push(format!(
-            "the branch budget is {ceiling}, {OFFERED_BRANCHES} branches were offered against it, \
+            "the branch budget is {budget}, {OFFERED_BRANCHES} branches were offered against it, \
              and no more than {peak} ran at once",
         ));
     }
@@ -268,27 +298,73 @@ async fn saturate_split_branches(url: &str) -> Result<Stressed, Box<dyn Error>> 
         ));
     }
 
+    let at_ceiling = split_at_ceiling(url, ceiling, connections).await?;
+    if at_ceiling != usize::from(ceiling) {
+        violations.push(format!(
+            "the declared branch ceiling is {ceiling} and a split budgeted at it held no more \
+             than {at_ceiling} branches at once",
+        ));
+    }
+
     Ok(Stressed {
         resource: "concurrent-split-branches",
         policy: "bounded-concurrency",
-        ceiling: u64::from(ceiling),
+        declared: u64::from(ceiling),
+        ceiling: u64::from(budget),
         offered: OFFERED_BRANCHES as u64,
         peak: peak as u64,
         admitted: occupancy.admitted() as u64,
         connections: capacity,
-        detail: json!({ "join_outcome": format!("{:?}", outcome.outcome()) }),
+        detail: json!({
+            "declared_ceiling": ceiling,
+            "budgeted_run": { "budget": budget, "offered": OFFERED_BRANCHES, "peak": peak },
+            "ceiling_run": { "budget": ceiling, "offered": OFFERED_BRANCHES, "peak": at_ceiling },
+            "note": "The declared ceiling equals the largest branch count a split may declare, so \
+                     a run budgeted at it has nothing left over to hold back. The budgeted run is \
+                     what proves the budget bounds concurrency; the ceiling run is what proves \
+                     the declared ceiling is reachable.",
+            "join_outcome": format!("{:?}", outcome.outcome()),
+        }),
         violations,
     })
 }
 
+/// Runs the same split budgeted at the declared ceiling and returns its peak.
+async fn split_at_ceiling(
+    url: &str,
+    ceiling: u8,
+    connections: u32,
+) -> Result<usize, Box<dyn Error>> {
+    let occupancy = Arc::new(Occupancy::new());
+    let barrier = Arc::new(Barrier::new(usize::from(ceiling)));
+    let job = saturated_split_job(ceiling, connections, &occupancy, &barrier)?;
+
+    let clock = FixedClock::default();
+    let repository = PostgresJobRepository::connect(
+        config_with_pool(url.to_owned(), connections)?,
+        Arc::new(clock),
+    )
+    .await?;
+    let ids = SequentialIdGenerator::new(NonZeroU64::MIN);
+    let (_, stop) = StopSource::new();
+    FlowLauncher::new(&repository, &clock, &ids)
+        .launch(&job, &JobParameters::new(), &stop)
+        .await?;
+    repository.close().await?;
+
+    Ok(occupancy.peak())
+}
+
 /// Builds the split whose branch set the report saturates.
 fn saturated_split_job(
-    ceiling: u8,
+    budget: u8,
     connections: u32,
     occupancy: &Arc<Occupancy>,
     barrier: &Arc<Barrier>,
 ) -> Result<FlowJob, Box<dyn Error>> {
-    let name = JobName::new(SPLIT_JOB)?;
+    // The two runs are two jobs, because the second would otherwise be a
+    // restart of a completed instance rather than a launch.
+    let name = JobName::new(format!("{SPLIT_JOB}_{budget}"))?;
     let prepare = NodeId::new("prepare")?;
     let split = NodeId::new("parallel")?;
     let join = NodeId::new("joined")?;
@@ -313,7 +389,7 @@ fn saturated_split_job(
             split.clone(),
             branches,
             join.clone(),
-            SplitBudget::new(ceiling, connections)?,
+            SplitBudget::new(budget, connections)?,
         )))
         .with_node(FlowNode::join(JoinNode::new(join.clone())))
         .with_sequence(prepare.clone(), FlowTarget::Node(split))?
@@ -553,6 +629,7 @@ async fn short_pool_is_refused_before_any_child(url: &str) -> Result<Stressed, B
     Ok(Stressed {
         resource: "repository-connection-capacity",
         policy: "fail-closed",
+        declared: u64::from(required),
         ceiling: u64::from(required),
         offered: u64::from(required - 1),
         peak: 0,
@@ -876,6 +953,22 @@ fn compare(baseline: &Observation, stressed: &Observation) -> Equivalence {
         "aggregate-execution-counts",
         baseline.parent_counts == stressed.parent_counts,
     );
+    // The scope names the individual counters as well as the aggregate,
+    // because an aggregate that matched while a retry counter drifted would be
+    // the interesting failure and this comparison would not see it.
+    agree(
+        "read-write-commit-rollback-counters",
+        baseline.parent_counts.read() == stressed.parent_counts.read()
+            && baseline.parent_counts.processed() == stressed.parent_counts.processed()
+            && baseline.parent_counts.written() == stressed.parent_counts.written()
+            && baseline.parent_counts.filtered() == stressed.parent_counts.filtered()
+            && baseline.parent_counts.committed() == stressed.parent_counts.committed()
+            && baseline.parent_counts.rolled_back() == stressed.parent_counts.rolled_back(),
+    );
+    agree(
+        "partition-execution-count",
+        baseline.partitions.len() == stressed.partitions.len(),
+    );
     agree(
         "step-execution-count",
         baseline.step_executions == stressed.step_executions,
@@ -912,8 +1005,25 @@ fn compare(baseline: &Observation, stressed: &Observation) -> Equivalence {
         }),
     );
 
-    // The comparison above would hold between two runs that both did nothing,
-    // so the shape of the record is required as well as its agreement.
+    violations.extend(shape_violations(stressed));
+
+    Equivalence {
+        baseline_workers: 1,
+        stressed_workers: u64::from(MAX_PARTITION_WORKERS),
+        partitions: stressed.partitions.len() as u64,
+        compared,
+        violations,
+    }
+}
+
+/// Reports what the stressed run's own record must look like regardless.
+///
+/// The field comparison would hold between two runs that both did nothing, so
+/// the shape of the durable record is required as well as its agreement with
+/// the baseline.
+fn shape_violations(stressed: &Observation) -> Vec<String> {
+    let mut violations = Vec::new();
+
     if stressed.partitions.len() != usize::from(OFFERED_PARTITIONS) {
         violations.push(format!(
             "the stressed run recorded {} durable partitions and {OFFERED_PARTITIONS} were \
@@ -933,13 +1043,7 @@ fn compare(baseline: &Observation, stressed: &Observation) -> Equivalence {
         );
     }
 
-    Equivalence {
-        baseline_workers: 1,
-        stressed_workers: u64::from(MAX_PARTITION_WORKERS),
-        partitions: stressed.partitions.len() as u64,
-        compared,
-        violations,
-    }
+    violations
 }
 
 /// Builds one bounded partition context and key.
@@ -1023,6 +1127,11 @@ struct DurablePartition {
 struct Stressed {
     resource: &'static str,
     policy: &'static str,
+    /// The bound the denominator declares for this resource.
+    declared: u64,
+    /// The bound this run was configured with, which is the one the peak is
+    /// measured against. It is below the declared ceiling only where running at
+    /// the declared ceiling leaves nothing to hold back.
     ceiling: u64,
     offered: u64,
     peak: u64,
@@ -1043,6 +1152,7 @@ impl Stressed {
         json!({
             "resource": self.resource,
             "overload_policy": self.policy,
+            "declared_ceiling": self.declared,
             "configured_ceiling": self.ceiling,
             "offered_load": self.offered,
             "observed_peak_occupancy": self.peak,
