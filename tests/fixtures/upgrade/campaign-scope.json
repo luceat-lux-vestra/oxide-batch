@@ -1,0 +1,131 @@
+{
+  "campaign": "M5 PostgreSQL upgrade",
+  "issue": "https://github.com/luceat-lux-vestra/oxide-batch/issues/102",
+  "gate": "docs/project/m5-design-gate-evidence.md",
+  "plan": "docs/engineering/performance-plan.md",
+  "note": "This document is the campaign's denominator. The runner reads it to decide what must run and what each report must have observed, and the in-process reconciliation in crates/oxide-batch/tests/m5_upgrade_campaign.rs reads it to decide whether it still says what the accepted documents require.",
+  "support_contract": {
+    "postgres_versions": ["15", "16", "17", "18"],
+    "matrix_endpoints": ["15", "18"],
+    "installed_schema_version": 3,
+    "direct_upgrade_from": [1, 2],
+    "rollback": "restore-based"
+  },
+  "schema2_runtime": {
+    "revision": "397a38bcada93d961dbb2ca3d9960311a3fb4395",
+    "supported_schema_version": 2,
+    "probe": "tests/fixtures/upgrade/schema-2-runtime/probe.rs",
+    "note": "The last revision before schema 3 was added. The rejection report builds this revision in a worktree because no build of the current tree can report a supported schema version of 2."
+  },
+  "fixtures": {
+    "postgres-upgrade": [
+      "OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL",
+      "OXIDEBATCH_POSTGRES_BACKUP_TEST_URL"
+    ]
+  },
+  "sources": [
+    {
+      "schema_version": 1,
+      "installed_by": "crates/oxide-batch/migrations/0001_initial_metadata.sql",
+      "seed": "tests/fixtures/upgrade/schema-1/seed.sql",
+      "note": "Installed by running the immutable migration set to version 1 and stopping, so the fixture is the schema those migrations produced rather than schema 3 wearing an older number."
+    },
+    {
+      "schema_version": 2,
+      "installed_by": "crates/oxide-batch/migrations/0002_fault_tolerance_and_flow.sql",
+      "seed": "tests/fixtures/upgrade/schema-2/seed.sql",
+      "note": "Installed by running the immutable migration set to version 2 and stopping."
+    }
+  ],
+  "reports": [
+    {
+      "id": "schema-upgrade",
+      "title": "Direct upgrade to schema 3",
+      "owes": "Schema 1 and 2 to schema 3 direct upgrade",
+      "package": "oxide-batch",
+      "target": "postgres_schema_upgrade",
+      "name": "schema1_and_schema2_upgrade_directly_to_schema3",
+      "fixture": "postgres-upgrade"
+    },
+    {
+      "id": "schema-rejection",
+      "title": "A schema-2 runtime refusing a schema-3 database",
+      "owes": "newer-schema rejection",
+      "package": "oxide-batch",
+      "target": "postgres_schema_rejection",
+      "name": "schema2_runtime_rejects_schema3",
+      "fixture": "postgres-upgrade"
+    },
+    {
+      "id": "upgrade-rollback",
+      "title": "Restore-based rollback of an upgrade",
+      "owes": "restore-based rollback",
+      "package": "oxide-batch",
+      "target": "postgres_upgrade_rollback",
+      "name": "schema3_backup_restores_the_prior_schema",
+      "fixture": "postgres-upgrade"
+    }
+  ],
+  "paths": [
+    {
+      "id": "upgrade-from-1",
+      "report": "schema-upgrade",
+      "source_schema_version": 1,
+      "target_schema_version": 3,
+      "repository_open_result": "ok",
+      "backup_restore_result": null,
+      "observed_schema_version": 3,
+      "expected": "one migrator invocation carries a schema-1 database to schema 3, every value of every column schema 1 declared is unchanged, and the result opens through the current repository"
+    },
+    {
+      "id": "upgrade-from-2",
+      "report": "schema-upgrade",
+      "source_schema_version": 2,
+      "target_schema_version": 3,
+      "repository_open_result": "ok",
+      "backup_restore_result": null,
+      "observed_schema_version": 3,
+      "expected": "one migrator invocation carries a schema-2 database to schema 3, every value of every column schema 2 declared is unchanged, and the result opens through the current repository"
+    },
+    {
+      "id": "reject-schema-3",
+      "report": "schema-rejection",
+      "source_schema_version": 2,
+      "target_schema_version": 3,
+      "repository_open_result": "refused: NewerSchema",
+      "backup_restore_result": null,
+      "observed_schema_version": 3,
+      "expected": "the runtime that shipped against schema 2 refuses a database upgraded to schema 3 from both its repository and its migrator, with the typed newer-schema failure, and writes nothing while refusing"
+    },
+    {
+      "id": "rollback-to-1",
+      "report": "upgrade-rollback",
+      "source_schema_version": 1,
+      "target_schema_version": 3,
+      "repository_open_result": "refused: MigrationRequired",
+      "backup_restore_result": "ok",
+      "observed_schema_version": 1,
+      "expected": "the logical backup taken before the upgrade restores into a separate database at schema 1 carrying the state it was taken from, and the current runtime refuses it as needing migration"
+    },
+    {
+      "id": "rollback-to-2",
+      "report": "upgrade-rollback",
+      "source_schema_version": 2,
+      "target_schema_version": 3,
+      "repository_open_result": "refused: MigrationRequired",
+      "backup_restore_result": "ok",
+      "observed_schema_version": 2,
+      "expected": "the logical backup taken before the upgrade restores into a separate database at schema 2 carrying the state it was taken from, and the current runtime refuses it as needing migration"
+    }
+  ],
+  "related": [
+    {
+      "package": "oxide-batch",
+      "target": "postgres_repository",
+      "name": "newer_schema_is_rejected_without_guessing_compatibility",
+      "invariant": "newer schema rejection",
+      "run_by_this_campaign": false,
+      "note": "The lower-level regression test for the comparison the rejection report exercises end to end. It is kept and must keep existing, and this campaign does not run it: it needs a database already migrated to the current schema, which is the crash-and-restore campaign's fixture rather than this one's, and every database this campaign touches it creates itself. It is also not a substitute for the report, because it moves a version number one past whatever this runtime supports, where the report runs a previous runtime against a real schema-3 database."
+    }
+  ]
+}

@@ -5,6 +5,7 @@ mod crash_restore;
 mod deps;
 mod suite;
 mod surface;
+mod upgrade;
 
 use std::env;
 use std::ffi::OsStr;
@@ -107,6 +108,7 @@ fn main() -> ExitCode {
         Some("doctor") => run_all(DOCTOR),
         Some("package") => run_all(PACKAGE),
         Some("surface") => run_surface_check(),
+        Some("upgrade") => run_upgrade_campaign(),
         Some(command) => {
             eprintln!("unknown xtask command: {command}");
             usage();
@@ -208,6 +210,37 @@ fn run_crash_restore_campaign() -> bool {
     }
 }
 
+/// Reports whether the upgrade campaign observed every schema path it owes.
+fn run_upgrade_campaign() -> bool {
+    eprintln!("==> PostgreSQL upgrade campaign");
+
+    match upgrade::run() {
+        Ok(campaign) => {
+            eprintln!("campaign report: {}", campaign.report.display());
+            if campaign.violations.is_empty() {
+                eprintln!(
+                    "schema 1 and schema 2 upgraded directly to schema 3, a schema-2 runtime \
+                     refused the result without writing, and the backup taken before each \
+                     upgrade restored the prior schema"
+                );
+                return true;
+            }
+            for violation in &campaign.violations {
+                eprintln!("campaign gap: {violation}");
+            }
+            eprintln!(
+                "see the campaign scope in \
+                 tests/fixtures/upgrade/campaign-scope.json"
+            );
+            false
+        }
+        Err(error) => {
+            eprintln!("could not run the upgrade campaign: {error}");
+            false
+        }
+    }
+}
+
 /// Reports whether the rendered facade surface discloses only what the
 /// facade review accepted.
 fn run_surface_check() -> bool {
@@ -284,6 +317,7 @@ fn usage() {
            deps           check extraction boundaries and workspace cycles\n\
            doctor         show required local tool versions\n\
            package        inspect and dry-run every publishable crate\n\
-           surface        inspect the rendered facade for disclosed dependencies"
+           surface        inspect the rendered facade for disclosed dependencies\n\
+           upgrade        run the PostgreSQL schema upgrade, rejection, and rollback campaign"
     );
 }
