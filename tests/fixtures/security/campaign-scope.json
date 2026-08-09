@@ -1,0 +1,163 @@
+{
+  "campaign": "M5 PostgreSQL security",
+  "issue": "https://github.com/luceat-lux-vestra/oxide-batch/issues/102",
+  "gate": "docs/project/m5-design-gate-evidence.md",
+  "plan": "docs/engineering/performance-plan.md",
+  "note": "This document is the campaign's denominator. The runner reads it to decide what must run and what each report must have observed, and the in-process reconciliation in crates/oxide-batch/tests/m5_security_campaign.rs reads it to decide whether it still says what the accepted documents require.",
+  "support_contract": {
+    "postgres_versions": ["15", "16", "17", "18"],
+    "matrix_endpoints": ["15", "18"],
+    "installed_schema_version": 3,
+    "tls_mode": "verify-full",
+    "privilege_classes": [
+      "migration",
+      "runtime",
+      "explorer",
+      "operator",
+      "retention"
+    ],
+    "prohibited_value_classes": [
+      "password",
+      "database-url-endpoint",
+      "certificate",
+      "payload"
+    ]
+  },
+  "policy": {
+    "roles": "tests/fixtures/security/roles.sql",
+    "grants": "tests/fixtures/security/grants.sql",
+    "note": "The least-privilege policy is committed SQL rather than statements assembled by the report, so what each class may reach is reviewable on its own."
+  },
+  "fixtures": {
+    "postgres-security-tls": [
+      "OXIDEBATCH_POSTGRES_ADMIN_TEST_URL",
+      "OXIDEBATCH_SECURITY_TLS_HOST",
+      "OXIDEBATCH_SECURITY_TLS_MISMATCH_HOST",
+      "OXIDEBATCH_SECURITY_TLS_CA",
+      "OXIDEBATCH_SECURITY_TLS_UNTRUSTED_CA",
+      "OXIDEBATCH_SECURITY_PLAINTEXT_TEST_URL"
+    ],
+    "postgres-security-roles": ["OXIDEBATCH_POSTGRES_ADMIN_TEST_URL"]
+  },
+  "reports": [
+    {
+      "id": "verify-full-tls",
+      "title": "verify-full TLS in the supported mode",
+      "owes": "verify-full TLS connectivity",
+      "package": "oxide-batch",
+      "target": "postgres_verify_full_tls",
+      "name": "verify_full_tls_is_required_in_the_supported_mode",
+      "fixture": "postgres-security-tls",
+      "database_report": true
+    },
+    {
+      "id": "least-privilege-roles",
+      "title": "Least-privilege separation across the five M5 classes",
+      "owes": "least-privilege role separation for migration, runtime, explorer, operator, and retention",
+      "package": "oxide-batch",
+      "target": "postgres_least_privilege_roles",
+      "name": "least_privilege_role_cannot_exceed_its_class",
+      "fixture": "postgres-security-roles",
+      "database_report": true
+    },
+    {
+      "id": "redaction-sweep",
+      "title": "Redaction sweep across the M5 diagnostic surfaces",
+      "owes": "a redaction sweep over errors, telemetry, CLI output, and diagnostic bundles",
+      "package": "oxide-batch-cli",
+      "target": "m5_redaction_sweep",
+      "name": "redaction_sweep_finds_no_prohibited_value_class",
+      "fixture": null,
+      "database_report": false,
+      "note": "The sweep needs no database. Every value class it injects enters through configuration or the launch path, and every surface it collects is produced in process, so it runs wherever the workspace builds. It is still the campaign's to run, and the campaign still requires its observation."
+    }
+  ],
+  "tls": {
+    "report": "verify-full-tls",
+    "connects": "trusted-authority-and-name",
+    "refusals": [
+      {
+        "attempt": "untrusted-authority",
+        "failure_class": "untrusted-authority",
+        "expected": "an authority that signed nothing the server presents is refused by certificate validation, with the name correct"
+      },
+      {
+        "attempt": "hostname-mismatch",
+        "failure_class": "hostname-mismatch",
+        "expected": "the signing authority reached under a name its certificate does not carry is refused by host-name validation"
+      },
+      {
+        "attempt": "server-without-tls",
+        "failure_class": "tls-not-offered",
+        "expected": "a reachable server offering no TLS is refused rather than continued with unencrypted, which is what distinguishes a validated transport from a preferred one"
+      }
+    ]
+  },
+  "privilege_classes": [
+    {
+      "class": "migration",
+      "role": "oxide_batch_m5_migration",
+      "allowed": "installs and upgrades the metadata schema it owns",
+      "forbidden": "any cluster-level privilege, and anything outside the database it migrates"
+    },
+    {
+      "class": "runtime",
+      "role": "oxide_batch_m5_runtime",
+      "allowed": "the job, step, partition, and flow lifecycle",
+      "forbidden": "schema lifecycle, migration bookkeeping, operator decisions, retention deletes, and retention holds"
+    },
+    {
+      "class": "explorer",
+      "role": "oxide_batch_m5_explorer",
+      "allowed": "bounded reads",
+      "forbidden": "every mutation, and the migration bookkeeping"
+    },
+    {
+      "class": "operator",
+      "role": "oxide_batch_m5_operator",
+      "allowed": "guarded, audited recovery and stop actions",
+      "forbidden": "schema lifecycle, execution ownership, step creation, retention deletes, and retention records"
+    },
+    {
+      "class": "retention",
+      "role": "oxide_batch_m5_retention",
+      "allowed": "plan, apply, hold, release, and delete within its scope",
+      "forbidden": "schema lifecycle, lifecycle mutation, operator records, and instance identity"
+    }
+  ],
+  "redaction": {
+    "report": "redaction-sweep",
+    "surfaces": ["errors", "telemetry", "cli", "bundle"],
+    "value_classes": [
+      "password",
+      "database-url-endpoint",
+      "certificate",
+      "payload"
+    ],
+    "prohibited_occurrences": 0
+  },
+  "related": [
+    {
+      "package": "oxide-batch",
+      "target": "postgres_repository",
+      "name": "configuration_bounds_and_diagnostics_are_safe",
+      "invariant": "redacted configuration diagnostics",
+      "run_by_this_campaign": false,
+      "note": "The lower-level regression test for the configuration type's own redaction. It is kept and must keep existing, and this campaign does not run it: it asserts about one value in one Debug rendering, where the sweep injects a canary per prohibited class and scans every artifact the milestone can produce."
+    },
+    {
+      "package": "oxide-batch-cli",
+      "target": "operator_cli",
+      "name": "diagnostic_bundle_excludes_every_prohibited_value_class",
+      "invariant": "bundle redaction",
+      "run_by_this_campaign": false,
+      "note": "The per-surface bundle regression test. It is kept and must keep existing. It is not a substitute for the sweep: several of the literals it requires to be absent are never produced by the run it inspects, so their absence is not evidence, which is the failure mode the sweep exists to remove."
+    },
+    {
+      "fixture": "tests/fixtures/postgres/run-design-gate.sh",
+      "invariant": "M2 PostgreSQL 15-18 schema, role, and TLS design evidence",
+      "run_by_this_campaign": false,
+      "note": "The M2 design-gate fixture is kept and keeps running on its own CI axis. It is not this campaign renamed: it predates the adapter, proves what psql and a draft schema did, and covers four roles against a schema that is no longer the installed one."
+    }
+  ]
+}

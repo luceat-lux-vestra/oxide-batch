@@ -300,6 +300,37 @@ jobs:
           path: target/m5-campaigns/upgrade-campaign.json
           if-no-files-found: error
 
+  security-campaign:
+    name: postgres-${{ matrix.postgres }}-security-campaign
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["15", "18"]
+    # This job deliberately declares no `services:` block. The campaign needs a
+    # server whose certificate was signed by an authority generated for this
+    # run, and a service container starts before any step has run and therefore
+    # before that certificate exists. The fixture script starts both servers it
+    # needs — one with TLS, one without — after generating the material.
+    env:
+      OXIDEBATCH_CAMPAIGN_DIR: target/m5-campaigns
+      OXIDEBATCH_CAMPAIGN_MATRIX: postgres-${{ matrix.postgres }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Run the TLS, least-privilege, and redaction campaign
+        run: ./tests/fixtures/security/provision.sh ${{ matrix.postgres }}
+
+      - name: Retain the campaign report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: security-campaign-postgres-${{ matrix.postgres }}
+          path: target/m5-campaigns/security-campaign.json
+          if-no-files-found: error
+
   postgres-design-gate:
     name: postgres-${{ matrix.postgres }}-design-gate
     runs-on: ubuntu-latest
