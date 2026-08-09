@@ -499,7 +499,7 @@ fn the_stressed_run_is_compared_against_a_sequential_baseline() -> Result<(), Bo
             "partition-key-set",
             "partition-status-per-key",
             "aggregate-execution-counts",
-            "checkpoint-per-partition",
+            "partition-context-per-key",
         ] {
             assert!(
                 comparison.must_agree_on.iter().any(|item| item == required),
@@ -632,8 +632,11 @@ fn is_bound_symbol(symbol: &str) -> bool {
     }
     symbol.starts_with("MAX_")
         || symbol.starts_with("MIN_")
+        || symbol.contains("MAXIMUM")
+        || symbol.contains("MINIMUM")
         || symbol.contains("_BUDGET")
         || symbol.contains("_BOUND")
+        || symbol.contains("_CAPACITY")
 }
 
 /// Evaluates a constant expression that is a product of integer literals.
@@ -1014,6 +1017,11 @@ mod scan {
         assert!(is_bound_symbol("METRIC_CARDINALITY_BUDGET"));
         assert!(is_bound_symbol("MAX_PARTITIONS"));
         assert!(is_bound_symbol("MIN_EXPORT_QUEUE_RECORDS"));
+        // The scan matches a bound by how it is named rather than by a marker
+        // an author has to remember, so every spelling this workspace uses for
+        // one has to be a spelling it recognizes.
+        assert!(is_bound_symbol("MAXIMUM_BYTES"));
+        assert!(is_bound_symbol("DEFAULT_RETAINED_EVENT_CAPACITY"));
         assert!(!is_bound_symbol("TELEMETRY_SCHEMA_VERSION"));
         assert!(!is_bound_symbol("Positions"));
     }

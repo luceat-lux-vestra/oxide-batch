@@ -130,6 +130,7 @@
   },
   "durable_equivalence": {
     "note": "The performance plan holds that a concurrency result that changes a durable observation is invalid regardless of its throughput. Each report that runs work concurrently therefore runs the same work sequentially and compares the durable record, and the runner requires the comparison rather than trusting the concurrent run alone.",
+    "checkpoint_note": "The per-partition durable state compared is the partition context, which is what a restart resumes a child from. A chunk checkpoint proper is not compared, and saying so is deliberate: this campaign's workers are tasklets, which write no checkpoint, so a field comparing them would agree between two runs that both produced nothing. That is the shape of assertion this repository keeps finding stale, and the chunk checkpoint under concurrency belongs to the crash-and-restore campaign, where a killed process leaves one worth comparing.",
     "comparisons": [
       {
         "report": "worker-assignment",
@@ -142,7 +143,7 @@
           "partition-status-per-key",
           "aggregate-execution-counts",
           "read-write-commit-skip-counters",
-          "checkpoint-per-partition",
+          "partition-context-per-key",
           "partition-execution-count"
         ],
         "must_not_observe": [
@@ -447,6 +448,25 @@
       "budget_bound": null
     },
     {
+      "resource": "durable-state-envelope",
+      "class": "buffer",
+      "owner": "StateLimits",
+      "symbols": [
+        "MAXIMUM_BYTES",
+        "MAXIMUM_DEPTH",
+        "DEFAULT_MAXIMUM_BYTES",
+        "DEFAULT_MAXIMUM_DEPTH"
+      ],
+      "ceiling": 1048576,
+      "unit": "bytes",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": true,
+      "budget_row": null,
+      "budget_bound": null,
+      "note": "The ceiling on any durable checkpoint or execution context, above which no configured limit may go. A definition chooses its own limits inside it, so this is the bound on the bound: the partition context's 4 KiB is a framework ceiling on one use of the envelope, and this is the ceiling the envelope itself cannot be configured past."
+    },
+    {
       "resource": "instance-key-input",
       "class": "buffer",
       "owner": "JobInstanceKey",
@@ -560,7 +580,10 @@
       "resource": "retained-incident-events",
       "class": "queue",
       "owner": "IncidentEventBuffer",
-      "symbols": ["MAX_RETAINED_EVENTS_PER_EXECUTION"],
+      "symbols": [
+        "MAX_RETAINED_EVENTS_PER_EXECUTION",
+        "DEFAULT_RETAINED_EVENT_CAPACITY"
+      ],
       "ceiling": 200,
       "unit": "events per execution",
       "policy": "bounded-shedding",
@@ -609,7 +632,8 @@
       "report": "bounded-shedding",
       "postgres": false,
       "budget_row": "Diagnostic bundle",
-      "budget_bound": "`4 MiB`"
+      "budget_bound": "`4 MiB`",
+      "note": "The one resource in the campaign whose ceiling no M5 input reaches. A bundle is built from a bounded configuration, a bounded execution projection, and a bounded incident buffer, and all three together come to a few kilobytes, so the report proves the bound as an upper limit that held rather than as a truncation that happened. The campaign records the observed size beside the ceiling instead of claiming a saturation it did not produce."
     },
     {
       "resource": "shutdown-deadline",
