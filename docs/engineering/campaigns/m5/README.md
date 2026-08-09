@@ -28,8 +28,8 @@ a pass or failure that does not.
 | [`upgrade-campaign-postgres-18.json`](upgrade-campaign-postgres-18.json) | Upgrade | The same, on PostgreSQL 18 |
 | [`security-campaign-postgres-15.json`](security-campaign-postgres-15.json) | Security | The TLS attempts and the reason each refusal carried, the privilege matrix and the code every refusal was refused under, and the surfaces and value classes the redaction sweep covered, on PostgreSQL 15 |
 | [`security-campaign-postgres-18.json`](security-campaign-postgres-18.json) | Security | The same, on PostgreSQL 18 |
-| `resource-bounds-campaign-postgres-15.json` | Resource bounds | Every declared bounded resource, the ceiling each report checked, the load it was offered, the occupancy it reached, and what it shed or refused, on PostgreSQL 15 |
-| `resource-bounds-campaign-postgres-18.json` | Resource bounds | The same, on PostgreSQL 18 |
+| [`resource-bounds-campaign-postgres-15.json`](resource-bounds-campaign-postgres-15.json) | Resource bounds | Every declared bounded resource, the ceiling each report checked, the load it was offered, the occupancy it reached, and what it shed or refused, on PostgreSQL 15 |
+| [`resource-bounds-campaign-postgres-18.json`](resource-bounds-campaign-postgres-18.json) | Resource bounds | The same, on PostgreSQL 18 |
 
 A file carries the matrix point in its name because one run produces one
 report: the runner always writes `conformance-campaign.json`, and the two jobs

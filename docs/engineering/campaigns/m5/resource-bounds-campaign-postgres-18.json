@@ -1,0 +1,2293 @@
+{
+  "campaign": "M5 PostgreSQL resource bounds",
+  "declared_resources": 36,
+  "durable_equivalence": [
+    {
+      "observation": {
+        "baseline_workers": 1,
+        "fields_compared": [
+          {
+            "agrees": true,
+            "field": "outcome"
+          },
+          {
+            "agrees": true,
+            "field": "job-execution-status"
+          },
+          {
+            "agrees": true,
+            "field": "job-exit-status"
+          },
+          {
+            "agrees": true,
+            "field": "step-execution-status"
+          },
+          {
+            "agrees": true,
+            "field": "step-exit-status"
+          },
+          {
+            "agrees": true,
+            "field": "aggregate-execution-counts"
+          },
+          {
+            "agrees": true,
+            "field": "read-write-commit-rollback-counters"
+          },
+          {
+            "agrees": true,
+            "field": "partition-execution-count"
+          },
+          {
+            "agrees": true,
+            "field": "step-execution-count"
+          },
+          {
+            "agrees": true,
+            "field": "partition-key-set"
+          },
+          {
+            "agrees": true,
+            "field": "partition-status-per-key"
+          },
+          {
+            "agrees": true,
+            "field": "partition-counts-per-key"
+          },
+          {
+            "agrees": true,
+            "field": "partition-context-per-key"
+          }
+        ],
+        "partitions": 128,
+        "passed": true,
+        "stressed_workers": 64,
+        "violations": []
+      },
+      "report": "worker-assignment"
+    }
+  ],
+  "environment": {
+    "arch": "x86_64",
+    "matrix": "postgres-18",
+    "os": "linux",
+    "profile": "debug",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "source_commit": "3a4a962816405a39f3b3e100c1eb982790852ee7",
+    "source_tree_clean": true
+  },
+  "fixtures": {
+    "postgres-resource-bounds": true
+  },
+  "notes": [
+    "Every report is run on its own so its result is attributable.",
+    "A passing report is not sufficient on its own, and a resource campaign has a failure mode the other campaigns do not: a bound can be reported as holding by a run that never approached it. A worker budget of 64 whose observed peak was 3, a page bound checked against four rows, and a queue that was never filled are all green and none is evidence about a ceiling. So each report retains an observation into a directory this runner creates empty, and the runner requires every declared resource to have been observed, every live ceiling to have been reached exactly, and every shedding resource to have been offered an overload and to have shed.",
+    "The stressed run is required to have left the same durable record as the sequential baseline, because a concurrency result that changes a durable observation is invalid regardless of its throughput.",
+    "Each database report is required to name the PostgreSQL major it ran against, because a matrix point is invisible in a connection string and an observation from one supported major would otherwise reconcile perfectly inside a run of another.",
+    "The denominator this reconciles against is checked from the other side by an ordinary cargo test, which parses every library crate and fails when a constant declared under the repository's bound declaration convention is neither proved nor argued out of scope. That convention is what the guarantee is bounded by: a ceiling written as a bare literal or named outside it is ruled out by review rather than by the scan."
+  ],
+  "observed_resources": 36,
+  "observed_scenarios": [
+    "declared_ceilings_hold_under_stress_with_backpressure",
+    "bounded_query_paths_stay_bounded_as_history_grows",
+    "bounded_payloads_are_refused_one_byte_over_the_ceiling",
+    "bounded_queues_shed_under_overload_without_blocking_batch_work"
+  ],
+  "out_of_scope": [
+    {
+      "covered_by": "crates/oxide-batch/tests/postgres_repository.rs::configuration_bounds_and_diagnostics_are_safe",
+      "reason": "A timeout bounds how long one operation may take, not how much of a resource is concurrently held, and the capacity budget declares none of these. They are validated at construction like every other bound here, and their validation is covered by the configuration tests that own them.",
+      "resource": "operation timeouts",
+      "symbols": [
+        "MAX_CLIENT_TIMEOUT",
+        "MIN_CLIENT_TIMEOUT",
+        "MAX_CONNECT_TIMEOUT",
+        "MAX_SHORT_TIMEOUT",
+        "MAX_STATEMENT_TIMEOUT",
+        "MAX_CONNECTION_LIFETIME",
+        "MIN_BOUNDED_DURATION"
+      ]
+    },
+    {
+      "covered_by": "crates/oxide-batch/tests/fault_policy.rs",
+      "reason": "The retry attempt ceiling and the backoff ceiling bound a policy a definition declares, not a resource the framework holds. The retry cache those attempts write into is in scope, and is the resource the performance plan names.",
+      "resource": "retry and backoff policy limits",
+      "symbols": [
+        "MAX_RETRY",
+        "MAX_BACKOFF"
+      ]
+    },
+    {
+      "covered_by": "crates/oxide-batch/tests/services.rs",
+      "reason": "These bound when a decision may be taken, not how much may be held. A stale-execution threshold that is wrong produces a premature or delayed recovery decision, which is a lifecycle result rather than a resource result.",
+      "resource": "recovery staleness and age thresholds",
+      "symbols": [
+        "MAX_STALE_THRESHOLD",
+        "MIN_STALE_THRESHOLD",
+        "MAX_CLOCK_SKEW",
+        "MIN_CLOCK_SKEW",
+        "MIN_PURGE_AGE",
+        "MIN_UNRESOLVED_AGE"
+      ]
+    },
+    {
+      "covered_by": null,
+      "reason": "Explicitly outside the M0-M4 framework boundary. The capacity budget already states that application readers, writers, and item buffers are budgeted by the workload, and the framework declares no ceiling for them, so the campaign has nothing to prove and does not pretend to.",
+      "resource": "application readers, writers, and item buffers",
+      "symbols": []
+    },
+    {
+      "covered_by": null,
+      "reason": "No remote worker, broker credit, or assignment queue exists in the accepted M0-M4 scope. A campaign row for one would be a claim about unwritten code.",
+      "resource": "distributed and remote execution resources",
+      "symbols": []
+    }
+  ],
+  "overload_policies": [
+    "fail-closed",
+    "bounded-concurrency",
+    "bounded-shedding",
+    "bounded-truncation"
+  ],
+  "passed": true,
+  "postgresql_major_version": "18",
+  "postgresql_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+  "related": [
+    {
+      "invariant": "peak worker occupancy equals the configured budget at 1, 10, and 64 workers",
+      "name": "p010_local_partition_scaling",
+      "note": "The M4 measurement this campaign does not replace and is not a rerun of. It measures scaling on the in-memory repository and reports throughput; this campaign proves the ceiling holds on PostgreSQL and compares the durable record. Rerunning it against a database would produce a different number, not a resource result.",
+      "package": "oxide-batch",
+      "run_by_this_campaign": false,
+      "target": "m4_exit_measurements"
+    },
+    {
+      "invariant": "rows per page never above the requested size, and a constant cursor size",
+      "name": "p012_explorer_pagination_bounds",
+      "note": "Kept, and not a substitute for the bounded-query report: it runs against the in-memory explorer, where paging is a slice of a cloned history. Whether a page stays bounded when the rows come from a real index on a grown table is a PostgreSQL property, which is what this campaign covers.",
+      "package": "oxide-batch",
+      "run_by_this_campaign": false,
+      "target": "m4_exit_measurements"
+    },
+    {
+      "invariant": "in-memory partition worker occupancy",
+      "name": "worker_concurrency_never_exceeds_manifest_bound",
+      "note": "The in-memory regression for the same ceiling. It is kept and must keep existing; it is fast and runs on every commit, where this campaign runs on the matrix.",
+      "package": "oxide-batch",
+      "run_by_this_campaign": false,
+      "target": "local_partition_runtime"
+    }
+  ],
+  "report": "resource-bounds",
+  "reports": [
+    {
+      "fixture": "postgres-resource-bounds",
+      "id": "worker-assignment",
+      "name": "declared_ceilings_hold_under_stress_with_backpressure",
+      "observation": {
+        "construction": [
+          {
+            "case": "at the ceiling",
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "partitions-per-step",
+            "value": 1024
+          },
+          {
+            "case": "one past the ceiling",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "partitions-per-step",
+            "value": 1025
+          },
+          {
+            "case": "at the ceiling",
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "concurrent-partition-workers",
+            "value": 64
+          },
+          {
+            "case": "one past the ceiling",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "concurrent-partition-workers",
+            "value": 65
+          },
+          {
+            "case": "zero workers",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "concurrent-partition-workers",
+            "value": 0
+          },
+          {
+            "case": "a declared pool one short of the derivation",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "repository-connection-capacity",
+            "value": 64
+          },
+          {
+            "case": "at the ceiling",
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "concurrent-split-branches",
+            "value": 8
+          },
+          {
+            "case": "one past the ceiling",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "concurrent-split-branches",
+            "value": 9
+          },
+          {
+            "case": "at the ceiling",
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "split-branches-per-node",
+            "value": 8
+          },
+          {
+            "case": "one past the ceiling",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "split-branches-per-node",
+            "value": 9
+          },
+          {
+            "case": "one branch, below the two a split means",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "split-branches-per-node",
+            "value": 1
+          },
+          {
+            "case": "at the ceiling",
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "steps-per-split-branch",
+            "value": 8
+          },
+          {
+            "case": "one past the ceiling",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "steps-per-split-branch",
+            "value": 9
+          },
+          {
+            "case": "at the ceiling",
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "repository-pool-size",
+            "value": 1024
+          },
+          {
+            "case": "one past the ceiling",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "repository-pool-size",
+            "value": 1025
+          }
+        ],
+        "durable_equivalence": {
+          "baseline_workers": 1,
+          "fields_compared": [
+            {
+              "agrees": true,
+              "field": "outcome"
+            },
+            {
+              "agrees": true,
+              "field": "job-execution-status"
+            },
+            {
+              "agrees": true,
+              "field": "job-exit-status"
+            },
+            {
+              "agrees": true,
+              "field": "step-execution-status"
+            },
+            {
+              "agrees": true,
+              "field": "step-exit-status"
+            },
+            {
+              "agrees": true,
+              "field": "aggregate-execution-counts"
+            },
+            {
+              "agrees": true,
+              "field": "read-write-commit-rollback-counters"
+            },
+            {
+              "agrees": true,
+              "field": "partition-execution-count"
+            },
+            {
+              "agrees": true,
+              "field": "step-execution-count"
+            },
+            {
+              "agrees": true,
+              "field": "partition-key-set"
+            },
+            {
+              "agrees": true,
+              "field": "partition-status-per-key"
+            },
+            {
+              "agrees": true,
+              "field": "partition-counts-per-key"
+            },
+            {
+              "agrees": true,
+              "field": "partition-context-per-key"
+            }
+          ],
+          "partitions": 128,
+          "passed": true,
+          "stressed_workers": 64,
+          "violations": []
+        },
+        "passed": true,
+        "postgres_major_version": "18",
+        "report": "worker-assignment",
+        "resources": [
+          {
+            "admitted_total": 128,
+            "configured_ceiling": 64,
+            "connection_capacity": 65,
+            "declared_ceiling": 64,
+            "detail": {
+              "partitions_recorded": 128,
+              "waves": 2
+            },
+            "drops": 0,
+            "observed_peak_occupancy": 64,
+            "offered_load": 128,
+            "overload_policy": "bounded-concurrency",
+            "passed": true,
+            "rejections": 0,
+            "resource": "concurrent-partition-workers",
+            "violations": [],
+            "waits": 64
+          },
+          {
+            "admitted_total": 8,
+            "configured_ceiling": 4,
+            "connection_capacity": 9,
+            "declared_ceiling": 8,
+            "detail": {
+              "budgeted_run": {
+                "budget": 4,
+                "offered": 8,
+                "peak": 4
+              },
+              "ceiling_run": {
+                "budget": 8,
+                "offered": 8,
+                "peak": 8
+              },
+              "declared_ceiling": 8,
+              "join_outcome": "Completed",
+              "note": "The declared ceiling equals the largest branch count a split may declare, so a run budgeted at it has nothing left over to hold back. The budgeted run is what proves the budget bounds concurrency; the ceiling run is what proves the declared ceiling is reachable."
+            },
+            "drops": 0,
+            "observed_peak_occupancy": 4,
+            "offered_load": 8,
+            "overload_policy": "bounded-concurrency",
+            "passed": true,
+            "rejections": 0,
+            "resource": "concurrent-split-branches",
+            "violations": [],
+            "waits": 4
+          },
+          {
+            "admitted_total": 0,
+            "configured_ceiling": 9,
+            "connection_capacity": 8,
+            "declared_ceiling": 9,
+            "detail": {
+              "concurrent_children": 8,
+              "derivation": "concurrent_children + 1",
+              "refused_as": "InsufficientPoolCapacity(9/8)",
+              "required_connections": 9,
+              "residue_after_refusal": {
+                "ob_job_definition": 0,
+                "ob_job_execution": 0,
+                "ob_job_instance": 0
+              },
+              "short_pool": 8,
+              "sufficient_pool": 9,
+              "sufficient_pool_outcome": "Completed"
+            },
+            "drops": 0,
+            "observed_peak_occupancy": 0,
+            "offered_load": 8,
+            "overload_policy": "fail-closed",
+            "passed": true,
+            "rejections": 1,
+            "resource": "repository-connection-capacity",
+            "violations": [],
+            "waits": 0
+          }
+        ],
+        "scenario": "declared_ceilings_hold_under_stress_with_backpressure",
+        "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+        "violations": []
+      },
+      "owes": "declared ceiling proof for every worker assignment, with backpressure propagation under stress",
+      "package": "oxide-batch",
+      "result": "ok",
+      "target": "postgres_resource_bound_workers",
+      "title": "Worker and connection ceilings under PostgreSQL saturation"
+    },
+    {
+      "fixture": "postgres-resource-bounds",
+      "id": "bounded-query-paths",
+      "name": "bounded_query_paths_stay_bounded_as_history_grows",
+      "observation": {
+        "construction": [
+          {
+            "case": "at the ceiling",
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "explorer-page-size",
+            "value": 500
+          },
+          {
+            "case": "one past the ceiling",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "explorer-page-size",
+            "value": 501
+          },
+          {
+            "case": "an empty page",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "explorer-page-size",
+            "value": 0
+          },
+          {
+            "case": "at the ceiling",
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "explorer-cursor",
+            "value": 256
+          },
+          {
+            "case": "one past the ceiling",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "explorer-cursor",
+            "value": 257
+          },
+          {
+            "case": "an empty token",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "explorer-cursor",
+            "value": 0
+          },
+          {
+            "case": "at the ceiling",
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "retention-purge-batch",
+            "value": 1000
+          },
+          {
+            "case": "one past the ceiling",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "retention-purge-batch",
+            "value": 1001
+          },
+          {
+            "case": "an empty batch",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "retention-purge-batch",
+            "value": 0
+          }
+        ],
+        "passed": true,
+        "postgres_major_version": "18",
+        "report": "bounded-query-paths",
+        "resources": [
+          {
+            "configured_ceiling": 500,
+            "drops": 0,
+            "duplicate_rows": 0,
+            "observed_peak_occupancy": 202,
+            "offered_load": 1200,
+            "overload_policy": "fail-closed",
+            "pages": 6,
+            "passed": true,
+            "rejections": 0,
+            "resource": "explorer-page-size",
+            "rows_traversed": 1200,
+            "violations": [],
+            "waits": 0
+          },
+          {
+            "configured_ceiling": 262144,
+            "drops": 0,
+            "observed_peak_occupancy": 261994,
+            "offered_load": 500,
+            "overload_policy": "bounded-truncation",
+            "passed": true,
+            "rejections": 0,
+            "resource": "explorer-response",
+            "truncated_pages": 5,
+            "violations": [],
+            "waits": 0
+          },
+          {
+            "configured_ceiling": 256,
+            "drops": 0,
+            "observed_peak_occupancy": 59,
+            "offered_load": 1200,
+            "overload_policy": "fail-closed",
+            "passed": true,
+            "rejections": 0,
+            "resource": "explorer-cursor",
+            "violations": [],
+            "waits": 0
+          },
+          {
+            "configured_ceiling": 100,
+            "declared_ceiling": 1000,
+            "deleted_executions": 100,
+            "deleted_instances": 100,
+            "drops": 0,
+            "observed_peak_occupancy": 100,
+            "offered_load": 1200,
+            "overload_policy": "fail-closed",
+            "passed": true,
+            "rejections": 0,
+            "resource": "retention-purge-batch",
+            "violations": [],
+            "waits": 0
+          }
+        ],
+        "scenario": "bounded_query_paths_stay_bounded_as_history_grows",
+        "seeded_instances": 1200,
+        "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+        "violations": []
+      },
+      "owes": "declared ceiling proof for every page and result set",
+      "package": "oxide-batch",
+      "result": "ok",
+      "target": "postgres_resource_bound_queries",
+      "title": "Page, response, cursor, and purge-batch bounds against a grown history"
+    },
+    {
+      "fixture": "postgres-resource-bounds",
+      "id": "bounded-payloads",
+      "name": "bounded_payloads_are_refused_one_byte_over_the_ceiling",
+      "observation": {
+        "cells": [
+          {
+            "case": "at the ceiling",
+            "declared_ceiling": 128,
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "partition-key",
+            "subject": null,
+            "value": 128
+          },
+          {
+            "case": "one byte past the ceiling",
+            "declared_ceiling": 128,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "partition-key",
+            "subject": null,
+            "value": 129
+          },
+          {
+            "case": "an empty key",
+            "declared_ceiling": 128,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "partition-key",
+            "subject": null,
+            "value": 0
+          },
+          {
+            "case": "at the ceiling",
+            "declared_ceiling": 4096,
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "partition-context",
+            "subject": null,
+            "value": 4096
+          },
+          {
+            "case": "one byte past the ceiling",
+            "declared_ceiling": 4096,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "partition-context",
+            "subject": null,
+            "value": 4097
+          },
+          {
+            "case": "at the ceiling",
+            "declared_ceiling": 256,
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "retry-cache-entries",
+            "subject": null,
+            "value": 256
+          },
+          {
+            "case": "one entry past the ceiling",
+            "declared_ceiling": 256,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "retry-cache-entries",
+            "subject": null,
+            "value": 257
+          },
+          {
+            "case": "the canonical bytes of a full envelope",
+            "declared_ceiling": 65536,
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "retry-cache-bytes",
+            "subject": null,
+            "value": 40797
+          },
+          {
+            "case": "one byte past the ceiling, presented as durable bytes",
+            "declared_ceiling": 65536,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "retry-cache-bytes",
+            "subject": null,
+            "value": 65537
+          },
+          {
+            "case": "at the ceiling",
+            "declared_ceiling": 256,
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "declared-retry-state-capacity",
+            "subject": null,
+            "value": 256
+          },
+          {
+            "case": "one past the ceiling",
+            "declared_ceiling": 256,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "declared-retry-state-capacity",
+            "subject": null,
+            "value": 257
+          },
+          {
+            "case": "zero retained keys",
+            "declared_ceiling": 256,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "declared-retry-state-capacity",
+            "subject": null,
+            "value": 0
+          },
+          {
+            "case": "at the ceiling",
+            "declared_ceiling": 64,
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "outgoing-transitions-per-node",
+            "subject": null,
+            "value": 64
+          },
+          {
+            "case": "one past the ceiling",
+            "declared_ceiling": 64,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "outgoing-transitions-per-node",
+            "subject": null,
+            "value": 65
+          },
+          {
+            "case": "the largest chain any bound admits",
+            "declared_ceiling": 1024,
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "definition-nodes",
+            "subject": null,
+            "value": 157
+          },
+          {
+            "case": "one node past the ceiling",
+            "declared_ceiling": 1024,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "definition-nodes",
+            "subject": null,
+            "value": 1025
+          },
+          {
+            "case": "the transitions of the largest chain any bound admits",
+            "declared_ceiling": 4096,
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "definition-transitions",
+            "subject": null,
+            "value": 314
+          },
+          {
+            "case": "the largest chain that fits the ceiling",
+            "declared_ceiling": 65536,
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "definition-manifest",
+            "subject": null,
+            "value": 65248
+          },
+          {
+            "case": "one node past the largest chain that fits",
+            "declared_ceiling": 65536,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "definition-manifest",
+            "subject": null,
+            "value": 158
+          },
+          {
+            "case": "at the ceiling",
+            "declared_ceiling": 1048576,
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "durable-state-envelope",
+            "subject": null,
+            "value": 1048576
+          },
+          {
+            "case": "one byte past the ceiling",
+            "declared_ceiling": 1048576,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "durable-state-envelope",
+            "subject": null,
+            "value": 1048577
+          },
+          {
+            "case": "one level past the depth ceiling",
+            "declared_ceiling": 1048576,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "durable-state-envelope",
+            "subject": null,
+            "value": 65
+          },
+          {
+            "case": "one byte past the ceiling",
+            "declared_ceiling": 1048576,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "ca-certificate",
+            "subject": null,
+            "value": 1048577
+          },
+          {
+            "case": "a chain of exactly the ceiling",
+            "declared_ceiling": 64,
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "state-upgrade-chain",
+            "subject": null,
+            "value": 64
+          },
+          {
+            "case": "one edge past the ceiling",
+            "declared_ceiling": 64,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "state-upgrade-chain",
+            "subject": null,
+            "value": 65
+          },
+          {
+            "case": "at the ceiling",
+            "declared_ceiling": 32,
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "item-listeners",
+            "subject": null,
+            "value": 32
+          },
+          {
+            "case": "one past the ceiling",
+            "declared_ceiling": 32,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "item-listeners",
+            "subject": null,
+            "value": 33
+          },
+          {
+            "case": "at the ceiling",
+            "declared_ceiling": 0,
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "bounded-identifier-text",
+            "subject": "operation-id",
+            "value": 0
+          },
+          {
+            "case": "one byte past the ceiling",
+            "declared_ceiling": 0,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "bounded-identifier-text",
+            "subject": "operation-id",
+            "value": 0
+          },
+          {
+            "case": "at the ceiling",
+            "declared_ceiling": 0,
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "bounded-identifier-text",
+            "subject": "reason-code",
+            "value": 0
+          },
+          {
+            "case": "one byte past the ceiling",
+            "declared_ceiling": 0,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "bounded-identifier-text",
+            "subject": "reason-code",
+            "value": 0
+          },
+          {
+            "case": "at the ceiling",
+            "declared_ceiling": 0,
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "bounded-identifier-text",
+            "subject": "actor-ref",
+            "value": 0
+          },
+          {
+            "case": "one byte past the ceiling",
+            "declared_ceiling": 0,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "bounded-identifier-text",
+            "subject": "actor-ref",
+            "value": 0
+          },
+          {
+            "case": "at the ceiling",
+            "declared_ceiling": 0,
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "bounded-identifier-text",
+            "subject": "exit-pattern",
+            "value": 0
+          },
+          {
+            "case": "one byte past the ceiling",
+            "declared_ceiling": 0,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "bounded-identifier-text",
+            "subject": "exit-pattern",
+            "value": 0
+          },
+          {
+            "case": "at the ceiling",
+            "declared_ceiling": 0,
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "bounded-identifier-text",
+            "subject": "exit-code",
+            "value": 0
+          },
+          {
+            "case": "one byte past the ceiling",
+            "declared_ceiling": 0,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "bounded-identifier-text",
+            "subject": "exit-code",
+            "value": 0
+          },
+          {
+            "case": "at the ceiling",
+            "declared_ceiling": 0,
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "bounded-identifier-text",
+            "subject": "parameter-name",
+            "value": 0
+          },
+          {
+            "case": "one byte past the ceiling",
+            "declared_ceiling": 0,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "bounded-identifier-text",
+            "subject": "parameter-name",
+            "value": 0
+          },
+          {
+            "case": "at the ceiling",
+            "declared_ceiling": 0,
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "bounded-identifier-text",
+            "subject": "parameter-string",
+            "value": 0
+          },
+          {
+            "case": "one byte past the ceiling",
+            "declared_ceiling": 0,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "bounded-identifier-text",
+            "subject": "parameter-string",
+            "value": 0
+          },
+          {
+            "case": "at the ceiling",
+            "declared_ceiling": 0,
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "bounded-identifier-text",
+            "subject": "cursor-token",
+            "value": 0
+          },
+          {
+            "case": "one byte past the ceiling",
+            "declared_ceiling": 0,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "bounded-identifier-text",
+            "subject": "cursor-token",
+            "value": 0
+          }
+        ],
+        "definition_bound": {
+          "binding_bound": "definition-manifest",
+          "largest_accepted_chain": 157,
+          "largest_accepted_manifest_bytes": 65248,
+          "manifest_ceiling": 65536,
+          "node_ceiling": 1024,
+          "note": "The node and transition ceilings are not independently reachable: the canonical manifest crosses its own ceiling first, so a graph is refused for its encoded size before it is refused for its node count. Both are still declared and both still refuse, and the campaign records which one an author actually meets.",
+          "transition_ceiling": 4096
+        },
+        "durable_round_trip": {
+          "identical": true,
+          "partition_context_bytes_returned": 4096,
+          "partition_context_bytes_written": 4096,
+          "partition_key_bytes_returned": 128,
+          "partition_key_bytes_written": 128,
+          "violations": []
+        },
+        "instance_key": {
+          "configured_ceiling": 1048576,
+          "offered_load": 1310720,
+          "overload_policy": "fail-closed",
+          "passed": true,
+          "refused": true,
+          "resource": "instance-key-input",
+          "violations": []
+        },
+        "passed": true,
+        "postgres_major_version": "18",
+        "report": "bounded-payloads",
+        "resources": [
+          {
+            "accepted_at_boundary": 1,
+            "configured_ceiling": 128,
+            "drops": 0,
+            "observed_peak_occupancy": 128,
+            "offered_load": 129,
+            "overload_policy": "fail-closed",
+            "passed": true,
+            "rejections": 2,
+            "resource": "partition-key",
+            "violations": [],
+            "waits": 0
+          },
+          {
+            "accepted_at_boundary": 1,
+            "configured_ceiling": 4096,
+            "drops": 0,
+            "observed_peak_occupancy": 4096,
+            "offered_load": 4097,
+            "overload_policy": "fail-closed",
+            "passed": true,
+            "rejections": 1,
+            "resource": "partition-context",
+            "violations": [],
+            "waits": 0
+          },
+          {
+            "accepted_at_boundary": 1,
+            "configured_ceiling": 256,
+            "drops": 0,
+            "observed_peak_occupancy": 256,
+            "offered_load": 257,
+            "overload_policy": "fail-closed",
+            "passed": true,
+            "rejections": 1,
+            "resource": "retry-cache-entries",
+            "violations": [],
+            "waits": 0
+          },
+          {
+            "accepted_at_boundary": 1,
+            "configured_ceiling": 65536,
+            "drops": 0,
+            "observed_peak_occupancy": 40797,
+            "offered_load": 65537,
+            "overload_policy": "fail-closed",
+            "passed": true,
+            "rejections": 1,
+            "resource": "retry-cache-bytes",
+            "violations": [],
+            "waits": 0
+          },
+          {
+            "accepted_at_boundary": 1,
+            "configured_ceiling": 256,
+            "drops": 0,
+            "observed_peak_occupancy": 256,
+            "offered_load": 257,
+            "overload_policy": "fail-closed",
+            "passed": true,
+            "rejections": 2,
+            "resource": "declared-retry-state-capacity",
+            "violations": [],
+            "waits": 0
+          },
+          {
+            "accepted_at_boundary": 1,
+            "configured_ceiling": 64,
+            "drops": 0,
+            "observed_peak_occupancy": 64,
+            "offered_load": 65,
+            "overload_policy": "fail-closed",
+            "passed": true,
+            "rejections": 1,
+            "resource": "outgoing-transitions-per-node",
+            "violations": [],
+            "waits": 0
+          },
+          {
+            "accepted_at_boundary": 1,
+            "configured_ceiling": 1024,
+            "drops": 0,
+            "observed_peak_occupancy": 157,
+            "offered_load": 1025,
+            "overload_policy": "fail-closed",
+            "passed": true,
+            "rejections": 1,
+            "resource": "definition-nodes",
+            "violations": [],
+            "waits": 0
+          },
+          {
+            "accepted_at_boundary": 1,
+            "configured_ceiling": 4096,
+            "drops": 0,
+            "observed_peak_occupancy": 314,
+            "offered_load": 314,
+            "overload_policy": "fail-closed",
+            "passed": true,
+            "rejections": 0,
+            "resource": "definition-transitions",
+            "violations": [],
+            "waits": 0
+          },
+          {
+            "accepted_at_boundary": 1,
+            "configured_ceiling": 65536,
+            "drops": 0,
+            "observed_peak_occupancy": 65248,
+            "offered_load": 65248,
+            "overload_policy": "fail-closed",
+            "passed": true,
+            "rejections": 1,
+            "resource": "definition-manifest",
+            "violations": [],
+            "waits": 0
+          },
+          {
+            "accepted_at_boundary": 1,
+            "configured_ceiling": 1048576,
+            "drops": 0,
+            "observed_peak_occupancy": 1048576,
+            "offered_load": 1048577,
+            "overload_policy": "fail-closed",
+            "passed": true,
+            "rejections": 2,
+            "resource": "durable-state-envelope",
+            "violations": [],
+            "waits": 0
+          },
+          {
+            "accepted_at_boundary": 0,
+            "configured_ceiling": 1048576,
+            "drops": 0,
+            "observed_peak_occupancy": 0,
+            "offered_load": 1048577,
+            "overload_policy": "fail-closed",
+            "passed": true,
+            "rejections": 1,
+            "resource": "ca-certificate",
+            "violations": [],
+            "waits": 0
+          },
+          {
+            "accepted_at_boundary": 1,
+            "configured_ceiling": 64,
+            "drops": 0,
+            "observed_peak_occupancy": 64,
+            "offered_load": 65,
+            "overload_policy": "fail-closed",
+            "passed": true,
+            "rejections": 1,
+            "resource": "state-upgrade-chain",
+            "violations": [],
+            "waits": 0
+          },
+          {
+            "accepted_at_boundary": 1,
+            "configured_ceiling": 32,
+            "drops": 0,
+            "observed_peak_occupancy": 32,
+            "offered_load": 33,
+            "overload_policy": "fail-closed",
+            "passed": true,
+            "rejections": 1,
+            "resource": "item-listeners",
+            "violations": [],
+            "waits": 0
+          },
+          {
+            "accepted_at_boundary": 8,
+            "configured_ceiling": 0,
+            "drops": 0,
+            "observed_peak_occupancy": 0,
+            "offered_load": 0,
+            "overload_policy": "fail-closed",
+            "passed": true,
+            "rejections": 8,
+            "resource": "bounded-identifier-text",
+            "violations": [],
+            "waits": 0
+          }
+        ],
+        "scenario": "bounded_payloads_are_refused_one_byte_over_the_ceiling",
+        "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+        "violations": []
+      },
+      "owes": "declared ceiling proof for every buffer and for the retry cache",
+      "package": "oxide-batch",
+      "result": "ok",
+      "target": "postgres_resource_bound_payloads",
+      "title": "Durable and in-memory payload ceilings at the boundary and one past it"
+    },
+    {
+      "fixture": null,
+      "id": "bounded-shedding",
+      "name": "bounded_queues_shed_under_overload_without_blocking_batch_work",
+      "observation": {
+        "construction": [
+          {
+            "case": "at the ceiling",
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "telemetry-exporter-queue",
+            "value": 65536
+          },
+          {
+            "case": "one past the ceiling",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "telemetry-exporter-queue",
+            "value": 65537
+          },
+          {
+            "case": "at the floor",
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "telemetry-exporter-queue",
+            "value": 64
+          },
+          {
+            "case": "one below the floor",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "telemetry-exporter-queue",
+            "value": 63
+          },
+          {
+            "case": "at the ceiling",
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "retained-incident-events",
+            "value": 200
+          },
+          {
+            "case": "one past the ceiling",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "retained-incident-events",
+            "value": 201
+          },
+          {
+            "case": "at the ceiling",
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "metric-name-allowlist",
+            "value": 50
+          },
+          {
+            "case": "one past the ceiling",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "metric-name-allowlist",
+            "value": 51
+          },
+          {
+            "case": "at the ceiling",
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "telemetry-drop-report-window",
+            "value": 3600
+          },
+          {
+            "case": "one second past the ceiling",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "telemetry-drop-report-window",
+            "value": 3601
+          },
+          {
+            "case": "at the ceiling",
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "shutdown-deadline",
+            "value": 3600
+          },
+          {
+            "case": "one second past the ceiling",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "shutdown-deadline",
+            "value": 3601
+          },
+          {
+            "case": "one second below the floor",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "shutdown-deadline",
+            "value": 0
+          },
+          {
+            "case": "at the ceiling",
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "telemetry-flush-deadline",
+            "value": 60
+          },
+          {
+            "case": "one millisecond below the floor",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "telemetry-flush-deadline",
+            "value": 99
+          },
+          {
+            "case": "one second past the ceiling",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "telemetry-flush-deadline",
+            "value": 61
+          },
+          {
+            "case": "one byte past the ceiling",
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "cli-configuration-document",
+            "value": 262145
+          },
+          {
+            "case": "a document inside the ceiling",
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "cli-configuration-document",
+            "value": 1024
+          }
+        ],
+        "durable_equivalence": {
+          "agrees": true,
+          "baseline_dropped_records": 0,
+          "baseline_durable": {
+            "category": "Success",
+            "exit_status": null,
+            "status": "STARTING",
+            "version": 0
+          },
+          "passed": true,
+          "saturated_dropped_records": 2,
+          "saturated_durable": {
+            "category": "Success",
+            "exit_status": null,
+            "status": "STARTING",
+            "version": 0
+          },
+          "violations": []
+        },
+        "passed": true,
+        "report": "bounded-shedding",
+        "resources": [
+          {
+            "configured_ceiling": 64,
+            "declared_ceiling": 65536,
+            "drops": 192,
+            "observed_peak_occupancy": 64,
+            "offered_load": 256,
+            "overload_policy": "bounded-shedding",
+            "passed": true,
+            "rejections": 0,
+            "resource": "telemetry-exporter-queue",
+            "retained": 64,
+            "shedding_rule": "drop-newest",
+            "violations": [],
+            "waits": 0
+          },
+          {
+            "configured_ceiling": 200,
+            "declared_ceiling": 200,
+            "drops": 201,
+            "observed_peak_occupancy": 200,
+            "offered_load": 400,
+            "overload_policy": "bounded-shedding",
+            "passed": true,
+            "rejections": 0,
+            "resource": "metric-series-per-family",
+            "retained": 200,
+            "shedding_rule": "collapse-to-reserved-series",
+            "violations": [],
+            "waits": 0
+          },
+          {
+            "configured_ceiling": 200,
+            "declared_ceiling": 200,
+            "drops": 400,
+            "observed_peak_occupancy": 200,
+            "offered_load": 600,
+            "overload_policy": "bounded-shedding",
+            "passed": true,
+            "rejections": 0,
+            "resource": "retained-incident-events",
+            "retained": 200,
+            "shedding_rule": "evict-oldest",
+            "violations": [],
+            "waits": 0
+          },
+          {
+            "configured_ceiling": 262144,
+            "declared_ceiling": 262144,
+            "drops": 810293,
+            "observed_peak_occupancy": 261750,
+            "offered_load": 1072043,
+            "overload_policy": "bounded-truncation",
+            "passed": true,
+            "rejections": 0,
+            "resource": "operator-response",
+            "retained": 261750,
+            "shedding_rule": "truncate-and-declare",
+            "violations": [],
+            "waits": 0
+          },
+          {
+            "configured_ceiling": 4194304,
+            "declared_ceiling": 4194304,
+            "drops": 0,
+            "observed_peak_occupancy": 4544,
+            "offered_load": 4544,
+            "overload_policy": "bounded-truncation",
+            "passed": true,
+            "rejections": 0,
+            "resource": "diagnostic-bundle",
+            "retained": 4544,
+            "shedding_rule": "truncate-and-declare",
+            "violations": [],
+            "waits": 0
+          }
+        ],
+        "scenario": "bounded_queues_shed_under_overload_without_blocking_batch_work",
+        "violations": []
+      },
+      "owes": "declared ceiling proof for every queue, with the shedding rule each one contracts for",
+      "package": "oxide-batch-cli",
+      "result": "ok",
+      "target": "m5_resource_bound_shedding",
+      "title": "Queue, cardinality, and diagnostic ceilings under offered overload"
+    }
+  ],
+  "required_scenarios": [
+    "declared_ceilings_hold_under_stress_with_backpressure",
+    "bounded_query_paths_stay_bounded_as_history_grows",
+    "bounded_payloads_are_refused_one_byte_over_the_ceiling",
+    "bounded_queues_shed_under_overload_without_blocking_batch_work"
+  ],
+  "resource_classes": [
+    "queue",
+    "retry-cache",
+    "page",
+    "buffer",
+    "worker-assignment",
+    "result-set"
+  ],
+  "resource_ledger": [
+    {
+      "class": "worker-assignment",
+      "covered": true,
+      "declared_ceiling": 1024,
+      "observation": null,
+      "observed_by": null,
+      "overload_policy": "fail-closed",
+      "postgres": false,
+      "proving_report": "worker-assignment",
+      "resource": "partitions-per-step"
+    },
+    {
+      "class": "worker-assignment",
+      "covered": true,
+      "declared_ceiling": 64,
+      "observation": {
+        "admitted_total": 128,
+        "configured_ceiling": 64,
+        "connection_capacity": 65,
+        "declared_ceiling": 64,
+        "detail": {
+          "partitions_recorded": 128,
+          "waves": 2
+        },
+        "drops": 0,
+        "observed_peak_occupancy": 64,
+        "offered_load": 128,
+        "overload_policy": "bounded-concurrency",
+        "passed": true,
+        "rejections": 0,
+        "resource": "concurrent-partition-workers",
+        "violations": [],
+        "waits": 64
+      },
+      "observed_by": "worker-assignment",
+      "overload_policy": "bounded-concurrency",
+      "postgres": true,
+      "proving_report": "worker-assignment",
+      "resource": "concurrent-partition-workers"
+    },
+    {
+      "class": "worker-assignment",
+      "covered": true,
+      "declared_ceiling": 8,
+      "observation": null,
+      "observed_by": null,
+      "overload_policy": "fail-closed",
+      "postgres": false,
+      "proving_report": "worker-assignment",
+      "resource": "split-branches-per-node"
+    },
+    {
+      "class": "worker-assignment",
+      "covered": true,
+      "declared_ceiling": 8,
+      "observation": {
+        "admitted_total": 8,
+        "configured_ceiling": 4,
+        "connection_capacity": 9,
+        "declared_ceiling": 8,
+        "detail": {
+          "budgeted_run": {
+            "budget": 4,
+            "offered": 8,
+            "peak": 4
+          },
+          "ceiling_run": {
+            "budget": 8,
+            "offered": 8,
+            "peak": 8
+          },
+          "declared_ceiling": 8,
+          "join_outcome": "Completed",
+          "note": "The declared ceiling equals the largest branch count a split may declare, so a run budgeted at it has nothing left over to hold back. The budgeted run is what proves the budget bounds concurrency; the ceiling run is what proves the declared ceiling is reachable."
+        },
+        "drops": 0,
+        "observed_peak_occupancy": 4,
+        "offered_load": 8,
+        "overload_policy": "bounded-concurrency",
+        "passed": true,
+        "rejections": 0,
+        "resource": "concurrent-split-branches",
+        "violations": [],
+        "waits": 4
+      },
+      "observed_by": "worker-assignment",
+      "overload_policy": "bounded-concurrency",
+      "postgres": true,
+      "proving_report": "worker-assignment",
+      "resource": "concurrent-split-branches"
+    },
+    {
+      "class": "worker-assignment",
+      "covered": true,
+      "declared_ceiling": 8,
+      "observation": null,
+      "observed_by": null,
+      "overload_policy": "fail-closed",
+      "postgres": false,
+      "proving_report": "worker-assignment",
+      "resource": "steps-per-split-branch"
+    },
+    {
+      "class": "worker-assignment",
+      "covered": true,
+      "declared_ceiling": null,
+      "observation": {
+        "admitted_total": 0,
+        "configured_ceiling": 9,
+        "connection_capacity": 8,
+        "declared_ceiling": 9,
+        "detail": {
+          "concurrent_children": 8,
+          "derivation": "concurrent_children + 1",
+          "refused_as": "InsufficientPoolCapacity(9/8)",
+          "required_connections": 9,
+          "residue_after_refusal": {
+            "ob_job_definition": 0,
+            "ob_job_execution": 0,
+            "ob_job_instance": 0
+          },
+          "short_pool": 8,
+          "sufficient_pool": 9,
+          "sufficient_pool_outcome": "Completed"
+        },
+        "drops": 0,
+        "observed_peak_occupancy": 0,
+        "offered_load": 8,
+        "overload_policy": "fail-closed",
+        "passed": true,
+        "rejections": 1,
+        "resource": "repository-connection-capacity",
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "worker-assignment",
+      "overload_policy": "fail-closed",
+      "postgres": true,
+      "proving_report": "worker-assignment",
+      "resource": "repository-connection-capacity"
+    },
+    {
+      "class": "worker-assignment",
+      "covered": true,
+      "declared_ceiling": 1024,
+      "observation": null,
+      "observed_by": null,
+      "overload_policy": "fail-closed",
+      "postgres": true,
+      "proving_report": "worker-assignment",
+      "resource": "repository-pool-size"
+    },
+    {
+      "class": "page",
+      "covered": true,
+      "declared_ceiling": 500,
+      "observation": {
+        "configured_ceiling": 500,
+        "drops": 0,
+        "duplicate_rows": 0,
+        "observed_peak_occupancy": 202,
+        "offered_load": 1200,
+        "overload_policy": "fail-closed",
+        "pages": 6,
+        "passed": true,
+        "rejections": 0,
+        "resource": "explorer-page-size",
+        "rows_traversed": 1200,
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-query-paths",
+      "overload_policy": "fail-closed",
+      "postgres": true,
+      "proving_report": "bounded-query-paths",
+      "resource": "explorer-page-size"
+    },
+    {
+      "class": "result-set",
+      "covered": true,
+      "declared_ceiling": 262144,
+      "observation": {
+        "configured_ceiling": 262144,
+        "drops": 0,
+        "observed_peak_occupancy": 261994,
+        "offered_load": 500,
+        "overload_policy": "bounded-truncation",
+        "passed": true,
+        "rejections": 0,
+        "resource": "explorer-response",
+        "truncated_pages": 5,
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-query-paths",
+      "overload_policy": "bounded-truncation",
+      "postgres": true,
+      "proving_report": "bounded-query-paths",
+      "resource": "explorer-response"
+    },
+    {
+      "class": "page",
+      "covered": true,
+      "declared_ceiling": 256,
+      "observation": {
+        "configured_ceiling": 256,
+        "drops": 0,
+        "observed_peak_occupancy": 59,
+        "offered_load": 1200,
+        "overload_policy": "fail-closed",
+        "passed": true,
+        "rejections": 0,
+        "resource": "explorer-cursor",
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-query-paths",
+      "overload_policy": "fail-closed",
+      "postgres": true,
+      "proving_report": "bounded-query-paths",
+      "resource": "explorer-cursor"
+    },
+    {
+      "class": "result-set",
+      "covered": true,
+      "declared_ceiling": 1000,
+      "observation": {
+        "configured_ceiling": 100,
+        "declared_ceiling": 1000,
+        "deleted_executions": 100,
+        "deleted_instances": 100,
+        "drops": 0,
+        "observed_peak_occupancy": 100,
+        "offered_load": 1200,
+        "overload_policy": "fail-closed",
+        "passed": true,
+        "rejections": 0,
+        "resource": "retention-purge-batch",
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-query-paths",
+      "overload_policy": "fail-closed",
+      "postgres": true,
+      "proving_report": "bounded-query-paths",
+      "resource": "retention-purge-batch"
+    },
+    {
+      "class": "result-set",
+      "covered": true,
+      "declared_ceiling": 262144,
+      "observation": {
+        "configured_ceiling": 262144,
+        "declared_ceiling": 262144,
+        "drops": 810293,
+        "observed_peak_occupancy": 261750,
+        "offered_load": 1072043,
+        "overload_policy": "bounded-truncation",
+        "passed": true,
+        "rejections": 0,
+        "resource": "operator-response",
+        "retained": 261750,
+        "shedding_rule": "truncate-and-declare",
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-shedding",
+      "overload_policy": "bounded-truncation",
+      "postgres": false,
+      "proving_report": "bounded-shedding",
+      "resource": "operator-response"
+    },
+    {
+      "class": "buffer",
+      "covered": true,
+      "declared_ceiling": 128,
+      "observation": {
+        "accepted_at_boundary": 1,
+        "configured_ceiling": 128,
+        "drops": 0,
+        "observed_peak_occupancy": 128,
+        "offered_load": 129,
+        "overload_policy": "fail-closed",
+        "passed": true,
+        "rejections": 2,
+        "resource": "partition-key",
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-payloads",
+      "overload_policy": "fail-closed",
+      "postgres": true,
+      "proving_report": "bounded-payloads",
+      "resource": "partition-key"
+    },
+    {
+      "class": "buffer",
+      "covered": true,
+      "declared_ceiling": 4096,
+      "observation": {
+        "accepted_at_boundary": 1,
+        "configured_ceiling": 4096,
+        "drops": 0,
+        "observed_peak_occupancy": 4096,
+        "offered_load": 4097,
+        "overload_policy": "fail-closed",
+        "passed": true,
+        "rejections": 1,
+        "resource": "partition-context",
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-payloads",
+      "overload_policy": "fail-closed",
+      "postgres": true,
+      "proving_report": "bounded-payloads",
+      "resource": "partition-context"
+    },
+    {
+      "class": "retry-cache",
+      "covered": true,
+      "declared_ceiling": 256,
+      "observation": {
+        "accepted_at_boundary": 1,
+        "configured_ceiling": 256,
+        "drops": 0,
+        "observed_peak_occupancy": 256,
+        "offered_load": 257,
+        "overload_policy": "fail-closed",
+        "passed": true,
+        "rejections": 1,
+        "resource": "retry-cache-entries",
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-payloads",
+      "overload_policy": "fail-closed",
+      "postgres": true,
+      "proving_report": "bounded-payloads",
+      "resource": "retry-cache-entries"
+    },
+    {
+      "class": "retry-cache",
+      "covered": true,
+      "declared_ceiling": 65536,
+      "observation": {
+        "accepted_at_boundary": 1,
+        "configured_ceiling": 65536,
+        "drops": 0,
+        "observed_peak_occupancy": 40797,
+        "offered_load": 65537,
+        "overload_policy": "fail-closed",
+        "passed": true,
+        "rejections": 1,
+        "resource": "retry-cache-bytes",
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-payloads",
+      "overload_policy": "fail-closed",
+      "postgres": true,
+      "proving_report": "bounded-payloads",
+      "resource": "retry-cache-bytes"
+    },
+    {
+      "class": "retry-cache",
+      "covered": true,
+      "declared_ceiling": 256,
+      "observation": {
+        "accepted_at_boundary": 1,
+        "configured_ceiling": 256,
+        "drops": 0,
+        "observed_peak_occupancy": 256,
+        "offered_load": 257,
+        "overload_policy": "fail-closed",
+        "passed": true,
+        "rejections": 2,
+        "resource": "declared-retry-state-capacity",
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-payloads",
+      "overload_policy": "fail-closed",
+      "postgres": false,
+      "proving_report": "bounded-payloads",
+      "resource": "declared-retry-state-capacity"
+    },
+    {
+      "class": "buffer",
+      "covered": true,
+      "declared_ceiling": 1024,
+      "observation": {
+        "accepted_at_boundary": 1,
+        "configured_ceiling": 1024,
+        "drops": 0,
+        "observed_peak_occupancy": 157,
+        "offered_load": 1025,
+        "overload_policy": "fail-closed",
+        "passed": true,
+        "rejections": 1,
+        "resource": "definition-nodes",
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-payloads",
+      "overload_policy": "fail-closed",
+      "postgres": false,
+      "proving_report": "bounded-payloads",
+      "resource": "definition-nodes"
+    },
+    {
+      "class": "buffer",
+      "covered": true,
+      "declared_ceiling": 4096,
+      "observation": {
+        "accepted_at_boundary": 1,
+        "configured_ceiling": 4096,
+        "drops": 0,
+        "observed_peak_occupancy": 314,
+        "offered_load": 314,
+        "overload_policy": "fail-closed",
+        "passed": true,
+        "rejections": 0,
+        "resource": "definition-transitions",
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-payloads",
+      "overload_policy": "fail-closed",
+      "postgres": false,
+      "proving_report": "bounded-payloads",
+      "resource": "definition-transitions"
+    },
+    {
+      "class": "buffer",
+      "covered": true,
+      "declared_ceiling": 64,
+      "observation": {
+        "accepted_at_boundary": 1,
+        "configured_ceiling": 64,
+        "drops": 0,
+        "observed_peak_occupancy": 64,
+        "offered_load": 65,
+        "overload_policy": "fail-closed",
+        "passed": true,
+        "rejections": 1,
+        "resource": "outgoing-transitions-per-node",
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-payloads",
+      "overload_policy": "fail-closed",
+      "postgres": false,
+      "proving_report": "bounded-payloads",
+      "resource": "outgoing-transitions-per-node"
+    },
+    {
+      "class": "buffer",
+      "covered": true,
+      "declared_ceiling": 65536,
+      "observation": {
+        "accepted_at_boundary": 1,
+        "configured_ceiling": 65536,
+        "drops": 0,
+        "observed_peak_occupancy": 65248,
+        "offered_load": 65248,
+        "overload_policy": "fail-closed",
+        "passed": true,
+        "rejections": 1,
+        "resource": "definition-manifest",
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-payloads",
+      "overload_policy": "fail-closed",
+      "postgres": true,
+      "proving_report": "bounded-payloads",
+      "resource": "definition-manifest"
+    },
+    {
+      "class": "buffer",
+      "covered": true,
+      "declared_ceiling": 64,
+      "observation": {
+        "accepted_at_boundary": 1,
+        "configured_ceiling": 64,
+        "drops": 0,
+        "observed_peak_occupancy": 64,
+        "offered_load": 65,
+        "overload_policy": "fail-closed",
+        "passed": true,
+        "rejections": 1,
+        "resource": "state-upgrade-chain",
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-payloads",
+      "overload_policy": "fail-closed",
+      "postgres": false,
+      "proving_report": "bounded-payloads",
+      "resource": "state-upgrade-chain"
+    },
+    {
+      "class": "buffer",
+      "covered": true,
+      "declared_ceiling": 1048576,
+      "observation": {
+        "accepted_at_boundary": 1,
+        "configured_ceiling": 1048576,
+        "drops": 0,
+        "observed_peak_occupancy": 1048576,
+        "offered_load": 1048577,
+        "overload_policy": "fail-closed",
+        "passed": true,
+        "rejections": 2,
+        "resource": "durable-state-envelope",
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-payloads",
+      "overload_policy": "fail-closed",
+      "postgres": true,
+      "proving_report": "bounded-payloads",
+      "resource": "durable-state-envelope"
+    },
+    {
+      "class": "buffer",
+      "covered": true,
+      "declared_ceiling": 1048576,
+      "observation": {
+        "configured_ceiling": 1048576,
+        "offered_load": 1310720,
+        "overload_policy": "fail-closed",
+        "passed": true,
+        "refused": true,
+        "resource": "instance-key-input",
+        "violations": []
+      },
+      "observed_by": "bounded-payloads",
+      "overload_policy": "fail-closed",
+      "postgres": true,
+      "proving_report": "bounded-payloads",
+      "resource": "instance-key-input"
+    },
+    {
+      "class": "buffer",
+      "covered": true,
+      "declared_ceiling": 32,
+      "observation": {
+        "accepted_at_boundary": 1,
+        "configured_ceiling": 32,
+        "drops": 0,
+        "observed_peak_occupancy": 32,
+        "offered_load": 33,
+        "overload_policy": "fail-closed",
+        "passed": true,
+        "rejections": 1,
+        "resource": "item-listeners",
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-payloads",
+      "overload_policy": "fail-closed",
+      "postgres": false,
+      "proving_report": "bounded-payloads",
+      "resource": "item-listeners"
+    },
+    {
+      "class": "buffer",
+      "covered": true,
+      "declared_ceiling": null,
+      "observation": {
+        "accepted_at_boundary": 8,
+        "configured_ceiling": 0,
+        "drops": 0,
+        "observed_peak_occupancy": 0,
+        "offered_load": 0,
+        "overload_policy": "fail-closed",
+        "passed": true,
+        "rejections": 8,
+        "resource": "bounded-identifier-text",
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-payloads",
+      "overload_policy": "fail-closed",
+      "postgres": false,
+      "proving_report": "bounded-payloads",
+      "resource": "bounded-identifier-text"
+    },
+    {
+      "class": "buffer",
+      "covered": true,
+      "declared_ceiling": 1048576,
+      "observation": {
+        "accepted_at_boundary": 0,
+        "configured_ceiling": 1048576,
+        "drops": 0,
+        "observed_peak_occupancy": 0,
+        "offered_load": 1048577,
+        "overload_policy": "fail-closed",
+        "passed": true,
+        "rejections": 1,
+        "resource": "ca-certificate",
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-payloads",
+      "overload_policy": "fail-closed",
+      "postgres": false,
+      "proving_report": "bounded-payloads",
+      "resource": "ca-certificate"
+    },
+    {
+      "class": "buffer",
+      "covered": true,
+      "declared_ceiling": 262144,
+      "observation": null,
+      "observed_by": null,
+      "overload_policy": "fail-closed",
+      "postgres": false,
+      "proving_report": "bounded-shedding",
+      "resource": "cli-configuration-document"
+    },
+    {
+      "class": "queue",
+      "covered": true,
+      "declared_ceiling": 65536,
+      "observation": {
+        "configured_ceiling": 64,
+        "declared_ceiling": 65536,
+        "drops": 192,
+        "observed_peak_occupancy": 64,
+        "offered_load": 256,
+        "overload_policy": "bounded-shedding",
+        "passed": true,
+        "rejections": 0,
+        "resource": "telemetry-exporter-queue",
+        "retained": 64,
+        "shedding_rule": "drop-newest",
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-shedding",
+      "overload_policy": "bounded-shedding",
+      "postgres": false,
+      "proving_report": "bounded-shedding",
+      "resource": "telemetry-exporter-queue"
+    },
+    {
+      "class": "queue",
+      "covered": true,
+      "declared_ceiling": null,
+      "observation": null,
+      "observed_by": null,
+      "overload_policy": "fail-closed",
+      "postgres": false,
+      "proving_report": "bounded-shedding",
+      "resource": "telemetry-drop-report-window"
+    },
+    {
+      "class": "queue",
+      "covered": true,
+      "declared_ceiling": 200,
+      "observation": {
+        "configured_ceiling": 200,
+        "declared_ceiling": 200,
+        "drops": 400,
+        "observed_peak_occupancy": 200,
+        "offered_load": 600,
+        "overload_policy": "bounded-shedding",
+        "passed": true,
+        "rejections": 0,
+        "resource": "retained-incident-events",
+        "retained": 200,
+        "shedding_rule": "evict-oldest",
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-shedding",
+      "overload_policy": "bounded-shedding",
+      "postgres": false,
+      "proving_report": "bounded-shedding",
+      "resource": "retained-incident-events"
+    },
+    {
+      "class": "queue",
+      "covered": true,
+      "declared_ceiling": 200,
+      "observation": {
+        "configured_ceiling": 200,
+        "declared_ceiling": 200,
+        "drops": 201,
+        "observed_peak_occupancy": 200,
+        "offered_load": 400,
+        "overload_policy": "bounded-shedding",
+        "passed": true,
+        "rejections": 0,
+        "resource": "metric-series-per-family",
+        "retained": 200,
+        "shedding_rule": "collapse-to-reserved-series",
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-shedding",
+      "overload_policy": "bounded-shedding",
+      "postgres": false,
+      "proving_report": "bounded-shedding",
+      "resource": "metric-series-per-family"
+    },
+    {
+      "class": "buffer",
+      "covered": true,
+      "declared_ceiling": 50,
+      "observation": null,
+      "observed_by": null,
+      "overload_policy": "fail-closed",
+      "postgres": false,
+      "proving_report": "bounded-shedding",
+      "resource": "metric-name-allowlist"
+    },
+    {
+      "class": "buffer",
+      "covered": true,
+      "declared_ceiling": 4194304,
+      "observation": {
+        "configured_ceiling": 4194304,
+        "declared_ceiling": 4194304,
+        "drops": 0,
+        "observed_peak_occupancy": 4544,
+        "offered_load": 4544,
+        "overload_policy": "bounded-truncation",
+        "passed": true,
+        "rejections": 0,
+        "resource": "diagnostic-bundle",
+        "retained": 4544,
+        "shedding_rule": "truncate-and-declare",
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-shedding",
+      "overload_policy": "bounded-truncation",
+      "postgres": false,
+      "proving_report": "bounded-shedding",
+      "resource": "diagnostic-bundle"
+    },
+    {
+      "class": "worker-assignment",
+      "covered": true,
+      "declared_ceiling": null,
+      "observation": null,
+      "observed_by": null,
+      "overload_policy": "fail-closed",
+      "postgres": false,
+      "proving_report": "bounded-shedding",
+      "resource": "shutdown-deadline"
+    },
+    {
+      "class": "queue",
+      "covered": true,
+      "declared_ceiling": null,
+      "observation": null,
+      "observed_by": null,
+      "overload_policy": "fail-closed",
+      "postgres": false,
+      "proving_report": "bounded-shedding",
+      "resource": "telemetry-flush-deadline"
+    }
+  ],
+  "result": "passed",
+  "scenarios": [
+    "declared_ceilings_hold_under_stress_with_backpressure",
+    "bounded_query_paths_stay_bounded_as_history_grows",
+    "bounded_payloads_are_refused_one_byte_over_the_ceiling",
+    "bounded_queues_shed_under_overload_without_blocking_batch_work"
+  ],
+  "stress": {
+    "note": "A ceiling is only proved by a run that reached it. A worker budget of 64 whose observed peak was 3 is evidence about a workload, not about a bound, so each report records the load it offered and the peak it observed and the runner requires the two to be in the relation the resource's policy implies.",
+    "requirements": [
+      {
+        "detail": "The offered partition count is several times the worker budget, so the ceiling is reachable, and the observed peak must equal it. A peak below the ceiling means the run never filled the worker set and proves nothing about the bound; a peak above it is the failure the report exists to catch.",
+        "report": "worker-assignment",
+        "requires": "peak-equals-ceiling",
+        "resource": "concurrent-partition-workers"
+      },
+      {
+        "detail": "The split declares more branches than the branch budget admits, so the ceiling is reachable and the observed peak must equal it.",
+        "report": "worker-assignment",
+        "requires": "peak-equals-ceiling",
+        "resource": "concurrent-split-branches"
+      },
+      {
+        "detail": "The short-pool attempt must be refused before a job execution exists, so the rejection is observable as an absence in the database rather than only as an error value.",
+        "report": "worker-assignment",
+        "requires": "rejected-before-any-durable-write",
+        "resource": "repository-connection-capacity"
+      },
+      {
+        "detail": "The database holds several times a full page, so a page that returned everything would exceed the bound rather than satisfy it.",
+        "report": "bounded-query-paths",
+        "requires": "history-exceeds-page",
+        "resource": "explorer-page-size"
+      },
+      {
+        "detail": "The purge is planned against more candidates than the batch bound admits, so a plan that took them all would exceed the bound.",
+        "report": "bounded-query-paths",
+        "requires": "candidates-exceed-batch",
+        "resource": "retention-purge-batch"
+      },
+      {
+        "detail": "More records are offered than the queue holds, so the drop path is entered rather than described. The drop count must be the excess exactly, and batch work must complete while the queue is saturated.",
+        "report": "bounded-shedding",
+        "requires": "offered-exceeds-ceiling",
+        "resource": "telemetry-exporter-queue"
+      },
+      {
+        "detail": "More label combinations are offered than the family budget admits, so the reserved series is reached rather than assumed.",
+        "report": "bounded-shedding",
+        "requires": "offered-exceeds-ceiling",
+        "resource": "metric-series-per-family"
+      },
+      {
+        "detail": "More events are emitted for one execution than the buffer retains, so the eviction rule is exercised.",
+        "report": "bounded-shedding",
+        "requires": "offered-exceeds-ceiling",
+        "resource": "retained-incident-events"
+      }
+    ]
+  },
+  "violations": []
+}

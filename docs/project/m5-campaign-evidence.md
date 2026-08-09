@@ -1172,8 +1172,17 @@ failure alike.
 ### Results
 
 Both matrix points pass. All four reports ran and none skipped. `36` declared
-resources, `36` observed. The retained reports are registered in
-[the campaign evidence index](../engineering/campaigns/m5/README.md#reports).
+resources, `36` observed.
+
+| Report | Matrix | Result |
+| --- | --- | --- |
+| [`resource-bounds-campaign-postgres-15.json`](../engineering/campaigns/m5/resource-bounds-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
+| [`resource-bounds-campaign-postgres-18.json`](../engineering/campaigns/m5/resource-bounds-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
+
+Both were produced by commit `3a4a962`, which is the merge commit the workflow
+checked out rather than a branch tip, on `rustc 1.97.1` and Linux `x86_64`,
+against servers `15.18` and `18.4`. The command is
+`cargo run --package oxide-batch-xtask -- resource-bounds`.
 
 Every structural figure below is identical on the two matrix points, which is
 what the campaign claims: it asserts occupancy, counts, and refusals rather than
