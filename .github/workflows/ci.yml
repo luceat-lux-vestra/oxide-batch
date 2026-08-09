@@ -225,6 +225,81 @@ jobs:
           path: target/m5-campaigns/crash-restore-campaign.json
           if-no-files-found: error
 
+  upgrade-campaign:
+    name: postgres-${{ matrix.postgres }}-upgrade-campaign
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["15", "18"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oxide_batch_upgrade
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username postgres --dbname oxide_batch_upgrade"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      # The campaign never migrates this database. It reads the server, the
+      # role, and the connection parameters off it, and creates every database
+      # it reports on, because a report that ran against a database something
+      # else had already migrated would not be a report about an upgrade.
+      OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_upgrade
+      # Creating and dropping a database cannot be done from inside the database
+      # being created, dropped, or dumped, so the campaign does it through the
+      # maintenance database instead.
+      OXIDEBATCH_POSTGRES_BACKUP_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      OXIDEBATCH_CAMPAIGN_DIR: target/m5-campaigns
+      OXIDEBATCH_CAMPAIGN_MATRIX: postgres-${{ matrix.postgres }}
+    steps:
+      - name: Check out repository
+        # The rejection report builds the runtime that shipped against schema 2
+        # from the revision before schema 3 was added, so the campaign needs the
+        # history that contains it. The default shallow checkout does not have
+        # it, and the report fails rather than skipping without it.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Install the matching PostgreSQL client tools
+        # The rollback report takes its pre-upgrade backup with the real pg_dump
+        # and loads it with the real pg_restore, so the client must match the
+        # matrix point. The runner image ships a different major version and its
+        # wrapper would silently select that one, which would make the retained
+        # report name a tool the campaign did not intend.
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install --yes "postgresql-client-${{ matrix.postgres }}"
+          echo "/usr/lib/postgresql/${{ matrix.postgres }}/bin" >> "${GITHUB_PATH}"
+
+      - name: Show the client tools the campaign will use
+        run: |
+          pg_dump --version
+          pg_restore --version
+
+      - name: Run the schema upgrade, rejection, and rollback campaign
+        run: cargo run --package oxide-batch-xtask -- upgrade
+
+      - name: Retain the campaign report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: upgrade-campaign-postgres-${{ matrix.postgres }}
+          path: target/m5-campaigns/upgrade-campaign.json
+          if-no-files-found: error
+
   postgres-design-gate:
     name: postgres-${{ matrix.postgres }}-design-gate
     runs-on: ubuntu-latest
