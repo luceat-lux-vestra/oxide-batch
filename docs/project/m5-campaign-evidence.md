@@ -1,7 +1,7 @@
 # M5 Evidence Campaign Record
 
-**State:** In progress. The conformance and crash-and-restore campaigns are
-delivered; the upgrade, security, resource-bound, soak, cancellation,
+**State:** In progress. The conformance, crash-and-restore, and upgrade
+campaigns are delivered; the security, resource-bound, soak, cancellation,
 performance, and reference-workload campaigns are not.
 
 **Issue:** [#102](https://github.com/luceat-lux-vestra/oxide-batch/issues/102)
@@ -26,7 +26,7 @@ named released version, and that stays with
 | --- | --- | --- |
 | Conformance | `full_embedded_conformance_suite_passes_on_the_accepted_scope` | Delivered |
 | Crash and restore | `process_kill_at_each_commit_phase_recovers_without_a_forged_status`, plus the P-013 and logical-restore reports | Delivered |
-| Upgrade | `schema1_and_schema2_upgrade_directly_to_schema3`, `schema2_runtime_rejects_schema3`, `schema3_backup_restores_the_prior_schema` | Not started |
+| Upgrade | `schema1_and_schema2_upgrade_directly_to_schema3`, `schema2_runtime_rejects_schema3`, `schema3_backup_restores_the_prior_schema` | Delivered |
 | Security | `verify_full_tls_is_required_in_the_supported_mode`, `least_privilege_role_cannot_exceed_its_class`, `redaction_sweep_finds_no_prohibited_value_class` | Not started |
 | Resource bounds | `declared_ceilings_hold_under_stress_with_backpressure` | Not started |
 | Soak | `soak_reports_no_task_connection_handle_or_memory_growth` | Not started |
@@ -388,8 +388,9 @@ are recorded; the first is a defect and it is closed.
 
 - **Schema upgrade and rollback.** The logical restore proves that a schema-3
   backup restores schema-3 state and that a job restarts on the restored copy.
-  It does not upgrade a prior schema or roll one back, which the upgrade
-  campaign owes as `schema1_and_schema2_upgrade_directly_to_schema3`,
+  It does not upgrade a prior schema or roll one back. That is the
+  [upgrade campaign](#upgrade-campaign) below, which delivers
+  `schema1_and_schema2_upgrade_directly_to_schema3`,
   `schema2_runtime_rejects_schema3`, and
   `schema3_backup_restores_the_prior_schema`.
 - **Physical backup, replication, or point-in-time recovery.** The campaign
@@ -437,3 +438,303 @@ run to completion alongside the chunk job, so the flow decisions and partition
 metadata the restore is compared over are ones the runtime actually wrote. The
 report asserts both are present before comparing them, so the comparison cannot
 pass vacuously.
+
+## Upgrade campaign
+
+### What the campaign owes
+
+The [performance plan](../engineering/performance-plan.md#m5-production-preview-campaigns)
+gives the upgrade row three obligations: a direct upgrade from schema 1 and
+schema 2 to schema 3, newer-schema rejection, and restore-based rollback. The
+[design gate](m5-design-gate-evidence.md#named-campaign-scenarios) names all
+three as scenarios: `schema1_and_schema2_upgrade_directly_to_schema3`,
+`schema2_runtime_rejects_schema3`, and
+`schema3_backup_restores_the_prior_schema`.
+
+The denominator is committed as
+[`tests/fixtures/upgrade/campaign-scope.json`](../../tests/fixtures/upgrade/campaign-scope.json).
+It lists the two prior schemas the campaign builds fixtures at, the three
+reports, and the five schema paths those reports must be observed taking.
+`crates/oxide-batch/tests/m5_upgrade_campaign.rs` reconciles it against the plan
+and the gate in an ordinary `cargo test`, so a path or a report cannot quietly
+leave the campaign.
+
+| Path | Report | From | To | Required outcome |
+| --- | --- | --- | --- | --- |
+| `upgrade-from-1` | `schema-upgrade` | `1` | `3` | Migrates, preserves every prior value, and opens through the current repository |
+| `upgrade-from-2` | `schema-upgrade` | `2` | `3` | The same |
+| `reject-schema-3` | `schema-rejection` | `2` | `3` | A schema-2 runtime refuses the upgraded database and writes nothing |
+| `rollback-to-1` | `upgrade-rollback` | `1` | `3` | The pre-upgrade backup restores a schema-1 database carrying the state it was taken from |
+| `rollback-to-2` | `upgrade-rollback` | `2` | `3` | The same, at schema 2 |
+
+### The prior schemas are the prior schemas
+
+This is the part of an upgrade campaign that is easiest to fake and worth the
+most. A fixture built by installing schema 3 and lowering the recorded version
+would pass an upgrade test and would prove nothing, because the upgrade would
+have nothing to do.
+
+The campaign does not build one. This crate's migration set is immutable, and
+`0001_initial_metadata.sql` and `0002_fault_tolerance_and_flow.sql` are the
+migrations that installed schema 1 and schema 2 when each was the whole schema.
+A fixture is that set run up to the version under test and stopped, through
+sqlx's own migrator, so the tables, columns, constraints, indexes, and
+applied-migration bookkeeping are the ones that version produced. The upgrade
+afterwards is the real remaining chain rather than a replay of it.
+
+Three checks keep it that way. Before every upgrade the report requires the
+recorded version to be the source version, every table that schema declared to
+be present, and every table and column a later schema introduced to be
+**absent** — so a fixture that drifted into being schema 3 fails the report that
+depends on it. The scope reconciliation requires each declared source schema to
+be one a migration in that set actually installs, and refuses a seed script that
+so much as mentions a later schema's column. And the seed scripts are applied by
+the database, whose constraints reject a row that does not belong to the schema
+holding it.
+
+The seeded state is what an upgrade has to carry: two registered definitions and
+the upgrade edge between them, a job instance, a resolved attempt and a live
+one, the step execution of each with its durable checkpoint, execution context,
+and counters, and the recovery decision that resolved the first attempt. The
+schema-2 fixture adds the durable state schema 2 introduced — the logical step
+identity, the retry and skip counters, and a recorded flow decision. The live
+attempt is the one that matters most: an upgrade that lost it would lose a
+running job's restart point.
+
+### How durable state is compared across a schema change
+
+A prior schema cannot be read through the repository port, because the current
+runtime refuses to open one. The comparison is therefore a direct row reading,
+but taken through the column list the **source** schema declared, captured from
+`information_schema` before the upgrade. A column a later schema adds is outside
+the projection and cannot mask a lost or rewritten value.
+
+The comparison is exact rather than tolerant. The chain rewrites no value of a
+column that already existed, so anything but equality is a defect. The one
+transformation it does make is asserted rather than tolerated: schema 2 gives
+every schema-1 step execution a logical identity equal to its step name, and the
+report requires exactly that, because a migration that invented one instead
+would leave the step unaddressable across the definition change the identity
+exists for.
+
+Row equality alone would not be enough — a migration can leave rows intact and
+unreadable — so each upgraded database is then opened through
+`PostgresJobRepository`, its instance looked up by the identity the domain
+computes rather than by a stored key, every attempt and step decoded into its
+typed form, and every attempt projected through the explorer. Finally the
+migrator is run a second time and required to change the recorded version,
+the durable rows, and the port reading not at all.
+
+### The rejecting runtime is a real schema-2 runtime
+
+`schema2_runtime_rejects_schema3` is about an old release meeting a database a
+newer migrator has moved on. That runtime cannot be built from this working
+tree: the supported schema version is a constant of the crate, and this tree's
+is `3`.
+
+The report builds it. `397a38bcada93d961dbb2ca3d9960311a3fb4395` is the last
+revision before schema 3 was added; its `SUPPORTED_SCHEMA_VERSION` is `2` and its
+migration set ends at `0002`. The report checks it out into a worktree, builds
+it, and runs the campaign's committed probe
+([`tests/fixtures/upgrade/schema-2-runtime/probe.rs`](../../tests/fixtures/upgrade/schema-2-runtime/probe.rs))
+against a database this crate's migrator has just upgraded from schema 2 to
+schema 3. The scope reconciliation reads the supported version out of that
+revision rather than asserting something about it, so a pin that moved to a
+runtime supporting something else fails in review.
+
+Both of that runtime's entry points are asked, because an operator rolling a
+deployment back runs both: the repository a running instance opens, and the
+migrator a deployment step runs. A schema-2 migrator that treated a schema-3
+database as having pending work would rewrite it downwards.
+
+Refusing is only half the contract, so the report also requires that nothing was
+written while refusing — no durable value, no recorded schema version, no
+applied-migration row — and that the current runtime still opens and projects
+the database afterwards. That is what makes the refusal non-destructive rather
+than merely unsuccessful.
+
+The existing
+`postgres_repository::newer_schema_is_rejected_without_guessing_compatibility`
+is kept as the lower-level regression test and is **not** treated as this
+scenario's evidence. It moves the recorded version one past whatever the current
+runtime supports and requires the typed rejection, which proves the comparison
+is wired up. It does not prove that the runtime which shipped against schema 2
+refuses the schema 3 this crate now installs. The campaign does not run it,
+because it needs a database already migrated to the current schema — the crash
+and restore campaign's fixture rather than this one's, since every database this
+campaign touches it creates itself — and the reconciliation requires it to keep
+existing.
+
+### The rollback is a restore, and says so
+
+No downgrade migration exists in this repository and none was written. The M5
+contract is restore-based rollback, and the report performs the operational
+sequence: a prior-schema database is built and seeded, `pg_dump` writes a
+custom-format archive of the metadata schema, the migrator upgrades the database
+to schema 3, and the archive is loaded by `pg_restore` into a separate database
+created empty for it.
+
+Between the upgrade and the restore the upgraded database is used, through a
+path that exists only in schema 3: a retention hold is placed through
+`RetentionService`, which writes a column and an audit table schema 2 did not
+have. Without that the restored copy and the upgraded one would differ by a
+version number alone, and the report could not say the restore brought back the
+earlier state rather than the later one.
+
+The restored database must be at the source schema, must not declare a structure
+schema 3 introduced, and must carry the durable state the reading taken
+immediately before the archive was written recorded. The current schema-3
+runtime must then **refuse** it, with `MigrationRequired` naming the version it
+found. That requirement is what keeps the report honest: a rollback that
+produced something the schema-3 runtime accepted would not be a rollback. And
+nothing here claims the schema-3 state was converted to the prior schema — the
+upgraded database is checked afterwards and still records schema 3, still holds
+the hold, and still reports exactly what it reported before.
+
+### Why it is a runner as well as a test
+
+Every scenario needs a real database and returns success without one, because it
+prints a skip line and returns. That half is `cargo xtask upgrade`, which
+resolves the fixtures before starting and refuses to run without them.
+
+An upgrade campaign has a sharper version of the forged-pass problem than the
+others: a report that covered one source schema and silently skipped the other
+would be green and would have proved half of what it claims. So each report
+retains a machine-readable observation into a directory the runner creates
+empty, and the runner reconciles the five declared schema paths against what
+those observations record — the source and target schema version, the migration
+result, what opening the database afterwards did, whether durable state was
+compared, the backup and restore result where the path has one, and the version
+finally observed. A path with no matching observation, or one whose observation
+disagrees with the committed scope, fails the campaign.
+
+### Where it runs
+
+`postgres-15-upgrade-campaign` and `postgres-18-upgrade-campaign` in
+`.github/workflows/ci.yml`, on the two ends of the supported PostgreSQL `15`-`18`
+range. Two things separate these jobs from the other campaign jobs.
+
+Their checkout is not shallow. The rejection report builds a previous revision
+of this crate, and that revision is not in a shallow clone; the report fails
+rather than skipping without it.
+
+Their service database is never migrated by anything but the campaign. It
+supplies the server, the role, and the connection parameters, and every database
+a report works on it creates itself — because a report that ran against a
+database something else had already migrated would not be a report about an
+upgrade.
+
+Each job installs the client tools matching its matrix point, because the
+rollback report takes a real `pg_dump` archive and loads it with a real
+`pg_restore`, and retains its report as a build artifact.
+
+### Results
+
+Both matrix points pass. All five schema paths were observed, both reports that
+cover two source schemas covered both, and no report skipped.
+
+| Report | Matrix | Result |
+| --- | --- | --- |
+| [`upgrade-campaign-postgres-15.json`](../engineering/campaigns/m5/upgrade-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
+| [`upgrade-campaign-postgres-18.json`](../engineering/campaigns/m5/upgrade-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
+
+Both were produced by commit `ce5fe10`, which is the merge commit the workflow
+checked out rather than a branch tip, on `rustc 1.97.1` and Linux `x86_64`,
+against servers `15.18` and `18.4`. The command is
+`cargo run --package oxide-batch-xtask -- upgrade`.
+
+**Schema 1 and schema 2 to schema 3.** Both upgrades succeeded in one migrator
+invocation and left the recorded version at `3`, identically on both matrix
+points. The schema-1 fixture carried `9` rows across `6` tables and the schema-2
+fixture `10` rows across `7`; every value of every column the source schema
+declared compared equal afterwards, and both step executions kept `import` as
+their logical identity, which is what schema 2's one transformation of an
+existing column is required to write.
+
+Each upgraded database then opened through `PostgresJobRepository`. The seeded
+instance was found by the identity the domain computes for it rather than by a
+stored key, both attempts decoded — the resolved `FAILED` one and the live
+`STARTED` one — the recovery decision on the first attempt survived, both
+attempts projected through the explorer, and the schema-2 fixture's recorded
+flow decision was still there. Running the migrator a second time left the
+version, the durable rows, and that whole reading unchanged.
+
+**Newer-schema rejection.** The runtime built from
+`397a38bcada93d961dbb2ca3d9960311a3fb4395` reported
+`supported_schema_version: 2`, which is the fact no build of this tree can
+produce. Pointed at a database this crate's migrator had just carried from
+schema 2 to schema 3, it refused through both entry points and reported the same
+thing through each: `NewerSchema`, `observed_schema_version: 3`,
+`supported_schema_version: 2`. The refusal was clean — the `10` tables compared
+before and after were identical, the recorded schema version was still `3`, and
+the applied-migration bookkeeping was untouched — and the current runtime still
+opened and projected the database afterwards.
+
+**Restore-based rollback.** Both rollbacks used the client matching their matrix
+point — `pg_dump` and `pg_restore` `15.18` against server `15.18`, and `18.4`
+against server `18.4`. The pre-upgrade archives were `35889` and `46171` bytes on
+PostgreSQL 15, and `36176` and `46518` on PostgreSQL 18, for the schema-1 and
+schema-2 sources respectively.
+
+Each restored database came up at its source schema, declared no structure schema
+3 introduced, and carried exactly the durable state the reading taken immediately
+before the archive was written recorded. The current runtime refused each one:
+`MigrationRequired { current: 1, supported: 3 }` and
+`MigrationRequired { current: 2, supported: 3 }`. The upgraded databases were
+unaffected by any of it — still at schema 3, still holding the retention hold
+placed after the upgrade, and still reporting exactly what they reported before
+the restore ran.
+
+No correctness P0 or P1 was found by this campaign, and none is open against it.
+
+### What this campaign does not establish
+
+- **That an old runtime is safe on a database it accepts.** The rejection report
+  proves a schema-2 runtime refuses schema 3 and writes nothing while refusing.
+  It says nothing about mixed-version operation that the runtime does not
+  refuse, and the M5 support contract does not offer any.
+- **A downgrade migration.** There is none, and the campaign does not imply one.
+  Rolling back means restoring the backup taken before the upgrade, which loses
+  everything written after it — by construction, and the report demonstrates
+  exactly that by leaving the post-upgrade hold behind.
+- **Rollback of an upgrade whose backup was not taken.** The contract is
+  restore-based, so a backup is the precondition. The campaign proves the
+  restore, not a recovery path for an operator who skipped it.
+- **Upgrade under load.** Every upgrade here runs against a quiescent database.
+  Migration behavior with concurrent runtime traffic, lock contention, or a
+  partially applied chain interrupted mid-flight is not covered, and the
+  advisory lock the migrator takes is not exercised against a competing
+  migrator.
+- **Physical backup, replication, or point-in-time recovery.** The campaign
+  covers the logical backup the support bounds name and nothing wider.
+- **A duration budget.** The campaign records outcomes, not timings. The
+  fixtures are small on purpose, so nothing here says how long an upgrade of a
+  production-sized database takes.
+
+### Findings
+
+No defect was found. Two observations changed the campaign and are recorded
+because they are the reason it is shaped the way it is.
+
+**F5. A schema-2 runtime cannot be built from a tree that installs schema 3.**
+The first design of the rejection report intended to reuse the existing
+newer-schema mechanism: set the recorded version above what the runtime
+supports and require the typed failure. That is what
+`newer_schema_is_rejected_without_guessing_compatibility` already does, and it
+cannot discharge this scenario. With `SUPPORTED_SCHEMA_VERSION` at `3` the
+comparison it exercises is `4` against `3`, not `3` against `2`, and the
+database it exercises it against is a schema-3 database wearing a higher number
+rather than a schema-3 database. The scenario the gate names is about a runtime
+that shipped, so the report builds that runtime from the revision before schema
+3 existed. The cost is that the campaign needs the repository's full history and
+a build of a previous revision; the alternative was a report that named schema 2
+without ever running one.
+
+**F6. `installed_schema_version` postdates the schema-2 runtime.**
+The probe was first written to report the version it found through
+`PostgresMigrator::installed_schema_version`, which does not exist at the pinned
+revision — it was added afterwards. The probe uses only the API that revision
+exposed, and the version it found is read out of the typed failure itself, where
+`NewerSchema` carries `current` alongside `supported`. That is a better reading
+anyway: it is the runtime's own account of what it saw, rather than a second
+observation taken beside it.

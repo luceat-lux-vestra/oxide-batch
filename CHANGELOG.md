@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `cargo xtask upgrade`, the M5 PostgreSQL upgrade campaign. It proves the
+  preview's upgrade contract: a schema-1 or schema-2 database upgrades directly
+  to schema 3, a runtime that supports schema 2 refuses one that has been, and
+  an upgrade is rolled back by restoring the backup taken before it. The prior
+  schemas are not reconstructed — each is installed by running this crate's
+  immutable migration set up to that version and stopping, and every report
+  refuses to proceed against a fixture carrying a table or column a later schema
+  introduced. Durable state is compared through the column list the source
+  schema declared, so a column added later cannot mask a lost value, and the
+  upgraded database is then opened through the repository and projected through
+  the explorer. The rejecting runtime is built from the last revision before
+  schema 3 was added, because no build of this tree can report a supported
+  schema version of `2`; both its repository and its migrator must refuse with
+  the typed newer-schema failure and write nothing. The rollback takes a real
+  `pg_dump` archive before the upgrade and loads it with `pg_restore` into a
+  separate database, which must come up at the prior schema with the state the
+  backup was taken from. The runner resolves its fixtures before starting and
+  requires every declared schema path to appear in a retained observation, so a
+  report that covered one source schema and skipped the other fails rather than
+  passing half proved. CI runs it on PostgreSQL 15 and 18 and retains each
+  report. No production code changed.
 - `cargo xtask crash-restore`, the M5 crash and restore campaign. It kills a
   live process with `SIGKILL` at every phase of the chunk commit protocol,
   reports P-013 restart after many chunks, and takes a real `pg_dump` archive

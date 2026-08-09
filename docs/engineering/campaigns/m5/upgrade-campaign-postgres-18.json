@@ -1,0 +1,490 @@
+{
+  "campaign": "M5 PostgreSQL upgrade",
+  "environment": {
+    "arch": "x86_64",
+    "matrix": "postgres-18",
+    "os": "linux",
+    "profile": "debug",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "source_commit": "ce5fe10156801d7f090c87743a0b14e9f3758b82",
+    "source_tree_clean": true
+  },
+  "fixtures": {
+    "postgres-upgrade": true
+  },
+  "notes": [
+    "Every report is run on its own so its result is attributable, and so a report that needs to build a previous revision of this crate does not do so inside another report's invocation.",
+    "A passing report is not sufficient on its own. Each one retains an observation into a directory this runner creates empty, and the runner requires every declared schema path to appear in one, carrying the source and target schema version, the migration result, the repository-open result, the durable-state comparison, the backup and restore result where the path has one, and the version finally observed.",
+    "The prior schemas are not reconstructed. Each is installed by running this crate's immutable migration set up to that version and stopping, and the reports refuse to proceed against a fixture that carries a structure a later schema introduced.",
+    "The runtime the rejection report is about is built from the last revision before schema 3 existed, because no build of this tree can report a supported schema version of 2. The campaign needs the repository's full history for that; a shallow clone fails it rather than skipping it."
+  ],
+  "passed": true,
+  "paths": [
+    {
+      "backup_restore_result": null,
+      "expected": "one migrator invocation carries a schema-1 database to schema 3, every value of every column schema 1 declared is unchanged, and the result opens through the current repository",
+      "id": "upgrade-from-1",
+      "observed_schema_version": 3,
+      "report": "schema-upgrade",
+      "repository_open_result": "ok",
+      "source_schema_version": 1,
+      "target_schema_version": 3
+    },
+    {
+      "backup_restore_result": null,
+      "expected": "one migrator invocation carries a schema-2 database to schema 3, every value of every column schema 2 declared is unchanged, and the result opens through the current repository",
+      "id": "upgrade-from-2",
+      "observed_schema_version": 3,
+      "report": "schema-upgrade",
+      "repository_open_result": "ok",
+      "source_schema_version": 2,
+      "target_schema_version": 3
+    },
+    {
+      "backup_restore_result": null,
+      "expected": "the runtime that shipped against schema 2 refuses a database upgraded to schema 3 from both its repository and its migrator, with the typed newer-schema failure, and writes nothing while refusing",
+      "id": "reject-schema-3",
+      "observed_schema_version": 3,
+      "report": "schema-rejection",
+      "repository_open_result": "refused: NewerSchema",
+      "source_schema_version": 2,
+      "target_schema_version": 3
+    },
+    {
+      "backup_restore_result": "ok",
+      "expected": "the logical backup taken before the upgrade restores into a separate database at schema 1 carrying the state it was taken from, and the current runtime refuses it as needing migration",
+      "id": "rollback-to-1",
+      "observed_schema_version": 1,
+      "report": "upgrade-rollback",
+      "repository_open_result": "refused: MigrationRequired",
+      "source_schema_version": 1,
+      "target_schema_version": 3
+    },
+    {
+      "backup_restore_result": "ok",
+      "expected": "the logical backup taken before the upgrade restores into a separate database at schema 2 carrying the state it was taken from, and the current runtime refuses it as needing migration",
+      "id": "rollback-to-2",
+      "observed_schema_version": 2,
+      "report": "upgrade-rollback",
+      "repository_open_result": "refused: MigrationRequired",
+      "source_schema_version": 2,
+      "target_schema_version": 3
+    }
+  ],
+  "related": [
+    {
+      "invariant": "newer schema rejection",
+      "name": "newer_schema_is_rejected_without_guessing_compatibility",
+      "note": "The lower-level regression test for the comparison the rejection report exercises end to end. It is kept and must keep existing, and this campaign does not run it: it needs a database already migrated to the current schema, which is the crash-and-restore campaign's fixture rather than this one's, and every database this campaign touches it creates itself. It is also not a substitute for the report, because it moves a version number one past whatever this runtime supports, where the report runs a previous runtime against a real schema-3 database.",
+      "package": "oxide-batch",
+      "run_by_this_campaign": false,
+      "target": "postgres_repository"
+    }
+  ],
+  "report": "upgrade",
+  "reports": [
+    {
+      "fixture": "postgres-upgrade",
+      "id": "schema-upgrade",
+      "name": "schema1_and_schema2_upgrade_directly_to_schema3",
+      "observation": {
+        "fixture": "postgres-upgrade",
+        "passed": true,
+        "paths": [
+          {
+            "backup_restore_result": null,
+            "database": "oxide_batch_m5_upgrade_from_1",
+            "durable_state_preserved": true,
+            "durable_state_verified": true,
+            "fixture": {
+              "installed_by": "the immutable migration set run to 1 and stopped there",
+              "rows_compared": {
+                "ob_definition_upgrade": 1,
+                "ob_job_definition": 2,
+                "ob_job_execution": 2,
+                "ob_job_instance": 1,
+                "ob_recovery_decision": 1,
+                "ob_step_execution": 2
+              },
+              "seed": "tests/fixtures/upgrade/schema-1/seed.sql",
+              "tables_compared": [
+                "ob_definition_upgrade",
+                "ob_job_definition",
+                "ob_job_execution",
+                "ob_job_instance",
+                "ob_recovery_decision",
+                "ob_step_execution"
+              ]
+            },
+            "idempotent_remigration": {
+              "durable_state_preserved": true,
+              "port_reading_unchanged": true,
+              "result": "ok"
+            },
+            "migration_result": "ok",
+            "observed_schema_version": 3,
+            "passed": true,
+            "port_reading": {
+              "attempt_statuses": [
+                "FAILED",
+                "STARTED"
+              ],
+              "attempt_versions": [
+                3,
+                2
+              ],
+              "attempts": 2,
+              "definition_digests": [
+                "1111111111111111111111111111111111111111111111111111111111111111",
+                "1111111111111111111111111111111111111111111111111111111111111111"
+              ],
+              "flow_decisions": [
+                0,
+                0
+              ],
+              "instance_found": true,
+              "recovery_decisions": [
+                true,
+                false
+              ],
+              "step_statuses": [
+                [
+                  "FAILED"
+                ],
+                [
+                  "STARTED"
+                ]
+              ],
+              "steps": [
+                1,
+                1
+              ]
+            },
+            "repository_open_result": "ok",
+            "source_schema_version": 1,
+            "step_logical_identity": [
+              [
+                1,
+                "import"
+              ],
+              [
+                2,
+                "import"
+              ]
+            ],
+            "target_schema_version": 3,
+            "violations": []
+          },
+          {
+            "backup_restore_result": null,
+            "database": "oxide_batch_m5_upgrade_from_2",
+            "durable_state_preserved": true,
+            "durable_state_verified": true,
+            "fixture": {
+              "installed_by": "the immutable migration set run to 2 and stopped there",
+              "rows_compared": {
+                "ob_definition_upgrade": 1,
+                "ob_flow_decision": 1,
+                "ob_job_definition": 2,
+                "ob_job_execution": 2,
+                "ob_job_instance": 1,
+                "ob_recovery_decision": 1,
+                "ob_step_execution": 2
+              },
+              "seed": "tests/fixtures/upgrade/schema-2/seed.sql",
+              "tables_compared": [
+                "ob_definition_upgrade",
+                "ob_flow_decision",
+                "ob_job_definition",
+                "ob_job_execution",
+                "ob_job_instance",
+                "ob_recovery_decision",
+                "ob_step_execution"
+              ]
+            },
+            "idempotent_remigration": {
+              "durable_state_preserved": true,
+              "port_reading_unchanged": true,
+              "result": "ok"
+            },
+            "migration_result": "ok",
+            "observed_schema_version": 3,
+            "passed": true,
+            "port_reading": {
+              "attempt_statuses": [
+                "FAILED",
+                "STARTED"
+              ],
+              "attempt_versions": [
+                3,
+                2
+              ],
+              "attempts": 2,
+              "definition_digests": [
+                "1111111111111111111111111111111111111111111111111111111111111111",
+                "1111111111111111111111111111111111111111111111111111111111111111"
+              ],
+              "flow_decisions": [
+                0,
+                1
+              ],
+              "instance_found": true,
+              "recovery_decisions": [
+                true,
+                false
+              ],
+              "step_statuses": [
+                [
+                  "FAILED"
+                ],
+                [
+                  "STARTED"
+                ]
+              ],
+              "steps": [
+                1,
+                1
+              ]
+            },
+            "repository_open_result": "ok",
+            "source_schema_version": 2,
+            "step_logical_identity": [
+              [
+                1,
+                "import"
+              ],
+              [
+                2,
+                "import"
+              ]
+            ],
+            "target_schema_version": 3,
+            "violations": []
+          }
+        ],
+        "postgres_major_version": "18",
+        "report": "direct upgrade to schema 3",
+        "scenario": "schema1_and_schema2_upgrade_directly_to_schema3",
+        "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+        "violations": []
+      },
+      "owes": "Schema 1 and 2 to schema 3 direct upgrade",
+      "package": "oxide-batch",
+      "result": "ok",
+      "target": "postgres_schema_upgrade",
+      "title": "Direct upgrade to schema 3"
+    },
+    {
+      "fixture": "postgres-upgrade",
+      "id": "schema-rejection",
+      "name": "schema2_runtime_rejects_schema3",
+      "observation": {
+        "fixture": "postgres-upgrade",
+        "passed": true,
+        "paths": [
+          {
+            "applied_migrations_unchanged": true,
+            "backup_restore_result": null,
+            "current_runtime_still_opens_it": true,
+            "database": "oxide_batch_m5_upgrade_rejection",
+            "durable_state_unchanged": true,
+            "durable_state_verified": true,
+            "failed_closed": true,
+            "migration_result": "ok",
+            "observed_schema_version": 3,
+            "passed": true,
+            "reached_schema_3_by": "upgrading a seeded schema-2 database with this crate's migrator",
+            "repository_open_result": "refused: NewerSchema",
+            "rows_compared": {
+              "ob_definition_upgrade": 1,
+              "ob_flow_decision": 1,
+              "ob_job_definition": 2,
+              "ob_job_execution": 2,
+              "ob_job_instance": 1,
+              "ob_operator_request": 0,
+              "ob_recovery_decision": 1,
+              "ob_retention_action": 0,
+              "ob_step_execution": 2,
+              "ob_step_partition": 0
+            },
+            "runtime": {
+              "built_from": "a worktree of the last revision before schema 3 was added",
+              "probe": "tests/fixtures/upgrade/schema-2-runtime/probe.rs",
+              "revision": "397a38bcada93d961dbb2ca3d9960311a3fb4395",
+              "supported_schema_version": 2
+            },
+            "runtime_migrator_run": {
+              "accepted": false,
+              "error": "NewerSchema",
+              "observed_schema_version": 3,
+              "supported_schema_version": 2
+            },
+            "runtime_repository_open": {
+              "accepted": false,
+              "error": "NewerSchema",
+              "observed_schema_version": 3,
+              "supported_schema_version": 2
+            },
+            "source_schema_version": 2,
+            "target_schema_version": 3,
+            "violations": []
+          }
+        ],
+        "postgres_major_version": "18",
+        "report": "a schema-2 runtime refusing a schema-3 database",
+        "scenario": "schema2_runtime_rejects_schema3",
+        "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+        "violations": []
+      },
+      "owes": "newer-schema rejection",
+      "package": "oxide-batch",
+      "result": "ok",
+      "target": "postgres_schema_rejection",
+      "title": "A schema-2 runtime refusing a schema-3 database"
+    },
+    {
+      "fixture": "postgres-upgrade",
+      "id": "upgrade-rollback",
+      "name": "schema3_backup_restores_the_prior_schema",
+      "observation": {
+        "fixture": "postgres-upgrade",
+        "method": "a logical pg_dump archive taken before the upgrade, restored with pg_restore into a separate freshly created database",
+        "no_downgrade_migration": true,
+        "passed": true,
+        "paths": [
+          {
+            "backup": {
+              "archive_bytes": 36176,
+              "format": "custom",
+              "rows_covered": {
+                "ob_definition_upgrade": 1,
+                "ob_job_definition": 2,
+                "ob_job_execution": 2,
+                "ob_job_instance": 1,
+                "ob_recovery_decision": 1,
+                "ob_step_execution": 2
+              },
+              "schema": "oxide_batch",
+              "taken_at_schema_version": 1,
+              "tool": "pg_dump (PostgreSQL) 18.4 (Ubuntu 18.4-1.pgdg24.04+1)"
+            },
+            "backup_restore_result": "ok",
+            "current_runtime_refuses_restored_database": "MigrationRequired { current: 1, supported: 3 }",
+            "databases": {
+              "restored_into": "oxide_batch_m5_restored_to_1",
+              "upgraded": "oxide_batch_m5_rollback_from_1"
+            },
+            "durable_state_verified": true,
+            "migration_result": "ok",
+            "observed_schema_version": 1,
+            "passed": true,
+            "repository_open_result": "refused: MigrationRequired",
+            "restore": {
+              "downgrade_migration_applied": false,
+              "into": "a separate database created empty for the restore",
+              "tool": "pg_restore (PostgreSQL) 18.4 (Ubuntu 18.4-1.pgdg24.04+1)"
+            },
+            "restored_schema_version": 1,
+            "restored_state_matches_backup": true,
+            "schema3_only_state_on_upgraded_database": {
+              "restored_copy_cannot_carry_it": true,
+              "retention_hold": {
+                "actor": "operator:m5-upgrade-campaign",
+                "reason": "M5_UPGRADE_ROLLBACK"
+              }
+            },
+            "schema3_structures_absent_after_restore": true,
+            "source_schema_version": 1,
+            "target_schema_version": 3,
+            "upgraded_database_unchanged_by_rollback": true,
+            "violations": []
+          },
+          {
+            "backup": {
+              "archive_bytes": 46518,
+              "format": "custom",
+              "rows_covered": {
+                "ob_definition_upgrade": 1,
+                "ob_flow_decision": 1,
+                "ob_job_definition": 2,
+                "ob_job_execution": 2,
+                "ob_job_instance": 1,
+                "ob_recovery_decision": 1,
+                "ob_step_execution": 2
+              },
+              "schema": "oxide_batch",
+              "taken_at_schema_version": 2,
+              "tool": "pg_dump (PostgreSQL) 18.4 (Ubuntu 18.4-1.pgdg24.04+1)"
+            },
+            "backup_restore_result": "ok",
+            "current_runtime_refuses_restored_database": "MigrationRequired { current: 2, supported: 3 }",
+            "databases": {
+              "restored_into": "oxide_batch_m5_restored_to_2",
+              "upgraded": "oxide_batch_m5_rollback_from_2"
+            },
+            "durable_state_verified": true,
+            "migration_result": "ok",
+            "observed_schema_version": 2,
+            "passed": true,
+            "repository_open_result": "refused: MigrationRequired",
+            "restore": {
+              "downgrade_migration_applied": false,
+              "into": "a separate database created empty for the restore",
+              "tool": "pg_restore (PostgreSQL) 18.4 (Ubuntu 18.4-1.pgdg24.04+1)"
+            },
+            "restored_schema_version": 2,
+            "restored_state_matches_backup": true,
+            "schema3_only_state_on_upgraded_database": {
+              "restored_copy_cannot_carry_it": true,
+              "retention_hold": {
+                "actor": "operator:m5-upgrade-campaign",
+                "reason": "M5_UPGRADE_ROLLBACK"
+              }
+            },
+            "schema3_structures_absent_after_restore": true,
+            "source_schema_version": 2,
+            "target_schema_version": 3,
+            "upgraded_database_unchanged_by_rollback": true,
+            "violations": []
+          }
+        ],
+        "postgres_major_version": "18",
+        "report": "restore-based rollback of an upgrade to schema 3",
+        "scenario": "schema3_backup_restores_the_prior_schema",
+        "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+        "violations": []
+      },
+      "owes": "restore-based rollback",
+      "package": "oxide-batch",
+      "result": "ok",
+      "target": "postgres_upgrade_rollback",
+      "title": "Restore-based rollback of an upgrade"
+    }
+  ],
+  "scenarios": [
+    "schema1_and_schema2_upgrade_directly_to_schema3",
+    "schema2_runtime_rejects_schema3",
+    "schema3_backup_restores_the_prior_schema"
+  ],
+  "schema2_runtime": {
+    "note": "The last revision before schema 3 was added. The rejection report builds this revision in a worktree because no build of the current tree can report a supported schema version of 2.",
+    "probe": "tests/fixtures/upgrade/schema-2-runtime/probe.rs",
+    "revision": "397a38bcada93d961dbb2ca3d9960311a3fb4395",
+    "supported_schema_version": 2
+  },
+  "sources": [
+    {
+      "installed_by": "crates/oxide-batch/migrations/0001_initial_metadata.sql",
+      "note": "Installed by running the immutable migration set to version 1 and stopping, so the fixture is the schema those migrations produced rather than schema 3 wearing an older number.",
+      "schema_version": 1,
+      "seed": "tests/fixtures/upgrade/schema-1/seed.sql"
+    },
+    {
+      "installed_by": "crates/oxide-batch/migrations/0002_fault_tolerance_and_flow.sql",
+      "note": "Installed by running the immutable migration set to version 2 and stopping.",
+      "schema_version": 2,
+      "seed": "tests/fixtures/upgrade/schema-2/seed.sql"
+    }
+  ],
+  "violations": []
+}
