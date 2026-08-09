@@ -31,12 +31,6 @@ a pass or failure that does not.
 | `resource-bounds-campaign-postgres-15.json` | Resource bounds | Every declared bounded resource, the ceiling each report checked, the load it was offered, the occupancy it reached, and what it shed or refused, on PostgreSQL 15 |
 | `resource-bounds-campaign-postgres-18.json` | Resource bounds | The same, on PostgreSQL 18 |
 
-The two resource-bound files are produced by the
-`postgres-<version>-resource-bound-campaign` CI axes added with the campaign
-and are committed here once that job has run on the branch. Until then the
-axes' build artifacts are the retained evidence, and the development-host
-figures quoted in the gate are labelled as such.
-
 A file carries the matrix point in its name because one run produces one
 report: the runner always writes `conformance-campaign.json`, and the two jobs
 that produce it differ only in the database behind the fixture. The point is

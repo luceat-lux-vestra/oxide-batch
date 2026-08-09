@@ -1030,13 +1030,31 @@ So the denominator is committed as
 and reconciled in **both directions** by an ordinary `cargo test`, in
 [`m5_resource_bounds_campaign.rs`](../../crates/oxide-batch/tests/m5_resource_bounds_campaign.rs).
 
-From the code outward, the reconciliation scans every library crate for the
-bounds it declares — matching on how a bound is *named* rather than on a marker
-attribute, because a bound nobody remembered to mark is exactly the one the scan
-is for — and requires each to be classified: as a resource with a proving
-report, or as out of scope with a reason a reviewer can disagree with. A bounded
-resource added later cannot reach a release without either entering the campaign
-or being argued out of it in writing.
+From the code outward, the reconciliation *parses* every library crate and
+requires each constant declared under the repository's
+[bound declaration convention](../engineering/coding-conventions.md#declaring-a-resource-bound)
+to be classified: as a resource with a proving report, or as out of scope with a
+reason a reviewer can disagree with.
+
+It parses rather than reads lines, and that is not a detail. A textual reader
+recognizes the spellings its author happened to think of — it sees `pub const`
+and misses `pub(super) const`, it sees a declaration that fits on one line and
+misses the same one after a formatter wraps it — and both failures are silent,
+and both would remove a resource from the denominator without removing it from
+the product. So visibility is not consulted at all, layout cannot be, and
+associated constants and constants inside inline modules are found, because
+`FaultStateEnvelope::MAX_ENTRIES` is one and missing it would drop the retry
+cache.
+
+**What that does and does not guarantee** is worth stating exactly, because it
+is easy to claim more. A constant declared under the convention cannot enter the
+product without entering the campaign. A ceiling written as a bare literal at
+the point it is enforced, or named outside the convention, or existing only
+after macro expansion, is invisible to the scan — those are ruled out by the
+convention being a documented rule that review applies, not by the scan itself.
+The campaign does not claim to discover every bounded resource automatically,
+and the convention exists so that the claim it does make has something to be
+measured against.
 
 From the operator's document inward, it requires the
 [capacity budget](../operations/capacity-and-resource-budgets.md#declared-bounds)
@@ -1153,14 +1171,15 @@ failure alike.
 
 ### Results
 
-The figures below are from the development run recorded in
-[the measurement index](../engineering/campaigns/m5/README.md#the-resource-bound-campaign):
-PostgreSQL `18.4` on macOS `aarch64`. The release-blocking results are the two
-CI axes, whose reports are retained as build artifacts and committed here once
-that job has run on this branch. Everything the campaign asserts is structural,
-so the two differ in the server they ran against and not in what they prove.
+Both matrix points pass. All four reports ran and none skipped. `36` declared
+resources, `36` observed. The retained reports are registered in
+[the campaign evidence index](../engineering/campaigns/m5/README.md#reports).
 
-All four reports ran and none skipped. `36` declared resources, `36` observed.
+Every structural figure below is identical on the two matrix points, which is
+what the campaign claims: it asserts occupancy, counts, and refusals rather than
+durations, so a supported server that changed one of them would be the finding.
+The figures were also identical on the development host the campaign was written
+against, PostgreSQL `18.4` on macOS `aarch64`.
 
 **Worker and connection ceilings.** `128` partitions were offered against a
 worker budget of `64` through a pool of exactly `65` connections. Peak
@@ -1183,7 +1202,7 @@ compared fields over all `128` partitions.
 
 **Bounded query paths.** Against `1200` seeded instances, six pages returned all
 `1200` rows with `0` duplicates. The largest page held `202` rows against a
-`500`-row bound, because the encoded response bound bound first: the largest
+`500`-row bound, because the encoded response bound is what stopped it: the largest
 page encoded `261994` bytes against `262144`, and five of the six pages were
 truncated by it and handed back a continuation cursor. Cursors were `59` bytes
 against a `256`-byte bound at every point in the traversal. A purge planned

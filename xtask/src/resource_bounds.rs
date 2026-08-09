@@ -709,9 +709,12 @@ fn write_report(
              string and an observation from one supported major would otherwise \
              reconcile perfectly inside a run of another.",
             "The denominator this reconciles against is checked from the other \
-             side by an ordinary cargo test, which scans this workspace for \
-             every bound it declares and fails when one is neither proved nor \
-             argued out of scope.",
+             side by an ordinary cargo test, which parses every library crate \
+             and fails when a constant declared under the repository's bound \
+             declaration convention is neither proved nor argued out of scope. \
+             That convention is what the guarantee is bounded by: a ceiling \
+             written as a bare literal or named outside it is ruled out by \
+             review rather than by the scan.",
         ],
     });
 

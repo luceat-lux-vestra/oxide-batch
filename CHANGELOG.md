@@ -15,10 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   overload policy the resource contracts for, and that resource pressure changes
   no durable observation. The denominator is committed as
   `tests/fixtures/resource-bounds/campaign-scope.json` and reconciled in both
-  directions by ordinary tests: from the code outward, a scan of every library
-  crate requires each declared bound to be classified as a proved resource or an
-  argued exclusion, so a bounded resource added later cannot ship without
-  entering the campaign; from the operator's document inward, the capacity
+  directions by ordinary tests: from the code outward, every library crate is
+  parsed and each constant declared under the repository's new bound declaration
+  convention must be classified as a proved resource or an argued exclusion, so
+  a bound written under that convention cannot ship without entering the
+  campaign; from the operator's document inward, the capacity
   budget table and the scope must agree, and the scope's numbers must be the
   numbers the code holds. Four overload policies are kept distinct rather than
   collapsed — fail-closed, bounded concurrency, bounded shedding, and bounded

@@ -26,12 +26,27 @@
 //!
 //! So the reconciliation runs in both directions.
 //!
-//! From the code outward, [`every_declared_bound_is_classified`] scans every
-//! library crate for the bounds it declares and requires each one to appear in
-//! the scope document — as a resource with a proving report, or in the
-//! out-of-scope list with a reason. A bounded resource added later cannot reach
-//! a release without either entering the campaign or being argued out of it in
-//! writing, and neither can happen silently.
+//! From the code outward, [`every_declared_bound_is_classified`] parses every
+//! library crate and requires each constant declared under the repository's
+//! [bound declaration convention](../../../docs/engineering/coding-conventions.md)
+//! to appear in the scope document — as a resource with a proving report, or in
+//! the out-of-scope list with a reason.
+//!
+//! It parses rather than reading lines because the failure mode of a textual
+//! reader is silent: it recognizes the spellings its author thought of, so a
+//! ceiling that becomes `pub(super)` in a refactor, or that a formatter wraps
+//! across lines, leaves the denominator without leaving the product. Visibility
+//! is therefore never consulted, layout cannot be, and associated constants and
+//! constants in inline modules are found.
+//!
+//! What that guarantees, exactly: a constant declared under the convention
+//! cannot enter the product without entering the campaign. A ceiling written as
+//! a bare literal where it is enforced, or named outside the convention, or
+//! produced only by macro expansion, is invisible here — those are ruled out by
+//! the convention being a documented rule that review applies, not by this
+//! scan. The distinction is worth keeping sharp: a denominator that claimed to
+//! find everything would be making the same unfalsifiable claim this campaign
+//! exists to replace.
 //!
 //! From the operator's document inward,
 //! [`every_declared_budget_has_a_proving_report`] requires the capacity budget
@@ -570,9 +585,11 @@ type DeclaredBounds = BTreeMap<String, Vec<Option<i128>>>;
 
 /// Reads every bound the shipping crates declare, by symbol.
 ///
-/// The value is the integer the declaration evaluates to when it is a product
-/// of integer literals, which covers every byte and count ceiling in the
-/// workspace, and `None` for a duration or a reference to another constant.
+/// The value is the integer the declaration evaluates to when the expression is
+/// a product of integer literals, which covers every byte and count ceiling in
+/// the workspace, and `None` for a duration, a call, or a reference to another
+/// constant. A symbol whose value cannot be evaluated is still *discovered*:
+/// losing it would let a bound leave the campaign by being written differently.
 fn declared_bounds() -> Result<DeclaredBounds, Box<dyn Error>> {
     let mut declared = DeclaredBounds::new();
 
@@ -581,7 +598,9 @@ fn declared_bounds() -> Result<DeclaredBounds, Box<dyn Error>> {
         for file in rust_files(&source)? {
             let text = fs::read_to_string(&file)
                 .map_err(|error| Failure(format!("could not read {}: {error}", file.display())))?;
-            for (symbol, value) in bounds_in(&text) {
+            let found = bounds_in(&text)
+                .map_err(|error| Failure(format!("could not parse {}: {error}", file.display())))?;
+            for (symbol, value) in found {
                 declared.entry(symbol).or_default().push(value);
             }
         }
@@ -592,40 +611,101 @@ fn declared_bounds() -> Result<DeclaredBounds, Box<dyn Error>> {
 
 /// Returns every bound declaration in one source file.
 ///
-/// A declaration is a `const` whose name is bound-shaped and whose type is not
-/// a string or a slice. Matching on the name rather than on a marker attribute
-/// is deliberate: an attribute is something an author has to remember, and a
-/// bound that nobody remembered to mark is exactly the one this scan is for.
-fn bounds_in(text: &str) -> Vec<(String, Option<i128>)> {
+/// The file is parsed rather than read line by line, and that is the whole
+/// point of this function. A textual reader recognizes the spellings its author
+/// happened to think of: it sees `pub const` and misses `pub(super) const`, and
+/// it sees a declaration that fits on one line and misses the same declaration
+/// after a formatter wraps it. Both failures are silent, and both would remove a
+/// resource from the campaign's denominator without removing it from the
+/// product. Visibility is therefore not consulted at all, and layout cannot be
+/// consulted, because the input is a syntax tree.
+///
+/// What is consulted is the constant's *name*, against the repository's bound
+/// declaration convention. That is a deliberate choice over a marker attribute:
+/// an attribute is something an author has to remember, and a bound nobody
+/// remembered to mark is exactly the one this scan is for. It is also the limit
+/// of what this scan can promise, and the convention is written down in
+/// [the coding conventions](../../../docs/engineering/coding-conventions.md) so
+/// the promise has something to be measured against.
+///
+/// # Errors
+///
+/// Returns the parse failure when the file is not valid Rust, which is a broken
+/// scan rather than an empty one.
+fn bounds_in(text: &str) -> Result<Vec<(String, Option<i128>)>, syn::Error> {
+    let file = syn::parse_file(text)?;
     let mut found = Vec::new();
+    collect(&file.items, &mut found);
+    Ok(found)
+}
 
-    for line in text.lines() {
-        let line = line.trim();
-        let Some(rest) = line
-            .strip_prefix("pub const ")
-            .or_else(|| line.strip_prefix("pub(crate) const "))
-            .or_else(|| line.strip_prefix("const "))
-        else {
-            continue;
-        };
-        let Some((symbol, tail)) = rest.split_once(':') else {
-            continue;
-        };
-        let symbol = symbol.trim();
-        if !is_bound_symbol(symbol) {
-            continue;
+/// Collects bound declarations from a list of items, descending into modules.
+///
+/// Inline modules and `impl` blocks are descended into because a ceiling
+/// declared inside either is still a ceiling the framework enforces. An
+/// associated `const` is the shape `FaultStateEnvelope::MAX_ENTRIES` already
+/// uses, so missing them would drop the retry cache.
+fn collect(items: &[syn::Item], found: &mut Vec<(String, Option<i128>)>) {
+    for item in items {
+        match item {
+            syn::Item::Const(declaration) => {
+                record(
+                    &declaration.ident,
+                    &declaration.ty,
+                    &declaration.expr,
+                    found,
+                );
+            }
+            syn::Item::Mod(module) => {
+                if let Some((_, inner)) = &module.content {
+                    collect(inner, found);
+                }
+            }
+            syn::Item::Impl(block) => {
+                for member in &block.items {
+                    if let syn::ImplItem::Const(declaration) = member {
+                        record(
+                            &declaration.ident,
+                            &declaration.ty,
+                            &declaration.expr,
+                            found,
+                        );
+                    }
+                }
+            }
+            syn::Item::Trait(declaration) => {
+                for member in &declaration.items {
+                    if let syn::TraitItem::Const(constant) = member
+                        && let Some((_, value)) = &constant.default
+                    {
+                        record(&constant.ident, &constant.ty, value, found);
+                    }
+                }
+            }
+            _ => {}
         }
-        let Some((_, value)) = tail.split_once('=') else {
-            continue;
-        };
-        let value = value.trim().trim_end_matches(';').trim();
-        found.push((symbol.to_owned(), evaluate(value)));
     }
+}
 
-    found
+/// Records one constant when its name and type make it a resource bound.
+fn record(
+    ident: &syn::Ident,
+    ty: &syn::Type,
+    expr: &syn::Expr,
+    found: &mut Vec<(String, Option<i128>)>,
+) {
+    let symbol = ident.to_string();
+    if !is_bound_symbol(&symbol) || !is_bound_type(ty) {
+        return;
+    }
+    found.push((symbol, evaluate(expr)));
 }
 
 /// Reports whether a constant's name makes it a resource bound.
+///
+/// This is the repository's bound declaration convention, and it is the exact
+/// extent of what the scan can find. A ceiling named outside it is invisible
+/// here, which is why the convention is a documented rule rather than a habit.
 fn is_bound_symbol(symbol: &str) -> bool {
     if !symbol.chars().all(|character| {
         character.is_ascii_uppercase() || character.is_ascii_digit() || character == '_'
@@ -641,21 +721,36 @@ fn is_bound_symbol(symbol: &str) -> bool {
         || symbol.contains("_CAPACITY")
 }
 
+/// Reports whether a constant's type can be a resource ceiling.
+///
+/// A reference or a slice is a catalogue or a message, not a quantity. Every
+/// other type is admitted, including `Duration`, because two of the ceilings the
+/// capacity budget declares are deadlines.
+fn is_bound_type(ty: &syn::Type) -> bool {
+    !matches!(ty, syn::Type::Reference(_) | syn::Type::Slice(_))
+}
+
 /// Evaluates a constant expression that is a product of integer literals.
-fn evaluate(expression: &str) -> Option<i128> {
-    let mut product: i128 = 1;
-    for factor in expression.split('*') {
-        let factor = factor.trim().replace('_', "");
-        let factor = factor
-            .trim_end_matches("usize")
-            .trim_end_matches("u128")
-            .trim_end_matches("u64")
-            .trim_end_matches("u32")
-            .trim_end_matches("u16")
-            .trim_end_matches("u8");
-        product = product.checked_mul(factor.parse::<i128>().ok()?)?;
+///
+/// Suffixes and `_` separators are handled by the literal parser rather than by
+/// stripping text, so `64 * 1_024usize` and `65536` are read the same way.
+/// Anything else — a call, a path to another constant, an unsupported operator —
+/// evaluates to `None`, and the symbol is still discovered.
+fn evaluate(expression: &syn::Expr) -> Option<i128> {
+    match expression {
+        syn::Expr::Lit(literal) => match &literal.lit {
+            syn::Lit::Int(value) => value.base10_parse::<i128>().ok(),
+            _ => None,
+        },
+        syn::Expr::Paren(inner) => evaluate(&inner.expr),
+        syn::Expr::Group(inner) => evaluate(&inner.expr),
+        syn::Expr::Binary(binary) if matches!(binary.op, syn::BinOp::Mul(_)) => {
+            let left = evaluate(&binary.left)?;
+            let right = evaluate(&binary.right)?;
+            left.checked_mul(right)
+        }
+        _ => None,
     }
-    Some(product)
 }
 
 /// Returns every Rust source file under one directory.
@@ -970,24 +1065,141 @@ impl Error for Failure {}
 ///
 /// The scan is the only part of the campaign that can fail silently in the
 /// direction that matters: a reader that found nothing would classify nothing
-/// and report no gap. These run beside it so what review checks is what the
-/// reconciliation uses.
+/// and report no gap. Everything here is therefore about *not missing* a
+/// declaration, and most of the cases are the same bound written differently —
+/// a different visibility, a wrapped line, an arithmetic expression split
+/// across lines. A resource must not be able to leave the campaign's
+/// denominator by being reformatted, and these are what say so.
+#[allow(
+    clippy::expect_used,
+    reason = "every fixture here is a source fragment written in this file, so a parse failure is \
+              a broken test rather than a condition the scan has to handle"
+)]
 mod scan {
     use super::{bounds_in, evaluate, is_bound_symbol};
+
+    /// What a scan found for one symbol.
+    ///
+    /// The three cases are the ones that matter and they are not the same:
+    /// `Missing` is the silent false negative this whole scan exists to rule
+    /// out, `Unevaluated` is a bound that was found and whose value is not a
+    /// number, and only the third is a value to check.
+    #[derive(Debug, Eq, PartialEq)]
+    enum Found {
+        /// The scan did not discover the symbol at all.
+        Missing,
+        /// The scan discovered it and could not evaluate its expression.
+        Unevaluated,
+        /// The scan discovered it with this value.
+        Value(i128),
+    }
+
+    /// Reads one source fragment the way the reconciliation does.
+    fn scan(source: &str) -> Vec<(String, Option<i128>)> {
+        bounds_in(source).expect("the fixture is valid Rust")
+    }
+
+    /// Reports what a scan of `source` found for `symbol`.
+    fn found(source: &str, symbol: &str) -> Found {
+        scan(source)
+            .into_iter()
+            .find(|(name, _)| name == symbol)
+            .map_or(Found::Missing, |(_, value)| {
+                value.map_or(Found::Unevaluated, Found::Value)
+            })
+    }
 
     #[test]
     fn a_bound_is_read_with_the_value_it_evaluates_to() {
         assert_eq!(
-            bounds_in("pub const MAX_RESPONSE_BYTES: usize = 256 * 1024;"),
+            scan("pub const MAX_RESPONSE_BYTES: usize = 256 * 1024;"),
             vec![("MAX_RESPONSE_BYTES".to_owned(), Some(262_144))],
         );
         assert_eq!(
-            bounds_in("    pub(crate) const MAX_MANIFEST_BYTES: usize = 64 * 1024;"),
+            scan("pub(crate) const MAX_MANIFEST_BYTES: usize = 64 * 1024;"),
             vec![("MAX_MANIFEST_BYTES".to_owned(), Some(65_536))],
         );
         assert_eq!(
-            bounds_in("const MAX_NODES: usize = 1_024;"),
+            scan("const MAX_NODES: usize = 1_024;"),
             vec![("MAX_NODES".to_owned(), Some(1_024))],
+        );
+    }
+
+    #[test]
+    fn every_visibility_declares_the_same_bound() {
+        // The scan does not consult visibility, and this is why: a ceiling that
+        // became `pub(super)` in a refactor is the same ceiling, and a reader
+        // that recognized only the spellings its author thought of would drop
+        // it from the denominator without dropping it from the product.
+        for visibility in [
+            "",
+            "pub ",
+            "pub(crate) ",
+            "pub(super) ",
+            "pub(self) ",
+            "pub(in crate::telemetry) ",
+        ] {
+            let source = format!("{visibility}const MAX_QUEUE_RECORDS: usize = 64;");
+            assert_eq!(
+                scan(&source),
+                vec![("MAX_QUEUE_RECORDS".to_owned(), Some(64))],
+                "a {visibility:?} declaration was not read as the bound it is",
+            );
+        }
+    }
+
+    #[test]
+    fn layout_does_not_change_what_is_found() {
+        // The same declaration as one line and as a formatter would wrap it.
+        // A line-based reader sees the first and misses the second, which is a
+        // silent false negative and the reason this scan parses instead.
+        let inline = "pub const MAX_WRAPPED_BYTES: usize = 4 * 1024 * 1024;";
+        let wrapped = "pub const MAX_WRAPPED_BYTES:
+                usize =
+                4 * 1024
+                    * 1024;";
+        assert_eq!(scan(inline), scan(wrapped));
+        assert_eq!(
+            scan(wrapped),
+            vec![("MAX_WRAPPED_BYTES".to_owned(), Some(4_194_304))],
+        );
+
+        // Attributes and doc comments sit between the reader and the
+        // declaration in real source.
+        let annotated = "/// The ceiling.
+            #[allow(dead_code)]
+            pub(super) const MAX_ANNOTATED: usize = (2 * 8);";
+        assert_eq!(
+            scan(annotated),
+            vec![("MAX_ANNOTATED".to_owned(), Some(16))],
+        );
+    }
+
+    #[test]
+    fn a_bound_declared_inside_a_module_or_an_impl_is_found() {
+        // `FaultStateEnvelope::MAX_ENTRIES` is an associated const, so missing
+        // these would drop the retry cache — one of the six classes the
+        // performance plan names by name.
+        assert_eq!(
+            found(
+                "impl FaultStateEnvelope { pub const MAX_ENTRIES: usize = 256; }",
+                "MAX_ENTRIES",
+            ),
+            Found::Value(256),
+        );
+        assert_eq!(
+            found(
+                "mod inner { pub(crate) const MAX_INNER_BYTES: usize = 8 * 8; }",
+                "MAX_INNER_BYTES",
+            ),
+            Found::Value(64),
+        );
+        assert_eq!(
+            found(
+                "trait Bounded { const MAX_TRAIT_ITEMS: usize = 12; }",
+                "MAX_TRAIT_ITEMS",
+            ),
+            Found::Value(12),
         );
     }
 
@@ -997,21 +1209,28 @@ mod scan {
         // would let a bound leave the campaign by being defined in terms of
         // another one.
         assert_eq!(
-            bounds_in("    pub const MAX_LISTENERS: usize = MAX_LISTENERS;"),
+            scan("impl S { pub const MAX_LISTENERS: usize = MAX_LISTENERS; }"),
             vec![("MAX_LISTENERS".to_owned(), None)],
         );
         assert_eq!(
-            bounds_in("pub const MAX_SHUTDOWN_DEADLINE: Duration = Duration::from_hours(1);"),
+            scan("pub const MAX_SHUTDOWN_DEADLINE: Duration = Duration::from_hours(1);"),
             vec![("MAX_SHUTDOWN_DEADLINE".to_owned(), None)],
+        );
+        assert_eq!(
+            scan("const MAX_DERIVED: usize = OTHER + 1;"),
+            vec![("MAX_DERIVED".to_owned(), None)],
         );
     }
 
     #[test]
     fn a_constant_that_is_not_a_bound_is_not_read_as_one() {
-        assert!(bounds_in("pub const VERSION: &str = env!(\"CARGO_PKG_VERSION\");").is_empty());
-        assert!(bounds_in("pub const CONFIG_VERSION: u64 = 1;").is_empty());
-        assert!(bounds_in("    pub const fn category(&self) -> ExitCategory {").is_empty());
-        assert!(bounds_in("pub const ZERO: Self = Self(0);").is_empty());
+        assert!(scan("pub const VERSION: &str = env!(\"CARGO_PKG_VERSION\");").is_empty());
+        assert!(scan("pub const CONFIG_VERSION: u64 = 1;").is_empty());
+        assert!(scan("impl S { pub const fn category(&self) -> ExitCategory { X } }").is_empty());
+        assert!(scan("impl S { pub const ZERO: Self = Self(0); }").is_empty());
+        // A bound-shaped name on a catalogue is a list, not a quantity.
+        assert!(scan("pub const MAX_NAMES: &[&str] = &[\"a\"];").is_empty());
+        assert!(scan("pub const MAX_LABEL: &str = \"other\";").is_empty());
     }
 
     #[test]
@@ -1030,9 +1249,50 @@ mod scan {
 
     #[test]
     fn a_product_of_literals_is_evaluated_and_a_call_is_not() {
-        assert_eq!(evaluate("4 * 1024 * 1024"), Some(4_194_304));
-        assert_eq!(evaluate("65_536"), Some(65_536));
-        assert_eq!(evaluate("Duration::from_secs(1)"), None);
-        assert_eq!(evaluate("MAX_LISTENERS"), None);
+        assert_eq!(
+            found("const MAX_A: usize = 4 * 1024 * 1024;", "MAX_A"),
+            Found::Value(4_194_304),
+        );
+        assert_eq!(
+            found("const MAX_B: usize = 65_536;", "MAX_B"),
+            Found::Value(65_536),
+        );
+        assert_eq!(
+            found("const MAX_C: usize = 64 * 1_024usize;", "MAX_C"),
+            Found::Value(65_536),
+        );
+        assert_eq!(
+            found("const MAX_D: usize = (2 * (3 * 4));", "MAX_D"),
+            Found::Value(24),
+        );
+        assert_eq!(
+            found("const MAX_E: Duration = Duration::from_secs(1);", "MAX_E"),
+            Found::Unevaluated,
+        );
+        assert_eq!(
+            found("const MAX_F: usize = OTHER;", "MAX_F"),
+            Found::Unevaluated,
+        );
+        // A symbol the scan never saw is a different answer from one it saw and
+        // could not evaluate, and the tests must not be able to confuse them.
+        assert_eq!(
+            found("const MAX_G: usize = 1;", "MAX_ABSENT"),
+            Found::Missing,
+        );
+    }
+
+    #[test]
+    fn an_unparseable_file_is_a_broken_scan_rather_than_an_empty_one() {
+        // A scan that silently returned nothing would classify nothing and
+        // report no gap, which is the one failure this whole reconciliation
+        // cannot survive.
+        assert!(bounds_in("pub const MAX_BROKEN: usize =").is_err());
+    }
+
+    #[test]
+    fn the_evaluator_reads_expressions_rather_than_text() {
+        let expression: syn::Expr =
+            syn::parse_str("256 * 1024").expect("the fixture is a valid expression");
+        assert_eq!(evaluate(&expression), Some(262_144));
     }
 }
