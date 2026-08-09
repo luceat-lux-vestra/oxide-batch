@@ -29,7 +29,7 @@ use std::time::{Duration, SystemTime};
 use oxide_batch::{CaCertificate, PostgresConfig, TlsMode};
 use serde_json::Value;
 use sqlx::postgres::PgPoolOptions;
-use sqlx::{AssertSqlSafe, Row};
+use sqlx::{AssertSqlSafe, Connection, PgConnection, Row};
 
 /// The variable that tells a report where to retain its observation.
 pub const OBSERVATIONS_ENV: &str = "OXIDEBATCH_SECURITY_OBSERVATIONS";
@@ -277,6 +277,97 @@ pub async fn run_statement(url: &str, statement: String) -> Result<(), Box<dyn E
     pool.close().await;
     outcome?;
     Ok(())
+}
+
+/// Applies one committed fixture script.
+///
+/// The script is read from this repository rather than supplied by a caller,
+/// and it is the reviewable half of the policy: what each privilege class may
+/// do is written there, in SQL, rather than assembled here.
+///
+/// # Errors
+///
+/// Returns the failure that prevented the script from being read or applied.
+pub async fn apply_script(url: &str, script: &Path) -> Result<(), Box<dyn Error>> {
+    let source = fs::read_to_string(script)
+        .map_err(|error| Failure(format!("could not read {}: {error}", script.display())))?;
+    let mut connection = PgConnection::connect(url).await?;
+    let outcome = sqlx::raw_sql(AssertSqlSafe(source))
+        .execute(&mut connection)
+        .await;
+    connection.close().await?;
+    outcome?;
+    Ok(())
+}
+
+/// What one statement did when a privilege class ran it.
+///
+/// The database's own answer is what the matrix records. A statement that was
+/// refused for some reason other than privilege — a missing table, a violated
+/// constraint — is neither a denial nor a success, and saying so is the point
+/// of keeping the code rather than a boolean.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum StatementOutcome {
+    /// The statement ran.
+    Succeeded,
+    /// The server refused it, with the `SQLSTATE` it refused it under.
+    Refused(String),
+}
+
+impl StatementOutcome {
+    /// Returns the `SQLSTATE` of a refusal, or `None` for a success.
+    #[must_use]
+    pub fn code(&self) -> Option<&str> {
+        match self {
+            Self::Succeeded => None,
+            Self::Refused(code) => Some(code.as_str()),
+        }
+    }
+
+    /// Returns the stable name the retained evidence uses.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Succeeded => "succeeded",
+            Self::Refused(code) => code.as_str(),
+        }
+    }
+}
+
+/// The `SQLSTATE` `PostgreSQL` refuses an operation under for want of privilege.
+pub const INSUFFICIENT_PRIVILEGE: &str = "42501";
+
+/// Runs one statement as one privilege class and reports what the server did.
+///
+/// The connection is opened and closed around the statement so that a class's
+/// result cannot depend on what an earlier class left on a shared session.
+///
+/// # Errors
+///
+/// Returns the failure only when the class could not connect at all, which is a
+/// broken fixture rather than a privilege result.
+pub async fn attempt_statement(
+    url: &str,
+    statement: &str,
+) -> Result<StatementOutcome, Box<dyn Error>> {
+    let mut connection = PgConnection::connect(url).await?;
+    // Every statement is a compile-time constant of this report.
+    let outcome = sqlx::query(AssertSqlSafe(statement.to_owned()))
+        .execute(&mut connection)
+        .await;
+    connection.close().await?;
+
+    match outcome {
+        Ok(_) => Ok(StatementOutcome::Succeeded),
+        Err(sqlx::Error::Database(database)) => Ok(StatementOutcome::Refused(
+            database
+                .code()
+                .map_or_else(|| "unknown".to_owned(), std::borrow::Cow::into_owned),
+        )),
+        Err(error) => Err(Box::new(Failure(format!(
+            "a privilege attempt failed before the server answered: {error}"
+        )))),
+    }
 }
 
 /// Reads the server version a report ran against.
