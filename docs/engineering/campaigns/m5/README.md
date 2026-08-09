@@ -26,6 +26,8 @@ a pass or failure that does not.
 | [`crash-restore-campaign-postgres-18.json`](crash-restore-campaign-postgres-18.json) | Crash and restore | The same, on PostgreSQL 18 |
 | [`upgrade-campaign-postgres-15.json`](upgrade-campaign-postgres-15.json) | Upgrade | Every schema path from a prior schema to schema 3, the three reports and their observations, and the revision the rejecting runtime was built from, on PostgreSQL 15 |
 | [`upgrade-campaign-postgres-18.json`](upgrade-campaign-postgres-18.json) | Upgrade | The same, on PostgreSQL 18 |
+| [`security-campaign-postgres-15.json`](security-campaign-postgres-15.json) | Security | The TLS attempts and the reason each refusal carried, the privilege matrix and the code every refusal was refused under, and the surfaces and value classes the redaction sweep covered, on PostgreSQL 15 |
+| [`security-campaign-postgres-18.json`](security-campaign-postgres-18.json) | Security | The same, on PostgreSQL 18 |
 
 A file carries the matrix point in its name because one run produces one
 report: the runner always writes `conformance-campaign.json`, and the two jobs
@@ -67,6 +69,21 @@ covered one source schema and skipped the other fails rather than passing half
 proved. The report also names the revision the rejecting runtime was built from,
 because that runtime is not this tree's.
 
+The security report embeds an observation per report for the same reason, and
+its units are the things a security claim is made of, because all three of them
+are negative. The TLS observation carries every attempt, the authority it
+trusted, what the supported configuration did, and — for a refusal — the
+transport reason it carried, so an attempt built around an untrusted authority
+that actually failed on the host name is a failure rather than a pass. The
+privilege observation carries the whole `role × operation` matrix: the class,
+the role, the operation, whether it was expected to be allowed or forbidden,
+whether it reached the database through a service path or as a statement, and
+the `SQLSTATE` the server answered with, which for a forbidden cell must be
+`42501` and nothing else. The redaction observation carries the value classes
+injected, the surfaces collected from, the artifact and string counts, and the
+occurrence count. It records no canary, no credential, no connection string,
+and no certificate: the classes appear by name and the roles by role name.
+
 ## Reproducing
 
 ```bash
@@ -107,3 +124,62 @@ the repository's full history and `git`, because the rejection report builds the
 runtime that shipped against schema 2 from the revision before schema 3 was
 added; a shallow clone fails the campaign rather than skipping that report. Its
 committed files come from the `postgres-<version>-upgrade-campaign` CI jobs.
+
+The security campaign needs more than a connection string, so it is reproduced
+through the fixture script that builds what a URL cannot carry:
+
+```bash
+OXIDEBATCH_CAMPAIGN_DIR=docs/engineering/campaigns/m5 \
+  ./tests/fixtures/security/provision.sh 18
+```
+
+The script generates a private certificate authority and a `localhost`
+certificate, starts a PostgreSQL container with TLS configured against them,
+starts a second container with TLS switched off, generates a second authority
+that signs nothing, and then runs the security runner against all of it. It
+needs `docker` and `openssl` on `PATH` and
+accepts one supported major as its argument. An environment that already
+supplies that material can invoke the runner directly instead:
+
+```bash
+OXIDEBATCH_CAMPAIGN_DIR=docs/engineering/campaigns/m5 \
+  cargo run --package oxide-batch-xtask -- security
+```
+
+Then `OXIDEBATCH_POSTGRES_ADMIN_TEST_URL`,
+`OXIDEBATCH_SECURITY_PLAINTEXT_TEST_URL`, `OXIDEBATCH_SECURITY_TLS_HOST`,
+`OXIDEBATCH_SECURITY_TLS_MISMATCH_HOST`, `OXIDEBATCH_SECURITY_TLS_CA`, and
+`OXIDEBATCH_SECURITY_TLS_UNTRUSTED_CA` must all be set; the runner names the
+ones it is missing and fails before running anything. Its committed files come
+from the `postgres-<version>-security-campaign` CI jobs, which are the only
+place the release-blocking results are produced.
+
+## A passing test suite is not a campaign result
+
+This holds for every campaign here and is worth stating once, because the
+security campaign is where it bites hardest.
+
+A scenario that needs a database and does not have one prints a skip line and
+returns success. Under `cargo test` that is indistinguishable from evidence, so
+`cargo test --workspace --all-features` passing on a development host says
+nothing about any campaign on this page.
+
+The runners exist for that reason and do not accept it. Each one resolves its
+declared fixtures first and fails before starting a target when one is absent,
+rather than reporting on the subset it happened to receive, and each one then
+requires every scenario it owes to have run and reported `ok` — a scenario that
+is missing or `ignored` is a violation rather than a silence.
+
+Reporting `ok` is not sufficient either, for every campaign whose claim is
+about work done rather than about a suite passing. The crash-and-restore,
+upgrade, and security runners additionally require the observation each
+scenario retained to exist and to record that work, so a scenario that returned
+green without doing anything fails. The security runner requires the substance
+of a negative claim: the three transport refusals and the reason each carried,
+every privilege class on both sides of its boundary with every refusal under
+`42501`, and every swept surface and value class with nothing found.
+
+Each database report must also name the PostgreSQL major it ran against,
+because a matrix point is invisible in a connection string and an observation
+from one supported major would otherwise reconcile perfectly inside a run of
+another.

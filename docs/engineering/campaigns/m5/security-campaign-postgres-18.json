@@ -1,0 +1,891 @@
+{
+  "campaign": "M5 PostgreSQL security",
+  "environment": {
+    "arch": "x86_64",
+    "matrix": "postgres-18",
+    "os": "linux",
+    "profile": "debug",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "source_commit": "9a87a35656ff859ee1dcee03b84a4d37cc4a904a",
+    "source_tree_clean": true
+  },
+  "fixtures": {
+    "postgres-security-roles": true,
+    "postgres-security-tls": true
+  },
+  "notes": [
+    "Every report is run on its own so its result is attributable.",
+    "A passing report is not sufficient on its own. Each one retains an observation into a directory this runner creates empty, and the runner requires the substance rather than the outcome: that the TLS report refused an untrusted authority, a mismatched name, and a server offering no TLS, and left no unencrypted session behind; that every privilege class was observed on both sides of its boundary and through the path an operator uses, with every refusal carrying 42501; and that the sweep covered every surface and every value class and found nothing.",
+    "Each database report is required to name the PostgreSQL major it ran against, because a matrix point is invisible in a connection string and an observation from one supported major would otherwise reconcile perfectly inside a run of another.",
+    "No credential, connection string, certificate, or canary is recorded here. The least-privilege classes log in with a password generated for the run, and the sweep records the classes it injected rather than the values."
+  ],
+  "observed_scenarios": [
+    "verify_full_tls_is_required_in_the_supported_mode",
+    "least_privilege_role_cannot_exceed_its_class",
+    "redaction_sweep_finds_no_prohibited_value_class"
+  ],
+  "passed": true,
+  "policy": {
+    "grants": "tests/fixtures/security/grants.sql",
+    "note": "The least-privilege policy is committed SQL rather than statements assembled by the report, so what each class may reach is reviewable on its own.",
+    "roles": "tests/fixtures/security/roles.sql"
+  },
+  "postgresql_major_version": "18",
+  "postgresql_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+  "privilege_classes": [
+    {
+      "allowed": "installs and upgrades the metadata schema it owns",
+      "class": "migration",
+      "forbidden": "any cluster-level privilege, and anything outside the database it migrates",
+      "role": "oxide_batch_m5_migration"
+    },
+    {
+      "allowed": "the job, step, partition, and flow lifecycle",
+      "class": "runtime",
+      "forbidden": "schema lifecycle, migration bookkeeping, operator decisions, retention deletes, and retention holds",
+      "role": "oxide_batch_m5_runtime"
+    },
+    {
+      "allowed": "bounded reads",
+      "class": "explorer",
+      "forbidden": "every mutation, and the migration bookkeeping",
+      "role": "oxide_batch_m5_explorer"
+    },
+    {
+      "allowed": "guarded, audited recovery and stop actions",
+      "class": "operator",
+      "forbidden": "schema lifecycle, execution ownership, step creation, retention deletes, and retention records",
+      "role": "oxide_batch_m5_operator"
+    },
+    {
+      "allowed": "plan, apply, hold, release, and delete within its scope",
+      "class": "retention",
+      "forbidden": "schema lifecycle, lifecycle mutation, operator records, and instance identity",
+      "role": "oxide_batch_m5_retention"
+    }
+  ],
+  "redaction_scan_counts": {
+    "artifacts_scanned": 41,
+    "prohibited_occurrences": 0,
+    "strings_scanned": 483,
+    "value_classes_scanned": 4
+  },
+  "redaction_surfaces": [
+    {
+      "artifacts": 11,
+      "surface": "bundle"
+    },
+    {
+      "artifacts": 19,
+      "surface": "cli"
+    },
+    {
+      "artifacts": 5,
+      "surface": "errors"
+    },
+    {
+      "artifacts": 6,
+      "surface": "telemetry"
+    }
+  ],
+  "related": [
+    {
+      "invariant": "redacted configuration diagnostics",
+      "name": "configuration_bounds_and_diagnostics_are_safe",
+      "note": "The lower-level regression test for the configuration type's own redaction. It is kept and must keep existing, and this campaign does not run it: it asserts about one value in one Debug rendering, where the sweep injects a canary per prohibited class and scans every artifact the milestone can produce.",
+      "package": "oxide-batch",
+      "run_by_this_campaign": false,
+      "target": "postgres_repository"
+    },
+    {
+      "invariant": "bundle redaction",
+      "name": "diagnostic_bundle_excludes_every_prohibited_value_class",
+      "note": "The per-surface bundle regression test. It is kept and must keep existing. It is not a substitute for the sweep: several of the literals it requires to be absent are never produced by the run it inspects, so their absence is not evidence, which is the failure mode the sweep exists to remove.",
+      "package": "oxide-batch-cli",
+      "run_by_this_campaign": false,
+      "target": "operator_cli"
+    },
+    {
+      "fixture": "tests/fixtures/postgres/run-design-gate.sh",
+      "invariant": "M2 PostgreSQL 15-18 schema, role, and TLS design evidence",
+      "note": "The M2 design-gate fixture is kept and keeps running on its own CI axis. It is not this campaign renamed: it predates the adapter, proves what psql and a draft schema did, and covers four roles against a schema that is no longer the installed one.",
+      "run_by_this_campaign": false
+    }
+  ],
+  "report": "security",
+  "reports": [
+    {
+      "fixture": "postgres-security-tls",
+      "id": "verify-full-tls",
+      "name": "verify_full_tls_is_required_in_the_supported_mode",
+      "observation": {
+        "attempts": [
+          {
+            "authority": "signing",
+            "expected": "connects",
+            "id": "trusted-authority-and-name",
+            "intent": "the supported production configuration against a server whose certificate the given authority signed for the name connected to",
+            "observed": {
+              "encrypted_sessions": 1,
+              "plaintext_sessions": 0,
+              "result": "connected",
+              "transport": [
+                "TLSv1.3"
+              ]
+            }
+          },
+          {
+            "authority": "unrelated",
+            "expected": "refused: untrusted-authority",
+            "id": "untrusted-authority",
+            "intent": "the same server and the same name, trusting an authority that signed nothing it presents",
+            "observed": {
+              "failure_class": "untrusted-authority",
+              "plaintext_sessions": 0,
+              "repository_error": "unavailable",
+              "result": "refused"
+            }
+          },
+          {
+            "authority": "signing",
+            "expected": "refused: hostname-mismatch",
+            "id": "hostname-mismatch",
+            "intent": "the same server and the signing authority, reached under a name its certificate does not carry",
+            "observed": {
+              "failure_class": "hostname-mismatch",
+              "plaintext_sessions": 0,
+              "repository_error": "unavailable",
+              "result": "refused"
+            }
+          },
+          {
+            "authority": "signing",
+            "expected": "refused: tls-not-offered",
+            "id": "server-without-tls",
+            "intent": "a reachable server that offers no TLS, which the supported mode must refuse rather than continue without encryption",
+            "observed": {
+              "failure_class": "tls-not-offered",
+              "plaintext_sessions": 0,
+              "repository_error": "unavailable",
+              "result": "refused"
+            }
+          }
+        ],
+        "certificate_validation_result": "refused",
+        "fixture": "postgres-security-tls",
+        "hostname_validation_result": "refused",
+        "passed": true,
+        "plaintext_fallback_result": "refused",
+        "postgres_major_version": "18",
+        "report": "verify-full TLS in the supported mode",
+        "residual_sessions_encrypted": 0,
+        "residual_sessions_plaintext": 0,
+        "scenario": "verify_full_tls_is_required_in_the_supported_mode",
+        "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+        "tls_mode": "verify-full",
+        "tls_mode_source": "the PostgresConfig default, with no production-mode switch",
+        "tls_option_in_connection_string": {
+          "refused_options": [
+            "sslmode=disable",
+            "sslmode=prefer",
+            "sslrootcert=/dev/null"
+          ]
+        },
+        "violations": []
+      },
+      "owes": "verify-full TLS connectivity",
+      "package": "oxide-batch",
+      "result": "ok",
+      "target": "postgres_verify_full_tls",
+      "title": "verify-full TLS in the supported mode"
+    },
+    {
+      "fixture": "postgres-security-roles",
+      "id": "least-privilege-roles",
+      "name": "least_privilege_role_cannot_exceed_its_class",
+      "observation": {
+        "class_attributes": [
+          {
+            "bypassrls": false,
+            "class": "migration",
+            "createdb": false,
+            "createrole": false,
+            "replication": false,
+            "role": "oxide_batch_m5_migration",
+            "superuser": false
+          },
+          {
+            "bypassrls": false,
+            "class": "runtime",
+            "createdb": false,
+            "createrole": false,
+            "replication": false,
+            "role": "oxide_batch_m5_runtime",
+            "superuser": false
+          },
+          {
+            "bypassrls": false,
+            "class": "explorer",
+            "createdb": false,
+            "createrole": false,
+            "replication": false,
+            "role": "oxide_batch_m5_explorer",
+            "superuser": false
+          },
+          {
+            "bypassrls": false,
+            "class": "operator",
+            "createdb": false,
+            "createrole": false,
+            "replication": false,
+            "role": "oxide_batch_m5_operator",
+            "superuser": false
+          },
+          {
+            "bypassrls": false,
+            "class": "retention",
+            "createdb": false,
+            "createrole": false,
+            "replication": false,
+            "role": "oxide_batch_m5_retention",
+            "superuser": false
+          }
+        ],
+        "classes": [
+          {
+            "class": "migration",
+            "role": "oxide_batch_m5_migration"
+          },
+          {
+            "class": "runtime",
+            "role": "oxide_batch_m5_runtime"
+          },
+          {
+            "class": "explorer",
+            "role": "oxide_batch_m5_explorer"
+          },
+          {
+            "class": "operator",
+            "role": "oxide_batch_m5_operator"
+          },
+          {
+            "class": "retention",
+            "role": "oxide_batch_m5_retention"
+          }
+        ],
+        "fixture": "postgres-security-roles",
+        "matrix": [
+          {
+            "belongs_to": null,
+            "class": "runtime",
+            "error_class": null,
+            "expected": "allowed",
+            "observed": "succeeded",
+            "operation": "create a job instance, execution, and step execution and move the step to STARTED through JobRepository",
+            "passed": true,
+            "role": "oxide_batch_m5_runtime",
+            "surface": "service-path"
+          },
+          {
+            "belongs_to": null,
+            "class": "explorer",
+            "error_class": null,
+            "expected": "allowed",
+            "observed": "succeeded",
+            "operation": "project one execution and page its step executions through JobExplorer",
+            "passed": true,
+            "role": "oxide_batch_m5_explorer",
+            "surface": "service-path"
+          },
+          {
+            "belongs_to": null,
+            "class": "operator",
+            "error_class": null,
+            "expected": "allowed",
+            "observed": "succeeded",
+            "operation": "apply a guarded, audited stop through JobOperator, recording the request and the execution's stop columns",
+            "passed": true,
+            "role": "oxide_batch_m5_operator",
+            "surface": "service-path"
+          },
+          {
+            "belongs_to": null,
+            "class": "retention",
+            "error_class": null,
+            "expected": "allowed",
+            "observed": "succeeded",
+            "operation": "place and release an audited hold and plan a purge through RetentionService",
+            "passed": true,
+            "role": "oxide_batch_m5_retention",
+            "surface": "service-path"
+          },
+          {
+            "belongs_to": null,
+            "class": "migration",
+            "error_class": null,
+            "expected": "allowed",
+            "observed": "succeeded",
+            "operation": "apply the shipped migrator and report the installed schema version",
+            "passed": true,
+            "role": "oxide_batch_m5_migration",
+            "surface": "service-path"
+          },
+          {
+            "belongs_to": null,
+            "class": "migration",
+            "error_class": null,
+            "expected": "allowed",
+            "observed": "succeeded",
+            "operation": "add and remove a table in the metadata schema it owns",
+            "passed": true,
+            "role": "oxide_batch_m5_migration",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": null,
+            "class": "runtime",
+            "error_class": null,
+            "expected": "allowed",
+            "observed": "succeeded",
+            "operation": "claim ownership of an execution",
+            "passed": true,
+            "role": "oxide_batch_m5_runtime",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": null,
+            "class": "retention",
+            "error_class": null,
+            "expected": "allowed",
+            "observed": "succeeded",
+            "operation": "delete a flow decision",
+            "passed": true,
+            "role": "oxide_batch_m5_retention",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": null,
+            "class": "retention",
+            "error_class": null,
+            "expected": "allowed",
+            "observed": "succeeded",
+            "operation": "place a retention hold",
+            "passed": true,
+            "role": "oxide_batch_m5_retention",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": null,
+            "class": "operator",
+            "error_class": null,
+            "expected": "allowed",
+            "observed": "succeeded",
+            "operation": "ask an execution to stop",
+            "passed": true,
+            "role": "oxide_batch_m5_operator",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "no class: role administration is outside the preview",
+            "class": "migration",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "create a login role",
+            "passed": true,
+            "role": "oxide_batch_m5_migration",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "no class: database administration is outside the preview",
+            "class": "migration",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "create a database",
+            "passed": true,
+            "role": "oxide_batch_m5_migration",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "no class: only a superuser may read pg_authid",
+            "class": "migration",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "read the cluster's stored credentials",
+            "passed": true,
+            "role": "oxide_batch_m5_migration",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "no class: server-side execution is outside the preview",
+            "class": "migration",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "execute a program on the server",
+            "passed": true,
+            "role": "oxide_batch_m5_migration",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "migration",
+            "class": "runtime",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "add a table to the metadata schema",
+            "passed": true,
+            "role": "oxide_batch_m5_runtime",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "migration",
+            "class": "runtime",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "drop a metadata table",
+            "passed": true,
+            "role": "oxide_batch_m5_runtime",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "migration",
+            "class": "runtime",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "rewrite the recorded schema version",
+            "passed": true,
+            "role": "oxide_batch_m5_runtime",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "migration",
+            "class": "runtime",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "read the migration bookkeeping",
+            "passed": true,
+            "role": "oxide_batch_m5_runtime",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "operator",
+            "class": "runtime",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "record a recovery decision",
+            "passed": true,
+            "role": "oxide_batch_m5_runtime",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "retention",
+            "class": "runtime",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "record a retention action",
+            "passed": true,
+            "role": "oxide_batch_m5_runtime",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "retention",
+            "class": "runtime",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "delete a job execution",
+            "passed": true,
+            "role": "oxide_batch_m5_runtime",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "retention",
+            "class": "runtime",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "place a retention hold",
+            "passed": true,
+            "role": "oxide_batch_m5_runtime",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "runtime",
+            "class": "explorer",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "create a job instance",
+            "passed": true,
+            "role": "oxide_batch_m5_explorer",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "runtime and operator",
+            "class": "explorer",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "move an execution's status",
+            "passed": true,
+            "role": "oxide_batch_m5_explorer",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "retention",
+            "class": "explorer",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "place a retention hold",
+            "passed": true,
+            "role": "oxide_batch_m5_explorer",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "retention",
+            "class": "explorer",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "delete a flow decision",
+            "passed": true,
+            "role": "oxide_batch_m5_explorer",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "migration",
+            "class": "explorer",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "add a table to the metadata schema",
+            "passed": true,
+            "role": "oxide_batch_m5_explorer",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "migration",
+            "class": "explorer",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "read the migration bookkeeping",
+            "passed": true,
+            "role": "oxide_batch_m5_explorer",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "runtime",
+            "class": "operator",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "claim ownership of a live execution",
+            "passed": true,
+            "role": "oxide_batch_m5_operator",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "runtime",
+            "class": "operator",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "create a step execution",
+            "passed": true,
+            "role": "oxide_batch_m5_operator",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "retention",
+            "class": "operator",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "delete a job execution",
+            "passed": true,
+            "role": "oxide_batch_m5_operator",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "retention",
+            "class": "operator",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "record a retention action",
+            "passed": true,
+            "role": "oxide_batch_m5_operator",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "migration",
+            "class": "operator",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "add a table to the metadata schema",
+            "passed": true,
+            "role": "oxide_batch_m5_operator",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "migration",
+            "class": "operator",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "read the migration bookkeeping",
+            "passed": true,
+            "role": "oxide_batch_m5_operator",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "runtime",
+            "class": "retention",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "create a step execution",
+            "passed": true,
+            "role": "oxide_batch_m5_retention",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "runtime and operator",
+            "class": "retention",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "move an execution's status",
+            "passed": true,
+            "role": "oxide_batch_m5_retention",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "operator",
+            "class": "retention",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "record an operator request",
+            "passed": true,
+            "role": "oxide_batch_m5_retention",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "runtime",
+            "class": "retention",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "rewrite an instance's identity",
+            "passed": true,
+            "role": "oxide_batch_m5_retention",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "migration",
+            "class": "retention",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "add a table to the metadata schema",
+            "passed": true,
+            "role": "oxide_batch_m5_retention",
+            "surface": "statement"
+          },
+          {
+            "belongs_to": "migration",
+            "class": "retention",
+            "error_class": "42501",
+            "expected": "forbidden",
+            "observed": "refused",
+            "operation": "read the migration bookkeeping",
+            "passed": true,
+            "role": "oxide_batch_m5_retention",
+            "surface": "statement"
+          }
+        ],
+        "passed": true,
+        "policy": [
+          "tests/fixtures/security/roles.sql",
+          "tests/fixtures/security/grants.sql"
+        ],
+        "postgres_major_version": "18",
+        "public_grants": [],
+        "report": "least-privilege separation across the five M5 classes",
+        "scenario": "least_privilege_role_cannot_exceed_its_class",
+        "schema_version": 3,
+        "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+        "violations": []
+      },
+      "owes": "least-privilege role separation for migration, runtime, explorer, operator, and retention",
+      "package": "oxide-batch",
+      "result": "ok",
+      "target": "postgres_least_privilege_roles",
+      "title": "Least-privilege separation across the five M5 classes"
+    },
+    {
+      "fixture": null,
+      "id": "redaction-sweep",
+      "name": "redaction_sweep_finds_no_prohibited_value_class",
+      "observation": {
+        "artifacts_scanned": 41,
+        "diagnostics_preserved": {
+          "configuration_keys_reported": 9,
+          "configuration_values_marked_redacted": 2,
+          "parameter_names_preserved": 1,
+          "parameter_types_preserved": true
+        },
+        "passed": true,
+        "prohibited_occurrences": 0,
+        "report": "redaction sweep across the M5 diagnostic surfaces",
+        "scenario": "redaction_sweep_finds_no_prohibited_value_class",
+        "scenario_result": "passed",
+        "strings_scanned": 483,
+        "surfaces_scanned": [
+          {
+            "artifacts": 11,
+            "surface": "bundle"
+          },
+          {
+            "artifacts": 19,
+            "surface": "cli"
+          },
+          {
+            "artifacts": 5,
+            "surface": "errors"
+          },
+          {
+            "artifacts": 6,
+            "surface": "telemetry"
+          }
+        ],
+        "value_classes_scanned": [
+          {
+            "class": "password",
+            "entered_through": "the repository URL's credential, from the environment and a config file"
+          },
+          {
+            "class": "database-url-endpoint",
+            "entered_through": "the repository URL's host and database, from the environment and a file"
+          },
+          {
+            "class": "certificate",
+            "entered_through": "the repository CA certificate, from the environment and a config file"
+          },
+          {
+            "class": "payload",
+            "entered_through": "an identifying job parameter value supplied to launch"
+          }
+        ],
+        "violations": []
+      },
+      "owes": "a redaction sweep over errors, telemetry, CLI output, and diagnostic bundles",
+      "package": "oxide-batch-cli",
+      "result": "ok",
+      "target": "m5_redaction_sweep",
+      "title": "Redaction sweep across the M5 diagnostic surfaces"
+    }
+  ],
+  "required_scenarios": [
+    "verify_full_tls_is_required_in_the_supported_mode",
+    "least_privilege_role_cannot_exceed_its_class",
+    "redaction_sweep_finds_no_prohibited_value_class"
+  ],
+  "result": "passed",
+  "role_matrix_result": {
+    "cells": 40,
+    "class_attributes": [
+      {
+        "bypassrls": false,
+        "class": "migration",
+        "createdb": false,
+        "createrole": false,
+        "replication": false,
+        "role": "oxide_batch_m5_migration",
+        "superuser": false
+      },
+      {
+        "bypassrls": false,
+        "class": "runtime",
+        "createdb": false,
+        "createrole": false,
+        "replication": false,
+        "role": "oxide_batch_m5_runtime",
+        "superuser": false
+      },
+      {
+        "bypassrls": false,
+        "class": "explorer",
+        "createdb": false,
+        "createrole": false,
+        "replication": false,
+        "role": "oxide_batch_m5_explorer",
+        "superuser": false
+      },
+      {
+        "bypassrls": false,
+        "class": "operator",
+        "createdb": false,
+        "createrole": false,
+        "replication": false,
+        "role": "oxide_batch_m5_operator",
+        "superuser": false
+      },
+      {
+        "bypassrls": false,
+        "class": "retention",
+        "createdb": false,
+        "createrole": false,
+        "replication": false,
+        "role": "oxide_batch_m5_retention",
+        "superuser": false
+      }
+    ],
+    "classes": [
+      {
+        "class": "migration",
+        "role": "oxide_batch_m5_migration"
+      },
+      {
+        "class": "runtime",
+        "role": "oxide_batch_m5_runtime"
+      },
+      {
+        "class": "explorer",
+        "role": "oxide_batch_m5_explorer"
+      },
+      {
+        "class": "operator",
+        "role": "oxide_batch_m5_operator"
+      },
+      {
+        "class": "retention",
+        "role": "oxide_batch_m5_retention"
+      }
+    ],
+    "public_grants": [],
+    "schema_version": 3
+  },
+  "scenarios": [
+    "verify_full_tls_is_required_in_the_supported_mode",
+    "least_privilege_role_cannot_exceed_its_class",
+    "redaction_sweep_finds_no_prohibited_value_class"
+  ],
+  "tls_certificate_validation_result": "refused",
+  "tls_hostname_validation_result": "refused",
+  "tls_mode": "verify-full",
+  "tls_plaintext_fallback_result": "refused",
+  "violations": []
+}

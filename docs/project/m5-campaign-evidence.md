@@ -1,7 +1,7 @@
 # M5 Evidence Campaign Record
 
-**State:** In progress. The conformance, crash-and-restore, and upgrade
-campaigns are delivered; the security, resource-bound, soak, cancellation,
+**State:** In progress. The conformance, crash-and-restore, upgrade, and
+security campaigns are delivered; the resource-bound, soak, cancellation,
 performance, and reference-workload campaigns are not.
 
 **Issue:** [#102](https://github.com/luceat-lux-vestra/oxide-batch/issues/102)
@@ -27,7 +27,7 @@ named released version, and that stays with
 | Conformance | `full_embedded_conformance_suite_passes_on_the_accepted_scope` | Delivered |
 | Crash and restore | `process_kill_at_each_commit_phase_recovers_without_a_forged_status`, plus the P-013 and logical-restore reports | Delivered |
 | Upgrade | `schema1_and_schema2_upgrade_directly_to_schema3`, `schema2_runtime_rejects_schema3`, `schema3_backup_restores_the_prior_schema` | Delivered |
-| Security | `verify_full_tls_is_required_in_the_supported_mode`, `least_privilege_role_cannot_exceed_its_class`, `redaction_sweep_finds_no_prohibited_value_class` | Not started |
+| Security | `verify_full_tls_is_required_in_the_supported_mode`, `least_privilege_role_cannot_exceed_its_class`, `redaction_sweep_finds_no_prohibited_value_class` | Delivered |
 | Resource bounds | `declared_ceilings_hold_under_stress_with_backpressure` | Not started |
 | Soak | `soak_reports_no_task_connection_handle_or_memory_growth` | Not started |
 | Cancellation | P-014 report | Not started |
@@ -738,3 +738,259 @@ exposed, and the version it found is read out of the typed failure itself, where
 `NewerSchema` carries `current` alongside `supported`. That is a better reading
 anyway: it is the runtime's own account of what it saw, rather than a second
 observation taken beside it.
+
+## Security campaign
+
+### What the campaign owes
+
+The design gate's security row promises three things about the M5 preview:
+that `verify-full` TLS is the supported production transport, that privilege is
+separated across migration, runtime, explorer, operator, and retention, and
+that no prohibited value class reaches a diagnostic surface. Each is one named
+scenario, and each is a claim about what does *not* happen, which is what
+shapes the campaign.
+
+| Scenario | What it must show |
+| --- | --- |
+| `verify_full_tls_is_required_in_the_supported_mode` | The supported configuration connects only when the certificate chain and the host name both validate, and refuses rather than continuing unencrypted when they do not. |
+| `least_privilege_role_cannot_exceed_its_class` | Each of the five classes performs its own work through the path an operator uses, and is refused outside it by the database. |
+| `redaction_sweep_finds_no_prohibited_value_class` | No canary injected as a password, a database endpoint, a certificate, or a payload appears in any artifact the milestone can put in front of an operator. |
+
+The denominator is committed as
+[`tests/fixtures/security/campaign-scope.json`](../../tests/fixtures/security/campaign-scope.json),
+and the least-privilege policy is committed as SQL beside it, in
+[`roles.sql`](../../tests/fixtures/security/roles.sql) and
+[`grants.sql`](../../tests/fixtures/security/grants.sql), so what each class may
+reach is reviewable on its own rather than assembled inside a test.
+
+### Why the fixture is more than a database
+
+Three of the campaign's claims cannot be checked against an ordinary server, so
+[`provision.sh`](../../tests/fixtures/security/provision.sh) builds what a
+connection string cannot carry.
+
+A certificate refusal needs an authority that really signed nothing the server
+presents, so a second authority is generated and signs nothing. A host-name
+refusal needs a name that reaches the same server and is not in its
+certificate, so the certificate carries `DNS:localhost` and no address, and the
+mismatch attempt connects to `127.0.0.1` — the same server, the same trusted
+chain, and the name as the only difference.
+
+The third is the one that carries the claim. The assertion that the supported
+mode does not fall back needs a reachable server offering no TLS at all, which
+is a second container with `ssl=off`. Without it the campaign would show only
+that a bad certificate is refused, and a client that quietly continued
+unencrypted whenever TLS was unavailable would show exactly that too.
+
+This is also why the CI job declares no `services:` block. A service container
+starts before any step has run, and therefore before the certificate the server
+must present exists.
+
+### The refusals are classified, not merely counted
+
+`PostgresJobRepository::connect` reports every connection failure as one
+redacted `Unavailable`, by design. That is right for an operator and useless
+for this report: an attempt built around an untrusted authority that actually
+failed on the host name would be green and would prove nothing about
+certificate validation.
+
+So each refusal is corroborated at the transport layer and required to carry
+the reason the attempt was built to provoke, and the transport probe and the
+production path are required to agree on every attempt so the two cannot drift
+apart. The probe's error text is never retained — it can carry the host, the
+port, and the name a certificate was issued for — only the class it maps to.
+
+### The matrix is real operations, on both sides
+
+The allowed half of the privilege matrix is not `has_table_privilege` lookups.
+The migrator migrates, the runtime builds an execution graph through
+`JobRepository`, the explorer answers through `JobExplorer`, the operator
+applies a guarded stop through `JobOperator`, and retention holds, releases, and
+plans a purge through `RetentionService`, so a grant that is present but
+unusable fails the report.
+
+The forbidden half requires `42501` exactly rather than any failure. An `INSERT`
+a class may not perform and an `INSERT` that violates a constraint both merely
+fail, and a matrix that asked only whether the statement failed would pass with
+the privilege wide open. No forbidden statement can change anything if it
+unexpectedly succeeds: the destructive ones match no row and the inserting ones
+select none, so a passing cell and a failing cell leave the database identical.
+
+Two boundaries needed column granularity. The operator may move an execution's
+status and ask it to stop but may not write `owner_token`, so it cannot claim an
+execution a live runtime holds. Retention may write an instance's hold columns
+and the runtime may write its identity columns, and neither may write the
+other's.
+
+### The sweep injects before it scans
+
+The campaign's redaction evidence is a sweep rather than a set of per-value
+assertions, because the per-value shape rots silently: an assertion that an
+artifact does not contain a string nothing in the run ever produced passes
+forever, including after the redaction is removed.
+
+The sweep generates one canary per prohibited value class, each naming its own
+class and carrying a per-run suffix, injects each through a place that really
+accepts a value of that class, collects every artifact the milestone produces,
+and scans all of them for all of the canaries. Structured artifacts are scanned
+twice — over the serialized bytes and over every string reachable in the parsed
+document — because a value escaped on the way out survives the first scan and a
+value carried in framing survives the second.
+
+It also requires what is safe to survive. Redaction that worked by deleting
+diagnostics would pass every scan and leave operators worse off, so the sweep
+requires the configuration to still list its keys and still mark the withheld
+ones redacted, and the instance projection to still name the parameter the
+payload arrived in and still report its type.
+
+### Why it is a runner as well as a test
+
+Two of the three scenarios need a real database and return green without one,
+because they skip. `cargo xtask security` resolves the fixtures first and fails
+before any target starts when one is absent.
+
+Passing tests are not sufficient either, because everything the campaign proves
+is negative: a report that connected once and attempted no refusal, a matrix
+that filled in one class, or a sweep that injected nothing would all be green.
+So each report retains an observation into a directory the runner creates empty,
+and the runner requires the substance — the three refusals and their classes,
+every class on both sides of its boundary and once through a service path, every
+refusal carrying `42501`, and every surface and value class covered with nothing
+found.
+
+Each database report must also name the PostgreSQL major it ran against, because
+a matrix point is invisible in a connection string and an observation from one
+supported major would otherwise reconcile perfectly inside a run of another.
+
+### Where it runs
+
+`postgres-15-security-campaign` and `postgres-18-security-campaign` in
+`.github/workflows/ci.yml`, on the two ends of the supported PostgreSQL `15`-`18`
+range, each retaining its report as a build artifact on success and failure
+alike.
+
+The M2 `postgres-design-gate` axis is untouched and keeps running over `15`
+through `18`. It is not this campaign renamed: it predates the adapter,
+exercises a draft schema through `psql`, and separates four roles rather than
+the five the M5 preview does.
+
+### Results
+
+Both matrix points pass. All three scenarios ran and none skipped.
+
+| Report | Matrix | Result |
+| --- | --- | --- |
+| [`security-campaign-postgres-15.json`](../engineering/campaigns/m5/security-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
+| [`security-campaign-postgres-18.json`](../engineering/campaigns/m5/security-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
+
+Both were produced by commit `9a87a35`, which is the merge commit the workflow
+checked out rather than a branch tip, on `rustc 1.97.1` and Linux `x86_64`,
+against servers `15.18` and `18.4`. The command is
+`./tests/fixtures/security/provision.sh <major>`, which provisions the fixture
+and runs `cargo run --package oxide-batch-xtask -- security`.
+
+**`verify-full` TLS.** The supported configuration — `PostgresConfig` with the
+default TLS mode, no production-mode switch anywhere — connected once and was
+refused three times, identically on both matrix points. The successful session
+negotiated `TLSv1.3`, and that it was encrypted was read from the server through
+a separate administrative connection rather than from the client's account of
+itself: `pg_stat_ssl` reported the adapter's live backend as encrypted, and no
+unencrypted backend existed on the adapter's behalf at any point in the report,
+on either server.
+
+Each refusal carried the reason it was built to provoke. The untrusted authority
+failed on the issuer, the mismatched name failed on the name, and the server
+offering no TLS failed because no TLS was offered rather than by continuing
+without it. The configuration surface also refused `sslmode=disable`,
+`sslmode=prefer`, and `sslrootcert` in the connection string, which is the only
+other way a deployment could express a weaker transport.
+
+**Least-privilege separation.** All five classes were provisioned from the
+committed policy on schema 3, and the matrix recorded `40` cells: `10` allowed
+and `30` forbidden, with every class appearing on both sides and once through
+the path an operator uses. Every forbidden cell was refused under `42501` and no
+other code.
+
+Read back from `pg_roles` rather than assumed from the script that created them,
+no class holds `SUPERUSER`, `CREATEDB`, `CREATEROLE`, `REPLICATION`, or
+`BYPASSRLS`. `PUBLIC` holds no privilege in the metadata schema — the query that
+looks for one returned nothing — and the migration bookkeeping is readable by
+none of the four non-migrating classes.
+
+**Redaction sweep.** Four value classes were injected — a password and a
+database endpoint through the repository URL, a certificate through the CA
+setting, and a payload as an identifying job parameter value — through both the
+environment and a configuration file. `41` artifacts across the four surfaces
+were collected and `483` strings scanned. Prohibited occurrences: `0`.
+
+The diagnostics survived: the bundle still reported `9` configuration keys with
+`2` marked redacted, and the instance projection still named `business_key` and
+still reported its type while carrying no value.
+
+No correctness P0 or P1 was found by this campaign, and none is open against it.
+
+### What this campaign does not establish
+
+- **That a deployment is configured this way.** The campaign proves the
+  supported configuration validates certificates and host names and refuses to
+  continue unencrypted. It cannot prove an operator did not set
+  `TlsMode::Plaintext`, which the API still offers for an explicitly isolated
+  environment and which the support bounds already describe as unsupported in
+  production.
+- **Client certificates or mutual TLS.** The campaign covers server
+  authentication. `PostgresConfig` exposes no client certificate, and the M5
+  support contract does not offer one.
+- **Certificate expiry, revocation, or rotation.** The fixture's certificates
+  live for a day and are never rotated. Nothing here says what happens when a
+  chain expires mid-pool or when an authority publishes a revocation.
+- **That the committed policy is the policy a deployment installs.** The
+  campaign proves the policy separates the classes it describes. The operations
+  documentation owns telling an operator to install it, and no mechanism forces
+  the two to agree.
+- **Row-level security or column-level reads.** The separation is table and
+  column granular for writes. No class is prevented from reading a row of a
+  table it may read at all.
+- **That every diagnostic surface exists in the sweep.** The sweep proves a
+  property of the artifacts it collects. A surface added later is covered only
+  once it is collected, and the runner requires the four the gate names rather
+  than proving the list is complete.
+- **Redaction under an unbounded value.** The canaries are short strings. A
+  value large enough to be truncated, chunked, or re-encoded on the way out is
+  not exercised.
+
+### Findings
+
+No defect was found in the product. Three observations changed the campaign and
+are recorded because they are the reason it is shaped the way it is.
+
+**F7. The existing bundle redaction test asserts about values it never
+produces.** `diagnostic_bundle_excludes_every_prohibited_value_class` requires a
+bundle to contain neither `context-payload-sentinel` nor
+`checkpoint-payload-sentinel` nor `SELECT sentinel SQL` nor
+`user-error-text-sentinel`. No code in this repository produces any of those
+strings, so those four assertions have been passing without exercising anything
+and would keep passing if the redaction were removed. The test is kept — it does
+cover the values it really injects — and the sweep exists because that failure
+mode cannot be fixed by adding more assertions of the same shape. The scope
+document records it as evidence the campaign keeps and does not stand in for.
+
+**F8. A refused connection cannot say why it was refused, and should not.** The
+adapter maps every connection failure to one redacted `Unavailable`, so the TLS
+report cannot learn from the production path whether a refusal was about the
+certificate, the name, or the absence of TLS. The alternative — classifying
+failures at the facade — would put the host, the port, and the certificate's
+subject into a diagnostic, which is the thing the redaction sweep exists to
+prevent. The report corroborates at the transport layer instead, retains only
+the class, and requires the probe and the production path to agree on every
+attempt so the corroboration cannot drift into describing a different
+connection.
+
+**F9. Row locking is a privilege, and the runtime needs it on the instance
+table.** The first policy gave the runtime `SELECT, INSERT` on
+`ob_job_instance` and no `UPDATE`, on the reasoning that it writes no column of
+an existing instance. Creating an attempt takes `SELECT ... FOR UPDATE` on the
+instance row so that two launches cannot both decide they are the first, and
+PostgreSQL requires `UPDATE` on at least one column to take that lock. The grant
+is confined to the identity columns the runtime writes when it creates the
+instance, which leaves the hold columns to retention and keeps the boundary the
+matrix checks in both directions.

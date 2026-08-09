@@ -3,6 +3,7 @@
 mod conformance;
 mod crash_restore;
 mod deps;
+mod security;
 mod suite;
 mod surface;
 mod upgrade;
@@ -107,6 +108,7 @@ fn main() -> ExitCode {
         Some("deps") => run_dependency_check(),
         Some("doctor") => run_all(DOCTOR),
         Some("package") => run_all(PACKAGE),
+        Some("security") => run_security_campaign(),
         Some("surface") => run_surface_check(),
         Some("upgrade") => run_upgrade_campaign(),
         Some(command) => {
@@ -205,6 +207,38 @@ fn run_crash_restore_campaign() -> bool {
         }
         Err(error) => {
             eprintln!("could not run the crash and restore campaign: {error}");
+            false
+        }
+    }
+}
+
+/// Reports whether the security campaign observed every property it owes.
+fn run_security_campaign() -> bool {
+    eprintln!("==> PostgreSQL security campaign");
+
+    match security::run() {
+        Ok(campaign) => {
+            eprintln!("campaign report: {}", campaign.report.display());
+            if campaign.violations.is_empty() {
+                eprintln!(
+                    "the supported configuration connected only under validated TLS and refused \
+                     an untrusted authority, a mismatched name, and a server without TLS; no \
+                     privilege class exceeded itself; and no prohibited value class reached a \
+                     diagnostic surface"
+                );
+                return true;
+            }
+            for violation in &campaign.violations {
+                eprintln!("campaign gap: {violation}");
+            }
+            eprintln!(
+                "see the campaign scope in \
+                 tests/fixtures/security/campaign-scope.json"
+            );
+            false
+        }
+        Err(error) => {
+            eprintln!("could not run the security campaign: {error}");
             false
         }
     }
@@ -317,6 +351,7 @@ fn usage() {
            deps           check extraction boundaries and workspace cycles\n\
            doctor         show required local tool versions\n\
            package        inspect and dry-run every publishable crate\n\
+           security       run the TLS, least-privilege, and redaction campaign\n\
            surface        inspect the rendered facade for disclosed dependencies\n\
            upgrade        run the PostgreSQL schema upgrade, rejection, and rollback campaign"
     );
