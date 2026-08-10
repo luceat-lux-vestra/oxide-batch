@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A trust model for the M5 soak evidence in which raw observations, not the
+  report's own conclusions, are the authority. The campaign produces two kinds
+  of thing: its samples and per-cycle journal are observations, and its
+  correctness results, growth verdicts and totals are conclusions it drew about
+  itself — which are the claim under examination rather than evidence for it. So
+  `cargo xtask soak` now recomputes every verdict from the raw observations and
+  requires the report's own answers to match, in an order that is load-bearing:
+  chronology first, since the correctness baseline is *the first measured cycle*
+  and the memory verdict *the last third of the window* and a duplicated or
+  reordered entry moves both silently; then the lifecycle, folded from the
+  journal and required of each cycle rather than of the totals; then all fifteen
+  correctness obligations, compared on the failing-cycle set with the declared,
+  reported and recomputed identifier sets reconciled as unique sets; then
+  growth. The journal records exact partition-key sets and per-partition status,
+  exit status and counters, because a count cannot be recomputed from. The root
+  of provenance is the tree that actually executed: each run records the object
+  identity of its whole declared closure from inside its own checkout, since a
+  pull-request job runs against an ephemeral merge commit and the branch head is
+  a different tree. That closure is declared once and now includes `Cargo.lock`,
+  the migrations, the toolchain pin and the CI execution contract — which moved
+  out of the workflow so that changing how the soak runs invalidates evidence
+  while adding an unrelated CI job does not. The permanent verifier is offline
+  by construction, and the one-time remote check is recorded as machine-readable
+  results rather than prose. No production code changed.
 - `cargo xtask evidence`, a verifier for retained campaign evidence. It checks
   that each report committed under `docs/engineering/campaigns/m5/` is still the
   untouched output of a recorded CI run over a tree whose campaign still means

@@ -497,7 +497,7 @@ fn verify_semantics(root: &Path, document: &Value, reports: &[(String, Value)]) 
 
     for (name, report) in reports {
         let Some(objects) = report
-            .pointer("/execution_manifest/objects")
+            .pointer("/observation/execution_manifest/objects")
             .and_then(Value::as_object)
         else {
             violations.push(format!(
@@ -506,14 +506,14 @@ fn verify_semantics(root: &Path, document: &Value, reports: &[(String, Value)]) 
             continue;
         };
         if report
-            .pointer("/execution_manifest/execution_commit")
+            .pointer("/observation/execution_manifest/execution_commit")
             .and_then(Value::as_str)
             .is_none_or(str::is_empty)
         {
             violations.push(format!("{name} records no execution commit"));
         }
         if report
-            .pointer("/execution_manifest/tree_clean")
+            .pointer("/observation/execution_manifest/tree_clean")
             .and_then(Value::as_bool)
             != Some(true)
         {
@@ -551,7 +551,7 @@ fn verify_one_execution(document: &Value, reports: &[(String, Value)]) -> Vec<St
         .iter()
         .filter_map(|(_, report)| {
             report
-                .pointer("/execution_manifest/execution_commit")
+                .pointer("/observation/execution_manifest/execution_commit")
                 .and_then(Value::as_str)
         })
         .collect::<BTreeSet<_>>();
@@ -583,7 +583,7 @@ fn verify_one_execution(document: &Value, reports: &[(String, Value)]) -> Vec<St
             .find(|(report, _)| report == name)
             .and_then(|(_, report)| {
                 report
-                    .pointer("/execution_manifest/execution_commit")
+                    .pointer("/observation/execution_manifest/execution_commit")
                     .and_then(Value::as_str)
             });
         if actual.is_some() && claimed != actual {
@@ -967,7 +967,10 @@ mod tests {
             .iter()
             .map(|entry| {
                 let name = entry["report"].as_str().expect("report").to_owned();
-                (name, json!({ "execution_manifest": manifest }))
+                (
+                    name,
+                    json!({ "observation": { "execution_manifest": manifest } }),
+                )
             })
             .collect()
     }
@@ -987,7 +990,7 @@ mod tests {
     fn with_manifest(path: &str, object: &Value) -> Vec<(String, Value)> {
         let mut reports = reports();
         for (_, report) in &mut reports {
-            report["execution_manifest"]["objects"][path] = object.clone();
+            report["observation"]["execution_manifest"]["objects"][path] = object.clone();
         }
         reports
     }
@@ -1013,7 +1016,8 @@ mod tests {
     #[test]
     fn rejects_reports_from_different_execution_trees() {
         let mut reports = reports();
-        reports[0].1["execution_manifest"]["execution_commit"] = json!("0".repeat(40));
+        reports[0].1["observation"]["execution_manifest"]["execution_commit"] =
+            json!("0".repeat(40));
         let violations = semantics_of(&provenance(), &reports);
         assert!(
             violations
@@ -1026,7 +1030,7 @@ mod tests {
     #[test]
     fn rejects_an_unclean_execution_tree() {
         let mut reports = reports();
-        reports[0].1["execution_manifest"]["tree_clean"] = json!(false);
+        reports[0].1["observation"]["execution_manifest"]["tree_clean"] = json!(false);
         let violations = semantics_of(&provenance(), &reports);
         assert!(
             violations
@@ -1039,10 +1043,9 @@ mod tests {
     #[test]
     fn rejects_a_report_with_no_execution_manifest() {
         let mut reports = reports();
-        reports[0]
-            .1
+        reports[0].1["observation"]
             .as_object_mut()
-            .expect("report")
+            .expect("observation")
             .remove("execution_manifest");
         let violations = semantics_of(&provenance(), &reports);
         assert!(
@@ -1057,7 +1060,7 @@ mod tests {
     fn rejects_a_manifest_missing_a_declared_path() {
         let mut reports = reports();
         for (_, report) in &mut reports {
-            report["execution_manifest"]["objects"]
+            report["observation"]["execution_manifest"]["objects"]
                 .as_object_mut()
                 .expect("objects")
                 .remove("Cargo.lock");
@@ -1123,7 +1126,7 @@ mod tests {
     fn rejects_a_changed_semantics_path(path: &str) {
         let reports = with_manifest(path, &json!("0".repeat(40)));
         assert!(
-            reports[0].1["execution_manifest"]["objects"]
+            reports[0].1["observation"]["execution_manifest"]["objects"]
                 .as_object()
                 .expect("objects")
                 .contains_key(path),
