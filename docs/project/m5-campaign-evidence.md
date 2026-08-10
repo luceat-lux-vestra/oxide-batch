@@ -152,6 +152,43 @@ in-process reconciliation requires.
 No correctness P0 or P1 is open against this campaign. The two findings below
 are recorded and both are closed.
 
+**F22 (P2, campaign defect). A gate whose healthy range crosses its own limit
+is a flaky gate, and this one crossed it on the tenth run.** The rule that
+replaced F21's compared the least-squares growth rate of the measured window's
+last third against its first third, with a limit of `0.50`. It passed nine CI
+runs and then failed a healthy PostgreSQL 18 run at `0.585` — on a retention
+commit whose diff was documentation only, so the same tree that had just
+produced passing evidence failed on rerun.
+
+The two series are almost the same run. Warmup rose `428` and `424` KiB;
+measurement rose `260` and `300`; both decayed. What differed is *where*: the
+failing run gained `48` KiB during cycles 400-499, and that burst falls inside
+the last third, tilting the regression line inside that window. Per-hundred-cycle
+slopes were `1.19, 0.49, 0.36, 0.23, 0.17, 0.15` for the passing run and
+`1.00, 0.63, 0.50, 0.15, 0.47, 0.22` for the failing one — the same decay with
+a bump in it.
+
+Characterising the statistic across all ten runs is what settled it. The
+last-third slope ranges `0.076` to `0.443`, a `5.8×` spread, and the ratio
+ranges `0.084` to `0.585` — so a limit of `0.50` sits *inside* the healthy
+distribution. That is the same mistake as F20 and F21 one level up: a statistic
+whose run-to-run variance is comparable to the effect being measured, with a
+bound set from too few observations.
+
+Four candidates were then measured against the same ten runs rather than
+reasoned about. Whole-window rate decay — measured mean rate over warmup mean
+rate — came in at `0.031` to `0.044`, a `1.4×` spread, against `1.00` for a
+straight line. It is robust for a structural reason rather than a lucky one: a
+burst moves both endpoints of the window it lands in, so it changes the rate
+that window reports without changing where the rate is measured from. The
+campaign now gates on that, and records the rejected statistics alongside it so
+the choice can be re-examined against future runs.
+
+The general lesson, third time stated because it keeps recurring in a new
+disguise: before gating on a statistic, characterise what it does on runs that
+are known good. Every rule this campaign has discarded looked correct in the
+abstract and was chosen without knowing its own null distribution.
+
 ### What this campaign does not establish
 
 - **Evidence-profile completeness.** The ledger gives each row a required
@@ -1508,7 +1545,7 @@ campaign exists to refuse.
 | `pool_connections` | No measured sample above the post-warmup baseline |
 | `peak_connections_in_use` | No measured sample above the configured capacity |
 | `open_handles` | No measured sample above the post-warmup baseline |
-| `resident_kib` | The growth rate of the measured window's last third is at most half the rate of its first third |
+| `resident_kib` | The mean growth rate across the measured window is at most a quarter of the mean rate across warmup |
 
 The first seven are exact and need no interpretation. Tasks and handles are
 checked at *every* boundary rather than only at the end, which is the point: a
@@ -1521,10 +1558,10 @@ statement about the allocator rather than about the framework, and inventing a
 kilobyte budget would publish a release commitment nobody accepted.
 
 The rule holds resident memory to **convergence** rather than to a level: the
-measured window is split into thirds, and the last third's least-squares growth
-rate must be at most half the first third's. It compares a rate against a rate,
-so it carries no unit and no allowance in kilobytes, and it is scale-free in
-both the size of the process and the page size of the host.
+mean growth rate across the measured window must be at most a quarter of the
+mean rate across warmup, each taken end to end over its window. It compares a
+rate against a rate, so it carries no unit and no allowance in kilobytes, and it
+is scale-free in both the size of the process and the page size of the host.
 
 What makes it discriminate is that accumulation and settling differ in their
 *derivative*, not their level. A leak adds the same amount every cycle, so its
@@ -1545,16 +1582,21 @@ be flat at every boundary; resident memory is required only to converge. The two
 kinds of evidence are not interchangeable and the campaign does not present them
 as such.
 
-The window is `600` measured cycles for this rule's sake as much as for the
-soak's. A rate estimated from sixty samples of a page-quantised series decides
-nothing — the first CI run put PostgreSQL 15 and 18 at `0.57` and `0.86` of the
-same quantity — and two hundred samples per third makes the estimate mean
-something. The reconciliation enforces both properties structurally: a decay
-requirement must be between `1` and `99` percent, since `100` permits a straight
-line, and each third must hold at least `100` samples.
+The limit is `0.25`, and it is set from a characterised null rather than from
+taste. Across ten CI runs of the two supported majors the observed ratio is
+`0.031` to `0.044` — a spread of `1.4×` — so the limit sits roughly six times
+above the worst healthy run and four times below the `1.00` a straight line
+would give. No single run moves it. The reconciliation additionally requires any
+declared decay to be between `1` and `99` percent, since `100` permits a
+straight line.
 
-Two rules were tried and rejected before this one; they are recorded as F20 and
-F21, because the reasons are worth more than the rules were.
+Getting to a statistic that stable took three attempts, and the reason is
+recorded as F22: the resident series is bursty as well as quantised, so any
+statistic computed *inside* a sub-window of the measurement is sensitive to
+where a burst happens to land, while a whole-window rate is not.
+
+Three rules were tried and rejected before this one; they are recorded as F20,
+F21 and F22, because the reasons are worth more than the rules were.
 
 Every rule's series, and the structural summary a reader would want beside it
 (first, last, minimum, maximum, delta, consecutive new highs, the two half
@@ -3157,7 +3199,7 @@ campaign exists to refuse.
 | `pool_connections` | No measured sample above the post-warmup baseline |
 | `peak_connections_in_use` | No measured sample above the configured capacity |
 | `open_handles` | No measured sample above the post-warmup baseline |
-| `resident_kib` | The growth rate of the measured window's last third is at most half the rate of its first third |
+| `resident_kib` | The mean growth rate across the measured window is at most a quarter of the mean rate across warmup |
 
 The first seven are exact and need no interpretation. Tasks and handles are
 checked at *every* boundary rather than only at the end, which is the point: a
@@ -3170,10 +3212,10 @@ statement about the allocator rather than about the framework, and inventing a
 kilobyte budget would publish a release commitment nobody accepted.
 
 The rule holds resident memory to **convergence** rather than to a level: the
-measured window is split into thirds, and the last third's least-squares growth
-rate must be at most half the first third's. It compares a rate against a rate,
-so it carries no unit and no allowance in kilobytes, and it is scale-free in
-both the size of the process and the page size of the host.
+mean growth rate across the measured window must be at most a quarter of the
+mean rate across warmup, each taken end to end over its window. It compares a
+rate against a rate, so it carries no unit and no allowance in kilobytes, and it
+is scale-free in both the size of the process and the page size of the host.
 
 What makes it discriminate is that accumulation and settling differ in their
 *derivative*, not their level. A leak adds the same amount every cycle, so its
@@ -3194,16 +3236,21 @@ be flat at every boundary; resident memory is required only to converge. The two
 kinds of evidence are not interchangeable and the campaign does not present them
 as such.
 
-The window is `600` measured cycles for this rule's sake as much as for the
-soak's. A rate estimated from sixty samples of a page-quantised series decides
-nothing — the first CI run put PostgreSQL 15 and 18 at `0.57` and `0.86` of the
-same quantity — and two hundred samples per third makes the estimate mean
-something. The reconciliation enforces both properties structurally: a decay
-requirement must be between `1` and `99` percent, since `100` permits a straight
-line, and each third must hold at least `100` samples.
+The limit is `0.25`, and it is set from a characterised null rather than from
+taste. Across ten CI runs of the two supported majors the observed ratio is
+`0.031` to `0.044` — a spread of `1.4×` — so the limit sits roughly six times
+above the worst healthy run and four times below the `1.00` a straight line
+would give. No single run moves it. The reconciliation additionally requires any
+declared decay to be between `1` and `99` percent, since `100` permits a
+straight line.
 
-Two rules were tried and rejected before this one; they are recorded as F20 and
-F21, because the reasons are worth more than the rules were.
+Getting to a statistic that stable took three attempts, and the reason is
+recorded as F22: the resident series is bursty as well as quantised, so any
+statistic computed *inside* a sub-window of the measurement is sensitive to
+where a burst happens to land, while a whole-window rate is not.
+
+Three rules were tried and rejected before this one; they are recorded as F20,
+F21 and F22, because the reasons are worth more than the rules were.
 
 Every rule's series, and the structural summary a reader would want beside it
 (first, last, minimum, maximum, delta, consecutive new highs, the two half

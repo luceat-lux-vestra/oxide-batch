@@ -552,7 +552,14 @@ fn reconcile_growth(scope: &Scope, observation: &Value) -> Vec<String> {
         // a report that marked a leaking series as passing fails on the
         // recomputation rather than being taken at its word.
         let baseline = baseline_reading(observation, &rule.metric);
-        let recomputed = decide(rule, &measured, baseline, scope.pool_size);
+        let warmup = warmup_series(observation, &rule.metric);
+        let recomputed = decide(
+            rule,
+            &measured,
+            baseline,
+            scope.pool_size,
+            warmup.as_deref(),
+        );
         let claimed_pass = verdict.get("passed").and_then(Value::as_bool);
         if claimed_pass != Some(recomputed.passed) {
             violations.push(format!(
@@ -637,6 +644,20 @@ fn measured_series(observation: &Value, metric: &str) -> Option<Vec<i64>> {
         .collect()
 }
 
+/// Rebuilds one metric's warmup series from the retained samples.
+fn warmup_series(observation: &Value, metric: &str) -> Option<Vec<i64>> {
+    let samples = observation.get("samples").and_then(Value::as_array)?;
+    samples
+        .iter()
+        .filter(|sample| sample.get("phase").and_then(Value::as_str) == Some("warmup"))
+        .map(|sample| {
+            sample
+                .pointer(&format!("/metrics/{metric}"))
+                .and_then(Value::as_i64)
+        })
+        .collect()
+}
+
 /// Reads one metric's post-warmup baseline from the retained samples.
 ///
 /// The baseline the campaign declares is the last warmup sample: the first
@@ -664,7 +685,13 @@ struct Decision {
 /// and the samples; they do not share the boolean, and they do not share the
 /// code that produces it. Two implementations of one documented algorithm
 /// disagreeing is a finding, which is the point.
-fn decide(rule: &Rule, series: &[i64], baseline: Option<i64>, capacity: u64) -> Decision {
+fn decide(
+    rule: &Rule,
+    series: &[i64],
+    baseline: Option<i64>,
+    capacity: u64,
+    warmup: Option<&[i64]>,
+) -> Decision {
     match rule.decides.as_str() {
         "every-measured-sample-equals-zero" => {
             let offenders = series.iter().filter(|value| **value != 0).count();
@@ -708,7 +735,7 @@ fn decide(rule: &Rule, series: &[i64], baseline: Option<i64>, capacity: u64) -> 
                 ),
             }
         }
-        "growth-rate-decays" => decide_decay(rule, series),
+        "warmup-relative-rate-decay" => decide_decay(rule, series, warmup),
         other => Decision {
             passed: false,
             explanation: format!(
@@ -720,8 +747,8 @@ fn decide(rule: &Rule, series: &[i64], baseline: Option<i64>, capacity: u64) -> 
     }
 }
 
-/// Decides the convergence rule from the measured series.
-fn decide_decay(rule: &Rule, series: &[i64]) -> Decision {
+/// Decides the convergence rule from the warmup and measured rates.
+fn decide_decay(rule: &Rule, series: &[i64], warmup: Option<&[i64]>) -> Decision {
     let Some(decay) = rule.decay_percent else {
         return Decision {
             passed: false,
@@ -731,22 +758,17 @@ fn decide_decay(rule: &Rule, series: &[i64]) -> Decision {
             ),
         };
     };
-    let third = series.len() / 3;
-    if third == 0 {
+    let Some(warmup) = warmup else {
         return Decision {
             passed: false,
             explanation: format!(
-                "{} cannot be split into thirds from {} samples",
-                rule.metric,
-                series.len(),
+                "the {} rule is decided against the warmup rate and no warmup series carried {}",
+                rule.id, rule.metric,
             ),
         };
-    }
-    let early = slope(&series[..third]);
-    let late = slope(&series[series.len() - third..]);
-    // A series already flat has an early rate of zero, and nothing is allowed
-    // above zero: flat early and rising late is the failure this rule exists
-    // for, and scaling zero by any percentage would admit it.
+    };
+    let early = rate(warmup);
+    let late = rate(series);
     let passed = if early <= 0 {
         late <= 0
     } else {
@@ -755,39 +777,31 @@ fn decide_decay(rule: &Rule, series: &[i64]) -> Decision {
     Decision {
         passed,
         explanation: format!(
-            "{} grew at {early} millionths of a KiB per cycle over the first third of the \
-             measured window and {late} over the last, against a rule that the last must be at \
-             most {decay}% of the first",
+            "{} grew at {early} millionths of a KiB per cycle across warmup and {late} across the \
+             measured window, against a rule that the measured rate must be at most {decay}% of \
+             the warmup rate",
             rule.metric,
         ),
     }
 }
 
-/// Returns the least-squares slope of a series, in millionths per cycle.
+/// Returns the mean growth rate of a series, in millionths per cycle.
 ///
-/// The same integer algorithm the report uses, restated here rather than
-/// shared, so that the two arrive at the rate independently.
-fn slope(series: &[i64]) -> i64 {
-    let count = i64::try_from(series.len()).unwrap_or(i64::MAX);
-    if count < 2 {
+/// Endpoint-to-endpoint over the whole window, deliberately rather than a
+/// least-squares fit. The resident series is page-quantised and bursty, and a
+/// regression line inside a window is tilted by where a burst happens to fall;
+/// the same work produced last-third slopes differing by seven times across CI
+/// runs. A whole-window rate is unmoved by a burst's position because a burst
+/// shifts both endpoints of the window it lands in.
+fn rate(series: &[i64]) -> i64 {
+    let Some(first) = series.first() else {
         return 0;
-    }
-    let mut positions = 0_i64;
-    let mut values = 0_i64;
-    let mut products = 0_i64;
-    let mut squares = 0_i64;
-    for (index, value) in series.iter().enumerate() {
-        let position = i64::try_from(index).unwrap_or(i64::MAX);
-        positions += position;
-        values += value;
-        products += position * value;
-        squares += position * position;
-    }
-    let denominator = count * squares - positions * positions;
-    if denominator == 0 {
+    };
+    let Some(last) = series.last() else {
         return 0;
-    }
-    (count * products - positions * values).saturating_mul(1_000_000) / denominator
+    };
+    let count = i64::try_from(series.len()).unwrap_or(i64::MAX).max(1);
+    (last - first).saturating_mul(1_000_000) / count
 }
 
 /// Requires the final drain to have joined everything and closed the pool.
@@ -1262,8 +1276,8 @@ mod tests {
                 Rule {
                     id: "resident-memory-converges".to_owned(),
                     metric: "resident_kib".to_owned(),
-                    decides: "growth-rate-decays".to_owned(),
-                    decay_percent: Some(50),
+                    decides: "warmup-relative-rate-decay".to_owned(),
+                    decay_percent: Some(25),
                 },
                 Rule {
                     id: "connections-are-returned".to_owned(),
@@ -1287,16 +1301,23 @@ mod tests {
     /// six hundred.
     const MEASURED: usize = 12;
 
+    /// The warmup readings: a process still settling steeply.
+    ///
+    /// The convergence rule compares the measured rate against this one, so a
+    /// fixture whose warmup did not grow would leave the rule nothing to decay
+    /// from and every series would fail it.
+    const WARMUP: [i64; 2] = [100, 200];
+
     /// A converging resident series: it rises early and flattens.
-    const RESIDENT: [i64; MEASURED] = [100, 104, 108, 112, 114, 115, 116, 116, 116, 116, 116, 116];
+    const RESIDENT: [i64; MEASURED] = [200, 204, 208, 212, 214, 215, 216, 216, 216, 216, 216, 216];
 
     /// A straight line — a leak of a fixed amount every cycle.
     const LEAKING: [i64; MEASURED] = [
-        100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200,
+        200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200, 1300,
     ];
 
     /// Flat through the window and rising only at the end.
-    const LATE_RISE: [i64; MEASURED] = [100, 100, 100, 100, 100, 100, 100, 100, 100, 200, 300, 400];
+    const LATE_RISE: [i64; MEASURED] = [200, 200, 200, 200, 200, 200, 200, 200, 200, 300, 400, 500];
 
     /// Partitions each fixture cycle offers.
     const PARTITIONS: usize = 16;
@@ -1386,7 +1407,7 @@ mod tests {
                     "cycle": index,
                     "phase": if measured { "measured" } else { "warmup" },
                     "metrics": {
-                        "resident_kib": if measured { RESIDENT[index - 2] } else { 100 },
+                        "resident_kib": if measured { RESIDENT[index - 2] } else { WARMUP[index] },
                         "pool_connections_in_use": 0,
                     },
                 })
@@ -1444,7 +1465,7 @@ mod tests {
                     {
                         "id": "resident-memory-converges",
                         "metric": "resident_kib",
-                        "rule": "growth-rate-decays",
+                        "rule": "warmup-relative-rate-decay",
                         "decided": true,
                         "passed": true,
                         "series": RESIDENT,
@@ -1849,7 +1870,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_declared_50_percent_rate_decay() {
+    fn accepts_declared_rate_decay() {
         // The healthy shape on its own, so the rejections below cannot all be
         // passing for an unrelated reason.
         let violations = reconcile(observation());
@@ -1932,11 +1953,15 @@ mod tests {
     #[test]
     fn rejects_wrong_decay_threshold() {
         // A report that applied a laxer decay than the campaign declares.
-        let violations = reconcile(with("/growth/rules/0/rule", json!("growth-rate-decays-90")));
+        let violations = reconcile(with(
+            "/growth/rules/0/rule",
+            json!("warmup-relative-rate-decay-90"),
+        ));
         assert!(
             violations
                 .iter()
-                .any(|violation| violation.contains("the report applied growth-rate-decays-90")),
+                .any(|violation| violation
+                    .contains("the report applied warmup-relative-rate-decay-90")),
             "{violations:?}",
         );
     }

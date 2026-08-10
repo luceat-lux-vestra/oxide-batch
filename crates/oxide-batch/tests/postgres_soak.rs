@@ -896,6 +896,8 @@ async fn take_sample(
 /// campaign's own bookkeeping is fixed rather than growing with the run.
 struct Series {
     baseline: BTreeMap<String, i64>,
+    /// The whole warmup series per metric, for rules decided against its rate.
+    warmup: BTreeMap<String, Vec<i64>>,
     measured: BTreeMap<String, Vec<i64>>,
     /// Metrics a measured sample failed to carry, by metric.
     missing: BTreeMap<String, usize>,
@@ -917,6 +919,16 @@ impl Series {
             .collect();
         Self {
             baseline: BTreeMap::new(),
+            warmup: scope
+                .rules
+                .iter()
+                .map(|rule| {
+                    (
+                        rule.metric.clone(),
+                        Vec::with_capacity(scope.window.warmup_cycles),
+                    )
+                })
+                .collect(),
             measured,
             missing: BTreeMap::new(),
             samples: 0,
@@ -931,7 +943,8 @@ impl Series {
     fn baseline(&mut self, sample: &Value) {
         for name in self.measured.keys().cloned().collect::<Vec<_>>() {
             if let Some(value) = metric(sample, &name) {
-                self.baseline.insert(name, value);
+                self.baseline.insert(name.clone(), value);
+                self.warmup.entry(name).or_default().push(value);
             }
         }
     }
@@ -1283,6 +1296,7 @@ fn decide_growth(scope: &Scope, series: &Series) -> Growth {
             measured,
             baseline,
             i64::from(scope.workload.pool_size),
+            series.warmup.get(&rule.metric).map(Vec::as_slice),
         );
         if !decision.passed {
             violations.push(decision.explanation.clone());
@@ -1313,7 +1327,13 @@ struct Decision {
 }
 
 /// Applies one declared rule to one measured series.
-fn decide(rule: &Rule, series: &[i64], baseline: Option<i64>, capacity: i64) -> Decision {
+fn decide(
+    rule: &Rule,
+    series: &[i64],
+    baseline: Option<i64>,
+    capacity: i64,
+    warmup: Option<&[i64]>,
+) -> Decision {
     match rule.decides.as_str() {
         "no-measured-sample-above-baseline" => {
             let Some(baseline) = baseline else {
@@ -1356,7 +1376,7 @@ fn decide(rule: &Rule, series: &[i64], baseline: Option<i64>, capacity: i64) -> 
                 ),
             }
         }
-        "growth-rate-decays" => {
+        "warmup-relative-rate-decay" => {
             let Some(decay) = rule.decay_percent else {
                 return Decision {
                     passed: false,
@@ -1366,23 +1386,21 @@ fn decide(rule: &Rule, series: &[i64], baseline: Option<i64>, capacity: i64) -> 
                     ),
                 };
             };
-            let third = series.len() / 3;
-            if third == 0 {
+            let Some(warmup) = warmup else {
                 return Decision {
                     passed: false,
                     explanation: format!(
-                        "{} cannot be split into thirds from {} samples",
-                        rule.metric,
-                        series.len(),
+                        "the {} rule is decided against the warmup rate and no warmup series \
+                         carried {}",
+                        rule.id, rule.metric,
                     ),
                 };
-            }
-            let early = slope(&series[..third]);
-            let late = slope(&series[series.len() - third..]);
-            // A series that is already flat has an early rate of zero, and
-            // nothing is allowed above zero: a run that is flat early and
-            // rising late is the failure this rule exists to catch, and
-            // scaling zero by any percentage would admit it.
+            };
+            let early = rate(warmup);
+            let late = rate(series);
+            // A warmup that did not grow leaves nothing to decay from, and
+            // nothing is allowed above zero: a process flat through warmup and
+            // rising through measurement is the failure this rule exists for.
             let passed = if early <= 0 {
                 late <= 0
             } else {
@@ -1391,9 +1409,9 @@ fn decide(rule: &Rule, series: &[i64], baseline: Option<i64>, capacity: i64) -> 
             Decision {
                 passed,
                 explanation: format!(
-                    "{} grew at {early} millionths of a KiB per cycle over the first third of the \
-                     measured window and {late} over the last, against a rule that the last must \
-                     be at most {decay}% of the first",
+                    "{} grew at {early} millionths of a KiB per cycle across warmup and {late} \
+                     across the measured window, against a rule that the measured rate must be at \
+                     most {decay}% of the warmup rate",
                     rule.metric,
                 ),
             }
@@ -1457,6 +1475,25 @@ fn upward_steps(series: &[i64]) -> i64 {
         }
     }
     steps
+}
+
+/// Returns the mean growth rate of a series, in millionths per cycle.
+///
+/// Endpoint-to-endpoint over the whole window, deliberately rather than a
+/// least-squares fit. The resident series is page-quantised and bursty, and a
+/// regression line inside a window is tilted by where a burst happens to fall;
+/// the same work produced last-third slopes differing by seven times across CI
+/// runs. A whole-window rate is unmoved by a burst's position because a burst
+/// shifts both endpoints of the window it lands in.
+fn rate(series: &[i64]) -> i64 {
+    let Some(first) = series.first() else {
+        return 0;
+    };
+    let Some(last) = series.last() else {
+        return 0;
+    };
+    let count = i64::try_from(series.len()).unwrap_or(i64::MAX).max(1);
+    (last - first).saturating_mul(1_000_000) / count
 }
 
 /// Returns the least-squares slope of a series, in millionths per cycle.

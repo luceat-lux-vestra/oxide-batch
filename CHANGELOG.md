@@ -32,7 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   out of the workflow so that changing how the soak runs invalidates evidence
   while adding an unrelated CI job does not. The permanent verifier is offline
   by construction, and the one-time remote check is recorded as machine-readable
-  results rather than prose. No production code changed.
+  results rather than prose. Resident memory is gated on whole-window rate
+  decay — the measured mean rate against the warmup mean rate — after the
+  three earlier statistics were each found to have a healthy range that
+  crossed their own limit; the chosen one is characterised across ten CI runs
+  at 0.031 to 0.044 against a limit of 0.25. No production code changed.
 - `cargo xtask evidence`, a verifier for retained campaign evidence. It checks
   that each report committed under `docs/engineering/campaigns/m5/` is still the
   untouched output of a recorded CI run over a tree whose campaign still means

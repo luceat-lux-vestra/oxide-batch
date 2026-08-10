@@ -281,13 +281,11 @@ fn verify_required_strings(name: &str, entry: &Value) -> Vec<String> {
             ));
         }
     }
-    if entry
-        .pointer("/workflow_run/github_artifact_digest")
-        .and_then(Value::as_str)
-        .is_some_and(|digest| !digest.starts_with("sha256:"))
+    if let Some(digest) = entry.pointer("/artifact/digest").and_then(Value::as_str)
+        && !is_sha256(digest)
     {
         violations.push(format!(
-            "{name} records an artifact digest that is not a sha256"
+            "{name} records {digest} as its artifact digest, which is not a sha256"
         ));
     }
     violations.extend(verify_remote_record(name, entry));
@@ -350,6 +348,19 @@ fn verify_remote_record(name: &str, entry: &Value) -> Vec<String> {
         ));
     }
     violations
+}
+
+/// Reports whether a string is a `sha256:` digest and not merely prefixed.
+///
+/// A prefix check passes `sha256:`, `sha256:1234` and `sha256:zzzz…`, none of
+/// which identifies anything. The digest is the only field tying the retained
+/// bytes to what GitHub stored, so it must be the full sixty-four hexadecimal
+/// characters.
+fn is_sha256(digest: &str) -> bool {
+    let Some(hex) = digest.strip_prefix("sha256:") else {
+        return false;
+    };
+    hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// Requires the run that produced a report to be identified.
@@ -424,17 +435,12 @@ fn verify_matrix(document: &Value, entries: &[Value]) -> Vec<String> {
     violations.extend(verify_unique(entries, "report", |entry| {
         entry.get("report").and_then(Value::as_str)
     }));
-    violations.extend(verify_unique(entries, "artifact_name", |entry| {
-        entry
-            .pointer("/workflow_run/artifact_name")
-            .and_then(Value::as_str)
+    violations.extend(verify_unique(entries, "artifact name", |entry| {
+        entry.pointer("/artifact/name").and_then(Value::as_str)
     }));
     let mut jobs: BTreeMap<u64, usize> = BTreeMap::new();
     for entry in entries {
-        if let Some(job) = entry
-            .pointer("/workflow_run/job_id")
-            .and_then(Value::as_u64)
-        {
+        if let Some(job) = entry.pointer("/producing_job/id").and_then(Value::as_u64) {
             *jobs.entry(job).or_default() += 1;
         }
     }
@@ -1213,6 +1219,120 @@ mod tests {
                 .iter()
                 .any(|violation| violation.contains("producing job did not succeed")),
             "{violations:?}",
+        );
+    }
+
+    /// The entries the repository actually ships.
+    ///
+    /// These tests deliberately run against the production schema rather than
+    /// a synthetic object. The stale-pointer regression they exist to prevent —
+    /// the verifier reading `/workflow_run/artifact_name` long after the field
+    /// had moved to `/artifact/name` — survived because every schema test built
+    /// its own fixture and so agreed with the verifier's mistake instead of
+    /// with the document.
+    fn shipped_entries() -> Vec<Value> {
+        provenance()["evidence"]
+            .as_array()
+            .expect("evidence")
+            .clone()
+    }
+
+    #[test]
+    fn rejects_duplicate_artifact_name() {
+        let mut entries = shipped_entries();
+        let name = entries[0]["artifact"]["name"].clone();
+        entries[1]["artifact"]["name"] = name;
+        let violations = super::verify_matrix(&provenance(), &entries);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("share the same artifact name")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_producing_job_id() {
+        let mut entries = shipped_entries();
+        let id = entries[0]["producing_job"]["id"].clone();
+        entries[1]["producing_job"]["id"] = id;
+        let violations = super::verify_matrix(&provenance(), &entries);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("as the producer of 2 retained reports")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_report_path() {
+        let mut entries = shipped_entries();
+        let report = entries[0]["report"].clone();
+        entries[1]["report"] = report;
+        let violations = super::verify_matrix(&provenance(), &entries);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("share the same report")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_artifact_digest() {
+        for digest in ["sha256:", "hello", "md5:d41d8cd98f00b204e9800998ecf8427e"] {
+            let mut entry = shipped_entries().remove(0);
+            entry["artifact"]["digest"] = json!(digest);
+            let violations = verify(&entry);
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("not a sha256")),
+                "{digest}: {violations:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_short_artifact_digest() {
+        let mut entry = shipped_entries().remove(0);
+        entry["artifact"]["digest"] = json!(format!("sha256:{}", "a".repeat(63)));
+        let violations = verify(&entry);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("not a sha256")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_non_hex_artifact_digest() {
+        let mut entry = shipped_entries().remove(0);
+        entry["artifact"]["digest"] = json!(format!("sha256:{}", "z".repeat(64)));
+        let violations = verify(&entry);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("not a sha256")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn accepts_the_shipped_artifact_digests() {
+        // The positive half, so the rejections above cannot pass vacuously:
+        // every digest the repository ships is a real sha256, and every
+        // uniqueness field it ships is distinct.
+        let entries = shipped_entries();
+        for entry in &entries {
+            let digest = entry["artifact"]["digest"].as_str().expect("digest");
+            assert!(super::is_sha256(digest), "{digest}");
+        }
+        assert_eq!(
+            super::verify_matrix(&provenance(), &entries),
+            Vec::<String>::new()
         );
     }
 

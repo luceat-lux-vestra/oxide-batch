@@ -8,9 +8,11 @@
 # environment, or the database the soak runs against does not — this file is in
 # the campaign's semantic closure, and the workflow is not.
 #
-# The values below are the ones execution-contract.json declares. They are
-# stated once here and read from there by review; a mismatch between the two is
-# a defect in this file.
+# The values below and the ones in execution-contract.json describe the same
+# execution. Both files, and the workflow that calls this one, are inside the
+# campaign's semantic closure, so a change to any of them invalidates retained
+# evidence and forces the campaign to be run again — which is the mechanism.
+# Nothing here relies on the three being kept in step by review.
 #
 # Usage: run-ci-campaign.sh <postgres-major>
 
