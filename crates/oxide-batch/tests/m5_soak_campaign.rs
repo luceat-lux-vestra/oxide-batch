@@ -64,6 +64,32 @@ const REQUIRED_CLASSES: &[&str] = &["task", "connection", "handle", "memory"];
 /// The M4 measurement this campaign builds on and must not consume.
 const M4_MEASUREMENT: &str = "p015_shutdown_restart_soak";
 
+/// The warmup boundary the campaign fixes, in cycles.
+///
+/// Pinned rather than bounded below. Warmup is excluded from every growth rule,
+/// so a longer warmup is not a more careful campaign — it is a smaller window
+/// for accumulation to be visible in.
+const DECLARED_WARMUP_CYCLES: u64 = 32;
+
+/// The measured window the campaign fixes, in cycles.
+const DECLARED_MEASURED_CYCLES: u64 = 600;
+
+/// The rule identifiers `cargo xtask soak` can recompute.
+///
+/// The runner decides each declared rule again from the raw samples, and a rule
+/// it does not implement is reported as undecidable rather than passed. Listing
+/// them here keeps the campaign from declaring an obligation that nothing on
+/// the other side of the recomputation can check.
+const SUPPORTED_RULES: &[&str] = &[
+    "no-measured-sample-above-baseline",
+    "every-measured-sample-equals-zero",
+    "no-measured-sample-above-configured-capacity",
+    "warmup-relative-rate-decay",
+];
+
+/// The rule that decides resident memory, which is the only one on a threshold.
+const CONVERGENCE_RULE: &str = "warmup-relative-rate-decay";
+
 #[test]
 fn campaign_scope_matches_the_accepted_soak_obligations() -> Result<(), Box<dyn Error>> {
     let scope = Scope::read()?;
@@ -158,32 +184,72 @@ fn the_declared_window_is_a_window() -> Result<(), Box<dyn Error>> {
         "a campaign whose warmup is longer than its measurement is mostly warmup, and warmup is \
          the part the growth rules do not look at",
     );
-    // A rule decided on convergence is only a rule while it actually requires
-    // the rate to fall. A decay of 100% permits a straight line, which is the
-    // one shape it exists to reject.
+    // The declared window is pinned rather than merely positive. Warmup is the
+    // part the growth rules do not look at, so a warmup that could be extended
+    // until the numbers settled would be a way to hide accumulation rather than
+    // to exclude startup; the scope document says the count is fixed and not
+    // adjusted to a run, and this is that sentence in executable form.
+    assert_eq!(
+        scope.warmup_cycles, DECLARED_WARMUP_CYCLES,
+        "the campaign's warmup boundary is fixed at {DECLARED_WARMUP_CYCLES} cycles, and moving \
+         it changes which samples the growth rules are allowed to see",
+    );
+    assert!(
+        scope.measured_cycles >= DECLARED_MEASURED_CYCLES,
+        "the campaign declares {DECLARED_MEASURED_CYCLES} measured cycles and this scope has \
+         {}, so the soak's denominator shrank",
+        scope.measured_cycles,
+    );
+
+    // Both windows are read endpoint-to-endpoint, so each needs at least one
+    // cycle interval to have a rate at all. A one-sample window has no rate,
+    // and the implementations are required to say so rather than report it as
+    // flat — but a campaign that declared such a window would be asking for a
+    // verdict that cannot be reached.
+    for (name, cycles) in [
+        ("warmup", scope.warmup_cycles),
+        ("measured", scope.measured_cycles),
+    ] {
+        assert!(
+            cycles >= 2,
+            "the convergence rule reads a rate across the {name} window, and {cycles} samples \
+             span no cycle interval to read it over",
+        );
+    }
+
     for rule in &scope.rules {
+        // Every declared rule has to be one the independent runner can actually
+        // recompute. A rule identifier the runner does not know is not a
+        // stricter campaign; it is a rule that is never decided.
+        assert!(
+            SUPPORTED_RULES.contains(&rule.decides.as_str()),
+            "the {} rule is decided by {}, which `cargo xtask soak` does not implement, so the \
+             campaign would declare an obligation nothing recomputes",
+            rule.id,
+            rule.decides,
+        );
+
+        // A rule decided on convergence is only a rule while it actually
+        // requires the rate to fall. A decay of 100% permits a straight line,
+        // which is the one shape it exists to reject, and 0% forbids every
+        // series including a flat one.
         let Some(decay) = rule.decay_percent else {
             continue;
         };
+        assert_eq!(
+            rule.decides, CONVERGENCE_RULE,
+            "the {} rule carries a decay percent, which only the {CONVERGENCE_RULE} rule reads, \
+             so the threshold would be declared and ignored",
+            rule.id,
+        );
         assert!(
             (1..100).contains(&decay),
             "the {} rule requires the late growth rate to be at most {decay}% of the early one, \
              which either forbids every series or permits a straight one",
             rule.id,
         );
-        // The rate is estimated from a third of the window at each end, and an
-        // estimate from a handful of page-quantised samples decides nothing:
-        // the first CI run put the two supported majors at 0.57 and 0.86 of
-        // the same quantity from sixty samples apiece.
-        assert!(
-            scope.measured_cycles / 3 >= 100,
-            "the {} rule estimates a growth rate from {} samples at each end of the measured \
-             window, which is too few for the estimate to separate a decaying series from a \
-             straight one",
-            rule.id,
-            scope.measured_cycles / 3,
-        );
     }
+
     assert_eq!(
         scope.termination.len(),
         1,
@@ -366,6 +432,7 @@ struct Report {
 struct RuleEntry {
     id: String,
     metric: String,
+    decides: String,
     decay_percent: Option<i64>,
 }
 
@@ -437,6 +504,7 @@ impl Scope {
             rules.push(RuleEntry {
                 id: field(rule, "id")?,
                 metric: field(rule, "metric")?,
+                decides: field(rule, "rule")?,
                 decay_percent: rule.get("decay_percent").and_then(Value::as_i64),
             });
         }

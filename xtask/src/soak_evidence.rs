@@ -20,7 +20,7 @@
 //!    correctly phased run of the declared length. Nothing below means anything
 //!    until this holds, because every later step indexes into these arrays and
 //!    a reordered or duplicated array quietly changes what "the first measured
-//!    cycle" and "the last third of the window" refer to.
+//!    cycle" and each window's first and last reading refer to.
 //! 2. **lifecycle** — folded from the cycles, not read from the summary.
 //! 3. **correctness** — every obligation recomputed per cycle from the journal.
 //! 4. **growth** — recomputed from the sample series, in verified cycle order.
@@ -182,11 +182,13 @@ pub struct Window {
 /// Requires the samples and cycles to be one contiguous, ordered, phased run.
 ///
 /// This runs before anything else because everything else indexes into these
-/// arrays. "The first measured cycle" is the correctness baseline and "the last
-/// third of the window" is the memory verdict; both are positions, and a
-/// duplicated, missing or reordered entry silently moves them. Serialization
-/// order is not authority — the recorded cycle index is, and it is required to
-/// agree with the position.
+/// arrays. "The first measured cycle" is the correctness baseline, and the
+/// memory verdict is read from the first and last reading of each window; both
+/// are positions, and a duplicated, missing or reordered entry silently moves
+/// them. The memory rule consults four readings out of the whole run, so a swap
+/// that lands on an endpoint changes the verdict without changing any value.
+/// Serialization order is not authority — the recorded cycle index is, and it
+/// is required to agree with the position.
 pub fn reconcile_sequence(window: &Window, observation: &Value, cycles: &[Cycle]) -> Vec<String> {
     let mut violations = Vec::new();
     let total = window.warmup + window.measured;

@@ -1,0 +1,118 @@
+{
+  "fixture": "soak resident-memory rate vectors",
+  "issue": "https://github.com/luceat-lux-vestra/oxide-batch/issues/102",
+  "note": "The campaign's memory rule is recomputed by an independent verifier, and the point of that recomputation is that it can disagree with the producer. Sharing a helper between them would remove the disagreement by construction: both would be equally wrong and the recomputation would confirm rather than check. So the two implementations stay separate and are held to this document instead. Each reads these vectors, applies its own arithmetic, and must land on the declared rate and the declared verdict. A defect that reaches only one of them fails on that side; a defect in the shared understanding of what the statistic is fails on both, which is what this file exists to catch.",
+  "statistic": {
+    "definition": "The mean growth rate of a window is its last sample minus its first, divided by the number of cycle intervals the window spans, expressed in millionths of the metric's unit per cycle.",
+    "denominator": "A window of n samples spans n - 1 intervals. The denominator is n - 1, not n.",
+    "why": "The rule compares a measured rate against a warmup rate, and the two windows have different lengths. Dividing by the sample count understates a window's rate by a factor of (n - 1) / n, which does not cancel between windows of different length: at this campaign's declared 32 and 600 it drags the ratio of a constant leak down to 0.970 instead of the 1.000 the rule is stated in terms of. The error is small enough to leave a healthy run passing and a gross leak failing, which is why it survived review, and it is still wrong: it makes the threshold mean something slightly different from what the scope declares it means.",
+    "undecidable": "Fewer than two samples span no interval and have no rate. That is not a rate of zero. Zero is a real answer meaning the window was flat, and reading a one-sample window as flat would let a truncated campaign pass the rule it should have been unable to decide."
+  },
+  "decay_percent": 25,
+  "verdict_rule": "The measured rate must be at most decay_percent of the warmup rate. A warmup rate at or below zero leaves nothing to decay from, and then nothing above zero is allowed.",
+  "vectors": [
+    {
+      "id": "constant-leak-unequal-windows",
+      "why": "The property the whole statistic rests on. A leak adds the same amount every cycle, so its rate is the same in both windows whatever their lengths and whatever the per-cycle amount, and the ratio is exactly one. This vector is the reason the denominator matters: the windows are 5 and 12 samples, and only an interval denominator makes the two rates equal.",
+      "warmup": [100, 200, 300, 400, 500],
+      "measured": [1000, 1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900, 2000, 2100],
+      "warmup_rate_micro": 100000000,
+      "measured_rate_micro": 100000000,
+      "passes": false
+    },
+    {
+      "id": "constant-leak-small-amount",
+      "why": "The same property at a per-cycle amount small enough to look harmless, and at different window lengths again. A leak of seven a cycle fails exactly as a leak of a hundred does, because the rule reads the derivative and not the level.",
+      "warmup": [40, 47, 54, 61, 68, 75, 82, 89, 96],
+      "measured": [
+        500, 507, 514, 521, 528, 535, 542, 549, 556, 563, 570, 577, 584, 591, 598, 605, 612, 619,
+        626, 633, 640, 647, 654, 661, 668, 675, 682, 689, 696
+      ],
+      "warmup_rate_micro": 7000000,
+      "measured_rate_micro": 7000000,
+      "passes": false
+    },
+    {
+      "id": "settling-converges",
+      "why": "The healthy shape. An allocator reaching a steady state against an unchanging transient pattern rises steeply through warmup and flattens through measurement.",
+      "warmup": [100, 200, 300, 400, 500],
+      "measured": [500, 506, 510, 512, 513, 514, 514, 514, 514, 514, 514, 514],
+      "warmup_rate_micro": 100000000,
+      "measured_rate_micro": 1272727,
+      "passes": true
+    },
+    {
+      "id": "flat-warmup-rising-measured",
+      "why": "The failure the zero-warmup branch exists for. A process that settled before the campaign started and then began accumulating has nothing to decay from, and a ratio against a zero warmup rate would be meaningless. Nothing above zero is allowed instead.",
+      "warmup": [500, 500, 500, 500, 500],
+      "measured": [500, 500, 500, 500, 500, 500, 500, 500, 500, 600, 700, 800],
+      "warmup_rate_micro": 0,
+      "measured_rate_micro": 27272727,
+      "passes": false
+    },
+    {
+      "id": "flat-warmup-flat-measured",
+      "why": "The other side of that branch, so the rule is not simply failing everything whose warmup was flat.",
+      "warmup": [500, 500, 500, 500, 500],
+      "measured": [500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500],
+      "warmup_rate_micro": 0,
+      "measured_rate_micro": 0,
+      "passes": true
+    },
+    {
+      "id": "decay-exactly-at-the-limit",
+      "why": "The boundary is inclusive: the rule is that the measured rate must be at most a quarter of the warmup rate, so a ratio of exactly a quarter passes. Stated as a vector because an off-by-one at the comparison would otherwise only show up as a run that failed for no visible reason.",
+      "warmup": [100, 200, 300, 400, 500],
+      "measured": [500, 525, 550, 575, 600, 625, 650, 675, 700, 725, 750],
+      "warmup_rate_micro": 100000000,
+      "measured_rate_micro": 25000000,
+      "passes": true
+    },
+    {
+      "id": "decay-just-above-the-limit",
+      "why": "One kilobyte more across the whole measured window than the vector above, which is the smallest distinguishable step over it, and the verdict turns.",
+      "warmup": [100, 200, 300, 400, 500],
+      "measured": [500, 525, 550, 575, 600, 625, 650, 675, 700, 725, 751],
+      "warmup_rate_micro": 100000000,
+      "measured_rate_micro": 25100000,
+      "passes": false
+    },
+    {
+      "id": "single-sample-warmup",
+      "why": "One endpoint spans no interval. The rule cannot be decided and must say so rather than treat the window as flat.",
+      "warmup": [500],
+      "measured": [500, 506, 510, 512, 513, 514, 514, 514, 514, 514, 514, 514],
+      "warmup_rate_micro": null,
+      "measured_rate_micro": 1272727,
+      "passes": false
+    },
+    {
+      "id": "single-sample-measured",
+      "why": "The same on the side that carries the claim. A campaign truncated to one measured sample has not measured convergence.",
+      "warmup": [100, 200, 300, 400, 500],
+      "measured": [500],
+      "warmup_rate_micro": 100000000,
+      "measured_rate_micro": null,
+      "passes": false
+    },
+    {
+      "id": "empty-measured",
+      "why": "No samples at all, which is the degenerate case a rate function that returned zero for an empty window would have reported as a perfectly flat process.",
+      "warmup": [100, 200, 300, 400, 500],
+      "measured": [],
+      "warmup_rate_micro": 100000000,
+      "measured_rate_micro": null,
+      "passes": false
+    }
+  ],
+  "constant_growth_property": {
+    "note": "The explicit vectors above are short enough to read. This states the same property at window lengths that are not, including the campaign's own declared 32 and 600, which no reviewer would check by eye in a literal array. Both implementations synthesize the series from these parameters — a window of `samples` readings rising by `slope` each cycle from an arbitrary origin — and require the two rates to be equal, so the ratio is exactly one and a constant leak fails at any decay percent below a hundred.",
+    "cases": [
+      { "warmup_samples": 32, "measured_samples": 600, "slope": 1 },
+      { "warmup_samples": 32, "measured_samples": 600, "slope": 1024 },
+      { "warmup_samples": 2, "measured_samples": 600, "slope": 13 },
+      { "warmup_samples": 600, "measured_samples": 2, "slope": 13 },
+      { "warmup_samples": 7, "measured_samples": 7, "slope": 5 }
+    ]
+  }
+}

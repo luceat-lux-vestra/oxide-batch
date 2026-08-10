@@ -17,8 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `cargo xtask soak` now recomputes every verdict from the raw observations and
   requires the report's own answers to match, in an order that is load-bearing:
   chronology first, since the correctness baseline is *the first measured cycle*
-  and the memory verdict *the last third of the window* and a duplicated or
-  reordered entry moves both silently; then the lifecycle, folded from the
+  and the memory verdict is read from the first and last reading of each window,
+  so a duplicated or reordered entry moves both silently; then the lifecycle, folded from the
   journal and required of each cycle rather than of the totals; then all fifteen
   correctness obligations, compared on the failing-cycle set with the declared,
   reported and recomputed identifier sets reconciled as unique sets; then
@@ -80,10 +80,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   the run, decided from the measured samples alone, and each verdict carries the
   series it was decided from, so no trajectory is passed by eye. No memory budget
   was invented. Tasks, connections, and handles are exact integers required to be
-  flat at every cycle boundary, and the accumulation claim rests on those;
-  resident memory is held only to convergence, by comparing the growth rate of
-  the measured window's last third against its first, which fails a leak of any
-  per-cycle size and says nothing about how much memory the framework may use. CI runs it on PostgreSQL 15 and 18 and
+  flat at every cycle boundary, and the non-accumulation claim rests on those
+  alone; resident memory is held only to convergence, by comparing its mean
+  growth rate over the whole measured window against its mean rate over warmup —
+  each taken over the cycle intervals the window spans — and requiring the
+  second to be at most a quarter of the first. That fails a leak of any
+  per-cycle size, because a constant leak rates the same in both windows however
+  differently sized they are, and it says nothing about how much memory the
+  framework may use. It is not a proof that no leak exists: one much smaller
+  than the warmup settling rate stays inside it, which is why no exact
+  non-accumulation claim is made about resident memory.
+  CI runs it on PostgreSQL 15 and 18 and
   retains each report on failure as well as success, because a failed soak's
   value is its trajectory. No production code changed.
 - `cargo xtask resource-bounds`, the M5 resource-bound campaign. It proves that

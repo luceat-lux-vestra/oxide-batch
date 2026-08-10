@@ -233,9 +233,12 @@ fn reconcile(scope: &Scope, run: &Run, matrix: Option<&str>) -> Vec<String> {
     // The order below is the trust graph, and it is not interchangeable. Every
     // step after the chronology check indexes into the samples and the journal
     // — the correctness baseline is "the first measured cycle" and the memory
-    // verdict is "the last third of the window", and both are positions. A
-    // duplicated, missing or reordered entry moves them silently, so a run
-    // whose chronology does not hold is not evaluated further: its later
+    // verdict is read from each window's first and last reading, and both are
+    // positions. The memory rule is the more exposed of the two: it consults
+    // exactly four readings out of six hundred and thirty-two, so a single
+    // reordered entry that happens to land on an endpoint moves the verdict
+    // outright while leaving every value in the series intact. A run whose
+    // chronology does not hold is therefore not evaluated further: its later
     // verdicts would be answers about a different arrangement of the same data.
     let cycles = match soak_evidence::read_cycles(observation) {
         Ok(cycles) => cycles,
@@ -767,8 +770,18 @@ fn decide_decay(rule: &Rule, series: &[i64], warmup: Option<&[i64]>) -> Decision
             ),
         };
     };
-    let early = rate(warmup);
-    let late = rate(series);
+    let (Some(early), Some(late)) = (rate(warmup), rate(series)) else {
+        return Decision {
+            passed: false,
+            explanation: format!(
+                "the {} rule is decided from a rate per cycle, and a window of {} warmup and {} \
+                 measured samples spans too few cycle intervals to have one",
+                rule.id,
+                warmup.len(),
+                series.len(),
+            ),
+        };
+    };
     let passed = if early <= 0 {
         late <= 0
     } else {
@@ -787,21 +800,24 @@ fn decide_decay(rule: &Rule, series: &[i64], warmup: Option<&[i64]>) -> Decision
 
 /// Returns the mean growth rate of a series, in millionths per cycle.
 ///
-/// Endpoint-to-endpoint over the whole window, deliberately rather than a
-/// least-squares fit. The resident series is page-quantised and bursty, and a
-/// regression line inside a window is tilted by where a burst happens to fall;
-/// the same work produced last-third slopes differing by seven times across CI
-/// runs. A whole-window rate is unmoved by a burst's position because a burst
-/// shifts both endpoints of the window it lands in.
-fn rate(series: &[i64]) -> i64 {
-    let Some(first) = series.first() else {
-        return 0;
+/// This is the runner's own reading of the definition the campaign scope
+/// states: the rise from the window's first endpoint to its last, divided by
+/// the number of cycle intervals between them. It is written from that
+/// definition rather than shared with the campaign that produced the report,
+/// because a recomputation that imported the producer's arithmetic would agree
+/// with the producer by construction and could not contradict it. The two
+/// implementations are held to the same declared vectors instead.
+///
+/// A window of `n` samples spans `n - 1` intervals. Fewer than two samples span
+/// none, and no rate exists; `None` says so, rather than a zero that would be
+/// indistinguishable from a genuinely flat window.
+fn rate(series: &[i64]) -> Option<i64> {
+    let intervals = match series.len() {
+        0 | 1 => return None,
+        length => i64::try_from(length - 1).unwrap_or(i64::MAX),
     };
-    let Some(last) = series.last() else {
-        return 0;
-    };
-    let count = i64::try_from(series.len()).unwrap_or(i64::MAX).max(1);
-    (last - first).saturating_mul(1_000_000) / count
+    let (first, last) = (series[0], series[series.len() - 1]);
+    Some(last.saturating_sub(first).saturating_mul(1_000_000) / intervals)
 }
 
 /// Requires the final drain to have joined everything and closed the pool.
@@ -1293,12 +1309,12 @@ mod tests {
 
     /// Measured readings in the fixture window.
     ///
-    /// Twelve rather than a handful, because the convergence rule estimates a
-    /// slope over each outer third: with four readings the thirds are one
-    /// sample apiece, both slopes are zero by definition, and every series
-    /// passes — including a straight line. A fixture that small does not
-    /// exercise the rule at all, which is why the campaign's own window is
-    /// six hundred.
+    /// Twelve rather than a handful. The convergence rule itself would be
+    /// decided by two, but the mutations below have to be able to disturb a
+    /// series without landing on one of its endpoints, and the correctness and
+    /// chronology attacks need somewhere in the middle to attack. The
+    /// campaign's own window is six hundred for a different reason, recorded
+    /// with the window in the scope document.
     const MEASURED: usize = 12;
 
     /// The warmup readings: a process still settling steeply.
@@ -1646,8 +1662,8 @@ mod tests {
     #[test]
     fn rejects_reordered_samples() {
         // Serialization order is not authority: the recorded index is, and it
-        // has to agree with the position. A swapped pair moves what "the last
-        // third of the window" means without changing any value in it.
+        // has to agree with the position. A swapped pair moves which readings
+        // are the window's endpoints without changing any value in it.
         let mut observation = observation();
         let samples = observation["samples"].as_array_mut().expect("samples");
         samples.swap(4, 9);
@@ -2215,5 +2231,144 @@ mod tests {
                 .any(|violation| violation.contains("took no pool reading")),
             "{violations:?}",
         );
+    }
+}
+
+/// The declared rate vectors, applied to this runner's own arithmetic.
+///
+/// This runner exists to disagree with the report when the report is wrong, so
+/// it recomputes the memory verdict rather than reading it. That only works if
+/// the two arithmetics are genuinely separate, and they are: neither calls the
+/// other and neither shares a helper with it. Separateness alone, though, does
+/// not make them independent — both were written from the same description, and
+/// when that description was ambiguous about the denominator both made the same
+/// mistake and agreed with each other about a statistic neither was computing
+/// correctly.
+///
+/// `tests/fixtures/soak/rate-vectors.json` is the repair. It states the
+/// statistic and its answers outside both implementations, so agreement between
+/// them is no longer self-certifying: each is checked against the declaration,
+/// not against the other.
+#[cfg(test)]
+mod rate_vectors {
+    #![allow(clippy::expect_used, clippy::panic)]
+
+    use std::fs;
+
+    use serde_json::Value;
+
+    use super::{Rule, decide_decay, rate};
+
+    /// Reads the declared vector document from the committed fixture.
+    fn document() -> Value {
+        let path = super::super::suite::workspace_root()
+            .expect("the workspace root resolves")
+            .join("tests")
+            .join("fixtures")
+            .join("soak")
+            .join("rate-vectors.json");
+        let text = fs::read_to_string(&path).expect("the declared rate vectors are committed");
+        serde_json::from_str(&text).expect("the declared rate vectors parse")
+    }
+
+    /// Reads one declared series.
+    fn series(vector: &Value, name: &str) -> Vec<i64> {
+        vector[name]
+            .as_array()
+            .expect("the vector declares the series")
+            .iter()
+            .map(|value| value.as_i64().expect("a reading is an integer"))
+            .collect()
+    }
+
+    /// The rule under test, at the decay the vectors declare.
+    fn rule(decay: i64) -> Rule {
+        Rule {
+            id: "resident-memory-converges".to_owned(),
+            metric: "resident_kib".to_owned(),
+            decides: "warmup-relative-rate-decay".to_owned(),
+            decay_percent: Some(decay),
+        }
+    }
+
+    #[test]
+    fn declared_rates_match_this_implementation() {
+        let document = document();
+        for vector in document["vectors"].as_array().expect("vectors") {
+            let id = vector["id"].as_str().expect("the vector is named");
+            for name in ["warmup", "measured"] {
+                let declared = vector[format!("{name}_rate_micro")].as_i64();
+                let computed = rate(&series(vector, name));
+                assert_eq!(
+                    computed, declared,
+                    "{id}: the {name} window's declared rate is {declared:?} and this runner \
+                     computes {computed:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn declared_verdicts_match_this_implementation() {
+        let document = document();
+        let decay = document["decay_percent"].as_i64().expect("decay percent");
+        for vector in document["vectors"].as_array().expect("vectors") {
+            let id = vector["id"].as_str().expect("the vector is named");
+            let expected = vector["passes"].as_bool().expect("the verdict is declared");
+            let warmup = series(vector, "warmup");
+            let decision = decide_decay(&rule(decay), &series(vector, "measured"), Some(&warmup));
+            assert_eq!(
+                decision.passed, expected,
+                "{id}: the declared verdict is {expected} and this runner decided {} — {}",
+                decision.passed, decision.explanation,
+            );
+        }
+    }
+
+    #[test]
+    fn a_constant_leak_rates_the_same_in_windows_of_any_length() {
+        let document = document();
+        let decay = document["decay_percent"].as_i64().expect("decay percent");
+        for case in document["constant_growth_property"]["cases"]
+            .as_array()
+            .expect("cases")
+        {
+            let slope = case["slope"].as_i64().expect("slope");
+            let ramp = |samples: u64, origin: i64| -> Vec<i64> {
+                let mut readings = Vec::new();
+                let mut value = origin;
+                for _ in 0..samples {
+                    readings.push(value);
+                    value += slope;
+                }
+                readings
+            };
+            let warmup = ramp(case["warmup_samples"].as_u64().expect("warmup"), 1_000);
+            let measured = ramp(case["measured_samples"].as_u64().expect("measured"), 7_777);
+
+            // A leak adds the same amount every cycle. Its rate is therefore a
+            // property of the leak and not of the window watching it, and the
+            // ratio of two such rates is one however differently sized the two
+            // windows are. A sample-count denominator breaks that: it scales
+            // each window's rate by its own length.
+            let (early, late) = (rate(&warmup), rate(&measured));
+            assert_eq!(
+                early,
+                Some(slope * 1_000_000),
+                "warmup of {} samples",
+                warmup.len()
+            );
+            assert_eq!(
+                late, early,
+                "windows of different length, same constant rise"
+            );
+
+            let decision = decide_decay(&rule(decay), &measured, Some(&warmup));
+            assert!(
+                !decision.passed,
+                "a constant leak must fail at {decay}% — {}",
+                decision.explanation,
+            );
+        }
     }
 }

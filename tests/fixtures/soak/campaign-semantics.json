@@ -55,10 +55,11 @@
       ]
     },
     "campaign fixtures": {
-      "why": "The declared denominator \u2014 the window, the workload, the obligations, the rules \u2014 and this closure itself.",
+      "why": "The declared denominator \u2014 the window, the workload, the obligations, the rules \u2014 and this closure itself. The rate vectors belong here rather than beside either implementation: they are the statement of what the memory statistic is, and the report and the verifier are each held to them separately. A change to them changes what both are required to mean, which is exactly what this closure is for.",
       "paths": [
         "tests/fixtures/soak/campaign-scope.json",
-        "tests/fixtures/soak/campaign-semantics.json"
+        "tests/fixtures/soak/campaign-semantics.json",
+        "tests/fixtures/soak/rate-vectors.json"
       ]
     },
     "soak execution contract": {

@@ -1,9 +1,19 @@
 //! P-015 over repeated `PostgreSQL` launch, failure, restart, and drain cycles.
 //!
 //! This is the scenario the M5 design gate names for the soak campaign. Its
-//! claim is a negative one — that nothing accumulated — and a negative claim is
-//! only worth what its denominator and its rules are worth, so both are read
-//! from `tests/fixtures/soak/campaign-scope.json` rather than declared here.
+//! claim is a negative one, and a negative claim is only worth what its
+//! denominator and its rules are worth, so both are read from
+//! `tests/fixtures/soak/campaign-scope.json` rather than declared here.
+//!
+//! The claim is also not one claim. For the exact-count resources — owned
+//! tasks, pooled connections, checkouts, and process handles — it is
+//! non-accumulation: they are integers, and every measured cycle boundary held
+//! them at the post-warmup baseline. For resident memory it is weaker, and is
+//! stated as what the rule actually decides: growth converged under the
+//! declared warmup-relative rate-decay rule. That is not a proof that no leak
+//! exists, and the scenario name — which the design gate fixes and this
+//! campaign may not rename — is broader than what the resident-memory half of
+//! it establishes.
 //! The cycle counts, the workload shape, the correctness obligations, and the
 //! growth rules all come from that document, and `cargo xtask soak` requires
 //! this report to have decided every one of them.
@@ -76,14 +86,26 @@
 //!
 //! Resident memory is held to *convergence* rather than to a level, and the
 //! difference is the most important thing in this file to get right. The rule
-//! splits the measured window into thirds and requires the last third's growth
-//! rate to be at most half the first third's. It compares a rate against a
+//! reads one growth rate across the whole warmup window and one across the
+//! whole measured window, and requires the second to be at most a quarter of
+//! the first. Each rate is the window's last reading minus its first, over the
+//! number of cycle intervals between them — intervals rather than samples,
+//! because the two windows are different lengths and a sample-count denominator
+//! would scale each of them by its own length. It compares a rate against a
 //! rate, so it carries no unit: it is scale-free in the size of the process and
 //! — the part that took a failed CI run to learn — in the page size of the
 //! host. Accumulation and settling differ in their derivative, not their level.
-//! A leak adds the same amount every cycle, so its rate is flat and the ratio
-//! is one whatever the per-cycle amount; an allocator reaching a steady state
-//! against an unchanging transient pattern has a rate that decays toward zero.
+//! A leak adds the same amount every cycle, so its rate is the same in both
+//! windows and the ratio is exactly one whatever the per-cycle amount; an
+//! allocator reaching a steady state against an unchanging transient pattern
+//! has a rate that decays toward zero.
+//!
+//! `cargo xtask soak` decides that rule again from these samples with its own
+//! arithmetic, which is only worth something if the two can disagree, so
+//! neither imports the other. Both are held to the vectors in
+//! `tests/fixtures/soak/rate-vectors.json`, because writing them separately is
+//! what stops one from copying the other's bug and is not what stops them from
+//! sharing a misreading of what the statistic is.
 //!
 //! What resident memory cannot do is carry the accumulation claim on its own. A
 //! 1032-cycle run on the development host is flat for its last 800 samples, and
@@ -1396,8 +1418,18 @@ fn decide(
                     ),
                 };
             };
-            let early = rate(warmup);
-            let late = rate(series);
+            let (Some(early), Some(late)) = (rate(warmup), rate(series)) else {
+                return Decision {
+                    passed: false,
+                    explanation: format!(
+                        "the {} rule is decided from a rate per cycle, and a window of {} warmup \
+                         and {} measured samples spans too few cycle intervals to have one",
+                        rule.id,
+                        warmup.len(),
+                        series.len(),
+                    ),
+                };
+            };
             // A warmup that did not grow leaves nothing to decay from, and
             // nothing is allowed above zero: a process flat through warmup and
             // rising through measurement is the failure this rule exists for.
@@ -1482,18 +1514,29 @@ fn upward_steps(series: &[i64]) -> i64 {
 /// Endpoint-to-endpoint over the whole window, deliberately rather than a
 /// least-squares fit. The resident series is page-quantised and bursty, and a
 /// regression line inside a window is tilted by where a burst happens to fall;
-/// the same work produced last-third slopes differing by seven times across CI
-/// runs. A whole-window rate is unmoved by a burst's position because a burst
-/// shifts both endpoints of the window it lands in.
-fn rate(series: &[i64]) -> i64 {
-    let Some(first) = series.first() else {
-        return 0;
-    };
-    let Some(last) = series.last() else {
-        return 0;
-    };
-    let count = i64::try_from(series.len()).unwrap_or(i64::MAX).max(1);
-    (last - first).saturating_mul(1_000_000) / count
+/// the same work produced slopes differing by seven times across CI runs when
+/// the rate was read from part of the window. A whole-window rate is unmoved by
+/// a burst's position because a burst shifts both endpoints of the window it
+/// lands in.
+///
+/// The denominator is the number of cycle intervals the window spans, which is
+/// one fewer than the number of samples: `n` endpoints have `n - 1` gaps
+/// between them. Dividing by the sample count instead understates every rate by
+/// `(n - 1) / n`, and because warmup and measurement have different lengths the
+/// understatement does not cancel in their ratio — a constant leak would come
+/// out at `0.97` rather than the `1.00` the campaign's scope declares it must.
+///
+/// A window shorter than two samples spans no interval and has no rate. That is
+/// returned as `None` rather than as zero, because zero is a real rate that
+/// means "flat" and would be read as a passing warmup or a passing measurement.
+fn rate(series: &[i64]) -> Option<i64> {
+    let first = *series.first()?;
+    let last = *series.last()?;
+    let intervals = i64::try_from(series.len().checked_sub(1)?).unwrap_or(i64::MAX);
+    if intervals < 1 {
+        return None;
+    }
+    Some((last - first).saturating_mul(1_000_000) / intervals)
 }
 
 /// Returns the least-squares slope of a series, in millionths per cycle.
@@ -1804,5 +1847,143 @@ impl JobRepository for CountingRepository<'_> {
     ) -> BoxFuture<'a, Result<Box<dyn RepositoryUnitOfWork + 'a>, RepositoryError>> {
         self.begins.fetch_add(1, Ordering::SeqCst);
         self.inner.begin()
+    }
+}
+
+/// The declared rate vectors, applied to this report's own arithmetic.
+///
+/// The campaign's memory verdict is recomputed by `cargo xtask soak` from the
+/// same samples, and that recomputation is only worth something if the two
+/// implementations can disagree. They are therefore written separately and
+/// share no helper. What they do share is
+/// `tests/fixtures/soak/rate-vectors.json`: a defect in one implementation
+/// fails on that side alone, and a defect in the shared understanding of what
+/// the statistic is fails on both, which is the case a private fixture on each
+/// side would have missed.
+#[cfg(test)]
+mod rate_vectors {
+    #![allow(clippy::expect_used, clippy::panic)]
+
+    use std::fs;
+
+    use serde_json::Value;
+
+    use super::soak::scope::Rule;
+    use super::soak::workspace_root;
+    use super::{decide, rate};
+
+    /// Reads the declared vector document.
+    fn document() -> Value {
+        let path = workspace_root()
+            .join("tests")
+            .join("fixtures")
+            .join("soak")
+            .join("rate-vectors.json");
+        let text = fs::read_to_string(&path).expect("the declared rate vectors are committed");
+        serde_json::from_str(&text).expect("the declared rate vectors parse")
+    }
+
+    /// Reads one series field as a vector of readings.
+    fn series(vector: &Value, name: &str) -> Vec<i64> {
+        vector[name]
+            .as_array()
+            .expect("the vector declares the series")
+            .iter()
+            .map(|value| value.as_i64().expect("a reading is an integer"))
+            .collect()
+    }
+
+    /// The rule under test, at the decay the vectors declare.
+    fn rule(decay: i64) -> Rule {
+        Rule {
+            id: "resident-memory-converges".to_owned(),
+            metric: "resident_kib".to_owned(),
+            decides: "warmup-relative-rate-decay".to_owned(),
+            decay_percent: Some(decay),
+        }
+    }
+
+    #[test]
+    fn declared_rates_match_this_implementation() {
+        let document = document();
+        for vector in document["vectors"].as_array().expect("vectors") {
+            let id = vector["id"].as_str().expect("the vector is named");
+            for name in ["warmup", "measured"] {
+                let declared = vector[format!("{name}_rate_micro")].as_i64();
+                let computed = rate(&series(vector, name));
+                assert_eq!(
+                    computed, declared,
+                    "{id}: the {name} window's declared rate is {declared:?} and this \
+                     implementation computes {computed:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn declared_verdicts_match_this_implementation() {
+        let document = document();
+        let decay = document["decay_percent"].as_i64().expect("decay percent");
+        for vector in document["vectors"].as_array().expect("vectors") {
+            let id = vector["id"].as_str().expect("the vector is named");
+            let expected = vector["passes"].as_bool().expect("the verdict is declared");
+            let warmup = series(vector, "warmup");
+            let decision = decide(
+                &rule(decay),
+                &series(vector, "measured"),
+                None,
+                0,
+                Some(&warmup),
+            );
+            assert_eq!(
+                decision.passed, expected,
+                "{id}: the declared verdict is {expected} and this implementation decided \
+                 {} — {}",
+                decision.passed, decision.explanation,
+            );
+        }
+    }
+
+    #[test]
+    fn a_constant_leak_rates_the_same_in_windows_of_any_length() {
+        let document = document();
+        let decay = document["decay_percent"].as_i64().expect("decay percent");
+        let cases = document["constant_growth_property"]["cases"]
+            .as_array()
+            .expect("cases");
+        for case in cases {
+            let slope = case["slope"].as_i64().expect("slope");
+            let build = |samples: u64, origin: i64| -> Vec<i64> {
+                (0..samples)
+                    .map(|index| origin + slope * i64::try_from(index).expect("index fits"))
+                    .collect()
+            };
+            let warmup = build(case["warmup_samples"].as_u64().expect("warmup"), 1_000);
+            let measured = build(case["measured_samples"].as_u64().expect("measured"), 7_777);
+
+            // The property the rule is stated in terms of: a leak adds the same
+            // amount every cycle, so its rate does not depend on how long the
+            // window watching it happens to be. Only an interval denominator
+            // gives that; dividing by the sample count makes the rate a
+            // function of the window length and the ratio drift away from one.
+            let (early, late) = (rate(&warmup), rate(&measured));
+            assert_eq!(
+                early,
+                Some(slope * 1_000_000),
+                "a constant rise of {slope} over {} samples",
+                warmup.len(),
+            );
+            assert_eq!(
+                early, late,
+                "the same constant rise in windows of different length"
+            );
+
+            let decision = decide(&rule(decay), &measured, None, 0, Some(&warmup));
+            assert!(
+                !decision.passed,
+                "a constant leak must fail at {decay}% — {}",
+                decision.explanation,
+            );
+        }
     }
 }
