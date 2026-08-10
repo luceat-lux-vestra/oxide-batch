@@ -1729,23 +1729,59 @@ permanently, and accepting an unresolvable one would decide nothing. So it is
 recorded, compared against what the artifact itself says, and never resolved,
 while the branch head is recorded separately.
 
-Two content bindings are enforced by `cargo xtask evidence`, both working from
-the retained files alone:
+Two verifications with different reach, and the difference is worth being
+precise about. `cargo xtask evidence` is **repository-local**: it resolves
+nothing over the network, so it keeps working long after GitHub has expired the
+artifacts it describes — and what it establishes is that the retained bytes are
+the bytes this repository recorded, over a tree whose campaign still means what
+it meant. It cannot say they are the bytes the workflow uploaded. That stronger
+check needs the GitHub API, so it is performed **once, at the moment evidence is
+promoted** — the run and job are confirmed to exist and to have succeeded, the
+artifact's own sha256 digest is recorded, and the downloaded artifact's report
+is compared byte-for-byte with the retained file — and its result is recorded
+per entry under `remote_verification`. It is deliberately not a permanent CI
+dependency: Actions artifacts expire, and a verifier that stopped working on a
+retention boundary would be switched off rather than fixed.
+
+The local binding is two content identities, both working from the retained
+files alone:
 
 - **the artifact's git blob identity**, which fails if a byte of a retained
   report is edited after retention;
 - **the git object identity of every path that defines what the campaign
-  executes** — the framework crates, the report, the shared soak mechanics, the
-  campaign scope, and the runner — taken at the producer commit. If one differs
-  today, the report describes a campaign this tree no longer runs, and it may
-  not be promoted: the campaign has to be run again on the new tree.
+  executes**, taken at the producer commit — and checked as a three-way
+  identity, `producer:<path>` == recorded == `HEAD:<path>`, rather than a
+  two-way one. The middle term alone is worthless: change a campaign path, leave
+  the producer SHA alone, and refresh the recorded identities from the current
+  tree, and recorded and `HEAD` agree perfectly while the report describes a
+  campaign nobody runs. Resolving the objects at the producer commit is what
+  makes that visible, which is why the producer commit must resolve rather than
+  merely be quoted.
+
+  The set is the campaign's whole input closure, grouped by what each input
+  contributes: framework implementation, campaign implementation, campaign
+  fixture, database migrations, dependency resolution (including `Cargo.lock`),
+  toolchain and build configuration, and the runner. The first version of that
+  list was assembled by hand from the code the campaign obviously touches and
+  omitted every input that reaches it indirectly — the resolved dependency
+  graph, the schema the run migrates to, the compiler it is built with. A
+  campaign is not defined only by the code that spells it out.
 
 The second is the one that carries weight. It is what stops the genuinely
 tempting move of keeping a green report while changing the rule that made it
-green, and it is checked by a CI job rather than by review. Fourteen tests hold
-the verifier itself, including an edited artifact, a producer commit the report
-does not name, a half matrix, an unidentified workflow run, and a changed
-campaign scope.
+green, and it is checked by a CI job rather than by review. Twenty-seven tests
+hold the verifier itself, including an edited artifact, a producer commit the
+report does not name, provenance rewritten to the current head, an unresolvable
+producer, a changed `Cargo.lock`, a changed migration, a changed toolchain pin,
+a duplicated and an undeclared matrix point, and every required field emptied.
+
+The campaign runner is held to the same standard from the other side. Its growth
+verdicts are **recomputed** from the retained samples rather than read: the
+series each verdict claims must equal the measured samples element by element,
+and every rule — including the `50%` rate decay — is decided again by the runner
+from those samples with an independent implementation of the declared algorithm.
+A report that marked a straight line as passing fails on the recomputation
+rather than on its own word.
 
 The workflow file is deliberately outside that set. What matters is the job that
 ran, and the run id, attempt, and job identity name one immutable execution more

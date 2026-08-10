@@ -260,7 +260,7 @@ The soak campaign requires `OXIDEBATCH_POSTGRES_TEST_URL` and
 `OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL`, and fails before running anything when
 either is absent. It needs a server that will grant it `5` connections for the
 whole run, which is `worker_budget + 1` and is the pool it holds open from
-before the first cycle until after the last. It runs `152` cycles and takes
+before the first cycle until after the last. It runs `632` cycles and takes
 minutes rather than seconds, which is the point of it; the declared window is
 committed in
 [`tests/fixtures/soak/campaign-scope.json`](../../../../tests/fixtures/soak/campaign-scope.json)

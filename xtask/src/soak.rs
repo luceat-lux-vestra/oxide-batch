@@ -480,15 +480,19 @@ fn reconcile_growth(scope: &Scope, observation: &Value) -> Vec<String> {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let by_id = verdicts
-        .iter()
-        .filter_map(|verdict| {
-            verdict
-                .get("id")
-                .and_then(Value::as_str)
-                .map(|id| (id.to_owned(), verdict.clone()))
-        })
-        .collect::<BTreeMap<_, _>>();
+    let mut by_id: BTreeMap<String, Value> = BTreeMap::new();
+    for verdict in &verdicts {
+        let Some(id) = verdict.get("id").and_then(Value::as_str) else {
+            violations.push("the report decided a rule with no identity".to_owned());
+            continue;
+        };
+        if by_id.insert(id.to_owned(), verdict.clone()).is_some() {
+            violations.push(format!(
+                "the report decided {id} more than once, so which verdict the campaign passed on \
+                 depends on which one is read"
+            ));
+        }
+    }
 
     for rule in &scope.rules {
         let Some(verdict) = by_id.get(&rule.id) else {
@@ -520,29 +524,40 @@ fn reconcile_growth(scope: &Scope, observation: &Value) -> Vec<String> {
                     .unwrap_or("no stated rule"),
             ));
         }
-        // The series has to be there. A verdict is a boolean, and a boolean
-        // that nobody can check against the readings it came from is the kind
-        // of green this campaign is built to refuse.
-        let series = verdict
-            .get("series")
-            .and_then(Value::as_array)
-            .map_or(0, Vec::len) as u64;
-        if series < scope.minimum_measured_samples {
+
+        let measured = measured_series(observation, &rule.metric);
+        violations.extend(reconcile_series(rule, verdict, measured.as_deref()));
+        let Some(measured) = measured else {
+            continue;
+        };
+        if (measured.len() as u64) < scope.minimum_measured_samples {
             violations.push(format!(
-                "the {} rule was decided from {series} readings and the campaign requires at \
-                 least {}",
-                rule.id, scope.minimum_measured_samples,
+                "the {} rule was decided from {} readings and the campaign requires at least {}",
+                rule.id,
+                measured.len(),
+                scope.minimum_measured_samples,
             ));
         }
-        if verdict.get("passed").and_then(Value::as_bool) != Some(true) {
+
+        // The verdict itself is recomputed here, from the samples, by this
+        // program. The report's own boolean is then required to agree with it —
+        // a report that marked a leaking series as passing fails on the
+        // recomputation rather than being taken at its word.
+        let baseline = baseline_reading(observation, &rule.metric);
+        let recomputed = decide(rule, &measured, baseline, scope.pool_size);
+        let claimed_pass = verdict.get("passed").and_then(Value::as_bool);
+        if claimed_pass != Some(recomputed.passed) {
             violations.push(format!(
-                "{}: {}",
+                "the {} rule reports passed={} and recomputing it from the measured samples gives \
+                 {}: {}",
                 rule.id,
-                verdict
-                    .get("explanation")
-                    .and_then(Value::as_str)
-                    .unwrap_or("the report gave no reason"),
+                claimed_pass.map_or_else(|| "nothing".to_owned(), |value| value.to_string()),
+                recomputed.passed,
+                recomputed.explanation,
             ));
+        }
+        if !recomputed.passed {
+            violations.push(format!("{}: {}", rule.id, recomputed.explanation));
         }
     }
 
@@ -555,6 +570,216 @@ fn reconcile_growth(scope: &Scope, observation: &Value) -> Vec<String> {
     }
 
     violations
+}
+
+/// Requires a verdict's series to be the one the retained samples carry.
+///
+/// A verdict decided from readings nobody else can see is not checkable, so the
+/// two are compared element by element rather than by length.
+fn reconcile_series(rule: &Rule, verdict: &Value, measured: Option<&[i64]>) -> Vec<String> {
+    let claimed = verdict
+        .get("series")
+        .and_then(Value::as_array)
+        .map(|values| values.iter().map(Value::as_i64).collect::<Vec<_>>());
+    match (measured, claimed) {
+        (Some(measured), Some(claimed)) => {
+            if claimed.len() == measured.len()
+                && claimed
+                    .iter()
+                    .zip(measured)
+                    .all(|(claimed, measured)| *claimed == Some(*measured))
+            {
+                return Vec::new();
+            }
+            vec![format!(
+                "the {} rule was decided from a series of {} reading(s) that is not the {} the \
+                 measured samples carry for {}",
+                rule.id,
+                claimed.len(),
+                measured.len(),
+                rule.metric,
+            )]
+        }
+        (None, _) => vec![format!(
+            "the {} rule is decided from {}, which the measured samples do not all carry",
+            rule.id, rule.metric,
+        )],
+        (_, None) => vec![format!(
+            "the {} rule carries no series to check against the measured samples",
+            rule.id,
+        )],
+    }
+}
+
+/// Rebuilds one metric's measured series from the retained samples.
+///
+/// This is the authoritative series. A verdict carries its own copy, and the
+/// two are required to be identical, but the samples are what the campaign
+/// retained and what a reader can check.
+fn measured_series(observation: &Value, metric: &str) -> Option<Vec<i64>> {
+    let samples = observation.get("samples").and_then(Value::as_array)?;
+    samples
+        .iter()
+        .filter(|sample| sample.get("phase").and_then(Value::as_str) == Some("measured"))
+        .map(|sample| {
+            sample
+                .pointer(&format!("/metrics/{metric}"))
+                .and_then(Value::as_i64)
+        })
+        .collect()
+}
+
+/// Reads one metric's post-warmup baseline from the retained samples.
+///
+/// The baseline the campaign declares is the last warmup sample: the first
+/// reading taken with the pool open, the arenas sized, and the runtime started.
+fn baseline_reading(observation: &Value, metric: &str) -> Option<i64> {
+    observation
+        .get("samples")
+        .and_then(Value::as_array)?
+        .iter()
+        .rfind(|sample| sample.get("phase").and_then(Value::as_str) == Some("warmup"))?
+        .pointer(&format!("/metrics/{metric}"))
+        .and_then(Value::as_i64)
+}
+
+/// One rule's recomputed decision and the sentence that explains it.
+struct Decision {
+    passed: bool,
+    explanation: String,
+}
+
+/// Applies one declared rule to one measured series.
+///
+/// This is a second implementation of the rule the report applies, deliberately
+/// kept independent of it. The report and this program share the declared rule
+/// and the samples; they do not share the boolean, and they do not share the
+/// code that produces it. Two implementations of one documented algorithm
+/// disagreeing is a finding, which is the point.
+fn decide(rule: &Rule, series: &[i64], baseline: Option<i64>, capacity: u64) -> Decision {
+    match rule.decides.as_str() {
+        "every-measured-sample-equals-zero" => {
+            let offenders = series.iter().filter(|value| **value != 0).count();
+            Decision {
+                passed: offenders == 0,
+                explanation: format!(
+                    "{} was non-zero at {offenders} of {} measured boundaries",
+                    rule.metric,
+                    series.len(),
+                ),
+            }
+        }
+        "no-measured-sample-above-baseline" => {
+            let Some(baseline) = baseline else {
+                return Decision {
+                    passed: false,
+                    explanation: format!(
+                        "{} is decided against the post-warmup baseline and no warmup sample \
+                         carries {}",
+                        rule.id, rule.metric,
+                    ),
+                };
+            };
+            let worst = series.iter().copied().max().unwrap_or(baseline);
+            Decision {
+                passed: worst <= baseline,
+                explanation: format!(
+                    "{} settled at {baseline} after warmup and the measured window reached {worst}",
+                    rule.metric,
+                ),
+            }
+        }
+        "no-measured-sample-above-configured-capacity" => {
+            let capacity = i64::try_from(capacity).unwrap_or(i64::MAX);
+            let worst = series.iter().copied().max().unwrap_or_default();
+            Decision {
+                passed: worst <= capacity,
+                explanation: format!(
+                    "{} reached {worst} against a configured capacity of {capacity}",
+                    rule.metric,
+                ),
+            }
+        }
+        "growth-rate-decays" => decide_decay(rule, series),
+        other => Decision {
+            passed: false,
+            explanation: format!(
+                "the {} rule asks for {other}, which this runner does not know how to recompute, \
+                 so its verdict cannot be checked",
+                rule.id,
+            ),
+        },
+    }
+}
+
+/// Decides the convergence rule from the measured series.
+fn decide_decay(rule: &Rule, series: &[i64]) -> Decision {
+    let Some(decay) = rule.decay_percent else {
+        return Decision {
+            passed: false,
+            explanation: format!(
+                "the {} rule is decided on a decay and the campaign declares none",
+                rule.id,
+            ),
+        };
+    };
+    let third = series.len() / 3;
+    if third == 0 {
+        return Decision {
+            passed: false,
+            explanation: format!(
+                "{} cannot be split into thirds from {} samples",
+                rule.metric,
+                series.len(),
+            ),
+        };
+    }
+    let early = slope(&series[..third]);
+    let late = slope(&series[series.len() - third..]);
+    // A series already flat has an early rate of zero, and nothing is allowed
+    // above zero: flat early and rising late is the failure this rule exists
+    // for, and scaling zero by any percentage would admit it.
+    let passed = if early <= 0 {
+        late <= 0
+    } else {
+        late.saturating_mul(100) <= early.saturating_mul(decay)
+    };
+    Decision {
+        passed,
+        explanation: format!(
+            "{} grew at {early} millionths of a KiB per cycle over the first third of the \
+             measured window and {late} over the last, against a rule that the last must be at \
+             most {decay}% of the first",
+            rule.metric,
+        ),
+    }
+}
+
+/// Returns the least-squares slope of a series, in millionths per cycle.
+///
+/// The same integer algorithm the report uses, restated here rather than
+/// shared, so that the two arrive at the rate independently.
+fn slope(series: &[i64]) -> i64 {
+    let count = i64::try_from(series.len()).unwrap_or(i64::MAX);
+    if count < 2 {
+        return 0;
+    }
+    let mut positions = 0_i64;
+    let mut values = 0_i64;
+    let mut products = 0_i64;
+    let mut squares = 0_i64;
+    for (index, value) in series.iter().enumerate() {
+        let position = i64::try_from(index).unwrap_or(i64::MAX);
+        positions += position;
+        values += value;
+        products += position * value;
+        squares += position * position;
+    }
+    let denominator = count * squares - positions * positions;
+    if denominator == 0 {
+        return 0;
+    }
+    (count * products - positions * values).saturating_mul(1_000_000) / denominator
 }
 
 /// Requires the final drain to have joined everything and closed the pool.
@@ -722,6 +947,7 @@ fn write_report(
                 "id": rule.id,
                 "metric": rule.metric,
                 "rule": rule.decides,
+                "decay_percent": rule.decay_percent,
             }))
             .collect::<Vec<_>>(),
         "report_result": run.outcome,
@@ -837,6 +1063,9 @@ struct Rule {
     metric: String,
     /// How the metric's measured series decides the rule.
     decides: String,
+    /// How far the late growth rate must fall below the early one, in percent,
+    /// for a rule decided on convergence rather than on a level.
+    decay_percent: Option<i64>,
 }
 
 /// The report the campaign delivers.
@@ -916,6 +1145,7 @@ impl Scope {
                 id: suite::string(rule, "id")?,
                 metric: suite::string(rule, "metric")?,
                 decides: suite::string(rule, "rule")?,
+                decay_percent: rule.get("decay_percent").and_then(Value::as_i64),
             });
         }
 
@@ -992,8 +1222,8 @@ mod tests {
             },
             claim: "bounded by the declared window".to_owned(),
             warmup_cycles: 2,
-            measured_cycles: 4,
-            minimum_measured_samples: 4,
+            measured_cycles: 12,
+            minimum_measured_samples: 12,
             partitions_per_cycle: 16,
             worker_budget: 4,
             pool_size: 5,
@@ -1001,24 +1231,58 @@ mod tests {
             owned_tasks_per_drain: 4,
             observations: vec!["resident_kib".to_owned()],
             correctness: vec!["drain-complete".to_owned()],
-            rules: vec![Rule {
-                id: "resident-memory-does-not-accumulate".to_owned(),
-                metric: "resident_kib".to_owned(),
-                decides: "second-half-minimum-not-above-first-half-maximum".to_owned(),
-            }],
+            rules: vec![
+                Rule {
+                    id: "resident-memory-converges".to_owned(),
+                    metric: "resident_kib".to_owned(),
+                    decides: "growth-rate-decays".to_owned(),
+                    decay_percent: Some(50),
+                },
+                Rule {
+                    id: "connections-are-returned".to_owned(),
+                    metric: "pool_connections_in_use".to_owned(),
+                    decides: "every-measured-sample-equals-zero".to_owned(),
+                    decay_percent: None,
+                },
+            ],
             excluded: Value::Null,
             related: Value::Null,
         }
     }
 
+    /// Measured readings in the fixture window.
+    ///
+    /// Twelve rather than a handful, because the convergence rule estimates a
+    /// slope over each outer third: with four readings the thirds are one
+    /// sample apiece, both slopes are zero by definition, and every series
+    /// passes — including a straight line. A fixture that small does not
+    /// exercise the rule at all, which is why the campaign's own window is
+    /// six hundred.
+    const MEASURED: usize = 12;
+
+    /// A converging resident series: it rises early and flattens.
+    const RESIDENT: [i64; MEASURED] = [100, 104, 108, 112, 114, 115, 116, 116, 116, 116, 116, 116];
+
+    /// A straight line — a leak of a fixed amount every cycle.
+    const LEAKING: [i64; MEASURED] = [
+        100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200,
+    ];
+
+    /// Flat through the window and rising only at the end.
+    const LATE_RISE: [i64; MEASURED] = [100, 100, 100, 100, 100, 100, 100, 100, 100, 200, 300, 400];
+
     /// Builds the observation a healthy run of that scope would retain.
     fn observation() -> Value {
-        let samples = (0..6)
+        let samples = (0..MEASURED + 2)
             .map(|cycle| {
+                let measured = cycle >= 2;
                 json!({
                     "cycle": cycle,
-                    "phase": if cycle < 2 { "warmup" } else { "measured" },
-                    "metrics": { "resident_kib": 100 },
+                    "phase": if measured { "measured" } else { "warmup" },
+                    "metrics": {
+                        "resident_kib": if measured { RESIDENT[cycle - 2] } else { 100 },
+                        "pool_connections_in_use": 0,
+                    },
                 })
             })
             .collect::<Vec<_>>();
@@ -1029,16 +1293,16 @@ mod tests {
             "environment": { "pool": { "size": 5 } },
             "campaign": {
                 "warmup_cycles": 2,
-                "measured_cycles": 4,
-                "completed_cycles": 6,
+                "measured_cycles": MEASURED,
+                "completed_cycles": MEASURED + 2,
                 "partitions_per_cycle": 16,
                 "worker_budget": 4,
                 "launches_per_cycle": 2,
                 "owned_tasks_per_drain": 4,
-                "faults_injected": 6,
-                "restarts": 6,
-                "recoveries": 6,
-                "drains_completed": 6,
+                "faults_injected": MEASURED + 2,
+                "restarts": MEASURED + 2,
+                "recoveries": MEASURED + 2,
+                "drains_completed": MEASURED + 2,
                 "pool_readings": 900,
             },
             "samples": samples,
@@ -1047,14 +1311,24 @@ mod tests {
                 "checks": [{ "id": "drain-complete", "holds": true }],
             },
             "growth": {
-                "rules": [{
-                    "id": "resident-memory-does-not-accumulate",
-                    "metric": "resident_kib",
-                    "rule": "second-half-minimum-not-above-first-half-maximum",
-                    "decided": true,
-                    "passed": true,
-                    "series": [100, 100, 100, 100],
-                }],
+                "rules": [
+                    {
+                        "id": "resident-memory-converges",
+                        "metric": "resident_kib",
+                        "rule": "growth-rate-decays",
+                        "decided": true,
+                        "passed": true,
+                        "series": RESIDENT,
+                    },
+                    {
+                        "id": "connections-are-returned",
+                        "metric": "pool_connections_in_use",
+                        "rule": "every-measured-sample-equals-zero",
+                        "decided": true,
+                        "passed": true,
+                        "series": vec![0; MEASURED],
+                    },
+                ],
             },
             "final_drain": {
                 "pre_close_pool": { "connections": 5, "idle": 5, "in_use": 0 },
@@ -1140,7 +1414,7 @@ mod tests {
         assert!(
             violations
                 .iter()
-                .any(|violation| violation.contains("declares 4 measured_cycles")),
+                .any(|violation| violation.contains("declares 12 measured_cycles")),
             "{violations:?}",
         );
     }
@@ -1156,7 +1430,7 @@ mod tests {
         assert!(
             violations
                 .iter()
-                .any(|violation| violation.contains("5 samples were retained")),
+                .any(|violation| violation.contains("13 samples were retained")),
             "{violations:?}",
         );
     }
@@ -1199,7 +1473,7 @@ mod tests {
             assert!(
                 violations
                     .iter()
-                    .any(|violation| violation.contains("6 cycles ran")),
+                    .any(|violation| violation.contains("14 cycles ran")),
                 "{field}: {violations:?}",
             );
         }
@@ -1231,11 +1505,25 @@ mod tests {
 
     #[test]
     fn a_verdict_decided_from_too_few_readings_is_rejected() {
-        let violations = reconcile(with("/growth/rules/0/series", json!([100, 100])));
+        // Fewer measured samples than the campaign declares. The window checks
+        // fire too; this asserts the growth rule refuses to be decided from
+        // them independently of that.
+        let mut observation = observation();
+        let samples = observation["samples"].as_array_mut().expect("samples");
+        samples.truncate(5);
+        for rule in observation["growth"]["rules"]
+            .as_array_mut()
+            .expect("rules")
+            .iter_mut()
+        {
+            let series = rule["series"].as_array_mut().expect("series");
+            series.truncate(3);
+        }
+        let violations = reconcile(observation);
         assert!(
             violations
                 .iter()
-                .any(|violation| violation.contains("decided from 2 readings")),
+                .any(|violation| violation.contains("readings and the campaign requires at least")),
             "{violations:?}",
         );
     }
@@ -1257,7 +1545,118 @@ mod tests {
         assert!(
             violations
                 .iter()
-                .any(|violation| violation.starts_with("resident-memory-does-not-accumulate:")),
+                .any(|violation| violation.contains("reports passed=false")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn accepts_declared_50_percent_rate_decay() {
+        // The healthy shape on its own, so the rejections below cannot all be
+        // passing for an unrelated reason.
+        let violations = reconcile(observation());
+        assert!(
+            !violations
+                .iter()
+                .any(|violation| violation.contains("resident-memory-converges")),
+            "{violations:?}",
+        );
+    }
+
+    /// Rewrites the observation so a metric carries the given measured series.
+    fn with_series(metric: &str, rule: usize, series: [i64; MEASURED]) -> Value {
+        let mut observation = observation();
+        for (index, value) in series.iter().enumerate() {
+            observation["samples"][index + 2]["metrics"][metric] = json!(value);
+        }
+        observation["growth"]["rules"][rule]["series"] = json!(series);
+        observation
+    }
+
+    #[test]
+    fn rejects_passed_true_for_leaking_series() {
+        // The forged green this whole recomputation exists for: a straight
+        // line reported as passing. The runner rebuilds the verdict from the
+        // samples and disagrees.
+        let violations = reconcile(with_series("resident_kib", 0, LEAKING));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("reports passed=true")
+                    && violation.contains("gives false")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_flat_early_but_rising_late_memory() {
+        // Zero early rate admits nothing above zero, or a process that only
+        // starts growing halfway through the window would pass.
+        let violations = reconcile(with_series("resident_kib", 0, LATE_RISE));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("resident-memory-converges")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_forged_pass_on_an_exact_count_rule() {
+        let mut leaked = [0; MEASURED];
+        leaked[7] = 1;
+        let violations = reconcile(with_series("pool_connections_in_use", 1, leaked));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("connections-are-returned")
+                    && violation.contains("non-zero at 1")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_growth_series_different_from_measured_samples() {
+        // The verdict keeps a flattering series while the samples say
+        // otherwise. Element-by-element comparison catches it.
+        let mut observation = observation();
+        observation["samples"][3]["metrics"]["resident_kib"] = json!(9999);
+        let violations = reconcile(observation);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("is not the")
+                    && violation.contains("measured samples carry")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_wrong_decay_threshold() {
+        // A report that applied a laxer decay than the campaign declares.
+        let violations = reconcile(with("/growth/rules/0/rule", json!("growth-rate-decays-90")));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("the report applied growth-rate-decays-90")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_rule_duplicate_ids() {
+        let mut observation = observation();
+        let duplicate = observation["growth"]["rules"][0].clone();
+        observation["growth"]["rules"]
+            .as_array_mut()
+            .expect("rules")
+            .push(duplicate);
+        let violations = reconcile(observation);
+        assert!(
+            violations.iter().any(|violation| violation.contains(
+                "decided resident-memory-converges more than \
+                                                     once"
+            ) || violation.contains("more than once")),
             "{violations:?}",
         );
     }

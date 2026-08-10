@@ -394,7 +394,7 @@ jobs:
   soak-campaign:
     name: postgres-${{ matrix.postgres }}-soak-campaign
     runs-on: ubuntu-latest
-    # The declared window is 32 warmup and 120 measured cycles, each a launch,
+    # The declared window is 32 warmup and 600 measured cycles, each a launch,
     # a fault, a restart, and a drain. That is minutes rather than seconds, so
     # the ceiling is higher than the other campaigns' — and it is still a
     # ceiling, because a soak that stopped making progress must fail rather
