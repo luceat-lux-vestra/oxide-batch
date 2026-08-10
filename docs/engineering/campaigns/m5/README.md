@@ -30,6 +30,8 @@ a pass or failure that does not.
 | [`security-campaign-postgres-18.json`](security-campaign-postgres-18.json) | Security | The same, on PostgreSQL 18 |
 | [`resource-bounds-campaign-postgres-15.json`](resource-bounds-campaign-postgres-15.json) | Resource bounds | Every declared bounded resource, the ceiling each report checked, the load it was offered, the occupancy it reached, and what it shed or refused, on PostgreSQL 15 |
 | [`resource-bounds-campaign-postgres-18.json`](resource-bounds-campaign-postgres-18.json) | Resource bounds | The same, on PostgreSQL 18 |
+| `soak-campaign-postgres-15.json` | Soak | The declared warmup and measured window, every cycle's fault, restart, recovery, drain, and durable record, and the per-cycle task, connection, handle, memory, and durable-history series each growth rule was decided from, on PostgreSQL 15 |
+| `soak-campaign-postgres-18.json` | Soak | The same, on PostgreSQL 18 |
 
 A file carries the matrix point in its name because one run produces one
 report: the runner always writes `conformance-campaign.json`, and the two jobs
@@ -109,6 +111,47 @@ lower wherever running at the declared ceiling would leave nothing to hold back.
 The report also carries `out_of_scope`, so a reader can tell a resource the
 campaign examined and excluded from one it never looked at.
 
+## The soak campaign
+
+The soak report is the only one here whose body is a *series* rather than a set
+of outcomes, and it is shaped that way because of a failure mode the other
+campaigns do not have: a soak's obligation is a period, so a run that did less
+produces a flatter series and therefore a more convincing report.
+
+`declared_window` is the committed denominator and `observed_window` is what the
+run actually did, side by side, because the interesting question about a soak
+report is never only whether it passed. Under `observation.samples` there is one
+boundary sample per cycle, each carrying its phase — `warmup` or `measured` —
+and every declared metric: the alive-task count, the pool's connections, idle
+connections, and checked-out connections, the peak occupancy reached while the
+cycle ran, the database's own backend count, the open handle count, resident
+memory, and the durable history the cycle added. `observation.cycles` carries
+the lifecycle beside it: what the failed attempt committed, which partition the
+fault was injected into, what the restart re-ran, the terminal durable record,
+and the drain result.
+
+The durable-history metrics are in every sample and under no growth rule, and
+the separation is the point rather than an omission. The database is supposed to
+grow; a report that treated that as a leak would be requiring the framework to
+forget its own history, and one that omitted it would let a flat process series
+be read without knowing whether the workload was still doing anything.
+
+`observation.growth.rules` carries one verdict per declared rule, and each
+verdict carries the series it was decided from and a structural summary of it —
+first, last, minimum, maximum, delta, upward level shifts, the two half
+statistics, and a least-squares slope. The series is there so the decision can
+be checked rather than trusted; the slope and the half statistics are recorded
+and never asserted on. The runner requires the verdict to name the rule the
+scope declares and to carry at least the declared minimum number of readings, so
+a rule cannot be answered by a bare boolean or decided from a handful of
+samples.
+
+The resident-memory verdict is the one to read carefully, because it is the only
+rule here that could be mistaken for a budget and is not one. It counts how
+often the series rose to a level it had not held before and never how far, so
+`upward_steps` against the declared allowance is the whole decision, and a
+passing report says nothing about how much memory the run used.
+
 ## Reproducing
 
 ```bash
@@ -123,6 +166,9 @@ OXIDEBATCH_CAMPAIGN_DIR=docs/engineering/campaigns/m5 \
 
 OXIDEBATCH_CAMPAIGN_DIR=docs/engineering/campaigns/m5 \
   cargo run --package oxide-batch-xtask -- resource-bounds
+
+OXIDEBATCH_CAMPAIGN_DIR=docs/engineering/campaigns/m5 \
+  cargo run --package oxide-batch-xtask -- soak
 ```
 
 Without `OXIDEBATCH_CAMPAIGN_DIR` the runner writes to `target/m5-campaigns`,
@@ -160,6 +206,17 @@ because the worker report saturates a partition budget of `64` and the derived
 requirement is one connection per child plus the parent's; the official image's
 default of `100` is enough and the CI axes do not raise it. Its committed files
 come from the `postgres-<version>-resource-bound-campaign` CI jobs.
+
+The soak campaign requires `OXIDEBATCH_POSTGRES_TEST_URL` and
+`OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL`, and fails before running anything when
+either is absent. It needs a server that will grant it `5` connections for the
+whole run, which is `worker_budget + 1` and is the pool it holds open from
+before the first cycle until after the last. It runs `152` cycles and takes
+minutes rather than seconds, which is the point of it; the declared window is
+committed in
+[`tests/fixtures/soak/campaign-scope.json`](../../../../tests/fixtures/soak/campaign-scope.json)
+and the runner refuses a run that covered less of it. Its committed files come
+from the `postgres-<version>-soak-campaign` CI jobs.
 
 The security campaign needs more than a connection string, so it is reproduced
 through the fixture script that builds what a URL cannot carry:
@@ -214,6 +271,18 @@ green without doing anything fails. The security runner requires the substance
 of a negative claim: the three transport refusals and the reason each carried,
 every privilege class on both sides of its boundary with every refusal under
 `42501`, and every swept surface and value class with nothing found.
+
+The soak runner requires a further thing, because its campaign is the one that
+can be weakened by doing less rather than by doing nothing. A soak that ran
+three cycles and one that ran three hundred produce reports of identical shape,
+both green, and the shorter one produces the flatter series and therefore the
+more convincing result. So the runner reads the committed denominator itself and
+requires the declared warmup and measured windows to have run with a sample
+each, the workload to have been the declared one down to the partition count and
+pool size, the lifecycle to have happened once per cycle — a fault, a restart, a
+recovery, and a completed drain — and every declared growth rule to have been
+decided, to have applied the rule the scope declares, and to carry the readings
+it was decided from.
 
 Each database report must also name the PostgreSQL major it ran against,
 because a matrix point is invisible in a connection string and an observation

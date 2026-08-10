@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `cargo xtask soak`, the M5 PostgreSQL soak campaign. It runs a declared window
+  of repeated launch, fault, restart, recovery, and drain cycles against one
+  PostgreSQL pool and reports task, connection, handle, and memory growth over
+  it — the P-015 obligation the performance plan states and the
+  `soak_reports_no_task_connection_handle_or_memory_growth` scenario the design
+  gate names. The M4 in-memory measurement it builds on is retained unchanged
+  and is not cited as a PostgreSQL result; a test asserts that it still runs on
+  the in-memory repository, because relabelling it would be the cheapest way to
+  appear to deliver this. The campaign's denominator is a *period*, which is the
+  failure mode it is shaped around: a soak that ran three cycles and one that ran
+  three hundred produce reports of identical shape, and the shorter one produces
+  the flatter series and the more convincing result. So the window — 32 warmup
+  and 120 measured cycles, 16 partitions against a worker budget of 4 through a
+  pool of exactly 5 — is committed as `tests/fixtures/soak/campaign-scope.json`
+  and read by all three consumers: the report takes its cycle counts and rules
+  from it, the runner requires the run to have matched it, and an ordinary test
+  reconciles it against the accepted plan and design gate. Correctness comes
+  before any resource number: fifteen durable obligations are decided every
+  cycle against the first measured cycle, because flatness over a workload that
+  stopped working is not a result. The fault is injected by a worker that waits
+  for its siblings rather than firing on a timer, since a cooperative sibling
+  stop is consulted only before a tasklet is invoked and a timed fault would give
+  every cycle a different durable record. Eight growth rules are declared before
+  the run, decided from the measured samples alone, and each verdict carries the
+  series it was decided from, so no trajectory is passed by eye. No memory budget
+  was invented: the resident rule counts how often the level shifted upward and
+  never how far, which fails a leak of any per-cycle size and says nothing about
+  how much memory the framework may use. CI runs it on PostgreSQL 15 and 18 and
+  retains each report on failure as well as success, because a failed soak's
+  value is its trajectory. No production code changed.
 - `cargo xtask resource-bounds`, the M5 resource-bound campaign. It proves that
   every queue, retry cache, page, buffer, worker assignment, and result set the
   framework owns has a finite ceiling, that the ceiling is enforced under the
