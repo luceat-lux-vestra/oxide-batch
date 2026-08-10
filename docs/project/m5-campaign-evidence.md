@@ -1624,18 +1624,18 @@ Both matrix points pass with no violations.
 | [`soak-campaign-postgres-15.json`](../engineering/campaigns/m5/soak-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
 | [`soak-campaign-postgres-18.json`](../engineering/campaigns/m5/soak-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
 
-Both were produced by commit `5e5fd4a`, which is the merge commit the workflow
+Both were produced by commit `4c53563`, which is the merge commit the workflow
 checked out rather than a branch tip, on `rustc 1.97.1` and Linux `x86_64`,
 against servers `15.18` and `18.4`, with `4` Tokio worker threads. The command
-is `cargo run --package oxide-batch-xtask -- soak`. The runs took `228` and
-`270` seconds.
+is `cargo run --package oxide-batch-xtask -- soak`. The runs took `253` and
+`233` seconds.
 
 Every exact figure below is identical on the two matrix points. The resident
 series differ, which is the one place this campaign expects them to: it is the
 only observation that is not an integer the framework controls.
 
 **The window.** `32` warmup and `600` measured cycles, `632` completed, one
-sample per cycle, and `37660` and `44747` pool readings taken while the cycles
+sample per cycle, and `41758` and `38557` pool readings taken while the cycles
 ran, none of which failed to read the gauge.
 
 **Correctness.** All fifteen obligations held in all `600` measured cycles, on
@@ -1645,10 +1645,11 @@ same instance, exactly `partition-0015` re-run, `16` partitions `Completed`,
 `108` repository transactions, and a drain that joined all `4` owned tasks with
 no panic. `10744` partition executions per matrix point. No worker was still
 holding when a step returned, and peak worker occupancy never exceeded the
-budget of `4` — it reached `2` on the CI runners and `4` on the development
-host, which is a property of the host's parallelism rather than of the bound,
-and is why the campaign requires occupancy to stay within the budget rather than
-to reach it. Reaching a ceiling is the resource-bound campaign's obligation.
+budget of `4` — it reached `2` and `3` on the CI runners and `4` on the
+development host, which is a property of the host's parallelism rather than of
+the bound, and is why the campaign requires occupancy to stay within the budget
+rather than to reach it. Reaching a ceiling is the resource-bound campaign's
+obligation.
 
 **Tasks.** `4` alive at the post-warmup baseline and `4` at all `600` measured
 boundaries, on both majors. No drain left a task unjoined and none panicked, in
@@ -1659,17 +1660,16 @@ checked out at every one of them, and `0` checked out in the authoritative
 reading taken while the pool was still open at the end of the run. In-flight
 occupancy reached `5` — the whole pool, which is `worker_budget + 1` — and never
 exceeded it. The database reported `5` backends for the application throughout,
-and `0` after the close, which the server reached within `1` millisecond on both
+and `0` after the close, which the server reached within a millisecond on both
 majors.
 
 **Handles.** `17` at the post-warmup baseline and `17` at all `600` measured
 boundaries, on both majors.
 
-**Memory.** The measured window's first third grew at `0.645` KiB per cycle on
-PostgreSQL 15 and its last third at `0.133`, a ratio of `0.21`; on PostgreSQL 18
-the rates were `0.766` and `0.183`, a ratio of `0.24`. The rule allows `0.50`
-and a straight line would be `1.00`. Total measured rise was `248` and `296`
-KiB.
+**Memory.** The measured window's first third grew at `0.760` KiB per cycle on
+PostgreSQL 15 and its last third at `0.187`, a ratio of `0.25`; on PostgreSQL 18
+the rates were `0.911` and `0.222`, a ratio of `0.24`. The rule allows `0.50`
+and a straight line would be `1.00`.
 
 The rates decay rather than hold, which is the shape the rule asks for, and two
 further readings say why that is settling rather than a leak. The rate falls
