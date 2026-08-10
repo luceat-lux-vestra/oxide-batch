@@ -3,6 +3,7 @@
 mod conformance;
 mod crash_restore;
 mod deps;
+mod resource_bounds;
 mod security;
 mod suite;
 mod surface;
@@ -108,6 +109,7 @@ fn main() -> ExitCode {
         Some("deps") => run_dependency_check(),
         Some("doctor") => run_all(DOCTOR),
         Some("package") => run_all(PACKAGE),
+        Some("resource-bounds") => run_resource_bound_campaign(),
         Some("security") => run_security_campaign(),
         Some("surface") => run_surface_check(),
         Some("upgrade") => run_upgrade_campaign(),
@@ -207,6 +209,39 @@ fn run_crash_restore_campaign() -> bool {
         }
         Err(error) => {
             eprintln!("could not run the crash and restore campaign: {error}");
+            false
+        }
+    }
+}
+
+/// Reports whether every declared ceiling held and was reached.
+fn run_resource_bound_campaign() -> bool {
+    eprintln!("==> PostgreSQL resource-bound campaign");
+
+    match resource_bounds::run() {
+        Ok(campaign) => {
+            eprintln!("campaign report: {}", campaign.report.display());
+            if campaign.violations.is_empty() {
+                eprintln!(
+                    "every declared queue, retry cache, page, buffer, worker assignment, and \
+                     result set was observed at its ceiling; every live ceiling was reached \
+                     rather than merely respected; every shedding resource was offered an \
+                     overload and shed under the rule it contracts for; and the stressed run \
+                     left the sequential baseline's durable record"
+                );
+                return true;
+            }
+            for violation in &campaign.violations {
+                eprintln!("campaign gap: {violation}");
+            }
+            eprintln!(
+                "see the campaign scope in \
+                 tests/fixtures/resource-bounds/campaign-scope.json"
+            );
+            false
+        }
+        Err(error) => {
+            eprintln!("could not run the resource-bound campaign: {error}");
             false
         }
     }
@@ -345,14 +380,15 @@ fn usage() {
     eprintln!(
         "usage: cargo xtask <command>\n\n\
          commands:\n\
-           check          run formatting, Clippy, tests, rustdoc, and boundaries\n\
-           conformance    run the full suite over the accepted M0-M4 scope\n\
-           crash-restore  run the crash, restart, and logical restore campaign\n\
-           deps           check extraction boundaries and workspace cycles\n\
-           doctor         show required local tool versions\n\
-           package        inspect and dry-run every publishable crate\n\
-           security       run the TLS, least-privilege, and redaction campaign\n\
-           surface        inspect the rendered facade for disclosed dependencies\n\
-           upgrade        run the PostgreSQL schema upgrade, rejection, and rollback campaign"
+           check            run formatting, Clippy, tests, rustdoc, and boundaries\n\
+           conformance      run the full suite over the accepted M0-M4 scope\n\
+           crash-restore    run the crash, restart, and logical restore campaign\n\
+           deps             check extraction boundaries and workspace cycles\n\
+           doctor           show required local tool versions\n\
+           package          inspect and dry-run every publishable crate\n\
+           resource-bounds  prove every declared ceiling holds and is reached under stress\n\
+           security         run the TLS, least-privilege, and redaction campaign\n\
+           surface          inspect the rendered facade for disclosed dependencies\n\
+           upgrade          run the PostgreSQL schema upgrade, rejection, and rollback campaign"
     );
 }

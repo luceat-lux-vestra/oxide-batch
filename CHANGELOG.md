@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `cargo xtask resource-bounds`, the M5 resource-bound campaign. It proves that
+  every queue, retry cache, page, buffer, worker assignment, and result set the
+  framework owns has a finite ceiling, that the ceiling is enforced under the
+  overload policy the resource contracts for, and that resource pressure changes
+  no durable observation. The denominator is committed as
+  `tests/fixtures/resource-bounds/campaign-scope.json` and reconciled in both
+  directions by ordinary tests: from the code outward, every library crate is
+  parsed and each constant declared under the repository's new bound declaration
+  convention must be classified as a proved resource or an argued exclusion, so
+  a bound written under that convention cannot ship without entering the
+  campaign; from the operator's document inward, the capacity
+  budget table and the scope must agree, and the scope's numbers must be the
+  numbers the code holds. Four overload policies are kept distinct rather than
+  collapsed — fail-closed, bounded concurrency, bounded shedding, and bounded
+  truncation — because telemetry may not block batch work, and each queue
+  records which shedding rule it contracts for. The campaign's own claim is that
+  a ceiling was *reached*, not merely respected: a worker budget of 64 whose
+  observed peak was 3 is evidence about a workload, so every report records what
+  it offered beside what the framework held and the runner requires the two to
+  be in the relation the policy implies. 128 partitions are offered against a
+  64-worker budget through a pool of exactly 65 connections, a pool one
+  connection short is refused before any row is written, and the stressed run is
+  compared field by field against the same work run one child at a time. CI runs
+  it on PostgreSQL 15 and 18 and retains each report. No production code changed.
 - `cargo xtask upgrade`, the M5 PostgreSQL upgrade campaign. It proves the
   preview's upgrade contract: a schema-1 or schema-2 database upgrades directly
   to schema 3, a runtime that supports schema 2 refuses one that has been, and
@@ -627,6 +651,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   which the read and write skip contracts require.
 
 ### Fixed
+
+- The capacity budget's declared partition-key bound is the one the code holds.
+  The table gave `256` bytes; `MAX_PARTITION_KEY_BYTES` has been `128` since the
+  bound was introduced, so the number an operator would have sized a partition
+  key against was never the number the framework enforces. Nothing about the
+  enforcement changed — the ceiling has always been `128` and has always been
+  refused above it — but the document a deployment is sized from disagreed with
+  it, and no check related the two. The resource-bound campaign's reconciliation
+  now requires the budget table, the campaign scope, and the constants the code
+  declares to agree, so this class of drift fails an ordinary `cargo test`.
+- The capacity budget declares the retry cache, which it had omitted entirely.
+  The performance plan names six resource classes that must have a finite bound
+  and the budget table had a row for five of them. The durable fault state is
+  that cache: a bounded envelope of unresolved retry keys that commits with the
+  chunk, with a `256`-entry and `64 KiB` ceiling. Both are now declared where an
+  operator will look for them.
 
 - Evidence-bound recovery discovery works against PostgreSQL. The recovery
   snapshot read the `attempt` column, which is an `integer`, as an `i64`, so

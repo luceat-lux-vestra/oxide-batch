@@ -24,6 +24,38 @@ meaning that formatting cannot decide.
 - Avoid abbreviations except established domain terms (`id`, `sql`, `utc`).
 - Error variants state the condition, not the action that noticed it.
 
+## Declaring a resource bound
+
+Every finite ceiling the framework owns — a queue, retry cache, page, buffer,
+worker assignment, or result set — is declared as a **named constant**, and the
+name follows this convention so that the
+[resource-bound campaign](../project/m5-campaign-evidence.md#resource-bound-campaign)
+can find it.
+
+- The name is `SCREAMING_SNAKE_CASE` and contains `MAX_`, `MIN_`, `MAXIMUM`,
+  `MINIMUM`, `_BUDGET`, `_BOUND`, or `_CAPACITY`.
+- The ceiling is the constant's own value, not an anonymous literal inlined at
+  the place it is enforced. `if value > MAX_PAGE_SIZE` is a bound; `if value >
+  500` is a number nobody can find.
+- The constant is an ordinary `const` item or an associated `const`. A ceiling
+  that exists only after macro expansion is not declared for these purposes.
+- A configurable limit still declares the hard ceiling it is validated against.
+  `ExportQueueBound` is chosen by an operator and is checked against
+  `MIN_EXPORT_QUEUE_RECORDS` and `MAX_EXPORT_QUEUE_RECORDS`, which are what the
+  framework actually owns.
+- Visibility is irrelevant to the convention. A private ceiling is still a
+  ceiling, and the campaign's scan deliberately does not consult visibility.
+
+The campaign's reconciliation parses every library crate and requires each
+constant matching this convention to be classified — as a resource with a
+proving report, or as an explicitly excluded bound with a stated reason. What
+that guarantees is exactly this: **a bound declared under this convention cannot
+enter the product without entering the campaign.** It does not, and cannot,
+discover a ceiling written as a bare literal or named outside the convention.
+That is the reason the convention is a documented rule rather than a habit, and
+the reason review still owns the question of whether a new limit is a
+framework-owned resource at all.
+
 ## Functions and control flow
 
 - Validate at boundaries and keep domain internals operating on valid values.

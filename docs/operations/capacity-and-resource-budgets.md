@@ -28,8 +28,10 @@ fails closed at construction or launch rather than degrading at runtime.
 | Concurrent split branches | `1..=8` | Manifest `MaxParallelBranches` |
 | Partitions per partitioned step | `1..=1024` | Manifest `PartitionCount` |
 | Concurrent partition workers | `1..=64` | Manifest `PartitionBudget` |
-| Partition key | `256` bytes | `MAX_PARTITION_KEY_BYTES` |
+| Partition key | `128` bytes | `MAX_PARTITION_KEY_BYTES` |
 | Partition context | `4 KiB` | `MAX_PARTITION_CONTEXT_BYTES` |
+| Unresolved retry entries per step | `256` | `FaultStateEnvelope::MAX_ENTRIES` |
+| Encoded fault state per step | `64 KiB` | `FaultStateEnvelope::MAX_BYTES` |
 | Explorer page size | `1..=500` rows | `MAX_PAGE_SIZE` |
 | Explorer response | `256 KiB` | `MAX_RESPONSE_BYTES` |
 | Explorer cursor | `256` bytes | `MAX_CURSOR_BYTES` |
@@ -40,6 +42,13 @@ fails closed at construction or launch rather than degrading at runtime.
 | Diagnostic bundle | `4 MiB` | Bounded diagnostics |
 | Shutdown deadline | `1 s..=1 h` | `ShutdownDeadline` |
 | Telemetry flush deadline | `100 ms..=1 min` | `TelemetryFlushDeadline` |
+
+The two fault-state rows are the retry cache the
+[performance plan](../engineering/performance-plan.md#backpressure-and-capacity)
+names among the resources that must have a finite bound. It is not a cache in
+front of a store: it is the durable envelope of unresolved retry keys that
+commits with the chunk, so its ceiling is a durable-format ceiling and a step
+that would exceed either bound fails rather than forgetting an entry.
 
 ## Deriving a connection pool
 

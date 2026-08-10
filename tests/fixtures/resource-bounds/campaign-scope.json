@@ -1,0 +1,741 @@
+{
+  "campaign": "M5 PostgreSQL resource bounds",
+  "issue": "https://github.com/luceat-lux-vestra/oxide-batch/issues/102",
+  "gate": "docs/project/m5-design-gate-evidence.md",
+  "plan": "docs/engineering/performance-plan.md",
+  "budgets": "docs/operations/capacity-and-resource-budgets.md",
+  "note": "This document is the campaign's denominator, and a resource campaign needs one more than most: the thing being counted is what the framework owns, and a resource that is not listed is not proved absent, it is unexamined. The runner reads this to decide what must run and what each report must have observed. The in-process reconciliation in crates/oxide-batch/tests/m5_resource_bounds_campaign.rs reads it from the other side: it parses every library crate and fails an ordinary cargo test when a constant declared under the repository's bound declaration convention is not classified here.",
+  "completeness": "What the reconciliation guarantees is bounded by that convention, and the campaign states the limit rather than implying more. Every constant matching the convention in docs/engineering/coding-conventions.md is discovered and must be classified, regardless of its visibility, its module, whether it is an associated const, and how the source is formatted, because the scan parses Rust rather than reading lines. A ceiling written as a bare literal at the point it is enforced, or named outside the convention, or existing only after macro expansion, is invisible to it. Those are ruled out by the convention being a documented rule that review applies, not by the scan, and the campaign does not claim to discover every bounded resource automatically.",
+  "support_contract": {
+    "postgres_versions": ["15", "16", "17", "18"],
+    "matrix_endpoints": ["15", "18"],
+    "installed_schema_version": 3,
+    "resource_classes": [
+      "queue",
+      "retry-cache",
+      "page",
+      "buffer",
+      "worker-assignment",
+      "result-set"
+    ],
+    "overload_policies": [
+      "fail-closed",
+      "bounded-concurrency",
+      "bounded-shedding",
+      "bounded-truncation"
+    ],
+    "policy_note": "The four policies are not interchangeable, and the campaign does not force one shape onto every resource. Fail-closed is a refusal before work starts, and nothing may be partially launched behind it. Bounded concurrency admits the work and holds occupancy at the ceiling, so a backlog waits rather than growing the worker set. Bounded shedding keeps the bound and discards a record under a stated rule while never blocking batch progress, which is the contract telemetry already has and which introducing backpressure would break. Bounded truncation returns less than was asked for and says so, through a continuation cursor or a recorded truncation, rather than returning an unbounded response."
+  },
+  "fixtures": {
+    "postgres-resource-bounds": [
+      "OXIDEBATCH_POSTGRES_TEST_URL",
+      "OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL"
+    ]
+  },
+  "reports": [
+    {
+      "id": "worker-assignment",
+      "title": "Worker and connection ceilings under PostgreSQL saturation",
+      "owes": "declared ceiling proof for every worker assignment, with backpressure propagation under stress",
+      "package": "oxide-batch",
+      "target": "postgres_resource_bound_workers",
+      "name": "declared_ceilings_hold_under_stress_with_backpressure",
+      "fixture": "postgres-resource-bounds",
+      "database_report": true,
+      "note": "The scenario the M5 design gate names for this campaign. It is the only report that can be saturated rather than merely bounded, because a worker set is the one framework resource whose occupancy is a live quantity rather than a validated value."
+    },
+    {
+      "id": "bounded-query-paths",
+      "title": "Page, response, cursor, and purge-batch bounds against a grown history",
+      "owes": "declared ceiling proof for every page and result set",
+      "package": "oxide-batch",
+      "target": "postgres_resource_bound_queries",
+      "name": "bounded_query_paths_stay_bounded_as_history_grows",
+      "fixture": "postgres-resource-bounds",
+      "database_report": true
+    },
+    {
+      "id": "bounded-payloads",
+      "title": "Durable and in-memory payload ceilings at the boundary and one past it",
+      "owes": "declared ceiling proof for every buffer and for the retry cache",
+      "package": "oxide-batch",
+      "target": "postgres_resource_bound_payloads",
+      "name": "bounded_payloads_are_refused_one_byte_over_the_ceiling",
+      "fixture": "postgres-resource-bounds",
+      "database_report": true
+    },
+    {
+      "id": "bounded-shedding",
+      "title": "Queue, cardinality, and diagnostic ceilings under offered overload",
+      "owes": "declared ceiling proof for every queue, with the shedding rule each one contracts for",
+      "package": "oxide-batch-cli",
+      "target": "m5_resource_bound_shedding",
+      "name": "bounded_queues_shed_under_overload_without_blocking_batch_work",
+      "fixture": null,
+      "database_report": false,
+      "note": "The shedding report needs no database. Every resource it covers is in-process and is offered its overload directly, so it runs wherever the workspace builds. It is still the campaign's to run, and the campaign still requires its observation. It lives in the CLI package because two of the resources it owes — the diagnostic bundle and the operator response — are the CLI's, and that package can reach both its own bounds and the framework's."
+    }
+  ],
+  "stress": {
+    "note": "A ceiling is only proved by a run that reached it. A worker budget of 64 whose observed peak was 3 is evidence about a workload, not about a bound, so each report records the load it offered and the peak it observed and the runner requires the two to be in the relation the resource's policy implies.",
+    "requirements": [
+      {
+        "report": "worker-assignment",
+        "resource": "concurrent-partition-workers",
+        "requires": "peak-equals-ceiling",
+        "detail": "The offered partition count is several times the worker budget, so the ceiling is reachable, and the observed peak must equal it. A peak below the ceiling means the run never filled the worker set and proves nothing about the bound; a peak above it is the failure the report exists to catch."
+      },
+      {
+        "report": "worker-assignment",
+        "resource": "concurrent-split-branches",
+        "requires": "peak-equals-ceiling",
+        "detail": "The split declares more branches than the branch budget admits, so the ceiling is reachable and the observed peak must equal it."
+      },
+      {
+        "report": "worker-assignment",
+        "resource": "repository-connection-capacity",
+        "requires": "rejected-before-any-durable-write",
+        "detail": "The short-pool attempt must be refused before a job execution exists, so the rejection is observable as an absence in the database rather than only as an error value."
+      },
+      {
+        "report": "bounded-query-paths",
+        "resource": "explorer-page-size",
+        "requires": "history-exceeds-page",
+        "detail": "The database holds several times a full page, so a page that returned everything would exceed the bound rather than satisfy it."
+      },
+      {
+        "report": "bounded-query-paths",
+        "resource": "retention-purge-batch",
+        "requires": "candidates-exceed-batch",
+        "detail": "The purge is planned against more candidates than the batch bound admits, so a plan that took them all would exceed the bound."
+      },
+      {
+        "report": "bounded-shedding",
+        "resource": "telemetry-exporter-queue",
+        "requires": "offered-exceeds-ceiling",
+        "detail": "More records are offered than the queue holds, so the drop path is entered rather than described. The drop count must be the excess exactly, and batch work must complete while the queue is saturated."
+      },
+      {
+        "report": "bounded-shedding",
+        "resource": "metric-series-per-family",
+        "requires": "offered-exceeds-ceiling",
+        "detail": "More label combinations are offered than the family budget admits, so the reserved series is reached rather than assumed."
+      },
+      {
+        "report": "bounded-shedding",
+        "resource": "retained-incident-events",
+        "requires": "offered-exceeds-ceiling",
+        "detail": "More events are emitted for one execution than the buffer retains, so the eviction rule is exercised."
+      }
+    ]
+  },
+  "durable_equivalence": {
+    "note": "The performance plan holds that a concurrency result that changes a durable observation is invalid regardless of its throughput. Each report that runs work concurrently therefore runs the same work sequentially and compares the durable record, and the runner requires the comparison rather than trusting the concurrent run alone.",
+    "counter_note": "The counters compared are the six an execution carries: read, processed, written, filtered, committed, and rolled back. Skip and retry counters are not among them, and saying so is deliberate: they live in the durable fault state, and this campaign's workers are tasklets that produce none, so a field comparing them would agree between two runs that both produced nothing. Retry and skip divergence under concurrency belongs to the fault-tolerance scenarios that inject faults.",
+    "checkpoint_note": "The per-partition durable state compared is the partition context, which is what a restart resumes a child from. A chunk checkpoint proper is not compared, and saying so is deliberate: this campaign's workers are tasklets, which write no checkpoint, so a field comparing them would agree between two runs that both produced nothing. That is the shape of assertion this repository keeps finding stale, and the chunk checkpoint under concurrency belongs to the crash-and-restore campaign, where a killed process leaves one worth comparing.",
+    "comparisons": [
+      {
+        "report": "worker-assignment",
+        "baseline": "one worker, one branch at a time",
+        "stressed": "the largest configured worker and branch budgets",
+        "must_agree_on": [
+          "job-execution-status",
+          "step-execution-status",
+          "partition-key-set",
+          "partition-status-per-key",
+          "aggregate-execution-counts",
+          "read-write-commit-rollback-counters",
+          "partition-context-per-key",
+          "partition-execution-count"
+        ],
+        "must_not_observe": [
+          "duplicate-partition-execution",
+          "missing-partition",
+          "unfinished-child",
+          "leaked-durable-execution",
+          "forged-execution-status",
+          "partial-launch-after-rejection"
+        ]
+      }
+    ]
+  },
+  "resources": [
+    {
+      "resource": "partitions-per-step",
+      "class": "worker-assignment",
+      "owner": "PartitionCount",
+      "symbols": ["MAX_PARTITIONS"],
+      "ceiling": 1024,
+      "unit": "partitions",
+      "policy": "fail-closed",
+      "report": "worker-assignment",
+      "postgres": false,
+      "budget_row": "Partitions per partitioned step",
+      "budget_bound": "`1..=1024`"
+    },
+    {
+      "resource": "concurrent-partition-workers",
+      "class": "worker-assignment",
+      "owner": "PartitionBudget",
+      "symbols": ["MAX_PARTITION_WORKERS"],
+      "ceiling": 64,
+      "unit": "concurrent workers",
+      "policy": "bounded-concurrency",
+      "report": "worker-assignment",
+      "postgres": true,
+      "budget_row": "Concurrent partition workers",
+      "budget_bound": "`1..=64`"
+    },
+    {
+      "resource": "split-branches-per-node",
+      "class": "worker-assignment",
+      "owner": "SplitNode",
+      "symbols": ["MAX_SPLIT_BRANCHES"],
+      "ceiling": 8,
+      "unit": "branches",
+      "policy": "fail-closed",
+      "report": "worker-assignment",
+      "postgres": false,
+      "budget_row": "Split branches per node",
+      "budget_bound": "`2..=8`"
+    },
+    {
+      "resource": "concurrent-split-branches",
+      "class": "worker-assignment",
+      "owner": "SplitBudget",
+      "symbols": ["MAX_SPLIT_BRANCHES"],
+      "ceiling": 8,
+      "unit": "concurrent branches",
+      "policy": "bounded-concurrency",
+      "report": "worker-assignment",
+      "postgres": true,
+      "budget_row": "Concurrent split branches",
+      "budget_bound": "`1..=8`"
+    },
+    {
+      "resource": "steps-per-split-branch",
+      "class": "worker-assignment",
+      "owner": "SplitBranch",
+      "symbols": ["MAX_BRANCH_STEPS"],
+      "ceiling": 8,
+      "unit": "steps",
+      "policy": "fail-closed",
+      "report": "worker-assignment",
+      "postgres": false,
+      "budget_row": "Steps per split branch",
+      "budget_bound": "`1..=8`"
+    },
+    {
+      "resource": "repository-connection-capacity",
+      "class": "worker-assignment",
+      "owner": "FlowLauncher::launch",
+      "symbols": [],
+      "ceiling": null,
+      "derivation": "concurrent_children + 1",
+      "unit": "connections",
+      "policy": "fail-closed",
+      "report": "worker-assignment",
+      "postgres": true,
+      "budget_row": null,
+      "budget_bound": null,
+      "note": "The one bound in the campaign that is derived rather than declared, so it has no symbol to reconcile against. The extra connection belongs to the parent, which owns planning, the per-child compare-and-swap, and the aggregate commit."
+    },
+    {
+      "resource": "repository-pool-size",
+      "class": "worker-assignment",
+      "owner": "PostgresConfig::with_pool_size",
+      "symbols": ["MAX_POOL_SIZE"],
+      "ceiling": 1024,
+      "unit": "connections",
+      "policy": "fail-closed",
+      "report": "worker-assignment",
+      "postgres": true,
+      "budget_row": null,
+      "budget_bound": null
+    },
+    {
+      "resource": "explorer-page-size",
+      "class": "page",
+      "owner": "PageSize",
+      "symbols": ["MAX_PAGE_SIZE"],
+      "ceiling": 500,
+      "unit": "rows",
+      "policy": "fail-closed",
+      "report": "bounded-query-paths",
+      "postgres": true,
+      "budget_row": "Explorer page size",
+      "budget_bound": "`1..=500` rows"
+    },
+    {
+      "resource": "explorer-response",
+      "class": "result-set",
+      "owner": "MAX_RESPONSE_BYTES",
+      "symbols": ["MAX_RESPONSE_BYTES"],
+      "ceiling": 262144,
+      "unit": "bytes",
+      "policy": "bounded-truncation",
+      "report": "bounded-query-paths",
+      "postgres": true,
+      "budget_row": "Explorer response",
+      "budget_bound": "`256 KiB`"
+    },
+    {
+      "resource": "explorer-cursor",
+      "class": "page",
+      "owner": "MAX_CURSOR_BYTES",
+      "symbols": ["MAX_CURSOR_BYTES"],
+      "ceiling": 256,
+      "unit": "bytes",
+      "policy": "fail-closed",
+      "report": "bounded-query-paths",
+      "postgres": true,
+      "budget_row": "Explorer cursor",
+      "budget_bound": "`256` bytes"
+    },
+    {
+      "resource": "retention-purge-batch",
+      "class": "result-set",
+      "owner": "PurgeBatchBound",
+      "symbols": ["MAX_PURGE_BATCH"],
+      "ceiling": 1000,
+      "unit": "candidates",
+      "policy": "fail-closed",
+      "report": "bounded-query-paths",
+      "postgres": true,
+      "budget_row": "Purge batch",
+      "budget_bound": "`1..=1000` candidates"
+    },
+    {
+      "resource": "operator-response",
+      "class": "result-set",
+      "owner": "oxide_batch_cli::MAX_OUTPUT_BYTES",
+      "symbols": ["MAX_OUTPUT_BYTES"],
+      "ceiling": 262144,
+      "unit": "bytes",
+      "policy": "bounded-truncation",
+      "report": "bounded-shedding",
+      "postgres": false,
+      "budget_row": null,
+      "budget_bound": null
+    },
+    {
+      "resource": "partition-key",
+      "class": "buffer",
+      "owner": "PartitionKey",
+      "symbols": ["MAX_PARTITION_KEY_BYTES"],
+      "ceiling": 128,
+      "unit": "bytes",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": true,
+      "budget_row": "Partition key",
+      "budget_bound": "`128` bytes"
+    },
+    {
+      "resource": "partition-context",
+      "class": "buffer",
+      "owner": "PartitionPlanEntry",
+      "symbols": ["MAX_PARTITION_CONTEXT_BYTES"],
+      "ceiling": 4096,
+      "unit": "bytes",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": true,
+      "budget_row": "Partition context",
+      "budget_bound": "`4 KiB`"
+    },
+    {
+      "resource": "retry-cache-entries",
+      "class": "retry-cache",
+      "owner": "FaultStateEnvelope",
+      "symbols": ["MAX_ENTRIES"],
+      "ceiling": 256,
+      "unit": "unresolved retry keys",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": true,
+      "budget_row": "Unresolved retry entries per step",
+      "budget_bound": "`256`"
+    },
+    {
+      "resource": "retry-cache-bytes",
+      "class": "retry-cache",
+      "owner": "FaultStateEnvelope",
+      "symbols": ["MAX_BYTES"],
+      "ceiling": 65536,
+      "unit": "bytes",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": true,
+      "budget_row": "Encoded fault state per step",
+      "budget_bound": "`64 KiB`"
+    },
+    {
+      "resource": "declared-retry-state-capacity",
+      "class": "retry-cache",
+      "owner": "RetryStateLimit",
+      "symbols": ["MAX_RETRY_STATE", "MIN_RETRY_STATE"],
+      "ceiling": 256,
+      "unit": "unresolved retry keys",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": false,
+      "budget_row": null,
+      "budget_bound": null,
+      "note": "The per-definition declaration of how much retry state a step may hold. It cannot exceed the durable format's own entry ceiling, and the report checks that relation rather than the two numbers separately."
+    },
+    {
+      "resource": "definition-nodes",
+      "class": "buffer",
+      "owner": "FlowGraph",
+      "symbols": ["MAX_NODES"],
+      "ceiling": 1024,
+      "unit": "nodes",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": false,
+      "budget_row": null,
+      "budget_bound": null
+    },
+    {
+      "resource": "definition-transitions",
+      "class": "buffer",
+      "owner": "FlowGraph",
+      "symbols": ["MAX_TRANSITIONS"],
+      "ceiling": 4096,
+      "unit": "transitions",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": false,
+      "budget_row": null,
+      "budget_bound": null
+    },
+    {
+      "resource": "outgoing-transitions-per-node",
+      "class": "buffer",
+      "owner": "CompiledExecutionPlan",
+      "symbols": ["MAX_OUTGOING_TRANSITIONS"],
+      "ceiling": 64,
+      "unit": "transitions",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": false,
+      "budget_row": null,
+      "budget_bound": null
+    },
+    {
+      "resource": "definition-manifest",
+      "class": "buffer",
+      "owner": "DefinitionManifest",
+      "symbols": ["MAX_MANIFEST_BYTES"],
+      "ceiling": 65536,
+      "unit": "bytes",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": true,
+      "budget_row": null,
+      "budget_bound": null
+    },
+    {
+      "resource": "state-upgrade-chain",
+      "class": "buffer",
+      "owner": "StateCodec",
+      "symbols": ["MAX_UPGRADE_CHAIN"],
+      "ceiling": 64,
+      "unit": "upgrade edges",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": false,
+      "budget_row": null,
+      "budget_bound": null
+    },
+    {
+      "resource": "durable-state-envelope",
+      "class": "buffer",
+      "owner": "StateLimits",
+      "symbols": [
+        "MAXIMUM_BYTES",
+        "MAXIMUM_DEPTH",
+        "DEFAULT_MAXIMUM_BYTES",
+        "DEFAULT_MAXIMUM_DEPTH"
+      ],
+      "ceiling": 1048576,
+      "unit": "bytes",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": true,
+      "budget_row": null,
+      "budget_bound": null,
+      "note": "The ceiling on any durable checkpoint or execution context, above which no configured limit may go. A definition chooses its own limits inside it, so this is the bound on the bound: the partition context's 4 KiB is a framework ceiling on one use of the envelope, and this is the ceiling the envelope itself cannot be configured past."
+    },
+    {
+      "resource": "instance-key-input",
+      "class": "buffer",
+      "owner": "JobInstanceKey",
+      "symbols": ["MAX_INSTANCE_KEY_INPUT"],
+      "ceiling": 1048576,
+      "unit": "bytes",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": true,
+      "budget_row": null,
+      "budget_bound": null
+    },
+    {
+      "resource": "item-listeners",
+      "class": "buffer",
+      "owner": "ItemListenerRegistry",
+      "symbols": ["MAX_LISTENERS"],
+      "ceiling": 32,
+      "unit": "listeners",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": false,
+      "budget_row": null,
+      "budget_bound": null
+    },
+    {
+      "resource": "bounded-identifier-text",
+      "class": "buffer",
+      "owner": "the validated identifier and reference types",
+      "symbols": [
+        "MAX_ACTOR_REF_BYTES",
+        "MAX_REASON_CODE_BYTES",
+        "MAX_OPERATION_ID_BYTES",
+        "MAX_OPERATOR_REFERENCE_BYTES",
+        "MAX_RECOVERY_REASON_BYTES",
+        "MAX_TOKEN_BYTES",
+        "MAX_EXIT_CODE_BYTES",
+        "MAX_PATTERN_BYTES",
+        "MAX_PARAMETER_NAME_BYTES",
+        "MAX_PARAMETER_STRING_BYTES",
+        "MAX_SCHEMA_ID_BYTES",
+        "MAX_CURSOR_NAME_BYTES",
+        "MAX_DOMAIN_NAME_BYTES",
+        "MAX_CONFIRMATION_BYTES"
+      ],
+      "ceiling": null,
+      "unit": "bytes",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": false,
+      "budget_row": null,
+      "budget_bound": null,
+      "note": "One resource rather than fourteen. Each is a caller-supplied string that becomes part of a durable record or an operator request, each is refused at construction one byte past its own ceiling, and there is nothing to say about any of them that is not true of all of them. The report sweeps them as a table so that adding a fifteenth is a line in the sweep rather than a new scenario, and the reconciliation still requires every symbol to be named here."
+    },
+    {
+      "resource": "ca-certificate",
+      "class": "buffer",
+      "owner": "CaCertificate",
+      "symbols": ["MAX_CA_CERTIFICATE_BYTES"],
+      "ceiling": 1048576,
+      "unit": "bytes",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": false,
+      "budget_row": null,
+      "budget_bound": null
+    },
+    {
+      "resource": "cli-configuration-document",
+      "class": "buffer",
+      "owner": "oxide_batch_cli::Configuration",
+      "symbols": ["MAX_CONFIG_BYTES", "MAX_SECRET_BYTES", "MAX_CONFIG_DEPTH"],
+      "ceiling": 262144,
+      "unit": "bytes",
+      "policy": "fail-closed",
+      "report": "bounded-shedding",
+      "postgres": false,
+      "budget_row": null,
+      "budget_bound": null
+    },
+    {
+      "resource": "telemetry-exporter-queue",
+      "class": "queue",
+      "owner": "ExportQueueBound",
+      "symbols": ["MAX_EXPORT_QUEUE_RECORDS", "MIN_EXPORT_QUEUE_RECORDS"],
+      "ceiling": 65536,
+      "unit": "records",
+      "policy": "bounded-shedding",
+      "shedding_rule": "drop-newest",
+      "report": "bounded-shedding",
+      "postgres": false,
+      "budget_row": "Telemetry exporter queue",
+      "budget_bound": "`64..=65536` records",
+      "note": "The one resource in the campaign whose contract forbids backpressure. Telemetry may not block batch work, so a full queue drops the newest record and counts the drop. Introducing a wait here to make the campaign uniform would break the accepted contract rather than strengthen it."
+    },
+    {
+      "resource": "telemetry-drop-report-window",
+      "class": "queue",
+      "owner": "DropReportWindow",
+      "symbols": ["MAX_DROP_REPORT_WINDOW", "MIN_DROP_REPORT_WINDOW"],
+      "ceiling": null,
+      "unit": "duration",
+      "policy": "fail-closed",
+      "report": "bounded-shedding",
+      "postgres": false,
+      "budget_row": null,
+      "budget_bound": null,
+      "note": "The throttle on the drop observation itself, so that a saturated queue reports its drops at a bounded rate rather than emitting one record per drop, which would be an unbounded queue in a different place."
+    },
+    {
+      "resource": "retained-incident-events",
+      "class": "queue",
+      "owner": "IncidentEventBuffer",
+      "symbols": [
+        "MAX_RETAINED_EVENTS_PER_EXECUTION",
+        "DEFAULT_RETAINED_EVENT_CAPACITY"
+      ],
+      "ceiling": 200,
+      "unit": "events per execution",
+      "policy": "bounded-shedding",
+      "shedding_rule": "evict-oldest",
+      "report": "bounded-shedding",
+      "postgres": false,
+      "budget_row": "Retained incident events",
+      "budget_bound": "`200` per execution",
+      "note": "The eviction rule is the opposite of the exporter queue's, and deliberately: an incident buffer exists to be read after a failure, so the newest records are the ones worth keeping. The campaign records which rule each queue contracts for rather than requiring one of them."
+    },
+    {
+      "resource": "metric-series-per-family",
+      "class": "queue",
+      "owner": "MetricCardinalityGuard",
+      "symbols": ["METRIC_CARDINALITY_BUDGET"],
+      "ceiling": 200,
+      "unit": "series per family",
+      "policy": "bounded-shedding",
+      "shedding_rule": "collapse-to-reserved-series",
+      "report": "bounded-shedding",
+      "postgres": false,
+      "budget_row": "Metric series per family",
+      "budget_bound": "`200`"
+    },
+    {
+      "resource": "metric-name-allowlist",
+      "class": "buffer",
+      "owner": "MetricCardinalityGuard::new",
+      "symbols": ["MAX_METRIC_NAME_ALLOWLIST"],
+      "ceiling": 50,
+      "unit": "names",
+      "policy": "fail-closed",
+      "report": "bounded-shedding",
+      "postgres": false,
+      "budget_row": null,
+      "budget_bound": null
+    },
+    {
+      "resource": "diagnostic-bundle",
+      "class": "buffer",
+      "owner": "the diagnostics bundle writer",
+      "symbols": ["MAX_BUNDLE_BYTES"],
+      "ceiling": 4194304,
+      "unit": "bytes",
+      "policy": "bounded-truncation",
+      "report": "bounded-shedding",
+      "postgres": false,
+      "budget_row": "Diagnostic bundle",
+      "budget_bound": "`4 MiB`",
+      "note": "The one resource in the campaign whose ceiling no M5 input reaches. A bundle is built from a bounded configuration, a bounded execution projection, and a bounded incident buffer, and all three together come to a few kilobytes, so the report proves the bound as an upper limit that held rather than as a truncation that happened. The campaign records the observed size beside the ceiling instead of claiming a saturation it did not produce."
+    },
+    {
+      "resource": "shutdown-deadline",
+      "class": "worker-assignment",
+      "owner": "ShutdownDeadline",
+      "symbols": ["MAX_SHUTDOWN_DEADLINE", "MIN_SHUTDOWN_DEADLINE"],
+      "ceiling": null,
+      "unit": "duration",
+      "policy": "fail-closed",
+      "report": "bounded-shedding",
+      "postgres": false,
+      "budget_row": "Shutdown deadline",
+      "budget_bound": "`1 s..=1 h`",
+      "note": "A deadline is in the campaign because the capacity budget declares it, and it bounds a resource rather than an operation: it is the ceiling on how long owned tasks may stay unjoined. The coordinator never cancels an in-flight persistence future to meet it, so the deadline is reported as missed rather than enforced by abandoning durable work."
+    },
+    {
+      "resource": "telemetry-flush-deadline",
+      "class": "queue",
+      "owner": "TelemetryFlushDeadline",
+      "symbols": ["MAX_TELEMETRY_FLUSH_DEADLINE", "MIN_TELEMETRY_FLUSH_DEADLINE"],
+      "ceiling": null,
+      "unit": "duration",
+      "policy": "fail-closed",
+      "report": "bounded-shedding",
+      "postgres": false,
+      "budget_row": "Telemetry flush deadline",
+      "budget_bound": "`100 ms..=1 min`"
+    }
+  ],
+  "out_of_scope": [
+    {
+      "resource": "operation timeouts",
+      "symbols": [
+        "MAX_CLIENT_TIMEOUT",
+        "MIN_CLIENT_TIMEOUT",
+        "MAX_CONNECT_TIMEOUT",
+        "MAX_SHORT_TIMEOUT",
+        "MAX_STATEMENT_TIMEOUT",
+        "MAX_CONNECTION_LIFETIME",
+        "MIN_BOUNDED_DURATION"
+      ],
+      "reason": "A timeout bounds how long one operation may take, not how much of a resource is concurrently held, and the capacity budget declares none of these. They are validated at construction like every other bound here, and their validation is covered by the configuration tests that own them.",
+      "covered_by": "crates/oxide-batch/tests/postgres_repository.rs::configuration_bounds_and_diagnostics_are_safe"
+    },
+    {
+      "resource": "retry and backoff policy limits",
+      "symbols": ["MAX_RETRY", "MAX_BACKOFF"],
+      "reason": "The retry attempt ceiling and the backoff ceiling bound a policy a definition declares, not a resource the framework holds. The retry cache those attempts write into is in scope, and is the resource the performance plan names.",
+      "covered_by": "crates/oxide-batch/tests/fault_policy.rs"
+    },
+    {
+      "resource": "recovery staleness and age thresholds",
+      "symbols": [
+        "MAX_STALE_THRESHOLD",
+        "MIN_STALE_THRESHOLD",
+        "MAX_CLOCK_SKEW",
+        "MIN_CLOCK_SKEW",
+        "MIN_PURGE_AGE",
+        "MIN_UNRESOLVED_AGE"
+      ],
+      "reason": "These bound when a decision may be taken, not how much may be held. A stale-execution threshold that is wrong produces a premature or delayed recovery decision, which is a lifecycle result rather than a resource result.",
+      "covered_by": "crates/oxide-batch/tests/services.rs"
+    },
+    {
+      "resource": "application readers, writers, and item buffers",
+      "symbols": [],
+      "reason": "Explicitly outside the M0-M4 framework boundary. The capacity budget already states that application readers, writers, and item buffers are budgeted by the workload, and the framework declares no ceiling for them, so the campaign has nothing to prove and does not pretend to.",
+      "covered_by": null
+    },
+    {
+      "resource": "distributed and remote execution resources",
+      "symbols": [],
+      "reason": "No remote worker, broker credit, or assignment queue exists in the accepted M0-M4 scope. A campaign row for one would be a claim about unwritten code.",
+      "covered_by": null
+    }
+  ],
+  "related": [
+    {
+      "package": "oxide-batch",
+      "target": "m4_exit_measurements",
+      "name": "p010_local_partition_scaling",
+      "invariant": "peak worker occupancy equals the configured budget at 1, 10, and 64 workers",
+      "run_by_this_campaign": false,
+      "note": "The M4 measurement this campaign does not replace and is not a rerun of. It measures scaling on the in-memory repository and reports throughput; this campaign proves the ceiling holds on PostgreSQL and compares the durable record. Rerunning it against a database would produce a different number, not a resource result."
+    },
+    {
+      "package": "oxide-batch",
+      "target": "m4_exit_measurements",
+      "name": "p012_explorer_pagination_bounds",
+      "invariant": "rows per page never above the requested size, and a constant cursor size",
+      "run_by_this_campaign": false,
+      "note": "Kept, and not a substitute for the bounded-query report: it runs against the in-memory explorer, where paging is a slice of a cloned history. Whether a page stays bounded when the rows come from a real index on a grown table is a PostgreSQL property, which is what this campaign covers."
+    },
+    {
+      "package": "oxide-batch",
+      "target": "local_partition_runtime",
+      "name": "worker_concurrency_never_exceeds_manifest_bound",
+      "invariant": "in-memory partition worker occupancy",
+      "run_by_this_campaign": false,
+      "note": "The in-memory regression for the same ceiling. It is kept and must keep existing; it is fast and runs on every commit, where this campaign runs on the matrix."
+    }
+  ]
+}
