@@ -3,6 +3,7 @@
 mod conformance;
 mod crash_restore;
 mod deps;
+mod evidence;
 mod resource_bounds;
 mod security;
 mod soak;
@@ -109,6 +110,7 @@ fn main() -> ExitCode {
         Some("crash-restore") => run_crash_restore_campaign(),
         Some("deps") => run_dependency_check(),
         Some("doctor") => run_all(DOCTOR),
+        Some("evidence") => run_evidence_check(),
         Some("package") => run_all(PACKAGE),
         Some("resource-bounds") => run_resource_bound_campaign(),
         Some("security") => run_security_campaign(),
@@ -281,6 +283,38 @@ fn run_security_campaign() -> bool {
     }
 }
 
+/// Reports whether the retained evidence is still what it says it is.
+fn run_evidence_check() -> bool {
+    eprintln!("==> retained evidence provenance");
+
+    match evidence::run() {
+        Ok(verification) => {
+            if verification.violations.is_empty() {
+                eprintln!(
+                    "{} retained report(s) in {} are byte-identical to what was recorded, name \
+                     the run and the producer commit they came from, cover the required matrix, \
+                     passed with no violations, and describe the campaign this tree still runs",
+                    verification.reports,
+                    evidence::directory().display(),
+                );
+                return true;
+            }
+            for violation in &verification.violations {
+                eprintln!("evidence gap: {violation}");
+            }
+            eprintln!(
+                "see the provenance contract in \
+                 docs/engineering/campaigns/m5/evidence-provenance.json"
+            );
+            false
+        }
+        Err(error) => {
+            eprintln!("could not verify the retained evidence: {error}");
+            false
+        }
+    }
+}
+
 /// Reports whether the soak ran its declared window and nothing accumulated.
 fn run_soak_campaign() -> bool {
     eprintln!("==> PostgreSQL soak campaign");
@@ -416,6 +450,7 @@ fn usage() {
            crash-restore    run the crash, restart, and logical restore campaign\n\
            deps             check extraction boundaries and workspace cycles\n\
            doctor           show required local tool versions\n\
+           evidence         verify retained campaign evidence against its provenance\n\
            package          inspect and dry-run every publishable crate\n\
            resource-bounds  prove every declared ceiling holds and is reached under stress\n\
            security         run the TLS, least-privilege, and redaction campaign\n\

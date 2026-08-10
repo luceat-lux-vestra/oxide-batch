@@ -1,0 +1,133 @@
+{
+  "document": "Retained evidence provenance for the M5 campaigns",
+  "issue": "https://github.com/luceat-lux-vestra/oxide-batch/issues/102",
+  "note": "This document says where each retained report came from and what binds it to the tree it sits beside. It is data rather than prose because `cargo xtask evidence` reads it: the fields below are checked rather than described.",
+  "model": {
+    "note": "A retained report cannot have been produced by the commit that contains it. The artifact records the commit it ran on, and the commit that stores the artifact necessarily comes after — so a rule requiring the two to be equal is not strict, it is unsatisfiable, and chasing it produces a rerun on every push and never converges. The pipeline has three distinct positions and this document keeps them apart.",
+    "stages": [
+      {
+        "stage": "producer commit",
+        "what": "The executable tree the campaign ran on: the framework, the report, the shared soak mechanics, the campaign scope, and the runner."
+      },
+      {
+        "stage": "workflow run",
+        "what": "The CI run that executed the campaign against that tree and uploaded the report as a build artifact. The run is immutable and is identified by its run id, attempt, workflow, and job."
+      },
+      {
+        "stage": "retention commit",
+        "what": "A later, evidence-only commit that stores the artifact byte-for-byte and records this provenance. It is normal and expected for it to differ from the producer commit; that difference is what this document exists to bound."
+      }
+    ],
+    "prohibited": [
+      "Presenting the retention commit as the producer commit.",
+      "Editing a retained artifact so that a recorded hash or commit matches.",
+      "Re-running the campaign on each new head in order to make the producer commit equal the retention commit."
+    ]
+  },
+  "binding": {
+    "note": "What makes retained evidence trustworthy is not that a SHA is reachable — the identifier the artifact carries is a pull-request merge ref, which GitHub replaces on the next push and which is therefore absent from any later clone. Reachability of that SHA cannot be the check. Content is. Two content bindings are enforced, and both work from the retained files alone.",
+    "artifact_identity": "Each report's git blob identity, taken over the working-tree file. It changes if a single byte of a retained artifact is edited after retention.",
+    "campaign_semantics": "The git object identity of every path that defines what the campaign executes, as those paths stood at the producer commit. If any of them differs today, the retained report describes a campaign this tree no longer runs, and it may not be promoted: the campaign has to be run again on the new tree.",
+    "why_object_ids": "Git object identities rather than a separate digest, because git is already required by this tooling, the values are verifiable by hand with `git rev-parse HEAD:<path>` and `git hash-object <file>`, and no dependency is added to compute them. They are content addresses, not a claim about the bytes GitHub stored for the uploaded artifact."
+  },
+  "campaign_semantics": {
+    "note": "The executable definition of the soak campaign. A change to any of these is a change to what the evidence is evidence of. Everything else in the repository — documentation, the changelog, unrelated xtask commands, the list of CI jobs — may change between the producer commit and the retention commit without invalidating a report.",
+    "workflow_exclusion": "The workflow file is deliberately not in this set. What matters is the job that ran, and that is pinned far more tightly than a file hash could pin it: the run id, the attempt, and the job identity below name one immutable execution. Including the file would additionally mean that adding any unrelated CI job invalidated every retained report in the repository.",
+    "paths": [
+      "crates/oxide-batch/src",
+      "crates/oxide-batch-core/src",
+      "crates/oxide-batch-plan/src",
+      "crates/oxide-batch-repository/src",
+      "crates/oxide-batch/tests/postgres_soak.rs",
+      "crates/oxide-batch/tests/soak",
+      "tests/fixtures/soak/campaign-scope.json",
+      "xtask/src/soak.rs",
+      "xtask/src/suite.rs"
+    ]
+  },
+  "retention_paths": {
+    "note": "The paths an evidence-retention change is allowed to touch. The verifier reports what a retention commit changed outside them; the binding requirement is the campaign-semantics one above, and this list is the narrower editorial convention that keeps a retention commit reviewable as a retention commit.",
+    "allowed": [
+      "docs/engineering/campaigns/m5/",
+      "docs/project/m5-campaign-evidence.md"
+    ]
+  },
+  "evidence": [
+    {
+      "report": "soak-campaign-postgres-15.json",
+      "campaign": "M5 PostgreSQL soak",
+      "scenario": "soak_reports_no_task_connection_handle_or_memory_growth",
+      "matrix_point": "postgres-15",
+      "postgres_major_version": "15",
+      "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
+      "producer": {
+        "branch_head_sha": "82627f72a5bb3d6d069827ee8d890a5f7dcd66f6",
+        "branch_head_note": "The commit on the pull-request branch the run was triggered from. This is a real commit in branch history and is the tree the campaign-semantics identities below were taken from.",
+        "merge_ref_sha": "4c535639b5eb8ee8cd018e64013c24cbf48a18b4",
+        "merge_ref_note": "The ephemeral merge of the branch head with the base that the workflow actually checked out, and therefore the value the artifact records as environment.source_commit. GitHub replaces this ref on the next push, so it is recorded as an identifier and is never required to be resolvable. The two SHAs are separate fields on purpose and are never used interchangeably.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "Rust",
+        "workflow_file": ".github/workflows/ci.yml",
+        "job": "postgres-15-soak-campaign",
+        "run_id": 31357073834,
+        "run_attempt": 1,
+        "job_id": 93358646500,
+        "event": "pull_request",
+        "artifact_name": "soak-campaign-postgres-15",
+        "conclusion": "success"
+      },
+      "artifact_git_blob": "fc9ee69a50b2fc7e768fadb3b49aa27d749d6156"
+    },
+    {
+      "report": "soak-campaign-postgres-18.json",
+      "campaign": "M5 PostgreSQL soak",
+      "scenario": "soak_reports_no_task_connection_handle_or_memory_growth",
+      "matrix_point": "postgres-18",
+      "postgres_major_version": "18",
+      "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+      "producer": {
+        "branch_head_sha": "82627f72a5bb3d6d069827ee8d890a5f7dcd66f6",
+        "branch_head_note": "The commit on the pull-request branch the run was triggered from. This is a real commit in branch history and is the tree the campaign-semantics identities below were taken from.",
+        "merge_ref_sha": "4c535639b5eb8ee8cd018e64013c24cbf48a18b4",
+        "merge_ref_note": "The ephemeral merge of the branch head with the base that the workflow actually checked out, and therefore the value the artifact records as environment.source_commit. GitHub replaces this ref on the next push, so it is recorded as an identifier and is never required to be resolvable. The two SHAs are separate fields on purpose and are never used interchangeably.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "Rust",
+        "workflow_file": ".github/workflows/ci.yml",
+        "job": "postgres-18-soak-campaign",
+        "run_id": 31357073834,
+        "run_attempt": 1,
+        "job_id": 93358646519,
+        "event": "pull_request",
+        "artifact_name": "soak-campaign-postgres-18",
+        "conclusion": "success"
+      },
+      "artifact_git_blob": "0c839075417720dbc188c80d5ce2d55cb6a3703c"
+    }
+  ],
+  "campaign_semantics_at_producer": {
+    "note": "Git object identities of the campaign-semantics paths as they stood at producer.branch_head_sha. The verifier recomputes each against the current tree and fails on any difference, which is what stops a report from being promoted alongside a campaign that has since changed.",
+    "producer_commit": "82627f72a5bb3d6d069827ee8d890a5f7dcd66f6",
+    "objects": {
+      "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+      "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+      "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+      "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+      "crates/oxide-batch/tests/postgres_soak.rs": "9ce60297846ba875b3739670e532ca6b616097ac",
+      "crates/oxide-batch/tests/soak": "fd6cbbb5b02861b8f8d604e57a67c9e5c9b2cd47",
+      "tests/fixtures/soak/campaign-scope.json": "296044e7f6aff0f4c51d341e0ef867b14d56c6d9",
+      "xtask/src/soak.rs": "a78ab45d6e2f5bf20dcae15053e5f49da4b33f5d",
+      "xtask/src/suite.rs": "2c590a7233a5f9c05bf09b672ee5d9e4370aa673"
+    }
+  },
+  "required_matrix": ["postgres-15", "postgres-18"]
+}

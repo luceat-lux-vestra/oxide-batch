@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `cargo xtask evidence`, a verifier for retained campaign evidence. It checks
+  that each report committed under `docs/engineering/campaigns/m5/` is still the
+  untouched output of a recorded CI run over a tree whose campaign still means
+  what it meant. The contract it reads separates three positions that had been
+  conflated: the producer commit the campaign ran on, the immutable workflow run
+  that produced the artifact, and the later evidence-only retention commit that
+  stores it — the last differing from the first being normal rather than a
+  defect, since a report cannot be produced by the commit that contains it. The
+  binding is content rather than commit identity, which is forced rather than
+  chosen: the identifier a report carries is the pull-request merge ref, which
+  GitHub replaces on the next push and which no later clone can resolve. So each
+  report's git blob identity is recorded, and so is the git object identity of
+  every path that defines what the campaign executes; if one of those differs,
+  the report describes a campaign the tree no longer runs and may not be
+  promoted. That last check is the point of the tool — it is what stops a green
+  report being kept beside a rule that has since been changed. Fourteen tests
+  hold the verifier, and a CI job runs it. No production code changed.
 - `cargo xtask soak`, the M5 PostgreSQL soak campaign. It runs a declared window
   of repeated launch, fault, restart, recovery, and drain cycles against one
   PostgreSQL pool and reports task, connection, handle, and memory growth over

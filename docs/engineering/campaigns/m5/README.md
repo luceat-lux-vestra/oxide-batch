@@ -39,6 +39,36 @@ that produce it differ only in the database behind the fixture. The point is
 also inside the file, as `environment.matrix`, so a copied report still says
 which run it came from.
 
+## Provenance
+
+[`evidence-provenance.json`](evidence-provenance.json) records where each
+retained report came from and what binds it to the tree it sits beside, and
+`cargo xtask evidence` checks it on every CI run.
+
+It exists because of a requirement that looks reasonable and is impossible: that
+a retained report be the output of the tree that contains it. The artifact
+records the commit it ran on, and the commit that stores the artifact comes
+after it, so the two can never be equal — and trying to make them equal means
+re-running the campaign on every new head, which produces a new head. The
+document separates the three positions instead: the **producer commit** is the
+executable tree the campaign ran on, the **workflow run** is the immutable CI
+execution, and the **retention commit** is the later evidence-only commit that
+stores the artifact. The last two differing from the first is normal.
+
+Commit identity cannot be the binding, either, and not by preference: the
+identifier a report carries is the pull-request merge ref, which GitHub replaces
+on the next push and which is absent from every later clone. It is recorded,
+checked against what the artifact itself says, and never resolved; the branch
+head is a separate field and the two are never used interchangeably. The
+binding is content — each report's git blob identity, and the git object
+identity of every path that defines what the campaign executes, taken at the
+producer commit. If a campaign-semantics path differs today, the retained report
+describes a campaign this tree no longer runs and may not be promoted: the
+campaign has to be run again.
+
+A report is never edited to make a hash or a commit match. If the recorded
+identity and the file disagree, the file is wrong.
+
 ## Document shape
 
 Every report carries the same envelope:

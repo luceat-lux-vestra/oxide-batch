@@ -1624,11 +1624,24 @@ Both matrix points pass with no violations.
 | [`soak-campaign-postgres-15.json`](../engineering/campaigns/m5/soak-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
 | [`soak-campaign-postgres-18.json`](../engineering/campaigns/m5/soak-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
 
-Both were produced by commit `4c53563`, which is the merge commit the workflow
-checked out rather than a branch tip, on `rustc 1.97.1` and Linux `x86_64`,
-against servers `15.18` and `18.4`, with `4` Tokio worker threads. The command
-is `cargo run --package oxide-batch-xtask -- soak`. The runs took `253` and
-`233` seconds.
+The retained reports are immutable CI artifacts produced from the recorded
+producer commit. The later evidence-retention commit only records those
+artifacts and their provenance.
+
+Both were produced by run `31357073834` of the `Rust` workflow, jobs
+`postgres-15-soak-campaign` and `postgres-18-soak-campaign`, from branch head
+`82627f7` and the merge ref `4c53563` that the workflow actually checked out —
+which is the value each report carries as its source commit. The two SHAs are
+recorded as separate fields and are never used interchangeably. `rustc 1.97.1`,
+Linux `x86_64`, servers `15.18` and `18.4`, `4` Tokio worker threads. The
+command is `cargo run --package oxide-batch-xtask -- soak`. The runs took `253`
+and `233` seconds.
+
+The full provenance is
+[`evidence-provenance.json`](../engineering/campaigns/m5/evidence-provenance.json),
+and `cargo xtask evidence` checks it on every CI run rather than leaving it as
+prose — including that the campaign these reports describe is still the campaign
+this tree runs. See "How retained evidence is bound" below.
 
 Every exact figure below is identical on the two matrix points. The resident
 series differ, which is the one place this campaign expects them to: it is the
@@ -1691,14 +1704,66 @@ No product defect was found. Two of the findings below are defects in the
 campaign itself, both caught by its own evidence; the rest are observations that
 shaped it.
 
+### How retained evidence is bound
+
+A retained report cannot have been produced by the commit that contains it. The
+artifact records the commit it ran on, and the commit that stores the artifact
+necessarily comes after it — so a rule requiring the two to be equal is not
+strict, it is unsatisfiable. Trying to satisfy it means re-running the campaign
+on every new head and committing the result, which produces a new head, and
+never converges. This campaign made that mistake once and the correction is
+recorded here rather than quietly dropped.
+
+The pipeline has three positions and the provenance document keeps them apart:
+the **producer commit** is the executable tree the campaign ran on; the
+**workflow run** is the immutable CI execution that produced the artifact; and
+the **retention commit** is the later, evidence-only commit that stores it.
+Producer and retention differing is the normal state, not a defect.
+
+What makes the evidence trustworthy is therefore content, not commit identity —
+and that is forced rather than chosen. The identifier a report carries is the
+pull-request *merge ref*, an ephemeral commit GitHub replaces on the next push
+and which is absent from every later clone; requiring it to resolve would fail
+permanently, and accepting an unresolvable one would decide nothing. So it is
+recorded, compared against what the artifact itself says, and never resolved,
+while the branch head is recorded separately.
+
+Two content bindings are enforced by `cargo xtask evidence`, both working from
+the retained files alone:
+
+- **the artifact's git blob identity**, which fails if a byte of a retained
+  report is edited after retention;
+- **the git object identity of every path that defines what the campaign
+  executes** — the framework crates, the report, the shared soak mechanics, the
+  campaign scope, and the runner — taken at the producer commit. If one differs
+  today, the report describes a campaign this tree no longer runs, and it may
+  not be promoted: the campaign has to be run again on the new tree.
+
+The second is the one that carries weight. It is what stops the genuinely
+tempting move of keeping a green report while changing the rule that made it
+green, and it is checked by a CI job rather than by review. Fourteen tests hold
+the verifier itself, including an edited artifact, a producer commit the report
+does not name, a half matrix, an unidentified workflow run, and a changed
+campaign scope.
+
+The workflow file is deliberately outside that set. What matters is the job that
+ran, and the run id, attempt, and job identity name one immutable execution more
+tightly than a file hash could; including the file would mean that adding any
+unrelated CI job invalidated every retained report in the repository.
+
 ### What this campaign does not establish
 
 - **That no leak exists.** What a passing run establishes is bounded by the
-  declared window and the declared workload: over `632` cycles of *this* work,
-  framework-owned tasks, pooled connections, process handles, and resident
-  memory did not accumulate. Four minutes says nothing about four hours, and the
-  campaign does not extrapolate. A longer window is
-  a different campaign result, not a stronger reading of this one.
+  declared window and the declared workload, and the two kinds of observation
+  carry different strengths. Over `632` cycles of *this* work, the exact-count
+  resources — tasks, pooled connections, checkouts, and handles — did not
+  accumulate; they are integers and every measured boundary held them at the
+  post-warmup baseline. Resident-memory growth *converged* under the declared
+  rate-decay rule, which is the weaker statement the rule actually supports: it
+  does not exclude a sufficiently small leak masked by settling behaviour. Four
+  minutes says nothing about four hours, and the campaign does not extrapolate.
+  A longer window is a different campaign result, not a stronger reading of
+  this one.
 - **That an unobserved resource is bounded.** Four resource classes are observed
   because the plan names four. Anything else the process holds is unexamined
   rather than proved absent.
