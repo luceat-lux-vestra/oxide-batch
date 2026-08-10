@@ -69,6 +69,12 @@ campaign has to be run again.
 A report is never edited to make a hash or a commit match. If the recorded
 identity and the file disagree, the file is wrong.
 
+The document also lists the paths a retention change is expected to touch. That
+one is a review convention rather than an automated check, and deliberately so:
+identifying "the retention commit" from inside the tree is the same
+self-reference that made the original requirement unsatisfiable. What is
+enforced is the campaign-semantics binding, which is the property that matters.
+
 ## Document shape
 
 Every report carries the same envelope:
