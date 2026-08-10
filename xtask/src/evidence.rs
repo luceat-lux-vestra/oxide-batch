@@ -407,27 +407,28 @@ mod tests {
     // window instead of the one CI job whose question it is. The command
     // answers it; these tests hold the logic that answers it.
 
-    /// One provenance entry shaped like the real ones.
+    /// The provenance entry the repository actually ships for `PostgreSQL` 15.
+    ///
+    /// Read from the shipped document rather than restated here. An earlier
+    /// version of these tests hardcoded the blob and the producer SHA, which
+    /// made every negative case below depend on values that change whenever
+    /// evidence is retained — and duplicated state in a test is exactly the
+    /// failure this whole verifier exists to catch, so it should not be the
+    /// shape of the verifier's own tests.
     fn entry() -> Value {
-        json!({
-            "report": "soak-campaign-postgres-15.json",
-            "matrix_point": "postgres-15",
-            "postgres_major_version": "15",
-            "producer": {
-                "branch_head_sha": "82627f72a5bb3d6d069827ee8d890a5f7dcd66f6",
-                "merge_ref_sha": "4c535639b5eb8ee8cd018e64013c24cbf48a18b4",
-                "source_tree_clean": true,
-            },
-            "workflow_run": {
-                "workflow": "Rust",
-                "job": "postgres-15-soak-campaign",
-                "run_id": 31_357_073_834_u64,
-                "run_attempt": 1,
-                "job_id": 93_358_646_500_u64,
-                "artifact_name": "soak-campaign-postgres-15",
-            },
-            "artifact_git_blob": "fc9ee69a50b2fc7e768fadb3b49aa27d749d6156",
-        })
+        let root = crate::suite::workspace_root().expect("workspace root");
+        let path = root.join(super::DIRECTORY).join(super::PROVENANCE);
+        let document: Value =
+            serde_json::from_str(&std::fs::read_to_string(path).expect("provenance document"))
+                .expect("provenance json");
+        document
+            .get("evidence")
+            .and_then(Value::as_array)
+            .expect("evidence")
+            .iter()
+            .find(|entry| entry.get("matrix_point").and_then(Value::as_str) == Some("postgres-15"))
+            .expect("a postgres-15 entry")
+            .clone()
     }
 
     /// Verifies one entry against the real retained directory.
