@@ -30,8 +30,8 @@ a pass or failure that does not.
 | [`security-campaign-postgres-18.json`](security-campaign-postgres-18.json) | Security | The same, on PostgreSQL 18 |
 | [`resource-bounds-campaign-postgres-15.json`](resource-bounds-campaign-postgres-15.json) | Resource bounds | Every declared bounded resource, the ceiling each report checked, the load it was offered, the occupancy it reached, and what it shed or refused, on PostgreSQL 15 |
 | [`resource-bounds-campaign-postgres-18.json`](resource-bounds-campaign-postgres-18.json) | Resource bounds | The same, on PostgreSQL 18 |
-| `soak-campaign-postgres-15.json` | Soak | The declared warmup and measured window, every cycle's fault, restart, recovery, drain, and durable record, and the per-cycle task, connection, handle, memory, and durable-history series each growth rule was decided from, on PostgreSQL 15 |
-| `soak-campaign-postgres-18.json` | Soak | The same, on PostgreSQL 18 |
+| [`soak-campaign-postgres-15.json`](soak-campaign-postgres-15.json) | Soak | The declared warmup and measured window, every cycle's fault, restart, recovery, drain, and durable record, and the per-cycle task, connection, handle, memory, and durable-history series each growth rule was decided from, on PostgreSQL 15 |
+| [`soak-campaign-postgres-18.json`](soak-campaign-postgres-18.json) | Soak | The same, on PostgreSQL 18 |
 
 A file carries the matrix point in its name because one run produces one
 report: the runner always writes `conformance-campaign.json`, and the two jobs

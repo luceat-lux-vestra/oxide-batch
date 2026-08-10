@@ -1,9 +1,8 @@
 # M5 Evidence Campaign Record
 
 **State:** In progress. The conformance, crash-and-restore, upgrade, security,
-and resource-bound campaigns are delivered; the soak campaign is built and
-awaiting its matrix reports; the cancellation, performance, and
-reference-workload campaigns are not started.
+resource-bound, and soak campaigns are delivered; the cancellation,
+performance, and reference-workload campaigns are not.
 
 **Issue:** [#102](https://github.com/luceat-lux-vestra/oxide-batch/issues/102)
 
@@ -30,7 +29,7 @@ named released version, and that stays with
 | Upgrade | `schema1_and_schema2_upgrade_directly_to_schema3`, `schema2_runtime_rejects_schema3`, `schema3_backup_restores_the_prior_schema` | Delivered |
 | Security | `verify_full_tls_is_required_in_the_supported_mode`, `least_privilege_role_cannot_exceed_its_class`, `redaction_sweep_finds_no_prohibited_value_class` | Delivered |
 | Resource bounds | `declared_ceilings_hold_under_stress_with_backpressure`, plus the bounded query-path, payload, and shedding reports | Delivered |
-| Soak | `soak_reports_no_task_connection_handle_or_memory_growth` | Awaiting the PostgreSQL 15 and 18 reports |
+| Soak | `soak_reports_no_task_connection_handle_or_memory_growth` | Delivered |
 | Cancellation | P-014 report | Not started |
 | Performance | P-001, P-003, P-010 reports | Not started |
 | Reference workload | Published P-003 run | Not started |
@@ -1447,7 +1446,8 @@ whose slot it is holding. The wait is bounded, so a run that cannot reach the
 fault fails on the record it produced rather than hanging past the CI timeout
 and retaining nothing.
 
-The result is exact and was exact in all `152` cycles of the development run:
+The result is exact and was exact in all `632` cycles of every run, on both
+matrix points and on the development host:
 `15` partitions committed on the first attempt, one failed, and exactly one
 re-run by the restart.
 
@@ -1617,54 +1617,74 @@ stopped making progress must fail rather than occupy a runner.
 
 ### Results
 
-The two matrix reports are produced by the CI axes added with this campaign and
-are committed once those jobs have run on this branch; the row in the status
-table above says `Awaiting the PostgreSQL 15 and 18 reports` until they are.
-The figures below are from the development run and are labelled as such:
-PostgreSQL `18.4` on macOS `aarch64`, `4` Tokio worker threads, `152` cycles in
-`38` seconds.
+Both matrix points pass with no violations.
 
-Everything the campaign asserts is structural — occupancy, counts, statuses, and
-the shape of a series — so the two matrix points are expected to differ in the
-server they ran against and not in what they prove.
+| Report | Matrix | Result |
+| --- | --- | --- |
+| [`soak-campaign-postgres-15.json`](../engineering/campaigns/m5/soak-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
+| [`soak-campaign-postgres-18.json`](../engineering/campaigns/m5/soak-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
+
+Both were produced by commit `5e5fd4a`, which is the merge commit the workflow
+checked out rather than a branch tip, on `rustc 1.97.1` and Linux `x86_64`,
+against servers `15.18` and `18.4`, with `4` Tokio worker threads. The command
+is `cargo run --package oxide-batch-xtask -- soak`. The runs took `228` and
+`270` seconds.
+
+Every exact figure below is identical on the two matrix points. The resident
+series differ, which is the one place this campaign expects them to: it is the
+only observation that is not an integer the framework controls.
 
 **The window.** `32` warmup and `600` measured cycles, `632` completed, one
-sample per cycle, `23380` pool readings taken while the cycles ran.
+sample per cycle, and `37660` and `44747` pool readings taken while the cycles
+ran, none of which failed to read the gauge.
 
-**Correctness.** All fifteen obligations held in all `600` measured cycles.
-Every cycle: `15` partitions committed on the failed attempt, the injected
-partition failed, `Failed` recorded durably, a new job execution on the same
-instance, exactly `partition-0015` re-run, `16` partitions `Completed`, `108`
-repository transactions, and a drain that joined all `4` owned tasks with no
-panic. Peak worker occupancy stayed within the budget of `4` and reached it,
-and no worker was still holding when a step returned.
+**Correctness.** All fifteen obligations held in all `600` measured cycles, on
+both majors. Every cycle: `15` partitions committed on the failed attempt, the
+injected partition failed, `Failed` recorded durably, a new job execution on the
+same instance, exactly `partition-0015` re-run, `16` partitions `Completed`,
+`108` repository transactions, and a drain that joined all `4` owned tasks with
+no panic. `10744` partition executions per matrix point. No worker was still
+holding when a step returned, and peak worker occupancy never exceeded the
+budget of `4` — it reached `2` on the CI runners and `4` on the development
+host, which is a property of the host's parallelism rather than of the bound,
+and is why the campaign requires occupancy to stay within the budget rather than
+to reach it. Reaching a ceiling is the resource-bound campaign's obligation.
 
 **Tasks.** `4` alive at the post-warmup baseline and `4` at all `600` measured
-boundaries. No drain left a task unjoined and none panicked, in any cycle.
+boundaries, on both majors. No drain left a task unjoined and none panicked, in
+any cycle.
 
 **Connections.** The pool held `5` connections at every boundary with `0`
 checked out at every one of them, and `0` checked out in the authoritative
 reading taken while the pool was still open at the end of the run. In-flight
 occupancy reached `5` — the whole pool, which is `worker_budget + 1` — and never
 exceeded it. The database reported `5` backends for the application throughout,
-and `0` once the server had finished tearing them down after the close.
+and `0` after the close, which the server reached within `1` millisecond on both
+majors.
 
-**Handles.** `15` at the post-warmup baseline and `15` at all `600` measured
-boundaries, falling to `10` after the pool closed.
+**Handles.** `17` at the post-warmup baseline and `17` at all `600` measured
+boundaries, on both majors.
 
-**Memory.** The measured window's first third grew at `0.215` KiB per cycle and
-its last third at `0.000`, against a rule that the last must be at most half the
-first. A separate `1032`-cycle diagnostic run on the same host is flat for its
-last `800` samples at an overall slope of `0.014` KiB per cycle, which is the
-evidence that no per-cycle leak exists to be found: a leak of even a tenth of a
-kilobyte a cycle would have moved five pages over those `800` cycles and moved
-none.
+**Memory.** The measured window's first third grew at `0.645` KiB per cycle on
+PostgreSQL 15 and its last third at `0.133`, a ratio of `0.21`; on PostgreSQL 18
+the rates were `0.766` and `0.183`, a ratio of `0.24`. The rule allows `0.50`
+and a straight line would be `1.00`. Total measured rise was `248` and `296`
+KiB.
 
-**Durable history, for contrast.** Instances rose from `33` to `632` and job
-executions from `66` to `1264` across the measured window, while every exact
-process counter stayed flat. That contrast is the campaign's shape in one line:
-the database accumulated over eleven thousand step executions and the process
-accumulated no task, no connection, and no handle.
+The rates decay rather than hold, which is the shape the rule asks for, and two
+further readings say why that is settling rather than a leak. The rate falls
+about fourteenfold from warmup to measurement on both majors. And a `1032`-cycle
+diagnostic run on the development host — a different allocator — is flat for its
+last `800` samples at an overall slope of `0.014` KiB per cycle: a leak of even
+a tenth of a kilobyte a cycle would have moved five pages across those `800`
+cycles, and it moved none.
+
+**Durable history, for contrast.** Instances rose from `33` to `632`, job
+executions from `66` to `1264`, and step executions from `627` to `12008` across
+the measured window, while every exact process counter stayed flat. That
+contrast is the campaign's shape in one line: the database accumulated `11381`
+step executions and the process accumulated no task, no connection, and no
+handle.
 
 No correctness P0 or P1 was found by this campaign, and none is open against it.
 No product defect was found. Two of the findings below are defects in the
@@ -1674,10 +1694,10 @@ shaped it.
 ### What this campaign does not establish
 
 - **That no leak exists.** What a passing run establishes is bounded by the
-  declared window and the declared workload: over `152` cycles of *this* work,
+  declared window and the declared workload: over `632` cycles of *this* work,
   framework-owned tasks, pooled connections, process handles, and resident
-  memory did not accumulate. Two and a half minutes says nothing about two and a
-  half hours, and the campaign does not extrapolate. A longer window is
+  memory did not accumulate. Four minutes says nothing about four hours, and the
+  campaign does not extrapolate. A longer window is
   a different campaign result, not a stronger reading of this one.
 - **That an unobserved resource is bounded.** Four resource classes are observed
   because the plan names four. Anything else the process holds is unexamined
@@ -1727,8 +1747,9 @@ and would have left the reported number partly measuring the report. Instead the
 per-cycle evidence is written out of the process as it is produced, one JSON
 document per line, and read back after the last sample. What stays resident is a
 handful of integers per declared metric, in vectors reserved to their final
-length before the measured window opens. The measured growth fell from `432` KiB
-across `32` cycles to `16` KiB across `120`.
+length before the measured window opens. Measured against the window in force at
+the time, the growth fell from `432` KiB across `32` cycles to `16` KiB across
+`120`.
 
 **F17. A timed fault cannot produce a repeatable durable record.** Recorded in
 full under "The fault waits rather than fires" above. It is a finding rather
