@@ -1802,8 +1802,8 @@ answers to match, in an order that is itself load-bearing:
    index equal to its position. Serialization order is not authority. Nothing
    below is evaluated until this holds, because every later step indexes into
    these arrays: the correctness baseline is *the first measured cycle* and the
-   memory verdict is *the last third of the window*, and a duplicated, missing
-   or reordered entry moves both silently.
+   memory verdict is *the ordered endpoints of the whole warmup and measured
+   windows*, and a duplicated, missing or reordered entry moves both silently.
 2. **lifecycle** — folded from the journal, never read from the summary, and
    required of each cycle individually: totals cannot distinguish six hundred
    launches with thirty restarts from six hundred of each.
