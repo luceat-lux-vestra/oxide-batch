@@ -55,9 +55,9 @@
       "postgres_major_version": "15",
       "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
       "producer": {
-        "execution_commit": "3c5a5f1c25437b3f854ef5560c0d1cbbc5425b5a",
+        "execution_commit": "d5b94b3bf7b44e7aff8ce3e2c5525460001db28d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "f3ea2fad4ff743fcd01d8fc3ae5e9bebb6d0ffde",
+        "branch_head_sha": "652fa1d634a66b8929ab8f7b4db3340d2b9b5703",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -67,27 +67,27 @@
       "workflow_run": {
         "workflow": "Rust",
         "workflow_file": ".github/workflows/ci.yml",
-        "id": 31383045018,
+        "id": 31387759020,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-soak-campaign",
-        "id": 93437242141,
+        "id": 93452000080,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-15",
-        "id": 9060747014,
-        "digest": "sha256:78afcb00e91ca0e0d2522fd4b2f5f6d3548f294df54968b00150f794efa41a4e",
-        "size_bytes": 87811
+        "id": 9062537761,
+        "digest": "sha256:639cd8cdc65c7bbbe15f683915c11c065a04aa5337662ce136a1e992dca850bd",
+        "size_bytes": 88621
       },
-      "retained_report_git_blob": "0d3f8d67b09f9ad53e51866cf72264e9366c5291",
+      "retained_report_git_blob": "10eb0f4837c329b97c17d060121027b2c27da33b",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-10T11:32:04+00:00",
-        "run_id": 31383045018,
+        "verified_at": "2026-08-10T12:35:51+00:00",
+        "run_id": 31387759020,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -106,9 +106,9 @@
       "postgres_major_version": "18",
       "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
       "producer": {
-        "execution_commit": "3c5a5f1c25437b3f854ef5560c0d1cbbc5425b5a",
+        "execution_commit": "d5b94b3bf7b44e7aff8ce3e2c5525460001db28d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "f3ea2fad4ff743fcd01d8fc3ae5e9bebb6d0ffde",
+        "branch_head_sha": "652fa1d634a66b8929ab8f7b4db3340d2b9b5703",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -118,27 +118,27 @@
       "workflow_run": {
         "workflow": "Rust",
         "workflow_file": ".github/workflows/ci.yml",
-        "id": 31383045018,
+        "id": 31387759020,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-soak-campaign",
-        "id": 93437242041,
+        "id": 93452000057,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-18",
-        "id": 9060734618,
-        "digest": "sha256:d6af594e5b99cfc19595b84d7443bb59a49ef0fd3da89e08afff70badfbc0b6d",
-        "size_bytes": 87388
+        "id": 9062541484,
+        "digest": "sha256:71d490268659bba63c274e645e22bb4a031e29da928e01d22a44cc93cfb53a8b",
+        "size_bytes": 89408
       },
-      "retained_report_git_blob": "a0d7b15ff66d0a39cb9a00aa2bc53c059a3a4ad7",
+      "retained_report_git_blob": "003624ba79e9f3ed9ee594a7c582783291b78fe6",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-10T11:32:04+00:00",
-        "run_id": 31383045018,
+        "verified_at": "2026-08-10T12:35:51+00:00",
+        "run_id": 31387759020,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
