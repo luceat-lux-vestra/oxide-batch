@@ -55,10 +55,10 @@
       "postgres_major_version": "15",
       "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
       "producer": {
-        "branch_head_sha": "fba6d353e1a0306949a1c0a2e77e9f6ffc6467c3",
-        "branch_head_note": "The commit on the pull-request branch the run was triggered from. This is a real commit in branch history and is the tree the campaign-semantics identities below were taken from.",
-        "merge_ref_sha": "a2bcc5a024f0a552cea8864fadd73bdc8501eaeb",
-        "merge_ref_note": "The ephemeral merge of the branch head with the base that the workflow actually checked out, and therefore the value the artifact records as environment.source_commit. GitHub replaces this ref on the next push, so it is recorded as an identifier and is never required to be resolvable. The two SHAs are separate fields on purpose and are never used interchangeably.",
+        "execution_commit": "3c5a5f1c25437b3f854ef5560c0d1cbbc5425b5a",
+        "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
+        "branch_head_sha": "f3ea2fad4ff743fcd01d8fc3ae5e9bebb6d0ffde",
+        "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
         "os": "linux",
@@ -67,24 +67,35 @@
       "workflow_run": {
         "workflow": "Rust",
         "workflow_file": ".github/workflows/ci.yml",
-        "job": "postgres-15-soak-campaign",
-        "run_id": 31375576807,
-        "run_attempt": 1,
-        "job_id": 93413929763,
+        "id": 31383045018,
+        "attempt": 1,
         "event": "pull_request",
-        "artifact_name": "soak-campaign-postgres-15",
-        "conclusion": "success",
-        "github_artifact_id": 9057961219,
-        "github_artifact_digest": "sha256:d37953f74dca07b07223d6196f83a96cee96b534f8f29fe84e2b0747dcb23d60",
-        "github_artifact_size_bytes": 39348
+        "conclusion": "success"
       },
-      "artifact_git_blob": "0e445731b9eb184a49e5f2933473aa60ee1139ce",
+      "producing_job": {
+        "name": "postgres-15-soak-campaign",
+        "id": 93437242141,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "soak-campaign-postgres-15",
+        "id": 9060747014,
+        "digest": "sha256:78afcb00e91ca0e0d2522fd4b2f5f6d3548f294df54968b00150f794efa41a4e",
+        "size_bytes": 87811
+      },
+      "retained_report_git_blob": "0d3f8d67b09f9ad53e51866cf72264e9366c5291",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-10T09:46:16+00:00",
-        "run_id": 31375576807,
-        "method": "GitHub Actions API: run, attempt and job confirmed present and successful; the artifact's own sha256 digest read from the API and recorded; the artifact downloaded and its report compared byte-for-byte with the retained file",
-        "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local."
+        "verified_at": "2026-08-10T11:32:04+00:00",
+        "run_id": 31383045018,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network."
       }
     },
     {
@@ -95,10 +106,10 @@
       "postgres_major_version": "18",
       "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
       "producer": {
-        "branch_head_sha": "fba6d353e1a0306949a1c0a2e77e9f6ffc6467c3",
-        "branch_head_note": "The commit on the pull-request branch the run was triggered from. This is a real commit in branch history and is the tree the campaign-semantics identities below were taken from.",
-        "merge_ref_sha": "a2bcc5a024f0a552cea8864fadd73bdc8501eaeb",
-        "merge_ref_note": "The ephemeral merge of the branch head with the base that the workflow actually checked out, and therefore the value the artifact records as environment.source_commit. GitHub replaces this ref on the next push, so it is recorded as an identifier and is never required to be resolvable. The two SHAs are separate fields on purpose and are never used interchangeably.",
+        "execution_commit": "3c5a5f1c25437b3f854ef5560c0d1cbbc5425b5a",
+        "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
+        "branch_head_sha": "f3ea2fad4ff743fcd01d8fc3ae5e9bebb6d0ffde",
+        "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
         "os": "linux",
@@ -107,24 +118,35 @@
       "workflow_run": {
         "workflow": "Rust",
         "workflow_file": ".github/workflows/ci.yml",
-        "job": "postgres-18-soak-campaign",
-        "run_id": 31375576807,
-        "run_attempt": 1,
-        "job_id": 93413929872,
+        "id": 31383045018,
+        "attempt": 1,
         "event": "pull_request",
-        "artifact_name": "soak-campaign-postgres-18",
-        "conclusion": "success",
-        "github_artifact_id": 9057930030,
-        "github_artifact_digest": "sha256:a150649cba3a7c5e8d5ea3077b28f827f22da0f4a3a4aa2760aa3f8b1dbf2fc5",
-        "github_artifact_size_bytes": 37359
+        "conclusion": "success"
       },
-      "artifact_git_blob": "11ccf42854a12c85bae5b085043223ca4de3eb68",
+      "producing_job": {
+        "name": "postgres-18-soak-campaign",
+        "id": 93437242041,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "soak-campaign-postgres-18",
+        "id": 9060734618,
+        "digest": "sha256:d6af594e5b99cfc19595b84d7443bb59a49ef0fd3da89e08afff70badfbc0b6d",
+        "size_bytes": 87388
+      },
+      "retained_report_git_blob": "a0d7b15ff66d0a39cb9a00aa2bc53c059a3a4ad7",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-10T09:46:16+00:00",
-        "run_id": 31375576807,
-        "method": "GitHub Actions API: run, attempt and job confirmed present and successful; the artifact's own sha256 digest read from the API and recorded; the artifact downloaded and its report compared byte-for-byte with the retained file",
-        "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local."
+        "verified_at": "2026-08-10T11:32:04+00:00",
+        "run_id": 31383045018,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network."
       }
     }
   ],

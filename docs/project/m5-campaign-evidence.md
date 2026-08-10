@@ -1628,16 +1628,17 @@ The retained reports are immutable CI artifacts produced from the recorded
 producer commit. The later evidence-retention commit only records those
 artifacts and their provenance.
 
-Both were produced by run `31375576807` of the `Rust` workflow, jobs
-`postgres-15-soak-campaign` and `postgres-18-soak-campaign`, from branch head
-`fba6d35` and the merge ref the workflow actually checked out —
-which is the value each report carries as its source commit. The two SHAs are
-recorded as separate fields and are never used interchangeably. `rustc 1.97.1`,
-Linux `x86_64`, servers `15.18` and `18.4`, `4` Tokio worker threads. The
-command is `cargo run --package oxide-batch-xtask -- soak`. The runs took `322`
-and `243` seconds. Each artifact's own sha256 digest was read from the GitHub
-API at promotion and its contents compared byte-for-byte with the retained
-file.
+Both were produced by run `31383045018` of the `Rust` workflow — which
+concluded successfully as a whole, not merely in its soak jobs — from execution
+tree `3c5a5f1`, the merge commit the workflow actually checked out, off branch
+head `f3ea2fa`. The execution tree is the provenance root and the branch head is
+recorded beside it as metadata; they are different commits and are never used
+interchangeably. `rustc 1.97.1`, Linux `x86_64`, servers `15.18` and `18.4`, `4`
+Tokio worker threads. The command is
+`./tests/fixtures/soak/run-ci-campaign.sh <major>`, which the workflow calls.
+The runs took `245` and `223` seconds. Each artifact's own sha256 digest was
+read from the GitHub API at promotion and its contents compared byte-for-byte
+with the retained file.
 
 The full provenance is
 [`evidence-provenance.json`](../engineering/campaigns/m5/evidence-provenance.json),
@@ -1650,7 +1651,7 @@ series differ, which is the one place this campaign expects them to: it is the
 only observation that is not an integer the framework controls.
 
 **The window.** `32` warmup and `600` measured cycles, `632` completed, one
-sample per cycle, and `53169` and `40193` pool readings taken while the cycles
+sample per cycle, and `40546` and `36983` pool readings taken while the cycles
 ran, none of which failed to read the gauge.
 
 **Correctness.** All fifteen obligations held in all `600` measured cycles, on
@@ -1680,13 +1681,14 @@ and `0` after the close, which the server reached within a millisecond.
 **Handles.** `17` at the post-warmup baseline and `17` at all `600` measured
 boundaries, on both majors.
 
-**Memory.** The measured window's first third grew at `0.839` KiB per cycle on
-PostgreSQL 15 and its last third at `0.372`, a ratio of `0.44`; on PostgreSQL 18
-the rates were `0.773` and `0.293`, a ratio of `0.38`. The rule allows `0.50`
-and a straight line would be `1.00`. Across six CI runs of the two majors the
-observed ratios have been `0.20` to `0.44` — all decaying, none near the flat
-line a leak would draw, and the spread is the honest reading of how much room
-the rule has rather than one run's pair presented as a measurement.
+**Memory.** The measured window's first third grew at `0.885` KiB per cycle on
+PostgreSQL 15 and its last third at `0.076`, a ratio of `0.09`; on PostgreSQL 18
+the rates were `0.821` and `0.153`, a ratio of `0.19`. The rule allows `0.50`
+and a straight line would be `1.00`. Across eight CI runs of the two majors the
+observed ratios have been `0.09` to `0.44` — all decaying, none near the flat
+line a leak would draw. The spread is the honest reading of how much room the
+rule has: `0.44` is the closest any run has come to the limit, and quoting only
+the best pair would misrepresent it.
 
 The rates decay rather than hold, which is the shape the rule asks for, and two
 further readings say why that is settling rather than a leak. The rate falls
@@ -3275,16 +3277,17 @@ The retained reports are immutable CI artifacts produced from the recorded
 producer commit. The later evidence-retention commit only records those
 artifacts and their provenance.
 
-Both were produced by run `31375576807` of the `Rust` workflow, jobs
-`postgres-15-soak-campaign` and `postgres-18-soak-campaign`, from branch head
-`fba6d35` and the merge ref the workflow actually checked out —
-which is the value each report carries as its source commit. The two SHAs are
-recorded as separate fields and are never used interchangeably. `rustc 1.97.1`,
-Linux `x86_64`, servers `15.18` and `18.4`, `4` Tokio worker threads. The
-command is `cargo run --package oxide-batch-xtask -- soak`. The runs took `322`
-and `243` seconds. Each artifact's own sha256 digest was read from the GitHub
-API at promotion and its contents compared byte-for-byte with the retained
-file.
+Both were produced by run `31383045018` of the `Rust` workflow — which
+concluded successfully as a whole, not merely in its soak jobs — from execution
+tree `3c5a5f1`, the merge commit the workflow actually checked out, off branch
+head `f3ea2fa`. The execution tree is the provenance root and the branch head is
+recorded beside it as metadata; they are different commits and are never used
+interchangeably. `rustc 1.97.1`, Linux `x86_64`, servers `15.18` and `18.4`, `4`
+Tokio worker threads. The command is
+`./tests/fixtures/soak/run-ci-campaign.sh <major>`, which the workflow calls.
+The runs took `245` and `223` seconds. Each artifact's own sha256 digest was
+read from the GitHub API at promotion and its contents compared byte-for-byte
+with the retained file.
 
 The full provenance is
 [`evidence-provenance.json`](../engineering/campaigns/m5/evidence-provenance.json),
@@ -3297,7 +3300,7 @@ series differ, which is the one place this campaign expects them to: it is the
 only observation that is not an integer the framework controls.
 
 **The window.** `32` warmup and `600` measured cycles, `632` completed, one
-sample per cycle, and `53169` and `40193` pool readings taken while the cycles
+sample per cycle, and `40546` and `36983` pool readings taken while the cycles
 ran, none of which failed to read the gauge.
 
 **Correctness.** All fifteen obligations held in all `600` measured cycles, on
@@ -3327,13 +3330,14 @@ and `0` after the close, which the server reached within a millisecond.
 **Handles.** `17` at the post-warmup baseline and `17` at all `600` measured
 boundaries, on both majors.
 
-**Memory.** The measured window's first third grew at `0.839` KiB per cycle on
-PostgreSQL 15 and its last third at `0.372`, a ratio of `0.44`; on PostgreSQL 18
-the rates were `0.773` and `0.293`, a ratio of `0.38`. The rule allows `0.50`
-and a straight line would be `1.00`. Across six CI runs of the two majors the
-observed ratios have been `0.20` to `0.44` — all decaying, none near the flat
-line a leak would draw, and the spread is the honest reading of how much room
-the rule has rather than one run's pair presented as a measurement.
+**Memory.** The measured window's first third grew at `0.885` KiB per cycle on
+PostgreSQL 15 and its last third at `0.076`, a ratio of `0.09`; on PostgreSQL 18
+the rates were `0.821` and `0.153`, a ratio of `0.19`. The rule allows `0.50`
+and a straight line would be `1.00`. Across eight CI runs of the two majors the
+observed ratios have been `0.09` to `0.44` — all decaying, none near the flat
+line a leak would draw. The spread is the honest reading of how much room the
+rule has: `0.44` is the closest any run has come to the limit, and quoting only
+the best pair would misrepresent it.
 
 The rates decay rather than hold, which is the shape the rule asks for, and two
 further readings say why that is settling rather than a leak. The rate falls
