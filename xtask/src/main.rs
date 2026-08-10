@@ -5,6 +5,7 @@ mod crash_restore;
 mod deps;
 mod resource_bounds;
 mod security;
+mod soak;
 mod suite;
 mod surface;
 mod upgrade;
@@ -111,6 +112,7 @@ fn main() -> ExitCode {
         Some("package") => run_all(PACKAGE),
         Some("resource-bounds") => run_resource_bound_campaign(),
         Some("security") => run_security_campaign(),
+        Some("soak") => run_soak_campaign(),
         Some("surface") => run_surface_check(),
         Some("upgrade") => run_upgrade_campaign(),
         Some(command) => {
@@ -279,6 +281,35 @@ fn run_security_campaign() -> bool {
     }
 }
 
+/// Reports whether the soak ran its declared window and nothing accumulated.
+fn run_soak_campaign() -> bool {
+    eprintln!("==> PostgreSQL soak campaign");
+
+    match soak::run() {
+        Ok(campaign) => {
+            eprintln!("campaign report: {}", campaign.report.display());
+            if campaign.violations.is_empty() {
+                eprintln!(
+                    "the declared warmup and measured windows ran the declared workload, every \
+                     cycle injected a fault, restarted, recovered, and drained completely, every \
+                     cycle left the first measured cycle's durable record, and no declared growth \
+                     rule for tasks, connections, handles, or resident memory was violated"
+                );
+                return true;
+            }
+            for violation in &campaign.violations {
+                eprintln!("campaign gap: {violation}");
+            }
+            eprintln!("see the campaign scope in tests/fixtures/soak/campaign-scope.json");
+            false
+        }
+        Err(error) => {
+            eprintln!("could not run the soak campaign: {error}");
+            false
+        }
+    }
+}
+
 /// Reports whether the upgrade campaign observed every schema path it owes.
 fn run_upgrade_campaign() -> bool {
     eprintln!("==> PostgreSQL upgrade campaign");
@@ -388,6 +419,7 @@ fn usage() {
            package          inspect and dry-run every publishable crate\n\
            resource-bounds  prove every declared ceiling holds and is reached under stress\n\
            security         run the TLS, least-privilege, and redaction campaign\n\
+           soak             run the declared P-015 soak window and judge its growth\n\
            surface          inspect the rendered facade for disclosed dependencies\n\
            upgrade          run the PostgreSQL schema upgrade, rejection, and rollback campaign"
     );

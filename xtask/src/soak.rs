@@ -1,0 +1,1241 @@
+//! The M5 soak campaign runner.
+//!
+//! The campaign owes P-015 across repeated launch, shutdown, restart, and
+//! recovery cycles on `PostgreSQL`, reporting task, connection, handle, and
+//! memory growth over a declared duration. It delivers that as one report, and
+//! this runner is the half that decides whether the report proved it.
+//!
+//! It is a command rather than a test for the reason the other campaigns are:
+//! the report returns success without a database, because it prints a skip line
+//! and returns. Under `cargo test` that is indistinguishable from evidence.
+//! Here the fixture is resolved first, and a campaign run without it fails
+//! before the target starts.
+//!
+//! A passing test is not sufficient either, and a soak has a failure mode the
+//! other campaigns do not have. Every other campaign's obligation exists
+//! independently of its run — a ledger row, a commit phase, a schema path, a
+//! declared ceiling — so a report either covered it or did not. A soak's
+//! obligation is *a period*, and a soak that ran three cycles and a soak that
+//! ran three hundred produce reports of identical shape, both green. Worse, the
+//! shorter one produces flatter series and therefore a *more* convincing
+//! result. So this runner reads the committed denominator itself rather than
+//! trusting the report's summary of it, and requires:
+//!
+//! - the declared warmup and measured windows to have actually run, with a
+//!   sample per cycle and at least the declared minimum of measured samples;
+//! - the workload the report ran to be the workload the denominator declares,
+//!   down to the partition count, the worker budget, and the pool size, since a
+//!   soak of a smaller workload is a different campaign with the same name;
+//! - the lifecycle to have actually happened every cycle: a fault injected, a
+//!   restart, a recovery, and a completed drain, once per cycle, rather than a
+//!   run that repeated a plain launch;
+//! - every declared correctness obligation to have been decided and to hold,
+//!   because resource flatness over a workload that stopped doing the work is
+//!   not a result;
+//! - every declared growth rule to have been decided and to have passed, and
+//!   every measured sample to carry every declared observation, because a rule
+//!   whose metric was never sampled passes by default;
+//! - the final drain to have joined every owned task and closed the pool.
+//!
+//! It also requires the report to name the `PostgreSQL` major it ran against. A
+//! matrix point is invisible in a connection string, so an observation from one
+//! supported major would otherwise reconcile perfectly inside a run of another.
+//!
+//! The scope document is `tests/fixtures/soak/campaign-scope.json`.
+//! `crates/oxide-batch/tests/m5_soak_campaign.rs` reconciles it against the
+//! accepted plan and the design gate, so this runner consumes a document that
+//! ordinary review has already checked from the other side.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use serde_json::{Value, json};
+
+use crate::suite::{self, TargetCommand};
+
+/// The report this campaign retains.
+const REPORT: &str = "soak-campaign.json";
+
+/// The directory the report writes its observation into.
+const OBSERVATIONS: &str = "soak-observations";
+
+/// The variable that tells the report where to retain its observation.
+const OBSERVATIONS_ENV: &str = "OXIDEBATCH_SOAK_OBSERVATIONS";
+
+/// One campaign run and everything it observed.
+pub struct Campaign {
+    /// Every reconciliation failure, as a human-readable line.
+    pub violations: Vec<String>,
+    /// Where the raw evidence was written.
+    pub report: PathBuf,
+}
+
+/// Runs the campaign and writes its report.
+///
+/// An empty violation list means the report ran on its fixture, over the
+/// declared window, doing the declared work, and decided every correctness
+/// obligation and every growth rule the campaign declares.
+///
+/// # Errors
+///
+/// Returns the first failure that prevents the campaign from producing a result
+/// at all, such as an unreadable scope document or an unwritable report
+/// directory.
+pub fn run() -> Result<Campaign, String> {
+    let root = suite::workspace_root()?;
+    let scope = Scope::read(&root)?;
+
+    let mut violations = Vec::new();
+    let fixtures = resolve_fixtures(&scope, &mut violations);
+    if !violations.is_empty() {
+        let report = write_report(&root, &scope, &fixtures, &Run::default(), &violations)?;
+        return Ok(Campaign { violations, report });
+    }
+
+    let observations = prepare_observations(&root)?;
+    let mut run = Run::default();
+
+    eprintln!("==> {} {}", scope.report.target, scope.report.name);
+    let target = suite::run_target(
+        &root,
+        &TargetCommand {
+            package: &scope.report.package,
+            selector: &["--test".to_owned(), scope.report.target.clone()],
+            filters: &["--exact", &scope.report.name],
+            environment: &[(OBSERVATIONS_ENV, observations.display().to_string())],
+            nocapture: true,
+        },
+    )?;
+    run.succeeded = target.succeeded;
+    run.outcome = target.results.get(&scope.report.name).cloned();
+    run.observation = read_observation(&observations)?;
+
+    violations.extend(reconcile(&scope, &run));
+    let report = write_report(&root, &scope, &fixtures, &run, &violations)?;
+    Ok(Campaign { violations, report })
+}
+
+/// Reports which declared fixtures the environment supplies.
+///
+/// The campaign's one report needs a database, so an absent fixture is always a
+/// violation and the campaign stops before running anything: a soak produced
+/// without a database is the forged pass this runner exists to rule out.
+fn resolve_fixtures(scope: &Scope, violations: &mut Vec<String>) -> BTreeMap<String, bool> {
+    let mut resolved = BTreeMap::new();
+    for (fixture, variables) in &scope.fixtures {
+        let missing = variables
+            .iter()
+            .filter(|variable| !env::var(variable).is_ok_and(|value| !value.is_empty()))
+            .cloned()
+            .collect::<Vec<_>>();
+        resolved.insert(fixture.clone(), missing.is_empty());
+
+        if missing.is_empty() || fixture != &scope.report.fixture {
+            continue;
+        }
+        violations.push(format!(
+            "the {fixture} fixture is required by the soak campaign and is incomplete: set {}",
+            missing.join(", "),
+        ));
+    }
+    resolved
+}
+
+/// Creates an empty observation directory and returns it.
+///
+/// Emptied rather than reused so a report retained by an earlier run can never
+/// be counted as this run's evidence. That matters more here than elsewhere: a
+/// soak takes minutes, and a stale report is exactly what a truncated rerun
+/// would leave behind.
+fn prepare_observations(root: &Path) -> Result<PathBuf, String> {
+    let directory = suite::directory(root).join(OBSERVATIONS);
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("could not create {}: {error}", directory.display()))?;
+    Ok(directory)
+}
+
+/// Reads the observation the report retained, if it retained one.
+fn read_observation(directory: &Path) -> Result<Option<Value>, String> {
+    let path = directory.join("soak.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let source = fs::read_to_string(&path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    serde_json::from_str(&source)
+        .map(Some)
+        .map_err(|error| format!("could not parse {}: {error}", path.display()))
+}
+
+/// Reports everything the campaign required and did not observe.
+fn reconcile(scope: &Scope, run: &Run) -> Vec<String> {
+    let mut violations = Vec::new();
+
+    if !run.succeeded {
+        violations.push(format!(
+            "{} {} exited unsuccessfully",
+            scope.report.package, scope.report.target,
+        ));
+    }
+    match run.outcome.as_deref() {
+        Some("ok") => {}
+        Some(other) => violations.push(format!(
+            "{}::{} reported {other}",
+            scope.report.target, scope.report.name,
+        )),
+        None => violations.push(format!(
+            "{}::{} did not run in package {}",
+            scope.report.target, scope.report.name, scope.report.package,
+        )),
+    }
+
+    let Some(observation) = &run.observation else {
+        violations.push(
+            "the soak report ran and retained no observation, so nothing says it did the work"
+                .to_owned(),
+        );
+        return violations;
+    };
+
+    if observation.get("passed").and_then(Value::as_bool) != Some(true) {
+        violations.push("the soak report retained an observation that did not pass".to_owned());
+    }
+    for violation in strings(observation, "violations") {
+        violations.push(format!("soak: {violation}"));
+    }
+
+    violations.extend(reconcile_matrix_point(observation));
+    violations.extend(reconcile_window(scope, observation));
+    violations.extend(reconcile_workload(scope, observation));
+    violations.extend(reconcile_lifecycle(observation));
+    violations.extend(reconcile_observations(scope, observation));
+    violations.extend(reconcile_correctness(scope, observation));
+    violations.extend(reconcile_growth(scope, observation));
+    violations.extend(reconcile_final_drain(observation));
+
+    violations
+}
+
+/// Requires the report to name the matrix point the campaign ran at.
+fn reconcile_matrix_point(observation: &Value) -> Vec<String> {
+    let Some(expected) = env::var(suite::MATRIX)
+        .ok()
+        .filter(|value| !value.is_empty())
+    else {
+        return Vec::new();
+    };
+    let expected = expected
+        .rsplit_once('-')
+        .map_or(expected.clone(), |(_, major)| major.to_owned());
+    let observed = observation
+        .get("postgres_major_version")
+        .and_then(Value::as_str);
+
+    if observed == Some(expected.as_str()) {
+        return Vec::new();
+    }
+    vec![format!(
+        "the soak ran against PostgreSQL {} and this campaign run is {expected}",
+        observed.unwrap_or("an unrecorded version"),
+    )]
+}
+
+/// Requires the declared window to have actually run and been sampled.
+///
+/// This is the obligation the campaign turns on. A soak's result is only as
+/// good as its period, and a shorter run produces a flatter series and a more
+/// convincing report, so the period is required from the denominator rather
+/// than read off the run.
+fn reconcile_window(scope: &Scope, observation: &Value) -> Vec<String> {
+    let mut violations = Vec::new();
+
+    for (field, declared) in [
+        ("warmup_cycles", scope.warmup_cycles),
+        ("measured_cycles", scope.measured_cycles),
+    ] {
+        let reported = campaign_number(observation, field);
+        if reported != Some(declared) {
+            violations.push(format!(
+                "the campaign declares {declared} {field} and the report ran {}",
+                describe(reported),
+            ));
+        }
+    }
+
+    let completed = campaign_number(observation, "completed_cycles");
+    let total = scope.warmup_cycles + scope.measured_cycles;
+    if completed != Some(total) {
+        violations.push(format!(
+            "the campaign declares {total} cycles and the report completed {}",
+            describe(completed),
+        ));
+    }
+
+    let samples = observation
+        .get("samples")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len) as u64;
+    if samples != total {
+        violations.push(format!(
+            "{total} cycles were declared and {samples} samples were retained; a growth rule is \
+             only as good as the series it was decided from",
+        ));
+    }
+
+    let measured = phase_count(observation, "measured");
+    if measured < scope.minimum_measured_samples {
+        violations.push(format!(
+            "the campaign requires at least {} measured samples and the report retained \
+             {measured}",
+            scope.minimum_measured_samples,
+        ));
+    }
+    let warmup = phase_count(observation, "warmup");
+    if warmup != scope.warmup_cycles {
+        violations.push(format!(
+            "the campaign declares {} warmup samples and the report marked {warmup}; warmup that \
+             can be widened after the fact is a way to exclude accumulation rather than startup",
+            scope.warmup_cycles,
+        ));
+    }
+
+    violations
+}
+
+/// Requires the workload run to be the workload declared.
+///
+/// A soak of a smaller workload is a different campaign wearing this one's
+/// name, and nothing in a resource series says which workload produced it.
+fn reconcile_workload(scope: &Scope, observation: &Value) -> Vec<String> {
+    let mut violations = Vec::new();
+
+    for (field, declared) in [
+        ("partitions_per_cycle", scope.partitions_per_cycle),
+        ("worker_budget", scope.worker_budget),
+        ("launches_per_cycle", scope.launches_per_cycle),
+        ("owned_tasks_per_drain", scope.owned_tasks_per_drain),
+    ] {
+        let reported = campaign_number(observation, field);
+        if reported != Some(declared) {
+            violations.push(format!(
+                "the campaign declares {field} of {declared} and the report ran {}",
+                describe(reported),
+            ));
+        }
+    }
+
+    let pool = observation
+        .pointer("/environment/pool/size")
+        .and_then(Value::as_u64);
+    if pool != Some(scope.pool_size) {
+        violations.push(format!(
+            "the campaign declares a pool of {} connections and the report opened {}",
+            scope.pool_size,
+            describe(pool),
+        ));
+    }
+
+    violations
+}
+
+/// Requires the lifecycle to have happened, once per cycle.
+///
+/// Without this a run that repeated a plain launch would satisfy every window
+/// and workload requirement above and produce the same flat series.
+fn reconcile_lifecycle(observation: &Value) -> Vec<String> {
+    let mut violations = Vec::new();
+    let Some(cycles) = campaign_number(observation, "completed_cycles") else {
+        return violations;
+    };
+
+    for (field, what) in [
+        ("faults_injected", "a fault was injected"),
+        ("restarts", "the failed attempt was restarted"),
+        ("recoveries", "the restart recovered the same instance"),
+        ("drains_completed", "the drain joined every owned task"),
+    ] {
+        let reported = campaign_number(observation, field);
+        if reported != Some(cycles) {
+            violations.push(format!(
+                "{cycles} cycles ran and {what} in {}; a soak that repeated a plain launch is not \
+                 the P-015 workload",
+                describe(reported),
+            ));
+        }
+    }
+
+    if campaign_number(observation, "pool_readings").is_none_or(|readings| readings == 0) {
+        violations.push(
+            "the report took no pool reading while the cycles ran, so every peak occupancy in it \
+             is a zero that means nothing was measured"
+                .to_owned(),
+        );
+    }
+
+    violations
+}
+
+/// Requires every sample to carry every observation the campaign declares.
+///
+/// A metric that stopped being sampled leaves its rule deciding an absence, and
+/// an absence is not a flat line.
+fn reconcile_observations(scope: &Scope, observation: &Value) -> Vec<String> {
+    let mut violations = Vec::new();
+    let samples = observation
+        .get("samples")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    for declared in &scope.observations {
+        let missing = samples
+            .iter()
+            .filter(|sample| {
+                sample
+                    .pointer(&format!("/metrics/{declared}"))
+                    .and_then(Value::as_i64)
+                    .is_none()
+            })
+            .count();
+        if missing != 0 {
+            violations.push(format!(
+                "{declared} is a declared observation and {missing} of {} samples do not carry it",
+                samples.len(),
+            ));
+        }
+    }
+
+    violations
+}
+
+/// Requires every declared correctness obligation to be decided and to hold.
+fn reconcile_correctness(scope: &Scope, observation: &Value) -> Vec<String> {
+    let mut violations = Vec::new();
+    let decided = observation
+        .pointer("/correctness/checks")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let by_id = decided
+        .iter()
+        .filter_map(|check| {
+            check
+                .get("id")
+                .and_then(Value::as_str)
+                .map(|id| (id.to_owned(), check.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    for declared in &scope.correctness {
+        let Some(check) = by_id.get(declared) else {
+            violations.push(format!(
+                "the campaign declares the {declared} obligation and the report decided nothing \
+                 for it",
+            ));
+            continue;
+        };
+        if check.get("holds").and_then(Value::as_bool) != Some(true) {
+            violations.push(format!(
+                "{declared} does not hold; a soak whose durable record changes is a failure \
+                 whatever its resource trajectory was",
+            ));
+        }
+    }
+
+    if observation
+        .pointer("/correctness/passed")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        violations.push(
+            "the report's per-cycle durable comparison did not pass, so its resource series \
+             describe a run that was not doing the declared work"
+                .to_owned(),
+        );
+    }
+
+    violations
+}
+
+/// Requires every declared growth rule to be decided and to have passed.
+fn reconcile_growth(scope: &Scope, observation: &Value) -> Vec<String> {
+    let mut violations = Vec::new();
+    let verdicts = observation
+        .pointer("/growth/rules")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let by_id = verdicts
+        .iter()
+        .filter_map(|verdict| {
+            verdict
+                .get("id")
+                .and_then(Value::as_str)
+                .map(|id| (id.to_owned(), verdict.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    for rule in &scope.rules {
+        let Some(verdict) = by_id.get(&rule.id) else {
+            violations.push(format!(
+                "the campaign declares the {} growth rule and the report decided nothing for it",
+                rule.id,
+            ));
+            continue;
+        };
+        if verdict.get("decided").and_then(Value::as_bool) != Some(true) {
+            violations.push(format!(
+                "the {} rule was not decided: {}",
+                rule.id,
+                verdict
+                    .get("explanation")
+                    .and_then(Value::as_str)
+                    .unwrap_or("the report gave no reason"),
+            ));
+            continue;
+        }
+        if verdict.get("rule").and_then(Value::as_str) != Some(rule.decides.as_str()) {
+            violations.push(format!(
+                "the campaign declares {} for {} and the report applied {}",
+                rule.decides,
+                rule.id,
+                verdict
+                    .get("rule")
+                    .and_then(Value::as_str)
+                    .unwrap_or("no stated rule"),
+            ));
+        }
+        // The series has to be there. A verdict is a boolean, and a boolean
+        // that nobody can check against the readings it came from is the kind
+        // of green this campaign is built to refuse.
+        let series = verdict
+            .get("series")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len) as u64;
+        if series < scope.minimum_measured_samples {
+            violations.push(format!(
+                "the {} rule was decided from {series} readings and the campaign requires at \
+                 least {}",
+                rule.id, scope.minimum_measured_samples,
+            ));
+        }
+        if verdict.get("passed").and_then(Value::as_bool) != Some(true) {
+            violations.push(format!(
+                "{}: {}",
+                rule.id,
+                verdict
+                    .get("explanation")
+                    .and_then(Value::as_str)
+                    .unwrap_or("the report gave no reason"),
+            ));
+        }
+    }
+
+    for id in by_id.keys() {
+        if !scope.rules.iter().any(|rule| &rule.id == id) {
+            violations.push(format!(
+                "the report decided a {id} rule, which the campaign scope does not declare",
+            ));
+        }
+    }
+
+    violations
+}
+
+/// Requires the final drain to have joined everything and closed the pool.
+fn reconcile_final_drain(observation: &Value) -> Vec<String> {
+    let mut violations = Vec::new();
+
+    let result = observation
+        .pointer("/final_drain/drain/result")
+        .and_then(Value::as_str);
+    if result != Some("complete") {
+        violations.push(format!(
+            "the final drain reported {} rather than joining every owned task",
+            result.unwrap_or("nothing"),
+        ));
+    }
+    let unjoined = observation
+        .pointer("/final_drain/drain/unjoined_tasks")
+        .and_then(Value::as_i64);
+    if unjoined != Some(0) {
+        violations.push(format!(
+            "the final drain left {} unjoined task(s)",
+            describe(unjoined.and_then(|count| u64::try_from(count).ok())),
+        ));
+    }
+    if observation
+        .pointer("/final_drain/repository_closed")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        violations.push(
+            "the final drain did not close the repository, so the campaign never observed the \
+             pool being given back"
+                .to_owned(),
+        );
+    }
+    let residual = observation
+        .pointer("/final_drain/pool/in_use")
+        .and_then(Value::as_i64);
+    if residual.is_some_and(|count| count != 0) {
+        violations.push(format!(
+            "the pool still had {} connection(s) checked out after the final drain",
+            describe(residual.and_then(|count| u64::try_from(count).ok())),
+        ));
+    }
+
+    violations
+}
+
+/// Counts the retained samples of one phase.
+fn phase_count(observation: &Value, phase: &str) -> u64 {
+    observation
+        .get("samples")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|sample| sample.get("phase").and_then(Value::as_str) == Some(phase))
+        .count() as u64
+}
+
+/// Reads one number out of the report's campaign summary.
+fn campaign_number(observation: &Value, name: &str) -> Option<u64> {
+    observation
+        .pointer(&format!("/campaign/{name}"))
+        .and_then(Value::as_u64)
+}
+
+/// Renders an absent number as words rather than as `None`.
+fn describe(value: Option<u64>) -> String {
+    value.map_or_else(|| "none it recorded".to_owned(), |value| value.to_string())
+}
+
+/// Reads a string array field, treating an absent one as empty.
+fn strings(value: &Value, name: &str) -> Vec<String> {
+    value
+        .get(name)
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Writes the retained campaign report and returns its path.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the retained record is one document, and splitting its construction would scatter \
+              the fields the evidence contract names"
+)]
+fn write_report(
+    root: &Path,
+    scope: &Scope,
+    fixtures: &BTreeMap<String, bool>,
+    run: &Run,
+    violations: &[String],
+) -> Result<PathBuf, String> {
+    let directory = suite::directory(root);
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("could not create {}: {error}", directory.display()))?;
+    let path = directory.join(REPORT);
+
+    let observation = run.observation.as_ref();
+    let document = json!({
+        "report": "soak",
+        "campaign": "M5 PostgreSQL soak",
+        "scenarios": [scope.report.name],
+        "required_scenarios": [scope.report.name],
+        "observed_scenarios": if run.outcome.as_deref() == Some("ok") && observation.is_some() {
+            vec![scope.report.name.clone()]
+        } else {
+            Vec::new()
+        },
+        "environment": suite::environment(),
+        "postgresql_version": observation.and_then(|value| value.get("server_version").cloned()),
+        "postgresql_major_version": observation
+            .and_then(|value| value.get("postgres_major_version").cloned()),
+        "fixtures": fixtures,
+        "claim": scope.claim,
+        "declared_window": {
+            "warmup_cycles": scope.warmup_cycles,
+            "measured_cycles": scope.measured_cycles,
+            "minimum_measured_samples": scope.minimum_measured_samples,
+            "partitions_per_cycle": scope.partitions_per_cycle,
+            "worker_budget": scope.worker_budget,
+            "pool_size": scope.pool_size,
+            "launches_per_cycle": scope.launches_per_cycle,
+            "owned_tasks_per_drain": scope.owned_tasks_per_drain,
+        },
+        "observed_window": observation.and_then(|value| value.get("campaign").cloned()),
+        "declared_observations": scope.observations,
+        "declared_correctness": scope.correctness,
+        "declared_growth_rules": scope
+            .rules
+            .iter()
+            .map(|rule| json!({
+                "id": rule.id,
+                "metric": rule.metric,
+                "rule": rule.decides,
+            }))
+            .collect::<Vec<_>>(),
+        "report_result": run.outcome,
+        "observation": observation,
+        "out_of_scope": scope.excluded,
+        "related": scope.related,
+        "violations": violations,
+        "passed": violations.is_empty(),
+        "result": if violations.is_empty() { "passed" } else { "failed" },
+        "notes": [
+            "The report is run on its own so its result is attributable, and \
+             the fixture is resolved before it starts, because a soak that \
+             skipped for want of a database returns success.",
+            "A passing report is not sufficient, and a soak has a failure mode \
+             the other campaigns do not. Every other campaign's obligation \
+             exists independently of its run — a ledger row, a commit phase, a \
+             schema path, a declared ceiling — so a report either covered it or \
+             did not. A soak's obligation is a period, and a soak that ran \
+             three cycles and one that ran three hundred produce reports of \
+             identical shape. The shorter one produces the flatter series and \
+             therefore the more convincing result. So this runner reads the \
+             committed denominator and requires the declared warmup and \
+             measured windows to have run, with a sample per cycle.",
+            "It also requires the workload to be the declared one, down to the \
+             partition count, worker budget, and pool size, and requires the \
+             lifecycle to have happened once per cycle: a fault injected, a \
+             restart, a recovery, and a completed drain. A run that repeated a \
+             plain launch would otherwise satisfy every window requirement and \
+             produce the same flat series.",
+            "Every declared correctness obligation must have been decided and \
+             must hold before any resource number counts, because resource \
+             flatness over a workload that stopped doing the work is not a \
+             result. Every declared growth rule must have been decided, must \
+             have applied the rule the campaign declares, must carry the series \
+             it was decided from, and must have passed.",
+            "What a passing run establishes is bounded by the declared window \
+             and the declared workload. It is not a claim that no leak exists \
+             over an unbounded period, and the durable history the database \
+             accumulates on purpose is recorded beside the process series \
+             rather than counted as growth.",
+            "The report is required to name the PostgreSQL major it ran \
+             against, because a matrix point is invisible in a connection \
+             string and an observation from one supported major would otherwise \
+             reconcile perfectly inside a run of another.",
+        ],
+    });
+
+    fs::write(
+        &path,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&document)
+                .map_err(|error| format!("could not render the report: {error}"))?
+        ),
+    )
+    .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+
+    Ok(path)
+}
+
+/// The campaign's own invocation and what it reported.
+#[derive(Default)]
+struct Run {
+    /// Whether the target process exited successfully.
+    succeeded: bool,
+    /// The outcome libtest reported for the scenario.
+    outcome: Option<String>,
+    /// The observation the report retained.
+    observation: Option<Value>,
+}
+
+/// The committed campaign scope document.
+struct Scope {
+    /// Fixture name to the environment variables it requires.
+    fixtures: BTreeMap<String, Vec<String>>,
+    /// The one report the campaign delivers.
+    report: Report,
+    /// What a passing run does and does not establish, as declared.
+    claim: String,
+    /// Cycles run before any sample is eligible for a growth rule.
+    warmup_cycles: u64,
+    /// Cycles run inside the measured window.
+    measured_cycles: u64,
+    /// The fewest measured samples the campaign may pass with.
+    minimum_measured_samples: u64,
+    /// Partitions offered in each cycle.
+    partitions_per_cycle: u64,
+    /// Concurrent partition workers each cycle admits.
+    worker_budget: u64,
+    /// Connections the repository pool is opened with.
+    pool_size: u64,
+    /// Launches each cycle performs.
+    launches_per_cycle: u64,
+    /// Tasks each cycle's coordinator owns and must join.
+    owned_tasks_per_drain: u64,
+    /// The per-sample observations the campaign declares.
+    observations: Vec<String>,
+    /// The per-cycle durable obligations the campaign declares.
+    correctness: Vec<String>,
+    /// The growth rules the campaign declares.
+    rules: Vec<Rule>,
+    /// The campaign boundaries, as declared.
+    excluded: Value,
+    /// Evidence the campaign records and does not run, as declared.
+    related: Value,
+}
+
+/// One growth rule, as declared.
+struct Rule {
+    /// The identity the report's verdict and this requirement share.
+    id: String,
+    /// The per-sample metric the rule is decided from.
+    metric: String,
+    /// How the metric's measured series decides the rule.
+    decides: String,
+}
+
+/// The report the campaign delivers.
+struct Report {
+    /// The workspace package that declares the test.
+    package: String,
+    /// The test target that contains it.
+    target: String,
+    /// The test name libtest reports.
+    name: String,
+    /// The fixture it needs.
+    fixture: String,
+}
+
+impl Scope {
+    /// Reads the campaign scope document from the workspace.
+    fn read(root: &Path) -> Result<Self, String> {
+        let path = root
+            .join("tests")
+            .join("fixtures")
+            .join("soak")
+            .join("campaign-scope.json");
+        let source = fs::read_to_string(&path)
+            .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+        let document: Value = serde_json::from_str(&source)
+            .map_err(|error| format!("could not parse {}: {error}", path.display()))?;
+
+        let mut fixtures = BTreeMap::new();
+        for (fixture, variables) in document
+            .get("fixtures")
+            .and_then(Value::as_object)
+            .ok_or_else(|| "the scope document declares no fixtures".to_owned())?
+        {
+            let variables = variables
+                .as_array()
+                .ok_or_else(|| format!("fixture {fixture} declares no variable list"))?
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect();
+            fixtures.insert(fixture.clone(), variables);
+        }
+
+        let reports = array(&document, "reports")?;
+        let report = reports
+            .first()
+            .ok_or_else(|| "the scope document declares no report".to_owned())?;
+        if reports.len() != 1 {
+            return Err(format!(
+                "the soak campaign delivers one report and the scope declares {}",
+                reports.len(),
+            ));
+        }
+        let report = Report {
+            package: suite::string(report, "package")?,
+            target: suite::string(report, "target")?,
+            name: suite::string(report, "name")?,
+            fixture: suite::string(report, "fixture")?,
+        };
+
+        let workload = document
+            .get("workload")
+            .ok_or_else(|| "the scope document declares no workload".to_owned())?;
+        let window = document
+            .get("window")
+            .ok_or_else(|| "the scope document declares no window".to_owned())?;
+        let sampling = window
+            .get("sampling")
+            .ok_or_else(|| "the window declares no sampling".to_owned())?;
+        let growth = document
+            .get("growth_rules")
+            .ok_or_else(|| "the scope document declares no growth rules".to_owned())?;
+
+        let mut rules = Vec::new();
+        for rule in array(growth, "rules")? {
+            rules.push(Rule {
+                id: suite::string(rule, "id")?,
+                metric: suite::string(rule, "metric")?,
+                decides: suite::string(rule, "rule")?,
+            });
+        }
+
+        let correctness = document
+            .get("correctness")
+            .ok_or_else(|| "the scope document declares no correctness checks".to_owned())?;
+        let correctness = array(correctness, "checks")?
+            .iter()
+            .map(|check| suite::string(check, "id"))
+            .collect::<Result<Vec<_>, _>>()?;
+        let observations = array(&document, "observations")?
+            .iter()
+            .map(|observation| suite::string(observation, "id"))
+            .collect::<Result<BTreeSet<_>, _>>()?
+            .into_iter()
+            .collect();
+
+        Ok(Self {
+            fixtures,
+            report,
+            claim: suite::string(&document, "claim")?,
+            warmup_cycles: number(window, "warmup_cycles")?,
+            measured_cycles: number(window, "measured_cycles")?,
+            minimum_measured_samples: number(sampling, "minimum_measured_samples")?,
+            partitions_per_cycle: number(workload, "partitions_per_cycle")?,
+            worker_budget: number(workload, "worker_budget")?,
+            pool_size: number(workload, "pool_size")?,
+            launches_per_cycle: number(workload, "launches_per_cycle")?,
+            owned_tasks_per_drain: number(workload, "owned_tasks_per_drain")?,
+            observations,
+            correctness,
+            rules,
+            excluded: document.get("out_of_scope").cloned().unwrap_or(Value::Null),
+            related: document.get("related").cloned().unwrap_or(Value::Null),
+        })
+    }
+}
+
+/// Reads one required array field.
+fn array<'a>(document: &'a Value, name: &str) -> Result<&'a Vec<Value>, String> {
+    document
+        .get(name)
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("the scope document has no {name}"))
+}
+
+/// Reads one required count.
+fn number(document: &Value, name: &str) -> Result<u64, String> {
+    document
+        .get(name)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("the scope document has no {name}"))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, clippy::panic)]
+
+    use serde_json::{Value, json};
+
+    use super::{Report, Rule, Scope};
+
+    /// Builds a scope small enough to reason about, shaped like the real one.
+    fn scope() -> Scope {
+        Scope {
+            fixtures: [("postgres-soak".to_owned(), vec!["URL".to_owned()])]
+                .into_iter()
+                .collect(),
+            report: Report {
+                package: "oxide-batch".to_owned(),
+                target: "postgres_soak".to_owned(),
+                name: "soak_reports_no_task_connection_handle_or_memory_growth".to_owned(),
+                fixture: "postgres-soak".to_owned(),
+            },
+            claim: "bounded by the declared window".to_owned(),
+            warmup_cycles: 2,
+            measured_cycles: 4,
+            minimum_measured_samples: 4,
+            partitions_per_cycle: 16,
+            worker_budget: 4,
+            pool_size: 5,
+            launches_per_cycle: 2,
+            owned_tasks_per_drain: 4,
+            observations: vec!["resident_kib".to_owned()],
+            correctness: vec!["drain-complete".to_owned()],
+            rules: vec![Rule {
+                id: "resident-memory-does-not-accumulate".to_owned(),
+                metric: "resident_kib".to_owned(),
+                decides: "second-half-minimum-not-above-first-half-maximum".to_owned(),
+            }],
+            excluded: Value::Null,
+            related: Value::Null,
+        }
+    }
+
+    /// Builds the observation a healthy run of that scope would retain.
+    fn observation() -> Value {
+        let samples = (0..6)
+            .map(|cycle| {
+                json!({
+                    "cycle": cycle,
+                    "phase": if cycle < 2 { "warmup" } else { "measured" },
+                    "metrics": { "resident_kib": 100 },
+                })
+            })
+            .collect::<Vec<_>>();
+        json!({
+            "passed": true,
+            "violations": [],
+            "postgres_major_version": "18",
+            "environment": { "pool": { "size": 5 } },
+            "campaign": {
+                "warmup_cycles": 2,
+                "measured_cycles": 4,
+                "completed_cycles": 6,
+                "partitions_per_cycle": 16,
+                "worker_budget": 4,
+                "launches_per_cycle": 2,
+                "owned_tasks_per_drain": 4,
+                "faults_injected": 6,
+                "restarts": 6,
+                "recoveries": 6,
+                "drains_completed": 6,
+                "pool_readings": 900,
+            },
+            "samples": samples,
+            "correctness": {
+                "passed": true,
+                "checks": [{ "id": "drain-complete", "holds": true }],
+            },
+            "growth": {
+                "rules": [{
+                    "id": "resident-memory-does-not-accumulate",
+                    "metric": "resident_kib",
+                    "rule": "second-half-minimum-not-above-first-half-maximum",
+                    "decided": true,
+                    "passed": true,
+                    "series": [100, 100, 100, 100],
+                }],
+            },
+            "final_drain": {
+                "drain": { "result": "complete", "unjoined_tasks": 0 },
+                "repository_closed": true,
+                "pool": { "in_use": 0 },
+            },
+        })
+    }
+
+    /// Reconciles one observation against the scope above.
+    fn reconcile(observation: Value) -> Vec<String> {
+        super::reconcile(
+            &scope(),
+            &super::Run {
+                succeeded: true,
+                outcome: Some("ok".to_owned()),
+                observation: Some(observation),
+            },
+        )
+    }
+
+    /// Replaces one field of the observation, addressed by JSON pointer.
+    fn with(pointer: &str, value: Value) -> Value {
+        let mut observation = observation();
+        *observation.pointer_mut(pointer).expect(pointer) = value;
+        observation
+    }
+
+    #[test]
+    fn a_healthy_run_reconciles() {
+        assert_eq!(reconcile(observation()), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_report_that_skipped_is_not_evidence() {
+        let violations = super::reconcile(
+            &scope(),
+            &super::Run {
+                succeeded: true,
+                outcome: Some("ok".to_owned()),
+                observation: None,
+            },
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("retained no observation")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn a_shorter_window_is_not_the_declared_one() {
+        // The failure this campaign is most exposed to: a run that did less
+        // produces a flatter series and a more convincing report.
+        let violations = reconcile(with("/campaign/measured_cycles", json!(2)));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("declares 4 measured_cycles")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn a_run_with_fewer_samples_than_cycles_is_rejected() {
+        let mut observation = observation();
+        observation["samples"]
+            .as_array_mut()
+            .expect("samples")
+            .pop();
+        let violations = reconcile(observation);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("5 samples were retained")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn widening_warmup_after_the_fact_is_rejected() {
+        let mut observation = observation();
+        observation["samples"][2]["phase"] = json!("warmup");
+        let violations = reconcile(observation);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("declares 2 warmup samples")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn a_smaller_workload_is_a_different_campaign() {
+        let violations = reconcile(with("/campaign/partitions_per_cycle", json!(2)));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("partitions_per_cycle of 16")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn a_run_that_repeated_a_plain_launch_is_rejected() {
+        // Every window and workload requirement above still holds here, which
+        // is why the lifecycle is required separately.
+        for field in [
+            "faults_injected",
+            "restarts",
+            "recoveries",
+            "drains_completed",
+        ] {
+            let violations = reconcile(with(&format!("/campaign/{field}"), json!(0)));
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("6 cycles ran")),
+                "{field}: {violations:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_metric_that_stopped_being_sampled_is_rejected() {
+        let mut observation = observation();
+        observation["samples"][4]["metrics"] = json!({});
+        let violations = reconcile(observation);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("resident_kib is a declared observation")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn a_declared_rule_with_no_verdict_is_rejected() {
+        let violations = reconcile(with("/growth/rules", json!([])));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("decided nothing for it")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn a_verdict_decided_from_too_few_readings_is_rejected() {
+        let violations = reconcile(with("/growth/rules/0/series", json!([100, 100])));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("decided from 2 readings")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn a_verdict_that_applied_a_different_rule_is_rejected() {
+        let violations = reconcile(with("/growth/rules/0/rule", json!("looks-fine-to-me")));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("the report applied looks-fine-to-me")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn a_failed_growth_rule_fails_the_campaign() {
+        let violations = reconcile(with("/growth/rules/0/passed", json!(false)));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.starts_with("resident-memory-does-not-accumulate:")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn a_durable_obligation_that_does_not_hold_fails_the_campaign() {
+        let violations = reconcile(with("/correctness/checks/0/holds", json!(false)));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("drain-complete does not hold")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn an_incomplete_final_drain_fails_the_campaign() {
+        let violations = reconcile(with("/final_drain/drain/result", json!("incomplete")));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("the final drain reported incomplete")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn a_pool_still_checked_out_after_the_final_drain_fails_the_campaign() {
+        let violations = reconcile(with("/final_drain/pool/in_use", json!(1)));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("still had 1 connection(s) checked out")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn a_run_that_took_no_pool_reading_is_rejected() {
+        let violations = reconcile(with("/campaign/pool_readings", json!(0)));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("took no pool reading")),
+            "{violations:?}",
+        );
+    }
+}
