@@ -1640,17 +1640,6 @@ stopped making progress must fail rather than occupy a runner.
 
 ### Results
 
-> **Superseded, pending the rerun on the corrected statistic.** F23 changed the
-> memory rule's denominator, and `rate-vectors.json` joined the semantic
-> closure. Both are inside the closure, so the reports from producer run
-> `31387759020` describe a campaign this tree no longer runs and may not be
-> promoted as this tree's evidence. They are not reinterpreted under the new
-> rule and their numbers are not adjusted by hand; the campaign is run again on
-> the final tree and the retention commit replaces the figures below with what
-> that run reported. The exact-count results are unaffected by the correction —
-> it touches only resident memory — but they are re-established by the same run
-> rather than carried across.
-
 Both matrix points pass with no violations.
 
 | Report | Matrix | Result |
@@ -1662,17 +1651,25 @@ The retained reports are immutable CI artifacts produced from the recorded
 producer commit. The later evidence-retention commit only records those
 artifacts and their provenance.
 
-Both were produced by run `31387759020` of the `Rust` workflow — which
-concluded successfully as a whole, not merely in its soak jobs — from execution
-tree `d5b94b3`, the merge commit the workflow actually checked out, off branch
-head `652fa1d`. The execution tree is the provenance root and the branch head is
+Both were produced by run `31418389250` of the `Rust` workflow — which concluded
+successfully as a whole, not merely in its soak jobs — from execution tree
+`e947dc0`, the merge commit the workflow actually checked out, off branch head
+`e999f91`. The execution tree is the provenance root and the branch head is
 recorded beside it as metadata; they are different commits and are never used
-interchangeably. `rustc 1.97.1`, Linux `x86_64`, servers `15.18` and `18.4`, `4`
-Tokio worker threads. The command is
-`./tests/fixtures/soak/run-ci-campaign.sh <major>`, which the workflow calls.
-The runs took `246` and `249` seconds. Each artifact's own sha256 digest was
-read from the GitHub API at promotion and its contents compared byte-for-byte
-with the retained file.
+interchangeably. `rustc 1.97.1`, Linux `x86_64` on kernel `6.17.0-1020-azure`,
+servers `15.18` and `18.4`, `4` Tokio worker threads. The command is
+`./tests/fixtures/soak/run-ci-campaign.sh <major>`, which the workflow calls and
+which runs `cargo xtask soak` — so the independent recomputation is what the
+producing job itself executed. The runs took `246` and `224` seconds. Each
+artifact's own sha256 digest was read from the GitHub API at promotion and
+matched the downloaded bytes exactly before those bytes were retained.
+
+This is the campaign's second producer run. The first, `31387759020`, was
+discarded rather than reinterpreted: F23 corrected the memory statistic's
+denominator and the workflow-closure corrections touched three closure files, so
+those reports described a campaign this tree no longer runs. No figure below is
+carried across from them, and none of their numbers was adjusted by hand to the
+new rule.
 
 The full provenance is
 [`evidence-provenance.json`](../engineering/campaigns/m5/evidence-provenance.json),
@@ -1685,7 +1682,7 @@ series differ, which is the one place this campaign expects them to: it is the
 only observation that is not an integer the framework controls.
 
 **The window.** `32` warmup and `600` measured cycles, `632` completed, one
-sample per cycle, and `40868` and `41376` pool readings taken while the
+sample per cycle, and `40906` and `37117` pool readings taken while the
 cycles ran, none of which failed to read the gauge.
 
 **Correctness.** All fifteen obligations held in all `600` measured cycles, on
@@ -1715,12 +1712,25 @@ and `0` after the close, which the server reached within a millisecond.
 **Handles.** `17` at the post-warmup baseline and `17` at all `600` measured
 boundaries, on both majors.
 
-**Memory.** *(Figures pending the rerun; the ratios below were computed with the
-denominator F23 corrected and are not restated here under the new rule.)*
-Resident memory converged on both majors, with the measured rate falling far
-enough below the warmup rate to sit several times inside the `0.25` limit, and
-the healthy range the statistic was characterised over is `0.030` to `0.043`
-against `1.00` for a straight line.
+**Memory.** Resident memory grew at `13.161` KiB per cycle across warmup and
+`0.574` across the measured window on PostgreSQL 15 — a ratio of `0.044` — and
+at `14.839` and `0.474` on PostgreSQL 18, a ratio of `0.032`. Each rate is the
+window's rise over the cycle intervals it spans: `408` KiB over `31` warmup
+intervals and `344` over `599` measured ones on 15, `460` and `284` on 18. The
+rule allows `0.25` and a straight line gives exactly `1.00`, so the two sit
+`5.7` and `7.8` times inside the limit.
+
+One of them is worth stating rather than rounding past. The statistic was
+characterised over ten runs whose ratios, restated for the interval denominator,
+span `0.030` to `0.043`; PostgreSQL 15's `0.0436` here is marginally *above* the
+top of that range. It is a new observation extending a ten-run sample, not a
+regression — the margin to the limit is still `5.7×`, and PostgreSQL 18 sits
+comfortably inside — but the characterised range in the scope document was not
+widened to absorb it, because that document is inside the semantic closure and
+editing it would invalidate the evidence being retained. The next campaign that
+touches the closure for its own reasons should fold these two runs into the
+characterisation. Recording the exceedance is the point: the F20/F21/F22
+sequence is a record of statistics whose healthy range was discovered late.
 
 What that establishes is convergence and not the absence of a leak. The rule
 compares a rate against a rate, so a leak much smaller than the warmup settling
