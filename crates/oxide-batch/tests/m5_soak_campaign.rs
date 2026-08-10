@@ -158,25 +158,30 @@ fn the_declared_window_is_a_window() -> Result<(), Box<dyn Error>> {
         "a campaign whose warmup is longer than its measurement is mostly warmup, and warmup is \
          the part the growth rules do not look at",
     );
-    // A rule decided against an allowance is only a rule while the allowance
-    // is small against the window it is counted over. One that permitted a
-    // level shift on a quarter of the samples would pass a series that shifted
-    // on a quarter of the samples, which is accumulation.
+    // A rule decided on convergence is only a rule while it actually requires
+    // the rate to fall. A decay of 100% permits a straight line, which is the
+    // one shape it exists to reject.
     for rule in &scope.rules {
-        let Some(budget) = rule.budget else {
+        let Some(decay) = rule.decay_percent else {
             continue;
         };
         assert!(
-            budget > 0,
-            "the {} rule declares a budget of {budget}, which is not an allowance",
+            (1..100).contains(&decay),
+            "the {} rule requires the late growth rate to be at most {decay}% of the early one, \
+             which either forbids every series or permits a straight one",
             rule.id,
         );
+        // The rate is estimated from a third of the window at each end, and an
+        // estimate from a handful of page-quantised samples decides nothing:
+        // the first CI run put the two supported majors at 0.57 and 0.86 of
+        // the same quantity from sixty samples apiece.
         assert!(
-            budget.saturating_mul(4) <= scope.measured_cycles,
-            "the {} rule allows {budget} of {} measured samples to move it, which is too many of \
-             them to distinguish settling from accumulation",
+            scope.measured_cycles / 3 >= 100,
+            "the {} rule estimates a growth rate from {} samples at each end of the measured \
+             window, which is too few for the estimate to separate a decaying series from a \
+             straight one",
             rule.id,
-            scope.measured_cycles,
+            scope.measured_cycles / 3,
         );
     }
     assert_eq!(
@@ -361,7 +366,7 @@ struct Report {
 struct RuleEntry {
     id: String,
     metric: String,
-    budget: Option<u64>,
+    decay_percent: Option<i64>,
 }
 
 /// One piece of evidence the campaign records and does not run.
@@ -432,7 +437,7 @@ impl Scope {
             rules.push(RuleEntry {
                 id: field(rule, "id")?,
                 metric: field(rule, "metric")?,
-                budget: rule.get("budget").and_then(Value::as_u64),
+                decay_percent: rule.get("decay_percent").and_then(Value::as_i64),
             });
         }
 

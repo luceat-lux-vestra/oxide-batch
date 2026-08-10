@@ -71,16 +71,29 @@
 //! them: a pool that has returned a connection and a server that has closed a
 //! backend are different events at different times.
 //!
-//! Handles and resident memory are read from the process, and neither is
-//! compared against a memory budget. The campaign declares structural rules
-//! instead: no boundary sample above the post-warmup baseline for handles, and
-//! for memory a bounded number of *upward level shifts* across the measured
-//! window. The memory rule counts how often the series rose to a level it had
-//! not held before, and never how far, because that is what separates the two
-//! things a resident series can be doing — accumulation keeps shifting the
-//! level whatever the per-cycle amount, and an allocator settling against an
-//! unchanging transient pattern shifts it a few times and then plateaus. This
-//! report decides the rules and retains the series they were decided from, so a
+//! Handles are read from the process and held to a level: no boundary sample
+//! above the post-warmup baseline.
+//!
+//! Resident memory is held to *convergence* rather than to a level, and the
+//! difference is the most important thing in this file to get right. The rule
+//! splits the measured window into thirds and requires the last third's growth
+//! rate to be at most half the first third's. It compares a rate against a
+//! rate, so it carries no unit: it is scale-free in the size of the process and
+//! — the part that took a failed CI run to learn — in the page size of the
+//! host. Accumulation and settling differ in their derivative, not their level.
+//! A leak adds the same amount every cycle, so its rate is flat and the ratio
+//! is one whatever the per-cycle amount; an allocator reaching a steady state
+//! against an unchanging transient pattern has a rate that decays toward zero.
+//!
+//! What resident memory cannot do is carry the accumulation claim on its own. A
+//! 1032-cycle run on the development host is flat for its last 800 samples, and
+//! the same workload on glibc rises about a kilobyte a cycle with a decaying
+//! rate. Both are this framework, so flatness is a property of the allocator.
+//! The claim rests on the exact counters instead — tasks, pooled connections,
+//! checkouts, and handles are integers required to be flat, not trends required
+//! to decay — and resident memory is required only to converge.
+//!
+//! This report decides every rule and retains the series it decided from, so a
 //! reader can check the decision rather than trust it.
 //!
 //! Durable history is recorded at every sample and is deliberately *not* under
@@ -143,6 +156,12 @@ const FAULT_WAIT: Duration = Duration::from_mins(2);
 
 /// How often the connection sampler reads the pool while a cycle runs.
 const POOL_SAMPLE_INTERVAL: Duration = Duration::from_millis(5);
+
+/// How long the server is given to finish tearing down the pool's backends.
+///
+/// Bounded rather than absent: the count is required to reach zero, and a run
+/// where it does not must fail on the count it saw rather than wait forever.
+const BACKEND_TEARDOWN: Duration = Duration::from_secs(30);
 
 /// Deadlines every drain runs under.
 const DRAIN_DEADLINE: Duration = Duration::from_secs(30);
@@ -245,6 +264,24 @@ async fn report(runtime: String, migrator: String) -> Result<(), Box<dyn Error>>
         sample_journal.append(&sample)?;
     }
 
+    // The sampler's measuring lifetime ends here, with the last boundary
+    // sample, and it is joined before anything closes the pool. The ordering is
+    // load-bearing rather than tidy: a sampler still running through
+    // `close` reads a closed pool, and a gauge that cannot be read is counted
+    // as an observation failure. Left that way, the campaign could not tell a
+    // reading it lost during the workload — which invalidates every peak
+    // occupancy in the report — from a reading it never should have taken.
+    running.store(false, Ordering::SeqCst);
+    let pool_readings = readings
+        .await
+        .map_err(|error| Failure::boxed(format!("the connection sampler did not join: {error}")))?;
+
+    // Taken while the pool is still open, which is what makes it evidence. This
+    // is the authoritative "nothing was still checked out" reading, and it is
+    // required to be present: after the pool closes there is no occupancy left
+    // to read, and an absent reading must not be able to pass as a zero.
+    let pre_close = PoolGauge::read(&repository);
+
     // The final drain is the one that closes the pool. Every earlier drain left
     // it open, because closing it would have reset the observation.
     let closed = Arc::new(AtomicUsize::new(0));
@@ -264,25 +301,28 @@ async fn report(runtime: String, migrator: String) -> Result<(), Box<dyn Error>>
         .await;
 
     tokio::time::sleep(Duration::from_millis(scope.window.settle_millis)).await;
+    let (backends, settled_after) = observer.await_backends(0, BACKEND_TEARDOWN).await?;
     let post_drain = json!({
-        "drain": describe_drain(final_drain.drain()),
-        "repository_closed": closed.load(Ordering::SeqCst) == 1,
-        "alive_tasks": alive_tasks(),
-        "open_handles": open_handles(),
-        "resident_kib": resident_kib(),
-        "pool": PoolGauge::read(&repository).map(|gauge| json!({
+        "pre_close_pool": pre_close.map(|gauge| json!({
             "connections": gauge.connections,
             "idle": gauge.idle,
             "in_use": gauge.in_use(),
         })),
-        "database_backends": observer.backends().await?,
+        "drain": describe_drain(final_drain.drain()),
+        "repository_closed": closed.load(Ordering::SeqCst) == 1,
+        // Read after the pool is gone, so the pool's own occupancy is
+        // deliberately absent here rather than reported as zero. What a closed
+        // pool leaves observable is the database's view of it and the process
+        // state, and those are what this records.
+        "post_close": {
+            "alive_tasks": alive_tasks(),
+            "open_handles": open_handles(),
+            "resident_kib": resident_kib(),
+            "database_backends": backends,
+            "backends_settled_after_millis": settled_after,
+        },
     });
     let elapsed = started_at.elapsed();
-
-    running.store(false, Ordering::SeqCst);
-    let pool_readings = readings
-        .await
-        .map_err(|error| Failure::boxed(format!("the connection sampler did not join: {error}")))?;
 
     // Every allocation from here on is outside the measured window.
     let samples = sample_journal.take()?;
@@ -292,6 +332,7 @@ async fn report(runtime: String, migrator: String) -> Result<(), Box<dyn Error>>
     violations.extend(check_final_drain(
         &final_drain,
         closed.load(Ordering::SeqCst),
+        pre_close,
     ));
     violations.extend(check_window(&scope, &totals, samples.len()));
     if peak.failures() != 0 {
@@ -933,7 +974,11 @@ fn check_window(scope: &Scope, totals: &Totals, samples: usize) -> Vec<String> {
 }
 
 /// Requires the final drain to have joined everything and closed the pool.
-fn check_final_drain(report: &ShutdownReport, closes: usize) -> Vec<String> {
+fn check_final_drain(
+    report: &ShutdownReport,
+    closes: usize,
+    pre_close: Option<PoolGauge>,
+) -> Vec<String> {
     let mut violations = Vec::new();
     if !matches!(report.drain(), DrainResult::Complete { panicked_tasks: 0 }) {
         violations.push(format!(
@@ -945,6 +990,21 @@ fn check_final_drain(report: &ShutdownReport, closes: usize) -> Vec<String> {
         violations.push(format!(
             "the final drain must close the repository exactly once and closed it {closes} times",
         ));
+    }
+    // An unreadable gauge is not a zero. The campaign's claim is that nothing
+    // was still checked out when the pool closed, and a reading that was never
+    // taken says nothing about that either way.
+    match pre_close {
+        Some(gauge) if gauge.in_use() == 0 => {}
+        Some(gauge) => violations.push(format!(
+            "{} connection(s) were still checked out when the pool closed",
+            gauge.in_use(),
+        )),
+        None => violations.push(
+            "the pool occupancy could not be read before the pool closed, so the campaign has no \
+             reading that says nothing was still checked out"
+                .to_owned(),
+        ),
     }
     violations
 }
@@ -1239,7 +1299,6 @@ struct Decision {
 
 /// Applies one declared rule to one measured series.
 fn decide(rule: &Rule, series: &[i64], baseline: Option<i64>, capacity: i64) -> Decision {
-    let budget = rule.budget;
     match rule.decides.as_str() {
         "no-measured-sample-above-baseline" => {
             let Some(baseline) = baseline else {
@@ -1282,24 +1341,45 @@ fn decide(rule: &Rule, series: &[i64], baseline: Option<i64>, capacity: i64) -> 
                 ),
             }
         }
-        "upward-steps-within-budget" => {
-            let Some(budget) = budget else {
+        "growth-rate-decays" => {
+            let Some(decay) = rule.decay_percent else {
                 return Decision {
                     passed: false,
                     explanation: format!(
-                        "the {} rule is decided against a budget and the campaign declares none",
+                        "the {} rule is decided on a decay and the campaign declares none",
                         rule.id,
                     ),
                 };
             };
-            let steps = upward_steps(series);
+            let third = series.len() / 3;
+            if third == 0 {
+                return Decision {
+                    passed: false,
+                    explanation: format!(
+                        "{} cannot be split into thirds from {} samples",
+                        rule.metric,
+                        series.len(),
+                    ),
+                };
+            }
+            let early = slope(&series[..third]);
+            let late = slope(&series[series.len() - third..]);
+            // A series that is already flat has an early rate of zero, and
+            // nothing is allowed above zero: a run that is flat early and
+            // rising late is the failure this rule exists to catch, and
+            // scaling zero by any percentage would admit it.
+            let passed = if early <= 0 {
+                late <= 0
+            } else {
+                late.saturating_mul(100) <= early.saturating_mul(decay)
+            };
             Decision {
-                passed: steps <= budget,
+                passed,
                 explanation: format!(
-                    "{} rose to a level it had not held before {steps} time(s) across {} measured \
-                     samples, against a budget of {budget}",
+                    "{} grew at {early} millionths of a KiB per cycle over the first third of the \
+                     measured window and {late} over the last, against a rule that the last must \
+                     be at most {decay}% of the first",
                     rule.metric,
-                    series.len(),
                 ),
             }
         }

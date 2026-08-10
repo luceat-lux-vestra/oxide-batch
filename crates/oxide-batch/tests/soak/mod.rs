@@ -375,6 +375,33 @@ impl Observer {
             .try_get(0)?)
     }
 
+    /// Waits, bounded, for this application's backends to reach `target`.
+    ///
+    /// Returns the count it settled on and how long that took. A backend
+    /// disappears from `pg_stat_activity` when the server finishes tearing it
+    /// down, which happens after the client-side close returns, so reading the
+    /// count once immediately afterwards measures the race rather than the
+    /// framework. Waiting is bounded and the elapsed time is reported, so a
+    /// count that never settles is still a finding rather than a hang.
+    ///
+    /// # Errors
+    ///
+    /// Returns the database failure when a reading cannot be taken.
+    pub async fn await_backends(
+        &self,
+        target: i64,
+        limit: Duration,
+    ) -> Result<(i64, u128), Box<dyn Error>> {
+        let started = std::time::Instant::now();
+        loop {
+            let observed = self.backends().await?;
+            if observed == target || started.elapsed() >= limit {
+                return Ok((observed, started.elapsed().as_millis()));
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
     /// Closes the observing connection.
     pub async fn close(&self) {
         self.pool.close().await;

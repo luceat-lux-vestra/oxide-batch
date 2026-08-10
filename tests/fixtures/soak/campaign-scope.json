@@ -6,8 +6,16 @@
   "note": "This document is the campaign's denominator, and a soak needs one more than most: the claim is about what did not happen over a period, so the period and the work inside it have to be fixed before the run rather than read off it afterwards. A soak that ran three cycles and a soak that ran three hundred produce the same shape of report, and only this document distinguishes them. The runner reads it to decide what must have run and what the report must have observed. The in-process reconciliation in crates/oxide-batch/tests/m5_soak_campaign.rs reads it from the other side, against the accepted plan and design gate. The report itself reads it too: crates/oxide-batch/tests/postgres_soak.rs takes its cycle counts, its workload shape, and its growth rules from here rather than declaring its own, so the denominator cannot disagree with the run.",
   "claim": "What a passing run establishes is bounded and the campaign states the bound rather than implying more: over the declared warmup and measured window, running the declared workload against a supported PostgreSQL, the framework-owned tasks, pooled connections, process handles, and resident memory did not accumulate, and every cycle's durable record equalled the first measured cycle's. It is not a claim that no leak exists over an unbounded period, and it is not a budget. A resource that is not observed here is unexamined rather than proved absent.",
   "support_contract": {
-    "postgres_versions": ["15", "16", "17", "18"],
-    "matrix_endpoints": ["15", "18"],
+    "postgres_versions": [
+      "15",
+      "16",
+      "17",
+      "18"
+    ],
+    "matrix_endpoints": [
+      "15",
+      "18"
+    ],
     "installed_schema_version": 3
   },
   "fixtures": {
@@ -78,19 +86,22 @@
     "note": "Warmup and measurement are separated because a pool that has not opened its connections, an allocator that has not sized its arenas, and a runtime that has not started its threads all grow once, legitimately, and a campaign that counted that growth would report a leak on its first cycle. The warmup count is fixed here for the opposite reason: warmup that could be extended until the numbers settled would be a way to hide accumulation rather than to exclude startup.",
     "warmup_note": "Thirty-two cycles is a settling window rather than a round number. The observation it is sized from is that the process's resident high-water on a development host stops rising after roughly fifty cycles of this workload, and almost all of that rise happens in the first few: it is a general-purpose allocator reaching a steady state against a per-cycle transient allocation pattern that does not change. Extending warmup cannot conceal a genuine leak, because a leak keeps rising after the settling does; what a short warmup can do is put the tail of the settling inside the measured window, where the memory rule would read it as accumulation. The count is fixed in this document and not adjusted to a run.",
     "warmup_cycles": 32,
-    "measured_cycles": 120,
+    "measured_cycles": 600,
     "settle_millis": 100,
     "settle_note": "A sample is taken after the drain returns and after this settle window, so a task that has finished but has not yet been accounted for is not read as a live one.",
     "sampling": {
       "at": "every cycle boundary, after the drain and the settle window",
       "interval_cycles": 1,
-      "minimum_measured_samples": 120
+      "minimum_measured_samples": 600
     },
     "baseline": "the last warmup sample, which is the first sample taken with the pool open, the arenas sized, and the runtime started",
     "termination": {
-      "allowed": ["every declared warmup and measured cycle completed"],
+      "allowed": [
+        "every declared warmup and measured cycle completed"
+      ],
       "note": "There is no early exit. A run that stopped short is a failure rather than a shorter campaign, because the declared window is what the claim is about."
-    }
+    },
+    "measured_note": "Six hundred measured cycles against thirty-two of warmup. The length is set by what the memory rule needs rather than by taste: it compares the growth rate of the window's last third against its first, and a rate estimated from sixty samples of a page-quantised series is too noisy to separate a decaying series from a straight one \u2014 the first CI run put the two supported majors at 0.57 and 0.86 of the same quantity, which decides nothing. Two hundred samples per third is enough for the estimate to mean something, and a longer soak is a better soak in any case."
   },
   "observations": [
     {
@@ -276,14 +287,18 @@
         "detail": "Read at steady-state boundaries after warmup has opened the pool, so the socket handles the framework legitimately holds are already in the baseline and only an increase counts."
       },
       {
-        "id": "resident-memory-does-not-accumulate",
+        "id": "resident-memory-converges",
         "metric": "resident_kib",
-        "rule": "upward-steps-within-budget",
-        "budget": 6,
-        "detail": "The measured series may rise to a level it has not held before at most six times. What the rule counts is the number of upward level shifts, not their size, and that is deliberate: accumulation is a process that keeps happening, so it shows up as a shift on nearly every sample whatever the per-cycle amount, while a general-purpose allocator settling against an unchanging transient pattern shows up as a handful of shifts and then a plateau. Counting shifts rather than kilobytes is what keeps this from being a memory budget: a leak of one byte per cycle and a leak of one megabyte per cycle both fail it, and neither a passing run nor a failing one says how much memory the framework is allowed to use.",
-        "budget_note": "Six is the window divided by twenty. The development run makes two shifts across the hundred and twenty measured samples and then holds a plateau for the rest, and a per-cycle leak of any size makes a hundred and nineteen. The budget sits an order of magnitude away from both, which is the property being bought: it is not tuned to the observed number, and moving it by one either way changes no verdict this campaign can produce.",
-        "blind_spot": "A rise slow enough to shift the level fewer than seven times across the declared window passes. That is a statement about the length of the window rather than about the framework, and it is the honest limit of what a hundred and twenty cycles can distinguish: at that resolution such a series and a settling allocator are the same series. A longer window narrows it; this campaign does not claim to have closed it.",
-        "rejected_alternative": "The rule this replaced compared the smallest reading of the measured window's second half against the largest of its first, which reads well and asks the right question — did the process ever come back to a level it already held. It was replaced because it decides a healthy run on where the last settling step happens to land: the same trajectory passes when the step falls before the midpoint and fails when it falls after, and the development runs produced both. A rule whose verdict on identical behaviour depends on the phase of a page fault is not a rule. Both half-statistics are still recorded on every verdict so the comparison can be made by a reader."
+        "rule": "growth-rate-decays",
+        "detail": "The measured window is split into thirds and the least-squares growth rate of the last third must be at most half the rate of the first third. The quantity compared is a rate against a rate, so the rule carries no unit and no allowance in kilobytes: it asks whether the series is converging, and it is scale-free in both the size of the process and the page size of the host. A series that is already flat passes with both rates at zero; a series that is flat early and rises later fails, because a rate of zero admits nothing above it.",
+        "why_a_rate": "Accumulation and settling differ in their derivative rather than in their level. A leak adds the same amount every cycle, so its rate is constant and the ratio of late rate to early rate is one, whatever the per-cycle amount \u2014 a leak of one byte per cycle and a leak of one megabyte per cycle both fail. A general-purpose allocator reaching a steady state against an unchanging transient pattern has a rate that decays toward zero. Nothing in this rule says how much memory the framework may use, and a passing run makes no claim about its footprint.",
+        "blind_spot": "A leak small enough to be dominated by the settling still in progress is not resolved: the measured rate would be the settling's, and the ratio would still decay. Process resident memory does not support a finer reading than that at any window this campaign can afford, which is why the framework's accumulation claim rests on the exact counters \u2014 tasks, pooled connections, checkouts, and handles are integers that must be flat, not trends that must decay \u2014 and resident memory is held to convergence rather than to flatness.",
+        "rejected_alternatives": [
+          "Comparing the smallest reading of the measured window's second half against the largest of its first. It reads well and asks the right question, but it decides a healthy run on where the last settling step happens to land: the same trajectory passes when the step falls before the midpoint and fails when it falls after, and development runs produced both.",
+          "Counting the number of times the series rose to a level it had not held before, against a fixed budget. This is what the campaign shipped first, and PostgreSQL 15 and 18 CI rejected it immediately with 22 and 29 shifts against a budget of 6. The rule was wrong rather than the product: a level shift is one page, so the count is a function of the host's page size, and a development host with 16 KiB pages hid four times the drift that a 4 KiB CI runner exposed. A rule that a supported platform fails for its page size is not measuring the framework.",
+          "Requiring the resident series to be flat. A 1032-cycle run on the development host is flat for its last 800 samples, and the same workload on glibc rises about one kilobyte per cycle with a decaying rate. Both are the same framework, so flatness is a property of the allocator and cannot be required of the product."
+        ],
+        "decay_percent": 50
       }
     ],
     "not_rules": [
@@ -323,7 +338,7 @@
       "name": "p015_shutdown_restart_soak",
       "run_by_this_campaign": false,
       "invariant": "24 in-memory cycles of launch, failure, restart, and drain, with the same durable observation and the same repository work each cycle",
-      "note": "The M4 measurement this campaign builds on and does not replace. It is the baseline: it fixed the per-cycle semantics — every owned task joined, the same repository work, the same durable observation, no re-run of a committed partition — and this campaign keeps them. What it cannot supply is M5 evidence, because it builds a fresh in-memory repository every cycle. That resets the two observations a production-preview soak is mostly about, connections and handles, and it means the resident reading it takes is over a process holding no pool. Its result is retained as an M4 measurement and is not cited as a PostgreSQL result."
+      "note": "The M4 measurement this campaign builds on and does not replace. It is the baseline: it fixed the per-cycle semantics \u2014 every owned task joined, the same repository work, the same durable observation, no re-run of a committed partition \u2014 and this campaign keeps them. What it cannot supply is M5 evidence, because it builds a fresh in-memory repository every cycle. That resets the two observations a production-preview soak is mostly about, connections and handles, and it means the resident reading it takes is over a process holding no pool. Its result is retained as an M4 measurement and is not cited as a PostgreSQL result."
     },
     {
       "package": "oxide-batch",

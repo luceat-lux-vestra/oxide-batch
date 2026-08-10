@@ -1373,11 +1373,11 @@ and all three consumers read it rather than restating it:
   checks the document against the accepted plan and the design gate in an
   ordinary `cargo test`, so a shrinking denominator is caught in review.
 
-The declared window is `32` warmup cycles and `120` measured cycles. Each cycle
+The declared window is `32` warmup cycles and `600` measured cycles. Each cycle
 launches a `16`-partition step with a worker budget of `4` through a pool of
 exactly `5` connections, fails one partition, restarts, recovers, and drains
-`4` owned tasks. That is `304` launches, `152` restarts, `152` drains, and
-`2584` partition executions per matrix point.
+`4` owned tasks. That is `1264` launches, `632` restarts, `632` drains, and
+`10744` partition executions per matrix point.
 
 The reconciliation also holds the shape of the window rather than only its
 existence: warmup and measurement must both be non-empty, the minimum sample
@@ -1508,46 +1508,53 @@ campaign exists to refuse.
 | `pool_connections` | No measured sample above the post-warmup baseline |
 | `peak_connections_in_use` | No measured sample above the configured capacity |
 | `open_handles` | No measured sample above the post-warmup baseline |
-| `resident_kib` | The series rises to a level it has not held before at most `6` times across the `120` measured samples |
+| `resident_kib` | The growth rate of the measured window's last third is at most half the rate of its first third |
 
 The first seven are exact and need no interpretation. Tasks and handles are
 checked at *every* boundary rather than only at the end, which is the point: a
 run that accumulated for thirty cycles and cleaned up on the last one would pass
 an end-state check, and the boundary series is what makes that pattern visible.
 
-The memory rule is the one that needed thought, and it is worth stating exactly
-what it does. Requiring the final resident reading to equal the first would be a
+The memory rule is the one that needed thought, and it took a failed CI run to
+get right. Requiring the final resident reading to equal the first would be a
 statement about the allocator rather than about the framework, and inventing a
-kilobyte budget would publish a release commitment nobody accepted. The rule
-counts *upward level shifts* instead — how often the series rose to a level it
-had not held before — and never how far.
+kilobyte budget would publish a release commitment nobody accepted.
 
-Counting shifts rather than kilobytes is what keeps it from being a memory
-budget, and it is also what makes it discriminate. Accumulation is a process
-that keeps happening, so it moves the level on nearly every sample whatever the
-per-cycle amount: a leak of one byte per cycle and a leak of one megabyte per
-cycle both produce a hundred and nineteen shifts across this window and both
-fail. An allocator settling against an unchanging transient pattern moves it a
-handful of times and then holds a plateau. Neither a passing run nor a failing
-one says how much memory the framework is allowed to use.
+The rule holds resident memory to **convergence** rather than to a level: the
+measured window is split into thirds, and the last third's least-squares growth
+rate must be at most half the first third's. It compares a rate against a rate,
+so it carries no unit and no allowance in kilobytes, and it is scale-free in
+both the size of the process and the page size of the host.
 
-The budget is `6`, which is the window divided by twenty; the development runs
-produce one or two. It is deliberately an order of magnitude away from both what
-a healthy run does and what a leaking one would do, so it is not tuned to an
-observed number and moving it by one either way changes no verdict this campaign
-can produce. The reconciliation enforces the same property structurally: a
-budget must be positive and must be at most a quarter of the measured window,
-because a rule that let a quarter of the samples move the level would pass a
-series that was accumulating on a quarter of them.
+What makes it discriminate is that accumulation and settling differ in their
+*derivative*, not their level. A leak adds the same amount every cycle, so its
+rate is flat and the ratio of late rate to early rate is one — a leak of one
+byte per cycle and a leak of one megabyte per cycle both fail. An allocator
+reaching a steady state against an unchanging transient pattern has a rate that
+decays toward zero. A series that is already flat passes with both rates at
+zero; one that is flat early and rises later fails, because a rate of zero
+admits nothing above it.
 
-The blind spot is stated rather than left to be discovered: a rise slow enough
-to shift the level fewer than seven times across `120` cycles passes. That is a
-statement about the length of the window rather than about the framework — at
-that resolution, such a series and a settling allocator *are* the same series —
-and a longer window narrows it. This campaign does not claim to have closed it.
+The blind spot is stated rather than left to be discovered: a leak small enough
+to be dominated by settling that is still in progress is not resolved, because
+the measured rate would be the settling's and the ratio would still decay.
+Process resident memory does not support a finer reading than that at any window
+this campaign can afford. **That is why the accumulation claim does not rest on
+it.** Tasks, pooled connections, checkouts, and handles are integers required to
+be flat at every boundary; resident memory is required only to converge. The two
+kinds of evidence are not interchangeable and the campaign does not present them
+as such.
 
-The rule this replaced is recorded as F20, because the reason it was replaced is
-worth more than the rule was.
+The window is `600` measured cycles for this rule's sake as much as for the
+soak's. A rate estimated from sixty samples of a page-quantised series decides
+nothing — the first CI run put PostgreSQL 15 and 18 at `0.57` and `0.86` of the
+same quantity — and two hundred samples per third makes the estimate mean
+something. The reconciliation enforces both properties structurally: a decay
+requirement must be between `1` and `99` percent, since `100` permits a straight
+line, and each third must hold at least `100` samples.
+
+Two rules were tried and rejected before this one; they are recorded as F20 and
+F21, because the reasons are worth more than the rules were.
 
 Every rule's series, and the structural summary a reader would want beside it
 (first, last, minimum, maximum, delta, consecutive new highs, the two half
@@ -1621,10 +1628,10 @@ Everything the campaign asserts is structural — occupancy, counts, statuses, a
 the shape of a series — so the two matrix points are expected to differ in the
 server they ran against and not in what they prove.
 
-**The window.** `32` warmup and `120` measured cycles, `152` completed, one
-sample per cycle, `5890` pool readings taken while the cycles ran.
+**The window.** `32` warmup and `600` measured cycles, `632` completed, one
+sample per cycle, `23380` pool readings taken while the cycles ran.
 
-**Correctness.** All fifteen obligations held in all `120` measured cycles.
+**Correctness.** All fifteen obligations held in all `600` measured cycles.
 Every cycle: `15` partitions committed on the failed attempt, the injected
 partition failed, `Failed` recorded durably, a new job execution on the same
 instance, exactly `partition-0015` re-run, `16` partitions `Completed`, `108`
@@ -1632,41 +1639,45 @@ repository transactions, and a drain that joined all `4` owned tasks with no
 panic. Peak worker occupancy stayed within the budget of `4` and reached it,
 and no worker was still holding when a step returned.
 
-**Tasks.** `4` alive at the post-warmup baseline and `4` at all `120` measured
+**Tasks.** `4` alive at the post-warmup baseline and `4` at all `600` measured
 boundaries. No drain left a task unjoined and none panicked, in any cycle.
 
 **Connections.** The pool held `5` connections at every boundary with `0`
-checked out at every one of them. In-flight occupancy reached `5` — the whole
-pool, which is `worker_budget + 1` — and never exceeded it. The database
-reported `5` backends for the application throughout, and `0` after the final
-drain closed the pool.
+checked out at every one of them, and `0` checked out in the authoritative
+reading taken while the pool was still open at the end of the run. In-flight
+occupancy reached `5` — the whole pool, which is `worker_budget + 1` — and never
+exceeded it. The database reported `5` backends for the application throughout,
+and `0` once the server had finished tearing them down after the close.
 
-**Handles.** `15` at the post-warmup baseline and `15` at all `120` measured
+**Handles.** `15` at the post-warmup baseline and `15` at all `600` measured
 boundaries, falling to `10` after the pool closed.
 
-**Memory.** One upward level shift across the `120` measured samples, against a
-budget of `6`: `15712` KiB at the post-warmup baseline and for the first
-measured sample, then a single `16` KiB step — one page on this host — and a
-plateau at `15728` KiB for the remaining `119`. Two consecutive runs of the
-campaign produced one shift each.
+**Memory.** The measured window's first third grew at `0.215` KiB per cycle and
+its last third at `0.000`, against a rule that the last must be at most half the
+first. A separate `1032`-cycle diagnostic run on the same host is flat for its
+last `800` samples at an overall slope of `0.014` KiB per cycle, which is the
+evidence that no per-cycle leak exists to be found: a leak of even a tenth of a
+kilobyte a cycle would have moved five pages over those `800` cycles and moved
+none.
 
-**Durable history, for contrast.** Instances rose from `33` to `152`,
-executions from `66` to `304`, and step executions from `627` to `2888` across
-the measured window, while every process series above stayed flat. That
-contrast is the campaign's shape in one line: the database accumulated `2261`
-step executions and the process accumulated one page.
+**Durable history, for contrast.** Instances rose from `33` to `632` and job
+executions from `66` to `1264` across the measured window, while every exact
+process counter stayed flat. That contrast is the campaign's shape in one line:
+the database accumulated over eleven thousand step executions and the process
+accumulated no task, no connection, and no handle.
 
 No correctness P0 or P1 was found by this campaign, and none is open against it.
-No product defect was found. Five observations shaped the campaign and are
-recorded below because they are why it looks the way it does.
+No product defect was found. Two of the findings below are defects in the
+campaign itself, both caught by its own evidence; the rest are observations that
+shaped it.
 
 ### What this campaign does not establish
 
 - **That no leak exists.** What a passing run establishes is bounded by the
   declared window and the declared workload: over `152` cycles of *this* work,
   framework-owned tasks, pooled connections, process handles, and resident
-  memory did not accumulate. Thirty-eight seconds says nothing about
-  thirty-eight hours, and the campaign does not extrapolate. A longer window is
+  memory did not accumulate. Two and a half minutes says nothing about two and a
+  half hours, and the campaign does not extrapolate. A longer window is
   a different campaign result, not a stronger reading of this one.
 - **That an unobserved resource is bounded.** Four resource classes are observed
   because the plan names four. Anything else the process holds is unexamined
@@ -1681,11 +1692,12 @@ recorded below because they are why it looks the way it does.
   slower rather than red. P-001, P-003, and P-010 belong to the performance
   campaign.
 - **A memory bound.** No number here says how much memory the framework may
-  use. The rule counts how often the resident level shifted upward and never how
-  far, so a run that passes has said nothing about its footprint. Its blind spot
-  is stated above: a rise slow enough to shift the level fewer than seven times
-  across `120` cycles passes, which is a limit of the window rather than a
-  property of the framework.
+  use. The rule compares a growth rate against a growth rate, so a run that
+  passes has said nothing about its footprint — only that its resident series is
+  converging. Its blind spot is stated above: a leak dominated by settling still
+  in progress is not resolved, which is a limit of what process resident memory
+  supports rather than a property of the framework. The accumulation claim rests
+  on the exact counters, not on this.
 - **That the handle count is only the framework's.** `/proc/self/fd` is the
   whole process, including the test's own journal and the observing connection.
   The campaign reads it as a trend at steady-state boundaries, which is what a
@@ -1780,3 +1792,32 @@ The general lesson is worth keeping: a structural rule can be threshold-free and
 still be wrong, if the structure it keys on is an accident of scheduling. The
 check that caught this was not a test — it was noticing that a rule kept passing
 by exactly zero margin.
+
+**F21 (P2, campaign defect). The replacement rule was page-size dependent, and
+CI rejected it on both supported majors.** The rule that replaced F20's counted
+how often the resident series rose to a level it had not held before, against a
+budget of `6`. The development host produced one or two shifts. PostgreSQL 15
+and 18 CI produced `22` and `29`, and the campaign failed on its first run.
+
+The product was not the problem and neither was the budget. A level shift is one
+page, so the count is a function of the host's page size: the development host
+has `16` KiB pages and the CI runner has `4` KiB, so the same drift is up to
+four times as many shifts, and the coarser host had additionally hidden most of
+it.
+A rule that a supported platform fails for its page size is not measuring the
+framework.
+
+Raising the budget would have been the wrong repair — it would have tuned the
+rule to the observed number on one platform and left it meaningless on both. The
+diagnosis came from two runs instead. A `1032`-cycle run on the development host
+is flat for its last `800` samples with an overall slope of `0.014` KiB per
+cycle, which rules out a per-cycle leak: at even a tenth of a kilobyte a cycle,
+`800` cycles would have moved five pages and moved none. The CI series meanwhile
+rises about a kilobyte a cycle with a rate that decays roughly fourteenfold from
+warmup. Same framework, two allocators, two shapes — so the shape that is common
+to both is convergence, and that is what the rule now requires.
+
+The lesson generalizes past this campaign: a metric that is quantised by the
+platform cannot carry a rule stated in units of that quantum. The three
+observations this campaign is most confident about — tasks, connections, handles
+— are exact integers, and they were flat on both hosts from the first run.

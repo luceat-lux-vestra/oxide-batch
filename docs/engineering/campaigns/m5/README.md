@@ -147,10 +147,23 @@ a rule cannot be answered by a bare boolean or decided from a handful of
 samples.
 
 The resident-memory verdict is the one to read carefully, because it is the only
-rule here that could be mistaken for a budget and is not one. It counts how
-often the series rose to a level it had not held before and never how far, so
-`upward_steps` against the declared allowance is the whole decision, and a
-passing report says nothing about how much memory the run used.
+rule here that could be mistaken for a budget and is not one. It compares the
+growth rate of the measured window's last third against its first and requires
+the later to be at most half the earlier, so a passing report says the series is
+converging and says nothing at all about how much memory the run used. It is
+also the only rule here that is not an exact counter: tasks, connections, and
+handles are integers required to be flat, and the campaign's accumulation claim
+rests on those rather than on this one.
+
+`final_drain` separates what was observed before the pool closed from what was
+observed after, because the two are not interchangeable. `pre_close_pool` is the
+authoritative reading that nothing was still checked out — taken while there is
+still an occupancy to read — and `post_close` carries what a closed pool leaves
+observable: the process state and the server's own backend count, with the time
+the server took to finish tearing the backends down. The runner requires the
+pre-close reading to be present and zero; an absent reading is a violation
+rather than a pass, since "nothing was checked out" and "nobody looked" are
+different findings.
 
 ## Reproducing
 

@@ -75,8 +75,9 @@ pub struct Rule {
     pub metric: String,
     /// How the metric's measured series decides the rule.
     pub decides: String,
-    /// The allowance the rule is decided against, where it has one.
-    pub budget: Option<i64>,
+    /// How far the late growth rate must fall below the early one, in percent,
+    /// for a rule that is decided on convergence rather than on a level.
+    pub decay_percent: Option<i64>,
 }
 
 impl Scope {
@@ -109,7 +110,7 @@ impl Scope {
                 id: string(rule, "id")?,
                 metric: string(rule, "metric")?,
                 decides: string(rule, "rule")?,
-                budget: rule.get("budget").and_then(Value::as_i64),
+                decay_percent: rule.get("decay_percent").and_then(Value::as_i64),
             });
         }
 

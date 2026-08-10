@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   failure mode it is shaped around: a soak that ran three cycles and one that ran
   three hundred produce reports of identical shape, and the shorter one produces
   the flatter series and the more convincing result. So the window — 32 warmup
-  and 120 measured cycles, 16 partitions against a worker budget of 4 through a
+  and 600 measured cycles, 16 partitions against a worker budget of 4 through a
   pool of exactly 5 — is committed as `tests/fixtures/soak/campaign-scope.json`
   and read by all three consumers: the report takes its cycle counts and rules
   from it, the runner requires the run to have matched it, and an ordinary test
@@ -34,9 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   every cycle a different durable record. Eight growth rules are declared before
   the run, decided from the measured samples alone, and each verdict carries the
   series it was decided from, so no trajectory is passed by eye. No memory budget
-  was invented: the resident rule counts how often the level shifted upward and
-  never how far, which fails a leak of any per-cycle size and says nothing about
-  how much memory the framework may use. CI runs it on PostgreSQL 15 and 18 and
+  was invented. Tasks, connections, and handles are exact integers required to be
+  flat at every cycle boundary, and the accumulation claim rests on those;
+  resident memory is held only to convergence, by comparing the growth rate of
+  the measured window's last third against its first, which fails a leak of any
+  per-cycle size and says nothing about how much memory the framework may use. CI runs it on PostgreSQL 15 and 18 and
   retains each report on failure as well as success, because a failed soak's
   value is its trajectory. No production code changed.
 - `cargo xtask resource-bounds`, the M5 resource-bound campaign. It proves that

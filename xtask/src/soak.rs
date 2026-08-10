@@ -578,14 +578,43 @@ fn reconcile_final_drain(observation: &Value) -> Vec<String> {
                 .to_owned(),
         );
     }
-    let residual = observation
-        .pointer("/final_drain/pool/in_use")
-        .and_then(Value::as_i64);
-    if residual.is_some_and(|count| count != 0) {
-        violations.push(format!(
-            "the pool still had {} connection(s) checked out after the final drain",
-            describe(residual.and_then(|count| u64::try_from(count).ok())),
-        ));
+    // The authoritative connection evidence is taken while the pool is still
+    // open, because a closed pool has no occupancy to read. An absent reading
+    // is a violation rather than a pass: "nothing was checked out" and "nobody
+    // looked" are different findings, and only one of them is evidence.
+    match observation
+        .pointer("/final_drain/pre_close_pool/in_use")
+        .map(serde_json::Value::as_i64)
+    {
+        Some(Some(0)) => {}
+        Some(Some(count)) => violations.push(format!(
+            "{count} connection(s) were still checked out when the pool closed",
+        )),
+        Some(None) => violations
+            .push("the final drain recorded a pool checkout state that is not a number".to_owned()),
+        None => violations.push(
+            "the final drain did not record the pool checkout state before closing, so nothing \
+             in this report says the connections were given back"
+                .to_owned(),
+        ),
+    }
+
+    // The database's own view after the close, as corroboration on a different
+    // side of the socket. Required to be present for the same reason.
+    match observation
+        .pointer("/final_drain/post_close/database_backends")
+        .map(serde_json::Value::as_i64)
+    {
+        Some(Some(0)) => {}
+        Some(Some(count)) => violations.push(format!(
+            "the server still reported {count} backend(s) for this application after the pool \
+             closed",
+        )),
+        Some(None) => violations
+            .push("the final drain recorded a backend count that is not a number".to_owned()),
+        None => violations.push(
+            "the final drain did not record the server's backend count after closing".to_owned(),
+        ),
     }
 
     violations
@@ -1016,9 +1045,10 @@ mod tests {
                 }],
             },
             "final_drain": {
+                "pre_close_pool": { "connections": 5, "idle": 5, "in_use": 0 },
                 "drain": { "result": "complete", "unjoined_tasks": 0 },
                 "repository_closed": true,
-                "pool": { "in_use": 0 },
+                "post_close": { "database_backends": 0 },
             },
         })
     }
@@ -1218,12 +1248,102 @@ mod tests {
     }
 
     #[test]
-    fn a_pool_still_checked_out_after_the_final_drain_fails_the_campaign() {
-        let violations = reconcile(with("/final_drain/pool/in_use", json!(1)));
+    fn accepts_zero_checkout_final_drain() {
+        // The healthy shape, stated on its own so the rejections below cannot
+        // all be passing for some unrelated reason.
+        let violations = reconcile(observation());
+        assert!(
+            !violations
+                .iter()
+                .any(|violation| violation.contains("checked out")
+                    || violation.contains("backend")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_checked_out_connection_after_final_drain() {
+        let violations = reconcile(with("/final_drain/pre_close_pool/in_use", json!(1)));
+        assert!(
+            violations.iter().any(|violation| violation
+                .contains("1 connection(s) were still checked out when the pool closed")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_missing_final_connection_evidence() {
+        // The hole this closes: an absent reading is not a zero. A report that
+        // never looked and one that looked and found nothing checked out are
+        // different findings, and only the second is evidence.
+        let mut observation = observation();
+        observation["final_drain"]
+            .as_object_mut()
+            .expect("final_drain")
+            .remove("pre_close_pool");
+        let violations = reconcile(observation);
+        assert!(
+            violations.iter().any(|violation| violation
+                .contains("did not record the pool checkout state before closing")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_null_final_connection_evidence() {
+        let violations = reconcile(with("/final_drain/pre_close_pool", json!(null)));
+        assert!(
+            violations.iter().any(|violation| violation
+                .contains("did not record the pool checkout state before closing")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_unreadable_final_connection_evidence() {
+        let violations = reconcile(with("/final_drain/pre_close_pool/in_use", json!("none")));
         assert!(
             violations
                 .iter()
-                .any(|violation| violation.contains("still had 1 connection(s) checked out")),
+                .any(|violation| violation.contains("not a number")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_a_repository_that_was_not_closed() {
+        let violations = reconcile(with("/final_drain/repository_closed", json!(false)));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("did not close the repository")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_surviving_backends_after_the_pool_closed() {
+        let violations = reconcile(with("/final_drain/post_close/database_backends", json!(3)));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("still reported 3 backend(s)")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_missing_backend_evidence_after_the_pool_closed() {
+        let mut observation = observation();
+        observation["final_drain"]
+            .as_object_mut()
+            .expect("final_drain")
+            .remove("post_close");
+        let violations = reconcile(observation);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("did not record the server's backend count")),
             "{violations:?}",
         );
     }
