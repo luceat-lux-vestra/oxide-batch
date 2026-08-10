@@ -65,8 +65,12 @@ be promoted — the campaign has to be run again.
 How CI executes the soak lives in
 [`execution-contract.json`](../../../../tests/fixtures/soak/execution-contract.json)
 and `run-ci-campaign.sh`, inside the closure, with the workflow only calling
-them. That is what lets changing the matrix, the database or the command
-invalidate evidence while adding an unrelated CI job does not.
+them. That keeps the execution semantics reviewable in one place beside the
+campaign. It does not narrow the closure: `.github/workflows/ci.yml` is bound
+whole, so an unrelated CI job invalidates retained soak evidence too. The
+bluntness is deliberate — agreement between the workflow, the contract and the
+script is a mechanism this way and a review habit otherwise — and narrowing it
+is left to its own change.
 
 The permanent verifier is offline: no commit resolution, no fetch, nothing but
 the retained report, the closure and the working tree. The one-time remote check

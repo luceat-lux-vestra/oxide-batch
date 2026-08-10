@@ -3,10 +3,10 @@
 #
 # The workflow provisions a runner and a database and then calls this; how the
 # campaign is actually executed lives here rather than in the workflow. That
-# split is what lets the two kinds of change be treated differently: adding an
-# unrelated CI job leaves retained evidence valid, and changing the command, the
-# environment, or the database the soak runs against does not — this file is in
-# the campaign's semantic closure, and the workflow is not.
+# split keeps the execution semantics reviewable in one place beside the
+# campaign, rather than spread through a workflow that also builds everything
+# else. It does not narrow what invalidates evidence: the workflow file is in
+# the closure as well, so an unrelated CI job forces a rerun too.
 #
 # The values below and the ones in execution-contract.json describe the same
 # execution. Both files, and the workflow that calls this one, are inside the

@@ -416,10 +416,15 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # The workflow provisions and calls; how the campaign is executed lives
-      # in the contract beside the campaign, which is inside its semantic
-      # closure. Changing the command, the environment, or the database the
-      # soak runs against therefore invalidates retained evidence, while
-      # adding an unrelated job to this file does not.
+      # in the contract beside the campaign. Both that contract and this file
+      # are inside the campaign's semantic closure, so changing the command,
+      # the environment, or the database the soak runs against invalidates
+      # retained evidence — and so, bluntly, does adding an unrelated job
+      # anywhere in this file. That cost is accepted rather than overlooked:
+      # the alternative is to trust that this file, the contract and the script
+      # agree, and agreement maintained by review is not a mechanism. Narrowing
+      # it by extracting the soak into its own workflow is left to its own
+      # change.
       - name: Run the declared P-015 soak window and judge its growth
         run: ./tests/fixtures/soak/run-ci-campaign.sh ${{ matrix.postgres }}
 

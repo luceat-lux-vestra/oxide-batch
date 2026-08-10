@@ -28,9 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   identity of its whole declared closure from inside its own checkout, since a
   pull-request job runs against an ephemeral merge commit and the branch head is
   a different tree. That closure is declared once and now includes `Cargo.lock`,
-  the migrations, the toolchain pin and the CI execution contract — which moved
-  out of the workflow so that changing how the soak runs invalidates evidence
-  while adding an unrelated CI job does not. The permanent verifier is offline
+  the migrations, the toolchain pin, the CI execution contract — which moved out
+  of the workflow so the execution semantics are reviewable beside the campaign
+  — and the workflow file itself, bound whole, so an unrelated CI job
+  invalidates retained soak evidence as well. The permanent verifier is offline
   by construction, and the one-time remote check is recorded as machine-readable
   results rather than prose. Resident memory is gated on whole-window rate
   decay — the measured mean rate against the warmup mean rate — after the

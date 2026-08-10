@@ -1,7 +1,7 @@
 {
   "document": "The executable closure of the M5 PostgreSQL soak campaign",
   "note": "The single source of truth for what the soak campaign is made of. The producer reads it to record the object identity of every path at the tree it actually ran on; the verifier reads it to require those identities to still hold. Neither restates the list, because a list kept in two places is a list that will disagree \u2014 the first version of this closure lived in the provenance document and was assembled by hand from the code the campaign obviously touches, which is how it came to omit the resolved dependency graph, the schema the run migrates to, and the compiler it is built with.",
-  "rule": "A change to anything here changes what the evidence is evidence of, so retained reports produced before the change may not be promoted after it: the campaign has to be run again. A change to anything not here \u2014 documentation, the changelog, unrelated xtask commands, the rest of the CI workflow \u2014 leaves retained evidence valid.",
+  "rule": "A change to anything here changes what the evidence is evidence of, so retained reports produced before the change may not be promoted after it: the campaign has to be run again. A change to anything not here \u2014 documentation, the changelog, unrelated xtask commands \u2014 leaves retained evidence valid. Note that `.github/workflows/ci.yml` is bound whole, as one object: a change anywhere in that file, including to a job the soak has nothing to do with, invalidates retained evidence and forces a rerun.",
   "categories": {
     "framework source": {
       "why": "The code under test. Its behaviour is what every observation in the report is about.",
