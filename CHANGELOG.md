@@ -736,6 +736,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The soak campaign's resident-memory rule divides each window's rise by the
+  cycle intervals it spans rather than by its sample count. A window of `n`
+  readings spans `n - 1` intervals, so every rate was understated by
+  `(n - 1)/n` — and because warmup and measurement are deliberately different
+  lengths, the factor did not cancel in their ratio: a constant leak reported
+  `0.97` where the campaign states the rule in terms of that ratio being `1.00`.
+  No verdict was wrong, since `0.97` is still four times the limit and healthy
+  runs sit near `0.04`; what was wrong is that the threshold meant something
+  other than what the scope declared. The report and the independent verifier
+  had the identical defect, which is the part worth recording: they share no
+  code on purpose, but both were written from the same ambiguous sentence, so
+  the recomputation agreed with the producer about a statistic neither was
+  computing. Separate implementations of an ambiguous specification are one
+  opinion typed twice. The statistic is now declared outside both, as vectors
+  with expected rates and verdicts in `tests/fixtures/soak/rate-vectors.json`,
+  and each side is checked against the declaration instead of against the other.
+  A window spanning no interval yields no rate rather than a rate of zero, so a
+  truncated campaign cannot pass a rule it could not decide. The limit stays at
+  `0.25`: the characterised null was restated by exact arithmetic rather than
+  re-measured, since at a fixed window the correction rescales every ratio by
+  `(600/599)/(32/31)`. Recorded as F23.
+- The M5 evidence record no longer describes each campaign twice. A merge left
+  every campaign section after the conformance one present in two copies, the
+  second describing a superseded memory rule with its own results and findings,
+  so a reader reaching the wrong copy would have found a different algorithm and
+  a different threshold presented as current. The conformance campaign's
+  findings had also been duplicated over the soak campaign's, and F22 — a soak
+  finding — sat inside the conformance results. Each campaign now appears once,
+  the findings sit under the campaign that made them, and
+  `m5_campaign_record.rs` holds the document's shape: campaign sections and
+  their subsections appear exactly once each, finding identifiers are unique and
+  contiguous, and the record's account of the semantic closure has to agree with
+  the closure itself. The checks are structural rather than textual, because the
+  record is required to keep explaining the rules it discarded.
 - The capacity budget's declared partition-key bound is the one the code holds.
   The table gave `256` bytes; `MAX_PARTITION_KEY_BYTES` has been `128` since the
   bound was introduced, so the number an operator would have sized a partition
