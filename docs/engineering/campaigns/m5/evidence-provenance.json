@@ -109,9 +109,9 @@
       "postgres_major_version": "15",
       "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
       "producer": {
-        "branch_head_sha": "72d405dfec28023a83d5b2952927bf6034fe0169",
+        "branch_head_sha": "fba6d353e1a0306949a1c0a2e77e9f6ffc6467c3",
         "branch_head_note": "The commit on the pull-request branch the run was triggered from. This is a real commit in branch history and is the tree the campaign-semantics identities below were taken from.",
-        "merge_ref_sha": "0ad0b81ee78920d721017fa7a57688c28a431048",
+        "merge_ref_sha": "a2bcc5a024f0a552cea8864fadd73bdc8501eaeb",
         "merge_ref_note": "The ephemeral merge of the branch head with the base that the workflow actually checked out, and therefore the value the artifact records as environment.source_commit. GitHub replaces this ref on the next push, so it is recorded as an identifier and is never required to be resolvable. The two SHAs are separate fields on purpose and are never used interchangeably.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -122,21 +122,21 @@
         "workflow": "Rust",
         "workflow_file": ".github/workflows/ci.yml",
         "job": "postgres-15-soak-campaign",
-        "run_id": 31363308736,
+        "run_id": 31375576807,
         "run_attempt": 1,
-        "job_id": 93376398515,
+        "job_id": 93413929763,
         "event": "pull_request",
         "artifact_name": "soak-campaign-postgres-15",
         "conclusion": "success",
-        "github_artifact_id": 9053300315,
-        "github_artifact_digest": "sha256:d2ef2a34afd6561390b414518aa538555eb35f7f80c0dbb60d700cabd244fb04",
-        "github_artifact_size_bytes": 37338
+        "github_artifact_id": 9057961219,
+        "github_artifact_digest": "sha256:d37953f74dca07b07223d6196f83a96cee96b534f8f29fe84e2b0747dcb23d60",
+        "github_artifact_size_bytes": 39348
       },
-      "artifact_git_blob": "747fd7f758d8b6b8d2ec09b269e97e0a5ec9fbe5",
+      "artifact_git_blob": "0e445731b9eb184a49e5f2933473aa60ee1139ce",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-10T09:37:42+00:00",
-        "run_id": 31363308736,
+        "verified_at": "2026-08-10T09:46:16+00:00",
+        "run_id": 31375576807,
         "method": "GitHub Actions API: run, attempt and job confirmed present and successful; the artifact's own sha256 digest read from the API and recorded; the artifact downloaded and its report compared byte-for-byte with the retained file",
         "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local."
       }
@@ -149,9 +149,9 @@
       "postgres_major_version": "18",
       "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
       "producer": {
-        "branch_head_sha": "72d405dfec28023a83d5b2952927bf6034fe0169",
+        "branch_head_sha": "fba6d353e1a0306949a1c0a2e77e9f6ffc6467c3",
         "branch_head_note": "The commit on the pull-request branch the run was triggered from. This is a real commit in branch history and is the tree the campaign-semantics identities below were taken from.",
-        "merge_ref_sha": "0ad0b81ee78920d721017fa7a57688c28a431048",
+        "merge_ref_sha": "a2bcc5a024f0a552cea8864fadd73bdc8501eaeb",
         "merge_ref_note": "The ephemeral merge of the branch head with the base that the workflow actually checked out, and therefore the value the artifact records as environment.source_commit. GitHub replaces this ref on the next push, so it is recorded as an identifier and is never required to be resolvable. The two SHAs are separate fields on purpose and are never used interchangeably.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -162,21 +162,21 @@
         "workflow": "Rust",
         "workflow_file": ".github/workflows/ci.yml",
         "job": "postgres-18-soak-campaign",
-        "run_id": 31363308736,
+        "run_id": 31375576807,
         "run_attempt": 1,
-        "job_id": 93376398493,
+        "job_id": 93413929872,
         "event": "pull_request",
         "artifact_name": "soak-campaign-postgres-18",
         "conclusion": "success",
-        "github_artifact_id": 9053398500,
-        "github_artifact_digest": "sha256:3a0c4c07d8d8a573b1d4a53ab99a4b3b6d0e8eb6217b4bb8ee06a5d7ee9b988e",
-        "github_artifact_size_bytes": 39739
+        "github_artifact_id": 9057930030,
+        "github_artifact_digest": "sha256:a150649cba3a7c5e8d5ea3077b28f827f22da0f4a3a4aa2760aa3f8b1dbf2fc5",
+        "github_artifact_size_bytes": 37359
       },
-      "artifact_git_blob": "74dea7d85f48755e2db416e0228a5901228f8edc",
+      "artifact_git_blob": "11ccf42854a12c85bae5b085043223ca4de3eb68",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-10T09:37:42+00:00",
-        "run_id": 31363308736,
+        "verified_at": "2026-08-10T09:46:16+00:00",
+        "run_id": 31375576807,
         "method": "GitHub Actions API: run, attempt and job confirmed present and successful; the artifact's own sha256 digest read from the API and recorded; the artifact downloaded and its report compared byte-for-byte with the retained file",
         "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local."
       }
@@ -184,7 +184,7 @@
   ],
   "campaign_semantics_at_producer": {
     "note": "Git object identities of the campaign-semantics paths as they stood at producer.branch_head_sha. The verifier recomputes each against the current tree and fails on any difference, which is what stops a report from being promoted alongside a campaign that has since changed.",
-    "producer_commit": "72d405dfec28023a83d5b2952927bf6034fe0169",
+    "producer_commit": "fba6d353e1a0306949a1c0a2e77e9f6ffc6467c3",
     "objects": {
       ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
       "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
@@ -203,7 +203,7 @@
       "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
       "tests/fixtures/soak/campaign-scope.json": "1d8d496c8dd5fb30c7671eb6be24c54c15442202",
       "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
-      "xtask/src/soak.rs": "a78ab45d6e2f5bf20dcae15053e5f49da4b33f5d",
+      "xtask/src/soak.rs": "457f3838a945a3fd5b58ff95e3e72e896ac0f339",
       "xtask/src/suite.rs": "2c590a7233a5f9c05bf09b672ee5d9e4370aa673"
     }
   },
