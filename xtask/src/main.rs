@@ -7,6 +7,7 @@ mod evidence;
 mod resource_bounds;
 mod security;
 mod soak;
+mod soak_evidence;
 mod suite;
 mod surface;
 mod upgrade;

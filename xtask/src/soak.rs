@@ -53,6 +53,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
+use crate::soak_evidence;
 use crate::suite::{self, TargetCommand};
 
 /// The report this campaign retains.
@@ -228,12 +229,105 @@ fn reconcile(scope: &Scope, run: &Run, matrix: Option<&str>) -> Vec<String> {
     violations.extend(reconcile_matrix_point(observation, matrix));
     violations.extend(reconcile_window(scope, observation));
     violations.extend(reconcile_workload(scope, observation));
-    violations.extend(reconcile_lifecycle(observation));
+
+    // The order below is the trust graph, and it is not interchangeable. Every
+    // step after the chronology check indexes into the samples and the journal
+    // — the correctness baseline is "the first measured cycle" and the memory
+    // verdict is "the last third of the window", and both are positions. A
+    // duplicated, missing or reordered entry moves them silently, so a run
+    // whose chronology does not hold is not evaluated further: its later
+    // verdicts would be answers about a different arrangement of the same data.
+    let cycles = match soak_evidence::read_cycles(observation) {
+        Ok(cycles) => cycles,
+        Err(error) => {
+            violations.push(format!("the per-cycle journal could not be read: {error}"));
+            return violations;
+        }
+    };
+    let window = soak_evidence::Window {
+        warmup: scope.warmup_cycles,
+        measured: scope.measured_cycles,
+    };
+    let sequence = soak_evidence::reconcile_sequence(&window, observation, &cycles);
+    if !sequence.is_empty() {
+        violations.extend(sequence);
+        return violations;
+    }
+
+    let workload = soak_evidence::Workload {
+        partitions_per_cycle: scope.partitions_per_cycle,
+        worker_budget: scope.worker_budget,
+    };
+    let lifecycle = soak_evidence::fold_lifecycle(&cycles);
+    violations.extend(soak_evidence::reconcile_lifecycle(
+        &lifecycle,
+        observation,
+        &cycles,
+    ));
+    violations.extend(reconcile_declared_workload(scope, &lifecycle));
+
+    let recomputed = soak_evidence::recompute_correctness(&workload, &cycles);
+    violations.extend(soak_evidence::reconcile_correctness(
+        &scope.correctness,
+        &recomputed,
+        observation,
+    ));
+
+    if observation
+        .pointer("/campaign/pool_readings")
+        .and_then(Value::as_u64)
+        .is_none_or(|readings| readings == 0)
+    {
+        violations.push(
+            "the report took no pool reading while the cycles ran, so every peak occupancy in it \
+             is a zero that means nothing was measured"
+                .to_owned(),
+        );
+    }
     violations.extend(reconcile_observations(scope, observation));
-    violations.extend(reconcile_correctness(scope, observation));
     violations.extend(reconcile_growth(scope, observation));
     violations.extend(reconcile_final_drain(observation));
 
+    violations
+}
+
+/// Requires the folded lifecycle to be the workload the campaign declares.
+///
+/// The journal is authority over the summary, and the scope is authority over
+/// both: a run that consistently did less than the declared workload would fold
+/// and summarise in perfect agreement.
+fn reconcile_declared_workload(scope: &Scope, lifecycle: &soak_evidence::Lifecycle) -> Vec<String> {
+    let mut violations = Vec::new();
+    let total = scope.warmup_cycles + scope.measured_cycles;
+    let expected = total * scope.partitions_per_cycle + total;
+
+    if lifecycle.cycles != total {
+        violations.push(format!(
+            "the campaign declares {total} cycles and the journal contains {}",
+            lifecycle.cycles,
+        ));
+    }
+    for (what, folded) in [
+        ("faults", lifecycle.faults),
+        ("restarts", lifecycle.restarts),
+        ("recoveries", lifecycle.recoveries),
+        ("completed drains", lifecycle.drains),
+    ] {
+        if folded != total {
+            violations.push(format!(
+                "{total} cycles ran and the journal contains {folded} {what}"
+            ));
+        }
+    }
+    // Every cycle invokes each partition once and the injected one twice, so
+    // the workload implies its own execution count exactly.
+    if lifecycle.partition_executions != expected {
+        violations.push(format!(
+            "the declared workload implies {expected} partition executions and the journal \
+             contains {}",
+            lifecycle.partition_executions,
+        ));
+    }
     violations
 }
 
@@ -353,43 +447,6 @@ fn reconcile_workload(scope: &Scope, observation: &Value) -> Vec<String> {
     violations
 }
 
-/// Requires the lifecycle to have happened, once per cycle.
-///
-/// Without this a run that repeated a plain launch would satisfy every window
-/// and workload requirement above and produce the same flat series.
-fn reconcile_lifecycle(observation: &Value) -> Vec<String> {
-    let mut violations = Vec::new();
-    let Some(cycles) = campaign_number(observation, "completed_cycles") else {
-        return violations;
-    };
-
-    for (field, what) in [
-        ("faults_injected", "a fault was injected"),
-        ("restarts", "the failed attempt was restarted"),
-        ("recoveries", "the restart recovered the same instance"),
-        ("drains_completed", "the drain joined every owned task"),
-    ] {
-        let reported = campaign_number(observation, field);
-        if reported != Some(cycles) {
-            violations.push(format!(
-                "{cycles} cycles ran and {what} in {}; a soak that repeated a plain launch is not \
-                 the P-015 workload",
-                describe(reported),
-            ));
-        }
-    }
-
-    if campaign_number(observation, "pool_readings").is_none_or(|readings| readings == 0) {
-        violations.push(
-            "the report took no pool reading while the cycles ran, so every peak occupancy in it \
-             is a zero that means nothing was measured"
-                .to_owned(),
-        );
-    }
-
-    violations
-}
-
 /// Requires every sample to carry every observation the campaign declares.
 ///
 /// A metric that stopped being sampled leaves its rule deciding an absence, and
@@ -418,55 +475,6 @@ fn reconcile_observations(scope: &Scope, observation: &Value) -> Vec<String> {
                 samples.len(),
             ));
         }
-    }
-
-    violations
-}
-
-/// Requires every declared correctness obligation to be decided and to hold.
-fn reconcile_correctness(scope: &Scope, observation: &Value) -> Vec<String> {
-    let mut violations = Vec::new();
-    let decided = observation
-        .pointer("/correctness/checks")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let by_id = decided
-        .iter()
-        .filter_map(|check| {
-            check
-                .get("id")
-                .and_then(Value::as_str)
-                .map(|id| (id.to_owned(), check.clone()))
-        })
-        .collect::<BTreeMap<_, _>>();
-
-    for declared in &scope.correctness {
-        let Some(check) = by_id.get(declared) else {
-            violations.push(format!(
-                "the campaign declares the {declared} obligation and the report decided nothing \
-                 for it",
-            ));
-            continue;
-        };
-        if check.get("holds").and_then(Value::as_bool) != Some(true) {
-            violations.push(format!(
-                "{declared} does not hold; a soak whose durable record changes is a failure \
-                 whatever its resource trajectory was",
-            ));
-        }
-    }
-
-    if observation
-        .pointer("/correctness/passed")
-        .and_then(Value::as_bool)
-        != Some(true)
-    {
-        violations.push(
-            "the report's per-cycle durable comparison did not pass, so its resource series \
-             describe a run that was not doing the declared work"
-                .to_owned(),
-        );
     }
 
     violations
@@ -1230,7 +1238,26 @@ mod tests {
             launches_per_cycle: 2,
             owned_tasks_per_drain: 4,
             observations: vec!["resident_kib".to_owned()],
-            correctness: vec!["drain-complete".to_owned()],
+            correctness: [
+                "final-job-status",
+                "final-step-status",
+                "execution-counts",
+                "partition-count",
+                "partition-key-set",
+                "partition-terminal-state",
+                "restart-position",
+                "committed-work-reused",
+                "no-duplicate-durable-work",
+                "no-missing-durable-work",
+                "failure-not-forged",
+                "recovery-semantics",
+                "no-worker-outlives-its-parent",
+                "drain-complete",
+                "constant-repository-work",
+            ]
+            .iter()
+            .map(|id| (*id).to_owned())
+            .collect(),
             rules: vec![
                 Rule {
                     id: "resident-memory-converges".to_owned(),
@@ -1271,21 +1298,124 @@ mod tests {
     /// Flat through the window and rising only at the end.
     const LATE_RISE: [i64; MEASURED] = [100, 100, 100, 100, 100, 100, 100, 100, 100, 200, 300, 400];
 
+    /// Partitions each fixture cycle offers.
+    const PARTITIONS: usize = 16;
+
+    /// The partition the fixture's fault is injected into.
+    fn injected() -> String {
+        format!("partition-{:04}", PARTITIONS - 1)
+    }
+
+    /// Builds one cycle's journal entry for a healthy run.
+    ///
+    /// The full lossless shape the report writes, because every attack below is
+    /// a mutation of a valid run and a fixture that omitted a field would make
+    /// the attacks pass for the wrong reason.
+    fn cycle(index: usize, measured: bool) -> Value {
+        let keys = (0..PARTITIONS)
+            .map(|partition| format!("partition-{partition:04}"))
+            .collect::<Vec<_>>();
+        let counts = json!({
+            "read": 0, "processed": 0, "written": 0,
+            "filtered": 0, "committed": 0, "rolled_back": 0,
+        });
+        let partitions = keys
+            .iter()
+            .map(|key| {
+                (
+                    key.clone(),
+                    json!({
+                        "status": "Completed",
+                        "exit_status": "ExitStatus { code: ExitCode(\"COMPLETED\") }",
+                        "counts": counts,
+                    }),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        let invocations = keys
+            .iter()
+            .map(|key| {
+                let runs = if *key == injected() { 2 } else { 1 };
+                (key.clone(), json!(runs))
+            })
+            .collect::<serde_json::Map<_, _>>();
+
+        json!({
+            "cycle": index,
+            "phase": if measured { "measured" } else { "warmup" },
+            "elapsed_millis": 250,
+            "failed_attempt": {
+                "outcome": "Failed(Tasklet(Error))",
+                "durable_status": "Failed",
+                "injected_partition": injected(),
+                "partitions_committed": keys[..PARTITIONS - 1].to_vec(),
+                "fault_wait_expired": false,
+            },
+            "restart": {
+                "new_execution_on_same_instance": true,
+                "partitions_re_run": [injected()],
+            },
+            "terminal": {
+                "outcome": "Completed",
+                "job_status": "Completed",
+                "job_exit_status": "ExitStatus { code: ExitCode(\"COMPLETED\") }",
+                "parent_status": "Completed",
+                "parent_exit_status": "ExitStatus { code: ExitCode(\"COMPLETED\") }",
+                "parent_counts": counts,
+                "step_executions": 2,
+                "partitions": partitions,
+            },
+            "invocations": invocations,
+            "repository_transactions": 108,
+            "worker_peak_occupancy": 2,
+            "worker_residue": 0,
+            "drain": { "result": "complete", "unjoined_tasks": 0, "panicked_tasks": 0 },
+            "durable_history_growth": {
+                "instances": 1, "executions": 2, "step_executions": 19, "partitions": 32,
+            },
+        })
+    }
+
     /// Builds the observation a healthy run of that scope would retain.
     fn observation() -> Value {
-        let samples = (0..MEASURED + 2)
-            .map(|cycle| {
-                let measured = cycle >= 2;
+        let total = MEASURED + 2;
+        let samples = (0..total)
+            .map(|index| {
+                let measured = index >= 2;
                 json!({
-                    "cycle": cycle,
+                    "cycle": index,
                     "phase": if measured { "measured" } else { "warmup" },
                     "metrics": {
-                        "resident_kib": if measured { RESIDENT[cycle - 2] } else { 100 },
+                        "resident_kib": if measured { RESIDENT[index - 2] } else { 100 },
                         "pool_connections_in_use": 0,
                     },
                 })
             })
             .collect::<Vec<_>>();
+        let cycles = (0..total)
+            .map(|index| cycle(index, index >= 2))
+            .collect::<Vec<_>>();
+        let checks = [
+            "final-job-status",
+            "final-step-status",
+            "execution-counts",
+            "partition-count",
+            "partition-key-set",
+            "partition-terminal-state",
+            "restart-position",
+            "committed-work-reused",
+            "no-duplicate-durable-work",
+            "no-missing-durable-work",
+            "failure-not-forged",
+            "recovery-semantics",
+            "no-worker-outlives-its-parent",
+            "drain-complete",
+            "constant-repository-work",
+        ]
+        .iter()
+        .map(|id| json!({ "id": id, "holds": true, "failing_cycles": [] }))
+        .collect::<Vec<_>>();
+
         json!({
             "passed": true,
             "violations": [],
@@ -1294,22 +1424,21 @@ mod tests {
             "campaign": {
                 "warmup_cycles": 2,
                 "measured_cycles": MEASURED,
-                "completed_cycles": MEASURED + 2,
-                "partitions_per_cycle": 16,
+                "completed_cycles": total,
+                "partitions_per_cycle": PARTITIONS,
                 "worker_budget": 4,
                 "launches_per_cycle": 2,
                 "owned_tasks_per_drain": 4,
-                "faults_injected": MEASURED + 2,
-                "restarts": MEASURED + 2,
-                "recoveries": MEASURED + 2,
-                "drains_completed": MEASURED + 2,
+                "faults_injected": total,
+                "restarts": total,
+                "recoveries": total,
+                "drains_completed": total,
+                "partitions_executed": total * (PARTITIONS + 1),
                 "pool_readings": 900,
             },
             "samples": samples,
-            "correctness": {
-                "passed": true,
-                "checks": [{ "id": "drain-complete", "holds": true }],
-            },
+            "cycles": cycles,
+            "correctness": { "passed": true, "checks": checks },
             "growth": {
                 "rules": [
                     {
@@ -1460,23 +1589,192 @@ mod tests {
     }
 
     #[test]
-    fn a_run_that_repeated_a_plain_launch_is_rejected() {
-        // Every window and workload requirement above still holds here, which
-        // is why the lifecycle is required separately.
+    fn rejects_duplicate_sample_cycle() {
+        let mut observation = observation();
+        observation["samples"][7]["cycle"] = json!(6);
+        observation["cycles"][7]["cycle"] = json!(6);
+        let violations = reconcile(observation);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("cycle 6 is journalled more than once")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_missing_sample_cycle() {
+        let mut observation = observation();
+        observation["samples"]
+            .as_array_mut()
+            .expect("samples")
+            .remove(5);
+        observation["cycles"]
+            .as_array_mut()
+            .expect("cycles")
+            .remove(5);
+        let violations = reconcile(observation);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("the declared window is 14 cycles")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_reordered_samples() {
+        // Serialization order is not authority: the recorded index is, and it
+        // has to agree with the position. A swapped pair moves what "the last
+        // third of the window" means without changing any value in it.
+        let mut observation = observation();
+        let samples = observation["samples"].as_array_mut().expect("samples");
+        samples.swap(4, 9);
+        let violations = reconcile(observation);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("are not in the order they were taken")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_reordered_cycles() {
+        let mut observation = observation();
+        let cycles = observation["cycles"].as_array_mut().expect("cycles");
+        cycles.swap(3, 10);
+        let violations = reconcile(observation);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("are not in the order they ran")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_shifted_warmup_boundary() {
+        // Relabelling one measured cycle as warmup excludes it from every
+        // growth rule while leaving the counts intact.
+        let mut observation = observation();
+        observation["samples"][2]["phase"] = json!("warmup");
+        observation["cycles"][2]["phase"] = json!("warmup");
+        let violations = reconcile(observation);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("the declared window makes it measured")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_wrong_cycle_phase() {
+        let mut observation = observation();
+        observation["samples"][3]["phase"] = json!("cooldown");
+        let violations = reconcile(observation);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("not a phase this campaign has")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_sample_cycle_phase_disagreement() {
+        let mut observation = observation();
+        observation["cycles"][1]["phase"] = json!("measured");
+        let violations = reconcile(observation);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("journalled as measured and sampled as")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_cycle_evidence() {
+        let mut observation = observation();
+        let cycles = observation["cycles"].as_array_mut().expect("cycles");
+        let duplicate = cycles[4].clone();
+        cycles.push(duplicate);
+        let violations = reconcile(observation);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("the declared window is 14 cycles")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn a_broken_chronology_stops_evaluation() {
+        // Nothing below the chronology check is meaningful once positions have
+        // moved, so the run is not evaluated further rather than producing
+        // verdicts about a different arrangement of the same data.
+        let mut observation = observation();
+        observation["cycles"]
+            .as_array_mut()
+            .expect("cycles")
+            .swap(3, 10);
+        let violations = reconcile(observation);
+        assert!(
+            violations
+                .iter()
+                .all(|violation| !violation.contains("resident-memory-converges")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_forged_lifecycle_totals() {
+        // The summary is a claim about the journal, so a summary that
+        // disagrees with the journal is caught by the fold rather than read.
         for field in [
             "faults_injected",
             "restarts",
             "recoveries",
             "drains_completed",
+            "partitions_executed",
         ] {
             let violations = reconcile(with(&format!("/campaign/{field}"), json!(0)));
             assert!(
                 violations
                     .iter()
-                    .any(|violation| violation.contains("14 cycles ran")),
+                    .any(|violation| violation.contains(&format!("summarises {field} as Some(0)"))),
                 "{field}: {violations:?}",
             );
         }
+    }
+
+    #[test]
+    fn rejects_raw_lifecycle_violation() {
+        // A cycle that launched and never restarted. Every total still folds
+        // and summarises in agreement, because the fold counts what the
+        // journal says — so the lifecycle is required of each cycle, not of
+        // the totals.
+        let mut observation = observation();
+        observation["cycles"][8]["restart"]["new_execution_on_same_instance"] = json!(false);
+        observation["cycles"][8]["restart"]["partitions_re_run"] = json!([]);
+        observation["campaign"]["recoveries"] = json!(13);
+        observation["campaign"]["restarts"] = json!(13);
+        let violations = reconcile(observation);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation
+                    .contains("cycle 8 did not restart onto the same instance")),
+            "{violations:?}",
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("14 cycles ran and the journal contains 13")),
+            "{violations:?}",
+        );
     }
 
     #[test]
@@ -1523,7 +1821,7 @@ mod tests {
         assert!(
             violations
                 .iter()
-                .any(|violation| violation.contains("readings and the campaign requires at least")),
+                .any(|violation| violation.contains("the declared window is 14 cycles")),
             "{violations:?}",
         );
     }
@@ -1662,12 +1960,111 @@ mod tests {
     }
 
     #[test]
-    fn a_durable_obligation_that_does_not_hold_fails_the_campaign() {
-        let violations = reconcile(with("/correctness/checks/0/holds", json!(false)));
+    fn rejects_forged_correctness_pass() {
+        // The journal shows an obligation violated and the report holds it.
+        let mut observation = observation();
+        observation["cycles"][6]["terminal"]["job_status"] = json!("Failed");
+        let violations = reconcile(observation);
+        assert!(
+            violations.iter().any(|violation| violation
+                .contains("the report holds final-job-status to be Some(true)")
+                && violation.contains("[6]")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_raw_cycle_that_violates_obligation_despite_pass_summary() {
+        // Same journal violation, with the report's own summary also green.
+        let mut observation = observation();
+        observation["cycles"][9]["drain"]["unjoined_tasks"] = json!(1);
+        let violations = reconcile(observation);
         assert!(
             violations
                 .iter()
-                .any(|violation| violation.contains("drain-complete does not hold")),
+                .any(|violation| violation.contains("drain-complete does not hold in cycle(s) [9]")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_wrong_failing_cycles() {
+        // The obligation genuinely fails, and the report names the wrong cycle.
+        let mut observation = observation();
+        observation["cycles"][5]["worker_residue"] = json!(1);
+        for check in observation["correctness"]["checks"]
+            .as_array_mut()
+            .expect("checks")
+        {
+            if check["id"] == json!("no-worker-outlives-its-parent") {
+                check["holds"] = json!(false);
+                check["failing_cycles"] = json!([11]);
+            }
+        }
+        observation["correctness"]["passed"] = json!(false);
+        let violations = reconcile(observation);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("as failing in Some([11])")
+                    && violation.contains("[5]")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_correctness_id_even_when_last_is_true() {
+        // Last-wins reading is the forgery: a false entry followed by a true
+        // one for the same obligation.
+        let mut observation = observation();
+        let checks = observation["correctness"]["checks"]
+            .as_array_mut()
+            .expect("checks");
+        checks.insert(
+            0,
+            json!({
+                "id": "drain-complete", "holds": false, "failing_cycles": [3],
+            }),
+        );
+        let violations = reconcile(observation);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("decided drain-complete more than once")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_unexpected_correctness_id() {
+        let mut observation = observation();
+        observation["correctness"]["checks"]
+            .as_array_mut()
+            .expect("checks")
+            .push(json!({ "id": "invented-obligation", "holds": true, "failing_cycles": [] }));
+        let violations = reconcile(observation);
+        assert!(
+            violations.iter().any(|violation| violation.contains(
+                "decided invented-obligation, which the campaign scope does not declare"
+            )),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_missing_correctness_id() {
+        let mut observation = observation();
+        observation["correctness"]["checks"]
+            .as_array_mut()
+            .expect("checks")
+            .retain(|check| check["id"] != json!("recovery-semantics"));
+        let violations = reconcile(observation);
+        assert!(
+            violations.iter().any(|violation| violation.contains(
+                "declares the recovery-semantics obligation and the report decided \
+                          nothing"
+            ) || violation
+                .contains("recovery-semantics obligation and the report decided")),
             "{violations:?}",
         );
     }

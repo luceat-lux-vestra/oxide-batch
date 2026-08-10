@@ -1,0 +1,30 @@
+{
+  "document": "How CI executes the M5 PostgreSQL soak campaign",
+  "note": "The execution semantics of the soak job, extracted from the workflow so that they can be part of the campaign's semantic closure. The workflow provisions a runner and a database and then calls run-ci-campaign.sh; everything about how the campaign is actually run lives here. The split exists so that two changes are treated differently: adding an unrelated CI job leaves retained evidence valid, and changing the database, the command, the features, or the environment the soak runs under does not.",
+  "supported_matrix": ["15", "18"],
+  "matrix_note": "The two ends of the supported PostgreSQL 15-18 range. Evidence is required from both, exactly once each.",
+  "database": {
+    "image": "postgres:{major}",
+    "database_name": "oxide_batch_soak",
+    "user": "postgres",
+    "password": "postgres",
+    "port": 5432,
+    "max_connections": "the image default",
+    "max_connections_note": "The campaign holds one pool of 5 connections, which is worker_budget + 1. The image's default of 100 is ample, and it is deliberately not raised: a checkout leak should exhaust the pool rather than be absorbed by spare capacity.",
+    "health_check": "pg_isready --username postgres --dbname oxide_batch_soak"
+  },
+  "command": ["cargo", "run", "--package", "oxide-batch-xtask", "--", "soak"],
+  "cargo_profile": "debug",
+  "features": "the campaign target is built with --all-features by the runner's own target invocation",
+  "environment": {
+    "OXIDEBATCH_POSTGRES_TEST_URL": "postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_soak",
+    "OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL": "postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_soak",
+    "OXIDEBATCH_CAMPAIGN_DIR": "target/m5-campaigns",
+    "OXIDEBATCH_CAMPAIGN_MATRIX": "postgres-{major}"
+  },
+  "report_path": "target/m5-campaigns/soak-campaign.json",
+  "artifact_name": "soak-campaign-postgres-{major}",
+  "artifact_retention": "on success and on failure alike, because what a failed soak needs is the resource trajectory that led to it",
+  "timeout_minutes": 60,
+  "timeout_note": "Higher than the other campaigns because the declared window is 32 warmup and 600 measured cycles, which is minutes of work. Still a ceiling: a soak that stopped making progress must fail rather than occupy a runner."
+}

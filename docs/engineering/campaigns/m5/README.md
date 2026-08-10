@@ -42,164 +42,40 @@ which run it came from.
 ## Provenance
 
 [`evidence-provenance.json`](evidence-provenance.json) records where each
-retained report came from and what binds it to the tree it sits beside, and
-`cargo xtask evidence` checks it on every CI run.
+retained report came from; `cargo xtask evidence` checks it on every CI run.
 
-It exists because of a requirement that looks reasonable and is impossible: that
-a retained report be the output of the tree that contains it. The artifact
-records the commit it ran on, and the commit that stores the artifact comes
-after it, so the two can never be equal — and trying to make them equal means
-re-running the campaign on every new head, which produces a new head. The
-document separates the three positions instead: the **producer commit** is the
-executable tree the campaign ran on, the **workflow run** is the immutable CI
-execution, and the **retention commit** is the later evidence-only commit that
-stores the artifact. The last two differing from the first is normal.
+The root of trust is the tree that actually executed. Each run records the git
+object identity of every path in the campaign's declared closure from inside its
+own checkout, into the report, as it runs — because that is the only way to name
+that tree correctly. A pull-request job executes against an ephemeral merge
+commit no later clone can resolve, and the branch head is a *different* tree, so
+using the branch head as a stand-in would mean checking evidence against
+something that never ran. Both SHAs are recorded in separate fields and only the
+manifest is authority.
 
-Commit identity cannot be the binding, either, and not by preference: the
-identifier a report carries is the pull-request merge ref, which GitHub replaces
-on the next push and which is absent from every later clone. It is recorded,
-checked against what the artifact itself says, and never resolved; the branch
-head is a separate field and the two are never used interchangeably. The
-binding is content — each report's git blob identity, and the git object
-identity of every path that defines what the campaign executes, taken at the
-producer commit. If a campaign-semantics path differs today, the retained report
-describes a campaign this tree no longer runs and may not be promoted: the
-campaign has to be run again.
+The closure itself is declared once, in
+[`campaign-semantics.json`](../../../../tests/fixtures/soak/campaign-semantics.json),
+and read by the producer and the verifier alike: framework source, the
+repository adapter, migrations, cargo manifests, `Cargo.lock`, toolchain and
+build configuration, the campaign implementation and fixtures, the soak
+execution contract, and the verifier. If any of them differs from what a report
+recorded, that report describes a campaign this tree no longer runs and may not
+be promoted — the campaign has to be run again.
 
-A report is never edited to make a hash or a commit match. If the recorded
-identity and the file disagree, the file is wrong.
+How CI executes the soak lives in
+[`execution-contract.json`](../../../../tests/fixtures/soak/execution-contract.json)
+and `run-ci-campaign.sh`, inside the closure, with the workflow only calling
+them. That is what lets changing the matrix, the database or the command
+invalidate evidence while adding an unrelated CI job does not.
 
-The document also lists the paths a retention change is expected to touch. That
-one is a review convention rather than an automated check, and deliberately so:
-identifying "the retention commit" from inside the tree is the same
-self-reference that made the original requirement unsatisfiable. What is
-enforced is the campaign-semantics binding, which is the property that matters.
-
-## Document shape
-
-Every report carries the same envelope:
-
-- `environment` — source commit, working-tree cleanliness, `rustc`, profile,
-  OS/architecture, and the supported-matrix point. On a pull request the
-  recorded commit is the merge commit the workflow checked out rather than the
-  branch tip;
-- `fixtures` — which declared fixture the run had, so a record produced without
-  a database can never be read as one produced with it;
-- the campaign's own body;
-- `violations` and `passed` — the campaign result. A report whose `passed` is
-  `false` is a failure record, retained deliberately: an absent report and a
-  failed one must not look the same.
-
-The crash and restore report additionally embeds the observation each scenario
-retained while it ran, under `reports[].observation`. That is what separates a
-scenario that passed from one that skipped: the observation records the child
-process identifier, the signal it died from, the durable state the kill left
-behind, the discovery result, and the restart outcome. The runner requires one
-per report and requires every declared phase to appear inside it, so a scenario
-that reported `ok` without doing the work fails the campaign.
-
-The upgrade report embeds the same kind of observation for the same reason, and
-its unit is a schema path rather than a commit phase. Each observation carries a
-`paths` array, and each entry records the source and target schema version, the
-migration result, what opening the database with the current runtime did, the
-durable-state comparison, the backup and restore result where the path has one,
-and the version finally observed. The runner requires every declared path to
-appear in one and to agree with the committed denominator, so a report that
-covered one source schema and skipped the other fails rather than passing half
-proved. The report also names the revision the rejecting runtime was built from,
-because that runtime is not this tree's.
-
-The security report embeds an observation per report for the same reason, and
-its units are the things a security claim is made of, because all three of them
-are negative. The TLS observation carries every attempt, the authority it
-trusted, what the supported configuration did, and — for a refusal — the
-transport reason it carried, so an attempt built around an untrusted authority
-that actually failed on the host name is a failure rather than a pass. The
-privilege observation carries the whole `role × operation` matrix: the class,
-the role, the operation, whether it was expected to be allowed or forbidden,
-whether it reached the database through a service path or as a statement, and
-the `SQLSTATE` the server answered with, which for a forbidden cell must be
-`42501` and nothing else. The redaction observation carries the value classes
-injected, the surfaces collected from, the artifact and string counts, and the
-occurrence count. It records no canary, no credential, no connection string,
-and no certificate: the classes appear by name and the roles by role name.
-
-## The resource-bound campaign
-
-The resource-bound report carries one row per declared bounded resource, under
-`resource_ledger`, and each row says which report proved it, the ceiling that
-report checked, the load it was offered, the occupancy it reached, and how much
-it shed or refused. The row exists whether or not a report covered the
-resource, because `covered` being `false` is the finding.
-
-The report is shaped that way because of the failure mode this campaign has and
-the others do not: a bound can be reported as holding by a run that never
-approached it. A worker budget of `64` whose observed peak was `3` and a page
-bound checked against four rows are both green and neither is evidence about a
-ceiling. So `offered_load` and `observed_peak_occupancy` are recorded beside
-`declared_ceiling` on every row, and the runner requires the three to be in the
-relation the resource's overload policy implies.
-
-`declared_ceiling` and `configured_ceiling` are separate fields and are
-sometimes different numbers. The declared one is what the denominator says the
-framework enforces; the configured one is what the run was set up with, which is
-lower wherever running at the declared ceiling would leave nothing to hold back.
-The report also carries `out_of_scope`, so a reader can tell a resource the
-campaign examined and excluded from one it never looked at.
-
-## The soak campaign
-
-The soak report is the only one here whose body is a *series* rather than a set
-of outcomes, and it is shaped that way because of a failure mode the other
-campaigns do not have: a soak's obligation is a period, so a run that did less
-produces a flatter series and therefore a more convincing report.
-
-`declared_window` is the committed denominator and `observed_window` is what the
-run actually did, side by side, because the interesting question about a soak
-report is never only whether it passed. Under `observation.samples` there is one
-boundary sample per cycle, each carrying its phase — `warmup` or `measured` —
-and every declared metric: the alive-task count, the pool's connections, idle
-connections, and checked-out connections, the peak occupancy reached while the
-cycle ran, the database's own backend count, the open handle count, resident
-memory, and the durable history the cycle added. `observation.cycles` carries
-the lifecycle beside it: what the failed attempt committed, which partition the
-fault was injected into, what the restart re-ran, the terminal durable record,
-and the drain result.
-
-The durable-history metrics are in every sample and under no growth rule, and
-the separation is the point rather than an omission. The database is supposed to
-grow; a report that treated that as a leak would be requiring the framework to
-forget its own history, and one that omitted it would let a flat process series
-be read without knowing whether the workload was still doing anything.
-
-`observation.growth.rules` carries one verdict per declared rule, and each
-verdict carries the series it was decided from and a structural summary of it —
-first, last, minimum, maximum, delta, upward level shifts, the two half
-statistics, and a least-squares slope. The series is there so the decision can
-be checked rather than trusted; the slope and the half statistics are recorded
-and never asserted on. The runner requires the verdict to name the rule the
-scope declares and to carry at least the declared minimum number of readings, so
-a rule cannot be answered by a bare boolean or decided from a handful of
-samples.
-
-The resident-memory verdict is the one to read carefully, because it is the only
-rule here that could be mistaken for a budget and is not one. It compares the
-growth rate of the measured window's last third against its first and requires
-the later to be at most half the earlier, so a passing report says the series is
-converging and says nothing at all about how much memory the run used. It is
-also the only rule here that is not an exact counter: tasks, connections, and
-handles are integers required to be flat, and the campaign's accumulation claim
-rests on those rather than on this one.
-
-`final_drain` separates what was observed before the pool closed from what was
-observed after, because the two are not interchangeable. `pre_close_pool` is the
-authoritative reading that nothing was still checked out — taken while there is
-still an occupancy to read — and `post_close` carries what a closed pool leaves
-observable: the process state and the server's own backend count, with the time
-the server took to finish tearing the backends down. The runner requires the
-pre-close reading to be present and zero; an absent reading is a violation
-rather than a pass, since "nothing was checked out" and "nobody looked" are
-different findings.
+The permanent verifier is offline: no commit resolution, no fetch, nothing but
+the retained report, the closure and the working tree. The one-time remote check
+— workflow run and producing job identity and conclusion, artifact digest, and a
+byte-for-byte comparison of the downloaded artifact against the retained file —
+runs once at promotion and is recorded as machine-readable booleans the verifier
+requires, rather than as a sentence saying it happened. A report is never edited
+to make a hash or a commit match; if the recorded identity and the file
+disagree, the file is wrong.
 
 ## Reproducing
 

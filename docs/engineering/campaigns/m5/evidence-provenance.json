@@ -3,98 +3,44 @@
   "issue": "https://github.com/luceat-lux-vestra/oxide-batch/issues/102",
   "note": "This document says where each retained report came from and what binds it to the tree it sits beside. It is data rather than prose because `cargo xtask evidence` reads it: the fields below are checked rather than described.",
   "model": {
-    "note": "A retained report cannot have been produced by the commit that contains it. The artifact records the commit it ran on, and the commit that stores the artifact necessarily comes after \u2014 so a rule requiring the two to be equal is not strict, it is unsatisfiable, and chasing it produces a rerun on every push and never converges. The pipeline has three distinct positions and this document keeps them apart.",
+    "note": "A retained report cannot have been produced by the commit that contains it: the artifact records the tree it ran on, and the commit that stores the artifact comes after it. A rule requiring the two to be equal is not strict, it is unsatisfiable, and chasing it reruns the campaign on every push without converging. The pipeline has three distinct positions and this document keeps them apart. The root of trust is the first of them, and it is recorded by the run itself rather than reconstructed afterwards.",
     "stages": [
       {
-        "stage": "producer commit",
-        "what": "The executable tree the campaign ran on: the framework, the report, the shared soak mechanics, the campaign scope, and the runner."
+        "stage": "actual execution tree",
+        "what": "The tree the campaign really ran against, recorded by the run from inside its own checkout as an object manifest in the report. On a pull request this is the ephemeral merge commit, which no later clone can resolve \u2014 which is exactly why the manifest is recorded rather than the commit name being trusted to stand for it."
       },
       {
         "stage": "workflow run",
-        "what": "The CI run that executed the campaign against that tree and uploaded the report as a build artifact. The run is immutable and is identified by its run id, attempt, workflow, and job."
+        "what": "The immutable CI execution that produced the artifact, identified by run, attempt and producing job. The run's conclusion and the job's conclusion are separate facts and are recorded separately."
       },
       {
         "stage": "retention commit",
-        "what": "A later, evidence-only commit that stores the artifact byte-for-byte and records this provenance. It is normal and expected for it to differ from the producer commit; that difference is what this document exists to bound."
+        "what": "A later, evidence-only commit that stores the artifact byte-for-byte and records this provenance. It differs from the execution tree, and that is the normal state rather than a defect."
       }
     ],
     "prohibited": [
-      "Presenting the retention commit as the producer commit.",
+      "Using the branch head as a stand-in for the tree the campaign executed against; they are different commits.",
+      "Presenting the retention commit as the producer.",
       "Editing a retained artifact so that a recorded hash or commit matches.",
-      "Re-running the campaign on each new head in order to make the producer commit equal the retention commit."
+      "Re-running the campaign on each new head to make the execution tree equal the retention commit.",
+      "Treating a summary the report wrote about itself \u2014 a verdict, a total, a pass \u2014 as evidence for the run it describes."
     ]
   },
   "binding": {
     "note": "Two verifications with different reach, and the difference is stated rather than blurred. `cargo xtask evidence` is repository-local: it resolves nothing over the network, so it keeps working long after GitHub has expired the artifacts it describes, and what it establishes is that the retained bytes are the bytes this repository recorded, over a tree whose campaign still means what it meant. It cannot say the retained bytes are the bytes the workflow uploaded. That stronger check needs the GitHub API, which is why it is performed once \u2014 at the moment evidence is promoted \u2014 and its result recorded per entry under remote_verification.",
     "artifact_identity": "Each report's git blob identity, taken over the working-tree file. It changes if a single byte of a retained artifact is edited after retention.",
-    "campaign_semantics": "The git object identity of every path that defines what the campaign executes, as those paths stood at the producer commit. If any of them differs today, the retained report describes a campaign this tree no longer runs, and it may not be promoted: the campaign has to be run again on the new tree.",
+    "campaign_semantics": "The object identity of every path in the declared closure, as the run recorded them from its own checkout. The verifier requires each to still be the tree's identity today. It resolves no commit and fetches nothing: the inputs are the retained report, the closure document, and the working tree.",
     "why_object_ids": "Git object identities for the local binding, because git is already required by this tooling, the values are verifiable by hand with `git rev-parse HEAD:<path>` and `git hash-object <file>`, and no dependency is added to compute them. The GitHub artifact digest is recorded separately and is a different thing: a sha256 over the uploaded archive, which is what the one-time remote check compares against.",
     "local_verification": "Enforced on every CI run. Artifact git blob identity, the three-way producer/recorded/HEAD binding over campaign-semantics paths, exactly-once matrix coverage, schema completeness, and the report contract.",
-    "remote_verification": "Performed once per retention, against the GitHub Actions API: the run, attempt and job exist and succeeded; the artifact's own sha256 digest is recorded; the artifact is downloaded and its extracted report compared byte-for-byte with the retained file. It is deliberately not a permanent CI dependency, because Actions artifacts expire and a verifier that stopped working on a retention boundary would be switched off rather than fixed."
+    "remote_verification": "Performed once per retention, against the GitHub Actions API: the run, attempt and job exist and succeeded; the artifact's own sha256 digest is recorded; the artifact is downloaded and its extracted report compared byte-for-byte with the retained file. It is deliberately not a permanent CI dependency, because Actions artifacts expire and a verifier that stopped working on a retention boundary would be switched off rather than fixed.",
+    "derived_verdicts": "The report's correctness results, growth verdicts and campaign totals are not read as evidence. `cargo xtask soak` recomputes each of them from the raw per-cycle journal and the retained samples, after first requiring the chronology of those arrays to be a contiguous, ordered, correctly phased run of the declared length, and requires the report's own answers to match."
   },
   "campaign_semantics": {
-    "note": "The executable definition of the soak campaign: everything whose change would change what the evidence is evidence of. It is grouped by what each input contributes rather than listed flat, because the first version of this list was assembled by hand from the code the campaign obviously touches and omitted every input that reaches it indirectly \u2014 the resolved dependency graph, the database schema the run migrates to, and the compiler the whole thing is built with. A campaign is not defined only by the code that spells it out.",
-    "workflow_exclusion": "The workflow file is deliberately not in this set. What matters is the job that ran, and that is pinned far more tightly than a file hash could pin it: the run id, the attempt, and the job identity below name one immutable execution. Including the file would additionally mean that adding any unrelated CI job invalidated every retained report in the repository.",
-    "paths": [
-      ".cargo/config.toml",
-      "Cargo.lock",
-      "Cargo.toml",
-      "crates/oxide-batch-core/Cargo.toml",
-      "crates/oxide-batch-core/src",
-      "crates/oxide-batch-plan/Cargo.toml",
-      "crates/oxide-batch-plan/src",
-      "crates/oxide-batch-repository/Cargo.toml",
-      "crates/oxide-batch-repository/src",
-      "crates/oxide-batch/Cargo.toml",
-      "crates/oxide-batch/migrations",
-      "crates/oxide-batch/src",
-      "crates/oxide-batch/tests/postgres_soak.rs",
-      "crates/oxide-batch/tests/soak",
-      "rust-toolchain.toml",
-      "tests/fixtures/soak/campaign-scope.json",
-      "xtask/Cargo.toml",
-      "xtask/src/soak.rs",
-      "xtask/src/suite.rs"
-    ],
-    "categories": {
-      "framework implementation": [
-        "crates/oxide-batch/src",
-        "crates/oxide-batch-core/src",
-        "crates/oxide-batch-plan/src",
-        "crates/oxide-batch-repository/src"
-      ],
-      "campaign implementation": [
-        "crates/oxide-batch/tests/postgres_soak.rs",
-        "crates/oxide-batch/tests/soak"
-      ],
-      "campaign fixture": [
-        "tests/fixtures/soak/campaign-scope.json"
-      ],
-      "database schema": [
-        "crates/oxide-batch/migrations"
-      ],
-      "dependency resolution": [
-        "Cargo.toml",
-        "Cargo.lock",
-        "crates/oxide-batch/Cargo.toml",
-        "crates/oxide-batch-core/Cargo.toml",
-        "crates/oxide-batch-plan/Cargo.toml",
-        "crates/oxide-batch-repository/Cargo.toml",
-        "xtask/Cargo.toml"
-      ],
-      "toolchain and build configuration": [
-        "rust-toolchain.toml",
-        ".cargo/config.toml"
-      ],
-      "runner": [
-        "xtask/src/soak.rs",
-        "xtask/src/suite.rs"
-      ]
-    },
-    "excluded": "Documentation, the changelog, the evidence directory itself, unrelated xtask commands, and the list of CI jobs. None of them changes what the campaign executes, and treating them as semantics would mean that editing a sentence invalidated every retained report."
+    "source": "tests/fixtures/soak/campaign-semantics.json",
+    "note": "The closure is declared once, there, and read by both the producer and the verifier. It is not restated here: the earlier version of this document carried its own copy, which is how it came to omit the resolved dependency graph, the database migrations and the toolchain pin."
   },
   "retention_paths": {
-    "note": "The paths an evidence-retention change is allowed to touch. This is a review convention rather than an automated check, and the distinction is deliberate: identifying \"the retention commit\" from inside the tree is the same self-reference that made the original requirement unsatisfiable, so the verifier does not try. What the verifier enforces instead is the campaign-semantics binding above, which is the property that actually matters \u2014 a retention commit may touch anything at all provided it does not change what the campaign executes, and if it does change that, the reports cannot be promoted no matter which paths the commit touched.",
+    "note": "The paths an evidence-retention change is expected to touch. A review convention rather than an automated check: identifying \"the retention commit\" from inside the tree is the same self-reference that made the original requirement unsatisfiable. What is enforced is the semantic binding above.",
     "allowed": [
       "docs/engineering/campaigns/m5/",
       "docs/project/m5-campaign-evidence.md"
@@ -182,31 +128,6 @@
       }
     }
   ],
-  "campaign_semantics_at_producer": {
-    "note": "Git object identities of the campaign-semantics paths as they stood at producer.branch_head_sha. The verifier recomputes each against the current tree and fails on any difference, which is what stops a report from being promoted alongside a campaign that has since changed.",
-    "producer_commit": "fba6d353e1a0306949a1c0a2e77e9f6ffc6467c3",
-    "objects": {
-      ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-      "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
-      "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
-      "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
-      "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
-      "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
-      "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
-      "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
-      "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
-      "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
-      "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
-      "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
-      "crates/oxide-batch/tests/postgres_soak.rs": "9ce60297846ba875b3739670e532ca6b616097ac",
-      "crates/oxide-batch/tests/soak": "fd6cbbb5b02861b8f8d604e57a67c9e5c9b2cd47",
-      "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
-      "tests/fixtures/soak/campaign-scope.json": "1d8d496c8dd5fb30c7671eb6be24c54c15442202",
-      "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
-      "xtask/src/soak.rs": "457f3838a945a3fd5b58ff95e3e72e896ac0f339",
-      "xtask/src/suite.rs": "2c590a7233a5f9c05bf09b672ee5d9e4370aa673"
-    }
-  },
   "required_matrix": [
     "postgres-15",
     "postgres-18"

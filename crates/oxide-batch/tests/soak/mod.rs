@@ -537,6 +537,92 @@ pub fn retain_observation(name: &str, document: &Value) -> Result<Option<PathBuf
     Ok(Some(path))
 }
 
+/// The canonical closure of what the campaign executes.
+///
+/// Read from `tests/fixtures/soak/campaign-semantics.json` rather than listed
+/// here, because the verifier reads the same document: a closure kept in two
+/// places is one that will disagree.
+///
+/// # Errors
+///
+/// Returns the failure when the document cannot be read or parsed.
+pub fn semantics_paths() -> Result<Vec<String>, Box<dyn Error>> {
+    let path = workspace_root()
+        .join("tests")
+        .join("fixtures")
+        .join("soak")
+        .join("campaign-semantics.json");
+    let document: Value = serde_json::from_str(&fs::read_to_string(&path)?)?;
+    let categories = document
+        .get("categories")
+        .and_then(Value::as_object)
+        .ok_or_else(|| Failure::boxed("the semantics document declares no categories"))?;
+    let mut paths = categories
+        .values()
+        .filter_map(|category| category.get("paths").and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    if paths.is_empty() {
+        return Err(Failure::boxed("the semantics document declares no paths"));
+    }
+    Ok(paths)
+}
+
+/// Records the object identity of the campaign's closure, as executed.
+///
+/// This is the provenance root, and it is taken here rather than reconstructed
+/// later for one reason: this process is the campaign, so the tree it can see
+/// is by definition the tree that ran. In CI that is the pull-request merge
+/// commit the workflow checked out — an ephemeral object no later clone can
+/// resolve — so a verifier that tried to re-derive these identities from a
+/// commit name would be depending on something GitHub throws away. Recording
+/// them in the report makes the binding permanent and offline.
+///
+/// # Errors
+///
+/// Returns the failure when the closure cannot be read, or when git cannot
+/// describe the tree the campaign is running against.
+pub fn execution_manifest() -> Result<Value, Box<dyn Error>> {
+    let root = workspace_root();
+    let commit = git(&root, &["rev-parse", "HEAD"])
+        .ok_or_else(|| Failure::boxed("the campaign is not running inside a git tree"))?;
+    let mut objects = serde_json::Map::new();
+    for path in semantics_paths()? {
+        let object = git(&root, &["rev-parse", &format!("HEAD:{path}")]).ok_or_else(|| {
+            Failure::boxed(format!(
+                "{path} is declared as campaign semantics and is not present"
+            ))
+        })?;
+        objects.insert(path, Value::String(object));
+    }
+    Ok(serde_json::json!({
+        "execution_commit": commit,
+        "execution_commit_note": "The tree this run actually executed against, read from the \
+                                  checkout the campaign is running in. In CI this is the \
+                                  pull-request merge commit rather than the branch head, and it \
+                                  is the authority: the objects below are its objects.",
+        "tree_clean": git(&root, &["status", "--porcelain"]).map(|status| status.is_empty()),
+        "objects": Value::Object(objects),
+    }))
+}
+
+/// Runs one git command against the workspace, tolerating failure.
+fn git(root: &std::path::Path, arguments: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .current_dir(root)
+        .args(arguments)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
 /// Returns the workspace root that contains this package.
 #[must_use]
 pub fn workspace_root() -> PathBuf {

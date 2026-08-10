@@ -81,11 +81,18 @@ pub fn run() -> Result<Verification, String> {
     let mut violations = Vec::new();
     let entries = array(&document, "evidence")?;
 
+    let mut reports = Vec::new();
     for entry in entries {
         violations.extend(verify_report(&root, &directory, entry));
+        if let Some(name) = entry.get("report").and_then(Value::as_str)
+            && let Ok(source) = fs::read_to_string(directory.join(name))
+            && let Ok(report) = serde_json::from_str::<Value>(&source)
+        {
+            reports.push((name.to_owned(), report));
+        }
     }
     violations.extend(verify_matrix(&document, entries));
-    violations.extend(verify_semantics(&root, &document));
+    violations.extend(verify_semantics(&root, &document, &reports));
 
     Ok(Verification {
         violations,
@@ -115,7 +122,9 @@ fn verify_report(root: &Path, directory: &Path, entry: &Value) -> Vec<String> {
     // which is the one thing a retained artifact may never be.
     match (
         git(root, &["hash-object", &file.display().to_string()]),
-        entry.get("artifact_git_blob").and_then(Value::as_str),
+        entry
+            .get("retained_report_git_blob")
+            .and_then(Value::as_str),
     ) {
         (Some(observed), Some(recorded)) if observed == recorded => {}
         (Some(observed), Some(recorded)) => violations.push(format!(
@@ -126,14 +135,14 @@ fn verify_report(root: &Path, directory: &Path, entry: &Value) -> Vec<String> {
         (None, _) => violations.push(format!("{name} could not be hashed")),
     }
 
-    // The artifact names the tree it ran on. That value is the merge ref, and
-    // the provenance has to agree with it rather than substitute the branch
-    // head, which is a different commit and is recorded separately.
+    // The report names the tree it ran on. The provenance has to agree with it
+    // rather than substitute the branch head, which is a real commit and a
+    // different tree — the substitution that would otherwise pass unnoticed.
     let observed = report
         .pointer("/environment/source_commit")
         .and_then(Value::as_str);
     let recorded = entry
-        .pointer("/producer/merge_ref_sha")
+        .pointer("/producer/execution_commit")
         .and_then(Value::as_str);
     match (observed, recorded) {
         (Some(observed), Some(recorded)) if observed == recorded => {}
@@ -234,14 +243,15 @@ const REQUIRED_STRINGS: &[&str] = &[
     "/matrix_point",
     "/postgres_major_version",
     "/producer/branch_head_sha",
-    "/producer/merge_ref_sha",
+    "/producer/execution_commit",
     "/workflow_run/workflow",
     "/workflow_run/workflow_file",
-    "/workflow_run/job",
-    "/workflow_run/artifact_name",
     "/workflow_run/event",
     "/workflow_run/conclusion",
-    "/workflow_run/github_artifact_digest",
+    "/producing_job/name",
+    "/producing_job/conclusion",
+    "/artifact/name",
+    "/artifact/digest",
 ];
 
 /// Requires every named provenance field to be present and non-empty.
@@ -254,14 +264,22 @@ fn verify_required_strings(name: &str, entry: &Value) -> Vec<String> {
             None => violations.push(format!("{name} records no {pointer}")),
         }
     }
-    if entry
-        .pointer("/workflow_run/conclusion")
-        .and_then(Value::as_str)
-        .is_some_and(|conclusion| conclusion != "success")
-    {
-        violations.push(format!(
-            "{name} is retained as official evidence and its producing job did not succeed"
-        ));
+    // The run and the job are different facts. A workflow whose other jobs
+    // failed is not one that produced trusted evidence, and the producing job's
+    // own success cannot stand in for it.
+    for (pointer, what) in [
+        ("/workflow_run/conclusion", "producer workflow run"),
+        ("/producing_job/conclusion", "producing job"),
+    ] {
+        if entry
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .is_some_and(|conclusion| conclusion != "success")
+        {
+            violations.push(format!(
+                "{name} is retained as official evidence and its {what} did not succeed"
+            ));
+        }
     }
     if entry
         .pointer("/workflow_run/github_artifact_digest")
@@ -299,16 +317,32 @@ fn verify_remote_record(name: &str, entry: &Value) -> Vec<String> {
             "{name} records a remote verification that did not pass"
         ));
     }
-    for field in ["method", "verified_at"] {
+    for field in ["verified_at"] {
         match remote.get(field).and_then(Value::as_str) {
             Some(value) if !value.trim().is_empty() => {}
             _ => violations.push(format!("{name} records no remote verification {field}")),
         }
     }
+    // Machine-readable results, not a prose method line. Each of these is one
+    // thing the retention step confirmed, and the campaign requires all of them
+    // rather than a sentence saying they were done.
+    for field in [
+        "workflow_run_identity",
+        "workflow_run_conclusion",
+        "producing_job_identity",
+        "producing_job_conclusion",
+        "artifact_digest",
+        "artifact_bytes_match_retained_report",
+        "execution_commit_matches_report",
+    ] {
+        if remote.get(field).and_then(Value::as_bool) != Some(true) {
+            violations.push(format!(
+                "{name} records no confirmed remote check for {field}"
+            ));
+        }
+    }
     let checked = remote.get("run_id").and_then(Value::as_u64);
-    let producing = entry
-        .pointer("/workflow_run/run_id")
-        .and_then(Value::as_u64);
+    let producing = entry.pointer("/workflow_run/id").and_then(Value::as_u64);
     if checked.is_none() || checked != producing {
         violations.push(format!(
             "{name} records a remote verification of run {checked:?} and was produced by \
@@ -324,22 +358,15 @@ fn verify_remote_record(name: &str, entry: &Value) -> Vec<String> {
 /// a report cannot be traced back to an execution anyone can look at.
 fn verify_run_identity(name: &str, entry: &Value) -> Vec<String> {
     let mut violations = Vec::new();
-    for field in ["run_id", "job_id", "run_attempt"] {
-        if entry
-            .pointer(&format!("/workflow_run/{field}"))
-            .and_then(Value::as_u64)
-            .is_none()
-        {
-            violations.push(format!("{name} records no workflow {field}"));
-        }
-    }
-    for field in ["workflow", "job", "artifact_name"] {
-        if entry
-            .pointer(&format!("/workflow_run/{field}"))
-            .and_then(Value::as_str)
-            .is_none()
-        {
-            violations.push(format!("{name} records no workflow {field}"));
+    for pointer in [
+        "/workflow_run/id",
+        "/workflow_run/attempt",
+        "/producing_job/id",
+        "/artifact/id",
+        "/artifact/size_bytes",
+    ] {
+        if entry.pointer(pointer).and_then(Value::as_u64).is_none() {
+            violations.push(format!("{name} records no {pointer}"));
         }
     }
     violations
@@ -449,195 +476,194 @@ fn verify_unique<'a>(
 
 /// Requires the campaign the reports describe to be the campaign this tree runs.
 ///
-/// This is the check the whole verifier is for, and it is a three-way identity
-/// rather than a two-way one:
+/// The identities compared here are the ones the producer recorded *from inside
+/// its own checkout*, in the report, at the moment it ran. That is the root of
+/// trust, and it replaces an earlier arrangement that re-derived them from a
+/// commit name.
 ///
-/// ```text
-/// producer:<path>  ==  recorded object  ==  HEAD:<path>
-/// ```
-///
-/// The middle term alone would be worthless. An attacker — or, far more likely,
-/// someone tidying up after a change they did not think was material — can
-/// change a campaign path, leave the producer SHA alone, and refresh the
-/// recorded object identities from the current tree. Recorded and HEAD then
-/// agree perfectly, and the retained report describes a campaign nobody runs
-/// any more. Resolving the objects at the recorded producer commit is what
-/// makes that visible, and it is why the producer commit is required to be
-/// resolvable rather than treated as a label.
-fn verify_semantics(root: &Path, document: &Value) -> Vec<String> {
+/// The reason is not preference. A pull-request run executes against an
+/// ephemeral merge commit no later clone can resolve, and the branch head is a
+/// different tree — using it as a stand-in means checking the evidence against
+/// something that never ran. Re-deriving also made the permanent verifier
+/// depend on fetching history that a squash-merge removes. Recording the
+/// manifest in the artifact makes the binding exact and offline: the only
+/// inputs are the retained report, the declared closure, and the current tree.
+fn verify_semantics(root: &Path, document: &Value, reports: &[(String, Value)]) -> Vec<String> {
     let mut violations = Vec::new();
-    let Some(objects) = document
-        .pointer("/campaign_semantics_at_producer/objects")
-        .and_then(Value::as_object)
-    else {
-        return vec![
-            "the provenance document records no campaign-semantics identities, so nothing says \
-             the retained reports describe the campaign this tree runs"
-                .to_owned(),
-        ];
+    let declared = match semantics_paths(root) {
+        Ok(paths) => paths,
+        Err(error) => return vec![error],
     };
-    let declared = document
-        .pointer("/campaign_semantics/paths")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_owned)
-        .collect::<BTreeSet<_>>();
-    if declared.is_empty() {
-        violations.push("the provenance document declares no campaign-semantics paths".to_owned());
-    }
 
-    // Every declared path must be recorded, and every recorded path declared.
-    // Otherwise the set can shrink on one side and still verify.
-    let recorded = objects.keys().cloned().collect::<BTreeSet<_>>();
-    for path in declared.difference(&recorded) {
-        violations.push(format!(
-            "{path} defines campaign semantics and no identity was recorded for it"
-        ));
-    }
-    for path in recorded.difference(&declared) {
-        violations.push(format!(
-            "an identity is recorded for {path}, which the contract does not declare as campaign \
-             semantics"
-        ));
-    }
-
-    let producer = document
-        .pointer("/campaign_semantics_at_producer/producer_commit")
-        .and_then(Value::as_str);
-    violations.extend(verify_producer_agreement(document, producer));
-
-    let resolvable = producer.filter(|commit| resolve(root, commit));
-    if let Some(producer) = producer {
-        if resolvable.is_none() {
+    for (name, report) in reports {
+        let Some(objects) = report
+            .pointer("/execution_manifest/objects")
+            .and_then(Value::as_object)
+        else {
             violations.push(format!(
-                "the recorded producer commit {producer} cannot be resolved in this repository, \
-                 so the recorded object identities cannot be checked against the tree the \
-                 campaign actually ran on; without that they only say the provenance agrees with \
-                 itself"
+                "{name} records no execution manifest, so nothing says which tree it ran against"
+            ));
+            continue;
+        };
+        if report
+            .pointer("/execution_manifest/execution_commit")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+        {
+            violations.push(format!("{name} records no execution commit"));
+        }
+        if report
+            .pointer("/execution_manifest/tree_clean")
+            .and_then(Value::as_bool)
+            != Some(true)
+        {
+            violations.push(format!("{name} ran against a tree that was not clean"));
+        }
+
+        // The manifest must cover the declared closure exactly. One that
+        // omitted a path would leave that input unbound; one carrying an extra
+        // would bind something the campaign does not declare.
+        let recorded = objects.keys().cloned().collect::<BTreeSet<_>>();
+        for path in declared.difference(&recorded) {
+            violations.push(format!(
+                "{name} ran without recording {path}, which the campaign declares as semantics"
             ));
         }
-    } else {
-        violations.push(
-            "the provenance document records no producer commit for its campaign-semantics \
-             identities"
-                .to_owned(),
-        );
-    }
-
-    for (path, expected) in objects {
-        violations.extend(verify_object(root, path, expected, resolvable));
-    }
-
-    // HEAD is only a truthful stand-in for the working tree while the two
-    // agree on these paths.
-    let mut dirty = vec![
-        "status".to_owned(),
-        "--porcelain".to_owned(),
-        "--".to_owned(),
-    ];
-    dirty.extend(declared.iter().cloned());
-    let arguments = dirty.iter().map(String::as_str).collect::<Vec<_>>();
-    match git(root, &arguments) {
-        Some(status) if status.is_empty() => {}
-        Some(status) => violations.push(format!(
-            "the working tree differs from HEAD in a campaign-semantics path, so the identities \
-             above were checked against something that is not what would run: {}",
-            status.replace('\n', "; "),
-        )),
-        None => violations.push("could not inspect the working tree".to_owned()),
-    }
-
-    violations
-}
-
-/// Requires one path's identity to hold at the producer and at `HEAD`.
-fn verify_object(root: &Path, path: &str, expected: &Value, producer: Option<&str>) -> Vec<String> {
-    let mut violations = Vec::new();
-    let Some(expected) = expected.as_str() else {
-        return vec![format!("{path} records an identity that is not a string")];
-    };
-
-    // The recorded identity must be the producer's, not merely today's.
-    if let Some(producer) = producer {
-        match git(root, &["rev-parse", &format!("{producer}:{path}")]) {
-            Some(observed) if observed == expected => {}
-            Some(observed) => violations.push(format!(
-                "{path} is recorded as {expected} and was {observed} at the producer commit \
-                 {producer}; the recorded identity does not belong to the tree the campaign ran on"
-            )),
-            None => violations.push(format!(
-                "{path} is declared as campaign semantics and did not exist at the producer \
-                 commit {producer}"
-            )),
+        for path in recorded.difference(&declared) {
+            violations.push(format!(
+                "{name} records {path}, which the campaign does not declare as semantics"
+            ));
+        }
+        for (path, expected) in objects {
+            violations.extend(verify_object(root, name, path, expected));
         }
     }
 
-    match git(root, &["rev-parse", &format!("HEAD:{path}")]) {
-        Some(observed) if observed == expected => {}
-        Some(observed) => violations.push(format!(
-            "{path} was {expected} when the retained evidence was produced and is {observed} now; \
-             the reports describe a campaign this tree no longer runs, so the campaign has to be \
-             run again rather than the evidence re-promoted"
-        )),
-        None => violations.push(format!(
-            "{path} is declared as campaign semantics and is not in this tree"
-        )),
-    }
-
+    violations.extend(verify_one_execution(document, reports));
+    violations.extend(verify_worktree(root, &declared));
     violations
 }
 
-/// Requires every entry to name the producer the semantics were recorded at.
-///
-/// The reports are one campaign run, so they share a producer tree. An entry
-/// that named a different one would mean the recorded object identities belong
-/// to some other report's tree than its own.
-fn verify_producer_agreement(document: &Value, producer: Option<&str>) -> Vec<String> {
+/// Requires the retained reports to be one campaign run on one tree.
+fn verify_one_execution(document: &Value, reports: &[(String, Value)]) -> Vec<String> {
     let mut violations = Vec::new();
-    let Some(producer) = producer else {
-        return violations;
-    };
+    let executed = reports
+        .iter()
+        .filter_map(|(_, report)| {
+            report
+                .pointer("/execution_manifest/execution_commit")
+                .and_then(Value::as_str)
+        })
+        .collect::<BTreeSet<_>>();
+    if executed.len() > 1 {
+        violations.push(format!(
+            "the retained reports were executed against {} different trees, so they are not one \
+             campaign result",
+            executed.len(),
+        ));
+    }
+
+    // The provenance records the execution commit too, and it must be the one
+    // the report itself carries rather than a substitute such as the branch
+    // head — which is a real commit, and a different tree.
     for entry in document
         .get("evidence")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
     {
-        let name = entry
-            .get("report")
-            .and_then(Value::as_str)
-            .unwrap_or("an unnamed report");
-        match entry
-            .pointer("/producer/branch_head_sha")
-            .and_then(Value::as_str)
-        {
-            Some(head) if head == producer => {}
-            Some(head) => violations.push(format!(
-                "{name} was produced from branch head {head} and the campaign-semantics \
-                 identities were recorded at {producer}, so they describe a different tree from \
-                 the one that produced this report"
-            )),
-            None => violations.push(format!("{name} records no producer branch head")),
+        let Some(name) = entry.get("report").and_then(Value::as_str) else {
+            continue;
+        };
+        let claimed = entry
+            .pointer("/producer/execution_commit")
+            .and_then(Value::as_str);
+        let actual = reports
+            .iter()
+            .find(|(report, _)| report == name)
+            .and_then(|(_, report)| {
+                report
+                    .pointer("/execution_manifest/execution_commit")
+                    .and_then(Value::as_str)
+            });
+        if actual.is_some() && claimed != actual {
+            violations.push(format!(
+                "{name} ran against {actual:?} and its provenance records an execution commit of \
+                 {claimed:?}"
+            ));
         }
     }
     violations
 }
 
-/// Reports whether a commit resolves here, fetching it once if it does not.
-///
-/// A pull-request branch head stops being reachable once the branch is deleted,
-/// and a shallow checkout may never have had it. Fetching the object by name is
-/// the difference between a verifier that keeps working after a merge and one
-/// that has to be switched off — but an unfetchable commit is a failure, never
-/// a pass, because the check it blocks is the one that matters.
-fn resolve(root: &Path, commit: &str) -> bool {
-    if git(root, &["cat-file", "-e", &format!("{commit}^{{commit}}")]).is_some() {
-        return true;
+/// Requires `HEAD` to be a truthful stand-in for the working tree.
+fn verify_worktree(root: &Path, declared: &BTreeSet<String>) -> Vec<String> {
+    let mut arguments = vec![
+        "status".to_owned(),
+        "--porcelain".to_owned(),
+        "--".to_owned(),
+    ];
+    arguments.extend(declared.iter().cloned());
+    let arguments = arguments.iter().map(String::as_str).collect::<Vec<_>>();
+    match git(root, &arguments) {
+        Some(status) if status.is_empty() => Vec::new(),
+        Some(status) => vec![format!(
+            "the working tree differs from HEAD in a campaign-semantics path, so the identities \
+             above were checked against something that is not what would run: {}",
+            status.replace('\n', "; "),
+        )],
+        None => vec!["could not inspect the working tree".to_owned()],
     }
-    git(root, &["fetch", "--quiet", "--depth=1", "origin", commit]);
-    git(root, &["cat-file", "-e", &format!("{commit}^{{commit}}")]).is_some()
+}
+
+/// Reads the declared semantic closure from its canonical document.
+///
+/// The producer reads the same document to build its manifest. Neither restates
+/// the list: a closure kept in two places is one that will disagree.
+fn semantics_paths(root: &Path) -> Result<BTreeSet<String>, String> {
+    let path = root
+        .join("tests")
+        .join("fixtures")
+        .join("soak")
+        .join("campaign-semantics.json");
+    let source = fs::read_to_string(&path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let document: Value = serde_json::from_str(&source)
+        .map_err(|error| format!("could not parse {}: {error}", path.display()))?;
+    let paths = document
+        .get("categories")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "the semantics document declares no categories".to_owned())?
+        .values()
+        .filter_map(|category| category.get("paths").and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    if paths.is_empty() {
+        return Err("the semantics document declares no paths".to_owned());
+    }
+    Ok(paths)
+}
+
+/// Requires one executed identity to still be the tree's identity.
+fn verify_object(root: &Path, name: &str, path: &str, expected: &Value) -> Vec<String> {
+    let Some(expected) = expected.as_str() else {
+        return vec![format!(
+            "{name} records an identity for {path} that is not a string"
+        )];
+    };
+    match git(root, &["rev-parse", &format!("HEAD:{path}")]) {
+        Some(observed) if observed == expected => Vec::new(),
+        Some(observed) => vec![format!(
+            "{path} was {expected} when {name} was produced and is {observed} now; the report \
+             describes a campaign this tree no longer runs, so the campaign has to be run again \
+             rather than the evidence re-promoted"
+        )],
+        None => vec![format!(
+            "{path} is declared as campaign semantics and is not in this tree"
+        )],
+    }
 }
 
 /// Runs one git command and returns its trimmed output.
@@ -681,28 +707,63 @@ mod tests {
     // window instead of the one CI job whose question it is. The command
     // answers it; these tests hold the logic that answers it.
 
-    /// The provenance entry the repository actually ships for `PostgreSQL` 15.
+    /// A complete, valid provenance entry for the retained `PostgreSQL` 15 report.
     ///
-    /// Read from the shipped document rather than restated here. An earlier
-    /// version of these tests hardcoded the blob and the producer SHA, which
-    /// made every negative case below depend on values that change whenever
-    /// evidence is retained — and duplicated state in a test is exactly the
-    /// failure this whole verifier exists to catch, so it should not be the
-    /// shape of the verifier's own tests.
+    /// Synthesized against the retained file rather than read from the shipped
+    /// document, for the reason the report fixture above is: these tests are
+    /// about the schema checks, and an entry taken from disk is stale for the
+    /// whole window between a semantics change and the retention that follows
+    /// it. Every attack below mutates one field of this.
     fn entry() -> Value {
         let root = crate::suite::workspace_root().expect("workspace root");
-        let path = root.join(super::DIRECTORY).join(super::PROVENANCE);
-        let document: Value =
-            serde_json::from_str(&std::fs::read_to_string(path).expect("provenance document"))
-                .expect("provenance json");
-        document
-            .get("evidence")
-            .and_then(Value::as_array)
-            .expect("evidence")
-            .iter()
-            .find(|entry| entry.get("matrix_point").and_then(Value::as_str) == Some("postgres-15"))
-            .expect("a postgres-15 entry")
-            .clone()
+        let file = root
+            .join(super::DIRECTORY)
+            .join("soak-campaign-postgres-15.json");
+        let report: Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).expect("retained report"))
+                .expect("report json");
+        json!({
+            "report": "soak-campaign-postgres-15.json",
+            "matrix_point": "postgres-15",
+            "postgres_major_version": "15",
+            "producer": {
+                "execution_commit": report["environment"]["source_commit"],
+                "branch_head_sha": "0".repeat(40),
+                "source_tree_clean": true,
+            },
+            "workflow_run": {
+                "workflow": "Rust",
+                "workflow_file": ".github/workflows/ci.yml",
+                "id": 1_u64, "attempt": 1_u64, "event": "pull_request",
+                "conclusion": "success",
+            },
+            "producing_job": {
+                "name": "postgres-15-soak-campaign", "id": 2_u64, "conclusion": "success",
+            },
+            "artifact": {
+                "name": "soak-campaign-postgres-15",
+                "id": 3_u64,
+                "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "size_bytes": 4_u64,
+            },
+            "retained_report_git_blob": super::git(
+                &root,
+                &["hash-object", &file.display().to_string()],
+            )
+            .expect("a blob for the retained report"),
+            "remote_verification": {
+                "verified": true,
+                "verified_at": "2026-08-10T00:00:00+00:00",
+                "run_id": 1_u64,
+                "workflow_run_identity": true,
+                "workflow_run_conclusion": true,
+                "producing_job_identity": true,
+                "producing_job_conclusion": true,
+                "artifact_digest": true,
+                "artifact_bytes_match_retained_report": true,
+                "execution_commit_matches_report": true,
+            },
+        })
     }
 
     /// Verifies one entry against the real retained directory.
@@ -726,7 +787,7 @@ mod tests {
 
     #[test]
     fn an_edited_artifact_is_rejected() {
-        let violations = verify(&with("/artifact_git_blob", json!("0".repeat(40))));
+        let violations = verify(&with("/retained_report_git_blob", json!("0".repeat(40))));
         assert!(
             violations
                 .iter()
@@ -740,7 +801,7 @@ mod tests {
         // The substitution this prevents is naming the retention commit, or
         // the branch head, as the tree the campaign ran on.
         let violations = verify(&with(
-            "/producer/merge_ref_sha",
+            "/producer/execution_commit",
             json!("82627f72a5bb3d6d069827ee8d890a5f7dcd66f6"),
         ));
         assert!(
@@ -769,17 +830,56 @@ mod tests {
 
     #[test]
     fn an_unidentified_workflow_run_is_rejected() {
-        for field in ["run_id", "job_id", "run_attempt", "workflow", "job"] {
+        for (section, field, pointer) in [
+            ("workflow_run", "id", "/workflow_run/id"),
+            ("workflow_run", "attempt", "/workflow_run/attempt"),
+            ("producing_job", "id", "/producing_job/id"),
+            ("artifact", "id", "/artifact/id"),
+        ] {
             let mut entry = entry();
-            entry["workflow_run"]
-                .as_object_mut()
-                .expect("workflow_run")
-                .remove(field);
+            entry[section].as_object_mut().expect(section).remove(field);
             let violations = verify(&entry);
             assert!(
                 violations
                     .iter()
-                    .any(|violation| violation.contains(&format!("records no workflow {field}"))),
+                    .any(|violation| violation.contains(&format!("records no {pointer}"))),
+                "{pointer}: {violations:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_a_workflow_run_that_did_not_succeed() {
+        // The producing job succeeding is not the whole run succeeding, and
+        // official evidence requires both.
+        let violations = verify(&with("/workflow_run/conclusion", json!("failure")));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("producer workflow run did not succeed")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_a_remote_check_that_was_not_confirmed() {
+        for field in [
+            "workflow_run_identity",
+            "workflow_run_conclusion",
+            "producing_job_identity",
+            "producing_job_conclusion",
+            "artifact_digest",
+            "artifact_bytes_match_retained_report",
+            "execution_commit_matches_report",
+        ] {
+            let violations = verify(&with(
+                &format!("/remote_verification/{field}"),
+                json!(false),
+            ));
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains(&format!("remote check for {field}"))),
                 "{field}: {violations:?}",
             );
         }
@@ -837,83 +937,147 @@ mod tests {
             .expect("provenance json")
     }
 
+    /// Two reports carrying a manifest that matches this tree exactly.
+    ///
+    /// Synthesized against the current tree rather than read off disk. These
+    /// tests are about the verifier's logic, and a fixture taken from the
+    /// retained files would be false for the whole window between a commit that
+    /// changes campaign semantics and the retention commit that records the
+    /// rerun — which is the same repo-state coupling that has broken this
+    /// suite twice already.
+    fn reports() -> Vec<(String, Value)> {
+        let root = crate::suite::workspace_root().expect("workspace root");
+        let objects = super::semantics_paths(&root)
+            .expect("declared semantics")
+            .into_iter()
+            .map(|path| {
+                let object = super::git(&root, &["rev-parse", &format!("HEAD:{path}")])
+                    .unwrap_or_else(|| panic!("{path} is declared and absent"));
+                (path, json!(object))
+            })
+            .collect::<serde_json::Map<_, _>>();
+        let manifest = json!({
+            "execution_commit": super::git(&root, &["rev-parse", "HEAD"]).expect("HEAD"),
+            "tree_clean": true,
+            "objects": objects,
+        });
+        provenance()["evidence"]
+            .as_array()
+            .expect("evidence")
+            .iter()
+            .map(|entry| {
+                let name = entry["report"].as_str().expect("report").to_owned();
+                (name, json!({ "execution_manifest": manifest }))
+            })
+            .collect()
+    }
+
     /// Runs the semantics check over a mutated provenance document.
     fn semantics(document: &Value) -> Vec<String> {
+        semantics_of(document, &reports())
+    }
+
+    /// Runs the semantics check over mutated reports.
+    fn semantics_of(document: &Value, reports: &[(String, Value)]) -> Vec<String> {
         let root = crate::suite::workspace_root().expect("workspace root");
-        super::verify_semantics(&root, document)
+        super::verify_semantics(&root, document, reports)
     }
 
-    #[test]
-    fn rejects_semantics_objects_not_owned_by_recorded_producer() {
-        // An identity that is a real object, but not the one that path had at
-        // the producer commit.
-        let mut document = provenance();
-        let objects = document["campaign_semantics_at_producer"]["objects"]
-            .as_object_mut()
-            .expect("objects");
-        let borrowed = objects["xtask/src/suite.rs"].clone();
-        objects.insert("xtask/src/soak.rs".to_owned(), borrowed);
-        let violations = semantics(&document);
-        assert!(
-            violations
-                .iter()
-                .any(|violation| violation
-                    .contains("does not belong to the tree the campaign ran on")),
-            "{violations:?}",
-        );
-    }
-
-    #[test]
-    fn rejects_producer_commit_mismatch_between_entries() {
-        let mut document = provenance();
-        document["evidence"][0]["producer"]["branch_head_sha"] =
-            json!("0000000000000000000000000000000000000000");
-        let violations = semantics(&document);
-        assert!(
-            violations.iter().any(|violation| violation
-                .contains("describe a different tree from the one that produced this report")),
-            "{violations:?}",
-        );
+    /// Replaces one object identity in every retained report's manifest.
+    fn with_manifest(path: &str, object: &Value) -> Vec<(String, Value)> {
+        let mut reports = reports();
+        for (_, report) in &mut reports {
+            report["execution_manifest"]["objects"][path] = object.clone();
+        }
+        reports
     }
 
     #[test]
     fn rejects_provenance_rewritten_to_current_head() {
-        // The attack this three-way binding exists for, reproduced exactly:
-        // keep the old producer SHA, change a campaign path, and refresh the
-        // recorded identity from the current tree. Recorded and HEAD agree
-        // perfectly; only the producer disagrees.
-        let root = crate::suite::workspace_root().expect("workspace root");
+        // The substitution the manifest exists to prevent: provenance that
+        // names some other real commit as the tree the campaign ran on. The
+        // report carries its own execution commit, so the two disagree.
         let mut document = provenance();
-        let rewritten = super::git(&root, &["rev-parse", "HEAD:xtask/src/suite.rs"])
-            .expect("an object for the path");
-        document["campaign_semantics_at_producer"]["objects"]["xtask/src/soak.rs"] =
-            json!(rewritten);
-        let violations = semantics(&document);
-        assert!(
-            violations
-                .iter()
-                .any(|violation| violation
-                    .contains("does not belong to the tree the campaign ran on")),
-            "{violations:?}",
-        );
-    }
-
-    #[test]
-    fn rejects_an_unresolvable_producer_commit() {
-        // Without the producer tree the recorded identities only say the
-        // provenance agrees with itself, so this must fail rather than skip.
-        let mut document = provenance();
-        document["campaign_semantics_at_producer"]["producer_commit"] =
-            json!("0123456789012345678901234567890123456789");
         for entry in document["evidence"].as_array_mut().expect("evidence") {
-            entry["producer"]["branch_head_sha"] =
-                json!("0123456789012345678901234567890123456789");
+            entry["producer"]["execution_commit"] = json!("0".repeat(40));
         }
         let violations = semantics(&document);
         assert!(
             violations
                 .iter()
-                .any(|violation| violation.contains("cannot be resolved in this repository")),
+                .any(|violation| violation.contains("its provenance records an execution commit")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_reports_from_different_execution_trees() {
+        let mut reports = reports();
+        reports[0].1["execution_manifest"]["execution_commit"] = json!("0".repeat(40));
+        let violations = semantics_of(&provenance(), &reports);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("executed against 2 different trees")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_an_unclean_execution_tree() {
+        let mut reports = reports();
+        reports[0].1["execution_manifest"]["tree_clean"] = json!(false);
+        let violations = semantics_of(&provenance(), &reports);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("ran against a tree that was not clean")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_a_report_with_no_execution_manifest() {
+        let mut reports = reports();
+        reports[0]
+            .1
+            .as_object_mut()
+            .expect("report")
+            .remove("execution_manifest");
+        let violations = semantics_of(&provenance(), &reports);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("records no execution manifest")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_a_manifest_missing_a_declared_path() {
+        let mut reports = reports();
+        for (_, report) in &mut reports {
+            report["execution_manifest"]["objects"]
+                .as_object_mut()
+                .expect("objects")
+                .remove("Cargo.lock");
+        }
+        let violations = semantics_of(&provenance(), &reports);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("ran without recording Cargo.lock")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_a_manifest_binding_an_undeclared_path() {
+        let reports = with_manifest("README.md", &json!("0".repeat(40)));
+        let violations = semantics_of(&provenance(), &reports);
+        assert!(
+            violations.iter().any(|violation| violation
+                .contains("records README.md, which the campaign does not declare")),
             "{violations:?}",
         );
     }
@@ -938,21 +1102,34 @@ mod tests {
         rejects_a_changed_semantics_path("rust-toolchain.toml");
     }
 
-    /// Requires a retained report to be refused once one input has changed.
+    #[test]
+    fn rejects_changed_execution_contract() {
+        // Changing how CI runs the soak invalidates the evidence, while
+        // changing an unrelated CI job does not — which is the whole reason
+        // the contract lives beside the campaign rather than in the workflow.
+        rejects_a_changed_semantics_path("tests/fixtures/soak/execution-contract.json");
+        rejects_a_changed_semantics_path("tests/fixtures/soak/run-ci-campaign.sh");
+    }
+
+    #[test]
+    fn rejects_changed_verifier() {
+        rejects_a_changed_semantics_path("xtask/src/soak.rs");
+    }
+
+    /// Requires retained reports to be refused once one input has changed.
     ///
     /// Simulated by recording an identity the path does not have, which is
     /// indistinguishable to the verifier from the path having changed since.
     fn rejects_a_changed_semantics_path(path: &str) {
-        let mut document = provenance();
-        let objects = document["campaign_semantics_at_producer"]["objects"]
-            .as_object_mut()
-            .expect("objects");
+        let reports = with_manifest(path, &json!("0".repeat(40)));
         assert!(
-            objects.contains_key(path),
+            reports[0].1["execution_manifest"]["objects"]
+                .as_object()
+                .expect("objects")
+                .contains_key(path),
             "{path} is not declared as campaign semantics",
         );
-        objects.insert(path.to_owned(), json!("0".repeat(40)));
-        let violations = semantics(&document);
+        let violations = semantics_of(&provenance(), &reports);
         assert!(
             violations
                 .iter()
@@ -1027,7 +1204,7 @@ mod tests {
 
     #[test]
     fn rejects_a_job_that_did_not_succeed() {
-        let violations = verify(&with("/workflow_run/conclusion", json!("failure")));
+        let violations = verify(&with("/producing_job/conclusion", json!("failure")));
         assert!(
             violations
                 .iter()
@@ -1044,61 +1221,6 @@ mod tests {
             violations
                 .iter()
                 .any(|violation| violation.contains("postgres-18 is a required matrix point")),
-            "{violations:?}",
-        );
-    }
-
-    #[test]
-    fn a_changed_campaign_is_rejected() {
-        // The failure the verifier exists for: last week's green report kept
-        // beside a rule that has since been changed.
-        let root = crate::suite::workspace_root().expect("workspace root");
-        let document = json!({
-            "campaign_semantics": { "paths": ["tests/fixtures/soak/campaign-scope.json"] },
-            "campaign_semantics_at_producer": {
-                "objects": { "tests/fixtures/soak/campaign-scope.json": "0".repeat(40) },
-            },
-        });
-        let violations = super::verify_semantics(&root, &document);
-        assert!(
-            violations
-                .iter()
-                .any(|violation| violation.contains("no longer runs")),
-            "{violations:?}",
-        );
-    }
-
-    #[test]
-    fn a_semantics_path_with_no_recorded_identity_is_rejected() {
-        let root = crate::suite::workspace_root().expect("workspace root");
-        let document = json!({
-            "campaign_semantics": { "paths": ["xtask/src/soak.rs", "xtask/src/suite.rs"] },
-            "campaign_semantics_at_producer": { "objects": {} },
-        });
-        let violations = super::verify_semantics(&root, &document);
-        for path in ["xtask/src/soak.rs", "xtask/src/suite.rs"] {
-            assert!(
-                violations.iter().any(|violation| violation.contains(path)
-                    && violation.contains("no identity was recorded")),
-                "{path}: {violations:?}",
-            );
-        }
-    }
-
-    #[test]
-    fn recording_an_identity_for_an_undeclared_path_is_rejected() {
-        let root = crate::suite::workspace_root().expect("workspace root");
-        let document = json!({
-            "campaign_semantics": { "paths": [] },
-            "campaign_semantics_at_producer": {
-                "objects": { "xtask/src/soak.rs": "0".repeat(40) },
-            },
-        });
-        let violations = super::verify_semantics(&root, &document);
-        assert!(
-            violations
-                .iter()
-                .any(|violation| violation.contains("does not declare as campaign semantics")),
             "{violations:?}",
         );
     }

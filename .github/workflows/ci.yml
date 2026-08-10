@@ -430,8 +430,13 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The workflow provisions and calls; how the campaign is executed lives
+      # in the contract beside the campaign, which is inside its semantic
+      # closure. Changing the command, the environment, or the database the
+      # soak runs against therefore invalidates retained evidence, while
+      # adding an unrelated job to this file does not.
       - name: Run the declared P-015 soak window and judge its growth
-        run: cargo run --package oxide-batch-xtask -- soak
+        run: ./tests/fixtures/soak/run-ci-campaign.sh ${{ matrix.postgres }}
 
       # Retained on failure as well as on success, and that is the case this
       # exists for: what a failed soak needs is the resource trajectory that

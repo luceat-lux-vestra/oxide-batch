@@ -133,8 +133,8 @@ use soak::journal::Journal;
 use soak::scope::{Rule, Scope};
 use soak::{
     APPLICATION_NAME, Failure, FixedClock, History, Observer, Occupancy, PeakConnections,
-    PoolGauge, alive_tasks, config, major_version, migrator_url, open_handles, remove_job,
-    resident_kib, retain_observation, runtime_url,
+    PoolGauge, alive_tasks, config, execution_manifest, major_version, migrator_url, open_handles,
+    remove_job, resident_kib, retain_observation, runtime_url,
 };
 
 /// The report identifier the runner reconciles this observation under.
@@ -362,6 +362,7 @@ async fn report(runtime: String, migrator: String) -> Result<(), Box<dyn Error>>
         "server_version": server,
         "postgres_major_version": major_version(&server),
         "environment": environment(&configuration, &scope),
+        "execution_manifest": execution_manifest()?,
         "campaign": {
             "job_name": job_name,
             "warmup_cycles": scope.window.warmup_cycles,
@@ -557,7 +558,7 @@ impl Cycle {
                 "outcome": self.failed_outcome,
                 "durable_status": format!("{:?}", self.failed_status),
                 "injected_partition": self.injected,
-                "partitions_committed": self.committed_first.len(),
+                "partitions_committed": self.committed_first.iter().collect::<Vec<_>>(),
                 "fault_wait_expired": self.fault_wait_expired,
             },
             "restart": {
@@ -604,6 +605,12 @@ struct DurableRecord {
 
 impl DurableRecord {
     /// Renders the record for the journal.
+    ///
+    /// Every partition is written out by key with its own status, exit status
+    /// and counters. A count and a set of distinct statuses would be smaller
+    /// and would lose partition identity — and an independent recomputation of
+    /// the per-partition obligations cannot be done from a set, which is the
+    /// whole reason the journal exists.
     fn evidence(&self) -> Value {
         json!({
             "outcome": self.outcome,
@@ -613,12 +620,20 @@ impl DurableRecord {
             "parent_exit_status": format!("{:?}", self.parent_exit_status),
             "parent_counts": counts(&self.parent_counts),
             "step_executions": self.step_executions,
-            "partitions": self.partitions.len(),
-            "partition_statuses": self
+            "partitions": self
                 .partitions
-                .values()
-                .map(|partition| format!("{:?}", partition.status))
-                .collect::<BTreeSet<_>>(),
+                .iter()
+                .map(|(key, partition)| {
+                    (
+                        key.clone(),
+                        json!({
+                            "status": format!("{:?}", partition.status),
+                            "exit_status": format!("{:?}", partition.exit_status),
+                            "counts": counts(&partition.counts),
+                        }),
+                    )
+                })
+                .collect::<serde_json::Map<_, _>>(),
         })
     }
 }
