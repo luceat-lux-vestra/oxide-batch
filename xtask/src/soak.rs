@@ -112,7 +112,7 @@ pub fn run() -> Result<Campaign, String> {
     run.outcome = target.results.get(&scope.report.name).cloned();
     run.observation = read_observation(&observations)?;
 
-    violations.extend(reconcile(&scope, &run));
+    violations.extend(reconcile(&scope, &run, matrix_point().as_deref()));
     let report = write_report(&root, &scope, &fixtures, &run, &violations)?;
     Ok(Campaign { violations, report })
 }
@@ -170,8 +170,26 @@ fn read_observation(directory: &Path) -> Result<Option<Value>, String> {
         .map_err(|error| format!("could not parse {}: {error}", path.display()))
 }
 
+/// Returns the supported-matrix major this run covers, where one is declared.
+///
+/// Resolved from the environment once, at the edge, and passed inward. The
+/// reconciliation itself reads no environment: a check that consults ambient
+/// state cannot be tested, and this one silently disagreed with its own unit
+/// test the first time the campaign ran on a matrix point other than the one
+/// the test's fixture named.
+fn matrix_point() -> Option<String> {
+    env::var(suite::MATRIX)
+        .ok()
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            value
+                .rsplit_once('-')
+                .map_or(value.clone(), |(_, major)| major.to_owned())
+        })
+}
+
 /// Reports everything the campaign required and did not observe.
-fn reconcile(scope: &Scope, run: &Run) -> Vec<String> {
+fn reconcile(scope: &Scope, run: &Run, matrix: Option<&str>) -> Vec<String> {
     let mut violations = Vec::new();
 
     if !run.succeeded {
@@ -207,7 +225,7 @@ fn reconcile(scope: &Scope, run: &Run) -> Vec<String> {
         violations.push(format!("soak: {violation}"));
     }
 
-    violations.extend(reconcile_matrix_point(observation));
+    violations.extend(reconcile_matrix_point(observation, matrix));
     violations.extend(reconcile_window(scope, observation));
     violations.extend(reconcile_workload(scope, observation));
     violations.extend(reconcile_lifecycle(observation));
@@ -220,21 +238,15 @@ fn reconcile(scope: &Scope, run: &Run) -> Vec<String> {
 }
 
 /// Requires the report to name the matrix point the campaign ran at.
-fn reconcile_matrix_point(observation: &Value) -> Vec<String> {
-    let Some(expected) = env::var(suite::MATRIX)
-        .ok()
-        .filter(|value| !value.is_empty())
-    else {
+fn reconcile_matrix_point(observation: &Value, expected: Option<&str>) -> Vec<String> {
+    let Some(expected) = expected else {
         return Vec::new();
     };
-    let expected = expected
-        .rsplit_once('-')
-        .map_or(expected.clone(), |(_, major)| major.to_owned());
     let observed = observation
         .get("postgres_major_version")
         .and_then(Value::as_str);
 
-    if observed == Some(expected.as_str()) {
+    if observed == Some(expected) {
         return Vec::new();
     }
     vec![format!(
@@ -1054,7 +1066,17 @@ mod tests {
     }
 
     /// Reconciles one observation against the scope above.
+    ///
+    /// The matrix point is passed rather than read from the environment, which
+    /// is the point of it being a parameter: these tests run inside the
+    /// conformance campaign, which sets `OXIDEBATCH_CAMPAIGN_MATRIX` to
+    /// whichever major that job is covering.
     fn reconcile(observation: Value) -> Vec<String> {
+        reconcile_at("18", observation)
+    }
+
+    /// Reconciles one observation as a run of a named matrix point.
+    fn reconcile_at(matrix: &str, observation: Value) -> Vec<String> {
         super::reconcile(
             &scope(),
             &super::Run {
@@ -1062,6 +1084,7 @@ mod tests {
                 outcome: Some("ok".to_owned()),
                 observation: Some(observation),
             },
+            Some(matrix),
         )
     }
 
@@ -1078,6 +1101,19 @@ mod tests {
     }
 
     #[test]
+    fn a_report_that_ran_against_another_major_is_rejected() {
+        // A matrix point is invisible in a connection string, so an observation
+        // from one supported major would otherwise reconcile inside a run of
+        // another. The fixture names 18.
+        let violations = reconcile_at("15", observation());
+        assert!(
+            violations.iter().any(|violation| violation
+                .contains("ran against PostgreSQL 18 and this campaign run is 15")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
     fn a_report_that_skipped_is_not_evidence() {
         let violations = super::reconcile(
             &scope(),
@@ -1086,6 +1122,7 @@ mod tests {
                 outcome: Some("ok".to_owned()),
                 observation: None,
             },
+            Some("18"),
         );
         assert!(
             violations
