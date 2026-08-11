@@ -407,10 +407,19 @@ async fn phase_separation(runtime: String, migrator: String) -> Result<Value, Bo
             let execution = await_running_execution(&harness.repository, &key, OBSERVATION_LIMIT)
                 .await?
                 .ok_or_else(|| Failure::boxed("the launch created no execution to cancel"))?;
+            // As in the operator-path report, the stop is requested only once
+            // the declared cancellation point holds: a partition has durably
+            // committed and later workers are still in flight.
             harness
                 .watcher
                 .await_completed_partitions(execution.id(), 1, OBSERVATION_LIMIT)
-                .await?;
+                .await?
+                .ok_or_else(|| {
+                    Failure::boxed(format!(
+                        "no partition committed in the {phase} phase, so the cancellation had \
+                         nothing to preserve"
+                    ))
+                })?;
             request_stop(&harness.repository, &execution).await?;
             let requested_at = Instant::now();
             let intake = harness
@@ -781,10 +790,19 @@ async fn restart_after_cancellation(
         let execution = await_running_execution(&harness.repository, &key, OBSERVATION_LIMIT)
             .await?
             .ok_or_else(|| Failure::boxed("the launch created no execution to cancel"))?;
+        // The cancellation request is made only once at least one partition
+        // has durably committed, so the restart below has committed work to
+        // prove it did not re-run rather than an absence that would pass
+        // vacuously.
         harness
             .watcher
             .await_completed_partitions(execution.id(), 1, OBSERVATION_LIMIT)
-            .await?;
+            .await?
+            .ok_or_else(|| {
+                Failure::boxed(
+                    "no partition committed, so the cancellation had nothing to preserve",
+                )
+            })?;
         request_stop(&harness.repository, &execution).await?;
         harness
             .watcher
@@ -824,6 +842,13 @@ async fn restart_after_cancellation(
     let restart_status = restarted.job_execution().metadata().status();
 
     let mut violations = Vec::new();
+    if committed_by_cancelled.is_empty() {
+        violations.push(
+            "the cancelled attempt committed no partitions before it was cancelled, so a \
+             restart that re-ran nothing would prove nothing was preserved"
+                .to_owned(),
+        );
+    }
     if !same_instance {
         violations.push(
             "the restart created a new job instance rather than a new attempt of the same one"
