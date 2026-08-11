@@ -9,6 +9,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A trust model for the M5 soak evidence in which raw observations, not the
+  report's own conclusions, are the authority. The campaign produces two kinds
+  of thing: its samples and per-cycle journal are observations, and its
+  correctness results, growth verdicts and totals are conclusions it drew about
+  itself — which are the claim under examination rather than evidence for it. So
+  `cargo xtask soak` now recomputes every verdict from the raw observations and
+  requires the report's own answers to match, in an order that is load-bearing:
+  chronology first, since the correctness baseline is *the first measured cycle*
+  and the memory verdict is read from the first and last reading of each window,
+  so a duplicated or reordered entry moves both silently; then the lifecycle, folded from the
+  journal and required of each cycle rather than of the totals; then all fifteen
+  correctness obligations, compared on the failing-cycle set with the declared,
+  reported and recomputed identifier sets reconciled as unique sets; then
+  growth. The journal records exact partition-key sets and per-partition status,
+  exit status and counters, because a count cannot be recomputed from. The root
+  of provenance is the tree that actually executed: each run records the object
+  identity of its whole declared closure from inside its own checkout, since a
+  pull-request job runs against an ephemeral merge commit and the branch head is
+  a different tree. That closure is declared once and now includes `Cargo.lock`,
+  the migrations, the toolchain pin, the CI execution contract — which moved out
+  of the workflow so the execution semantics are reviewable beside the campaign
+  — and the workflow file itself, bound whole, so an unrelated CI job
+  invalidates retained soak evidence as well. The permanent verifier is offline
+  by construction, and the one-time remote check is recorded as machine-readable
+  results rather than prose. Resident memory is gated on whole-window rate
+  decay — the measured mean rate against the warmup mean rate — after the
+  three earlier statistics were each found to have a healthy range that
+  crossed their own limit; the chosen one is characterised across ten CI runs
+  at 0.031 to 0.044 against a limit of 0.25. No production code changed.
+- `cargo xtask evidence`, a verifier for retained campaign evidence. It checks
+  that each report committed under `docs/engineering/campaigns/m5/` is still the
+  untouched output of a recorded CI run over a tree whose campaign still means
+  what it meant. The contract it reads separates three positions that had been
+  conflated: the producer commit the campaign ran on, the immutable workflow run
+  that produced the artifact, and the later evidence-only retention commit that
+  stores it — the last differing from the first being normal rather than a
+  defect, since a report cannot be produced by the commit that contains it. The
+  binding is content rather than commit identity, which is forced rather than
+  chosen: the identifier a report carries is the pull-request merge ref, which
+  GitHub replaces on the next push and which no later clone can resolve. So each
+  report's git blob identity is recorded, and so is the git object identity of
+  every path that defines what the campaign executes; if one of those differs,
+  the report describes a campaign the tree no longer runs and may not be
+  promoted. That last check is the point of the tool — it is what stops a green
+  report being kept beside a rule that has since been changed. Fourteen tests
+  hold the verifier, and a CI job runs it. No production code changed.
+- `cargo xtask soak`, the M5 PostgreSQL soak campaign. It runs a declared window
+  of repeated launch, fault, restart, recovery, and drain cycles against one
+  PostgreSQL pool and reports task, connection, handle, and memory growth over
+  it — the P-015 obligation the performance plan states and the
+  `soak_reports_no_task_connection_handle_or_memory_growth` scenario the design
+  gate names. The M4 in-memory measurement it builds on is retained unchanged
+  and is not cited as a PostgreSQL result; a test asserts that it still runs on
+  the in-memory repository, because relabelling it would be the cheapest way to
+  appear to deliver this. The campaign's denominator is a *period*, which is the
+  failure mode it is shaped around: a soak that ran three cycles and one that ran
+  three hundred produce reports of identical shape, and the shorter one produces
+  the flatter series and the more convincing result. So the window — 32 warmup
+  and 600 measured cycles, 16 partitions against a worker budget of 4 through a
+  pool of exactly 5 — is committed as `tests/fixtures/soak/campaign-scope.json`
+  and read by all three consumers: the report takes its cycle counts and rules
+  from it, the runner requires the run to have matched it, and an ordinary test
+  reconciles it against the accepted plan and design gate. Correctness comes
+  before any resource number: fifteen durable obligations are decided every
+  cycle against the first measured cycle, because flatness over a workload that
+  stopped working is not a result. The fault is injected by a worker that waits
+  for its siblings rather than firing on a timer, since a cooperative sibling
+  stop is consulted only before a tasklet is invoked and a timed fault would give
+  every cycle a different durable record. Eight growth rules are declared before
+  the run, decided from the measured samples alone, and each verdict carries the
+  series it was decided from, so no trajectory is passed by eye. No memory budget
+  was invented. Tasks, connections, and handles are exact integers required to be
+  flat at every cycle boundary, and the non-accumulation claim rests on those
+  alone; resident memory is held only to convergence, by comparing its mean
+  growth rate over the whole measured window against its mean rate over warmup —
+  each taken over the cycle intervals the window spans — and requiring the
+  second to be at most a quarter of the first. That fails a leak of any
+  per-cycle size, because a constant leak rates the same in both windows however
+  differently sized they are, and it says nothing about how much memory the
+  framework may use. It is not a proof that no leak exists: one much smaller
+  than the warmup settling rate stays inside it, which is why no exact
+  non-accumulation claim is made about resident memory.
+  CI runs it on PostgreSQL 15 and 18 and
+  retains each report on failure as well as success, because a failed soak's
+  value is its trajectory. No production code changed.
 - `cargo xtask resource-bounds`, the M5 resource-bound campaign. It proves that
   every queue, retry cache, page, buffer, worker assignment, and result set the
   framework owns has a finite ceiling, that the ceiling is enforced under the
@@ -652,6 +737,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The soak campaign's resident-memory rule divides each window's rise by the
+  cycle intervals it spans rather than by its sample count. A window of `n`
+  readings spans `n - 1` intervals, so every rate was understated by
+  `(n - 1)/n` — and because warmup and measurement are deliberately different
+  lengths, the factor did not cancel in their ratio: a constant leak reported
+  `0.97` where the campaign states the rule in terms of that ratio being `1.00`.
+  No verdict was wrong, since `0.97` is still four times the limit and healthy
+  runs sit near `0.04`; what was wrong is that the threshold meant something
+  other than what the scope declared. The report and the independent verifier
+  had the identical defect, which is the part worth recording: they share no
+  code on purpose, but both were written from the same ambiguous sentence, so
+  the recomputation agreed with the producer about a statistic neither was
+  computing. Separate implementations of an ambiguous specification are one
+  opinion typed twice. The statistic is now declared outside both, as vectors
+  with expected rates and verdicts in `tests/fixtures/soak/rate-vectors.json`,
+  and each side is checked against the declaration instead of against the other.
+  A window spanning no interval yields no rate rather than a rate of zero, so a
+  truncated campaign cannot pass a rule it could not decide. The limit stays at
+  `0.25`: the characterised null was restated by exact arithmetic rather than
+  re-measured, since at a fixed window the correction rescales every ratio by
+  `(600/599)/(32/31)`. Recorded as F23.
+- The M5 evidence record no longer describes each campaign twice. A merge left
+  every campaign section after the conformance one present in two copies, the
+  second describing a superseded memory rule with its own results and findings,
+  so a reader reaching the wrong copy would have found a different algorithm and
+  a different threshold presented as current. The conformance campaign's
+  findings had also been duplicated over the soak campaign's, and F22 — a soak
+  finding — sat inside the conformance results. Each campaign now appears once,
+  the findings sit under the campaign that made them, and
+  `m5_campaign_record.rs` holds the document's shape: campaign sections and
+  their subsections appear exactly once each, finding identifiers are unique and
+  contiguous, and the record's account of the semantic closure has to agree with
+  the closure itself. The checks are structural rather than textual, because the
+  record is required to keep explaining the rules it discarded.
 - The capacity budget's declared partition-key bound is the one the code holds.
   The table gave `256` bytes; `MAX_PARTITION_KEY_BYTES` has been `128` since the
   bound was introduced, so the number an operator would have sized a partition

@@ -1,0 +1,84 @@
+{
+  "document": "The executable closure of the M5 PostgreSQL soak campaign",
+  "note": "The single source of truth for what the soak campaign is made of. The producer reads it to record the object identity of every path at the tree it actually ran on; the verifier reads it to require those identities to still hold. Neither restates the list, because a list kept in two places is a list that will disagree \u2014 the first version of this closure lived in the provenance document and was assembled by hand from the code the campaign obviously touches, which is how it came to omit the resolved dependency graph, the schema the run migrates to, and the compiler it is built with.",
+  "rule": "A change to anything here changes what the evidence is evidence of, so retained reports produced before the change may not be promoted after it: the campaign has to be run again. A change to anything not here \u2014 documentation, the changelog, unrelated xtask commands \u2014 leaves retained evidence valid. Note that `.github/workflows/ci.yml` is bound whole, as one object: a change anywhere in that file, including to a job the soak has nothing to do with, invalidates retained evidence and forces a rerun.",
+  "categories": {
+    "framework source": {
+      "why": "The code under test. Its behaviour is what every observation in the report is about.",
+      "paths": [
+        "crates/oxide-batch/src",
+        "crates/oxide-batch-core/src",
+        "crates/oxide-batch-plan/src"
+      ]
+    },
+    "repository source": {
+      "why": "The PostgreSQL adapter the campaign runs through. The connection and checkout observations are readings of this.",
+      "paths": [
+        "crates/oxide-batch-repository/src"
+      ]
+    },
+    "migrations": {
+      "why": "The durable schema the run migrates to before it starts. A different schema is a different durable record, and every correctness obligation is stated over that record.",
+      "paths": [
+        "crates/oxide-batch/migrations"
+      ]
+    },
+    "cargo manifests": {
+      "why": "Feature selection and dependency ranges. A campaign built with different features is a different campaign.",
+      "paths": [
+        "Cargo.toml",
+        "crates/oxide-batch/Cargo.toml",
+        "crates/oxide-batch-core/Cargo.toml",
+        "crates/oxide-batch-plan/Cargo.toml",
+        "crates/oxide-batch-repository/Cargo.toml",
+        "xtask/Cargo.toml"
+      ]
+    },
+    "dependency resolution": {
+      "why": "The exact dependency graph the run was built from. A resolved version change can move any observation in the report \u2014 the pool implementation and the async runtime are both here \u2014 and the manifests alone do not pin it.",
+      "paths": [
+        "Cargo.lock"
+      ]
+    },
+    "toolchain and build configuration": {
+      "why": "The compiler the whole thing is built with and the cargo configuration it is built under.",
+      "paths": [
+        "rust-toolchain.toml",
+        ".cargo/config.toml"
+      ]
+    },
+    "campaign implementation": {
+      "why": "The report itself and the mechanics it observes through.",
+      "paths": [
+        "crates/oxide-batch/tests/postgres_soak.rs",
+        "crates/oxide-batch/tests/soak"
+      ]
+    },
+    "campaign fixtures": {
+      "why": "The declared denominator \u2014 the window, the workload, the obligations, the rules \u2014 and this closure itself. The rate vectors belong here rather than beside either implementation: they are the statement of what the memory statistic is, and the report and the verifier are each held to them separately. A change to them changes what both are required to mean, which is exactly what this closure is for.",
+      "paths": [
+        "tests/fixtures/soak/campaign-scope.json",
+        "tests/fixtures/soak/campaign-semantics.json",
+        "tests/fixtures/soak/rate-vectors.json"
+      ]
+    },
+    "soak execution contract": {
+      "why": "How CI actually runs the campaign: the supported matrix, the database it is given, the command, and the environment. The workflow file is included with them, which is deliberately blunt \u2014 an unrelated CI job now invalidates retained evidence. The alternative was to trust that the contract file, the script and the workflow agree, and agreement maintained by review is not a mechanism. Extracting the soak job into its own workflow so that only that file is in the closure is the right fix and is left to its own change.",
+      "paths": [
+        "tests/fixtures/soak/execution-contract.json",
+        "tests/fixtures/soak/run-ci-campaign.sh",
+        ".github/workflows/ci.yml"
+      ]
+    },
+    "independent verifier": {
+      "why": "The program that decides whether a report proved what it owed and whether retained evidence is still what it says. Its verdicts are part of the campaign result, so a report produced under a different verifier is a result under a different standard. The whole binary is listed, including its entry point and the recomputation module: an earlier version named only two of its five files, which would have let the recomputation itself change without invalidating anything.",
+      "paths": [
+        "xtask/src/main.rs",
+        "xtask/src/soak.rs",
+        "xtask/src/soak_evidence.rs",
+        "xtask/src/evidence.rs",
+        "xtask/src/suite.rs"
+      ]
+    }
+  }
+}

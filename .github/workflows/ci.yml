@@ -376,6 +376,70 @@ jobs:
           path: target/m5-campaigns/resource-bounds-campaign.json
           if-no-files-found: error
 
+  soak-campaign:
+    name: postgres-${{ matrix.postgres }}-soak-campaign
+    runs-on: ubuntu-latest
+    # The declared window is 32 warmup and 600 measured cycles, each a launch,
+    # a fault, a restart, and a drain. That is minutes rather than seconds, so
+    # the ceiling is higher than the other campaigns' — and it is still a
+    # ceiling, because a soak that stopped making progress must fail rather
+    # than occupy a runner.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["15", "18"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oxide_batch_soak
+        ports:
+          - 5432:5432
+        # The campaign holds one pool of 5 connections for its whole run, which
+        # is the derived requirement for a worker budget of 4. The image's
+        # default of 100 is ample; raising it would let a checkout leak be
+        # absorbed instead of exhausting the pool.
+        options: >-
+          --health-cmd "pg_isready --username postgres --dbname oxide_batch_soak"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      OXIDEBATCH_POSTGRES_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_soak
+      OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_soak
+      OXIDEBATCH_CAMPAIGN_DIR: target/m5-campaigns
+      OXIDEBATCH_CAMPAIGN_MATRIX: postgres-${{ matrix.postgres }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The workflow provisions and calls; how the campaign is executed lives
+      # in the contract beside the campaign. Both that contract and this file
+      # are inside the campaign's semantic closure, so changing the command,
+      # the environment, or the database the soak runs against invalidates
+      # retained evidence — and so, bluntly, does adding an unrelated job
+      # anywhere in this file. That cost is accepted rather than overlooked:
+      # the alternative is to trust that this file, the contract and the script
+      # agree, and agreement maintained by review is not a mechanism. Narrowing
+      # it by extracting the soak into its own workflow is left to its own
+      # change.
+      - name: Run the declared P-015 soak window and judge its growth
+        run: ./tests/fixtures/soak/run-ci-campaign.sh ${{ matrix.postgres }}
+
+      # Retained on failure as well as on success, and that is the case this
+      # exists for: what a failed soak needs is the resource trajectory that
+      # led to it, and a job that uploaded only green reports would discard
+      # exactly the evidence worth reading.
+      - name: Retain the campaign report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soak-campaign-postgres-${{ matrix.postgres }}
+          path: target/m5-campaigns/soak-campaign.json
+          if-no-files-found: error
+
   postgres-design-gate:
     name: postgres-${{ matrix.postgres }}-design-gate
     runs-on: ubuntu-latest

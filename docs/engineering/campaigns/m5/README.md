@@ -30,6 +30,8 @@ a pass or failure that does not.
 | [`security-campaign-postgres-18.json`](security-campaign-postgres-18.json) | Security | The same, on PostgreSQL 18 |
 | [`resource-bounds-campaign-postgres-15.json`](resource-bounds-campaign-postgres-15.json) | Resource bounds | Every declared bounded resource, the ceiling each report checked, the load it was offered, the occupancy it reached, and what it shed or refused, on PostgreSQL 15 |
 | [`resource-bounds-campaign-postgres-18.json`](resource-bounds-campaign-postgres-18.json) | Resource bounds | The same, on PostgreSQL 18 |
+| [`soak-campaign-postgres-15.json`](soak-campaign-postgres-15.json) | Soak | The declared warmup and measured window, every cycle's fault, restart, recovery, drain, and durable record, and the per-cycle task, connection, handle, memory, and durable-history series each growth rule was decided from, on PostgreSQL 15 |
+| [`soak-campaign-postgres-18.json`](soak-campaign-postgres-18.json) | Soak | The same, on PostgreSQL 18 |
 
 A file carries the matrix point in its name because one run produces one
 report: the runner always writes `conformance-campaign.json`, and the two jobs
@@ -37,77 +39,47 @@ that produce it differ only in the database behind the fixture. The point is
 also inside the file, as `environment.matrix`, so a copied report still says
 which run it came from.
 
-## Document shape
+## Provenance
 
-Every report carries the same envelope:
+[`evidence-provenance.json`](evidence-provenance.json) records where each
+retained report came from; `cargo xtask evidence` checks it on every CI run.
 
-- `environment` — source commit, working-tree cleanliness, `rustc`, profile,
-  OS/architecture, and the supported-matrix point. On a pull request the
-  recorded commit is the merge commit the workflow checked out rather than the
-  branch tip;
-- `fixtures` — which declared fixture the run had, so a record produced without
-  a database can never be read as one produced with it;
-- the campaign's own body;
-- `violations` and `passed` — the campaign result. A report whose `passed` is
-  `false` is a failure record, retained deliberately: an absent report and a
-  failed one must not look the same.
+The root of trust is the tree that actually executed. Each run records the git
+object identity of every path in the campaign's declared closure from inside its
+own checkout, into the report, as it runs — because that is the only way to name
+that tree correctly. A pull-request job executes against an ephemeral merge
+commit no later clone can resolve, and the branch head is a *different* tree, so
+using the branch head as a stand-in would mean checking evidence against
+something that never ran. Both SHAs are recorded in separate fields and only the
+manifest is authority.
 
-The crash and restore report additionally embeds the observation each scenario
-retained while it ran, under `reports[].observation`. That is what separates a
-scenario that passed from one that skipped: the observation records the child
-process identifier, the signal it died from, the durable state the kill left
-behind, the discovery result, and the restart outcome. The runner requires one
-per report and requires every declared phase to appear inside it, so a scenario
-that reported `ok` without doing the work fails the campaign.
+The closure itself is declared once, in
+[`campaign-semantics.json`](../../../../tests/fixtures/soak/campaign-semantics.json),
+and read by the producer and the verifier alike: framework source, the
+repository adapter, migrations, cargo manifests, `Cargo.lock`, toolchain and
+build configuration, the campaign implementation and fixtures, the soak
+execution contract, and the verifier. If any of them differs from what a report
+recorded, that report describes a campaign this tree no longer runs and may not
+be promoted — the campaign has to be run again.
 
-The upgrade report embeds the same kind of observation for the same reason, and
-its unit is a schema path rather than a commit phase. Each observation carries a
-`paths` array, and each entry records the source and target schema version, the
-migration result, what opening the database with the current runtime did, the
-durable-state comparison, the backup and restore result where the path has one,
-and the version finally observed. The runner requires every declared path to
-appear in one and to agree with the committed denominator, so a report that
-covered one source schema and skipped the other fails rather than passing half
-proved. The report also names the revision the rejecting runtime was built from,
-because that runtime is not this tree's.
+How CI executes the soak lives in
+[`execution-contract.json`](../../../../tests/fixtures/soak/execution-contract.json)
+and `run-ci-campaign.sh`, inside the closure, with the workflow only calling
+them. That keeps the execution semantics reviewable in one place beside the
+campaign. It does not narrow the closure: `.github/workflows/ci.yml` is bound
+whole, so an unrelated CI job invalidates retained soak evidence too. The
+bluntness is deliberate — agreement between the workflow, the contract and the
+script is a mechanism this way and a review habit otherwise — and narrowing it
+is left to its own change.
 
-The security report embeds an observation per report for the same reason, and
-its units are the things a security claim is made of, because all three of them
-are negative. The TLS observation carries every attempt, the authority it
-trusted, what the supported configuration did, and — for a refusal — the
-transport reason it carried, so an attempt built around an untrusted authority
-that actually failed on the host name is a failure rather than a pass. The
-privilege observation carries the whole `role × operation` matrix: the class,
-the role, the operation, whether it was expected to be allowed or forbidden,
-whether it reached the database through a service path or as a statement, and
-the `SQLSTATE` the server answered with, which for a forbidden cell must be
-`42501` and nothing else. The redaction observation carries the value classes
-injected, the surfaces collected from, the artifact and string counts, and the
-occurrence count. It records no canary, no credential, no connection string,
-and no certificate: the classes appear by name and the roles by role name.
-
-## The resource-bound campaign
-
-The resource-bound report carries one row per declared bounded resource, under
-`resource_ledger`, and each row says which report proved it, the ceiling that
-report checked, the load it was offered, the occupancy it reached, and how much
-it shed or refused. The row exists whether or not a report covered the
-resource, because `covered` being `false` is the finding.
-
-The report is shaped that way because of the failure mode this campaign has and
-the others do not: a bound can be reported as holding by a run that never
-approached it. A worker budget of `64` whose observed peak was `3` and a page
-bound checked against four rows are both green and neither is evidence about a
-ceiling. So `offered_load` and `observed_peak_occupancy` are recorded beside
-`declared_ceiling` on every row, and the runner requires the three to be in the
-relation the resource's overload policy implies.
-
-`declared_ceiling` and `configured_ceiling` are separate fields and are
-sometimes different numbers. The declared one is what the denominator says the
-framework enforces; the configured one is what the run was set up with, which is
-lower wherever running at the declared ceiling would leave nothing to hold back.
-The report also carries `out_of_scope`, so a reader can tell a resource the
-campaign examined and excluded from one it never looked at.
+The permanent verifier is offline: no commit resolution, no fetch, nothing but
+the retained report, the closure and the working tree. The one-time remote check
+— workflow run and producing job identity and conclusion, artifact digest, and a
+byte-for-byte comparison of the downloaded artifact against the retained file —
+runs once at promotion and is recorded as machine-readable booleans the verifier
+requires, rather than as a sentence saying it happened. A report is never edited
+to make a hash or a commit match; if the recorded identity and the file
+disagree, the file is wrong.
 
 ## Reproducing
 
@@ -123,6 +95,9 @@ OXIDEBATCH_CAMPAIGN_DIR=docs/engineering/campaigns/m5 \
 
 OXIDEBATCH_CAMPAIGN_DIR=docs/engineering/campaigns/m5 \
   cargo run --package oxide-batch-xtask -- resource-bounds
+
+OXIDEBATCH_CAMPAIGN_DIR=docs/engineering/campaigns/m5 \
+  cargo run --package oxide-batch-xtask -- soak
 ```
 
 Without `OXIDEBATCH_CAMPAIGN_DIR` the runner writes to `target/m5-campaigns`,
@@ -160,6 +135,17 @@ because the worker report saturates a partition budget of `64` and the derived
 requirement is one connection per child plus the parent's; the official image's
 default of `100` is enough and the CI axes do not raise it. Its committed files
 come from the `postgres-<version>-resource-bound-campaign` CI jobs.
+
+The soak campaign requires `OXIDEBATCH_POSTGRES_TEST_URL` and
+`OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL`, and fails before running anything when
+either is absent. It needs a server that will grant it `5` connections for the
+whole run, which is `worker_budget + 1` and is the pool it holds open from
+before the first cycle until after the last. It runs `632` cycles and takes
+minutes rather than seconds, which is the point of it; the declared window is
+committed in
+[`tests/fixtures/soak/campaign-scope.json`](../../../../tests/fixtures/soak/campaign-scope.json)
+and the runner refuses a run that covered less of it. Its committed files come
+from the `postgres-<version>-soak-campaign` CI jobs.
 
 The security campaign needs more than a connection string, so it is reproduced
 through the fixture script that builds what a URL cannot carry:
@@ -214,6 +200,18 @@ green without doing anything fails. The security runner requires the substance
 of a negative claim: the three transport refusals and the reason each carried,
 every privilege class on both sides of its boundary with every refusal under
 `42501`, and every swept surface and value class with nothing found.
+
+The soak runner requires a further thing, because its campaign is the one that
+can be weakened by doing less rather than by doing nothing. A soak that ran
+three cycles and one that ran three hundred produce reports of identical shape,
+both green, and the shorter one produces the flatter series and therefore the
+more convincing result. So the runner reads the committed denominator itself and
+requires the declared warmup and measured windows to have run with a sample
+each, the workload to have been the declared one down to the partition count and
+pool size, the lifecycle to have happened once per cycle — a fault, a restart, a
+recovery, and a completed drain — and every declared growth rule to have been
+decided, to have applied the rule the scope declares, and to carry the readings
+it was decided from.
 
 Each database report must also name the PostgreSQL major it ran against,
 because a matrix point is invisible in a connection string and an observation

@@ -1,0 +1,354 @@
+{
+  "campaign": "M5 PostgreSQL soak",
+  "issue": "https://github.com/luceat-lux-vestra/oxide-batch/issues/102",
+  "gate": "docs/project/m5-design-gate-evidence.md",
+  "plan": "docs/engineering/performance-plan.md",
+  "note": "This document is the campaign's denominator, and a soak needs one more than most: the claim is about what did not happen over a period, so the period and the work inside it have to be fixed before the run rather than read off it afterwards. A soak that ran three cycles and a soak that ran three hundred produce the same shape of report, and only this document distinguishes them. The runner reads it to decide what must have run and what the report must have observed. The in-process reconciliation in crates/oxide-batch/tests/m5_soak_campaign.rs reads it from the other side, against the accepted plan and design gate. The report itself reads it too: crates/oxide-batch/tests/postgres_soak.rs takes its cycle counts, its workload shape, and its growth rules from here rather than declaring its own, so the denominator cannot disagree with the run.",
+  "claim": "What a passing run establishes is bounded, and the bound differs between the two kinds of observation this campaign takes. For the exact-count resources \u2014 framework-owned tasks, pooled connections, connection checkouts, and process handles \u2014 the claim is non-accumulation: they are integers and every measured cycle boundary held them at the post-warmup baseline. For resident memory the claim is weaker and is stated as what the rule actually decides: resident-memory growth converged under the declared rate-decay rule. That rule does not exclude a sufficiently small leak masked by settling behaviour, so no exact non-accumulation claim is made about RSS. Both claims hold only over the declared warmup and measured window, running the declared workload against a supported PostgreSQL, and every cycle's durable record equalled the first measured cycle's. It is not a claim that no leak exists over an unbounded period, and it is not a budget. A resource that is not observed here is unexamined rather than proved absent.",
+  "support_contract": {
+    "postgres_versions": [
+      "15",
+      "16",
+      "17",
+      "18"
+    ],
+    "matrix_endpoints": [
+      "15",
+      "18"
+    ],
+    "installed_schema_version": 3
+  },
+  "fixtures": {
+    "postgres-soak": [
+      "OXIDEBATCH_POSTGRES_TEST_URL",
+      "OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL"
+    ]
+  },
+  "reports": [
+    {
+      "id": "soak",
+      "title": "Repeated PostgreSQL launch, failure, restart, and drain cycles",
+      "owes": "P-015 across repeated launch, shutdown, restart, and recovery cycles, reporting task, connection, handle, and memory growth over the declared duration",
+      "package": "oxide-batch",
+      "target": "postgres_soak",
+      "name": "soak_reports_no_task_connection_handle_or_memory_growth",
+      "fixture": "postgres-soak",
+      "database_report": true,
+      "note": "The scenario the M5 design gate names for this campaign."
+    }
+  ],
+  "workload": {
+    "id": "P-015",
+    "job_name": "m5_soak_lifecycle",
+    "repository": "one PostgresJobRepository opened at setup and reused by every cycle",
+    "repository_note": "Reuse is the point rather than a convenience. A cycle that opened its own pool would reset every connection and handle observation at the cycle boundary, which is precisely the accumulation the campaign is looking for. The pool is opened once, before warmup, and closed once, in the final drain.",
+    "partitions_per_cycle": 16,
+    "worker_budget": 4,
+    "pool_size": 5,
+    "pool_derivation": "concurrent_children + 1",
+    "pool_note": "The pool is the derived requirement exactly, so a cycle that held one connection more than it returned would exhaust it rather than absorbing it into spare capacity.",
+    "launches_per_cycle": 2,
+    "owned_tasks_per_drain": 4,
+    "worker_work_millis": 5,
+    "worker_work_note": "A bounded sleep as the worker's work, not as a synchronization device. Without it a worker's body finishes before the next one starts and the run is concurrent only in its database round trips, which would leave the worker set at an occupancy of one and the pool the only thing the cycle ever held more than one of.",
+    "instance_per_cycle": "one new job instance per cycle, distinguished by an identifying cycle parameter under one job name",
+    "instance_note": "One job name across the campaign means one definition row and a growing instance history, which is what a long-running deployment looks like. It also keeps the durable history growth this campaign expects separable from the process growth it prohibits.",
+    "fault_injection": {
+      "point": "the last partition of the first attempt of every cycle",
+      "mechanism": "the worker for the last partition key waits until every sibling worker has returned successfully and then fails",
+      "determinism": "The wait is what makes the cycle deterministic rather than timed. A sibling stop is cooperative and is only consulted before a worker's tasklet is invoked, so a fault that fired on a timer would leave a scheduling-dependent number of partitions committed and every cycle would have a different durable record. Waiting for the siblings to return means the first attempt of every cycle commits exactly partitions_per_cycle - 1 and fails exactly one.",
+      "bounded_by": "a wait deadline, so a workload that cannot reach the fault fails on the observation it recorded rather than hanging"
+    },
+    "restart": {
+      "path": "a second launch of the same job and parameters after the failed attempt",
+      "requires": "a new job execution rather than a reused one, exactly one partition re-run, and the terminal status Completed"
+    },
+    "drain": {
+      "mechanism": "ShutdownCoordinator, one per cycle",
+      "owned_work": "each owned task performs a real repository read, so the drain has both a task to join and a connection to get back",
+      "requires": "DrainResult::Complete with no panicked task",
+      "repository_close": "only in the final drain; the per-cycle drains leave the pool open because closing it would reset the observation"
+    },
+    "lifecycle": [
+      "launch the bounded partitioned job",
+      "commit partitions_per_cycle - 1 partitions",
+      "inject the deterministic fault",
+      "observe the failed attempt",
+      "restart along the accepted recovery path",
+      "confirm the committed partitions were reused rather than re-run",
+      "reach the terminal status Completed",
+      "drain the cycle's owned tasks",
+      "confirm every owned task joined",
+      "sample the resource state and enter the next cycle"
+    ]
+  },
+  "window": {
+    "note": "Warmup and measurement are separated because a pool that has not opened its connections, an allocator that has not sized its arenas, and a runtime that has not started its threads all grow once, legitimately, and a campaign that counted that growth would report a leak on its first cycle. The warmup count is fixed here for the opposite reason: warmup that could be extended until the numbers settled would be a way to hide accumulation rather than to exclude startup.",
+    "warmup_note": "Thirty-two cycles is a settling window rather than a round number. The observation it is sized from is that the process's resident high-water on a development host stops rising after roughly fifty cycles of this workload, and almost all of that rise happens in the first few: it is a general-purpose allocator reaching a steady state against a per-cycle transient allocation pattern that does not change. Extending warmup cannot conceal a genuine leak, because a leak keeps rising after the settling does; what a short warmup can do is put the tail of the settling inside the measured window, where the memory rule would read it as accumulation. The count is fixed in this document and not adjusted to a run.",
+    "warmup_cycles": 32,
+    "measured_cycles": 600,
+    "settle_millis": 100,
+    "settle_note": "A sample is taken after the drain returns and after this settle window, so a task that has finished but has not yet been accounted for is not read as a live one.",
+    "sampling": {
+      "at": "every cycle boundary, after the drain and the settle window",
+      "interval_cycles": 1,
+      "minimum_measured_samples": 600
+    },
+    "baseline": "the last warmup sample, which is the first sample taken with the pool open, the arenas sized, and the runtime started",
+    "termination": {
+      "allowed": [
+        "every declared warmup and measured cycle completed"
+      ],
+      "note": "There is no early exit. A run that stopped short is a failure rather than a shorter campaign, because the declared window is what the claim is about."
+    },
+    "measured_note": "Six hundred measured cycles against thirty-two of warmup. The length is not set by the rule's arithmetic \u2014 a whole-window rate can be read from any window that spans at least one cycle interval \u2014 but by how far a single page-sized step at either endpoint is allowed to move it. Resident memory moves in page-sized jumps, so one jump landing on an endpoint is four kilobytes spread across the whole window: about seven bytes a cycle over six hundred, against measured rates in the hundreds, and about seventy over sixty. The endpoints are where this statistic is sensitive, and a long window is what makes them cheap. A longer soak is a better soak in any case, and the cost is CI minutes rather than complexity."
+  },
+  "observations": [
+    {
+      "id": "alive_tasks",
+      "class": "task",
+      "source": "the Tokio runtime's own alive-task count",
+      "note": "Read from the runtime rather than from a counter the framework exports, because the campaign is looking for a task nothing is accounting for. A count the framework maintained would miss exactly the task that escaped it, and adding one to the production surface for this campaign's benefit is not something the campaign is allowed to ask for."
+    },
+    {
+      "id": "unjoined_tasks",
+      "class": "task",
+      "source": "the drain result of each cycle's ShutdownCoordinator"
+    },
+    {
+      "id": "panicked_tasks",
+      "class": "task",
+      "source": "the drain result of each cycle's ShutdownCoordinator"
+    },
+    {
+      "id": "pool_connections",
+      "class": "connection",
+      "source": "the adapter's own pool accounting",
+      "note": "The application's pool, not the database's view of it. The two are recorded separately and are not interchangeable: a pool that has returned a connection and a server that has closed the backend are different events at different times."
+    },
+    {
+      "id": "pool_idle_connections",
+      "class": "connection",
+      "source": "the adapter's own pool accounting"
+    },
+    {
+      "id": "pool_connections_in_use",
+      "class": "connection",
+      "source": "the adapter's own pool accounting"
+    },
+    {
+      "id": "peak_connections_in_use",
+      "class": "connection",
+      "source": "a sampler that reads the adapter's pool accounting while the cycle runs",
+      "note": "A boundary sample alone cannot see the ceiling: the interesting quantity is how much of the pool the cycle held at once, and by the boundary it holds none."
+    },
+    {
+      "id": "database_backends",
+      "class": "connection-supporting",
+      "source": "pg_stat_activity, counted for this application on this database",
+      "note": "Supporting evidence for the pool accounting above, never a substitute for it."
+    },
+    {
+      "id": "open_handles",
+      "class": "handle",
+      "source": "/proc/self/fd on Linux and /dev/fd on macOS, counted as directory entries",
+      "note": "Deterministic and dependency-light on both. Database sockets are handles too, so the number is read as a trend across steady-state cycle boundaries rather than as an absolute count with a meaning."
+    },
+    {
+      "id": "resident_kib",
+      "class": "memory",
+      "source": "/proc/self/statm on Linux and ps on macOS"
+    },
+    {
+      "id": "durable_job_instances",
+      "class": "durable-history",
+      "source": "a count over the campaign's job name",
+      "note": "Recorded so that history growth, which is expected and correct, is visibly a different series from the process growth the campaign prohibits. A cycle adds an instance and two executions to the database on purpose."
+    },
+    {
+      "id": "durable_job_executions",
+      "class": "durable-history",
+      "source": "a count over the campaign's job name"
+    },
+    {
+      "id": "transactions_begun",
+      "class": "durable-history",
+      "source": "a counting decorator over the repository, cumulative"
+    }
+  ],
+  "correctness": {
+    "note": "A soak is not a memory profiler. Resource flatness over a workload that stopped doing the work is not a result, so every cycle's durable record is compared against the first measured cycle's before any resource number is consulted, and a cycle that differs fails the campaign whatever its resource trajectory was.",
+    "baseline": "the first measured cycle, normalized so that identifiers, job instance keys, and timestamps do not enter the comparison",
+    "checks": [
+      {
+        "id": "final-job-status",
+        "requires": "every cycle reaches the same terminal job status and exit status as the baseline"
+      },
+      {
+        "id": "final-step-status",
+        "requires": "the partitioned parent reaches the same terminal status and exit status as the baseline"
+      },
+      {
+        "id": "execution-counts",
+        "requires": "the parent's read, processed, written, filtered, committed, and rolled-back counters each equal the baseline's, individually rather than only in aggregate"
+      },
+      {
+        "id": "partition-count",
+        "requires": "the cycle records exactly partitions_per_cycle partitions"
+      },
+      {
+        "id": "partition-key-set",
+        "requires": "the durable partition key set equals the baseline's"
+      },
+      {
+        "id": "partition-terminal-state",
+        "requires": "every partition ends Completed with the baseline's exit status and counts"
+      },
+      {
+        "id": "restart-position",
+        "requires": "the restart re-runs exactly the partitions the failed attempt had not committed"
+      },
+      {
+        "id": "committed-work-reused",
+        "requires": "no partition committed by the failed attempt is invoked again by the restart"
+      },
+      {
+        "id": "no-duplicate-durable-work",
+        "requires": "each partition key appears exactly once in the durable plan and each worker invocation count matches the number of attempts that had work for it"
+      },
+      {
+        "id": "no-missing-durable-work",
+        "requires": "the cycle's durable instance, execution, and partition counts grow by exactly the per-cycle amounts"
+      },
+      {
+        "id": "failure-not-forged",
+        "requires": "the first attempt ends Failed durably, with the injected partition Failed, and is not recorded as a success"
+      },
+      {
+        "id": "recovery-semantics",
+        "requires": "the restart is a new job execution on the same instance rather than a reuse of the failed one"
+      },
+      {
+        "id": "no-worker-outlives-its-parent",
+        "requires": "the worker occupancy gauge is empty when the partitioned step returns"
+      },
+      {
+        "id": "drain-complete",
+        "requires": "every cycle's drain joins every owned task with no panic"
+      },
+      {
+        "id": "constant-repository-work",
+        "requires": "every cycle begins the same number of repository transactions as the baseline",
+        "detail": "A cycle that quietly did less work would flatten every resource series in the campaign, so the amount of durable work is asserted rather than assumed."
+      }
+    ]
+  },
+  "growth_rules": {
+    "note": "Each rule is stated here so that the report and the runner apply the same one and neither can be relaxed by itself, and each is structural rather than a threshold. A campaign that invented a kilobyte budget and called a run under it green would be publishing a release commitment nobody accepted, and one that read the trajectory by eye would be publishing a judgement. Every rule below is decided from the measured samples alone.",
+    "applies_to": "the measured window only; warmup samples are recorded and excluded",
+    "rules": [
+      {
+        "id": "owned-tasks-do-not-accumulate",
+        "metric": "alive_tasks",
+        "rule": "no-measured-sample-above-baseline",
+        "detail": "At a cycle boundary the previous cycle's tasks have been joined, so a boundary sample above the baseline is a task the drain did not account for. This is checked at every boundary rather than only at the end: a campaign that accumulated tasks for thirty cycles and cleaned up on the last one would pass an end-state check and is exactly the pattern the boundary series exists to show."
+      },
+      {
+        "id": "no-task-unjoined-at-any-drain",
+        "metric": "unjoined_tasks",
+        "rule": "every-measured-sample-equals-zero"
+      },
+      {
+        "id": "no-task-panicked",
+        "metric": "panicked_tasks",
+        "rule": "every-measured-sample-equals-zero"
+      },
+      {
+        "id": "connections-are-returned-at-every-boundary",
+        "metric": "pool_connections_in_use",
+        "rule": "every-measured-sample-equals-zero",
+        "detail": "A checkout that is not returned is the one connection defect a boundary sample can see exactly, with no trend reading required."
+      },
+      {
+        "id": "pooled-connections-do-not-accumulate",
+        "metric": "pool_connections",
+        "rule": "no-measured-sample-above-baseline",
+        "detail": "The pool may hold fewer connections than it did at baseline, because idle retirement is allowed to close one. It may not hold more."
+      },
+      {
+        "id": "the-pool-is-never-exceeded",
+        "metric": "peak_connections_in_use",
+        "rule": "no-measured-sample-above-configured-capacity"
+      },
+      {
+        "id": "handles-do-not-accumulate",
+        "metric": "open_handles",
+        "rule": "no-measured-sample-above-baseline",
+        "detail": "Read at steady-state boundaries after warmup has opened the pool, so the socket handles the framework legitimately holds are already in the baseline and only an increase counts."
+      },
+      {
+        "id": "resident-memory-converges",
+        "metric": "resident_kib",
+        "rule": "warmup-relative-rate-decay",
+        "detail": "The mean growth rate over the measured window must be at most a quarter of the mean growth rate over warmup. Each rate is the window's last sample minus its first, divided by the number of cycle intervals the window spans. So the rule compares a rate against a rate: it carries no unit, no allowance in kilobytes, and is scale-free in the size of the process and the page size of the host. It asks whether the series is still settling or has stopped settling and started accumulating.",
+        "denominator": "Cycle intervals, not samples. A window of n readings spans n - 1 gaps between them, and dividing by n instead scales each window's rate by its own length — which does not cancel between two windows of different length, so at this campaign's declared 32 and 600 a constant leak would come out at 0.97 rather than the 1.00 this rule is stated in terms of. The report and the runner compute this separately and neither may import the other's arithmetic, because a recomputation that shared it could not disagree; they are held to `tests/fixtures/soak/rate-vectors.json` instead, which states the statistic and its answers outside both. A window spanning no interval has no rate at all, and both implementations are required to report the rule undecided rather than read it as flat.",
+        "why_a_rate": "Accumulation and settling differ in their derivative, not their level. A leak adds the same amount every cycle, so its rate is the same during warmup and during measurement and the ratio is one, whatever the per-cycle amount \u2014 a leak of one byte per cycle and one of a megabyte both fail. An allocator reaching a steady state has a rate that falls away from its warmup value. Nothing here says how much memory the framework may use.",
+        "blind_spot": "A leak much smaller than the warmup settling rate is not resolved: it would be a small addition to both rates and the ratio would still be small. Process resident memory does not support a finer reading at any window this campaign can afford, which is why the framework's non-accumulation claim rests on the exact counters \u2014 tasks, pooled connections, checkouts and handles are integers required to be flat \u2014 and resident memory is held only to convergence.",
+        "rejected_alternatives": [
+          "Comparing the smallest reading of the measured window's second half against the largest of its first. It decides a healthy run on where the last settling step happens to land, and development runs produced both verdicts from the same behaviour.",
+          "Counting how often the series rose to a level it had not held before, against a fixed budget. A level shift is one page, so the count is a function of the host's page size; CI rejected it on both majors with 22 and 29 shifts against a budget of 6.",
+          "Comparing the least-squares slope of the measured window's last third against its first third. This is the rule that had to be replaced here, and it failed a healthy PostgreSQL 18 run at 0.585 against a limit of 0.50. The diagnosis is recorded as F22: the series is bursty and page-quantised, so a single 200-sample window's slope swings by seven times across runs of identical work, and the limit sat inside the healthy distribution. Comparing whole-window rates instead is robust to where a burst lands, because a burst moves both endpoints of the window it falls in rather than tilting a regression line inside it."
+        ],
+        "decay_percent": 25,
+        "null_distribution": "Measured across ten CI runs of the two supported majors: 0.030 to 0.043, a spread of 1.4x. These are the ten runs characterised for F22, restated for the interval denominator rather than re-measured: at a fixed window the correction rescales every ratio by exactly (600/599)/(32/31), so what each of those runs would now report is arithmetic rather than a new observation. The limit of 0.25 sits roughly six times above the worst healthy run and four times below the 1.00 a straight line gives — exactly 1.00 under this denominator, where the sample-count one made it 0.97 — so it is not fitted to the observed numbers and no single run moves it."
+      }
+    ],
+    "not_rules": [
+      {
+        "id": "durable-history-growth",
+        "metric": "durable_job_executions",
+        "why": "The database is supposed to grow. Every cycle commits an instance, two executions, and a partition plan, and a campaign that treated that as a leak would be requiring the framework to forget its own history. It is recorded at every sample so that a reader can see it rising while the process metrics do not, and so that a flat process series cannot be explained away as a workload that stopped working."
+      },
+      {
+        "id": "final-resident-equals-first",
+        "why": "Not required, and not required for a reason rather than by omission. A general-purpose allocator returns pages to the operating system on its own schedule, so an equality here would be a statement about the allocator rather than about the framework."
+      }
+    ]
+  },
+  "out_of_scope": [
+    {
+      "id": "p014-cancellation",
+      "why": "The cancellation campaign is a separate row of the accepted plan with its own latency reports. This campaign drains at every cycle boundary and requires the drain to complete, which is not the same obligation as measuring request-to-intake-stop and request-to-durable-terminal latency."
+    },
+    {
+      "id": "p001-p003-p010-performance",
+      "why": "Separate campaign rows. Nothing here is compared against a time budget, and the cycle duration is recorded as context rather than asserted on, so a loaded host makes this campaign slower rather than red."
+    },
+    {
+      "id": "published-reference-workload",
+      "why": "A separate campaign row. This workload is a lifecycle exerciser sized to make resource accumulation visible, not a representative deployment."
+    },
+    {
+      "id": "unbounded-duration",
+      "why": "The claim is about the declared window. A longer window is a different campaign result, not a stronger reading of this one."
+    }
+  ],
+  "related": [
+    {
+      "package": "oxide-batch",
+      "target": "m4_exit_measurements",
+      "name": "p015_shutdown_restart_soak",
+      "run_by_this_campaign": false,
+      "invariant": "24 in-memory cycles of launch, failure, restart, and drain, with the same durable observation and the same repository work each cycle",
+      "note": "The M4 measurement this campaign builds on and does not replace. It is the baseline: it fixed the per-cycle semantics \u2014 every owned task joined, the same repository work, the same durable observation, no re-run of a committed partition \u2014 and this campaign keeps them. What it cannot supply is M5 evidence, because it builds a fresh in-memory repository every cycle. That resets the two observations a production-preview soak is mostly about, connections and handles, and it means the resident reading it takes is over a process holding no pool. Its result is retained as an M4 measurement and is not cited as a PostgreSQL result."
+    },
+    {
+      "package": "oxide-batch",
+      "target": "postgres_resource_bound_workers",
+      "name": "declared_ceilings_hold_under_stress_with_backpressure",
+      "run_by_this_campaign": false,
+      "invariant": "peak partition-worker occupancy equals the configured budget and a pool one connection short is refused before any child starts",
+      "note": "The resource-bound campaign proves a ceiling holds under a single stressed run. This campaign asks a different question of the same resources: whether the level they return to is the level they started at, over many runs. A ceiling that holds every time and a baseline that rises every time are both possible at once."
+    }
+  ]
+}

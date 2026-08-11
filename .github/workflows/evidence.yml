@@ -1,0 +1,45 @@
+name: Evidence
+
+# The retained-evidence verifier lives in its own workflow, and the separation
+# is structural rather than tidiness.
+#
+# It answers a question about the *repository's current state* — are the
+# retained reports still the untouched output of a recorded run over a tree
+# whose campaign still means what it meant — and the answer is legitimately
+# "no" for the whole window between a commit that changes campaign semantics
+# and the retention commit that records the rerun.
+#
+# Inside the Rust workflow that window would make the workflow run fail, and
+# official evidence may only be promoted from a producer run that wholly
+# succeeded. A campaign could then never produce evidence on the very commit
+# that needed it: the check would fail the run, the failed run could not be
+# promoted, and the evidence would stay stale. Keeping it separate lets the
+# producer run mean "this tree builds, tests and campaigns pass" while the
+# evidence check keeps its own, honest, red state until retention lands.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evidence-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evidence-provenance:
+    name: evidence-provenance
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # The verifier is offline by construction: it resolves no commit and
+      # fetches nothing, comparing the execution manifest each retained report
+      # carries against the working tree. A plain checkout is all it needs.
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Verify retained campaign evidence against its provenance
+        run: cargo run --package oxide-batch-xtask -- evidence

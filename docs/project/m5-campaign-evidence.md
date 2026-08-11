@@ -1,7 +1,7 @@
 # M5 Evidence Campaign Record
 
 **State:** In progress. The conformance, crash-and-restore, upgrade, security,
-and resource-bound campaigns are delivered; the soak, cancellation,
+resource-bound, and soak campaigns are delivered; the cancellation,
 performance, and reference-workload campaigns are not.
 
 **Issue:** [#102](https://github.com/luceat-lux-vestra/oxide-batch/issues/102)
@@ -29,7 +29,7 @@ named released version, and that stays with
 | Upgrade | `schema1_and_schema2_upgrade_directly_to_schema3`, `schema2_runtime_rejects_schema3`, `schema3_backup_restores_the_prior_schema` | Delivered |
 | Security | `verify_full_tls_is_required_in_the_supported_mode`, `least_privilege_role_cannot_exceed_its_class`, `redaction_sweep_finds_no_prohibited_value_class` | Delivered |
 | Resource bounds | `declared_ceilings_hold_under_stress_with_backpressure`, plus the bounded query-path, payload, and shedding reports | Delivered |
-| Soak | `soak_reports_no_task_connection_handle_or_memory_growth` | Not started |
+| Soak | `soak_reports_no_task_connection_handle_or_memory_growth` | Delivered |
 | Cancellation | P-014 report | Not started |
 | Performance | P-001, P-003, P-010 reports | Not started |
 | Reference workload | Published P-003 run | Not started |
@@ -1329,3 +1329,766 @@ held because nothing was ever offered to it. The report drives `600` real
 paginated reads instead. This is not a defect — a record's execution identity
 should come from whatever observed the execution — but it is the reason that one
 report is more expensive than it looks.
+
+## Soak campaign
+
+### What the campaign owes
+
+The performance plan's soak row promises P-015 across repeated launch,
+shutdown, restart, and recovery cycles, reporting task, connection, handle, and
+memory growth over the declared duration. The design gate names one scenario for
+it, and the campaign delivers that one.
+
+| Report | Scenario | What it must show |
+| --- | --- | --- |
+| Soak | `soak_reports_no_task_connection_handle_or_memory_growth` | Over a declared window of repeated launch, fault, restart, recovery, and drain cycles against one PostgreSQL pool, every cycle leaves the first measured cycle's durable record, and framework-owned tasks, pooled connections, process handles, and resident memory do not accumulate under rules declared before the run. |
+
+### The denominator is the period
+
+Every campaign on this page needs a denominator, and this one needs a kind the
+others do not.
+
+The other campaigns enumerate obligations that exist independently of the run: a
+ledger row, a commit phase, a schema path, a privilege class, a declared
+ceiling. A report either covered one or it did not, and the report itself says
+which. This campaign's obligation is *a period*. Nothing outside the campaign
+says how long a soak should be, which means a soak that ran three cycles and a
+soak that ran three hundred produce reports of exactly the same shape, both
+green — and the shorter one produces the flatter series, and therefore the more
+convincing result. A soak is the one campaign here whose evidence gets *better*
+looking as it does less.
+
+So the period is committed as
+[`tests/fixtures/soak/campaign-scope.json`](../../tests/fixtures/soak/campaign-scope.json),
+and all three consumers read it rather than restating it:
+
+- **the report** takes its cycle counts, workload shape, correctness
+  obligations, and growth rules from it, so there are no constants in the test
+  that could disagree with the document;
+- **the runner**, `cargo xtask soak`, reads it independently and requires the
+  run to have matched it;
+- **the reconciliation**,
+  [`m5_soak_campaign.rs`](../../crates/oxide-batch/tests/m5_soak_campaign.rs),
+  checks the document against the accepted plan and the design gate in an
+  ordinary `cargo test`, so a shrinking denominator is caught in review.
+
+The declared window is `32` warmup cycles and `600` measured cycles. Each cycle
+launches a `16`-partition step with a worker budget of `4` through a pool of
+exactly `5` connections, fails one partition, restarts, recovers, and drains
+`4` owned tasks. That is `1264` launches, `632` restarts, `632` drains, and
+`10744` partition executions per matrix point.
+
+The reconciliation also holds the shape of the window rather than only its
+existence: warmup and measurement must both be non-empty, the minimum sample
+count must equal the declared measured window so a short run cannot pass, the
+measured window must be at least as long as warmup, and exactly one termination
+condition may be allowed — a soak with a second way to stop can stop early and
+still be green.
+
+### Why it is not the M4 measurement rerun
+
+The M4 measurement `p015_shutdown_restart_soak` already runs this shape of
+cycle, and it fixed the per-cycle semantics this campaign keeps: every owned
+task joined, the same repository work each cycle, the same durable observation
+each cycle, no re-run of a committed partition. It stays exactly where it is,
+on the in-memory repository, and the reconciliation asserts that it does —
+including that it still uses `InMemoryJobRepository`, because the cheapest way
+to appear to deliver an M5 soak would be to move that measurement under a
+database fixture and relabel the result.
+
+What it cannot supply is production-preview evidence, and the reason is
+structural rather than a matter of scale. It builds a fresh in-memory repository
+every cycle, which resets the two observations a production-preview soak is
+mostly about — pooled connections and process handles — at every cycle boundary,
+and it takes its resident reading over a process that holds no pool at all. This
+campaign opens one PostgreSQL pool before the first cycle and closes it after
+the last, and every boundary sample is taken against that one pool.
+
+### Correctness first, then resources
+
+A soak is not a memory profiler. Resource flatness over a workload that stopped
+doing the work is the easiest green in this document to produce by accident, so
+every cycle's durable record is compared against the first measured cycle's
+before any resource number is consulted, and a cycle that differs fails the
+campaign whatever its trajectory was.
+
+Fifteen obligations are declared and decided per cycle: the terminal job and
+step statuses and exit statuses; the six execution counters individually as well
+as in aggregate; the partition count, the partition key set, and every
+partition's terminal state, exit status, and counters; the restart position; the
+reuse of committed work; the absence of duplicate and of missing durable work;
+that the failed attempt was recorded as failed rather than forged into a
+success; that the restart followed the accepted recovery path; that no worker
+outlived its parent; that the drain joined everything; and that every cycle
+began the same number of repository transactions.
+
+The declared set and the decided set are reconciled in both directions. A
+declared obligation the report does not decide is a violation, and so is a
+decision the report makes that the scope does not declare.
+
+### The fault waits rather than fires
+
+Making every cycle leave the *same* durable record is harder than it sounds, and
+getting it wrong would have made the whole comparison above unusable.
+
+A sibling stop in the partitioned runtime is cooperative, and it is consulted
+only *before* a worker's tasklet is invoked. A fault that fired on a timer would
+therefore stop a scheduling-dependent number of not-yet-started siblings: one
+cycle would commit fourteen partitions and the next fifteen, and every durable
+comparison in the campaign would fail for a reason that has nothing to do with
+the framework.
+
+So the injected worker waits until every sibling has returned, and only then
+fails. The failing key is the last one and the budget is smaller than the
+partition count, so that worker is the last to start and every sibling is
+already in flight when it begins waiting — it cannot deadlock against the budget
+whose slot it is holding. The wait is bounded, so a run that cannot reach the
+fault fails on the record it produced rather than hanging past the CI timeout
+and retaining nothing.
+
+The result is exact and was exact in all `632` cycles of every run, on both
+matrix points and on the development host:
+`15` partitions committed on the first attempt, one failed, and exactly one
+re-run by the restart.
+
+### Four observations, from four different places
+
+The distinction between them is most of what the campaign is.
+
+**Tasks** are read from the Tokio runtime's own alive-task count, not from a
+counter the framework keeps. A count the framework maintained would miss exactly
+the task that escaped it, and adding one to the public surface for a campaign's
+benefit is not something a campaign gets to ask for. The framework's own
+`ShutdownCoordinator` accounting is read too, as each cycle's drain result, but
+it answers the narrower question of whether the tasks it owns were joined.
+
+**Connections** are read from the adapter's own pool, at every cycle boundary
+and — by a sampler running throughout — while the cycles are in flight, because
+a boundary sample cannot see a ceiling: by the time a cycle ends it holds
+nothing. The database's own `pg_stat_activity` count is recorded beside them and
+is never substituted for them. A pool that has returned a connection and a
+server that has closed a backend are different events at different times, and
+reporting one as the other would turn a campaign about the framework's
+connection accounting into a campaign about PostgreSQL's.
+
+**Handles** are counted as directory entries in `/proc/self/fd` on Linux and
+`/dev/fd` on macOS, both of which are the process's own descriptor table and
+neither of which needs a dependency. Database sockets are handles, so the number
+is read as a trend across steady-state boundaries rather than as an absolute
+with a meaning.
+
+**Resident memory** comes from `/proc/self/statm` on Linux and `ps` elsewhere.
+
+**Durable history** — instances, executions, step executions, and transactions —
+is recorded at every sample and is deliberately under no growth rule. The
+database is supposed to grow; every cycle commits an instance, two executions,
+and a partition plan on purpose. It is there so that a reader can see it rising
+while the process series do not, and so a flat process series cannot be
+explained away as a workload that stopped working. The reconciliation enforces
+the separation in both directions: no rule may be decided from a
+durable-history metric, and the campaign may not record no durable history at
+all.
+
+### The growth rules are declared, not judged
+
+No threshold was invented for this campaign, and no run is passed by reading a
+trajectory and finding it acceptable. Eight rules are declared in the scope
+document, decided by the report from the measured samples, and required by the
+runner — which additionally requires that the rule the report applied is the
+rule the scope declares, and that the verdict carries the series it was decided
+from. A verdict nobody can check against its readings is the kind of green this
+campaign exists to refuse.
+
+| Metric | Rule |
+| --- | --- |
+| `alive_tasks` | No measured sample above the post-warmup baseline |
+| `unjoined_tasks` | Every measured sample zero |
+| `panicked_tasks` | Every measured sample zero |
+| `pool_connections_in_use` | Every measured sample zero |
+| `pool_connections` | No measured sample above the post-warmup baseline |
+| `peak_connections_in_use` | No measured sample above the configured capacity |
+| `open_handles` | No measured sample above the post-warmup baseline |
+| `resident_kib` | The mean growth rate across the measured window is at most a quarter of the mean rate across warmup |
+
+The first seven are exact and need no interpretation. Tasks and handles are
+checked at *every* boundary rather than only at the end, which is the point: a
+run that accumulated for thirty cycles and cleaned up on the last one would pass
+an end-state check, and the boundary series is what makes that pattern visible.
+
+The memory rule is the one that needed thought, and it took a failed CI run to
+get right. Requiring the final resident reading to equal the first would be a
+statement about the allocator rather than about the framework, and inventing a
+kilobyte budget would publish a release commitment nobody accepted.
+
+The rule holds resident memory to **convergence** rather than to a level: the
+mean growth rate across the measured window must be at most a quarter of the
+mean rate across warmup, each taken end to end over its window. It compares a
+rate against a rate, so it carries no unit and no allowance in kilobytes, and it
+is scale-free in both the size of the process and the page size of the host.
+
+What makes it discriminate is that accumulation and settling differ in their
+*derivative*, not their level. A leak adds the same amount every cycle, so its
+rate is flat and the ratio of late rate to early rate is one — a leak of one
+byte per cycle and a leak of one megabyte per cycle both fail. An allocator
+reaching a steady state against an unchanging transient pattern has a rate that
+decays toward zero. A series that is already flat passes with both rates at
+zero; one that is flat early and rises later fails, because a rate of zero
+admits nothing above it.
+
+The blind spot is stated rather than left to be discovered: a leak small enough
+to be dominated by settling that is still in progress is not resolved, because
+the measured rate would be the settling's and the ratio would still decay.
+Process resident memory does not support a finer reading than that at any window
+this campaign can afford. **That is why the accumulation claim does not rest on
+it.** Tasks, pooled connections, checkouts, and handles are integers required to
+be flat at every boundary; resident memory is required only to converge. The two
+kinds of evidence are not interchangeable and the campaign does not present them
+as such.
+
+Each rate is the window's last reading minus its first, divided by the number of
+cycle intervals the window spans — one fewer than the number of samples it
+holds. The denominator is intervals rather than samples because the two windows
+are deliberately different lengths, and a sample-count denominator scales each
+window's rate by its own length; that factor does not cancel in their ratio, so
+a constant leak would report `0.97` instead of the `1.00` the rule is stated in
+terms of. The report and the runner compute this separately and neither imports
+the other's arithmetic, so both are held to the vectors in
+[`rate-vectors.json`](../../tests/fixtures/soak/rate-vectors.json) instead. That
+file exists because writing the two implementations separately is what stops one
+from copying the other's bug, and is not what stops them from sharing a
+misreading of the statistic — which is precisely what happened, and is recorded
+as F23.
+
+The limit is `0.25`, and it is set from a characterised null rather than from
+taste. Across ten CI runs of the two supported majors the observed ratio is
+`0.030` to `0.043` — a spread of `1.4×` — so the limit sits roughly six times
+above the worst healthy run and four times below the `1.00` a straight line
+gives. Those are the ten runs characterised for F22, restated for the interval
+denominator rather than re-measured: at a fixed window the correction rescales
+every ratio by exactly `(600/599)/(32/31)`, so what each run would now report is
+arithmetic on what it did report. No single run moves the limit, and it was not
+adjusted to fit the reruns that followed. The reconciliation additionally
+requires any declared decay to be between `1` and `99` percent, since `100`
+permits a straight line.
+
+Getting to a statistic that stable took three attempts, and the reason is
+recorded as F22: the resident series is bursty as well as quantised, so any
+statistic computed *inside* a sub-window of the measurement is sensitive to
+where a burst happens to land, while a whole-window rate is not.
+
+Three rules were tried and rejected before this one; they are recorded as F20,
+F21 and F22, because the reasons are worth more than the rules were.
+
+Every rule's series, and the structural summary a reader would want beside it
+(first, last, minimum, maximum, delta, consecutive new highs, the two half
+statistics, and a least-squares slope) is retained in the report. The slope is
+recorded and never asserted on.
+
+### Why it is a runner as well as a test
+
+The report needs a real database and returns green without one, because it
+skips. `cargo xtask soak` resolves the fixture first and fails before the target
+starts when it is absent.
+
+A passing report is not sufficient either, for the reason at the top of this
+section, so the runner reads the committed denominator and requires the
+substance:
+
+- the declared warmup and measured windows ran, with one retained sample per
+  cycle and at least the declared minimum of measured samples, and with the
+  warmup marked as declared rather than widened after the fact;
+- the workload was the declared one, down to the partition count, the worker
+  budget, and the pool size, because a soak of a smaller workload is a different
+  campaign with the same name and nothing in a resource series says which
+  workload produced it;
+- the lifecycle actually happened, once per cycle: a fault injected, a restart,
+  a recovery, and a completed drain. Without this a run that repeated a plain
+  launch would satisfy every window and workload requirement above and produce
+  the same flat series;
+- the connection sampler took readings at all, since a sampler that died leaves
+  every peak occupancy at a zero that means *nothing was measured* rather than
+  *nothing was held*;
+- every declared observation appears in every retained sample, because a metric
+  that stopped being sampled leaves its rule deciding an absence;
+- every declared correctness obligation and every declared growth rule was
+  decided and holds;
+- the final drain joined every owned task and closed the pool with nothing
+  checked out.
+
+Fifteen unit tests in `xtask/src/soak.rs` hold those requirements against
+crafted observations, so what review checks is what the campaign enforces: a
+shortened window, a widened warmup, a smaller workload, a run that repeated a
+plain launch, a metric that stopped being sampled, a rule with no verdict, a
+verdict decided from too few readings, a verdict that applied a different rule,
+and a pool still checked out afterwards are each rejected by a named test.
+
+The report must also name the PostgreSQL major it ran against, because a matrix
+point is invisible in a connection string and an observation from one supported
+major would otherwise reconcile perfectly inside a run of another.
+
+### Where it runs
+
+`postgres-15-soak-campaign` and `postgres-18-soak-campaign` in
+`.github/workflows/ci.yml`, on the two ends of the supported PostgreSQL
+`15`-`18` range, each retaining its report as a build artifact on success and
+failure alike. Failure is the case that retention exists for: what a failed
+soak needs is the resource trajectory that led to it, and a job that uploaded
+only green reports would discard exactly the evidence worth reading. The job's
+timeout is `60` minutes — higher than the other campaigns because the window is
+minutes of work rather than seconds, and still a ceiling, because a soak that
+stopped making progress must fail rather than occupy a runner.
+
+### Results
+
+Both matrix points pass with no violations.
+
+| Report | Matrix | Result |
+| --- | --- | --- |
+| [`soak-campaign-postgres-15.json`](../engineering/campaigns/m5/soak-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
+| [`soak-campaign-postgres-18.json`](../engineering/campaigns/m5/soak-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
+
+The retained reports are immutable CI artifacts produced from the recorded
+producer commit. The later evidence-retention commit only records those
+artifacts and their provenance.
+
+Both were produced by run `31418389250` of the `Rust` workflow — which concluded
+successfully as a whole, not merely in its soak jobs — from execution tree
+`e947dc0`, the merge commit the workflow actually checked out, off branch head
+`e999f91`. The execution tree is the provenance root and the branch head is
+recorded beside it as metadata; they are different commits and are never used
+interchangeably. `rustc 1.97.1`, Linux `x86_64` on kernel `6.17.0-1020-azure`,
+servers `15.18` and `18.4`, `4` Tokio worker threads. The command is
+`./tests/fixtures/soak/run-ci-campaign.sh <major>`, which the workflow calls and
+which runs `cargo xtask soak` — so the independent recomputation is what the
+producing job itself executed. The runs took `246` and `224` seconds. Each
+artifact's own sha256 digest was read from the GitHub API at promotion and
+matched the downloaded bytes exactly before those bytes were retained.
+
+This is the campaign's second producer run. The first, `31387759020`, was
+discarded rather than reinterpreted: F23 corrected the memory statistic's
+denominator and the workflow-closure corrections touched three closure files, so
+those reports described a campaign this tree no longer runs. No figure below is
+carried across from them, and none of their numbers was adjusted by hand to the
+new rule.
+
+The full provenance is
+[`evidence-provenance.json`](../engineering/campaigns/m5/evidence-provenance.json),
+and `cargo xtask evidence` checks it on every CI run rather than leaving it as
+prose — including that the campaign these reports describe is still the campaign
+this tree runs. See "How retained evidence is bound" below.
+
+Every exact figure below is identical on the two matrix points. The resident
+series differ, which is the one place this campaign expects them to: it is the
+only observation that is not an integer the framework controls.
+
+**The window.** `32` warmup and `600` measured cycles, `632` completed, one
+sample per cycle, and `40906` and `37117` pool readings taken while the
+cycles ran, none of which failed to read the gauge.
+
+**Correctness.** All fifteen obligations held in all `600` measured cycles, on
+both majors. Every cycle: `15` partitions committed on the failed attempt, the
+injected partition failed, `Failed` recorded durably, a new job execution on the
+same instance, exactly `partition-0015` re-run, `16` partitions `Completed`,
+`108` repository transactions, and a drain that joined all `4` owned tasks with
+no panic. `10744` partition executions per matrix point. No worker was still
+holding when a step returned, and peak worker occupancy never exceeded the
+budget of `4` — it reached `2` and `3` on the CI runners and `4` on the
+development host, which is a property of the host's parallelism rather than of
+the bound, and is why the campaign requires occupancy to stay within the budget
+rather than to reach it. Reaching a ceiling is the resource-bound campaign's
+obligation.
+
+**Tasks.** `4` alive at the post-warmup baseline and `4` at all `600` measured
+boundaries, on both majors. No drain left a task unjoined and none panicked, in
+any cycle.
+
+**Connections.** The pool held `5` connections at every boundary with `0`
+checked out at every one of them, and `0` checked out in the authoritative
+reading taken while the pool was still open at the end of the run. In-flight
+occupancy reached `5` — the whole pool, which is `worker_budget + 1` — and never
+exceeded it. The database reported `5` backends for the application throughout,
+and `0` after the close, which the server reached within a millisecond.
+
+**Handles.** `17` at the post-warmup baseline and `17` at all `600` measured
+boundaries, on both majors.
+
+**Memory.** Resident memory grew at `13.161` KiB per cycle across warmup and
+`0.574` across the measured window on PostgreSQL 15 — a ratio of `0.044` — and
+at `14.839` and `0.474` on PostgreSQL 18, a ratio of `0.032`. Each rate is the
+window's rise over the cycle intervals it spans: `408` KiB over `31` warmup
+intervals and `344` over `599` measured ones on 15, `460` and `284` on 18. The
+rule allows `0.25` and a straight line gives exactly `1.00`, so the two sit
+`5.7` and `7.8` times inside the limit.
+
+One of them is worth stating rather than rounding past. The statistic was
+characterised over ten runs whose ratios, restated for the interval denominator,
+span `0.030` to `0.043`; PostgreSQL 15's `0.0436` here is marginally *above* the
+top of that range. It is a new observation extending a ten-run sample, not a
+regression — the margin to the limit is still `5.7×`, and PostgreSQL 18 sits
+comfortably inside — but the characterised range in the scope document was not
+widened to absorb it, because that document is inside the semantic closure and
+editing it would invalidate the evidence being retained. The next campaign that
+touches the closure for its own reasons should fold these two runs into the
+characterisation. Recording the exceedance is the point: the F20/F21/F22
+sequence is a record of statistics whose healthy range was discovered late.
+
+What that establishes is convergence and not the absence of a leak. The rule
+compares a rate against a rate, so a leak much smaller than the warmup settling
+rate is a small addition to both and leaves the ratio small. The campaign's
+non-accumulation claim rests on the exact counters above — tasks, pooled
+connections, checkouts and handles are integers required to be flat at every
+boundary — and resident memory carries only the weaker claim. The scenario
+name the design gate fixes is broader than what this half of it proves, and is
+kept unchanged for that reason rather than because it is exact.
+
+The rates decay rather than hold, which is the shape the rule asks for, and two
+further readings say why that is settling rather than a leak. The rate falls
+about fourteenfold from warmup to measurement on both majors. And a `1032`-cycle
+diagnostic run on the development host — a different allocator — is flat for its
+last `800` samples at an overall slope of `0.014` KiB per cycle: a leak of even
+a tenth of a kilobyte a cycle would have moved five pages across those `800`
+cycles, and it moved none.
+
+**Durable history, for contrast.** Instances rose from `33` to `632`, job
+executions from `66` to `1264`, and step executions from `627` to `12008` across
+the measured window, while every exact process counter stayed flat. That
+contrast is the campaign's shape in one line: the database accumulated `11381`
+step executions and the process accumulated no task, no connection, and no
+handle.
+
+No correctness P0 or P1 was found by this campaign, and none is open against it.
+No product defect was found. Two of the findings below are defects in the
+campaign itself, both caught by its own evidence; the rest are observations that
+shaped it.
+
+### How retained evidence is bound
+
+The campaign produces two different kinds of thing and only one of them is
+evidence. Its samples and its per-cycle journal are **observations** — what the
+run saw. Its correctness results, growth verdicts and campaign totals are
+**conclusions it drew about itself**, and a conclusion a program reaches about
+its own run is not evidence for that run; it is the claim under examination.
+The trust model follows from that distinction:
+
+```text
+actual CI execution tree
+      ↓
+raw immutable observations
+      ↓
+independent verifier
+      ↓
+derived verdicts
+      ↓
+retained artifact
+      ↓
+current-tree semantic compatibility
+```
+
+**The root is the tree that actually executed.** The run records the git object
+identity of every path in the campaign's declared closure from inside its own
+checkout, into the report, as it runs. That is the only way to name it
+correctly: a pull-request job executes against an ephemeral merge commit no
+later clone can resolve, and the branch head is a *different tree*, so using the
+branch head as a stand-in means checking the evidence against something that
+never ran. Both SHAs are recorded, in separate fields, and only the manifest is
+authority.
+
+**Nothing the report concluded is read as evidence.** `cargo xtask soak`
+recomputes every verdict from the raw observations and requires the report's own
+answers to match, in an order that is itself load-bearing:
+
+1. **chronology** — the samples and the journal must be one contiguous, ordered,
+   correctly phased run of the declared length, with each entry's recorded cycle
+   index equal to its position. Serialization order is not authority. Nothing
+   below is evaluated until this holds, because every later step indexes into
+   these arrays: the correctness baseline is *the first measured cycle* and the
+   memory verdict is *the ordered endpoints of the whole warmup and measured
+   windows*, and a duplicated, missing or reordered entry moves both silently.
+2. **lifecycle** — folded from the journal, never read from the summary, and
+   required of each cycle individually: totals cannot distinguish six hundred
+   launches with thirty restarts from six hundred of each.
+3. **correctness** — all fifteen obligations recomputed per cycle from the
+   journal, which is why the journal records exact partition-key sets and
+   per-partition status, exit status and counters rather than counts. The
+   comparison is on the *failing-cycle set*, so a report that holds an
+   obligation while the journal shows it violated in cycle 417 is caught, and so
+   is one that blames the wrong cycle. Declared, reported and recomputed
+   identifier sets are reconciled as unique sets in all three directions, and a
+   duplicated identifier is rejected outright rather than resolved last-wins.
+4. **growth** — every rule recomputed from the sample series, with the series
+   each verdict carries required to equal the measured samples element by
+   element.
+
+**The permanent verifier is offline.** `cargo xtask evidence` resolves no
+commit, fetches nothing, and needs only the retained report, the declared
+closure and the working tree. It checks the retained artifact's blob identity
+and requires every identity in the execution manifest to still be the tree's
+identity today. The one-time remote check — workflow run and producing job
+identity and conclusion, artifact digest, and a byte-for-byte comparison of the
+downloaded artifact against the retained file — happens once, at promotion, and
+is recorded as machine-readable booleans the verifier requires rather than as a
+sentence saying it was done.
+
+**The closure is declared once**, in
+[`tests/fixtures/soak/campaign-semantics.json`](../../tests/fixtures/soak/campaign-semantics.json),
+and read by both the producer and the verifier. It covers framework source, the
+repository adapter, migrations, cargo manifests, `Cargo.lock`, the toolchain and
+build configuration, the campaign implementation and fixtures, the soak
+execution contract, and the verifier itself. Two of those were learned the hard
+way: an earlier closure was assembled from the code the campaign obviously
+touches and omitted every input that reaches it indirectly.
+
+The **soak execution contract** covers how CI runs the campaign — the matrix,
+the database, the command, the environment — and lives in
+[`execution-contract.json`](../../tests/fixtures/soak/execution-contract.json)
+and `run-ci-campaign.sh` beside the campaign. `.github/workflows/ci.yml` is in
+the closure with them. That is deliberately blunt, and the bluntness has a cost
+worth stating plainly: an unrelated CI job now invalidates retained soak
+evidence and forces a rerun. The alternative was to trust that the contract
+file, the script and the workflow agree with each other, and agreement
+maintained by review is not a mechanism. Extracting the soak job into its own
+workflow, so that only that file sits in the closure, is the right fix and is
+left to its own change.
+
+A retained report cannot be produced by the commit that contains it — the
+artifact records the tree it ran on and the commit storing it comes after — so
+producer and retention differing is defined as the normal state, and the
+difference is bounded by the semantic binding rather than by a rule that cannot
+be satisfied.
+
+### What this campaign does not establish
+
+- **That no leak exists.** What a passing run establishes is bounded by the
+  declared window and the declared workload, and the two kinds of observation
+  carry different strengths. Over `632` cycles of *this* work, the exact-count
+  resources — tasks, pooled connections, checkouts, and handles — did not
+  accumulate; they are integers and every measured boundary held them at the
+  post-warmup baseline. Resident-memory growth *converged* under the declared
+  rate-decay rule, which is the weaker statement the rule actually supports: it
+  does not exclude a sufficiently small leak masked by settling behaviour. Four
+  minutes says nothing about four hours, and the campaign does not extrapolate.
+  A longer window is a different campaign result, not a stronger reading of
+  this one.
+- **That an unobserved resource is bounded.** Four resource classes are observed
+  because the plan names four. Anything else the process holds is unexamined
+  rather than proved absent.
+- **Anything about workloads this one does not run.** The cycle is a partitioned
+  tasklet step. Chunk-oriented steps, splits, the operator and retention
+  services, and the explorer are not in the loop, so nothing here says whether
+  those accumulate. The same is true of concurrent launches: the campaign runs
+  one job at a time.
+- **Any throughput or latency number.** Cycle duration is recorded as context
+  and never compared against a threshold, so a loaded host makes this campaign
+  slower rather than red. P-001, P-003, and P-010 belong to the performance
+  campaign.
+- **A memory bound.** No number here says how much memory the framework may
+  use. The rule compares a growth rate against a growth rate, so a run that
+  passes has said nothing about its footprint — only that its resident series is
+  converging. Its blind spot is stated above: a leak dominated by settling still
+  in progress is not resolved, which is a limit of what process resident memory
+  supports rather than a property of the framework. The accumulation claim rests
+  on the exact counters, not on this.
+- **That the handle count is only the framework's.** `/proc/self/fd` is the
+  whole process, including the test's own journal and the observing connection.
+  The campaign reads it as a trend at steady-state boundaries, which is what a
+  whole-process count supports.
+- **Cancellation or drain latency.** Every cycle drains and every drain must
+  complete, but no drain is timed. Request-to-intake-stop and
+  request-to-durable-terminal latency, and the unjoined count at each deadline,
+  are the P-014 cancellation campaign's.
+- **Anything about the published reference workload.** This workload is a
+  lifecycle exerciser sized to make accumulation visible, not a representative
+  deployment.
+
+### Findings
+
+**F16. A campaign that measures its own process must not retain its own
+evidence in it.** The first implementation of the report collected each cycle's
+evidence into a vector and rendered the whole thing at the end, which is the
+obvious shape and is wrong here: it retained roughly `13` KiB per cycle inside
+the very process whose resident memory is the result, and drew a straight line
+through the measured window that had nothing to do with the framework. The
+campaign's own memory rule caught it, on a run whose first-half maximum and
+second-half minimum were equal by luck.
+
+The repair matters as much as the defect. Loosening the rule until the report's
+bookkeeping fit underneath it would have weakened it for real accumulation too,
+and would have left the reported number partly measuring the report. Instead the
+per-cycle evidence is written out of the process as it is produced, one JSON
+document per line, and read back after the last sample. What stays resident is a
+handful of integers per declared metric, in vectors reserved to their final
+length before the measured window opens. Measured against the window in force at
+the time, the growth fell from `432` KiB across `32` cycles to `16` KiB across
+`120`.
+
+**F17. A timed fault cannot produce a repeatable durable record.** Recorded in
+full under "The fault waits rather than fires" above. It is a finding rather
+than a design note because it is a property of the partitioned runtime that a
+campaign author would reasonably not expect: a sibling stop is *cooperative* and
+is consulted only before a worker's tasklet is invoked, so what a fault
+interrupts is the set of siblings that had not yet started, and that set is a
+scheduling outcome. Nothing is wrong with the runtime here — a cooperative stop
+that never abandons work already invoked is the behaviour a batch framework
+should have — but a soak that assumed otherwise would have had a different
+durable record in most cycles and no usable comparison.
+
+**F18. The adapter's pool occupancy is only published through `Debug`.**
+`PostgresJobRepository` renders `pool_size` and `pool_idle` in its debug output
+and exposes them nowhere else; `connection_capacity` returns the configured
+ceiling, not the occupancy. The campaign therefore reads the occupancy out of
+that rendering, and fails loudly rather than recording an absent number if it
+ever stops carrying the fields — a connection observation that silently stopped
+being taken is the one outcome a connection campaign must not be able to reach.
+
+This is recorded rather than fixed. The alternative was to add a pool-metrics
+accessor to the facade so that a test could call it, and putting a soak
+instrument in the public API is a larger decision than a campaign gets to make
+on its own. Whether a deployment should be able to observe its own pool is a
+real question and an M6 one; it is not answered by this campaign needing to.
+
+**F19. The heap high-water needs roughly fifty cycles to settle, and the warmup
+is sized from that.** The residual growth after F16 is a general-purpose
+allocator reaching a steady state against a per-cycle transient allocation
+pattern that does not change, and almost all of it happens in the first few
+cycles. With a short warmup the tail of that settling lands inside the measured
+window, where the memory rule reads it as accumulation. The warmup is therefore
+`32` cycles, fixed in the denominator and not adjusted to a run.
+
+Being explicit about the risk: a longer warmup is the sort of thing that *could*
+be used to hide accumulation, which is why the count is committed rather than
+computed. It cannot actually hide one — a leak keeps rising after the settling
+stops, and the measured window is four times the warmup — but the reason it is a
+fixed number in a reviewed document rather than a threshold the report picks is
+that the distinction should not depend on anyone's good intentions.
+
+**F20. A rule whose verdict depends on where a page fault lands is not a
+rule.** The memory rule first written for this campaign compared the smallest
+reading of the measured window's second half against the largest of its first,
+which reads well and asks the right question: did the process ever come back to
+a level it had already held. It survived several development runs, always by
+equality, and that was the tell. What it actually decides is *where the last
+settling step falls*. The same trajectory — a couple of page-sized shifts and
+then a long plateau — passes when the last shift lands before the midpoint and
+fails when it lands after, and the development runs produced both. On a CI
+runner it would have been an intermittent failure that no amount of reading the
+report would have explained, and the temptation at that point is to widen the
+rule until it stops firing, which is how a campaign quietly stops testing
+anything.
+
+It was replaced by the upward-shift count described above, which asks a question
+whose answer does not depend on phase. The half statistics are still recorded on
+every verdict, so a reader who wants the original comparison can make it.
+
+The general lesson is worth keeping: a structural rule can be threshold-free and
+still be wrong, if the structure it keys on is an accident of scheduling. The
+check that caught this was not a test — it was noticing that a rule kept passing
+by exactly zero margin.
+
+**F21 (P2, campaign defect). The replacement rule was page-size dependent, and
+CI rejected it on both supported majors.** The rule that replaced F20's counted
+how often the resident series rose to a level it had not held before, against a
+budget of `6`. The development host produced one or two shifts. PostgreSQL 15
+and 18 CI produced `22` and `29`, and the campaign failed on its first run.
+
+The product was not the problem and neither was the budget. A level shift is one
+page, so the count is a function of the host's page size: the development host
+has `16` KiB pages and the CI runner has `4` KiB, so the same drift is up to
+four times as many shifts, and the coarser host had additionally hidden most of
+it.
+A rule that a supported platform fails for its page size is not measuring the
+framework.
+
+Raising the budget would have been the wrong repair — it would have tuned the
+rule to the observed number on one platform and left it meaningless on both. The
+diagnosis came from two runs instead. A `1032`-cycle run on the development host
+is flat for its last `800` samples with an overall slope of `0.014` KiB per
+cycle, which rules out a per-cycle leak: at even a tenth of a kilobyte a cycle,
+`800` cycles would have moved five pages and moved none. The CI series meanwhile
+rises about a kilobyte a cycle with a rate that decays roughly fourteenfold from
+warmup. Same framework, two allocators, two shapes — so the shape that is common
+to both is convergence, and that is what the rule now requires.
+
+The lesson generalizes past this campaign: a metric that is quantised by the
+platform cannot carry a rule stated in units of that quantum. The three
+observations this campaign is most confident about — tasks, connections, handles
+— are exact integers, and they were flat on both hosts from the first run.
+
+**F22 (P2, campaign defect). A gate whose healthy range crosses its own limit
+is a flaky gate, and this one crossed it on the tenth run.** The rule that
+replaced F21's compared the least-squares growth rate of the measured window's
+last third against its first third, with a limit of `0.50`. It passed nine CI
+runs and then failed a healthy PostgreSQL 18 run at `0.585` — on a retention
+commit whose diff was documentation only, so the same tree that had just
+produced passing evidence failed on rerun.
+
+The two series are almost the same run. Warmup rose `428` and `424` KiB;
+measurement rose `260` and `300`; both decayed. What differed is *where*: the
+failing run gained `48` KiB during cycles 400-499, and that burst falls inside
+the last third, tilting the regression line inside that window. Per-hundred-cycle
+slopes were `1.19, 0.49, 0.36, 0.23, 0.17, 0.15` for the passing run and
+`1.00, 0.63, 0.50, 0.15, 0.47, 0.22` for the failing one — the same decay with
+a bump in it.
+
+Characterising the statistic across all ten runs is what settled it. The
+last-third slope ranges `0.076` to `0.443`, a `5.8×` spread, and the ratio
+ranges `0.084` to `0.585` — so a limit of `0.50` sits *inside* the healthy
+distribution. That is the same mistake as F20 and F21 one level up: a statistic
+whose run-to-run variance is comparable to the effect being measured, with a
+bound set from too few observations.
+
+Four candidates were then measured against the same ten runs rather than
+reasoned about. Whole-window rate decay — measured mean rate over warmup mean
+rate — came in at `0.031` to `0.044`, a `1.4×` spread, against `1.00` for a
+straight line. It is robust for a structural reason rather than a lucky one: a
+burst moves both endpoints of the window it lands in, so it changes the rate
+that window reports without changing where the rate is measured from. The
+campaign now gates on that, and records the rejected statistics alongside it so
+the choice can be re-examined against future runs.
+
+The general lesson, third time stated because it keeps recurring in a new
+disguise: before gating on a statistic, characterise what it does on runs that
+are known good. Every rule this campaign has discarded looked correct in the
+abstract and was chosen without knowing its own null distribution.
+
+**F23 (P2, campaign defect). Two implementations written separately from the
+same ambiguous sentence made the same mistake, and each was the other's
+check.** The convergence rule divides a window's rise by its length, and both
+the report and the runner divided by the number of samples. A window of `n`
+readings spans `n - 1` intervals, so every rate was understated by `(n - 1)/n`.
+
+The factor does not cancel between the two windows, because they are
+deliberately different lengths. At the declared `32` and `600` a constant leak
+— the shape the rule exists to reject — came out at `0.97` rather than the
+`1.00` the scope document states the rule in terms of. Nothing passed that
+should have failed: `0.97` is still four times the limit, and the healthy runs
+sat near `0.04`. The defect was in what the threshold *meant*, not in what it
+decided, which is why ten CI runs and several reviews went past it.
+
+The interesting half is why the recomputation did not catch it. `cargo xtask
+soak` exists to disagree with the report, and it is kept separate from the
+report for exactly that reason — no shared helper, no import, deliberately
+different code. It still agreed, because both were written from the same prose,
+and the prose said "over their window" without saying what the denominator of a
+window is. Separate implementations of an ambiguous specification are not two
+opinions; they are one opinion typed twice.
+
+So the statistic is now declared outside both, as vectors with their expected
+rates and verdicts in
+[`rate-vectors.json`](../../tests/fixtures/soak/rate-vectors.json), and each
+side is checked against the declaration rather than against the other. The
+vectors carry the constant-leak property at unequal window lengths, both sides
+of the inclusive boundary, and the degenerate windows; reverting either
+implementation to the sample-count denominator fails them on that side alone.
+A window spanning no interval now yields no rate rather than a rate of zero,
+since a one-sample window read as flat would let a truncated campaign pass a
+rule it could not decide.
+
+The threshold did not move. The characterised null was restated by exact
+arithmetic rather than re-measured — at a fixed window the correction rescales
+every ratio by `(600/599)/(32/31)` — and the straight line the limit is
+measured against is now exactly `1.00` rather than `0.97`.
+
+The lesson is the F20/F21/F22 lesson displaced one level. Those were about
+choosing a statistic without knowing its null distribution. This one is about
+believing an agreement that was structurally incapable of being a
+disagreement — the check was real, and it was checking the wrong thing.
