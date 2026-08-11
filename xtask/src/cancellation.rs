@@ -68,6 +68,14 @@ const OBSERVATIONS: &str = "cancellation-observations";
 /// The variable that tells a report where to retain its observation.
 const OBSERVATIONS_ENV: &str = "OXIDEBATCH_CANCELLATION_OBSERVATIONS";
 
+/// The phases the accepted plan requires measured separately, and exactly
+/// these: the campaign's own reconciliation test asserts the plan still names
+/// this set (see `the_plan_still_requires_the_phases_measured_separately` in
+/// `crates/oxide-batch/tests/m5_cancellation_campaign.rs`), and the committed
+/// scope declares no ordering between them, so this checks set membership
+/// rather than position.
+const REQUIRED_PHASES: &[&str] = &["async", "blocking", "transaction"];
+
 /// One campaign run and everything it observed.
 pub struct Campaign {
     /// Every reconciliation failure, as a human-readable line.
@@ -451,16 +459,13 @@ fn reconcile_latency(runs: &Runs) -> Vec<String> {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        // The accepted plan requires the phases separated rather than averaged,
-        // so an empty or single-entry phase list is a campaign that did not do
-        // what the row asks for.
-        if phases.len() < 3 {
-            violations.push(format!(
-                "phase-separation reported {} phase(s) and the accepted plan requires the async, \
-                 blocking, and transaction phases measured separately",
-                phases.len()
-            ));
-        }
+        // The accepted plan requires exactly the async, blocking, and
+        // transaction phases, each measured once. A bare count check accepts a
+        // report that duplicated one phase and dropped another, or that
+        // measured an unrecognised phase in place of a required one, as long as
+        // the total still came to three or more; this requires the observed set
+        // to equal the required set.
+        violations.extend(reconcile_phase_set(&phases));
         for phase in &phases {
             let name = phase
                 .get("phase")
@@ -492,6 +497,78 @@ fn reconcile_latency(runs: &Runs) -> Vec<String> {
                 "phase-separation retained no process-path intake-stop measurement".to_owned(),
             );
         }
+    }
+
+    violations
+}
+
+/// Requires the phase-separation report's phase set to equal exactly
+/// [`REQUIRED_PHASES`], each named once.
+///
+/// A report can satisfy an entry-count check by duplicating one phase in
+/// place of a missing one, by measuring a phase the plan does not name, or by
+/// carrying more entries than the required three, and every per-entry check
+/// below this one (duration, terminal status, cancellation point) would still
+/// pass on the duplicated or unrecognised entries. So the set is checked
+/// directly, against every way it can diverge from what is required: an entry
+/// with no usable name, a required phase never observed, a required phase
+/// observed more than once, and any observed phase the required set does not
+/// name. The scope declares no order among the three, so this is set
+/// membership, not a sequence comparison.
+fn reconcile_phase_set(phases: &[Value]) -> Vec<String> {
+    let mut violations = Vec::new();
+    let mut counts: BTreeMap<&str, u64> = BTreeMap::new();
+    let mut unnamed = 0u64;
+
+    for phase in phases {
+        match non_empty_str(phase, "phase") {
+            Some(name) => *counts.entry(name).or_insert(0) += 1,
+            None => unnamed += 1,
+        }
+    }
+
+    if unnamed > 0 {
+        violations.push(format!(
+            "phase-separation reported {unnamed} phase entry(s) with no phase name, and every \
+             entry must name which of the async, blocking, or transaction phases it measured"
+        ));
+    }
+
+    let missing = REQUIRED_PHASES
+        .iter()
+        .filter(|required| !counts.contains_key(*required))
+        .copied()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        violations.push(format!(
+            "phase-separation did not report the {} phase(s) the accepted plan requires \
+             measured separately",
+            missing.join(", ")
+        ));
+    }
+
+    for required in REQUIRED_PHASES {
+        if let Some(count) = counts.get(required)
+            && *count > 1
+        {
+            violations.push(format!(
+                "phase-separation reported the {required} phase {count} times, and the accepted \
+                 plan requires each phase measured once"
+            ));
+        }
+    }
+
+    let unexpected = counts
+        .keys()
+        .filter(|name| !REQUIRED_PHASES.contains(*name))
+        .copied()
+        .collect::<Vec<_>>();
+    if !unexpected.is_empty() {
+        violations.push(format!(
+            "phase-separation reported the {} phase(s), which the accepted plan does not name \
+             among the phases measured separately",
+            unexpected.join(", ")
+        ));
     }
 
     violations
@@ -1212,7 +1289,7 @@ mod tests {
 
     use super::{
         Report, Runs, non_empty_str, postgres_major, reconcile_phase_cancellation_point,
-        reconcile_recovery, verify_matrix_identity,
+        reconcile_phase_set, reconcile_recovery, verify_matrix_identity,
     };
 
     /// A fully identified database observation: present, non-empty major and
@@ -1483,6 +1560,136 @@ mod tests {
             2,
             "an entirely missing cancellation_point object must fail both checks, not be treated \
              as an unrecognised-but-tolerated shape"
+        );
+    }
+
+    /// A phase entry with the given name and nothing else — enough to
+    /// exercise [`reconcile_phase_set`], which looks only at `phase`.
+    fn named_phase(name: &str) -> serde_json::Value {
+        json!({ "phase": name })
+    }
+
+    #[test]
+    fn phase_set_passes_with_exactly_the_required_three() {
+        let phases = vec![
+            named_phase("async"),
+            named_phase("blocking"),
+            named_phase("transaction"),
+        ];
+        assert!(reconcile_phase_set(&phases).is_empty());
+    }
+
+    #[test]
+    fn phase_set_fails_closed_on_a_duplicated_phase() {
+        // async twice, transaction never: an entry-count check alone would
+        // pass this, because it still totals three entries.
+        let phases = vec![
+            named_phase("async"),
+            named_phase("async"),
+            named_phase("blocking"),
+        ];
+        let violations = reconcile_phase_set(&phases);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("async") && violation.contains("2 times")),
+            "a duplicated async phase must be diagnosed as a duplicate: {violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("transaction")),
+            "the missing transaction phase must also be reported: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn phase_set_fails_closed_on_a_missing_phase() {
+        let phases = vec![named_phase("async"), named_phase("blocking")];
+        let violations = reconcile_phase_set(&phases);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("transaction")),
+            "a missing transaction phase must be diagnosed by name: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn phase_set_fails_closed_on_an_unknown_phase_in_place_of_a_required_one() {
+        // Three entries total, same as a passing run, but one of them is not
+        // a phase the plan names and the plan's transaction phase never
+        // appears.
+        let phases = vec![
+            named_phase("async"),
+            named_phase("blocking"),
+            named_phase("unknown"),
+        ];
+        let violations = reconcile_phase_set(&phases);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("transaction")),
+            "the never-observed transaction phase must be reported missing: {violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("unknown")),
+            "the unrecognised phase must be reported by name: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn phase_set_fails_closed_on_an_extra_unrecognised_phase() {
+        let phases = vec![
+            named_phase("async"),
+            named_phase("blocking"),
+            named_phase("transaction"),
+            named_phase("unknown"),
+        ];
+        let violations = reconcile_phase_set(&phases);
+        assert_eq!(
+            violations.len(),
+            1,
+            "the three required phases are each present exactly once, so the extra unrecognised \
+             phase should be the only violation: {violations:?}"
+        );
+        assert!(violations[0].contains("unknown"));
+    }
+
+    #[test]
+    fn phase_set_fails_closed_on_an_unnamed_phase_entry() {
+        let phases = vec![
+            named_phase("async"),
+            named_phase("blocking"),
+            named_phase("transaction"),
+            json!({}),
+        ];
+        let violations = reconcile_phase_set(&phases);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("no phase name")),
+            "an entry with no phase name must be diagnosed rather than silently ignored: \
+             {violations:?}"
+        );
+    }
+
+    #[test]
+    fn phase_set_fails_closed_on_an_empty_phase_name() {
+        let phases = vec![
+            named_phase("async"),
+            named_phase("blocking"),
+            named_phase("transaction"),
+            named_phase(""),
+        ];
+        let violations = reconcile_phase_set(&phases);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("no phase name")),
+            "an empty phase name must be treated as absent, not as a fourth phase: {violations:?}"
         );
     }
 }
