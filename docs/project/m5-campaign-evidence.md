@@ -2318,7 +2318,7 @@ Every one of these held on both matrix points:
 
 ### Findings
 
-**F23. The exit status of a cancelled attempt is `STOPPED`, not `CANCELLED`.**
+**F24. The exit status of a cancelled attempt is `STOPPED`, not `CANCELLED`.**
 This campaign asserted `CANCELLED` before reading the delivered contract, on the
 reasonable-sounding grounds that the domain has an exit status by that name.
 It does not: `CANCELLED` is the durable code of `FailureCategory::Cancelled`, a
@@ -2334,7 +2334,7 @@ would have changed an accepted durable contract to satisfy a test. This is
 exactly the failure mode a campaign is most exposed to, because it writes its
 assertions before it runs anything.
 
-**F24. The blocking phase costs roughly a third again as much as the others to
+**F25. The blocking phase costs roughly a third again as much as the others to
 reach a durable terminal, and a single averaged latency would have hidden it.**
 On both majors the blocking phase reached its terminal at `551 ms` and `548 ms`
 against `434`/`408` and `462`/`473` for the async and transaction phases. The
@@ -2346,7 +2346,7 @@ separately rather than as one number — a mean over the three would sit near
 `480 ms` and would describe none of them, and the phase whose cancellation
 behaviour a deployment most needs to understand is the one it would blur away.
 
-**F25. Request-to-intake-stop is a phase offset, not a constant, and a single
+**F26. Request-to-intake-stop is a phase offset, not a constant, and a single
 run cannot be read as its typical value.** The configured stop poll interval
 bounds how long the owning runtime may go without re-reading the durable stop
 request; where inside that window an operator's request happens to land is
@@ -2365,7 +2365,7 @@ campaign that wanted the *distribution* rather than a sample would need repeated
 cancellations at one configuration, which is a larger measurement than P-014
 asks for and is left to whatever eventually proposes a budget.
 
-**F26. The two intake paths differ by three orders of magnitude and must not be
+**F27. The two intake paths differ by three orders of magnitude and must not be
 reported as one number.** Process intake stop — `request_shutdown` followed by
 `ensure_accepting` — completed in `5 µs` and `2 µs`, against `15 197 µs` and
 `10 037 µs` for the durable operator path. The first is an atomic state
@@ -2374,7 +2374,7 @@ interval. They are both truthfully called "request to intake stop", and a report
 that averaged them, or quoted whichever suited, would be describing neither.
 They are recorded as separate observations for that reason.
 
-**F27. Adding this campaign invalidated the retained soak evidence, and that is
+**F28. Adding this campaign invalidated the retained soak evidence, and that is
 the closure mechanism working.** Registering `cargo xtask cancellation` in
 `xtask/src/main.rs` and adding the two CI jobs to `.github/workflows/ci.yml`
 changed two paths inside the *soak* campaign's declared semantic closure, so
@@ -2390,7 +2390,7 @@ than to whichever campaign happens to trigger it next. This is the second
 campaign to pay the cost, which is the argument for doing it; it is still not
 this PR's change to make.
 
-**F28. A campaign whose workload finishes before its cancellation lands measures
+**F29. A campaign whose workload finishes before its cancellation lands measures
 nothing, and reports it as a failure of the framework.** The first declared
 workload was `16` partitions of `50 ms`, which is about `200 ms` of work against
 a cancellation path that needs a durable commit, a poll interval, and a second
