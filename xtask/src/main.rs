@@ -1,5 +1,6 @@
 //! Repository development tasks.
 
+mod cancellation;
 mod conformance;
 mod crash_restore;
 mod deps;
@@ -106,6 +107,7 @@ fn main() -> ExitCode {
     let _program = args.next();
 
     let succeeded = match args.next().as_deref() {
+        Some("cancellation") => run_cancellation_campaign(),
         Some("check") => run_all(QUALITY) && run_dependency_check() && run_surface_check(),
         Some("conformance") => run_conformance_campaign(),
         Some("crash-restore") => run_crash_restore_campaign(),
@@ -133,6 +135,39 @@ fn main() -> ExitCode {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
+    }
+}
+
+/// Reports whether the cancellation campaign measured and proved what P-014
+/// owes.
+fn run_cancellation_campaign() -> bool {
+    eprintln!("==> PostgreSQL cancellation campaign");
+
+    match cancellation::run() {
+        Ok(campaign) => {
+            eprintln!("campaign report: {}", campaign.report.display());
+            if campaign.violations.is_empty() {
+                eprintln!(
+                    "the accepted operator path stopped intake and reached a durable terminal \
+                     status, both latencies P-014 names were measured and ordered, every declared \
+                     deadline reported the tasks it still owned, and a cancelled attempt \
+                     restarted without re-running committed work"
+                );
+                return true;
+            }
+            for violation in &campaign.violations {
+                eprintln!("campaign gap: {violation}");
+            }
+            eprintln!(
+                "see the campaign scope in \
+                 tests/fixtures/cancellation/campaign-scope.json"
+            );
+            false
+        }
+        Err(error) => {
+            eprintln!("could not run the cancellation campaign: {error}");
+            false
+        }
     }
 }
 
@@ -446,6 +481,7 @@ fn usage() {
     eprintln!(
         "usage: cargo xtask <command>\n\n\
          commands:\n\
+           cancellation     measure P-014 stop, cancel, and drain against PostgreSQL\n\
            check            run formatting, Clippy, tests, rustdoc, and boundaries\n\
            conformance      run the full suite over the accepted M0-M4 scope\n\
            crash-restore    run the crash, restart, and logical restore campaign\n\

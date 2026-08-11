@@ -1,0 +1,346 @@
+{
+  "campaign": "M5 PostgreSQL cancellation",
+  "issue": "https://github.com/luceat-lux-vestra/oxide-batch/issues/102",
+  "gate": "docs/project/m5-design-gate-evidence.md",
+  "plan": "docs/engineering/performance-plan.md",
+  "note": "This document is the campaign's denominator. What P-014 owes is a set of latencies and a set of counts, and both are the kind of obligation that disappears quietly: a report that measured one of the two latencies, or that counted unjoined tasks at one deadline instead of each, has exactly the shape of a report that did all of it. So the observations are enumerated here rather than read off the run. The runner reads this to decide what must have run and what each report must have observed. The in-process reconciliation in crates/oxide-batch/tests/m5_cancellation_campaign.rs reads it from the other side, against the accepted plan and the design gate. The reports read it too: crates/oxide-batch/tests/postgres_cancellation.rs takes its deadline set, its phase set, and its workload shape from here rather than declaring its own.",
+  "claim": "What a passing run establishes is that on a supported PostgreSQL, a cancellation requested through the accepted operator path stopped intake, reached a durable terminal status, and left the durable record the accepted shutdown and recovery contract requires — with the two latencies and the per-deadline unjoined counts recorded as measurements. The latencies are observations, not budgets. No numeric cancellation latency is asserted anywhere in this campaign, because no accepted document states one; see `latency_status` below. The counts are asserted, because the accepted contract does fix them: a drain that reports fewer unjoined tasks than it still owns is a defect regardless of timing. It is not a claim about cancellation under an arbitrary workload, at an arbitrary scale, or on an unsupported major, and it is not a throughput or capacity result.",
+  "latency_status": {
+    "status": "observational",
+    "note": "Deliberately not a gating threshold, and the distinction is the reason this field exists rather than a number. The accepted plan requires request-to-intake-stop and request-to-durable-terminal latency to be *measured* and reported; it states no value either must stay under. The M4 exit measurement recorded 1-2 microseconds to cancellation and 135-148 microseconds to durable terminal on the in-memory repository, and docs/operations/capacity-and-resource-budgets.md publishes those as observed ranges rather than budgets. A PostgreSQL run is a different order of magnitude for a reason that has nothing to do with the framework — the durable terminal is a committed transaction and the intake stop is bounded by a configured poll interval — so importing the M4 numbers as limits would fail a healthy run, and inventing new ones would publish a release commitment nobody accepted.",
+    "prohibited": "Deriving a pass or fail from any measured duration in this campaign. The runner checks that each duration was measured, that its structure is possible, and that the ordering the contract requires holds between them. It does not compare any of them against a limit.",
+    "if_a_budget_is_ever_wanted": "It requires a documentation change to the accepted performance plan, justified by repeated baselines across the supported matrix, per that plan's own rule that provisional budgets stay hypotheses until repeated baselines justify a release gate. This campaign supplies the raw material for that and does not pre-empt it."
+  },
+  "support_contract": {
+    "postgres_versions": ["15", "16", "17", "18"],
+    "matrix_endpoints": ["15", "18"],
+    "installed_schema_version": 3
+  },
+  "fixtures": {
+    "postgres-cancellation": [
+      "OXIDEBATCH_POSTGRES_TEST_URL",
+      "OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL"
+    ]
+  },
+  "accepted_contract": {
+    "note": "The names and values this campaign asserts against are read from the delivered M4 contract rather than chosen here. Every row below names where it lives, because a campaign that invented a status name or a reason code would be writing a new contract under the description of testing the old one.",
+    "operator_request": {
+      "call": "request_execution_stop(id, expected_version, actor, requested_at)",
+      "source": "crates/oxide-batch-repository/src/repository.rs",
+      "capability": "StopRequests",
+      "semantics": "Records a durable stop request under compare-and-swap. It does not itself transition the execution."
+    },
+    "intake_stop": {
+      "call": "observe_execution_control(id, owner, observed_at)",
+      "source": "crates/oxide-batch-repository/src/repository.rs",
+      "capability": "ExecutionOwnership",
+      "semantics": "When the owner matches and the execution is active, the observation moves it to STOPPING in the same transaction and the runtime requests the cooperative stop.",
+      "bounded_by": "StopPollInterval, accepted at 100 ms..=60 s with a default of 1 s in crates/oxide-batch/src/runtime.rs"
+    },
+    "durable_terminal": {
+      "status": "STOPPED",
+      "status_source": "BatchStatus::Stopped in crates/oxide-batch-core/src/domain/execution.rs",
+      "exit_status": "STOPPED",
+      "exit_status_source": "ExitStatus::stopped(), which is ExitCode::framework_owned(\"STOPPED\"), in the same file; selected at crates/oxide-batch/src/runtime.rs where a Stopped batch status maps to it",
+      "not_cancelled": "The exit status of a cancelled attempt is STOPPED and not CANCELLED, which is worth recording because the opposite is the natural guess and this campaign made it before checking. CANCELLED is the durable code of FailureCategory::Cancelled — a failure category, reached when cancellation surfaces as a failure — and it is not what a cooperatively stopped attempt persists as its exit status. Asserting CANCELLED here would have been a campaign inventing a contract while describing itself as testing one.",
+      "semantics": "The terminal status the accepted contract requires of a cancelled attempt, and the one the M4 exit measurement already asserts."
+    },
+    "process_intake_stop": {
+      "call": "ShutdownSignal::request_shutdown() then ensure_accepting()",
+      "source": "crates/oxide-batch/src/shutdown.rs",
+      "semantics": "The first request moves ACCEPTING to STOPPING and every later intake attempt returns ShutdownError::ShuttingDown. The second request escalates and ends join waiting.",
+      "returns": ["Initiated", "Escalated", "AlreadyEscalated"]
+    },
+    "drain": {
+      "call": "ShutdownCoordinator::shutdown(persist, flush_telemetry, close_repository)",
+      "source": "crates/oxide-batch/src/shutdown.rs",
+      "results": ["Complete { panicked_tasks }", "Incomplete { unjoined_tasks, phases, panicked_tasks, escalated }"],
+      "semantics": "The coordinator never detaches or force-aborts an in-flight task, so an unjoined task is reported rather than lost."
+    }
+  },
+  "deadlines": {
+    "note": "P-014 owes the count of unjoined tasks at each deadline, so the deadline set has to be fixed before the run rather than read off it. Each value below is inside the accepted 1 s..=1 h bound that ShutdownDeadline and TaskJoinDeadline enforce, and the campaign declares which accepted constant each corresponds to. Choosing a value inside an accepted range is a configuration, not a new threshold: nothing here says a drain must finish within any of them, only that whatever remained owned at each was counted and reported correctly.",
+    "why_not_only_the_default": "A single deadline cannot distinguish a coordinator that reports what it owns from one that reports a constant. Three separated by a factor of thirty, each with a held-task count that differs from the others, means a report that hard-coded any single answer fails the other two.",
+    "points": [
+      {
+        "id": "minimum",
+        "millis": 1000,
+        "accepted_constant": "MIN_SHUTDOWN_DEADLINE",
+        "held_tasks": 3,
+        "note": "The accepted floor. The cheapest honest deadline expiry the contract permits."
+      },
+      {
+        "id": "intermediate",
+        "millis": 5000,
+        "accepted_constant": null,
+        "held_tasks": 5,
+        "note": "A value inside the accepted range corresponding to no named constant, so that the deadline set is not made entirely of the two values the code happens to name. Its held-task count differs from both neighbours."
+      },
+      {
+        "id": "default",
+        "millis": 30000,
+        "accepted_constant": "DEFAULT_SHUTDOWN_DEADLINE",
+        "held_tasks": 7,
+        "note": "The deadline a deployment gets without configuring one, which makes it the one most runs will actually experience. It costs the campaign thirty seconds of waiting per matrix point and is included anyway, because omitting the default and reporting only cheap deadlines would be measuring the configuration the campaign chose rather than the one the framework ships."
+      }
+    ],
+    "escalation": {
+      "id": "escalation",
+      "held_tasks": 4,
+      "requires": "a second request ends waiting before any deadline expires, and the report names every phase that remained owned",
+      "note": "Not a deadline but the other way waiting ends, and it belongs to the same obligation: the count of what remained owned has to be right whether waiting ended by expiry or by escalation. It is also the only one of the four that must complete in well under its configured deadline, which is asserted structurally — the drain returned before the deadline — rather than against a duration."
+    }
+  },
+  "phases": {
+    "note": "The accepted plan requires cancellation measured separately for async, blocking, and transaction phases. It does not invent a phase vocabulary for this campaign: the delivered contract already classifies both halves, and this document maps the plan's three words onto the delivered names rather than adding a third set.",
+    "stop_timing": {
+      "source": "StopTiming in crates/oxide-batch/src/runtime.rs",
+      "mapping": [
+        {
+          "plan_phase": "async",
+          "delivered": "DuringExecution",
+          "means": "an asynchronous tasklet observed the stop while it was running"
+        },
+        {
+          "plan_phase": "blocking",
+          "delivered": "AfterBlockingWork",
+          "means": "the stop arrived after synchronous work had started and was reported when it completed"
+        },
+        {
+          "plan_phase": "transaction",
+          "delivered": "DuringExecution while a repository transaction is open",
+          "means": "the stop arrived while the worker held an open repository unit of work, so the cancellation has a transaction to resolve before the attempt can reach a durable terminal",
+          "note": "The plan's third phase, and the one whose delivered mechanism is not a distinct StopTiming variant: what separates it is what the worker is holding, not how the stop is classified. It is measured through a worker that opens a unit, reads through it, races the stop against its work, and rolls back rather than dropping the unit — dropping an open transaction at cancellation is precisely the ambiguity the accepted contract refuses to manufacture. An earlier version of this campaign mapped this phase onto the same worker body as the async one, which produced two measurements that agreed to within three milliseconds because they were the same measurement taken twice."
+        },
+        {
+          "plan_phase": "before start",
+          "delivered": "BeforeStart",
+          "means": "the stop was already requested when the worker was reached, so no user work ran",
+          "note": "Not one of the plan's three, and recorded rather than dropped. It is the timing a cancellation under load produces most often, because most workers of a partitioned step have not started when the stop lands."
+        }
+      ]
+    },
+    "task_phase": {
+      "source": "ShutdownTaskPhase in crates/oxide-batch/src/shutdown.rs",
+      "all": ["Tasklet", "ChunkReadProcess", "ChunkWrite", "Transaction", "RetryBackoff", "FlowDecision"],
+      "observed_by_this_campaign": ["Tasklet", "ChunkReadProcess", "Transaction"],
+      "why_a_subset": "The plan's transaction phase is Transaction, and the two async phases it separates are represented by Tasklet and ChunkReadProcess. ChunkWrite, RetryBackoff and FlowDecision are not exercised as unjoined phases here and are recorded as unexamined rather than counted as proved. A campaign that spawned a placeholder task into each of the six to make the table full would be reporting coverage it does not have."
+    }
+  },
+  "observations": {
+    "note": "Every observation P-014 owes, named so that a report that stopped taking one fails rather than shrinking the campaign. The runner requires each of these to be present and structurally possible in the observation of the report that owes it.",
+    "required": [
+      {
+        "id": "cancellation-request",
+        "owes": "the instant the accepted operator request was made durable, recorded monotonically",
+        "measured_by": "operator-stop"
+      },
+      {
+        "id": "request-to-intake-stop",
+        "owes": "the duration from the cancellation request to the first observation that intake had stopped",
+        "measured_by": "operator-stop",
+        "intake_stop_means": "the durable transition to STOPPING, observed through the accepted execution-control path"
+      },
+      {
+        "id": "request-to-durable-terminal",
+        "owes": "the duration from the cancellation request to the durable terminal status being readable",
+        "measured_by": "operator-stop",
+        "terminal_means": "STOPPED, read back from the repository rather than from the launch return value"
+      },
+      {
+        "id": "process-request-to-intake-stop",
+        "owes": "the duration from a process shutdown request to intake refusing new work",
+        "measured_by": "phase-separation",
+        "note": "The other intake path, and a much shorter one: it is an atomic state transition rather than a committed transaction. Recorded separately rather than averaged with the durable path, because reporting one number for both would hide whichever is slower."
+      },
+      {
+        "id": "phase-separated-latency",
+        "owes": "request-to-durable-terminal measured separately for the async, blocking, and transaction phases",
+        "measured_by": "phase-separation"
+      },
+      {
+        "id": "drain-completion",
+        "owes": "whether the drain joined every owned task, and the duration it took when it did",
+        "measured_by": "deadline-unjoined"
+      },
+      {
+        "id": "unjoined-count-per-deadline",
+        "owes": "the number of tasks still owned when waiting ended, at every declared deadline and at escalation, broken down by phase",
+        "measured_by": "deadline-unjoined"
+      },
+      {
+        "id": "checkpoint-preservation",
+        "owes": "the durable progress committed before the cancellation, read back after it",
+        "measured_by": "operator-stop"
+      },
+      {
+        "id": "recovery-after-cancellation",
+        "owes": "the durable observation a restart makes after a cancelled attempt",
+        "measured_by": "restart-after-cancellation"
+      },
+      {
+        "id": "postgres-matrix-identity",
+        "owes": "the PostgreSQL major and full server version the observation was taken against",
+        "measured_by": "every database report",
+        "note": "A matrix point is invisible in a connection string, so without this an observation from one supported major reconciles perfectly inside a run of another."
+      }
+    ]
+  },
+  "workload": {
+    "id": "P-014",
+    "job_name": "m5_cancellation_lifecycle",
+    "repository": "one PostgresJobRepository per report, opened at setup and closed in the report's final drain",
+    "partitions": 64,
+    "worker_budget": 4,
+    "pool_size": 5,
+    "pool_derivation": "concurrent_children + 1",
+    "stop_poll_interval_millis": 100,
+    "stop_poll_note": "The accepted minimum rather than the accepted default of one second. This is the interval at which the owning runtime re-reads the durable stop request, so it is the dominant term in request-to-intake-stop on the operator path, and a campaign that used the default would be reporting mostly the interval it chose. Both the value used and the accepted default are recorded in the report so the measurement can be read against either. It is a configuration inside the accepted 100 ms..=60 s bound, not a relaxation: nothing is asserted against the resulting duration.",
+    "worker_work_millis": 500,
+    "worker_work_note": "Long enough that a stop requested while the step is running lands inside a worker rather than between workers, which is what makes the DuringExecution timing observable at all. Not a synchronization device: the correctness assertions do not depend on it, and a host that runs it slower produces a larger measured latency rather than a different verdict.",
+    "duration_derivation": "partitions / worker_budget waves of worker_work, so 64 / 4 x 500 ms is about eight seconds of work. The size is set by what the campaign has to be able to do rather than by taste: the cancellation is requested only after a partition has durably committed, and the request itself is a transaction the owning runtime then has to observe at its poll interval. A workload shorter than the sum of those completes before the stop can land, which is not a fast cancellation but an unobserved one. The first implementation of this campaign declared 16 partitions of 50 ms, and every attempt reached COMPLETED before its stop request was observed - the run recorded no STOPPING transition at all, so both of P-014's latencies were unmeasurable rather than small.",
+    "cancellation_point": "after the first partition has committed and while later workers are in flight",
+    "cancellation_point_note": "Cancelling before any partition commits would leave nothing durable to check the checkpoint contract against, and cancelling after every partition commits would measure a job that had already finished. The report waits for the first committed partition and then requests the stop, so there is always both committed work to preserve and running work to cancel."
+  },
+  "correctness": {
+    "note": "What must hold regardless of any duration. These are the assertions the campaign fails on; every latency above is reported rather than judged.",
+    "requires": [
+      {
+        "id": "durable-terminal-is-stopped",
+        "requires": "the cancelled attempt persists the STOPPED batch status and the framework-owned STOPPED exit status",
+        "source": "the accepted M4 shutdown contract; the batch status is asserted identically by the M4 exit measurement"
+      },
+      {
+        "id": "intake-stop-precedes-durable-terminal",
+        "requires": "request-to-intake-stop is less than or equal to request-to-durable-terminal",
+        "detail": "An ordering rather than a budget. A durable terminal that preceded intake stopping would mean the attempt was terminated before it stopped accepting work, which no ordering of the contract permits."
+      },
+      {
+        "id": "no-worker-outlives-its-parent",
+        "requires": "worker occupancy is zero once the cancelled launch has returned"
+      },
+      {
+        "id": "committed-work-is-preserved",
+        "requires": "every partition committed before the cancellation is still recorded as committed after it",
+        "detail": "Cancellation is not a rollback of work that already reached durable storage. This is the checkpoint contract the campaign is most at risk of quietly breaking."
+      },
+      {
+        "id": "no-partial-partition-is-recorded-complete",
+        "requires": "no partition interrupted by the cancellation is recorded as completed"
+      },
+      {
+        "id": "unjoined-count-equals-held-count",
+        "requires": "at every declared deadline and at escalation, the reported unjoined total equals the number of tasks the report actually held, and the per-phase counts sum to it",
+        "detail": "The one place the campaign asserts on the drain rather than reporting it. A coordinator that under-reports what it still owns is the defect this obligation exists to catch, and it is checkable exactly because the report knows how many tasks it held."
+      },
+      {
+        "id": "no-task-is-detached",
+        "requires": "the drain reports every held task as unjoined rather than losing it, and reports panics rather than swallowing them"
+      },
+      {
+        "id": "restart-after-cancellation-is-a-new-execution",
+        "requires": "a restart after a cancelled attempt creates a new job execution rather than reusing the stopped one",
+        "source": "the accepted M4 recovery contract"
+      },
+      {
+        "id": "restart-does-not-rerun-committed-partitions",
+        "requires": "the restart re-runs only the partitions the cancelled attempt did not commit"
+      }
+    ]
+  },
+  "reports": [
+    {
+      "id": "operator-stop",
+      "title": "Durable operator cancellation to a durable terminal status",
+      "owes": "cancellation-request, request-to-intake-stop, request-to-durable-terminal, and checkpoint-preservation, through the accepted operator path on PostgreSQL",
+      "package": "oxide-batch",
+      "target": "postgres_cancellation",
+      "name": "operator_stop_reaches_a_durable_terminal_status",
+      "fixture": "postgres-cancellation",
+      "against_database": true,
+      "note": "The campaign's primary report. It is the only one that exercises the full durable operator path end to end, and the two latencies P-014 names by name are measured here."
+    },
+    {
+      "id": "phase-separation",
+      "title": "Cancellation latency separated by phase",
+      "owes": "phase-separated-latency and process-request-to-intake-stop",
+      "package": "oxide-batch",
+      "target": "postgres_cancellation",
+      "name": "cancellation_latency_is_measured_separately_per_phase",
+      "fixture": "postgres-cancellation",
+      "against_database": true,
+      "note": "The accepted plan requires the phases measured separately rather than as one number, because a single figure is dominated by whichever phase happens to be slowest and hides the others."
+    },
+    {
+      "id": "deadline-unjoined",
+      "title": "Unjoined task counts at every declared deadline",
+      "owes": "unjoined-count-per-deadline and drain-completion",
+      "package": "oxide-batch",
+      "target": "postgres_cancellation",
+      "name": "drain_reports_unjoined_tasks_at_every_declared_deadline",
+      "fixture": "postgres-cancellation",
+      "against_database": true,
+      "note": "Runs each declared deadline twice: once with tasks that finish before it, where the drain must complete and report nothing unjoined, and once with tasks held past it, where the reported count must equal the number held. One of the two alone is not evidence — a coordinator that always reported zero passes the first, and one that always reported the held count passes the second."
+    },
+    {
+      "id": "restart-after-cancellation",
+      "title": "Restart and recovery after a cancelled attempt",
+      "owes": "recovery-after-cancellation",
+      "package": "oxide-batch",
+      "target": "postgres_cancellation",
+      "name": "restart_after_cancellation_resumes_without_rerunning_committed_work",
+      "fixture": "postgres-cancellation",
+      "against_database": true,
+      "note": "Cancellation that leaves an unrestartable execution is not a successful cancellation. This report closes the loop against the accepted M4 recovery contract rather than assuming it still holds."
+    }
+  ],
+  "out_of_scope": [
+    {
+      "id": "cancellation-latency-budget",
+      "why": "No accepted document states one, and this campaign does not create one. See latency_status above."
+    },
+    {
+      "id": "forced-worker-loss",
+      "why": "The accepted plan puts it in the other campaign explicitly: forced loss of a worker is a crash and recovery result, not low cancellation latency. Process kill at each commit phase is delivered by the crash-and-restore campaign."
+    },
+    {
+      "id": "broker-and-remote-worker-phases",
+      "why": "The accepted plan names broker and remote worker phases among those a cancellation test separates. M5 adds no remote, distributed, or multi-host semantics, so neither phase exists to measure. They are unexamined rather than proved, and they belong to the milestone that introduces them."
+    },
+    {
+      "id": "chunkwrite-retrybackoff-and-flowdecision-unjoined-phases",
+      "why": "Three of the six accepted ShutdownTaskPhase variants are not exercised as unjoined phases by this campaign. Recorded as unexamined."
+    },
+    {
+      "id": "p001-p003-p010-performance",
+      "why": "Separate campaign rows. Nothing here is a throughput result, and the durations recorded are cancellation latencies rather than a measure of how fast the framework does work."
+    },
+    {
+      "id": "cancellation-under-arbitrary-scale",
+      "why": "The declared workload is one partitioned job at a declared partition count and worker budget. Cancellation at 1, 10, and 100 workers is a P-010 scaling question."
+    }
+  ],
+  "related": [
+    {
+      "package": "oxide-batch",
+      "target": "m4_exit_measurements",
+      "name": "p014_cancellation_and_shutdown_latency",
+      "run_by_this_campaign": false,
+      "invariant": "the stopped attempt persists STOPPED, no worker outlives its parent, intake closes, and escalation reports every task that remained owned",
+      "note": "The M4 measurement this campaign builds on and does not replace. It fixed the semantics this campaign asserts — the terminal status, the ordering between the two latencies, and the requirement that escalation report what remained — and measured them on the in-memory repository. What it cannot supply is production-preview evidence: its durable terminal is an in-memory write rather than a committed transaction, and its intake stop does not involve a poll interval or a database at all. Its result is retained as an M4 measurement and is not cited as a PostgreSQL result."
+    },
+    {
+      "package": "oxide-batch",
+      "target": "postgres_soak",
+      "name": "soak_reports_no_task_connection_handle_or_memory_growth",
+      "run_by_this_campaign": false,
+      "invariant": "every cycle's drain reaches DrainResult::Complete with no panicked task",
+      "note": "The soak campaign drains at every cycle boundary and requires the drain to complete. It does not measure how long the drain took or count what remained when it did not complete, and its own scope names this campaign as out of scope for exactly that reason. The two are complementary: the soak establishes that draining keeps working over a long window, and this campaign establishes what draining costs and what it reports when it cannot finish."
+    }
+  ],
+  "design_gate_scenario_gap": {
+    "note": "Recorded rather than resolved. The design gate's named campaign scenarios table lists ten scenario IDs for the evidence campaigns, and none of them is a cancellation scenario: the conformance, crash, upgrade, security, resource-bound, and soak campaigns each have at least one named there, and cancellation, performance, and reference workload have none. The performance plan's campaign table does name what this campaign owes, which is why the reconciliation in crates/oxide-batch/tests/m5_cancellation_campaign.rs is bidirectional against the plan and one-directional against the gate.",
+    "why_not_add_one": "Adding a scenario ID to the design gate would be editing an accepted, closed decision record to make this campaign's own reconciliation stronger, which is the wrong direction: the gate records what was decided on 2026-08-03, and this campaign is downstream of it. The gap is a documentation finding for the M5 exit record in #103, which owns the preview documentation, rather than something a campaign PR should quietly close.",
+    "consequence": "This campaign's scenario names are fixed by this document and by nothing above it. A rename here is not caught by the design gate the way a rename of the soak scenario would be, so the reconciliation test asserts the names against this document and the report set explicitly."
+  }
+}

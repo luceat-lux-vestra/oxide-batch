@@ -440,6 +440,68 @@ jobs:
           path: target/m5-campaigns/soak-campaign.json
           if-no-files-found: error
 
+  cancellation-campaign:
+    name: postgres-${{ matrix.postgres }}-cancellation-campaign
+    runs-on: ubuntu-latest
+    # The floor is set by the declared deadline set rather than by the
+    # workload: the accepted default deadline of 30 s has to be waited out
+    # once, and the other two points add six seconds, so roughly forty seconds
+    # of every run is deliberate waiting. Twenty minutes leaves room for the
+    # build and the four reports and is still a ceiling.
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["15", "18"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oxide_batch_cancellation
+        ports:
+          - 5432:5432
+        # Each report holds one pool of 5 connections, the derived requirement
+        # for a worker budget of 4, and the reports run one at a time. The
+        # image's default of 100 is ample; raising it would let a connection a
+        # cancelled attempt failed to return be absorbed rather than exhaust
+        # the pool, which is one of the leaked-work outcomes P-014 is about.
+        options: >-
+          --health-cmd "pg_isready --username postgres --dbname oxide_batch_cancellation"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      OXIDEBATCH_POSTGRES_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_cancellation
+      OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_cancellation
+      OXIDEBATCH_CAMPAIGN_DIR: target/m5-campaigns
+      OXIDEBATCH_CAMPAIGN_MATRIX: postgres-${{ matrix.postgres }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The workflow provisions and calls; how the campaign is executed lives
+      # in the contract beside the campaign. Both that contract and this file
+      # are inside the campaign's semantic closure, so changing the command,
+      # the environment, or the database this runs against invalidates
+      # retained evidence — and so does adding an unrelated job anywhere in
+      # this file. That bluntness is accepted for the reason the soak records:
+      # agreement maintained by review is not a mechanism.
+      - name: Measure P-014 stop, cancel, and drain
+        run: ./tests/fixtures/cancellation/run-ci-campaign.sh ${{ matrix.postgres }}
+
+      # Retained on failure as well as on success. A failed cancellation
+      # campaign is mostly worth reading for its latency and unjoined-count
+      # detail, and a job that uploaded only green reports would discard
+      # exactly that.
+      - name: Retain the campaign report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cancellation-campaign-postgres-${{ matrix.postgres }}
+          path: target/m5-campaigns/cancellation-campaign.json
+          if-no-files-found: error
+
   postgres-design-gate:
     name: postgres-${{ matrix.postgres }}-design-gate
     runs-on: ubuntu-latest
