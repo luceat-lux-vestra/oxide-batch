@@ -766,6 +766,11 @@ fn write_report(
         .map_err(|error| format!("could not create {}: {error}", directory.display()))?;
     let path = directory.join(REPORT);
 
+    let (manifest, manifest_violations) = execution_manifest(runs);
+    let mut violations = violations.to_vec();
+    violations.extend(manifest_violations);
+    let violations = violations.as_slice();
+
     let document = json!({
         "campaign": scope.campaign,
         "issue": scope.issue,
@@ -773,6 +778,7 @@ fn write_report(
         "passed": violations.is_empty(),
         "violations": violations,
         "environment": suite::environment(),
+        "observation": { "execution_manifest": manifest },
         "latency_status": {
             "status": "observational",
             "note": "No accepted document states a cancellation latency budget, so this campaign \
@@ -831,6 +837,52 @@ fn write_report(
     )
     .map_err(|error| format!("could not write {}: {error}", path.display()))?;
     Ok(path)
+}
+
+/// Hoists the execution manifest the reports recorded to the campaign report.
+///
+/// Each report records the object identity of the campaign's declared closure
+/// from inside its own checkout, and the evidence verifier reads that manifest
+/// from the top level of the retained campaign report — that is what binds the
+/// retained bytes to the tree they were produced on.
+///
+/// All four reports run in one campaign against one tree, so their manifests
+/// are expected to be identical, and this requires it rather than assuming it.
+/// Two reports that disagreed would mean the campaign ran across a tree that
+/// changed underneath it, which makes every observation in it a statement about
+/// no particular revision — a violation rather than something to average.
+fn execution_manifest(runs: &Runs) -> (Value, Vec<String>) {
+    let mut manifests = runs
+        .observations
+        .iter()
+        .filter_map(|(id, observation)| {
+            observation
+                .get("execution_manifest")
+                .map(|manifest| (id.clone(), manifest.clone()))
+        })
+        .collect::<Vec<_>>();
+
+    let Some((first_id, first)) = manifests.pop() else {
+        return (
+            Value::Null,
+            vec![
+                "no report recorded an execution manifest, so nothing says which tree the \
+                 campaign ran against"
+                    .to_owned(),
+            ],
+        );
+    };
+
+    let mut violations = Vec::new();
+    for (id, manifest) in &manifests {
+        if manifest != &first {
+            violations.push(format!(
+                "{id} and {first_id} recorded different execution manifests, so the campaign ran \
+                 against a tree that changed underneath it"
+            ));
+        }
+    }
+    (first, violations)
 }
 
 /// Every target this campaign ran and everything they retained.
