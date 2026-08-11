@@ -480,6 +480,7 @@ fn reconcile_latency(runs: &Runs) -> Vec<String> {
                         .unwrap_or("an unrecorded status")
                 ));
             }
+            violations.extend(reconcile_phase_cancellation_point(name, phase));
         }
         if number_at(
             observation,
@@ -491,6 +492,45 @@ fn reconcile_latency(runs: &Runs) -> Vec<String> {
                 "phase-separation retained no process-path intake-stop measurement".to_owned(),
             );
         }
+    }
+
+    violations
+}
+
+/// Requires one phase-separation phase to carry evidence that a target-phase
+/// worker was actually in flight when the cancellation was requested, rather
+/// than merely asserting the phase's own `passed` flag.
+///
+/// The phase-separation report is retained separately from this runner, so a
+/// producer that regresses back to timing-only evidence — or a hand-edited
+/// retained JSON — has to be caught here rather than trusted because the
+/// report once contained the right code. Both required fields must be present
+/// and `true`; `false`, missing, or a non-boolean value are all violations,
+/// which is what makes this fail closed rather than fail open on an
+/// unrecognised shape.
+fn reconcile_phase_cancellation_point(name: &str, phase: &Value) -> Vec<String> {
+    let mut violations = Vec::new();
+    let point = phase.get("cancellation_point");
+
+    if point
+        .and_then(|point| point.get("target_phase_entered_before_request"))
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        violations.push(format!(
+            "the {name} phase retained no evidence that a target-phase worker entered the phase \
+             before the cancellation was requested"
+        ));
+    }
+    if point
+        .and_then(|point| point.get("target_worker_in_flight_at_request"))
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        violations.push(format!(
+            "the {name} phase retained no evidence that a target-phase worker was in flight at \
+             the moment the cancellation was requested"
+        ));
     }
 
     violations
@@ -1171,7 +1211,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        Report, Runs, non_empty_str, postgres_major, reconcile_recovery, verify_matrix_identity,
+        Report, Runs, non_empty_str, postgres_major, reconcile_phase_cancellation_point,
+        reconcile_recovery, verify_matrix_identity,
     };
 
     /// A fully identified database observation: present, non-empty major and
@@ -1363,5 +1404,85 @@ mod tests {
         );
         let violations = reconcile_recovery(&runs);
         assert!(violations.is_empty());
+    }
+
+    /// A phase entry carrying both required cancellation-point booleans,
+    /// shaped like `phase_separation`'s producer emits.
+    fn phase_with_cancellation_point(entered: bool, in_flight: bool) -> serde_json::Value {
+        json!({
+            "phase": "async",
+            "cancellation_point": {
+                "target_phase_entered_before_request": entered,
+                "target_worker_in_flight_at_request": in_flight,
+            },
+        })
+    }
+
+    #[test]
+    fn phase_cancellation_point_passes_when_both_observations_are_true() {
+        let phase = phase_with_cancellation_point(true, true);
+        assert!(reconcile_phase_cancellation_point("async", &phase).is_empty());
+    }
+
+    #[test]
+    fn phase_cancellation_point_fails_closed_when_entry_evidence_is_missing() {
+        let phase = json!({
+            "phase": "async",
+            "cancellation_point": {
+                "target_worker_in_flight_at_request": true,
+            },
+        });
+        let violations = reconcile_phase_cancellation_point("async", &phase);
+        assert!(
+            !violations.is_empty(),
+            "a missing entry observation must fail even when the in-flight observation is present"
+        );
+    }
+
+    #[test]
+    fn phase_cancellation_point_fails_closed_when_entry_evidence_is_false() {
+        let phase = phase_with_cancellation_point(false, true);
+        let violations = reconcile_phase_cancellation_point("async", &phase);
+        assert!(
+            !violations.is_empty(),
+            "a false entry observation must fail, not be treated as absent-and-ignored"
+        );
+    }
+
+    #[test]
+    fn phase_cancellation_point_fails_closed_when_in_flight_evidence_is_missing() {
+        let phase = json!({
+            "phase": "blocking",
+            "cancellation_point": {
+                "target_phase_entered_before_request": true,
+            },
+        });
+        let violations = reconcile_phase_cancellation_point("blocking", &phase);
+        assert!(
+            !violations.is_empty(),
+            "a missing in-flight observation must fail even when entry was observed"
+        );
+    }
+
+    #[test]
+    fn phase_cancellation_point_fails_closed_when_in_flight_evidence_is_false() {
+        let phase = phase_with_cancellation_point(true, false);
+        let violations = reconcile_phase_cancellation_point("transaction", &phase);
+        assert!(
+            !violations.is_empty(),
+            "a false in-flight observation must fail, not be treated as absent-and-ignored"
+        );
+    }
+
+    #[test]
+    fn phase_cancellation_point_fails_closed_when_the_whole_object_is_absent() {
+        let phase = json!({ "phase": "async" });
+        let violations = reconcile_phase_cancellation_point("async", &phase);
+        assert_eq!(
+            violations.len(),
+            2,
+            "an entirely missing cancellation_point object must fail both checks, not be treated \
+             as an unrecognised-but-tolerated shape"
+        );
     }
 }
