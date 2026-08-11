@@ -261,28 +261,73 @@ fn reconcile(scope: &Scope, runs: &Runs) -> Vec<String> {
     violations
 }
 
-/// Requires a database report to name the matrix point the campaign ran at.
+/// Requires a database report to name the matrix point it ran at.
+///
+/// Presence of the major and the full server version is required
+/// unconditionally, whether or not `OXIDEBATCH_CAMPAIGN_MATRIX` is set: a
+/// report retained without them is invisible to every check downstream that
+/// keys off the major, including the cross-report consensus in
+/// [`postgres_major`]. The variable, when set, additionally requires the
+/// observed major to equal the matrix point the campaign was told it ran at.
 fn reconcile_matrix_point(id: &str, observation: &Value) -> Vec<String> {
-    let Some(expected) = env::var(suite::MATRIX)
-        .ok()
-        .filter(|value| !value.is_empty())
-    else {
-        return Vec::new();
-    };
-    let expected = expected
-        .rsplit_once('-')
-        .map_or(expected.clone(), |(_, major)| major.to_owned());
-    let observed = observation
-        .get("postgres_major_version")
-        .and_then(Value::as_str);
+    verify_matrix_identity(id, expected_matrix_major().as_deref(), observation)
+}
 
-    if observed == Some(expected.as_str()) {
-        return Vec::new();
+/// Extracts the `PostgreSQL` major the campaign was configured to run at.
+///
+/// `OXIDEBATCH_CAMPAIGN_MATRIX` names a matrix point such as `postgres-15`;
+/// only the major after the last hyphen is meaningful to a database report.
+fn expected_matrix_major() -> Option<String> {
+    let raw = env::var(suite::MATRIX)
+        .ok()
+        .filter(|value| !value.is_empty())?;
+    Some(
+        raw.rsplit_once('-')
+            .map_or_else(|| raw.clone(), |(_, major)| major.to_owned()),
+    )
+}
+
+/// Checks one database report's recorded identity against an optional
+/// expected major.
+///
+/// Pure and independent of the environment, so it is exercised directly by
+/// unit tests rather than through a process-global variable: presence of
+/// `postgres_major_version` and `server_version` is required regardless of
+/// `expected`, and `expected`, when given, must equal the observed major.
+fn verify_matrix_identity(id: &str, expected: Option<&str>, observation: &Value) -> Vec<String> {
+    let mut violations = Vec::new();
+
+    let major = non_empty_str(observation, "postgres_major_version");
+    if major.is_none() {
+        violations.push(format!(
+            "{id} retained no PostgreSQL major version, so this campaign cannot tell which \
+             matrix point it ran against"
+        ));
     }
-    vec![format!(
-        "{id} ran against PostgreSQL {} and this campaign run is {expected}",
-        observed.unwrap_or("an unrecorded version"),
-    )]
+    if non_empty_str(observation, "server_version").is_none() {
+        violations.push(format!(
+            "{id} retained no PostgreSQL server version, so this campaign cannot tell which \
+             matrix point it ran against"
+        ));
+    }
+
+    if let (Some(expected), Some(major)) = (expected, major)
+        && major != expected
+    {
+        violations.push(format!(
+            "{id} ran against PostgreSQL {major} and this campaign run is {expected}"
+        ));
+    }
+
+    violations
+}
+
+/// Reads a non-empty string field from an observation.
+fn non_empty_str<'a>(document: &'a Value, name: &str) -> Option<&'a str> {
+    document
+        .get(name)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
 }
 
 /// Requires every observation the denominator declares to have been taken.
@@ -662,6 +707,18 @@ fn reconcile_recovery(runs: &Runs) -> Vec<String> {
         ];
     };
 
+    let committed_before_cancellation = observation
+        .get("cancelled_attempt")
+        .and_then(|attempt| attempt.get("committed_partitions"))
+        .and_then(Value::as_u64);
+    if committed_before_cancellation.unwrap_or(0) == 0 {
+        violations.push(
+            "the cancelled attempt committed no partitions before it was cancelled, so a \
+             restart that re-ran nothing proves nothing was preserved"
+                .to_owned(),
+        );
+    }
+
     for (path, requirement) in [
         (
             ["restart", "same_instance"],
@@ -767,7 +824,7 @@ fn write_report(
     let path = directory.join(REPORT);
 
     let (manifest, manifest_violations) = execution_manifest(runs);
-    let (major, major_violations) = postgres_major(runs);
+    let (major, major_violations) = postgres_major(&scope.reports, runs);
     let mut violations = violations.to_vec();
     violations.extend(manifest_violations);
     violations.extend(major_violations);
@@ -892,23 +949,31 @@ fn execution_manifest(runs: &Runs) -> (Value, Vec<String>) {
 ///
 /// Recorded at the top level of the campaign report because that is where the
 /// evidence verifier reads it when checking that a retained report is filed
-/// under the major it actually ran against. Every database report records its
-/// own, and they must agree: two reports of one campaign run against different
-/// servers would make the campaign a result about neither.
-fn postgres_major(runs: &Runs) -> (Option<String>, Vec<String>) {
-    let observed = runs
-        .observations
-        .values()
-        .filter_map(|observation| {
-            observation
-                .get("postgres_major_version")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        })
-        .collect::<BTreeSet<_>>();
+/// under the major it actually ran against. Computed from the reports the
+/// scope declares `against_database` rather than by filtering whichever
+/// observations happen to carry a major: a report that retained none must stop
+/// the hoist rather than be silently excluded from the consensus it is
+/// supposed to be part of. Every database report records its own, and they
+/// must agree: two reports of one campaign run against different servers would
+/// make the campaign a result about neither.
+fn postgres_major(reports: &[Report], runs: &Runs) -> (Option<String>, Vec<String>) {
+    let mut majors = BTreeSet::new();
+    for report in reports.iter().filter(|report| report.against_database) {
+        let major = runs
+            .observations
+            .get(&report.id)
+            .and_then(|observation| non_empty_str(observation, "postgres_major_version"));
+        let Some(major) = major else {
+            // The missing identity is already reported by
+            // `reconcile_matrix_point` for this report; here it only has to
+            // stop the hoist from completing on a partial consensus.
+            return (None, Vec::new());
+        };
+        majors.insert(major.to_owned());
+    }
 
-    match observed.len() {
-        1 => (observed.into_iter().next(), Vec::new()),
+    match majors.len() {
+        1 => (majors.into_iter().next(), Vec::new()),
         0 => (
             None,
             vec![
@@ -922,8 +987,8 @@ fn postgres_major(runs: &Runs) -> (Option<String>, Vec<String>) {
             vec![format!(
                 "the reports ran against {} different PostgreSQL majors ({}), so this campaign \
                  run is a result about none of them",
-                observed.len(),
-                observed.into_iter().collect::<Vec<_>>().join(", ")
+                majors.len(),
+                majors.into_iter().collect::<Vec<_>>().join(", ")
             )],
         ),
     }
@@ -1099,4 +1164,204 @@ fn number(document: &Value, name: &str) -> Result<u64, String> {
         .get(name)
         .and_then(Value::as_u64)
         .ok_or_else(|| format!("a scope entry has no numeric {name}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{
+        Report, Runs, non_empty_str, postgres_major, reconcile_recovery, verify_matrix_identity,
+    };
+
+    /// A fully identified database observation: present, non-empty major and
+    /// server version, agreeing with `major`.
+    fn identified(major: &str, server: &str) -> serde_json::Value {
+        json!({
+            "postgres_major_version": major,
+            "server_version": server,
+        })
+    }
+
+    #[test]
+    fn identity_passes_when_matrix_env_is_unset_and_identity_is_recorded() {
+        let observation = identified("15", "15.4 (Debian 15.4-1)");
+        assert!(verify_matrix_identity("db-report", None, &observation).is_empty());
+    }
+
+    #[test]
+    fn identity_fails_closed_on_missing_major_without_matrix_env() {
+        let observation = json!({ "server_version": "15.4" });
+        let violations = verify_matrix_identity("db-report", None, &observation);
+        assert!(
+            !violations.is_empty(),
+            "a missing major must fail even with no expected matrix point configured"
+        );
+    }
+
+    #[test]
+    fn identity_fails_closed_on_missing_server_version_without_matrix_env() {
+        let observation = json!({ "postgres_major_version": "15" });
+        let violations = verify_matrix_identity("db-report", None, &observation);
+        assert!(
+            !violations.is_empty(),
+            "a missing server version must fail even with no expected matrix point configured"
+        );
+    }
+
+    #[test]
+    fn identity_fails_on_missing_major_with_matrix_env_set() {
+        let observation = json!({ "server_version": "15.4" });
+        let violations = verify_matrix_identity("db-report", Some("15"), &observation);
+        assert!(!violations.is_empty());
+    }
+
+    #[test]
+    fn identity_fails_on_missing_server_version_with_matrix_env_set() {
+        let observation = json!({ "postgres_major_version": "15" });
+        let violations = verify_matrix_identity("db-report", Some("15"), &observation);
+        assert!(!violations.is_empty());
+    }
+
+    #[test]
+    fn identity_fails_when_observed_major_disagrees_with_expected() {
+        let observation = identified("18", "18.0");
+        let violations = verify_matrix_identity("db-report", Some("15"), &observation);
+        assert!(!violations.is_empty());
+    }
+
+    #[test]
+    fn identity_passes_when_observed_major_matches_expected() {
+        let observation = identified("15", "15.4");
+        assert!(verify_matrix_identity("db-report", Some("15"), &observation).is_empty());
+    }
+
+    #[test]
+    fn identity_treats_empty_strings_as_absent() {
+        let observation = json!({ "postgres_major_version": "", "server_version": "" });
+        let violations = verify_matrix_identity("db-report", None, &observation);
+        assert_eq!(
+            violations.len(),
+            2,
+            "an empty string is not a recorded identity"
+        );
+    }
+
+    #[test]
+    fn non_empty_str_rejects_blank_and_absent_fields() {
+        let observation = json!({ "a": "", "b": "x" });
+        assert_eq!(non_empty_str(&observation, "a"), None);
+        assert_eq!(non_empty_str(&observation, "b"), Some("x"));
+        assert_eq!(non_empty_str(&observation, "missing"), None);
+    }
+
+    /// Builds a minimal against-database report the way the committed scope
+    /// declares its four.
+    fn db_report(id: &str) -> Report {
+        Report {
+            id: id.to_owned(),
+            package: "oxide-batch".to_owned(),
+            target: "postgres_cancellation".to_owned(),
+            name: id.to_owned(),
+            fixture: Some("postgres-cancellation".to_owned()),
+            against_database: true,
+        }
+    }
+
+    #[test]
+    fn postgres_major_hoists_when_every_report_agrees() {
+        let reports = vec![db_report("operator-stop"), db_report("phase-separation")];
+        let mut runs = Runs::default();
+        runs.observations.insert(
+            "operator-stop".to_owned(),
+            identified("15", "15.4 (Debian 15.4-1)"),
+        );
+        runs.observations.insert(
+            "phase-separation".to_owned(),
+            identified("15", "15.4 (Debian 15.4-1)"),
+        );
+
+        let (major, violations) = postgres_major(&reports, &runs);
+        assert_eq!(major.as_deref(), Some("15"));
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn postgres_major_refuses_mixed_majors_across_reports() {
+        let reports = vec![db_report("operator-stop"), db_report("phase-separation")];
+        let mut runs = Runs::default();
+        runs.observations.insert(
+            "operator-stop".to_owned(),
+            identified("15", "15.4 (Debian 15.4-1)"),
+        );
+        runs.observations.insert(
+            "phase-separation".to_owned(),
+            identified("18", "18.0 (Debian 18.0-1)"),
+        );
+
+        let (major, violations) = postgres_major(&reports, &runs);
+        assert!(major.is_none());
+        assert!(!violations.is_empty());
+    }
+
+    #[test]
+    fn postgres_major_does_not_hoist_a_partial_consensus() {
+        // One report never recorded a major at all. Its own reconciliation
+        // fails it separately (`verify_matrix_identity`); the point checked
+        // here is that the other report's agreeing major cannot be hoisted as
+        // if it spoke for both.
+        let reports = vec![db_report("operator-stop"), db_report("phase-separation")];
+        let mut runs = Runs::default();
+        runs.observations.insert(
+            "operator-stop".to_owned(),
+            identified("15", "15.4 (Debian 15.4-1)"),
+        );
+        runs.observations
+            .insert("phase-separation".to_owned(), json!({}));
+
+        let (major, _violations) = postgres_major(&reports, &runs);
+        assert!(
+            major.is_none(),
+            "a report with no recorded major must not be silently dropped from the consensus"
+        );
+    }
+
+    /// A restart observation shaped like `restart_after_cancellation`'s, with
+    /// the given prior commit count and every other check satisfied.
+    fn restart_observation(committed_partitions: u64) -> serde_json::Value {
+        json!({
+            "cancelled_attempt": { "committed_partitions": committed_partitions },
+            "restart": {
+                "same_instance": true,
+                "new_execution": true,
+                "committed_partitions_re_run": [],
+                "batch_status": "COMPLETED",
+            },
+        })
+    }
+
+    #[test]
+    fn recovery_rejects_a_restart_with_no_prior_committed_work() {
+        let mut runs = Runs::default();
+        runs.observations.insert(
+            "restart-after-cancellation".to_owned(),
+            restart_observation(0),
+        );
+        let violations = reconcile_recovery(&runs);
+        assert!(
+            !violations.is_empty(),
+            "zero committed partitions before cancellation makes zero rerun vacuous, not evidence"
+        );
+    }
+
+    #[test]
+    fn recovery_accepts_a_restart_with_prior_committed_work() {
+        let mut runs = Runs::default();
+        runs.observations.insert(
+            "restart-after-cancellation".to_owned(),
+            restart_observation(1),
+        );
+        let violations = reconcile_recovery(&runs);
+        assert!(violations.is_empty());
+    }
 }
