@@ -64,7 +64,8 @@ mod cancellation;
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::num::{NonZeroU64, NonZeroUsize};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use oxide_batch::{
@@ -142,9 +143,12 @@ async fn operator_stop(runtime: String, migrator: String) -> Result<Value, Box<d
         &job_name,
         &keys,
         WorkerKind::Cancellable,
-        &occupancy,
-        &Arc::new(Mutex::new(BTreeMap::new())),
-        &harness.repository,
+        &WorkerDeps {
+            occupancy: &occupancy,
+            invocations: &Arc::new(Mutex::new(BTreeMap::new())),
+            repository: &harness.repository,
+        },
+        None,
     )?;
     let parameters = run_parameters("operator")?;
     let key = JobInstanceKey::new(JobName::new(&job_name)?, &parameters);
@@ -382,14 +386,23 @@ async fn phase_separation(runtime: String, migrator: String) -> Result<Value, Bo
 
         let occupancy = Arc::new(Occupancy::new());
         let keys = partition_keys(scope.workload.partitions);
+        // Test-only coordination for this phase's cancellation point. Not a
+        // generic synchronization framework and not a production hook: it is
+        // the smallest primitive that lets the cancel side observe, rather
+        // than assume from worker_work_millis, that a target-phase worker is
+        // actually in flight before it requests a stop. See its doc comment.
+        let gate = Arc::new(PhaseGate::new());
         let job = build_job(
             &scope,
             &job_name,
             &keys,
             kind,
-            &occupancy,
-            &Arc::new(Mutex::new(BTreeMap::new())),
-            &harness.repository,
+            &WorkerDeps {
+                occupancy: &occupancy,
+                invocations: &Arc::new(Mutex::new(BTreeMap::new())),
+                repository: &harness.repository,
+            },
+            Some(&gate),
         )?;
         let parameters = run_parameters(phase)?;
         let key = JobInstanceKey::new(JobName::new(&job_name)?, &parameters);
@@ -407,9 +420,8 @@ async fn phase_separation(runtime: String, migrator: String) -> Result<Value, Bo
             let execution = await_running_execution(&harness.repository, &key, OBSERVATION_LIMIT)
                 .await?
                 .ok_or_else(|| Failure::boxed("the launch created no execution to cancel"))?;
-            // As in the operator-path report, the stop is requested only once
-            // the declared cancellation point holds: a partition has durably
-            // committed and later workers are still in flight.
+            // The declared cancellation point's first half: a partition has
+            // durably committed.
             harness
                 .watcher
                 .await_completed_partitions(execution.id(), 1, OBSERVATION_LIMIT)
@@ -420,8 +432,30 @@ async fn phase_separation(runtime: String, migrator: String) -> Result<Value, Bo
                          nothing to preserve"
                     ))
                 })?;
+            // The second half: a target-phase worker is actually in flight.
+            // `gate.await_entered` observes a sticky mark the worker itself
+            // set on reaching the phase, not `Occupancy::active() > 0`, which
+            // would be a check-then-act race between this read and the
+            // request below.
+            if !gate.await_entered(OBSERVATION_LIMIT).await {
+                return Err(Failure::boxed(format!(
+                    "no worker was observed entering the {phase} phase before the observation \
+                     limit, so the declared cancellation point was not proven"
+                )));
+            }
+            let workers_in_flight_at_request = occupancy.active();
+
             request_stop(&harness.repository, &execution).await?;
             let requested_at = Instant::now();
+            if matches!(kind, WorkerKind::Blocking) {
+                // The blocking body cannot observe the cooperative stop
+                // token, so it was held open on the gate until here: the
+                // request above has already committed, so releasing it now
+                // is proof the worker was still inside its synchronous body
+                // when the request happened.
+                gate.release();
+            }
+
             let intake = harness
                 .watcher
                 .await_status(execution.id(), &["STOPPING"], OBSERVATION_LIMIT)
@@ -434,12 +468,13 @@ async fn phase_separation(runtime: String, migrator: String) -> Result<Value, Bo
                 requested_at,
                 intake.map(|(at, _)| at),
                 terminal.map(|(at, _)| at),
+                workers_in_flight_at_request,
             ))
         };
 
         let (launched, cancelled) = tokio::join!(launch, cancel);
         let launched = launched?;
-        let (requested_at, intake_at, terminal_at) = cancelled?;
+        let (requested_at, intake_at, terminal_at, workers_in_flight_at_request) = cancelled?;
 
         let status = launched.job_execution().metadata().status();
         let to_intake = intake_at.map(|at| at - requested_at);
@@ -462,6 +497,12 @@ async fn phase_separation(runtime: String, migrator: String) -> Result<Value, Bo
                  measured"
             ));
         }
+        if workers_in_flight_at_request == 0 {
+            violations.push(format!(
+                "the {phase} phase reported no workers in flight at the moment the cancellation \
+                 was requested, even though a worker had marked entry into the phase"
+            ));
+        }
 
         phases.push(json!({
             "phase": phase,
@@ -472,7 +513,22 @@ async fn phase_separation(runtime: String, migrator: String) -> Result<Value, Bo
             "exit_status": launched.job_execution().metadata().exit_status().to_string(),
             "outcome": format!("{:?}", launched.outcome()),
             "workers_active_after_return": occupancy.active(),
-            "stop_timings": kind.expected_timing(),
+            "stop_timing_contract": kind.expected_timing(),
+            "stop_timing_contract_note": "A static description of what the accepted StopTiming \
+                                          contract promises for this mechanism, not a measurement \
+                                          of this run. See cancellation_point for what this run \
+                                          actually observed.",
+            "cancellation_point": {
+                "target_phase_entered_before_request": true,
+                "workers_in_flight_at_request": workers_in_flight_at_request,
+                "target_worker_in_flight_at_request": workers_in_flight_at_request > 0,
+                "mechanism": "a test-only PhaseGate the target-phase worker marks synchronously \
+                              on reaching the phase; the cancel side polls the sticky mark, never \
+                              occupancy, before requesting a stop, and the worker cannot leave the \
+                              phase again except by observing the very stop about to be requested \
+                              (async, transaction) or an explicit release granted only after that \
+                              request durably commits (blocking)",
+            },
         }));
 
         harness.close(&migrator, &job_name).await?;
@@ -769,9 +825,12 @@ async fn restart_after_cancellation(
         &job_name,
         &keys,
         WorkerKind::Cancellable,
-        &occupancy,
-        &invocations,
-        &harness.repository,
+        &WorkerDeps {
+            occupancy: &occupancy,
+            invocations: &invocations,
+            repository: &harness.repository,
+        },
+        None,
     )?;
     let parameters = run_parameters("restart")?;
     let key = JobInstanceKey::new(JobName::new(&job_name)?, &parameters);
@@ -1315,16 +1374,139 @@ impl WorkerKind {
     }
 }
 
+/// Deterministic phase-entry and phase-exit coordination for the
+/// phase-separation report only.
+///
+/// Test-only, and the smallest primitive that proves the workload's declared
+/// cancellation point rather than assuming it: "after the first partition has
+/// committed and while later workers are in flight" (`campaign-scope.json`'s
+/// own words). Reading `Occupancy::active() > 0` and immediately requesting a
+/// stop is a check-then-act race — the worker it saw active can finish and
+/// leave between that read and the request. `entered` is sticky instead: once
+/// a worker marks it, that worker cannot leave the phase again except by
+/// observing the very stop the cancel side is about to request (async,
+/// transaction) or an explicit release the cancel side grants only after that
+/// request has durably committed (blocking). So once the cancel side has
+/// observed `entered`, the phase stays occupied until the cancel side itself
+/// acts, and there is no gap left for a stale read to fall into.
+struct PhaseGate {
+    entered: AtomicBool,
+    release: Mutex<bool>,
+    released: Condvar,
+}
+
+impl PhaseGate {
+    /// Opens a gate with nothing entered and nothing released.
+    fn new() -> Self {
+        Self {
+            entered: AtomicBool::new(false),
+            release: Mutex::new(false),
+            released: Condvar::new(),
+        }
+    }
+
+    /// Marks that a worker has reached the target phase. Idempotent, and safe
+    /// to call from either an async task or a blocking-pool thread.
+    fn mark_entered(&self) {
+        self.entered.store(true, Ordering::SeqCst);
+    }
+
+    /// Waits, bounded, for a worker to have reached the target phase.
+    ///
+    /// Polls rather than parking on a notification, deliberately: `entered` is
+    /// sticky, so a poll that observes it late observes it just as validly as
+    /// one that observes it the instant it is set, and this avoids the lost-
+    /// wakeup a one-shot `Notify` would risk if `mark_entered` ran before this
+    /// function's first poll.
+    async fn await_entered(&self, limit: Duration) -> bool {
+        let deadline = Instant::now() + limit;
+        loop {
+            if self.entered.load(Ordering::SeqCst) {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    }
+
+    /// Releases every blocking worker currently inside [`Self::wait_for_release`].
+    ///
+    /// Called only after the cancellation request has durably committed, which
+    /// is what makes a released worker's synchronous body proof that it was
+    /// still running at the moment the request happened.
+    fn release(&self) {
+        *self.release.lock().unwrap_or_else(PoisonError::into_inner) = true;
+        self.released.notify_all();
+    }
+
+    /// Blocks the calling (blocking-pool) thread until [`Self::release`] is
+    /// called.
+    fn wait_for_release(&self) {
+        let mut released = self.release.lock().unwrap_or_else(PoisonError::into_inner);
+        while !*released {
+            released = self
+                .released
+                .wait(released)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+}
+
+/// How one partition's worker is driven.
+///
+/// Every report but phase-separation builds every worker as [`Self::Timed`],
+/// which is the original behavior: race the fixed work duration against the
+/// cooperative stop, or, for a blocking worker, run it unconditionally.
+/// Phase-separation instead needs one partition that produces durable
+/// committed work fast and one or more partitions that deterministically stay
+/// inside the target phase until the cancel side has actually requested a
+/// stop, rather than for as long as a fixed sleep happens to still be running.
+#[derive(Clone)]
+enum WorkerRole {
+    /// Races `work` against the cooperative stop (async, transaction) or runs
+    /// it unconditionally (blocking). The only role every report but
+    /// phase-separation uses.
+    Timed,
+    /// Completes immediately, with no phase to enter and nothing to wait for.
+    /// Phase-separation's fast partition, which exists only to produce durable
+    /// committed work before the target-phase worker is asked about.
+    Committer,
+    /// Marks entry on the shared gate, then stays inside the phase
+    /// deterministically: async and transactional workers await the
+    /// cooperative stop unconditionally, which cannot resolve before the
+    /// request that is about to be made; the blocking worker blocks on an
+    /// explicit release the cancel side grants only after that request has
+    /// committed.
+    Gated(Arc<PhaseGate>),
+}
+
+/// The dependencies a report's workers are built against.
+struct WorkerDeps<'a> {
+    occupancy: &'a Arc<Occupancy>,
+    invocations: &'a Arc<Mutex<BTreeMap<String, usize>>>,
+    repository: &'a PostgresJobRepository,
+}
+
 /// Builds the partitioned job a report cancels.
+///
+/// `gate` is `Some` only for the phase-separation report. When it is, the
+/// first of `keys` is built as [`WorkerRole::Committer`] and every other key
+/// as [`WorkerRole::Gated`]; when it is `None`, every key is
+/// [`WorkerRole::Timed`], which is exactly the original, ungated behavior
+/// every other report still runs under.
 fn build_job(
     scope: &Scope,
     job_name: &str,
     keys: &[String],
     kind: WorkerKind,
-    occupancy: &Arc<Occupancy>,
-    invocations: &Arc<Mutex<BTreeMap<String, usize>>>,
-    repository: &PostgresJobRepository,
+    deps: &WorkerDeps<'_>,
+    gate: Option<&Arc<PhaseGate>>,
 ) -> Result<FlowJob, Box<dyn Error>> {
+    let occupancy = deps.occupancy;
+    let invocations = deps.invocations;
+    let repository = deps.repository;
     let name = JobName::new(job_name)?;
     let manager = NodeId::new("partitioned")?;
     let worker_name = StepName::new("worker")?;
@@ -1361,10 +1543,43 @@ fn build_job(
     let invocations = Arc::clone(invocations);
     let repository = repository.clone();
     let lookup = JobInstanceKey::new(JobName::new(job_name)?, &run_parameters("worker")?);
+    // Only meaningful together with `gate`: the phase-separation report's
+    // fast partition, which produces durable committed work without ever
+    // entering the target phase. `None` for every other report, so every key
+    // there is `WorkerRole::Timed` and behavior is unchanged.
+    let committer_key = gate.and_then(|_| keys.first().cloned());
+    // Also only meaningful together with `gate`, and only for the blocking
+    // kind. Async and transaction workers stay in their `Gated` role forever
+    // except by observing a real stop, so gating every non-committer key is
+    // safe: none of them can complete on its own. A blocking worker cannot
+    // observe the cooperative stop at all, so its `Gated` role instead exits
+    // through an explicit release, and `PhaseGate::release`'s single sticky
+    // flag would let *every* later key return the instant it reached the
+    // gate — racing the whole job to completion before the launcher's poll
+    // ever caught up with the request. Restricting `Gated` to exactly one
+    // later key keeps that flag safe (there is only ever one caller of
+    // `wait_for_release`) and leaves every other key `Timed`, so once the
+    // gated key is released the very next blocking worker to take its place
+    // still sleeps `work` and gives the poll interval the same margin it
+    // always had.
+    let blocking_target_key = gate.and_then(|_| keys.get(1).cloned());
+    let gate = gate.cloned();
     let factory = PartitionTaskletFactory::new(worker_name, move |input| {
         let key = input.key().as_str().to_owned();
         let occupancy = Arc::clone(&occupancy);
         let invocations = Arc::clone(&invocations);
+        let role = match (&gate, &committer_key) {
+            (Some(_), Some(committer)) if *committer == key => WorkerRole::Committer,
+            (Some(gate), Some(_)) if matches!(kind, WorkerKind::Blocking) => {
+                if blocking_target_key.as_deref() == Some(key.as_str()) {
+                    WorkerRole::Gated(Arc::clone(gate))
+                } else {
+                    WorkerRole::Timed
+                }
+            }
+            (Some(gate), Some(_)) => WorkerRole::Gated(Arc::clone(gate)),
+            _ => WorkerRole::Timed,
+        };
         match kind {
             WorkerKind::Blocking => TaskletStep::new(
                 factory_name.clone(),
@@ -1374,6 +1589,7 @@ fn build_job(
                         invocations,
                         work,
                         key,
+                        role,
                     },
                     NonZeroUsize::MIN,
                 )),
@@ -1387,6 +1603,7 @@ fn build_job(
                     lookup: lookup.clone(),
                     work,
                     key,
+                    role,
                 }),
             ),
             WorkerKind::Cancellable => TaskletStep::new(
@@ -1396,6 +1613,7 @@ fn build_job(
                     invocations,
                     work,
                     key,
+                    role,
                 }),
             ),
         }
@@ -1410,6 +1628,7 @@ struct CancellableWorker {
     invocations: Arc<Mutex<BTreeMap<String, usize>>>,
     work: Duration,
     key: String,
+    role: WorkerRole,
 }
 
 impl Tasklet for CancellableWorker {
@@ -1424,13 +1643,29 @@ impl Tasklet for CancellableWorker {
             }
             let stop: &StopToken = context.stop_token();
 
-            // A bounded await as the work, raced against the accepted
-            // cooperative token. Racing rather than polling is what makes the
-            // stop observable *during* execution, which is the async phase the
-            // accepted plan asks to see measured separately.
-            let outcome = tokio::select! {
-                () = tokio::time::sleep(self.work) => TaskletOutcome::Completed,
-                () = stop.cancelled() => TaskletOutcome::Stopped,
+            let outcome = match &self.role {
+                // A bounded await as the work, raced against the accepted
+                // cooperative token. Racing rather than polling is what makes
+                // the stop observable *during* execution, which is the async
+                // phase the accepted plan asks to see measured separately.
+                WorkerRole::Timed => tokio::select! {
+                    () = tokio::time::sleep(self.work) => TaskletOutcome::Completed,
+                    () = stop.cancelled() => TaskletOutcome::Stopped,
+                },
+                // The phase-separation report's fast partition: no phase to
+                // enter, nothing to wait for.
+                WorkerRole::Committer => TaskletOutcome::Completed,
+                // Marks entry, then awaits the cooperative stop
+                // unconditionally rather than racing it against `work`. The
+                // launcher only cancels this token after it has observed the
+                // durable stop request the cancel side is about to make, so
+                // this cannot resolve before that request — no dependency on
+                // how long `work` would have taken.
+                WorkerRole::Gated(gate) => {
+                    gate.mark_entered();
+                    stop.cancelled().await;
+                    TaskletOutcome::Stopped
+                }
             };
             self.occupancy.leave();
             Ok(outcome)
@@ -1452,6 +1687,7 @@ struct TransactionalWorker {
     lookup: JobInstanceKey,
     work: Duration,
     key: String,
+    role: WorkerRole,
 }
 
 impl Tasklet for TransactionalWorker {
@@ -1466,23 +1702,47 @@ impl Tasklet for TransactionalWorker {
             }
             let stop: &StopToken = context.stop_token();
 
-            // The stop is raced while a repository transaction is open, so what
-            // this phase measures is a cancellation that has a transaction to
-            // resolve before it can reach a durable terminal.
-            let outcome = match self.repository.begin().await {
-                Ok(mut unit) => {
-                    let _ = unit.find_job_instance(&self.lookup).await;
-                    let observed = tokio::select! {
-                        () = tokio::time::sleep(self.work) => TaskletOutcome::Completed,
-                        () = stop.cancelled() => TaskletOutcome::Stopped,
-                    };
-                    // Rolled back rather than dropped: an open transaction that
-                    // is dropped at cancellation is precisely the ambiguity the
-                    // accepted contract refuses to manufacture.
-                    let _ = unit.rollback().await;
-                    observed
+            // The phase-separation report's fast partition never opens a
+            // transaction: it has no phase to enter and nothing to wait for.
+            let outcome = if matches!(self.role, WorkerRole::Committer) {
+                TaskletOutcome::Completed
+            } else {
+                // The stop is observed while a repository transaction is
+                // open, so what this phase measures is a cancellation that
+                // has a transaction to resolve before it can reach a durable
+                // terminal.
+                match self.repository.begin().await {
+                    Ok(mut unit) => {
+                        let _ = unit.find_job_instance(&self.lookup).await;
+                        // The outer `if` already ruled out `Committer`, so
+                        // only `Gated` and `Timed` remain here.
+                        let observed = if let WorkerRole::Gated(gate) = &self.role {
+                            // The transaction is genuinely open before entry
+                            // is marked, so the cancel side cannot observe
+                            // entry before there is a transaction to resolve.
+                            // Then, as in the async phase, awaiting the
+                            // cooperative stop unconditionally rather than
+                            // racing it against `work` is what makes this
+                            // independent of how long `work` would have
+                            // taken.
+                            gate.mark_entered();
+                            stop.cancelled().await;
+                            TaskletOutcome::Stopped
+                        } else {
+                            tokio::select! {
+                                () = tokio::time::sleep(self.work) => TaskletOutcome::Completed,
+                                () = stop.cancelled() => TaskletOutcome::Stopped,
+                            }
+                        };
+                        // Rolled back rather than dropped: an open
+                        // transaction that is dropped at cancellation is
+                        // precisely the ambiguity the accepted contract
+                        // refuses to manufacture.
+                        let _ = unit.rollback().await;
+                        observed
+                    }
+                    Err(_) => TaskletOutcome::Stopped,
                 }
-                Err(_) => TaskletOutcome::Stopped,
             };
             self.occupancy.leave();
             Ok(outcome)
@@ -1496,6 +1756,7 @@ struct BlockingWorker {
     invocations: Arc<Mutex<BTreeMap<String, usize>>>,
     work: Duration,
     key: String,
+    role: WorkerRole,
 }
 
 impl BlockingTasklet for BlockingWorker {
@@ -1504,11 +1765,27 @@ impl BlockingTasklet for BlockingWorker {
         if let Ok(mut invocations) = self.invocations.lock() {
             *invocations.entry(self.key.clone()).or_default() += 1;
         }
-        // Once this starts it runs to completion even when stop is requested;
-        // the adapter reports the request afterwards. That late-stop
-        // limitation is the accepted contract and is exactly what the blocking
-        // phase measurement is about.
-        std::thread::sleep(self.work);
+        match &self.role {
+            // Once this starts it runs to completion even when stop is
+            // requested; the adapter reports the request afterwards. That
+            // late-stop limitation is the accepted contract and is exactly
+            // what the blocking phase measurement is about.
+            WorkerRole::Timed => std::thread::sleep(self.work),
+            // The phase-separation report's fast partition: no phase to
+            // enter, nothing to wait for.
+            WorkerRole::Committer => {}
+            // This body cannot observe the cooperative stop token at all —
+            // that is the phase's whole point — so instead of a fixed sleep
+            // it blocks on an explicit release. The cancel side grants that
+            // release only after its stop request has durably committed, so
+            // a released worker is proof it was still inside this body when
+            // the request happened, independent of how long `work` would
+            // have taken.
+            WorkerRole::Gated(gate) => {
+                gate.mark_entered();
+                gate.wait_for_release();
+            }
+        }
         self.occupancy.leave();
         Ok(TaskletOutcome::Completed)
     }
