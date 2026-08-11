@@ -92,6 +92,28 @@ const REQUIRED_OBSERVATIONS: &[&str] = &[
     "phase-separated-latency",
 ];
 
+/// The correctness requirements the campaign declares, and must assert.
+///
+/// Fixed here as well as in the scope because the two drifted once already: the
+/// document declared `no-partial-partition-is-recorded-complete` -- that no
+/// partition interrupted by the cancellation is recorded as completed -- while
+/// the report asserted something else and weaker-sounding, that no partition is
+/// left recorded as running. The second is the one that can be decided from a
+/// durable record, and it is now what both say. A declared requirement no
+/// report asserts is a denominator claiming more than the campaign delivers,
+/// which is the one thing a denominator must never do.
+const REQUIRED_CORRECTNESS: &[&str] = &[
+    "durable-terminal-is-stopped",
+    "intake-stop-precedes-durable-terminal",
+    "no-worker-outlives-its-parent",
+    "committed-work-is-preserved",
+    "no-partition-is-left-recorded-as-running",
+    "unjoined-count-equals-held-count",
+    "no-task-is-detached",
+    "restart-after-cancellation-is-a-new-execution",
+    "restart-does-not-rerun-committed-partitions",
+];
+
 /// The phases the accepted plan requires measured separately.
 const REQUIRED_PHASES: &[&str] = &["async", "blocking", "transaction"];
 
@@ -272,6 +294,29 @@ fn the_plan_still_requires_the_phases_measured_separately() -> Result<(), Box<dy
              maps no delivered mechanism onto it",
         );
     }
+    Ok(())
+}
+
+#[test]
+fn every_declared_correctness_requirement_is_one_the_campaign_asserts() -> Result<(), Box<dyn Error>>
+{
+    let scope = read_scope()?;
+    let declared = scope
+        .get("correctness")
+        .and_then(|correctness| correctness.get("requires"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| Failure("the scope declares no correctness requirements".to_owned()))?
+        .iter()
+        .filter_map(|entry| entry.get("id").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        declared, REQUIRED_CORRECTNESS,
+        "the campaign's declared correctness requirements changed; each one has to be a claim \
+         some report actually asserts, so a change here needs a matching change in \
+         postgres_cancellation.rs rather than only in the document",
+    );
     Ok(())
 }
 

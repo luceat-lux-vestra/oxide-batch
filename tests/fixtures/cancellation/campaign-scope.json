@@ -225,8 +225,9 @@
         "detail": "Cancellation is not a rollback of work that already reached durable storage. This is the checkpoint contract the campaign is most at risk of quietly breaking."
       },
       {
-        "id": "no-partial-partition-is-recorded-complete",
-        "requires": "no partition interrupted by the cancellation is recorded as completed"
+        "id": "no-partition-is-left-recorded-as-running",
+        "requires": "once the cancelled launch has returned, no partition is still recorded as running",
+        "detail": "Stated as what is actually checkable rather than as what would be more satisfying to claim. The stronger-sounding requirement -- that no partition interrupted by the cancellation is recorded as completed -- cannot be decided from the durable record, because a partition that committed microseconds before the stop landed and one that was interrupted and then completed normally are the same row. What can be decided is that nothing was abandoned mid-flight: a partition still marked running after its parent reached a terminal status is durable state no recovery path would resolve. An earlier version of this document claimed the undecidable form while the report asserted this one."
       },
       {
         "id": "unjoined-count-equals-held-count",

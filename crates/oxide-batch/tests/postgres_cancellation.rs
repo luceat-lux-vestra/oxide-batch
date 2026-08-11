@@ -251,7 +251,9 @@ async fn operator_stop(runtime: String, migrator: String) -> Result<Value, Box<d
         .any(|partition| partition.status == BatchStatus::Started)
     {
         violations.push(
-            "a partition interrupted by the cancellation is still recorded as running".to_owned(),
+            "a partition is still recorded as running after the cancelled attempt reached a \
+             terminal status"
+                .to_owned(),
         );
     }
     match (to_intake_stop, to_durable_terminal) {
