@@ -2257,44 +2257,46 @@ reconciles perfectly inside a run of another.
 
 Both matrix points passed with no violations. Every figure below is an
 observation from workflow run
-[31450855074](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/31450855074),
-debug profile, on a shared GitHub-hosted runner. **Nothing is asserted against
-any of them.**
+[31452399059](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/31452399059),
+debug profile, on shared GitHub-hosted runners. **Nothing is asserted against
+any of them**, and the spread discussed under F25 and F26 below is the reason
+that matters rather than a caveat on it.
 
 | Observation | PostgreSQL 15 | PostgreSQL 18 |
 | --- | --- | --- |
 | Server | `15.18 (Debian 15.18-1.pgdg13+1)` | `18.4 (Debian 18.4-1.pgdg13+1)` |
-| Request to intake stop | `15 197 µs` | `10 037 µs` |
-| Request to durable terminal | `431 691 µs` | `483 574 µs` |
+| Request to intake stop | `9 257 µs` | `10 539 µs` |
+| Request to durable terminal | `478 900 µs` | `491 779 µs` |
 | Ordering holds | yes | yes |
 | Durable terminal | `STOPPED` / exit `STOPPED` | `STOPPED` / exit `STOPPED` |
-| Committed partitions preserved | `1` → `2` | `1` → `2` |
+| Committed partitions, before → after | `1` → `2` | `1` → `2` |
 | Workers outliving the attempt | `0` | `0` |
 
-Request-to-durable-terminal separated by phase, and the process intake path
+Request-to-durable-terminal separated by phase, with the process intake path
 beside it:
 
 | Phase | Mechanism | Intake stop, 15 | Terminal, 15 | Intake stop, 18 | Terminal, 18 |
 | --- | --- | --- | --- | --- | --- |
-| async | tasklet awaiting the cooperative token | `17 117 µs` | `433 802 µs` | `15 737 µs` | `461 609 µs` |
-| blocking | `BlockingTaskletAdapter` | `7 720 µs` | `550 664 µs` | `8 353 µs` | `548 011 µs` |
-| transaction | tasklet holding an open repository unit | `8 463 µs` | `408 430 µs` | `10 661 µs` | `472 915 µs` |
-| process intake | `request_shutdown` then `ensure_accepting` | `5 µs` | — | `2 µs` | — |
+| async | tasklet awaiting the cooperative token | `9 392 µs` | `446 430 µs` | `9 132 µs` | `498 433 µs` |
+| blocking | `BlockingTaskletAdapter` | `9 164 µs` | `564 004 µs` | `15 409 µs` | `508 166 µs` |
+| transaction | tasklet holding an open repository unit | `113 268 µs` | `551 483 µs` | `9 102 µs` | `482 037 µs` |
+| process intake | `request_shutdown` then `ensure_accepting` | `2 µs` | — | `2 µs` | — |
 
 Unjoined counts. Every declared deadline was run both ways; the completing
 column is the drain's join cost when its tasks finish, and the expiring column
 is what the coordinator still owned when the deadline won.
 
-| Deadline | Held | Completing (unjoined / cost, 15) | Expiring (unjoined, 15) | Completing (18) | Expiring (18) |
+| Deadline | Held | Completing (unjoined / cost, 15) | Expiring (15) | Completing (18) | Expiring (18) |
 | --- | --- | --- | --- | --- | --- |
-| `minimum`, `1 000 ms` | `3` | `0` / `89 560 µs` | `3` | `0` / `77 983 µs` | `3` |
-| `intermediate`, `5 000 ms` | `5` | `0` / `61 492 µs` | `5` | `0` / `76 060 µs` | `5` |
-| `default`, `30 000 ms` | `7` | `0` / `5 291 µs` | `7` | `0` / `5 730 µs` | `7` |
-| escalation | `4` | — | `4`, in `41 µs` | — | `4`, in `45 µs` |
+| `minimum`, `1 000 ms` | `3` | `0` / `70 237 µs` | `3` | `0` / `80 354 µs` | `3` |
+| `intermediate`, `5 000 ms` | `5` | `0` / `78 349 µs` | `5` | `0` / `70 117 µs` | `5` |
+| `default`, `30 000 ms` | `7` | `0` / `5 796 µs` | `7` | `0` / `5 853 µs` | `7` |
+| escalation | `4` | — | `4`, in `41 µs` | — | `4`, in `48 µs` |
 
 Every expiring count is attributed across the three observed phases and sums to
 the total: `Tasklet`/`ChunkReadProcess`/`Transaction` of `1`/`1`/`1`, `2`/`2`/`1`,
-and `3`/`2`/`2` respectively, identically on both majors.
+and `3`/`2`/`2` respectively, identically on both majors. Every completing drain
+joined every owned task and reported nothing unjoined.
 
 Restart after cancellation, both majors: the restart was a new execution of the
 same instance, re-ran `62` partitions, re-ran **none** of the partitions the
@@ -2334,41 +2336,52 @@ would have changed an accepted durable contract to satisfy a test. This is
 exactly the failure mode a campaign is most exposed to, because it writes its
 assertions before it runs anything.
 
-**F25. The blocking phase costs roughly a third again as much as the others to
-reach a durable terminal, and a single averaged latency would have hidden it.**
-On both majors the blocking phase reached its terminal at `551 ms` and `548 ms`
-against `434`/`408` and `462`/`473` for the async and transaction phases. The
-cause is not a defect: `BlockingTaskletAdapter`'s synchronous body runs to
-completion once started and the adapter reports the stop afterwards, which is
-the accepted late-stop limitation stated in its own documentation. The finding
-is about *measurement*, and it is why the accepted plan asks for the phases
-separately rather than as one number — a mean over the three would sit near
-`480 ms` and would describe none of them, and the phase whose cancellation
-behaviour a deployment most needs to understand is the one it would blur away.
+**F25. One sample per phase does not resolve the phase difference, and this
+campaign should not be read as having measured one.** The accepted plan asks for
+the async, blocking, and transaction phases separately, and this campaign
+measures them separately — but it measures each one *once* per matrix point, and
+the retained numbers show that is not enough to order them.
 
-**F26. Request-to-intake-stop is a phase offset, not a constant, and a single
-run cannot be read as its typical value.** The configured stop poll interval
-bounds how long the owning runtime may go without re-reading the durable stop
-request; where inside that window an operator's request happens to land is
-arbitrary. The campaign configures the accepted minimum of `100 ms`, and the
-observed values are `15 ms` and `10 ms` on CI against `110 ms` on the
-development machine — the same code, spread across the interval as the offset
-predicts.
+On PostgreSQL 15 the blocking phase reached its terminal at `564 ms` against
+`446 ms` for async, which looks like a clear effect and has a ready-made
+explanation: `BlockingTaskletAdapter`'s synchronous body runs to completion once
+started and the adapter reports the stop afterwards, which is the accepted
+late-stop limitation stated in its own documentation. On PostgreSQL 18 the same
+three phases came in at `498`, `508`, and `482 ms` — a spread of `5 %`, with the
+phases in a different order. The explanation is still true and the data does not
+demonstrate it.
 
-This is recorded because a reader given one number would reasonably take it for
-a latency the framework achieves. It is not: it is one sample of a quantity
-whose spread is the configured interval, and the honest summary is that
-request-to-intake-stop on this path is bounded by the poll interval and
-distributed within it. Both the configured interval and the accepted default of
-`1 s` are recorded in every report so the figure can be read against either. A
-campaign that wanted the *distribution* rather than a sample would need repeated
-cancellations at one configuration, which is a larger measurement than P-014
-asks for and is left to whatever eventually proposes a budget.
+An earlier draft of this section reported the phase difference as a ratio, from
+a development run where blocking came in at `2.7x` the async phase. That number
+was real and it was not a measurement of the phase: it was one sample of a
+quantity whose run-to-run spread is comparable to the difference being claimed.
+What this campaign establishes is that each phase *reaches a durable terminal
+and is measured*, which is what the plan's row asks for. Ordering the phases by
+cost needs repeated runs at one configuration, and is left to whatever proposes
+a budget.
+
+**F26. Request-to-intake-stop is a phase offset, not a latency, and one run
+cannot be read as a typical value.** The configured stop poll interval bounds how
+long the owning runtime may go without re-reading the durable stop request;
+where inside that window an operator's request happens to land is arbitrary. The
+campaign configures the accepted minimum of `100 ms`, and the retained
+observations range from `9 102 µs` to `113 268 µs` — the full width of the
+interval, across phases of the same run on the same server, with the extreme
+being the transaction phase on PostgreSQL 15 while the other five readings sit
+near `10 ms`.
+
+That spread is the expected behaviour of a poll offset and not a defect, and it
+is recorded because a reader given the headline `9 257 µs` would reasonably take
+it for a latency the framework achieves. It is not. The honest summary is that
+request-to-intake-stop on the durable operator path is bounded by the configured
+poll interval and distributed within it, and both that interval and the accepted
+default of `1 s` are recorded in every report so the figure can be read against
+either.
 
 **F27. The two intake paths differ by three orders of magnitude and must not be
 reported as one number.** Process intake stop — `request_shutdown` followed by
-`ensure_accepting` — completed in `5 µs` and `2 µs`, against `15 197 µs` and
-`10 037 µs` for the durable operator path. The first is an atomic state
+`ensure_accepting` — completed in `2 µs` on both majors, against `9 257 µs` and
+`10 539 µs` for the durable operator path. The first is an atomic state
 transition in memory; the second is a committed transaction observed at a poll
 interval. They are both truthfully called "request to intake stop", and a report
 that averaged them, or quoted whichever suited, would be describing neither.

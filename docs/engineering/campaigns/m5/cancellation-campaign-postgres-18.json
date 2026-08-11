@@ -1,0 +1,673 @@
+{
+  "campaign": "M5 PostgreSQL cancellation",
+  "declared_deadlines": [
+    {
+      "held_tasks": 3,
+      "id": "minimum",
+      "millis": 1000
+    },
+    {
+      "held_tasks": 5,
+      "id": "intermediate",
+      "millis": 5000
+    },
+    {
+      "held_tasks": 7,
+      "id": "default",
+      "millis": 30000
+    }
+  ],
+  "declared_escalation_held_tasks": 4,
+  "environment": {
+    "arch": "x86_64",
+    "matrix": "postgres-18",
+    "os": "linux",
+    "profile": "debug",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "source_commit": "107941f7d446c5d47388e3fb4cc11327cb516853",
+    "source_tree_clean": true
+  },
+  "fixtures": {
+    "postgres-cancellation": true
+  },
+  "issue": "https://github.com/luceat-lux-vestra/oxide-batch/issues/102",
+  "latency_status": {
+    "note": "No accepted document states a cancellation latency budget, so this campaign measures and reports the two latencies P-014 names and compares neither against a limit. A fast run and a slow run reach the same verdict here; only a missing, impossible, or misordered measurement fails.",
+    "status": "observational"
+  },
+  "observation": {
+    "execution_manifest": {
+      "execution_commit": "107941f7d446c5d47388e3fb4cc11327cb516853",
+      "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+      "objects": {
+        ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+        ".github/workflows/ci.yml": "bc62f61b3e5fd1ae8d2e39e4077a711ce167d86a",
+        "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+        "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+        "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+        "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+        "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+        "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+        "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+        "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+        "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+        "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+        "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+        "crates/oxide-batch/tests/cancellation": "ee3fb84bb73b0d0d072d3271e20044fdcf000515",
+        "crates/oxide-batch/tests/postgres_cancellation.rs": "88c0632488d3face81aab10ef92b960d5e6381b5",
+        "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+        "tests/fixtures/cancellation/campaign-scope.json": "738d288ac153eb19c3d19168feb4be638283a55c",
+        "tests/fixtures/cancellation/campaign-semantics.json": "ee6104d61058667ddb866071c0e161f4d7810b51",
+        "tests/fixtures/cancellation/execution-contract.json": "b80ad08568c82b7e37a388dafa357aa11c3795b4",
+        "tests/fixtures/cancellation/run-ci-campaign.sh": "1b87f69381f61c3b0e761ccf51c3ae8fac0f194d",
+        "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+        "xtask/src/cancellation.rs": "d0db42719f7d60f75bb332c17019cbf3a898d3ec",
+        "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
+        "xtask/src/main.rs": "eb3eef021ab7bf70049d18d7261d203dab4fcef4",
+        "xtask/src/suite.rs": "2c590a7233a5f9c05bf09b672ee5d9e4370aa673"
+      },
+      "tree_clean": true
+    }
+  },
+  "passed": true,
+  "postgresql_major_version": "18",
+  "reports": [
+    {
+      "against_database": true,
+      "fixture": "postgres-cancellation",
+      "id": "operator-stop",
+      "name": "operator_stop_reaches_a_durable_terminal_status",
+      "observation": {
+        "cancellation_request": {
+          "actor": "operator:m5-cancellation-campaign",
+          "committed_partitions_before": 1,
+          "expected_version": 1,
+          "path": "request_execution_stop under compare-and-swap, committed before the clock starts"
+        },
+        "checkpoint": {
+          "committed_partitions_after_cancellation": 2,
+          "committed_partitions_before_cancellation": 1,
+          "partition_statuses": {
+            "partition-0000": "STOPPED",
+            "partition-0001": "COMPLETED",
+            "partition-0002": "COMPLETED",
+            "partition-0003": "STOPPED",
+            "partition-0004": "STOPPED",
+            "partition-0005": "STOPPED",
+            "partition-0006": "STOPPED",
+            "partition-0007": "STOPPED",
+            "partition-0008": "STOPPED",
+            "partition-0009": "STOPPED",
+            "partition-0010": "STOPPED",
+            "partition-0011": "STOPPED",
+            "partition-0012": "STOPPED",
+            "partition-0013": "STOPPED",
+            "partition-0014": "STOPPED",
+            "partition-0015": "STOPPED",
+            "partition-0016": "STOPPED",
+            "partition-0017": "STOPPED",
+            "partition-0018": "STOPPED",
+            "partition-0019": "STOPPED",
+            "partition-0020": "STOPPED",
+            "partition-0021": "STOPPED",
+            "partition-0022": "STOPPED",
+            "partition-0023": "STOPPED",
+            "partition-0024": "STOPPED",
+            "partition-0025": "STOPPED",
+            "partition-0026": "STOPPED",
+            "partition-0027": "STOPPED",
+            "partition-0028": "STOPPED",
+            "partition-0029": "STOPPED",
+            "partition-0030": "STOPPED",
+            "partition-0031": "STOPPED",
+            "partition-0032": "STOPPED",
+            "partition-0033": "STOPPED",
+            "partition-0034": "STOPPED",
+            "partition-0035": "STOPPED",
+            "partition-0036": "STOPPED",
+            "partition-0037": "STOPPED",
+            "partition-0038": "STOPPED",
+            "partition-0039": "STOPPED",
+            "partition-0040": "STOPPED",
+            "partition-0041": "STOPPED",
+            "partition-0042": "STOPPED",
+            "partition-0043": "STOPPED",
+            "partition-0044": "STOPPED",
+            "partition-0045": "STOPPED",
+            "partition-0046": "STOPPED",
+            "partition-0047": "STOPPED",
+            "partition-0048": "STOPPED",
+            "partition-0049": "STOPPED",
+            "partition-0050": "STOPPED",
+            "partition-0051": "STOPPED",
+            "partition-0052": "STOPPED",
+            "partition-0053": "STOPPED",
+            "partition-0054": "STOPPED",
+            "partition-0055": "STOPPED",
+            "partition-0056": "STOPPED",
+            "partition-0057": "STOPPED",
+            "partition-0058": "STOPPED",
+            "partition-0059": "STOPPED",
+            "partition-0060": "STOPPED",
+            "partition-0061": "STOPPED",
+            "partition-0062": "STOPPED",
+            "partition-0063": "STOPPED"
+          },
+          "preserved": true
+        },
+        "durable_terminal": {
+          "batch_status": "STOPPED",
+          "exit_status": "STOPPED",
+          "outcome": "Stopped",
+          "watched_status": "STOPPED"
+        },
+        "execution_manifest": {
+          "execution_commit": "107941f7d446c5d47388e3fb4cc11327cb516853",
+          "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+          "objects": {
+            ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+            ".github/workflows/ci.yml": "bc62f61b3e5fd1ae8d2e39e4077a711ce167d86a",
+            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+            "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+            "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+            "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+            "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+            "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+            "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+            "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+            "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+            "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+            "crates/oxide-batch/tests/cancellation": "ee3fb84bb73b0d0d072d3271e20044fdcf000515",
+            "crates/oxide-batch/tests/postgres_cancellation.rs": "88c0632488d3face81aab10ef92b960d5e6381b5",
+            "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+            "tests/fixtures/cancellation/campaign-scope.json": "738d288ac153eb19c3d19168feb4be638283a55c",
+            "tests/fixtures/cancellation/campaign-semantics.json": "ee6104d61058667ddb866071c0e161f4d7810b51",
+            "tests/fixtures/cancellation/execution-contract.json": "b80ad08568c82b7e37a388dafa357aa11c3795b4",
+            "tests/fixtures/cancellation/run-ci-campaign.sh": "1b87f69381f61c3b0e761ccf51c3ae8fac0f194d",
+            "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+            "xtask/src/cancellation.rs": "d0db42719f7d60f75bb332c17019cbf3a898d3ec",
+            "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
+            "xtask/src/main.rs": "eb3eef021ab7bf70049d18d7261d203dab4fcef4",
+            "xtask/src/suite.rs": "2c590a7233a5f9c05bf09b672ee5d9e4370aa673"
+          },
+          "tree_clean": true
+        },
+        "latency": {
+          "ordering_holds": true,
+          "request_to_durable_terminal_means": "from the committed operator request to the durable STOPPED status being first readable",
+          "request_to_durable_terminal_micros": 491779,
+          "request_to_intake_stop_means": "from the committed operator request to the durable STOPPING transition being first readable",
+          "request_to_intake_stop_micros": 10539,
+          "status": "observational",
+          "status_note": "No accepted document states a cancellation budget. These are measurements and nothing in this campaign compares them against a limit."
+        },
+        "measurement_environment": {
+          "arch": "x86_64",
+          "available_parallelism": 4,
+          "os": "linux",
+          "profile": "debug",
+          "profile_note": "Every M5 campaign runs debug so the matrix points are comparable with each other. The absolute latencies below are therefore debug-build latencies and are not release figures.",
+          "resident_kib": 14716,
+          "tokio_worker_threads": 4,
+          "watch_interval_millis": 5,
+          "watch_interval_note": "The campaign's own sampling floor. Every duration measured by reading a durable status back carries this as quantisation: a transition that happened immediately is reported as having taken up to one interval."
+        },
+        "passed": true,
+        "postgres_major_version": "18",
+        "report": "operator-stop",
+        "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+        "violations": [],
+        "workers": {
+          "active_after_return": 0,
+          "admitted": 5,
+          "peak": 4
+        },
+        "workload": {
+          "accepted_stop_poll_default_millis": 1000,
+          "job_name": "m5_cancellation_lifecycle_operator",
+          "partitions": 64,
+          "pool_size": 5,
+          "stop_poll_interval_millis": 100,
+          "stop_poll_note": "The configured interval is the dominant term in request-to-intake-stop on this path. Both it and the accepted default are recorded so the measurement can be read against either.",
+          "worker_budget": 4,
+          "worker_work_millis": 500
+        }
+      },
+      "outcome": "ok",
+      "package": "oxide-batch",
+      "target": "postgres_cancellation"
+    },
+    {
+      "against_database": true,
+      "fixture": "postgres-cancellation",
+      "id": "phase-separation",
+      "name": "cancellation_latency_is_measured_separately_per_phase",
+      "observation": {
+        "execution_manifest": {
+          "execution_commit": "107941f7d446c5d47388e3fb4cc11327cb516853",
+          "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+          "objects": {
+            ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+            ".github/workflows/ci.yml": "bc62f61b3e5fd1ae8d2e39e4077a711ce167d86a",
+            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+            "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+            "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+            "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+            "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+            "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+            "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+            "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+            "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+            "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+            "crates/oxide-batch/tests/cancellation": "ee3fb84bb73b0d0d072d3271e20044fdcf000515",
+            "crates/oxide-batch/tests/postgres_cancellation.rs": "88c0632488d3face81aab10ef92b960d5e6381b5",
+            "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+            "tests/fixtures/cancellation/campaign-scope.json": "738d288ac153eb19c3d19168feb4be638283a55c",
+            "tests/fixtures/cancellation/campaign-semantics.json": "ee6104d61058667ddb866071c0e161f4d7810b51",
+            "tests/fixtures/cancellation/execution-contract.json": "b80ad08568c82b7e37a388dafa357aa11c3795b4",
+            "tests/fixtures/cancellation/run-ci-campaign.sh": "1b87f69381f61c3b0e761ccf51c3ae8fac0f194d",
+            "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+            "xtask/src/cancellation.rs": "d0db42719f7d60f75bb332c17019cbf3a898d3ec",
+            "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
+            "xtask/src/main.rs": "eb3eef021ab7bf70049d18d7261d203dab4fcef4",
+            "xtask/src/suite.rs": "2c590a7233a5f9c05bf09b672ee5d9e4370aa673"
+          },
+          "tree_clean": true
+        },
+        "latency": {
+          "status": "observational",
+          "status_note": "No accepted document states a cancellation budget. These are measurements and nothing in this campaign compares them against a limit."
+        },
+        "measurement_environment": {
+          "arch": "x86_64",
+          "available_parallelism": 4,
+          "os": "linux",
+          "profile": "debug",
+          "profile_note": "Every M5 campaign runs debug so the matrix points are comparable with each other. The absolute latencies below are therefore debug-build latencies and are not release figures.",
+          "resident_kib": 14748,
+          "tokio_worker_threads": 4,
+          "watch_interval_millis": 5,
+          "watch_interval_note": "The campaign's own sampling floor. Every duration measured by reading a durable status back carries this as quantisation: a transition that happened immediately is reported as having taken up to one interval."
+        },
+        "passed": true,
+        "phase_mapping_note": "The plan's async, blocking, and transaction phases are mapped onto the delivered StopTiming and adapter mechanisms rather than onto a vocabulary invented for this campaign. See the phases section of the committed scope.",
+        "phases": [
+          {
+            "batch_status": "STOPPED",
+            "delivered_mechanism": "an asynchronous tasklet awaiting the cooperative stop token while it runs",
+            "exit_status": "STOPPED",
+            "outcome": "Stopped",
+            "phase": "async",
+            "request_to_durable_terminal_micros": 498433,
+            "request_to_intake_stop_micros": 9132,
+            "stop_timings": "DuringExecution for a worker already running, BeforeStart for one not yet reached",
+            "workers_active_after_return": 0
+          },
+          {
+            "batch_status": "STOPPED",
+            "delivered_mechanism": "BlockingTaskletAdapter, whose synchronous body runs to completion and reports the stop afterwards",
+            "exit_status": "STOPPED",
+            "outcome": "Stopped",
+            "phase": "blocking",
+            "request_to_durable_terminal_micros": 508166,
+            "request_to_intake_stop_micros": 15409,
+            "stop_timings": "AfterBlockingWork for a worker already inside its synchronous body",
+            "workers_active_after_return": 0
+          },
+          {
+            "batch_status": "STOPPED",
+            "delivered_mechanism": "an asynchronous tasklet holding an open repository transaction when the stop arrives",
+            "exit_status": "STOPPED",
+            "outcome": "Stopped",
+            "phase": "transaction",
+            "request_to_durable_terminal_micros": 482037,
+            "request_to_intake_stop_micros": 9102,
+            "stop_timings": "DuringExecution for a worker already running, BeforeStart for one not yet reached",
+            "workers_active_after_return": 0
+          }
+        ],
+        "postgres_major_version": "18",
+        "process_intake": {
+          "first_request": "Initiated",
+          "note": "An atomic state transition rather than a committed transaction, and measured by spinning on the accepted intake predicate rather than by polling a database. It shares no mechanism with the durable operator path and is reported separately for that reason.",
+          "path": "ShutdownSignal::request_shutdown then ensure_accepting",
+          "request_to_intake_stop_micros": 2
+        },
+        "report": "phase-separation",
+        "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+        "unexamined": {
+          "broker_phase": "M5 adds no broker, so the phase the accepted plan names does not exist to measure.",
+          "remote_worker_phase": "M5 adds no remote or distributed semantics, so the phase the accepted plan names does not exist to measure."
+        },
+        "violations": []
+      },
+      "outcome": "ok",
+      "package": "oxide-batch",
+      "target": "postgres_cancellation"
+    },
+    {
+      "against_database": true,
+      "fixture": "postgres-cancellation",
+      "id": "deadline-unjoined",
+      "name": "drain_reports_unjoined_tasks_at_every_declared_deadline",
+      "observation": {
+        "deadlines": [
+          {
+            "accepted_constant": "MIN_SHUTDOWN_DEADLINE",
+            "completing": {
+              "drain_complete": true,
+              "note": "The tasks finish well before the deadline, so this measures the coordinator's join cost rather than the deadline.",
+              "panicked_tasks": 0,
+              "request_to_drain_complete_micros": 80354,
+              "unjoined_tasks": 0
+            },
+            "deadline": "minimum",
+            "deadline_millis": 1000,
+            "expiring": {
+              "drain_complete": false,
+              "escalated": false,
+              "note": "The tasks are held past the deadline, so the wait is the deadline and the reported count is what the coordinator still owned when it expired.",
+              "panicked_tasks": 0,
+              "phases": [
+                {
+                  "count": 1,
+                  "phase": "Tasklet"
+                },
+                {
+                  "count": 1,
+                  "phase": "ChunkReadProcess"
+                },
+                {
+                  "count": 1,
+                  "phase": "Transaction"
+                }
+              ],
+              "unjoined_tasks": 3,
+              "waited_micros": 1000516
+            },
+            "held_tasks": 3
+          },
+          {
+            "accepted_constant": null,
+            "completing": {
+              "drain_complete": true,
+              "note": "The tasks finish well before the deadline, so this measures the coordinator's join cost rather than the deadline.",
+              "panicked_tasks": 0,
+              "request_to_drain_complete_micros": 70117,
+              "unjoined_tasks": 0
+            },
+            "deadline": "intermediate",
+            "deadline_millis": 5000,
+            "expiring": {
+              "drain_complete": false,
+              "escalated": false,
+              "note": "The tasks are held past the deadline, so the wait is the deadline and the reported count is what the coordinator still owned when it expired.",
+              "panicked_tasks": 0,
+              "phases": [
+                {
+                  "count": 2,
+                  "phase": "Tasklet"
+                },
+                {
+                  "count": 2,
+                  "phase": "ChunkReadProcess"
+                },
+                {
+                  "count": 1,
+                  "phase": "Transaction"
+                }
+              ],
+              "unjoined_tasks": 5,
+              "waited_micros": 5001345
+            },
+            "held_tasks": 5
+          },
+          {
+            "accepted_constant": "DEFAULT_SHUTDOWN_DEADLINE",
+            "completing": {
+              "drain_complete": true,
+              "note": "The tasks finish well before the deadline, so this measures the coordinator's join cost rather than the deadline.",
+              "panicked_tasks": 0,
+              "request_to_drain_complete_micros": 5853,
+              "unjoined_tasks": 0
+            },
+            "deadline": "default",
+            "deadline_millis": 30000,
+            "expiring": {
+              "drain_complete": false,
+              "escalated": false,
+              "note": "The tasks are held past the deadline, so the wait is the deadline and the reported count is what the coordinator still owned when it expired.",
+              "panicked_tasks": 0,
+              "phases": [
+                {
+                  "count": 3,
+                  "phase": "Tasklet"
+                },
+                {
+                  "count": 2,
+                  "phase": "ChunkReadProcess"
+                },
+                {
+                  "count": 2,
+                  "phase": "Transaction"
+                }
+              ],
+              "unjoined_tasks": 7,
+              "waited_micros": 30000937
+            },
+            "held_tasks": 7
+          }
+        ],
+        "escalation": {
+          "configured_deadline_millis": 30000,
+          "escalated": true,
+          "held_tasks": 4,
+          "note": "Waiting ended by a second request rather than by expiry. The count owed is the same either way, which is why escalation sits in this report.",
+          "phases": [
+            {
+              "count": 2,
+              "phase": "Tasklet"
+            },
+            {
+              "count": 1,
+              "phase": "ChunkReadProcess"
+            },
+            {
+              "count": 1,
+              "phase": "Transaction"
+            }
+          ],
+          "request_to_escalated_report_micros": 48,
+          "unjoined_tasks": 4
+        },
+        "execution_manifest": {
+          "execution_commit": "107941f7d446c5d47388e3fb4cc11327cb516853",
+          "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+          "objects": {
+            ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+            ".github/workflows/ci.yml": "bc62f61b3e5fd1ae8d2e39e4077a711ce167d86a",
+            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+            "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+            "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+            "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+            "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+            "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+            "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+            "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+            "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+            "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+            "crates/oxide-batch/tests/cancellation": "ee3fb84bb73b0d0d072d3271e20044fdcf000515",
+            "crates/oxide-batch/tests/postgres_cancellation.rs": "88c0632488d3face81aab10ef92b960d5e6381b5",
+            "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+            "tests/fixtures/cancellation/campaign-scope.json": "738d288ac153eb19c3d19168feb4be638283a55c",
+            "tests/fixtures/cancellation/campaign-semantics.json": "ee6104d61058667ddb866071c0e161f4d7810b51",
+            "tests/fixtures/cancellation/execution-contract.json": "b80ad08568c82b7e37a388dafa357aa11c3795b4",
+            "tests/fixtures/cancellation/run-ci-campaign.sh": "1b87f69381f61c3b0e761ccf51c3ae8fac0f194d",
+            "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+            "xtask/src/cancellation.rs": "d0db42719f7d60f75bb332c17019cbf3a898d3ec",
+            "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
+            "xtask/src/main.rs": "eb3eef021ab7bf70049d18d7261d203dab4fcef4",
+            "xtask/src/suite.rs": "2c590a7233a5f9c05bf09b672ee5d9e4370aa673"
+          },
+          "tree_clean": true
+        },
+        "measurement_environment": {
+          "arch": "x86_64",
+          "available_parallelism": 4,
+          "os": "linux",
+          "profile": "debug",
+          "profile_note": "Every M5 campaign runs debug so the matrix points are comparable with each other. The absolute latencies below are therefore debug-build latencies and are not release figures.",
+          "resident_kib": 14132,
+          "tokio_worker_threads": 4,
+          "watch_interval_millis": 5,
+          "watch_interval_note": "The campaign's own sampling floor. Every duration measured by reading a durable status back carries this as quantisation: a transition that happened immediately is reported as having taken up to one interval."
+        },
+        "observed_phases": [
+          "Tasklet",
+          "ChunkReadProcess",
+          "Transaction"
+        ],
+        "owned_task_work": "Each held task performs a real repository read, so a drain has both a task to join and a connection to get back.",
+        "passed": true,
+        "postgres_major_version": "18",
+        "report": "deadline-unjoined",
+        "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+        "unexamined_note": "Accepted ShutdownTaskPhase variants this campaign never leaves a task unjoined in. Recorded as unexamined rather than counted as proved: spawning a placeholder task into each to fill the table would be reporting coverage the campaign does not have.",
+        "unexamined_phases": [
+          "ChunkWrite",
+          "RetryBackoff",
+          "FlowDecision"
+        ],
+        "violations": []
+      },
+      "outcome": "ok",
+      "package": "oxide-batch",
+      "target": "postgres_cancellation"
+    },
+    {
+      "against_database": true,
+      "fixture": "postgres-cancellation",
+      "id": "restart-after-cancellation",
+      "name": "restart_after_cancellation_resumes_without_rerunning_committed_work",
+      "observation": {
+        "cancelled_attempt": {
+          "batch_status": "STOPPED",
+          "committed_partitions": 2,
+          "exit_status": "STOPPED"
+        },
+        "execution_manifest": {
+          "execution_commit": "107941f7d446c5d47388e3fb4cc11327cb516853",
+          "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+          "objects": {
+            ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+            ".github/workflows/ci.yml": "bc62f61b3e5fd1ae8d2e39e4077a711ce167d86a",
+            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+            "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+            "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+            "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+            "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+            "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+            "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+            "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+            "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+            "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+            "crates/oxide-batch/tests/cancellation": "ee3fb84bb73b0d0d072d3271e20044fdcf000515",
+            "crates/oxide-batch/tests/postgres_cancellation.rs": "88c0632488d3face81aab10ef92b960d5e6381b5",
+            "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+            "tests/fixtures/cancellation/campaign-scope.json": "738d288ac153eb19c3d19168feb4be638283a55c",
+            "tests/fixtures/cancellation/campaign-semantics.json": "ee6104d61058667ddb866071c0e161f4d7810b51",
+            "tests/fixtures/cancellation/execution-contract.json": "b80ad08568c82b7e37a388dafa357aa11c3795b4",
+            "tests/fixtures/cancellation/run-ci-campaign.sh": "1b87f69381f61c3b0e761ccf51c3ae8fac0f194d",
+            "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+            "xtask/src/cancellation.rs": "d0db42719f7d60f75bb332c17019cbf3a898d3ec",
+            "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
+            "xtask/src/main.rs": "eb3eef021ab7bf70049d18d7261d203dab4fcef4",
+            "xtask/src/suite.rs": "2c590a7233a5f9c05bf09b672ee5d9e4370aa673"
+          },
+          "tree_clean": true
+        },
+        "measurement_environment": {
+          "arch": "x86_64",
+          "available_parallelism": 4,
+          "os": "linux",
+          "profile": "debug",
+          "profile_note": "Every M5 campaign runs debug so the matrix points are comparable with each other. The absolute latencies below are therefore debug-build latencies and are not release figures.",
+          "resident_kib": 14732,
+          "tokio_worker_threads": 4,
+          "watch_interval_millis": 5,
+          "watch_interval_note": "The campaign's own sampling floor. Every duration measured by reading a durable status back carries this as quantisation: a transition that happened immediately is reported as having taken up to one interval."
+        },
+        "passed": true,
+        "postgres_major_version": "18",
+        "report": "restart-after-cancellation",
+        "restart": {
+          "batch_status": "COMPLETED",
+          "committed_partitions_re_run": [],
+          "exit_status": "COMPLETED",
+          "new_execution": true,
+          "partitions_re_run": 62,
+          "recovery_path": "a second launch of the same job and identifying parameters after the cancelled attempt, with no stop request outstanding",
+          "same_instance": true
+        },
+        "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+        "violations": [],
+        "workers": {
+          "active_after_return": 0,
+          "admitted": 67,
+          "peak": 4
+        }
+      },
+      "outcome": "ok",
+      "package": "oxide-batch",
+      "target": "postgres_cancellation"
+    }
+  ],
+  "required_observations": [
+    {
+      "id": "cancellation-request",
+      "measured_by": "operator-stop"
+    },
+    {
+      "id": "request-to-intake-stop",
+      "measured_by": "operator-stop"
+    },
+    {
+      "id": "request-to-durable-terminal",
+      "measured_by": "operator-stop"
+    },
+    {
+      "id": "process-request-to-intake-stop",
+      "measured_by": "phase-separation"
+    },
+    {
+      "id": "phase-separated-latency",
+      "measured_by": "phase-separation"
+    },
+    {
+      "id": "drain-completion",
+      "measured_by": "deadline-unjoined"
+    },
+    {
+      "id": "unjoined-count-per-deadline",
+      "measured_by": "deadline-unjoined"
+    },
+    {
+      "id": "checkpoint-preservation",
+      "measured_by": "operator-stop"
+    },
+    {
+      "id": "recovery-after-cancellation",
+      "measured_by": "restart-after-cancellation"
+    },
+    {
+      "id": "postgres-matrix-identity",
+      "measured_by": "every database report"
+    }
+  ],
+  "violations": [],
+  "workload": "P-014"
+}
