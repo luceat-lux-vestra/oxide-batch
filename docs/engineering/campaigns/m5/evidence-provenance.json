@@ -184,9 +184,9 @@
       "postgres_major_version": "15",
       "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
       "producer": {
-        "execution_commit": "d3fbf83d4df83c6609a1efa240b8374ae4aac72c",
+        "execution_commit": "f3aa40a5a384f3041771d2972124dd8bceaa7bfc",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "743f535db20a19094994767deb36fa63de7a5a6d",
+        "branch_head_sha": "01d3a13860607d055e8c4f3cd72f7b2ce6fc7076",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -196,27 +196,27 @@
       "workflow_run": {
         "workflow": "Rust",
         "workflow_file": ".github/workflows/ci.yml",
-        "id": 31456444271,
+        "id": 31488666409,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-cancellation-campaign",
-        "id": 93671097500,
+        "id": 93769788309,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-15",
-        "id": 9088246831,
-        "digest": "sha256:3bde3a67169441428b87fd93d2e00629370b583d67ecd895d6e9f41ec50f88c4",
-        "size_bytes": 5369
+        "id": 9100185158,
+        "digest": "sha256:e351bdcc2c6f4a75ca2fcb9655f04f963b048842fe5452e04438205147553760",
+        "size_bytes": 5696
       },
-      "retained_report_git_blob": "22069e39e29e9a325343742ab845f4407f728bda",
+      "retained_report_git_blob": "413a5e6f65b930a371ddf3161cd8857f88c35b82",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-11T04:08:45Z",
-        "run_id": 31456444271,
+        "verified_at": "2026-08-11T12:07:50Z",
+        "run_id": 31488666409,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -240,9 +240,9 @@
       "postgres_major_version": "18",
       "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
       "producer": {
-        "execution_commit": "d3fbf83d4df83c6609a1efa240b8374ae4aac72c",
+        "execution_commit": "f3aa40a5a384f3041771d2972124dd8bceaa7bfc",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "743f535db20a19094994767deb36fa63de7a5a6d",
+        "branch_head_sha": "01d3a13860607d055e8c4f3cd72f7b2ce6fc7076",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -252,27 +252,27 @@
       "workflow_run": {
         "workflow": "Rust",
         "workflow_file": ".github/workflows/ci.yml",
-        "id": 31456444271,
+        "id": 31488666409,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-cancellation-campaign",
-        "id": 93671097509,
+        "id": 93769788315,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-18",
-        "id": 9088247696,
-        "digest": "sha256:06ffe48ff83f34ca97905eef7f2793ddbe780e1bba5cf798f94b97b3a7da22e5",
-        "size_bytes": 5371
+        "id": 9100182051,
+        "digest": "sha256:a23be7e5eb4d70d89c720d33dadc62c4fac05715addb4dcfe7d8afdbd6df5868",
+        "size_bytes": 5697
       },
-      "retained_report_git_blob": "6e56bd75ad0312482565c4315d54aad75b9ab01f",
+      "retained_report_git_blob": "ae02d78fb55e24d22ccc4b0c839080d5012ca9d6",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-11T04:08:45Z",
-        "run_id": 31456444271,
+        "verified_at": "2026-08-11T12:07:50Z",
+        "run_id": 31488666409,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
