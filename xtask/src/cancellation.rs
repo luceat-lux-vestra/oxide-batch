@@ -767,8 +767,10 @@ fn write_report(
     let path = directory.join(REPORT);
 
     let (manifest, manifest_violations) = execution_manifest(runs);
+    let (major, major_violations) = postgres_major(runs);
     let mut violations = violations.to_vec();
     violations.extend(manifest_violations);
+    violations.extend(major_violations);
     let violations = violations.as_slice();
 
     let document = json!({
@@ -778,6 +780,7 @@ fn write_report(
         "passed": violations.is_empty(),
         "violations": violations,
         "environment": suite::environment(),
+        "postgresql_major_version": major,
         "observation": { "execution_manifest": manifest },
         "latency_status": {
             "status": "observational",
@@ -883,6 +886,47 @@ fn execution_manifest(runs: &Runs) -> (Value, Vec<String>) {
         }
     }
     (first, violations)
+}
+
+/// Hoists the `PostgreSQL` major the reports ran against.
+///
+/// Recorded at the top level of the campaign report because that is where the
+/// evidence verifier reads it when checking that a retained report is filed
+/// under the major it actually ran against. Every database report records its
+/// own, and they must agree: two reports of one campaign run against different
+/// servers would make the campaign a result about neither.
+fn postgres_major(runs: &Runs) -> (Option<String>, Vec<String>) {
+    let observed = runs
+        .observations
+        .values()
+        .filter_map(|observation| {
+            observation
+                .get("postgres_major_version")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect::<BTreeSet<_>>();
+
+    match observed.len() {
+        1 => (observed.into_iter().next(), Vec::new()),
+        0 => (
+            None,
+            vec![
+                "no report recorded the PostgreSQL major it ran against, so the evidence cannot \
+                 be filed under a matrix point"
+                    .to_owned(),
+            ],
+        ),
+        _ => (
+            None,
+            vec![format!(
+                "the reports ran against {} different PostgreSQL majors ({}), so this campaign \
+                 run is a result about none of them",
+                observed.len(),
+                observed.into_iter().collect::<Vec<_>>().join(", ")
+            )],
+        ),
+    }
 }
 
 /// Every target this campaign ran and everything they retained.
