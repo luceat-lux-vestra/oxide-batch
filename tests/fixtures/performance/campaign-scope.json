@@ -1,0 +1,163 @@
+{
+  "document": "The fixed denominator for the M5 performance and reference-workload campaigns",
+  "issue": "https://github.com/luceat-lux-vestra/oxide-batch/issues/102",
+  "note": "This document fixes what the two remaining measurement campaigns owe before a producer or runner is allowed to call either campaign complete. The performance and reference-workload rows intentionally share one P-003 report: running the same fixed workload twice would produce two samples, not two different obligations.",
+  "campaigns": [
+    {
+      "id": "performance",
+      "plan_row": "Performance",
+      "reports": [
+        "p001-fixed-overhead",
+        "p003-reference-workload",
+        "p010-local-partition-scaling"
+      ]
+    },
+    {
+      "id": "reference-workload",
+      "plan_row": "Reference workload",
+      "reports": [
+        "p003-reference-workload"
+      ]
+    }
+  ],
+  "supported_matrix": [
+    "postgres-15",
+    "postgres-18"
+  ],
+  "execution": {
+    "cargo_profile": "release",
+    "matrix_rule": "Every report runs exactly once at each supported matrix point.",
+    "numeric_status": "observational",
+    "numeric_status_note": "The M4 numbers are provisional hypotheses from a different host and, for P-001 and P-010, an in-memory repository. No accepted document states a binding M5 throughput or latency limit. Correctness and finite resource ceilings are gates; the reported durations, rates, and efficiency values are retained observations until release planning accepts a budget."
+  },
+  "reports": [
+    {
+      "id": "p001-fixed-overhead",
+      "workload": "P-001",
+      "target": "postgres_performance",
+      "scenario": "p001_fixed_tasklet_lifecycle_overhead",
+      "against_database": true,
+      "fixture": "postgres-performance",
+      "measurements": [
+        "end-to-end-duration",
+        "job-overhead",
+        "step-overhead",
+        "repository-round-trips",
+        "metadata-writes",
+        "peak-resident-memory",
+        "peak-connections"
+      ],
+      "correctness": [
+        "every-attempt-completes",
+        "durable-job-and-step-statuses-are-completed",
+        "no-attempt-is-reused"
+      ]
+    },
+    {
+      "id": "p003-reference-workload",
+      "workload": "P-003",
+      "target": "postgres_performance",
+      "scenario": "p003_csv_to_postgres_reference_workload",
+      "against_database": true,
+      "fixture": "postgres-performance",
+      "measurements": [
+        "items-per-second",
+        "chunks-per-second",
+        "end-to-end-duration",
+        "per-item-overhead",
+        "per-chunk-overhead",
+        "repository-round-trips",
+        "metadata-writes",
+        "business-batch-size",
+        "peak-resident-memory",
+        "peak-connections"
+      ],
+      "correctness": [
+        "source-row-count-equals-written-row-count",
+        "source-digest-equals-written-digest",
+        "checkpoint-covers-the-fixed-dataset",
+        "business-writes-and-checkpoints-use-atomic-same-resource"
+      ]
+    },
+    {
+      "id": "p010-local-partition-scaling",
+      "workload": "P-010",
+      "target": "postgres_performance",
+      "scenario": "p010_postgres_local_partition_scaling",
+      "against_database": true,
+      "fixture": "postgres-performance",
+      "measurements": [
+        "partitions-per-second",
+        "end-to-end-duration",
+        "scaling-efficiency",
+        "worker-skew",
+        "aggregation-duration",
+        "repository-round-trips",
+        "metadata-writes",
+        "peak-resident-memory",
+        "peak-connections",
+        "peak-owned-tasks"
+      ],
+      "correctness": [
+        "every-scale-point-has-identical-durable-observations",
+        "peak-workers-do-not-exceed-the-configured-budget",
+        "peak-connections-do-not-exceed-the-derived-pool-budget",
+        "no-worker-outlives-its-parent"
+      ]
+    }
+  ],
+  "workloads": {
+    "p001": {
+      "tasklet": "no-op",
+      "warmup_attempts": 16,
+      "measured_attempts": 256,
+      "fresh_job_parameters_per_attempt": true
+    },
+    "p003": {
+      "dataset_rows": 10000,
+      "chunk_size": 100,
+      "source": "deterministically-generated RFC 4180 CSV with a header and three scalar columns",
+      "source_seed": 102,
+      "writer": "test-local enlisted PostgreSQL writer using AtomicSameResource",
+      "publication_note": "The campaign publishes the fixture, generator, schema, digest rule, and exact command. The test-local CSV reader is evidence workload code, not an advertised IO-FLAT-001 implementation."
+    },
+    "p010": {
+      "partitions": 100,
+      "worker_points": [
+        1,
+        10,
+        64
+      ],
+      "largest_worker_point_source": "oxide_batch::MAX_PARTITION_WORKERS",
+      "work_per_partition": "one deterministic enlisted business write and one durable partition result"
+    }
+  },
+  "related": [
+    {
+      "path": "docs/engineering/measurements/m4/telemetry-overhead.json",
+      "workloads": [
+        "P-001",
+        "P-010"
+      ],
+      "run_by_this_campaign": false
+    },
+    {
+      "path": "docs/engineering/measurements/m4/p-010.json",
+      "workloads": [
+        "P-010"
+      ],
+      "run_by_this_campaign": false
+    }
+  ],
+  "design_gate_scenario_gap": {
+    "status": "recorded",
+    "note": "The M5 design gate's named campaign-scenario table names no performance or reference-workload scenario. The accepted performance plan is therefore the normative denominator for these two campaigns; this scope fixes their scenario names locally and reconciles every obligation against the plan in both directions."
+  },
+  "out_of_scope": [
+    "No binding throughput, latency, or scaling-efficiency budget is invented by this campaign.",
+    "The test-local CSV parser and writer do not promote IO-FLAT-001 or add a public component API; standard CSV components remain M6 scope.",
+    "P-002 static-versus-erased measurement remains M6 scope.",
+    "No remote worker, distributed protocol, scheduler, or additional database backend is exercised.",
+    "The campaign does not promote a ledger row or select a preview release version."
+  ]
+}
