@@ -769,6 +769,7 @@ async fn deadline_unjoined(runtime: String, migrator: String) -> Result<Value, B
         "escalation": {
             "held_tasks": scope.escalation.held_tasks,
             "unjoined_tasks": unjoined_of(&escalation.result),
+            "panicked_tasks": panicked_of(&escalation.result),
             "escalated": escalated_of(&escalation.result),
             "phases": phases_of(&escalation.result),
             "request_to_escalated_report_micros": escalation.elapsed.as_micros(),
