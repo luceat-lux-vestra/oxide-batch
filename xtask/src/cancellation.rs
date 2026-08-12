@@ -488,6 +488,11 @@ fn reconcile_operator_stop(runs: &Runs) -> Vec<String> {
         .and_then(|checkpoint| checkpoint.get("partition_statuses"))
         .and_then(Value::as_object);
     match partition_statuses {
+        Some(statuses) if statuses.is_empty() => violations.push(
+            "operator-stop retained an empty partition status map, so it cannot prove no \
+             partition remained STARTED"
+                .to_owned(),
+        ),
         Some(statuses)
             if statuses.values().all(|status| {
                 non_empty_value_str(status).is_some_and(|name| name != "STARTED")
@@ -592,6 +597,16 @@ fn reconcile_latency(runs: &Runs) -> Vec<String> {
                     "the {name} phase reached {} rather than the accepted STOPPED terminal status",
                     phase
                         .get("batch_status")
+                        .and_then(Value::as_str)
+                        .unwrap_or("an unrecorded status")
+                ));
+            }
+            if phase.get("exit_status").and_then(Value::as_str) != Some("STOPPED") {
+                violations.push(format!(
+                    "the {name} phase recorded {} rather than the framework-owned STOPPED exit \
+                     status",
+                    phase
+                        .get("exit_status")
                         .and_then(Value::as_str)
                         .unwrap_or("an unrecorded status")
                 ));
@@ -977,7 +992,14 @@ fn reconcile_deadlines(scope: &Scope, runs: &Runs) -> Vec<String> {
         }
     }
 
-    // Escalation ends waiting the other way and owes the same count.
+    violations.extend(reconcile_escalation(scope, observation));
+    violations
+}
+
+/// Requires escalation to account for every owned task and to prove the second
+/// request, rather than the configured deadline, ended the wait.
+fn reconcile_escalation(scope: &Scope, observation: &Value) -> Vec<String> {
+    let mut violations = Vec::new();
     let escalation_held = number_at(observation, &["escalation", "held_tasks"]);
     if escalation_held != Some(scope.escalation_held_tasks) {
         violations.push(format!(
@@ -1020,6 +1042,28 @@ fn reconcile_deadlines(scope: &Scope, runs: &Runs) -> Vec<String> {
         number_at(observation, &["escalation", "unjoined_tasks"]),
         &scope.observed_task_phases,
     ));
+    let configured = number_at(observation, &["escalation", "configured_deadline_millis"]);
+    let expected_configured = scope.deadlines.last().map(|deadline| deadline.millis);
+    if configured != expected_configured {
+        violations.push(format!(
+            "escalation declared a {} ms wait and the report configured {} ms",
+            describe(expected_configured),
+            describe(configured)
+        ));
+    }
+    let elapsed = number_at(
+        observation,
+        &["escalation", "request_to_escalated_report_micros"],
+    );
+    if !matches!((elapsed, configured), (Some(elapsed), Some(configured)) if elapsed < configured.saturating_mul(1_000))
+    {
+        violations.push(format!(
+            "escalation reported after {} µs against a {} ms deadline, so the report does not \
+             prove the second request ended waiting before expiry",
+            describe(elapsed),
+            describe(configured)
+        ));
+    }
 
     violations
 }
@@ -1048,6 +1092,30 @@ fn reconcile_recovery(runs: &Runs) -> Vec<String> {
              restart that re-ran nothing proves nothing was preserved"
                 .to_owned(),
         );
+    }
+
+    for (field, expected, description) in [
+        (
+            "batch_status",
+            "STOPPED",
+            "cancelled attempt's durable batch status",
+        ),
+        (
+            "exit_status",
+            "STOPPED",
+            "cancelled attempt's framework-owned exit status",
+        ),
+    ] {
+        let actual = observation
+            .get("cancelled_attempt")
+            .and_then(|attempt| attempt.get(field))
+            .and_then(Value::as_str);
+        if actual != Some(expected) {
+            violations.push(format!(
+                "restart-after-cancellation recorded {} for the {description}, not {expected}",
+                actual.unwrap_or("nothing")
+            ));
+        }
     }
 
     for (path, requirement) in [
@@ -1765,6 +1833,7 @@ mod tests {
                         "phase": phase,
                         "request_to_durable_terminal_micros": 20,
                         "batch_status": "STOPPED",
+                        "exit_status": "STOPPED",
                         "workers_active_after_return": 0,
                         "cancellation_point": {
                             "target_phase_entered_before_request": true,
@@ -1806,10 +1875,16 @@ mod tests {
             "panicked_tasks": 0,
             "escalated": true,
             "phases": [{ "phase": "Transaction", "count": 4 }],
+            "request_to_escalated_report_micros": 50,
+            "configured_deadline_millis": 30_000,
         });
 
         let mut restart = identity("restart-after-cancellation");
-        restart["cancelled_attempt"] = json!({ "committed_partitions": 1 });
+        restart["cancelled_attempt"] = json!({
+            "batch_status": "STOPPED",
+            "exit_status": "STOPPED",
+            "committed_partitions": 1,
+        });
         restart["restart"] = json!({
             "same_instance": true,
             "new_execution": true,
@@ -1988,6 +2063,15 @@ mod tests {
     }
 
     #[test]
+    fn empty_partition_status_map_cannot_prove_operator_stop_cleanup() {
+        let verdict = mutated_verdict(|runs| {
+            runs.observations.get_mut("operator-stop").expect("present")["checkpoint"]["partition_statuses"] =
+                json!({});
+        });
+        assert!(!verdict.violations.is_empty());
+    }
+
+    #[test]
     fn duplicate_phase_fails_the_final_campaign() {
         let verdict = mutated_verdict(|runs| {
             let phases = runs
@@ -2010,6 +2094,16 @@ mod tests {
                 .as_array_mut()
                 .expect("array")
                 .pop();
+        });
+        assert!(!verdict.violations.is_empty());
+    }
+
+    #[test]
+    fn phase_exit_status_must_be_stopped() {
+        let verdict = mutated_verdict(|runs| {
+            runs.observations
+                .get_mut("phase-separation")
+                .expect("present")["phases"][0]["exit_status"] = json!("FAILED");
         });
         assert!(!verdict.violations.is_empty());
     }
@@ -2166,6 +2260,18 @@ mod tests {
     }
 
     #[test]
+    fn escalation_must_end_before_its_declared_deadline() {
+        let verdict = mutated_verdict(|runs| {
+            let escalation = &mut runs
+                .observations
+                .get_mut("deadline-unjoined")
+                .expect("present")["escalation"];
+            escalation["request_to_escalated_report_micros"] = json!(30_000_000);
+        });
+        assert!(!verdict.violations.is_empty());
+    }
+
+    #[test]
     fn missing_completion_duration_fails_the_final_campaign() {
         let verdict = mutated_verdict(|runs| {
             mutate_deadlines(runs, |deadlines| {
@@ -2184,6 +2290,16 @@ mod tests {
             runs.observations
                 .get_mut("restart-after-cancellation")
                 .expect("present")["cancelled_attempt"]["committed_partitions"] = json!(0);
+        });
+        assert!(!verdict.violations.is_empty());
+    }
+
+    #[test]
+    fn restart_report_must_show_a_stopped_cancelled_attempt() {
+        let verdict = mutated_verdict(|runs| {
+            runs.observations
+                .get_mut("restart-after-cancellation")
+                .expect("present")["cancelled_attempt"]["batch_status"] = json!("COMPLETED");
         });
         assert!(!verdict.violations.is_empty());
     }
@@ -2250,7 +2366,11 @@ mod tests {
     /// the given prior commit count and every other check satisfied.
     fn restart_observation(committed_partitions: u64) -> serde_json::Value {
         json!({
-            "cancelled_attempt": { "committed_partitions": committed_partitions },
+            "cancelled_attempt": {
+                "batch_status": "STOPPED",
+                "exit_status": "STOPPED",
+                "committed_partitions": committed_partitions,
+            },
             "restart": {
                 "same_instance": true,
                 "new_execution": true,
