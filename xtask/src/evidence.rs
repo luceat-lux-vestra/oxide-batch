@@ -391,44 +391,58 @@ fn verify_run_identity(name: &str, entry: &Value) -> Vec<String> {
 /// declared. Counts are what the campaign means by "the matrix".
 fn verify_matrix(document: &Value, entries: &[Value]) -> Vec<String> {
     let mut violations = Vec::new();
-    let required = document
-        .get("required_matrix")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_owned)
-        .collect::<BTreeSet<_>>();
-    if required.is_empty() {
-        return vec!["the provenance document requires no matrix point".to_owned()];
-    }
+    let campaigns = match campaign_closures(document) {
+        Ok(campaigns) => campaigns,
+        Err(error) => return vec![error],
+    };
 
-    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    // Counted per campaign. A single table across all of them would report a
+    // matrix point covered once by each of two campaigns as covered twice,
+    // which is the correct answer to a question nobody is asking.
+    let mut counts: BTreeMap<(String, String), usize> = BTreeMap::new();
     for entry in entries {
-        match entry.get("matrix_point").and_then(Value::as_str) {
-            Some(point) => *counts.entry(point.to_owned()).or_default() += 1,
-            None => violations.push("a provenance entry names no matrix point".to_owned()),
+        let campaign = entry.get("campaign").and_then(Value::as_str);
+        let point = entry.get("matrix_point").and_then(Value::as_str);
+        match (campaign, point) {
+            (Some(campaign), Some(point)) => {
+                *counts
+                    .entry((campaign.to_owned(), point.to_owned()))
+                    .or_default() += 1;
+            }
+            (None, _) => violations.push("a provenance entry names no campaign".to_owned()),
+            (_, None) => violations.push("a provenance entry names no matrix point".to_owned()),
         }
     }
 
-    for point in &required {
-        match counts.get(point).copied().unwrap_or_default() {
-            1 => {}
-            0 => violations.push(format!(
-                "{point} is a required matrix point and no retained report covers it, so the \
-                 evidence is part of a matrix presented as the whole one"
-            )),
-            found => violations.push(format!(
-                "{point} is covered by {found} retained reports, so which one the campaign result \
-                 rests on is unstated"
-            )),
+    for (name, campaign) in &campaigns {
+        for point in &campaign.required_matrix {
+            match counts
+                .get(&(name.clone(), point.clone()))
+                .copied()
+                .unwrap_or_default()
+            {
+                1 => {}
+                0 => violations.push(format!(
+                    "{point} is a required matrix point of {name} and no retained report covers \
+                     it, so the evidence is part of a matrix presented as the whole one"
+                )),
+                found => violations.push(format!(
+                    "{point} is covered by {found} retained reports of {name}, so which one the \
+                     campaign result rests on is unstated"
+                )),
+            }
         }
     }
-    for point in counts.keys() {
-        if !required.contains(point) {
-            violations.push(format!(
-                "{point} is retained as official evidence and is not a declared matrix point"
-            ));
+    for (campaign, point) in counts.keys() {
+        match campaigns.get(campaign) {
+            Some(declared) if declared.required_matrix.contains(point) => {}
+            Some(_) => violations.push(format!(
+                "{point} is retained as official evidence of {campaign} and is not one of its \
+                 declared matrix points"
+            )),
+            None => violations.push(format!(
+                "{campaign} has retained evidence and is not a declared campaign"
+            )),
         }
     }
 
@@ -496,12 +510,41 @@ fn verify_unique<'a>(
 /// inputs are the retained report, the declared closure, and the current tree.
 fn verify_semantics(root: &Path, document: &Value, reports: &[(String, Value)]) -> Vec<String> {
     let mut violations = Vec::new();
-    let declared = match semantics_paths(root) {
-        Ok(paths) => paths,
+    let campaigns = match campaign_closures(document) {
+        Ok(campaigns) => campaigns,
         Err(error) => return vec![error],
     };
+    let belongs = report_campaigns(document);
+
+    // Every closure is read once, and their union is what the working tree is
+    // checked against: a path in any campaign's closure has to be the tree's.
+    let mut closures = BTreeMap::new();
+    let mut union = BTreeSet::new();
+    for (name, campaign) in &campaigns {
+        match semantics_paths(root, &campaign.semantics) {
+            Ok(paths) => {
+                union.extend(paths.iter().cloned());
+                closures.insert(name.clone(), paths);
+            }
+            Err(error) => violations.push(error),
+        }
+    }
 
     for (name, report) in reports {
+        let Some(campaign) = belongs.get(name) else {
+            violations.push(format!(
+                "{name} is retained evidence and names no campaign, so nothing says which closure \
+                 decides what it is evidence of"
+            ));
+            continue;
+        };
+        let Some(declared) = closures.get(campaign) else {
+            violations.push(format!(
+                "{name} belongs to {campaign}, which declares no semantic closure"
+            ));
+            continue;
+        };
+        let declared = declared.clone();
         let Some(objects) = report
             .pointer("/observation/execution_manifest/objects")
             .and_then(Value::as_object)
@@ -546,27 +589,49 @@ fn verify_semantics(root: &Path, document: &Value, reports: &[(String, Value)]) 
     }
 
     violations.extend(verify_one_execution(document, reports));
-    violations.extend(verify_worktree(root, &declared));
+    violations.extend(verify_worktree(root, &union));
+
+    // A closure nothing is retained against is a campaign that was declared and
+    // never delivered, which should be visible rather than silently fine.
+    for campaign in campaigns.keys() {
+        if !belongs.values().any(|name| name == campaign) {
+            violations.push(format!(
+                "{campaign} declares a semantic closure and no retained report belongs to it"
+            ));
+        }
+    }
     violations
 }
 
 /// Requires the retained reports to be one campaign run on one tree.
 fn verify_one_execution(document: &Value, reports: &[(String, Value)]) -> Vec<String> {
     let mut violations = Vec::new();
-    let executed = reports
-        .iter()
-        .filter_map(|(_, report)| {
-            report
-                .pointer("/observation/execution_manifest/execution_commit")
-                .and_then(Value::as_str)
-        })
-        .collect::<BTreeSet<_>>();
-    if executed.len() > 1 {
-        violations.push(format!(
-            "the retained reports were executed against {} different trees, so they are not one \
-             campaign result",
-            executed.len(),
-        ));
+    // Grouped by campaign. One campaign's reports must be one run on one tree;
+    // two campaigns retained from different workflow runs legitimately are not,
+    // and requiring them to match would make every campaign's retention
+    // invalidate every other campaign's.
+    let belongs = report_campaigns(document);
+    let mut executed: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for (name, report) in reports {
+        let Some(commit) = report
+            .pointer("/observation/execution_manifest/execution_commit")
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        let campaign = belongs
+            .get(name)
+            .map_or("an unnamed campaign", String::as_str);
+        executed.entry(campaign).or_default().insert(commit);
+    }
+    for (campaign, trees) in executed {
+        if trees.len() > 1 {
+            violations.push(format!(
+                "the retained reports of {campaign} were executed against {} different trees, so \
+                 they are not one campaign result",
+                trees.len(),
+            ));
+        }
     }
 
     // The provenance records the execution commit too, and it must be the one
@@ -622,16 +687,86 @@ fn verify_worktree(root: &Path, declared: &BTreeSet<String>) -> Vec<String> {
     }
 }
 
+/// Reads the per-campaign closure table the provenance declares.
+///
+/// Each retained report belongs to a campaign, and each campaign declares the
+/// closure that decides what its evidence is evidence of. Resolving this per
+/// campaign rather than once is what keeps a second campaign from being checked
+/// against the first one's closure — which would pass, because the two closures
+/// share most of their paths, and would be checking the wrong thing.
+fn campaign_closures(document: &Value) -> Result<BTreeMap<String, Campaign>, String> {
+    let declared = document
+        .pointer("/campaigns/declared")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "the provenance document declares no campaigns".to_owned())?;
+    let mut campaigns = BTreeMap::new();
+    for entry in declared {
+        let name = entry
+            .get("campaign")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "a declared campaign has no name".to_owned())?;
+        let semantics = entry
+            .get("semantics")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("{name} declares no semantic closure"))?;
+        let required = entry
+            .get("required_matrix")
+            .and_then(Value::as_array)
+            .map(|points| {
+                points
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect::<BTreeSet<_>>()
+            })
+            .unwrap_or_default();
+        if required.is_empty() {
+            return Err(format!("{name} requires no matrix point"));
+        }
+        campaigns.insert(
+            name.to_owned(),
+            Campaign {
+                semantics: semantics.to_owned(),
+                required_matrix: required,
+            },
+        );
+    }
+    if campaigns.is_empty() {
+        return Err("the provenance document declares no campaigns".to_owned());
+    }
+    Ok(campaigns)
+}
+
+/// One declared campaign and what binds its retained evidence.
+struct Campaign {
+    /// The document declaring what the campaign is made of.
+    semantics: String,
+    /// The matrix points the campaign owes, exactly once each.
+    required_matrix: BTreeSet<String>,
+}
+
+/// Maps each retained report to the campaign it belongs to.
+fn report_campaigns(document: &Value) -> BTreeMap<String, String> {
+    document
+        .get("evidence")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            Some((
+                entry.get("report").and_then(Value::as_str)?.to_owned(),
+                entry.get("campaign").and_then(Value::as_str)?.to_owned(),
+            ))
+        })
+        .collect()
+}
+
 /// Reads the declared semantic closure from its canonical document.
 ///
 /// The producer reads the same document to build its manifest. Neither restates
 /// the list: a closure kept in two places is one that will disagree.
-fn semantics_paths(root: &Path) -> Result<BTreeSet<String>, String> {
-    let path = root
-        .join("tests")
-        .join("fixtures")
-        .join("soak")
-        .join("campaign-semantics.json");
+fn semantics_paths(root: &Path, source: &str) -> Result<BTreeSet<String>, String> {
+    let path = root.join(source);
     let source = fs::read_to_string(&path)
         .map_err(|error| format!("could not read {}: {error}", path.display()))?;
     let document: Value = serde_json::from_str(&source)
@@ -730,6 +865,7 @@ mod tests {
                 .expect("report json");
         json!({
             "report": "soak-campaign-postgres-15.json",
+            "campaign": "M5 PostgreSQL soak",
             "matrix_point": "postgres-15",
             "postgres_major_version": "15",
             "producer": {
@@ -953,32 +1089,85 @@ mod tests {
     /// suite twice already.
     fn reports() -> Vec<(String, Value)> {
         let root = crate::suite::workspace_root().expect("workspace root");
-        let objects = super::semantics_paths(&root)
-            .expect("declared semantics")
-            .into_iter()
-            .map(|path| {
-                let object = super::git(&root, &["rev-parse", &format!("HEAD:{path}")])
-                    .unwrap_or_else(|| panic!("{path} is declared and absent"));
-                (path, json!(object))
-            })
-            .collect::<serde_json::Map<_, _>>();
-        let manifest = json!({
-            "execution_commit": super::git(&root, &["rev-parse", "HEAD"]).expect("HEAD"),
-            "tree_clean": true,
-            "objects": objects,
-        });
-        provenance()["evidence"]
+        let document = provenance();
+        // Each report's manifest is built from *its own* campaign's closure.
+        // Building one manifest for all of them would make these fixtures agree
+        // with a verifier that resolved one closure for everything, which is
+        // exactly the bug the per-campaign resolution exists to prevent.
+        let campaigns = super::campaign_closures(&document).expect("declared campaigns");
+        let commit = super::git(&root, &["rev-parse", "HEAD"]).expect("HEAD");
+        document["evidence"]
             .as_array()
             .expect("evidence")
             .iter()
             .map(|entry| {
                 let name = entry["report"].as_str().expect("report").to_owned();
+                let campaign = entry["campaign"].as_str().expect("campaign");
+                let closure = campaigns.get(campaign).expect("a declared campaign");
+                let objects = super::semantics_paths(&root, &closure.semantics)
+                    .expect("declared semantics")
+                    .into_iter()
+                    .map(|path| {
+                        let object = super::git(&root, &["rev-parse", &format!("HEAD:{path}")])
+                            .unwrap_or_else(|| panic!("{path} is declared and absent"));
+                        (path, json!(object))
+                    })
+                    .collect::<serde_json::Map<_, _>>();
                 (
                     name,
-                    json!({ "observation": { "execution_manifest": manifest } }),
+                    json!({
+                        "observation": {
+                            "execution_manifest": {
+                                "execution_commit": commit,
+                                "tree_clean": true,
+                                "objects": objects,
+                            }
+                        }
+                    }),
                 )
             })
             .collect()
+    }
+
+    /// A provenance document declaring one campaign over the full matrix.
+    ///
+    /// The matrix tests below use this rather than the shipped document, for
+    /// the reason stated at the top of this module: whether the repository's
+    /// current evidence is complete is a property of the working tree, and it
+    /// is false by design between a semantics change and the retention that
+    /// records the rerun. A test that asserted the shipped document was
+    /// complete would fail for the whole of that window and would be testing
+    /// the retention state rather than this logic.
+    fn one_campaign() -> Value {
+        json!({
+            "campaigns": {
+                "declared": [{
+                    "campaign": "M5 PostgreSQL soak",
+                    "semantics": "tests/fixtures/soak/campaign-semantics.json",
+                    "required_matrix": ["postgres-15", "postgres-18"],
+                }]
+            }
+        })
+    }
+
+    /// The same, over the two campaigns the repository declares.
+    fn declared_campaigns() -> Value {
+        json!({
+            "campaigns": {
+                "declared": [
+                    {
+                        "campaign": "M5 PostgreSQL soak",
+                        "semantics": "tests/fixtures/soak/campaign-semantics.json",
+                        "required_matrix": ["postgres-15", "postgres-18"],
+                    },
+                    {
+                        "campaign": "M5 PostgreSQL cancellation",
+                        "semantics": "tests/fixtures/cancellation/campaign-semantics.json",
+                        "required_matrix": ["postgres-15", "postgres-18"],
+                    },
+                ]
+            }
+        })
     }
 
     /// Runs the semantics check over a mutated provenance document.
@@ -1149,19 +1338,69 @@ mod tests {
 
     #[test]
     fn accepts_exact_postgres_15_and_18_matrix() {
-        let document = provenance();
-        let entries = document["evidence"].as_array().expect("evidence").clone();
+        let mut fifteen = entry();
+        fifteen["matrix_point"] = json!("postgres-15");
+        let mut eighteen = entry();
+        eighteen["report"] = json!("soak-campaign-postgres-18.json");
+        eighteen["matrix_point"] = json!("postgres-18");
+        eighteen["artifact"]["name"] = json!("soak-campaign-postgres-18");
+        eighteen["producing_job"]["id"] = json!(9_u64);
         assert_eq!(
-            super::verify_matrix(&document, &entries),
+            super::verify_matrix(&one_campaign(), &[fifteen, eighteen]),
             Vec::<String>::new()
         );
     }
 
     #[test]
+    fn one_matrix_point_covered_once_by_each_of_two_campaigns_is_accepted() {
+        // The case that made the matrix check per campaign. Counted across all
+        // campaigns, postgres-15 here is covered twice and the evidence looks
+        // ambiguous; counted per campaign, each covers it exactly once.
+        let mut soak = entry();
+        soak["matrix_point"] = json!("postgres-15");
+        let mut soak_eighteen = soak.clone();
+        soak_eighteen["report"] = json!("soak-campaign-postgres-18.json");
+        soak_eighteen["matrix_point"] = json!("postgres-18");
+        soak_eighteen["artifact"]["name"] = json!("soak-campaign-postgres-18");
+        soak_eighteen["producing_job"]["id"] = json!(9_u64);
+
+        let mut cancel = entry();
+        cancel["campaign"] = json!("M5 PostgreSQL cancellation");
+        cancel["report"] = json!("cancellation-campaign-postgres-15.json");
+        cancel["artifact"]["name"] = json!("cancellation-campaign-postgres-15");
+        cancel["producing_job"]["id"] = json!(10_u64);
+        let mut cancel_eighteen = cancel.clone();
+        cancel_eighteen["report"] = json!("cancellation-campaign-postgres-18.json");
+        cancel_eighteen["matrix_point"] = json!("postgres-18");
+        cancel_eighteen["artifact"]["name"] = json!("cancellation-campaign-postgres-18");
+        cancel_eighteen["producing_job"]["id"] = json!(11_u64);
+
+        assert_eq!(
+            super::verify_matrix(
+                &declared_campaigns(),
+                &[soak, soak_eighteen, cancel, cancel_eighteen]
+            ),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn evidence_of_an_undeclared_campaign_is_rejected() {
+        let mut orphan = entry();
+        orphan["campaign"] = json!("M5 PostgreSQL performance");
+        let violations = super::verify_matrix(&one_campaign(), std::slice::from_ref(&orphan));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("is not a declared campaign")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
     fn rejects_duplicate_matrix_point() {
-        let document = provenance();
         let entry = entry();
-        let violations = super::verify_matrix(&document, &[entry.clone(), entry]);
+        let violations = super::verify_matrix(&one_campaign(), &[entry.clone(), entry]);
         assert!(
             violations
                 .iter()
@@ -1172,12 +1411,9 @@ mod tests {
 
     #[test]
     fn rejects_unexpected_matrix_point() {
-        let document = provenance();
         let mut extra = entry();
         extra["matrix_point"] = json!("postgres-17");
-        let mut entries = document["evidence"].as_array().expect("evidence").clone();
-        entries.push(extra);
-        let violations = super::verify_matrix(&document, &entries);
+        let violations = super::verify_matrix(&one_campaign(), std::slice::from_ref(&extra));
         assert!(
             violations
                 .iter()
@@ -1188,8 +1424,7 @@ mod tests {
 
     #[test]
     fn rejects_missing_matrix_point() {
-        let document = provenance();
-        let violations = super::verify_matrix(&document, std::slice::from_ref(&entry()));
+        let violations = super::verify_matrix(&one_campaign(), std::slice::from_ref(&entry()));
         assert!(
             violations
                 .iter()
@@ -1330,16 +1565,11 @@ mod tests {
             let digest = entry["artifact"]["digest"].as_str().expect("digest");
             assert!(super::is_sha256(digest), "{digest}");
         }
-        assert_eq!(
-            super::verify_matrix(&provenance(), &entries),
-            Vec::<String>::new()
-        );
     }
 
     #[test]
     fn a_half_matrix_is_rejected() {
-        let document = json!({ "required_matrix": ["postgres-15", "postgres-18"] });
-        let violations = super::verify_matrix(&document, std::slice::from_ref(&entry()));
+        let violations = super::verify_matrix(&one_campaign(), std::slice::from_ref(&entry()));
         assert!(
             violations
                 .iter()

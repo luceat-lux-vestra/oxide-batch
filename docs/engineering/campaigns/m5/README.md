@@ -32,6 +32,8 @@ a pass or failure that does not.
 | [`resource-bounds-campaign-postgres-18.json`](resource-bounds-campaign-postgres-18.json) | Resource bounds | The same, on PostgreSQL 18 |
 | [`soak-campaign-postgres-15.json`](soak-campaign-postgres-15.json) | Soak | The declared warmup and measured window, every cycle's fault, restart, recovery, drain, and durable record, and the per-cycle task, connection, handle, memory, and durable-history series each growth rule was decided from, on PostgreSQL 15 |
 | [`soak-campaign-postgres-18.json`](soak-campaign-postgres-18.json) | Soak | The same, on PostgreSQL 18 |
+| [`cancellation-campaign-postgres-15.json`](cancellation-campaign-postgres-15.json) | Cancellation | The declared deadline set, the request-to-intake-stop and request-to-durable-terminal latencies, those latencies separated by phase, the unjoined task count and its per-phase attribution at every deadline and at escalation, and the durable record a cancelled attempt left and a restart resumed from, on PostgreSQL 15 |
+| [`cancellation-campaign-postgres-18.json`](cancellation-campaign-postgres-18.json) | Cancellation | The same, on PostgreSQL 18 |
 
 A file carries the matrix point in its name because one run produces one
 report: the runner always writes `conformance-campaign.json`, and the two jobs
@@ -53,24 +55,39 @@ using the branch head as a stand-in would mean checking evidence against
 something that never ran. Both SHAs are recorded in separate fields and only the
 manifest is authority.
 
-The closure itself is declared once, in
-[`campaign-semantics.json`](../../../../tests/fixtures/soak/campaign-semantics.json),
-and read by the producer and the verifier alike: framework source, the
-repository adapter, migrations, cargo manifests, `Cargo.lock`, toolchain and
-build configuration, the campaign implementation and fixtures, the soak
-execution contract, and the verifier. If any of them differs from what a report
-recorded, that report describes a campaign this tree no longer runs and may not
-be promoted — the campaign has to be run again.
+Each campaign declares its own closure, once, and the producer and the verifier
+read the same document: the soak's is
+[`soak/campaign-semantics.json`](../../../../tests/fixtures/soak/campaign-semantics.json)
+and the cancellation campaign's is
+[`cancellation/campaign-semantics.json`](../../../../tests/fixtures/cancellation/campaign-semantics.json).
+Both cover framework source, the repository adapter, migrations, cargo
+manifests, `Cargo.lock`, toolchain and build configuration, the campaign
+implementation and fixtures, the execution contract, and the verifier. If any of
+them differs from what a report recorded, that report describes a campaign this
+tree no longer runs and may not be promoted — the campaign has to be run again.
 
-How CI executes the soak lives in
-[`execution-contract.json`](../../../../tests/fixtures/soak/execution-contract.json)
-and `run-ci-campaign.sh`, inside the closure, with the workflow only calling
-them. That keeps the execution semantics reviewable in one place beside the
-campaign. It does not narrow the closure: `.github/workflows/ci.yml` is bound
-whole, so an unrelated CI job invalidates retained soak evidence too. The
-bluntness is deliberate — agreement between the workflow, the contract and the
-script is a mechanism this way and a review habit otherwise — and narrowing it
-is left to its own change.
+Which closure applies to which report is decided by the campaign the report
+belongs to, recorded in `campaigns.declared` in the provenance document along
+with the matrix points that campaign owes. Resolving this per campaign is not a
+formality: two campaigns' closures share most of their paths, so checking one
+campaign's evidence against the other's would pass while checking the wrong
+thing, and a matrix point covered once by each of two campaigns is not a matrix
+point covered twice.
+
+How CI executes each campaign lives in its own `execution-contract.json` and
+`run-ci-campaign.sh`, inside that campaign's closure, with the workflow only
+calling them. That keeps the execution semantics reviewable in one place beside
+the campaign. It does not narrow the closure: `.github/workflows/ci.yml` is
+bound whole by both, so an unrelated CI job invalidates retained evidence too.
+The bluntness is deliberate — agreement between the workflow, the contract and
+the script is a mechanism this way and a review habit otherwise.
+
+Adding the cancellation campaign is the second time this has been paid: its two
+CI jobs and its xtask command changed paths inside the soak's closure and
+invalidated the retained soak evidence, which was re-run and re-retained in the
+same workflow run. Extracting each campaign into its own workflow, so that only
+that file is in its closure, is the right fix and is still left to its own
+change rather than to whichever campaign triggers the cost next.
 
 The permanent verifier is offline: no commit resolution, no fetch, nothing but
 the retained report, the closure and the working tree. The one-time remote check
@@ -217,3 +234,21 @@ Each database report must also name the PostgreSQL major it ran against,
 because a matrix point is invisible in a connection string and an observation
 from one supported major would otherwise reconcile perfectly inside a run of
 another.
+
+The cancellation runner has the mirror-image problem, and it is worth stating
+because it changes what the runner checks rather than how hard it checks. That
+campaign's headline observations are *durations*, and a duration is the easiest
+thing in this set to produce without doing the work: a report that measured
+nothing retains a zero, one that measured the wrong interval retains a plausible
+number, and both look exactly like evidence. There is also no accepted budget to
+compare any of them against, so the runner cannot fall back on a threshold.
+
+It therefore requires structure rather than magnitude. Every observation the
+denominator declares must have been taken by the report that owes it; the two
+latencies must be present and ordered so intake stopped no later than the
+durable terminal; every declared deadline must have been run both with tasks
+that finish and with tasks held past it, with the reported unjoined count equal
+to the number held and its per-phase attribution summing to that; and the
+accepted recovery contract must have held after the cancellation. No duration is
+compared against a limit anywhere, so a fast run and a slow run reach the same
+verdict.

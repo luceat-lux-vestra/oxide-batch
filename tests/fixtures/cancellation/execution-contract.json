@@ -1,0 +1,31 @@
+{
+  "document": "How CI executes the M5 PostgreSQL cancellation campaign",
+  "note": "The execution semantics of the cancellation job, extracted from the workflow so that they can be part of the campaign's semantic closure. The workflow provisions a runner and a database and then calls run-ci-campaign.sh; everything about how the campaign is actually run lives here. The split exists so that how the campaign is run is reviewable in one place beside it rather than scattered through a workflow that also builds everything else. It does not narrow what invalidates evidence: the workflow file is in the closure too, so an unrelated CI job invalidates retained evidence as surely as a change to the command here does.",
+  "supported_matrix": ["15", "18"],
+  "matrix_note": "The two ends of the supported PostgreSQL 15-18 range. Evidence is required from both, exactly once each.",
+  "database": {
+    "image": "postgres:{major}",
+    "database_name": "oxide_batch_cancellation",
+    "user": "postgres",
+    "password": "postgres",
+    "port": 5432,
+    "max_connections": "the image default",
+    "max_connections_note": "Each report holds one pool of 5 connections, which is worker_budget + 1, and the reports run one at a time. The image's default of 100 is ample and is deliberately not raised.",
+    "health_check": "pg_isready --username postgres --dbname oxide_batch_cancellation"
+  },
+  "command": ["cargo", "run", "--package", "oxide-batch-xtask", "--", "cancellation"],
+  "cargo_profile": "debug",
+  "profile_note": "Debug, like every other M5 campaign, so that the matrix points are comparable with each other and with the rest of the campaign set. It does mean the absolute latencies this campaign reports are debug-build latencies, which is stated in the report and in the campaign evidence document rather than left for a reader to infer. Nothing is asserted against them, so the profile changes what the numbers are without changing any verdict.",
+  "features": "the campaign targets are built with --all-features by the runner's own target invocation",
+  "environment": {
+    "OXIDEBATCH_POSTGRES_TEST_URL": "postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_cancellation",
+    "OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL": "postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_cancellation",
+    "OXIDEBATCH_CAMPAIGN_DIR": "target/m5-campaigns",
+    "OXIDEBATCH_CAMPAIGN_MATRIX": "postgres-{major}"
+  },
+  "report_path": "target/m5-campaigns/cancellation-campaign.json",
+  "artifact_name": "cancellation-campaign-postgres-{major}",
+  "artifact_retention": "on success and on failure alike, because what a failed cancellation campaign needs is the latency and unjoined-count detail that led to it",
+  "timeout_minutes": 20,
+  "timeout_note": "The campaign's floor is set by the declared deadline set: the default 30 s deadline has to be waited out once, and the other two add six seconds, so roughly forty seconds of the run is deliberate waiting. Twenty minutes leaves room for the build and the four reports while still being a ceiling that a campaign which stopped making progress hits rather than occupying a runner."
+}

@@ -7,7 +7,7 @@
     "stages": [
       {
         "stage": "actual execution tree",
-        "what": "The tree the campaign really ran against, recorded by the run from inside its own checkout as an object manifest in the report. On a pull request this is the ephemeral merge commit, which no later clone can resolve \u2014 which is exactly why the manifest is recorded rather than the commit name being trusted to stand for it."
+        "what": "The tree the campaign really ran against, recorded by the run from inside its own checkout as an object manifest in the report. On a pull request this is the ephemeral merge commit, which no later clone can resolve — which is exactly why the manifest is recorded rather than the commit name being trusted to stand for it."
       },
       {
         "stage": "workflow run",
@@ -23,11 +23,11 @@
       "Presenting the retention commit as the producer.",
       "Editing a retained artifact so that a recorded hash or commit matches.",
       "Re-running the campaign on each new head to make the execution tree equal the retention commit.",
-      "Treating a summary the report wrote about itself \u2014 a verdict, a total, a pass \u2014 as evidence for the run it describes."
+      "Treating a summary the report wrote about itself — a verdict, a total, a pass — as evidence for the run it describes."
     ]
   },
   "binding": {
-    "note": "Two verifications with different reach, and the difference is stated rather than blurred. `cargo xtask evidence` is repository-local: it resolves nothing over the network, so it keeps working long after GitHub has expired the artifacts it describes, and what it establishes is that the retained bytes are the bytes this repository recorded, over a tree whose campaign still means what it meant. It cannot say the retained bytes are the bytes the workflow uploaded. That stronger check needs the GitHub API, which is why it is performed once \u2014 at the moment evidence is promoted \u2014 and its result recorded per entry under remote_verification.",
+    "note": "Two verifications with different reach, and the difference is stated rather than blurred. `cargo xtask evidence` is repository-local: it resolves nothing over the network, so it keeps working long after GitHub has expired the artifacts it describes, and what it establishes is that the retained bytes are the bytes this repository recorded, over a tree whose campaign still means what it meant. It cannot say the retained bytes are the bytes the workflow uploaded. That stronger check needs the GitHub API, which is why it is performed once — at the moment evidence is promoted — and its result recorded per entry under remote_verification.",
     "artifact_identity": "Each report's git blob identity, taken over the working-tree file. It changes if a single byte of a retained artifact is edited after retention.",
     "campaign_semantics": "The object identity of every path in the declared closure, as the run recorded them from its own checkout. The verifier requires each to still be the tree's identity today. It resolves no commit and fetches nothing: the inputs are the retained report, the closure document, and the working tree.",
     "why_object_ids": "Git object identities for the local binding, because git is already required by this tooling, the values are verifiable by hand with `git rev-parse HEAD:<path>` and `git hash-object <file>`, and no dependency is added to compute them. The GitHub artifact digest is recorded separately and is a different thing: a sha256 over the uploaded archive, which is what the one-time remote check compares against.",
@@ -35,9 +35,27 @@
     "remote_verification": "Performed once per retention, against the GitHub Actions API: the run, attempt and job exist and succeeded; the artifact's own sha256 digest is recorded; the artifact is downloaded and its extracted report compared byte-for-byte with the retained file. It is deliberately not a permanent CI dependency, because Actions artifacts expire and a verifier that stopped working on a retention boundary would be switched off rather than fixed.",
     "derived_verdicts": "The report's correctness results, growth verdicts and campaign totals are not read as evidence. `cargo xtask soak` recomputes each of them from the raw per-cycle journal and the retained samples, after first requiring the chronology of those arrays to be a contiguous, ordered, correctly phased run of the declared length, and requires the report's own answers to match."
   },
-  "campaign_semantics": {
-    "source": "tests/fixtures/soak/campaign-semantics.json",
-    "note": "The closure is declared once, there, and read by both the producer and the verifier. It is not restated here: the earlier version of this document carried its own copy, which is how it came to omit the resolved dependency graph, the database migrations and the toolchain pin."
+  "campaigns": {
+    "note": "Retained evidence is per campaign, and everything that used to be stated once for the only campaign is stated per campaign here: which closure decides what its evidence is evidence of, and which matrix points it owes. The earlier version of this document had one `campaign_semantics` pointer and one `required_matrix`, which was correct while the soak was the only retained campaign and silently wrong the moment a second one arrived: the two campaigns' reports would have been checked against the soak's closure, and postgres-15 would have been reported as covered twice rather than once by each.",
+    "rule": "A campaign's reports are bound to that campaign's closure and to no other. Two campaigns retained from the same workflow run share an execution tree, and that is checked; two retained from different runs do not, and that is allowed. What is never allowed is a report whose campaign declares no closure, or a closure no retained report belongs to.",
+    "declared": [
+      {
+        "campaign": "M5 PostgreSQL soak",
+        "semantics": "tests/fixtures/soak/campaign-semantics.json",
+        "required_matrix": [
+          "postgres-15",
+          "postgres-18"
+        ]
+      },
+      {
+        "campaign": "M5 PostgreSQL cancellation",
+        "semantics": "tests/fixtures/cancellation/campaign-semantics.json",
+        "required_matrix": [
+          "postgres-15",
+          "postgres-18"
+        ]
+      }
+    ]
   },
   "retention_paths": {
     "note": "The paths an evidence-retention change is expected to touch. A review convention rather than an automated check: identifying \"the retention commit\" from inside the tree is the same self-reference that made the original requirement unsatisfiable. What is enforced is the semantic binding above.",
@@ -50,14 +68,16 @@
     {
       "report": "soak-campaign-postgres-15.json",
       "campaign": "M5 PostgreSQL soak",
-      "scenario": "soak_reports_no_task_connection_handle_or_memory_growth",
+      "scenarios": [
+        "soak_reports_no_task_connection_handle_or_memory_growth"
+      ],
       "matrix_point": "postgres-15",
       "postgres_major_version": "15",
       "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
       "producer": {
-        "execution_commit": "e947dc059f0a8e855bc9dfc7518ac41ff1af5eac",
+        "execution_commit": "107941f7d446c5d47388e3fb4cc11327cb516853",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "e999f9150ddc9de0524afa702012a577a567b224",
+        "branch_head_sha": "73668371a68e0556e29523eabd5a036aa7a63979",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -67,27 +87,27 @@
       "workflow_run": {
         "workflow": "Rust",
         "workflow_file": ".github/workflows/ci.yml",
-        "id": 31418389250,
+        "id": 31452399059,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-soak-campaign",
-        "id": 93552949087,
+        "id": 93659257907,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-15",
-        "id": 9074508462,
-        "digest": "sha256:a128841274d967523f89c28432310916c7ed3b92bde433ab55e4fcc2de95360c",
-        "size_bytes": 88890
+        "id": 9086858878,
+        "digest": "sha256:55314b04b1c0989b2a0281b1e49f03972e9f639a39e8a007cb8b7e16ce5570df",
+        "size_bytes": 88225
       },
-      "retained_report_git_blob": "eb7bb3525222acc041d20e14711894db63bdc015",
+      "retained_report_git_blob": "a3cabf782697c97f256bdc0b74643bf619887207",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-10T18:30:41+00:00",
-        "run_id": 31418389250,
+        "verified_at": "2026-08-11T02:39:02Z",
+        "run_id": 31452399059,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -101,14 +121,16 @@
     {
       "report": "soak-campaign-postgres-18.json",
       "campaign": "M5 PostgreSQL soak",
-      "scenario": "soak_reports_no_task_connection_handle_or_memory_growth",
+      "scenarios": [
+        "soak_reports_no_task_connection_handle_or_memory_growth"
+      ],
       "matrix_point": "postgres-18",
       "postgres_major_version": "18",
       "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
       "producer": {
-        "execution_commit": "e947dc059f0a8e855bc9dfc7518ac41ff1af5eac",
+        "execution_commit": "107941f7d446c5d47388e3fb4cc11327cb516853",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "e999f9150ddc9de0524afa702012a577a567b224",
+        "branch_head_sha": "73668371a68e0556e29523eabd5a036aa7a63979",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -118,27 +140,139 @@
       "workflow_run": {
         "workflow": "Rust",
         "workflow_file": ".github/workflows/ci.yml",
-        "id": 31418389250,
+        "id": 31452399059,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-soak-campaign",
-        "id": 93552949019,
+        "id": 93659257923,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-18",
-        "id": 9074488069,
-        "digest": "sha256:9568ad9190df336fb9a8b7bd147a0a16dc5c601c35060ea2a32dcd149ab05059",
-        "size_bytes": 88402
+        "id": 9086863010,
+        "digest": "sha256:9199b04ed819c17d2cfa771048ba27bc115ac1f43600260a5ca9bec9524771e3",
+        "size_bytes": 89725
       },
-      "retained_report_git_blob": "ce7177290551d7a3dacf1a2aec7ffe51d290b009",
+      "retained_report_git_blob": "15c62823023d109c5347bc74496b23ed24277864",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-10T18:30:41+00:00",
-        "run_id": 31418389250,
+        "verified_at": "2026-08-11T02:39:02Z",
+        "run_id": 31452399059,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network."
+      }
+    },
+    {
+      "report": "cancellation-campaign-postgres-15.json",
+      "campaign": "M5 PostgreSQL cancellation",
+      "scenarios": [
+        "operator_stop_reaches_a_durable_terminal_status",
+        "cancellation_latency_is_measured_separately_per_phase",
+        "drain_reports_unjoined_tasks_at_every_declared_deadline",
+        "restart_after_cancellation_resumes_without_rerunning_committed_work"
+      ],
+      "matrix_point": "postgres-15",
+      "postgres_major_version": "15",
+      "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
+      "producer": {
+        "execution_commit": "2a518982c7acc19abf4f95828d761322356a3776",
+        "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
+        "branch_head_sha": "cec39b5158f0d688619d0b7821a5c582c8ed8cb1",
+        "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "Rust",
+        "workflow_file": ".github/workflows/ci.yml",
+        "id": 31625254574,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "postgres-15-cancellation-campaign",
+        "id": 94210145377,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "cancellation-campaign-postgres-15",
+        "id": 9152942465,
+        "digest": "sha256:29abb2df6b570fd697dcca96390d812e14c207902955b09a0e76ed4377d02f34",
+        "size_bytes": 5695
+      },
+      "retained_report_git_blob": "1b36c84b4327e61aacd57d6b5308ac7d3ff50826",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-12T18:02:54Z",
+        "run_id": 31625254574,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network."
+      }
+    },
+    {
+      "report": "cancellation-campaign-postgres-18.json",
+      "campaign": "M5 PostgreSQL cancellation",
+      "scenarios": [
+        "operator_stop_reaches_a_durable_terminal_status",
+        "cancellation_latency_is_measured_separately_per_phase",
+        "drain_reports_unjoined_tasks_at_every_declared_deadline",
+        "restart_after_cancellation_resumes_without_rerunning_committed_work"
+      ],
+      "matrix_point": "postgres-18",
+      "postgres_major_version": "18",
+      "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+      "producer": {
+        "execution_commit": "2a518982c7acc19abf4f95828d761322356a3776",
+        "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
+        "branch_head_sha": "cec39b5158f0d688619d0b7821a5c582c8ed8cb1",
+        "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "Rust",
+        "workflow_file": ".github/workflows/ci.yml",
+        "id": 31625254574,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "postgres-18-cancellation-campaign",
+        "id": 94210145361,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "cancellation-campaign-postgres-18",
+        "id": 9152938260,
+        "digest": "sha256:178d48f9cd90fadb5138b2d229a647099235ca6e034b6ede2528c9bed3a37f1f",
+        "size_bytes": 5702
+      },
+      "retained_report_git_blob": "fecc209c5d43210c185f6220fbbbf55db45a479d",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-12T18:02:54Z",
+        "run_id": 31625254574,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -149,9 +283,5 @@
         "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network."
       }
     }
-  ],
-  "required_matrix": [
-    "postgres-15",
-    "postgres-18"
   ]
 }

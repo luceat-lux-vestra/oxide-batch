@@ -43,6 +43,7 @@ const CAMPAIGNS: &[&str] = &[
     "## Security campaign",
     "## Resource-bound campaign",
     "## Soak campaign",
+    "## Cancellation campaign",
 ];
 
 /// Subsections that belong to exactly one campaign apiece.

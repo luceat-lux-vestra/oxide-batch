@@ -1,0 +1,82 @@
+{
+  "document": "The executable closure of the M5 PostgreSQL cancellation campaign",
+  "note": "The single source of truth for what the cancellation campaign is made of. The producer reads it to record the object identity of every path at the tree it actually ran on; the verifier reads it to require those identities to still hold. Neither restates the list, because a list kept in two places is a list that will disagree.",
+  "rule": "A change to anything here changes what the evidence is evidence of, so retained reports produced before the change may not be promoted after it: the campaign has to be run again. A change to anything not here — documentation, the changelog, unrelated xtask commands — leaves retained evidence valid. Note that `.github/workflows/ci.yml` is bound whole, as one object: a change anywhere in that file, including to a job this campaign has nothing to do with, invalidates retained evidence and forces a rerun.",
+  "categories": {
+    "framework source": {
+      "why": "The code under test. Its behaviour is what every observation in the report is about. The shutdown coordinator and the flow launcher's execution-control polling both live under these paths, and they are the two mechanisms this campaign measures.",
+      "paths": [
+        "crates/oxide-batch/src",
+        "crates/oxide-batch-core/src",
+        "crates/oxide-batch-plan/src"
+      ]
+    },
+    "repository source": {
+      "why": "The PostgreSQL adapter the campaign runs through. The durable stop request, the STOPPING transition, and the terminal status are all writes this code makes, so request-to-durable-terminal is in large part a reading of it.",
+      "paths": [
+        "crates/oxide-batch-repository/src"
+      ]
+    },
+    "migrations": {
+      "why": "The durable schema the run migrates to before it starts. The stop-request column this campaign's operator path writes is part of it, and a different schema is a different durable record.",
+      "paths": [
+        "crates/oxide-batch/migrations"
+      ]
+    },
+    "cargo manifests": {
+      "why": "Feature selection and dependency ranges. A campaign built with different features is a different campaign.",
+      "paths": [
+        "Cargo.toml",
+        "crates/oxide-batch/Cargo.toml",
+        "crates/oxide-batch-core/Cargo.toml",
+        "crates/oxide-batch-plan/Cargo.toml",
+        "crates/oxide-batch-repository/Cargo.toml",
+        "xtask/Cargo.toml"
+      ]
+    },
+    "dependency resolution": {
+      "why": "The exact dependency graph the run was built from. This campaign measures latency, and the async runtime's scheduler and timer are resolved here: a runtime version change can move every duration in the report without touching a line of framework source.",
+      "paths": [
+        "Cargo.lock"
+      ]
+    },
+    "toolchain and build configuration": {
+      "why": "The compiler the whole thing is built with and the cargo configuration it is built under.",
+      "paths": [
+        "rust-toolchain.toml",
+        ".cargo/config.toml"
+      ]
+    },
+    "campaign implementation": {
+      "why": "The reports themselves and the mechanics they observe through.",
+      "paths": [
+        "crates/oxide-batch/tests/postgres_cancellation.rs",
+        "crates/oxide-batch/tests/cancellation"
+      ]
+    },
+    "campaign fixtures": {
+      "why": "The declared denominator — the deadline set, the phase mapping, the observations, the correctness requirements — and this closure itself. The deadline set in particular has to be here: it is the statement of what 'each deadline' means, and both the report and the verifier are held to it separately.",
+      "paths": [
+        "tests/fixtures/cancellation/campaign-scope.json",
+        "tests/fixtures/cancellation/campaign-semantics.json"
+      ]
+    },
+    "cancellation execution contract": {
+      "why": "How CI actually runs the campaign: the supported matrix, the database it is given, the command, and the environment. The workflow file is included with them, which is deliberately blunt — an unrelated CI job now invalidates retained evidence. The alternative was to trust that the contract file, the script and the workflow agree, and agreement maintained by review is not a mechanism.",
+      "paths": [
+        "tests/fixtures/cancellation/execution-contract.json",
+        "tests/fixtures/cancellation/run-ci-campaign.sh",
+        ".github/workflows/ci.yml"
+      ]
+    },
+    "independent verifier": {
+      "why": "The program that decides whether a report proved what it owed and whether retained evidence is still what it says. Its verdicts are part of the campaign result, so a report produced under a different verifier is a result under a different standard. The whole binary is listed, including its entry point and the shared suite mechanics.",
+      "paths": [
+        "xtask/src/main.rs",
+        "xtask/src/cancellation.rs",
+        "xtask/src/evidence.rs",
+        "xtask/src/suite.rs"
+      ]
+    }
+  }
+}

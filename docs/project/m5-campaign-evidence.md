@@ -30,7 +30,7 @@ named released version, and that stays with
 | Security | `verify_full_tls_is_required_in_the_supported_mode`, `least_privilege_role_cannot_exceed_its_class`, `redaction_sweep_finds_no_prohibited_value_class` | Delivered |
 | Resource bounds | `declared_ceilings_hold_under_stress_with_backpressure`, plus the bounded query-path, payload, and shedding reports | Delivered |
 | Soak | `soak_reports_no_task_connection_handle_or_memory_growth` | Delivered |
-| Cancellation | P-014 report | Not started |
+| Cancellation | `operator_stop_reaches_a_durable_terminal_status`, `cancellation_latency_is_measured_separately_per_phase`, `drain_reports_unjoined_tasks_at_every_declared_deadline`, `restart_after_cancellation_resumes_without_rerunning_committed_work` | Delivered |
 | Performance | P-001, P-003, P-010 reports | Not started |
 | Reference workload | Published P-003 run | Not started |
 | Extraction | Build, size, and dependency observations | Delivered by [#99](https://github.com/luceat-lux-vestra/oxide-batch/issues/99) and recorded in the [crate-extraction evidence](m5-crate-extraction-evidence.md) |
@@ -2092,3 +2092,375 @@ The lesson is the F20/F21/F22 lesson displaced one level. Those were about
 choosing a statistic without knowing its null distribution. This one is about
 believing an agreement that was structurally incapable of being a
 disagreement — the check was real, and it was checking the wrong thing.
+
+## Cancellation campaign
+
+### What the campaign owes
+
+The performance plan's cancellation row promises P-014 request-to-intake-stop
+and request-to-durable-terminal latency with the count of unjoined tasks at each
+deadline, and its M4 operations section additionally requires those latencies
+separated by phase. The campaign delivers four reports.
+
+| Report | Scenario | What it must show |
+| --- | --- | --- |
+| Operator stop | `operator_stop_reaches_a_durable_terminal_status` | A cancellation requested through the accepted durable operator path stops intake and reaches a durable terminal status, both latencies are measured and correctly ordered, and work committed before the cancellation survives it. |
+| Phase separation | `cancellation_latency_is_measured_separately_per_phase` | Request-to-durable-terminal measured separately for the async, blocking, and transaction phases, with the process intake path recorded beside them rather than averaged into them. |
+| Deadlines | `drain_reports_unjoined_tasks_at_every_declared_deadline` | At every declared deadline and at escalation, the number of tasks the drain still owned, attributed by phase, equal to the number the report actually held. |
+| Restart | `restart_after_cancellation_resumes_without_rerunning_committed_work` | A cancelled attempt restarts as a new execution of the same instance and re-runs only what it did not commit. |
+
+This campaign is the first on this page whose scenario names the design gate
+does not fix. Its named-scenario table lists ten IDs for the evidence campaigns
+and none of them is a cancellation scenario; conformance, crash, upgrade,
+security, resource bounds, and soak each have at least one, and cancellation,
+performance, and reference workload have none. That gap is recorded rather than
+repaired — adding an ID to a closed decision record so that a downstream
+campaign's reconciliation can lean on it is the wrong direction of travel — and
+`the_design_gate_still_names_no_cancellation_scenario` asserts the gap so that
+the day one is added, the test fails and the omission is revisited deliberately.
+It belongs to the M5 exit record in
+[#103](https://github.com/luceat-lux-vestra/oxide-batch/issues/103), not to a
+campaign PR. The practical consequence is that the reconciliation against the
+plan carries the weight the gate would otherwise share, so it runs in both
+directions: the campaign may not drop an obligation the plan states, and may not
+claim one it does not.
+
+### Denominator and scope
+
+The denominator is
+[`tests/fixtures/cancellation/campaign-scope.json`](../../tests/fixtures/cancellation/campaign-scope.json),
+read by all three consumers rather than restated: the reports take their
+deadline set, phase mapping, and workload shape from it; `cargo xtask
+cancellation` reads it independently and requires the run to have matched it;
+and
+[`m5_cancellation_campaign.rs`](../../crates/oxide-batch/tests/m5_cancellation_campaign.rs)
+checks it against the accepted plan in an ordinary `cargo test`.
+
+The deadline set is the part that most needs committing before the run. P-014
+owes the unjoined count *at each deadline*, and "each" is meaningless against a
+set the run gets to choose afterwards: a campaign that quietly reduced its set to
+one produces a report of exactly the same shape. Three points are declared, each
+inside the accepted `1 s..=1 h` bound that `ShutdownDeadline` and
+`TaskJoinDeadline` enforce, and each holding a *different* number of tasks —
+`3`, `5`, and `7` — because a set whose points all held the same number cannot
+distinguish a coordinator reporting what it owns from one reporting a constant.
+The accepted default of `30 s` is one of the three, and it costs the campaign
+thirty seconds of deliberate waiting per matrix point; omitting it and reporting
+only cheap deadlines would measure the configuration the campaign chose rather
+than the one the framework ships.
+
+### Latency is observational, and that is a decision
+
+**No accepted document states a cancellation budget.** The plan requires both
+latencies to be *measured* and reported and states no value either must stay
+under. The scope records this as `latency_status: observational`, and the rule
+is enforced from both sides: nothing in the reports compares a duration against
+a limit, and the runner checks only that each duration is present, structurally
+possible, and correctly ordered. A fast run and a slow run reach the same
+verdict.
+
+Two tempting alternatives were rejected. Importing the M4 in-memory figures —
+`1–2 µs` to cancellation, `135–148 µs` to durable terminal — would fail every
+healthy PostgreSQL run, because there the durable terminal is a committed
+transaction and the intake stop is bounded by a configured poll interval; the
+difference is the storage engine, not the framework. Inventing new numbers from
+these runs would publish a release commitment nobody accepted, against the
+plan's own rule that provisional budgets stay hypotheses until repeated
+baselines justify a release gate. This campaign supplies raw material for that
+decision and does not pre-empt it.
+
+The counts are a different matter and *are* asserted. The accepted contract
+fixes them: a drain that reports fewer unjoined tasks than it still owns is a
+defect at any speed, and it is checkable exactly because the report knows how
+many tasks it held.
+
+### Scenario methodology
+
+Cancellation is requested through the accepted operator path and no other. An
+operator knows a job name and its parameters, so the campaign finds the running
+execution the way one would — `find_job_instance` then `job_executions` — rather
+than reading an identifier out of a launch report no deployment has. It then
+calls `request_execution_stop` under compare-and-swap and commits.
+
+**The clock starts when that request is durable**, not when the campaign decided
+to cancel and not when the call was made: a request that has not committed is one
+no observer could act on, and starting earlier would charge the framework for the
+campaign's own round trip. Request-to-intake-stop ends when the durable
+`STOPPING` transition is first readable, which is the accepted meaning of intake
+having stopped on this path; request-to-durable-terminal ends when `STOPPED` is
+first readable.
+
+Both endpoints are read back from the database by a watcher on its own
+connection, outside the runtime. The alternative — a hook or telemetry event
+reporting the framework's own timings — is cheaper and wrong twice over: it asks
+the component under test to time itself, and it would measure the interval
+between two points the runtime already knew about, skipping the commit at each
+end, which is where an operator's latency actually goes. The cost is a sampling
+floor of `5 ms`, recorded beside every duration it bounds rather than left to be
+discovered, and two orders of magnitude below the framework's own stop poll
+interval, which dominates this path.
+
+The cancellation is requested only after a partition has durably committed and
+while later workers are in flight, so there is always both committed work to
+preserve and running work to cancel. Every duration is monotonic; the framework
+clock is pinned to a fixed instant precisely so no durable timestamp can
+accidentally become one of the campaign's measurements.
+
+The drain report runs each deadline **twice**: once with tasks that finish
+before it, where the drain must complete and report nothing unjoined, and once
+with tasks held past it, where the reported count must equal the number held and
+the per-phase attribution must sum to it. Either half alone is worthless — a
+coordinator hard-coded to report zero passes every completing drain, and one
+hard-coded to report the held count passes every expiring one — and across three
+deadlines with three different held counts neither constant survives. Escalation
+is measured beside them because it ends waiting the other way and owes the same
+count.
+
+### Why a runner is required
+
+All four reports return success without a database, because they skip and
+return, and under `cargo test` that is indistinguishable from evidence. `cargo
+xtask cancellation` resolves the fixture first and fails before any target runs
+when it is missing. This is verified rather than assumed: with the fixture
+unset, the campaign exits non-zero naming the variables, while `cargo test`
+reports four passes.
+
+Passing tests would not be sufficient even with a database. This campaign's
+headline numbers are durations, and a duration is the easiest observation in the
+M5 set to produce without doing the work — a report that measured nothing can
+retain a zero, and one that measured the wrong interval retains a plausible
+number. So the runner requires the substance: every observation the denominator
+declares was taken by the report that owes it; every declared deadline was run
+both ways with the right count; the durations are present and correctly ordered;
+and the accepted recovery contract held. An observation the denominator declares
+and the runner does not know how to locate is a violation rather than a pass, so
+the two cannot drift apart in either direction.
+
+### Matrix and CI execution
+
+`postgres-15-cancellation-campaign` and `postgres-18-cancellation-campaign` run
+the two ends of the supported range, each provisioning its own server and
+calling
+[`run-ci-campaign.sh`](../../tests/fixtures/cancellation/run-ci-campaign.sh);
+how the campaign is executed lives in
+[`execution-contract.json`](../../tests/fixtures/cancellation/execution-contract.json)
+beside the campaign rather than in the workflow. Reports are retained on failure
+as well as success, because a failed cancellation campaign is mostly worth
+reading for the latency and unjoined-count detail that led there.
+
+Every report names the PostgreSQL major it ran against, and the runner requires
+it to match the matrix point the run declares. A matrix point is invisible in a
+connection string, so without it an observation from one supported major
+reconciles perfectly inside a run of another.
+
+### Results
+
+Both matrix points passed with no violations. Every figure below is an
+observation from workflow run
+[31452399059](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/31452399059),
+debug profile, on shared GitHub-hosted runners. **Nothing is asserted against
+any of them**, and the spread discussed under F25 and F26 below is the reason
+that matters rather than a caveat on it.
+
+| Observation | PostgreSQL 15 | PostgreSQL 18 |
+| --- | --- | --- |
+| Server | `15.18 (Debian 15.18-1.pgdg13+1)` | `18.4 (Debian 18.4-1.pgdg13+1)` |
+| Request to intake stop | `9 257 µs` | `10 539 µs` |
+| Request to durable terminal | `478 900 µs` | `491 779 µs` |
+| Ordering holds | yes | yes |
+| Durable terminal | `STOPPED` / exit `STOPPED` | `STOPPED` / exit `STOPPED` |
+| Committed partitions, before → after | `1` → `2` | `1` → `2` |
+| Workers outliving the attempt | `0` | `0` |
+
+Request-to-durable-terminal separated by phase, with the process intake path
+beside it:
+
+| Phase | Mechanism | Intake stop, 15 | Terminal, 15 | Intake stop, 18 | Terminal, 18 |
+| --- | --- | --- | --- | --- | --- |
+| async | tasklet awaiting the cooperative token | `9 392 µs` | `446 430 µs` | `9 132 µs` | `498 433 µs` |
+| blocking | `BlockingTaskletAdapter` | `9 164 µs` | `564 004 µs` | `15 409 µs` | `508 166 µs` |
+| transaction | tasklet holding an open repository unit | `113 268 µs` | `551 483 µs` | `9 102 µs` | `482 037 µs` |
+| process intake | `request_shutdown` then `ensure_accepting` | `2 µs` | — | `2 µs` | — |
+
+Unjoined counts. Every declared deadline was run both ways; the completing
+column is the drain's join cost when its tasks finish, and the expiring column
+is what the coordinator still owned when the deadline won.
+
+| Deadline | Held | Completing (unjoined / cost, 15) | Expiring (15) | Completing (18) | Expiring (18) |
+| --- | --- | --- | --- | --- | --- |
+| `minimum`, `1 000 ms` | `3` | `0` / `70 237 µs` | `3` | `0` / `80 354 µs` | `3` |
+| `intermediate`, `5 000 ms` | `5` | `0` / `78 349 µs` | `5` | `0` / `70 117 µs` | `5` |
+| `default`, `30 000 ms` | `7` | `0` / `5 796 µs` | `7` | `0` / `5 853 µs` | `7` |
+| escalation | `4` | — | `4`, in `41 µs` | — | `4`, in `48 µs` |
+
+Every expiring count is attributed across the three observed phases and sums to
+the total: `Tasklet`/`ChunkReadProcess`/`Transaction` of `1`/`1`/`1`, `2`/`2`/`1`,
+and `3`/`2`/`2` respectively, identically on both majors. Every completing drain
+joined every owned task and reported nothing unjoined.
+
+Restart after cancellation, both majors: the restart was a new execution of the
+same instance, re-ran `62` partitions, re-ran **none** of the partitions the
+cancelled attempt had committed, and reached `COMPLETED`.
+
+### Correctness assertions
+
+Every one of these held on both matrix points:
+
+- the cancelled attempt persisted the `STOPPED` batch status and the
+  framework-owned `STOPPED` exit status;
+- request-to-intake-stop was less than or equal to request-to-durable-terminal;
+- no worker outlived its cancelled parent;
+- every partition committed before the cancellation was still committed after
+  it, and no interrupted partition was left recorded as running;
+- at every declared deadline and at escalation, the reported unjoined total
+  equalled the number of tasks held and the per-phase counts summed to it;
+- no task was detached and no panic was swallowed;
+- the restart was a new execution of the same instance and re-ran only what the
+  cancelled attempt had not committed.
+
+### Findings
+
+**F24. The exit status of a cancelled attempt is `STOPPED`, not `CANCELLED`.**
+This campaign asserted `CANCELLED` before reading the delivered contract, on the
+reasonable-sounding grounds that the domain has an exit status by that name.
+It does not: `CANCELLED` is the durable code of `FailureCategory::Cancelled`, a
+*failure category* reached when cancellation surfaces as a failure, while a
+cooperatively stopped attempt persists `ExitStatus::stopped()`, which is the
+framework-owned code `STOPPED`. The two are different fields with different
+meanings and one overlapping intuition.
+
+The framework is right and the campaign was wrong, which is the point worth
+recording. Had it not been checked, the campaign would have failed a correct
+framework and the obvious repair — "fix" the runtime to persist `CANCELLED` —
+would have changed an accepted durable contract to satisfy a test. This is
+exactly the failure mode a campaign is most exposed to, because it writes its
+assertions before it runs anything.
+
+**F25. One sample per phase does not resolve the phase difference, and this
+campaign should not be read as having measured one.** The accepted plan asks for
+the async, blocking, and transaction phases separately, and this campaign
+measures them separately — but it measures each one *once* per matrix point, and
+the retained numbers show that is not enough to order them.
+
+On PostgreSQL 15 the blocking phase reached its terminal at `564 ms` against
+`446 ms` for async, which looks like a clear effect and has a ready-made
+explanation: `BlockingTaskletAdapter`'s synchronous body runs to completion once
+started and the adapter reports the stop afterwards, which is the accepted
+late-stop limitation stated in its own documentation. On PostgreSQL 18 the same
+three phases came in at `498`, `508`, and `482 ms` — a spread of `5 %`, with the
+phases in a different order. The explanation is still true and the data does not
+demonstrate it.
+
+An earlier draft of this section reported the phase difference as a ratio, from
+a development run where blocking came in at `2.7x` the async phase. That number
+was real and it was not a measurement of the phase: it was one sample of a
+quantity whose run-to-run spread is comparable to the difference being claimed.
+What this campaign establishes is that each phase *reaches a durable terminal
+and is measured*, which is what the plan's row asks for. Ordering the phases by
+cost needs repeated runs at one configuration, and is left to whatever proposes
+a budget.
+
+**F26. Request-to-intake-stop is a phase offset, not a latency, and one run
+cannot be read as a typical value.** The configured stop poll interval bounds how
+long the owning runtime may go without re-reading the durable stop request;
+where inside that window an operator's request happens to land is arbitrary. The
+campaign configures the accepted minimum of `100 ms`, and the retained
+observations range from `9 102 µs` to `113 268 µs` — the full width of the
+interval, across phases of the same run on the same server, with the extreme
+being the transaction phase on PostgreSQL 15 while the other five readings sit
+near `10 ms`.
+
+That spread is the expected behaviour of a poll offset and not a defect, and it
+is recorded because a reader given the headline `9 257 µs` would reasonably take
+it for a latency the framework achieves. It is not. The honest summary is that
+request-to-intake-stop on the durable operator path is bounded by the configured
+poll interval and distributed within it, and both that interval and the accepted
+default of `1 s` are recorded in every report so the figure can be read against
+either.
+
+**F27. The two intake paths differ by three orders of magnitude and must not be
+reported as one number.** Process intake stop — `request_shutdown` followed by
+`ensure_accepting` — completed in `2 µs` on both majors, against `9 257 µs` and
+`10 539 µs` for the durable operator path. The first is an atomic state
+transition in memory; the second is a committed transaction observed at a poll
+interval. They are both truthfully called "request to intake stop", and a report
+that averaged them, or quoted whichever suited, would be describing neither.
+They are recorded as separate observations for that reason.
+
+**F28. Adding this campaign invalidated the retained soak evidence, and that is
+the closure mechanism working.** Registering `cargo xtask cancellation` in
+`xtask/src/main.rs` and adding the two CI jobs to `.github/workflows/ci.yml`
+changed two paths inside the *soak* campaign's declared semantic closure, so
+`cargo xtask evidence` correctly refused the retained soak reports: they
+describe a campaign this tree no longer runs. The soak was re-run in the same
+workflow run and its evidence re-retained.
+
+The cost is real and was accepted knowingly when the soak declared the workflow
+file as one bound object. Its own closure document anticipates this case in as
+many words, and names the fix — extracting each campaign into its own workflow
+so that only that file is in the closure — as belonging to its own change rather
+than to whichever campaign happens to trigger it next. This is the second
+campaign to pay the cost, which is the argument for doing it; it is still not
+this PR's change to make.
+
+**F29. A campaign whose workload finishes before its cancellation lands measures
+nothing, and reports it as a failure of the framework.** The first declared
+workload was `16` partitions of `50 ms`, which is about `200 ms` of work against
+a cancellation path that needs a durable commit, a poll interval, and a second
+commit — roughly twice that. Every attempt reached `COMPLETED` before its stop
+request was observed, and the report failed with "the cancelled attempt persisted
+COMPLETED rather than STOPPED" and no `STOPPING` transition at all.
+
+The distinction that matters is between a cancellation that was *fast* and one
+that was never *observed*, and the failing report could not tell them apart. The
+workload is now derived from what the campaign must be able to do rather than
+chosen for convenience — `64` partitions of `500 ms`, about eight seconds of
+work — and the derivation is recorded in the scope so that a later change that
+shortens it has to argue against the reasoning rather than merely pass.
+
+### What this campaign does not establish
+
+- **No latency budget.** Every duration here is an observation. Nothing is
+  asserted against any of them, and no number in this section is a commitment.
+- **Forced worker loss.** The accepted plan puts it in the crash campaign
+  explicitly: forced loss of a worker is a crash and recovery result, not low
+  cancellation latency. No process is killed here.
+- **Broker and remote worker phases.** The plan names them among the phases a
+  cancellation test separates. M5 adds no broker and no remote or distributed
+  semantics, so neither exists to measure. They are unexamined, not proved
+  absent, and belong to the milestone that introduces them.
+- **Three of the six `ShutdownTaskPhase` variants.** `ChunkWrite`,
+  `RetryBackoff`, and `FlowDecision` are never occupied by an unjoined task
+  here, and are reported as unexamined. Spawning a placeholder task into each to
+  fill the table would report coverage the campaign does not have.
+- **Cancellation at arbitrary scale or under an arbitrary workload.** One
+  partitioned job at a declared partition count and worker budget. Cancellation
+  at `1`, `10`, and `100` workers is a P-010 question.
+- **Release-profile numbers.** Every M5 campaign runs debug so the matrix points
+  are comparable with each other. The latencies below are debug-build latencies.
+
+### Reproduction
+
+```sh
+# A supported PostgreSQL, schema 3, with both URLs pointing at it.
+export OXIDEBATCH_POSTGRES_TEST_URL=postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_cancellation
+export OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL="$OXIDEBATCH_POSTGRES_TEST_URL"
+export OXIDEBATCH_CAMPAIGN_DIR=target/m5-campaigns
+export OXIDEBATCH_CAMPAIGN_MATRIX=postgres-18
+
+cargo run --package oxide-batch-xtask -- cancellation
+```
+
+Or exactly as CI runs it, which is the same command through the committed
+execution contract:
+
+```sh
+./tests/fixtures/cancellation/run-ci-campaign.sh 18
+```
+
+The report is written to `target/m5-campaigns/cancellation-campaign.json`. The
+denominator reconciliation runs without a database:
+
+```sh
+cargo test --package oxide-batch --all-features --test m5_cancellation_campaign
+```
