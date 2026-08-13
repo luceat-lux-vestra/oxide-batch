@@ -36,8 +36,9 @@
       "workload": "P-001",
       "target": "postgres_performance",
       "scenario": "p001_fixed_tasklet_lifecycle_overhead",
-      "against_database": true,
+      "against_database": false,
       "fixture": "postgres-performance",
+      "execution_context_note": "The accepted performance-plan workload table defines P-001 as the in-memory no-op tasklet lifecycle overhead measurement, independent of the PostgreSQL major. This report still runs inside the shared postgres_performance binary executed once per PostgreSQL-15/18-matrixed CI job, so it is retained once per matrix point for environmental consistency, but the scenario itself opens no PostgreSQL connection and its measurements are not a claim about database behavior.",
       "measurements": [
         "end-to-end-duration",
         "job-overhead",
