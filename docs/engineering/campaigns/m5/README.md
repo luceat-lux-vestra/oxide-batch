@@ -57,14 +57,24 @@ manifest is authority.
 
 Each campaign declares its own closure, once, and the producer and the verifier
 read the same document: the soak's is
-[`soak/campaign-semantics.json`](../../../../tests/fixtures/soak/campaign-semantics.json)
-and the cancellation campaign's is
-[`cancellation/campaign-semantics.json`](../../../../tests/fixtures/cancellation/campaign-semantics.json).
-Both cover framework source, the repository adapter, migrations, cargo
-manifests, `Cargo.lock`, toolchain and build configuration, the campaign
-implementation and fixtures, the execution contract, and the verifier. If any of
-them differs from what a report recorded, that report describes a campaign this
-tree no longer runs and may not be promoted — the campaign has to be run again.
+[`soak/campaign-semantics.json`](../../../../tests/fixtures/soak/campaign-semantics.json),
+the cancellation campaign's is
+[`cancellation/campaign-semantics.json`](../../../../tests/fixtures/cancellation/campaign-semantics.json),
+the performance campaign's is
+[`performance/campaign-semantics.json`](../../../../tests/fixtures/performance/campaign-semantics.json),
+and the conformance campaign's is
+[`conformance/campaign-semantics.json`](../../../../tests/fixtures/conformance/campaign-semantics.json).
+All four cover framework source, migrations, cargo manifests, `Cargo.lock`,
+toolchain and build configuration, the campaign implementation and fixtures,
+the execution contract, and the verifier. The conformance closure is wider
+than the other three by design rather than by accident: its producer
+enumerates and runs every workspace test target, not a fixed report set, so
+the whole workspace's test-affecting source is genuinely part of what its
+evidence is evidence of, and its closure lists whole crates and directories
+where the narrower campaigns list the specific subdirectories they alone
+exercise. If any closure path differs from what a report recorded, that report
+describes a campaign this tree no longer runs and may not be promoted — the
+campaign has to be run again.
 
 Which closure applies to which report is decided by the campaign the report
 belongs to, recorded in `campaigns.declared` in the provenance document along
@@ -79,8 +89,10 @@ How CI executes each campaign lives in its own `execution-contract.json`,
 The dedicated workflow only provisions the runner and database, verifies the
 contract, calls the script, and retains the report. Soak is owned by
 `.github/workflows/m5-soak.yml`; cancellation is owned by
-`.github/workflows/m5-cancellation.yml`. An unrelated quality or build change
-in `.github/workflows/ci.yml` therefore does not invalidate either campaign's
+`.github/workflows/m5-cancellation.yml`; performance is owned by
+`.github/workflows/m5-performance.yml`; conformance is owned by
+`.github/workflows/m5-conformance.yml`. An unrelated quality or build change
+in `.github/workflows/ci.yml` therefore does not invalidate any campaign's
 retained evidence, while a change to the relevant dedicated workflow does.
 
 The contract-check scripts compare the important workflow values — triggers,
@@ -120,12 +132,13 @@ OXIDEBATCH_CAMPAIGN_DIR=docs/engineering/campaigns/m5 \
 Without `OXIDEBATCH_CAMPAIGN_DIR` the runner writes to `target/m5-campaigns`,
 so an ordinary run never rewrites the retained evidence.
 
-The conformance campaign requires `OXIDEBATCH_POSTGRES_TEST_URL` and
-`OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL`, and fails before running anything when
-either is absent. It therefore does not run on a development host without
-PostgreSQL, and the committed files come from the
-`postgres-<version>-conformance-campaign` CI jobs, which run it on the
-supported matrix. That is the only place these results are produced.
+The conformance campaign requires `OXIDEBATCH_POSTGRES_ADMIN_TEST_URL`,
+`OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL`, and `OXIDEBATCH_POSTGRES_TEST_URL`,
+and fails before running anything when any is absent. It therefore does not
+run on a development host without PostgreSQL, and the committed files come
+from the dedicated `.github/workflows/m5-conformance.yml` workflow's
+`postgres-<version>-conformance-campaign` jobs, which run it on the supported
+matrix. That is the only place these results are produced.
 
 The crash and restore campaign requires those two variables and
 `OXIDEBATCH_POSTGRES_BACKUP_TEST_URL`, which names a database whose role may

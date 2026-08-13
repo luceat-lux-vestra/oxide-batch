@@ -125,11 +125,15 @@ test process.
 ### Where it runs
 
 `postgres-15-conformance-campaign` and `postgres-18-conformance-campaign` in
-`.github/workflows/ci.yml`, on the two ends of the supported PostgreSQL
-`15`-`18` range, matching the existing `postgres-repository` matrix. Each job
-retains its report as a build artifact, and the committed copies in
+the dedicated [`.github/workflows/m5-conformance.yml`](../../.github/workflows/m5-conformance.yml),
+on the two ends of the supported PostgreSQL `15`-`18` range, matching the
+existing `postgres-repository` matrix. Each job retains its report as a build
+artifact on success and failure alike, and the committed copies in
 [`docs/engineering/campaigns/m5`](../engineering/campaigns/m5/README.md) come
-from those jobs.
+from those jobs. See F36 below: the campaign was originally a job inside
+`.github/workflows/ci.yml` and has since been extracted into this dedicated
+workflow, with the same fail-closed retained-evidence provenance model the
+soak, cancellation, and performance campaigns already use.
 
 ### Results
 
