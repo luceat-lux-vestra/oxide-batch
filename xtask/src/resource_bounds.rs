@@ -104,6 +104,7 @@ pub fn run() -> Result<Campaign, String> {
                 filters: &["--exact", &report.name],
                 environment: &[(OBSERVATIONS_ENV, observations.display().to_string())],
                 nocapture: true,
+                release: false,
             },
         )?;
 

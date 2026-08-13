@@ -5,6 +5,7 @@ mod conformance;
 mod crash_restore;
 mod deps;
 mod evidence;
+mod performance;
 mod resource_bounds;
 mod security;
 mod soak;
@@ -115,6 +116,7 @@ fn main() -> ExitCode {
         Some("doctor") => run_all(DOCTOR),
         Some("evidence") => run_evidence_check(),
         Some("package") => run_all(PACKAGE),
+        Some("performance") => run_performance_campaign(),
         Some("resource-bounds") => run_resource_bound_campaign(),
         Some("security") => run_security_campaign(),
         Some("soak") => run_soak_campaign(),
@@ -351,6 +353,37 @@ fn run_evidence_check() -> bool {
     }
 }
 
+/// Reports whether P-001, P-003, and P-010 each proved what they owe.
+fn run_performance_campaign() -> bool {
+    eprintln!("==> M5 performance and reference-workload campaign");
+
+    match performance::run() {
+        Ok(campaign) => {
+            eprintln!("campaign report: {}", campaign.report.display());
+            if campaign.violations.is_empty() {
+                eprintln!(
+                    "P-001 measured the in-memory no-op tasklet lifecycle without opening a \
+                     database connection, P-003 wrote its fixed, seeded, digest-verified CSV to \
+                     PostgreSQL under AtomicSameResource and satisfies both campaign rows from \
+                     one retained report, and P-010 scaled to 1, 10, and MAX_PARTITION_WORKERS \
+                     local partitions with identical durable observations and enforced \
+                     connection ceilings at every point"
+                );
+                return true;
+            }
+            for violation in &campaign.violations {
+                eprintln!("campaign gap: {violation}");
+            }
+            eprintln!("see the campaign scope in tests/fixtures/performance/campaign-scope.json");
+            false
+        }
+        Err(error) => {
+            eprintln!("could not run the performance campaign: {error}");
+            false
+        }
+    }
+}
+
 /// Reports whether the soak ran its declared window and nothing accumulated.
 fn run_soak_campaign() -> bool {
     eprintln!("==> PostgreSQL soak campaign");
@@ -489,6 +522,7 @@ fn usage() {
            doctor           show required local tool versions\n\
            evidence         verify retained campaign evidence against its provenance\n\
            package          inspect and dry-run every publishable crate\n\
+           performance      run P-001, P-003, and P-010 in release profile against PostgreSQL\n\
            resource-bounds  prove every declared ceiling holds and is reached under stress\n\
            security         run the TLS, least-privilege, and redaction campaign\n\
            soak             run the declared P-015 soak window and judge its growth\n\

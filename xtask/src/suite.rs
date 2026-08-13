@@ -56,6 +56,15 @@ pub struct TargetCommand<'a> {
     pub environment: &'a [(&'a str, String)],
     /// Whether the target's own output is left uncaptured.
     pub nocapture: bool,
+    /// Whether the target is built and run in release profile.
+    ///
+    /// Every other M5 campaign runs debug, the workspace default, so every
+    /// existing call site sets this to `false` and nothing about their
+    /// invocation changes. The performance campaign is the one accepted
+    /// exception: its denominator requires release, because a debug-build
+    /// figure would not be comparable to anything release planning could
+    /// use.
+    pub release: bool,
 }
 
 /// Runs one test target and attributes every result libtest reports.
@@ -73,7 +82,11 @@ pub fn run_target(root: &Path, target: &TargetCommand<'_>) -> Result<TargetRun, 
     command
         .current_dir(root)
         .args(["test", "--package", target.package, "--all-features"])
-        .args(target.selector)
+        .args(target.selector);
+    if target.release {
+        command.arg("--release");
+    }
+    command
         .arg("--")
         .args(target.filters)
         .args(["--test-threads", "1"]);
@@ -211,9 +224,22 @@ pub fn directory(root: &Path) -> PathBuf {
     root.join(configured)
 }
 
-/// Records the environment a campaign result depends on.
+/// Records the environment a campaign result depends on, in debug profile —
+/// the profile every M5 campaign but performance runs.
 #[must_use]
 pub fn environment() -> Value {
+    environment_with_profile("debug")
+}
+
+/// Records the environment a campaign result depends on, under an explicit
+/// cargo profile.
+///
+/// Split from [`environment`] rather than given a defaulted parameter so
+/// every existing call site is untouched: the performance campaign is the
+/// only caller that needs `"release"` here, because its denominator requires
+/// the campaign to be built and run in release profile.
+#[must_use]
+pub fn environment_with_profile(profile: &str) -> Value {
     let mut map = Map::new();
     map.insert(
         "source_commit".into(),
@@ -226,7 +252,7 @@ pub fn environment() -> Value {
     map.insert("rustc".into(), json!(command("rustc", &["--version"])));
     map.insert("os".into(), json!(env::consts::OS));
     map.insert("arch".into(), json!(env::consts::ARCH));
-    map.insert("profile".into(), json!("debug"));
+    map.insert("profile".into(), json!(profile));
     map.insert("matrix".into(), json!(env::var(MATRIX).ok()));
     Value::Object(map)
 }

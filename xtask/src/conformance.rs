@@ -193,6 +193,7 @@ fn run_suite(root: &Path, targets: &[Target]) -> Result<Suite, String> {
                 filters: &[],
                 environment: &[],
                 nocapture: false,
+                release: false,
             },
         )?;
 

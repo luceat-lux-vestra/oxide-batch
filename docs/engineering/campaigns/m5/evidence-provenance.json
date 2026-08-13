@@ -54,6 +54,14 @@
           "postgres-15",
           "postgres-18"
         ]
+      },
+      {
+        "campaign": "M5 PostgreSQL performance",
+        "semantics": "tests/fixtures/performance/campaign-semantics.json",
+        "required_matrix": [
+          "postgres-15",
+          "postgres-18"
+        ]
       }
     ]
   },
@@ -75,9 +83,9 @@
       "postgres_major_version": "15",
       "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
       "producer": {
-        "execution_commit": "fa8245ab90473873ee1fb3a147f8c1686ee2ff41",
+        "execution_commit": "3197143442ac6eb0e2ccbab4b448371a3b41456d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "167d9d8708c716843b67b0b7df3e11200f809fbc",
+        "branch_head_sha": "a17a6c769422e881e9c04b6594a12c824bcceebd",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -87,27 +95,27 @@
       "workflow_run": {
         "workflow": "M5 Soak",
         "workflow_file": ".github/workflows/m5-soak.yml",
-        "id": 31666926265,
+        "id": 31680126429,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-soak-campaign",
-        "id": 94343425988,
+        "id": 94383453283,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-15",
-        "id": 9168350521,
-        "digest": "sha256:8736bf5627ec8e6e01781b4eee6246f98ffe200fcd798f2afbc71797e0b4e11c",
-        "size_bytes": 88163
+        "id": 9173260876,
+        "digest": "sha256:cf4ea1728d679fbf0d25bbd176c97579d2ee10aa3259240a2dbfa9a9c8a7a155",
+        "size_bytes": 87459
       },
-      "retained_report_git_blob": "11d8415e073e3b469cb5943e1cfe527d1cebaa0e",
+      "retained_report_git_blob": "f1b114ab0bac399ef46a47c00e16567851c317d5",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-13T04:31:36Z",
-        "run_id": 31666926265,
+        "verified_at": "2026-08-13T11:18:47Z",
+        "run_id": 31680126429,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -115,7 +123,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network."
+        "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes evidence originally promoted from run 31666926265, invalidated by an xtask/src/main.rs and xtask/src/suite.rs closure change unrelated to the soak workload itself; see docs/project/m5-campaign-evidence.md."
       }
     },
     {
@@ -128,9 +136,9 @@
       "postgres_major_version": "18",
       "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
       "producer": {
-        "execution_commit": "fa8245ab90473873ee1fb3a147f8c1686ee2ff41",
+        "execution_commit": "3197143442ac6eb0e2ccbab4b448371a3b41456d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "167d9d8708c716843b67b0b7df3e11200f809fbc",
+        "branch_head_sha": "a17a6c769422e881e9c04b6594a12c824bcceebd",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -140,27 +148,27 @@
       "workflow_run": {
         "workflow": "M5 Soak",
         "workflow_file": ".github/workflows/m5-soak.yml",
-        "id": 31666926265,
+        "id": 31680126429,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-soak-campaign",
-        "id": 94343425926,
+        "id": 94383453138,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-18",
-        "id": 9168352151,
-        "digest": "sha256:063a63903d2fc84d21c01d0f32c799da18f54f5d267e33b745dd3f5e72b78723",
-        "size_bytes": 87996
+        "id": 9173271435,
+        "digest": "sha256:f39e6ea386d0fd1c24a36f58dda846d1d0f102c0db5fd384cd3ad5cb8be6c2c5",
+        "size_bytes": 89371
       },
-      "retained_report_git_blob": "7bd99acb5220baa8c03edbdff27e7cc00182710d",
+      "retained_report_git_blob": "b5a9268e790cb19f165c987bb9fc6ee5457f7118",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-13T04:31:36Z",
-        "run_id": 31666926265,
+        "verified_at": "2026-08-13T11:18:47Z",
+        "run_id": 31680126429,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -168,7 +176,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network."
+        "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes evidence originally promoted from run 31666926265, invalidated by an xtask/src/main.rs and xtask/src/suite.rs closure change unrelated to the soak workload itself; see docs/project/m5-campaign-evidence.md."
       }
     },
     {
@@ -184,9 +192,9 @@
       "postgres_major_version": "15",
       "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
       "producer": {
-        "execution_commit": "fa8245ab90473873ee1fb3a147f8c1686ee2ff41",
+        "execution_commit": "3197143442ac6eb0e2ccbab4b448371a3b41456d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "167d9d8708c716843b67b0b7df3e11200f809fbc",
+        "branch_head_sha": "a17a6c769422e881e9c04b6594a12c824bcceebd",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -196,27 +204,27 @@
       "workflow_run": {
         "workflow": "M5 Cancellation",
         "workflow_file": ".github/workflows/m5-cancellation.yml",
-        "id": 31666926214,
+        "id": 31680126734,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-cancellation-campaign",
-        "id": 94343426023,
+        "id": 94383454450,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-15",
-        "id": 9168297281,
-        "digest": "sha256:4ec5ec683ae653c9a520e334dac430eef51d9bf15bc2b3d4a434c4ea887eadc2",
-        "size_bytes": 5740
+        "id": 9173180607,
+        "digest": "sha256:7e3f88a40652d7c266c894b9f1c05dc7bdfce00c7fa115279aca2c91dc41700c",
+        "size_bytes": 5758
       },
-      "retained_report_git_blob": "eec59d19f1ed4492c153b3d1575df5ba2b7ee184",
+      "retained_report_git_blob": "f277a72dc9b46503088f51a5a6fcca00a7c287fc",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-13T04:31:36Z",
-        "run_id": 31666926214,
+        "verified_at": "2026-08-13T11:18:47Z",
+        "run_id": 31680126734,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -224,7 +232,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network."
+        "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes evidence originally promoted from run 31666926214, invalidated by an xtask/src/main.rs and xtask/src/suite.rs closure change unrelated to the cancellation workload itself; see docs/project/m5-campaign-evidence.md."
       }
     },
     {
@@ -240,9 +248,9 @@
       "postgres_major_version": "18",
       "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
       "producer": {
-        "execution_commit": "fa8245ab90473873ee1fb3a147f8c1686ee2ff41",
+        "execution_commit": "3197143442ac6eb0e2ccbab4b448371a3b41456d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "167d9d8708c716843b67b0b7df3e11200f809fbc",
+        "branch_head_sha": "a17a6c769422e881e9c04b6594a12c824bcceebd",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -252,27 +260,27 @@
       "workflow_run": {
         "workflow": "M5 Cancellation",
         "workflow_file": ".github/workflows/m5-cancellation.yml",
-        "id": 31666926214,
+        "id": 31680126734,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-cancellation-campaign",
-        "id": 94343425959,
+        "id": 94383454422,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-18",
-        "id": 9168298400,
-        "digest": "sha256:ac4007a8182e40b741c48b7941ebba9a9a1964280e05b6bf3f5799001454082b",
-        "size_bytes": 5755
+        "id": 9173179236,
+        "digest": "sha256:1c9ce744c92a4f8b5fd0c724ab9ce53d0c77f606d52b5d40a7bcf76d67d07d2c",
+        "size_bytes": 5751
       },
-      "retained_report_git_blob": "8a09a808c3227276057c106e251a6271a5c7bb37",
+      "retained_report_git_blob": "e5f71e27ff7a84b4aa7e7b6e25ebf9a2c31e0b26",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-13T04:31:36Z",
-        "run_id": 31666926214,
+        "verified_at": "2026-08-13T11:18:47Z",
+        "run_id": 31680126734,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -280,7 +288,117 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network."
+        "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes evidence originally promoted from run 31666926214, invalidated by an xtask/src/main.rs and xtask/src/suite.rs closure change unrelated to the cancellation workload itself; see docs/project/m5-campaign-evidence.md."
+      }
+    },
+    {
+      "report": "performance-campaign-postgres-15.json",
+      "campaign": "M5 PostgreSQL performance",
+      "scenarios": [
+        "p001_fixed_tasklet_lifecycle_overhead",
+        "p003_csv_to_postgres_reference_workload",
+        "p010_postgres_local_partition_scaling"
+      ],
+      "matrix_point": "postgres-15",
+      "postgres_major_version": "15",
+      "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
+      "producer": {
+        "execution_commit": "513d235d12d2a58dc1955eb4cbe49662d34df69b",
+        "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
+        "branch_head_sha": "9616432f343977dd86dd26f610edc2afb16275ac",
+        "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "M5 Performance",
+        "workflow_file": ".github/workflows/m5-performance.yml",
+        "id": 31706269943,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "postgres-15-performance-campaign",
+        "id": 94467507505,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "performance-campaign-postgres-15",
+        "id": 9183416793,
+        "digest": "sha256:495a5d0963cae8debc60def39421e4aab470479e1a6146116c72510ad0c6d969",
+        "size_bytes": 6481
+      },
+      "retained_report_git_blob": "7871ceb5327f526c240925fad61dc987cdd0bbb4",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-13T13:56:21Z",
+        "run_id": 31706269943,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes evidence originally promoted from run 31692527295: the P-010 enlistment-wording denominator correction and the pool-ceiling/business-row/canonical-measurement hardening (F34/F35) changed the meaning of several retained fields, so the earlier evidence became stale by design; see docs/project/m5-campaign-evidence.md."
+      }
+    },
+    {
+      "report": "performance-campaign-postgres-18.json",
+      "campaign": "M5 PostgreSQL performance",
+      "scenarios": [
+        "p001_fixed_tasklet_lifecycle_overhead",
+        "p003_csv_to_postgres_reference_workload",
+        "p010_postgres_local_partition_scaling"
+      ],
+      "matrix_point": "postgres-18",
+      "postgres_major_version": "18",
+      "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+      "producer": {
+        "execution_commit": "513d235d12d2a58dc1955eb4cbe49662d34df69b",
+        "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
+        "branch_head_sha": "9616432f343977dd86dd26f610edc2afb16275ac",
+        "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "M5 Performance",
+        "workflow_file": ".github/workflows/m5-performance.yml",
+        "id": 31706269943,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "postgres-18-performance-campaign",
+        "id": 94467507463,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "performance-campaign-postgres-18",
+        "id": 9183418761,
+        "digest": "sha256:8f7bfedd57eda44f127b09d9f2aea9de2eea530d8fa7de1b59356de722dbcf43",
+        "size_bytes": 6472
+      },
+      "retained_report_git_blob": "89d44050e0f5a93a672a7698d37ea3f04c456f76",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-13T13:56:21Z",
+        "run_id": 31706269943,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes evidence originally promoted from run 31692527295: the P-010 enlistment-wording denominator correction and the pool-ceiling/business-row/canonical-measurement hardening (F34/F35) changed the meaning of several retained fields, so the earlier evidence became stale by design; see docs/project/m5-campaign-evidence.md."
       }
     }
   ]

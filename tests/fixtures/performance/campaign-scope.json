@@ -24,6 +24,12 @@
     "postgres-15",
     "postgres-18"
   ],
+  "fixtures": {
+    "postgres-performance": [
+      "OXIDEBATCH_POSTGRES_TEST_URL",
+      "OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL"
+    ]
+  },
   "execution": {
     "cargo_profile": "release",
     "matrix_rule": "Every report runs exactly once at each supported matrix point.",
@@ -103,7 +109,10 @@
         "every-scale-point-has-identical-durable-observations",
         "peak-workers-do-not-exceed-the-configured-budget",
         "peak-connections-do-not-exceed-the-derived-pool-budget",
-        "no-worker-outlives-its-parent"
+        "no-worker-outlives-its-parent",
+        "observed-concurrency-matches-configured-worker-point",
+        "pool-below-derived-budget-is-rejected-before-workers-start",
+        "business-row-set-matches-fixed-partition-set-at-every-scale-point"
       ]
     }
   ],
@@ -130,7 +139,7 @@
         64
       ],
       "largest_worker_point_source": "oxide_batch::MAX_PARTITION_WORKERS",
-      "work_per_partition": "one deterministic enlisted business write and one durable partition result"
+      "work_per_partition": "one deterministic PostgreSQL business write and one durable partition result"
     }
   },
   "related": [
