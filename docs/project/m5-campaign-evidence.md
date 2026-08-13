@@ -1629,14 +1629,15 @@ major would otherwise reconcile perfectly inside a run of another.
 ### Where it runs
 
 `postgres-15-soak-campaign` and `postgres-18-soak-campaign` in
-`.github/workflows/ci.yml`, on the two ends of the supported PostgreSQL
+`.github/workflows/m5-soak.yml`, on the two ends of the supported PostgreSQL
 `15`-`18` range, each retaining its report as a build artifact on success and
 failure alike. Failure is the case that retention exists for: what a failed
 soak needs is the resource trajectory that led to it, and a job that uploaded
 only green reports would discard exactly the evidence worth reading. The job's
 timeout is `60` minutes — higher than the other campaigns because the window is
 minutes of work rather than seconds, and still a ceiling, because a soak that
-stopped making progress must fail rather than occupy a runner.
+stopped making progress must fail rather than occupy a runner. It uses the
+explicit `ubuntu-24.04` label and `contents: read` permissions.
 
 ### Results
 
@@ -1838,17 +1839,15 @@ execution contract, and the verifier itself. Two of those were learned the hard
 way: an earlier closure was assembled from the code the campaign obviously
 touches and omitted every input that reaches it indirectly.
 
-The **soak execution contract** covers how CI runs the campaign — the matrix,
-the database, the command, the environment — and lives in
+The **soak execution contract** covers how CI runs the campaign — the workflow
+path and name, triggers, permissions, runner, matrix, database, command,
+environment, timeout, report, and artifact policy — and lives in
 [`execution-contract.json`](../../tests/fixtures/soak/execution-contract.json)
-and `run-ci-campaign.sh` beside the campaign. `.github/workflows/ci.yml` is in
-the closure with them. That is deliberately blunt, and the bluntness has a cost
-worth stating plainly: an unrelated CI job now invalidates retained soak
-evidence and forces a rerun. The alternative was to trust that the contract
-file, the script and the workflow agree with each other, and agreement
-maintained by review is not a mechanism. Extracting the soak job into its own
-workflow, so that only that file sits in the closure, is the right fix and is
-left to its own change.
+and `run-ci-campaign.sh` beside the campaign. The closure also includes
+`verify-ci-contract.sh` and `.github/workflows/m5-soak.yml`; the checker fails
+closed before execution if the important workflow values drift from the
+contract. An unrelated CI job in `.github/workflows/ci.yml` is outside the
+closure and does not invalidate retained soak evidence.
 
 A retained report cannot be produced by the commit that contains it — the
 artifact records the tree it ran on and the commit storing it comes after — so
@@ -2238,15 +2237,17 @@ the two cannot drift apart in either direction.
 
 ### Matrix and CI execution
 
-`postgres-15-cancellation-campaign` and `postgres-18-cancellation-campaign` run
-the two ends of the supported range, each provisioning its own server and
-calling
+`postgres-15-cancellation-campaign` and `postgres-18-cancellation-campaign` in
+`.github/workflows/m5-cancellation.yml` run the two ends of the supported
+range, each provisioning its own server and calling
 [`run-ci-campaign.sh`](../../tests/fixtures/cancellation/run-ci-campaign.sh);
 how the campaign is executed lives in
 [`execution-contract.json`](../../tests/fixtures/cancellation/execution-contract.json)
-beside the campaign rather than in the workflow. Reports are retained on failure
-as well as success, because a failed cancellation campaign is mostly worth
-reading for the latency and unjoined-count detail that led there.
+beside the campaign rather than in the workflow. The workflow uses the explicit
+`ubuntu-24.04` label, `contents: read` permissions, and the contract checker.
+Reports are retained on failure as well as success, because a failed
+cancellation campaign is mostly worth reading for the latency and
+unjoined-count detail that led there.
 
 Every report names the PostgreSQL major it ran against, and the runner requires
 it to match the matrix point the run declares. A matrix point is invisible in a
@@ -2390,18 +2391,12 @@ They are recorded as separate observations for that reason.
 **F28. Adding this campaign invalidated the retained soak evidence, and that is
 the closure mechanism working.** Registering `cargo xtask cancellation` in
 `xtask/src/main.rs` and adding the two CI jobs to `.github/workflows/ci.yml`
-changed two paths inside the *soak* campaign's declared semantic closure, so
-`cargo xtask evidence` correctly refused the retained soak reports: they
-describe a campaign this tree no longer runs. The soak was re-run in the same
-workflow run and its evidence re-retained.
-
-The cost is real and was accepted knowingly when the soak declared the workflow
-file as one bound object. Its own closure document anticipates this case in as
-many words, and names the fix — extracting each campaign into its own workflow
-so that only that file is in the closure — as belonging to its own change rather
-than to whichever campaign happens to trigger it next. This is the second
-campaign to pay the cost, which is the argument for doing it; it is still not
-this PR's change to make.
+changed two paths inside the *soak* campaign's then-declared semantic closure,
+so `cargo xtask evidence` correctly refused the retained soak reports: they
+described a campaign this tree no longer ran. The soak was re-run in the same
+workflow run and its evidence re-retained. That historical cost is why the
+dedicated workflow extraction below is evidence architecture work rather than
+mere YAML rearrangement.
 
 **F29. A campaign whose workload finishes before its cancellation lands measures
 nothing, and reports it as a failure of the framework.** The first declared
@@ -2417,6 +2412,18 @@ workload is now derived from what the campaign must be able to do rather than
 chosen for convenience — `64` partitions of `500 ms`, about eight seconds of
 work — and the derivation is recorded in the scope so that a later change that
 shortens it has to argue against the reasoning rather than merely pass.
+
+**F30. Dedicated campaign workflows close the historical CI-coupling debt.**
+Soak evidence now binds `.github/workflows/m5-soak.yml` and cancellation
+evidence binds `.github/workflows/m5-cancellation.yml`; neither closure binds
+`.github/workflows/ci.yml`. The dedicated workflows preserve the existing
+PostgreSQL 15/18 matrices, debug profile, commands, report paths, artifact
+names, failure retention, resource assumptions, and 60/20 minute ceilings.
+Each workflow checks those values against its execution contract before running,
+so a drift fails closed and requires new evidence instead of silently changing
+what a retained report means. Changing an unrelated quality/build job in
+`ci.yml` therefore leaves both campaign closures unchanged, while changing one
+dedicated workflow invalidates only that campaign's retained evidence.
 
 ### What this campaign does not establish
 

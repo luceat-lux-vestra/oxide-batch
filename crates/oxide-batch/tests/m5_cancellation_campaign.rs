@@ -571,8 +571,11 @@ fn the_semantic_closure_covers_what_the_campaign_runs() -> Result<(), Box<dyn Er
         // The resolved dependency graph: this campaign measures durations and
         // the async runtime's scheduler and timer are pinned here.
         "Cargo.lock",
-        // How CI runs it.
-        ".github/workflows/ci.yml",
+        // How the dedicated workflow runs it.
+        ".github/workflows/m5-cancellation.yml",
+        "tests/fixtures/cancellation/execution-contract.json",
+        "tests/fixtures/cancellation/run-ci-campaign.sh",
+        "tests/fixtures/cancellation/verify-ci-contract.sh",
     ] {
         assert!(
             paths.iter().any(|path| path == required),
@@ -580,6 +583,12 @@ fn the_semantic_closure_covers_what_the_campaign_runs() -> Result<(), Box<dyn Er
              retained evidence looking valid when it is evidence of something else",
         );
     }
+
+    assert!(
+        !paths.iter().any(|path| path == ".github/workflows/ci.yml"),
+        "ci.yml is unrelated to the dedicated cancellation campaign and must not invalidate its \
+         evidence",
+    );
 
     for path in &paths {
         assert!(

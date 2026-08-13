@@ -1,7 +1,7 @@
 {
   "document": "The executable closure of the M5 PostgreSQL cancellation campaign",
   "note": "The single source of truth for what the cancellation campaign is made of. The producer reads it to record the object identity of every path at the tree it actually ran on; the verifier reads it to require those identities to still hold. Neither restates the list, because a list kept in two places is a list that will disagree.",
-  "rule": "A change to anything here changes what the evidence is evidence of, so retained reports produced before the change may not be promoted after it: the campaign has to be run again. A change to anything not here — documentation, the changelog, unrelated xtask commands — leaves retained evidence valid. Note that `.github/workflows/ci.yml` is bound whole, as one object: a change anywhere in that file, including to a job this campaign has nothing to do with, invalidates retained evidence and forces a rerun.",
+  "rule": "A change to anything here changes what the evidence is evidence of, so retained reports produced before the change may not be promoted after it: the campaign has to be run again. A change to anything not here — documentation, the changelog, unrelated xtask commands, or unrelated jobs in `.github/workflows/ci.yml` — leaves retained evidence valid. The dedicated `.github/workflows/m5-cancellation.yml` is bound as one object, so changes to the cancellation provisioning or call layer invalidate cancellation evidence without binding the rest of CI.",
   "categories": {
     "framework source": {
       "why": "The code under test. Its behaviour is what every observation in the report is about. The shutdown coordinator and the flow launcher's execution-control polling both live under these paths, and they are the two mechanisms this campaign measures.",
@@ -62,11 +62,12 @@
       ]
     },
     "cancellation execution contract": {
-      "why": "How CI actually runs the campaign: the supported matrix, the database it is given, the command, and the environment. The workflow file is included with them, which is deliberately blunt — an unrelated CI job now invalidates retained evidence. The alternative was to trust that the contract file, the script and the workflow agree, and agreement maintained by review is not a mechanism.",
+      "why": "How CI actually runs the campaign: the supported matrix, the database it is given, the command, and the environment. The dedicated workflow is included with them, and its contract-check step fails closed if the workflow drifts from the contract. An unrelated CI job in ci.yml does not invalidate retained evidence, while any change to the dedicated cancellation workflow does.",
       "paths": [
         "tests/fixtures/cancellation/execution-contract.json",
         "tests/fixtures/cancellation/run-ci-campaign.sh",
-        ".github/workflows/ci.yml"
+        "tests/fixtures/cancellation/verify-ci-contract.sh",
+        ".github/workflows/m5-cancellation.yml"
       ]
     },
     "independent verifier": {

@@ -380,6 +380,39 @@ fn the_m4_soak_measurement_is_retained_rather_than_replaced() -> Result<(), Box<
 }
 
 #[test]
+fn the_semantic_closure_covers_the_dedicated_workflow_contract() -> Result<(), Box<dyn Error>> {
+    let closure = read_json("tests/fixtures/soak/campaign-semantics.json")?;
+    let paths = closure
+        .get("categories")
+        .and_then(Value::as_object)
+        .ok_or_else(|| Failure("the closure declares no categories".to_owned()))?
+        .values()
+        .filter_map(|category| category.get("paths").and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+
+    for required in [
+        "tests/fixtures/soak/execution-contract.json",
+        "tests/fixtures/soak/run-ci-campaign.sh",
+        "tests/fixtures/soak/verify-ci-contract.sh",
+        ".github/workflows/m5-soak.yml",
+    ] {
+        assert!(
+            paths.contains(&required),
+            "{required} is not in the campaign's semantic closure, so a change to it would leave \
+             retained evidence looking valid when it is evidence of something else",
+        );
+    }
+
+    assert!(
+        !paths.contains(&".github/workflows/ci.yml"),
+        "ci.yml is unrelated to the dedicated soak campaign and must not invalidate its evidence",
+    );
+    Ok(())
+}
+
+#[test]
 fn the_campaign_does_not_claim_the_neighbouring_campaigns() -> Result<(), Box<dyn Error>> {
     let scope = Scope::read()?;
 
@@ -559,6 +592,11 @@ fn workspace_root() -> PathBuf {
 /// Reads one canonical document from the workspace.
 fn read_document(relative: &str) -> Result<String, Box<dyn Error>> {
     Ok(fs::read_to_string(workspace_root().join(relative))?)
+}
+
+/// Reads and parses one JSON document relative to the workspace root.
+fn read_json(relative: &str) -> Result<Value, Box<dyn Error>> {
+    Ok(serde_json::from_str(&read_document(relative)?)?)
 }
 
 /// Reads one required array field.
