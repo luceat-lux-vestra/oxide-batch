@@ -28,7 +28,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
@@ -507,6 +511,387 @@ fn tests_in(source: &str) -> Vec<String> {
     }
 
     names
+}
+
+// ---------------------------------------------------------------------
+// Semantic closure. The conformance campaign's own closure is wider than the
+// other three M5 campaigns' by design (see campaign-semantics.json's own
+// closure_scope_note): its producer enumerates and runs every workspace test
+// target, not a fixed report set, so the whole workspace's test-affecting
+// source is genuinely part of what its evidence is evidence of.
+// ---------------------------------------------------------------------
+
+#[test]
+fn the_semantic_closure_covers_what_the_campaign_runs() -> Result<(), Box<dyn Error>> {
+    let closure: Value = serde_json::from_str(&read_document(
+        "tests/fixtures/conformance/campaign-semantics.json",
+    )?)?;
+    let paths = closure
+        .get("categories")
+        .and_then(Value::as_object)
+        .ok_or_else(|| Failure("the closure declares no categories".to_owned()))?
+        .values()
+        .filter_map(|category| category.get("paths").and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+    for required in [
+        // Every workspace package's test-affecting source, since the
+        // producer runs every workspace test target.
+        "crates/oxide-batch/src",
+        "crates/oxide-batch/tests",
+        "crates/oxide-batch-cli/src",
+        "crates/oxide-batch-cli/tests",
+        // The denominator.
+        "tests/fixtures/conformance/accepted-scope.json",
+        // The verifier, whose verdicts are part of the result.
+        "xtask/src",
+        // The resolved dependency graph, and the toolchain the suite is
+        // built with.
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        // How the dedicated workflow runs it.
+        ".github/workflows/m5-conformance.yml",
+        "tests/fixtures/conformance/execution-contract.json",
+        "tests/fixtures/conformance/run-ci-campaign.sh",
+        "tests/fixtures/conformance/verify-ci-contract.sh",
+    ] {
+        assert!(
+            paths.iter().any(|path| path == required),
+            "{required} is not in the campaign's semantic closure, so a change to it would leave \
+             retained evidence looking valid when it is evidence of something else",
+        );
+    }
+
+    assert!(
+        !paths.iter().any(|path| path == ".github/workflows/ci.yml"),
+        "ci.yml is unrelated to the dedicated conformance campaign and must not invalidate its \
+         evidence",
+    );
+
+    for path in &paths {
+        assert!(
+            workspace_root().join(path).exists(),
+            "{path} is declared as campaign semantics and does not exist, so the producer cannot \
+             record its object identity",
+        );
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// Contract-check exactness. `verify-ci-contract.sh` binds two files —
+// `.github/workflows/m5-conformance.yml` and `run-ci-campaign.sh` — by exact
+// git blob identity, not by the literal presence checks alone. These tests
+// drive the real script against an isolated sandbox copy of those files, so a
+// mutation proves the checker's actual behaviour rather than one helper's
+// return value, and never touches the repository working tree.
+// ---------------------------------------------------------------------
+
+#[test]
+fn contract_check_passes_on_the_canonical_workflow_and_script() -> Result<(), Box<dyn Error>> {
+    assert!(run_conformance_contract_check(|_sandbox| Ok(()))?);
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_an_added_trigger() -> Result<(), Box<dyn Error>> {
+    let passed = run_conformance_contract_check(|sandbox| {
+        insert_after(
+            &sandbox.join(".github/workflows/m5-conformance.yml"),
+            "  workflow_dispatch:\n",
+            "  schedule:\n    - cron: '0 0 * * *'\n",
+        )
+    })?;
+    assert!(
+        !passed,
+        "an added trigger must fail the contract check even though every expected trigger is \
+         still present",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_a_job_level_write_permission() -> Result<(), Box<dyn Error>> {
+    let passed = run_conformance_contract_check(|sandbox| {
+        insert_after(
+            &sandbox.join(".github/workflows/m5-conformance.yml"),
+            "runs-on: ubuntu-24.04\n",
+            "    permissions:\n      contents: write\n",
+        )
+    })?;
+    assert!(
+        !passed,
+        "a job-level permission override must fail even though the workflow-level contents: \
+         read line is still present",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_a_widened_matrix() -> Result<(), Box<dyn Error>> {
+    let passed = run_conformance_contract_check(|sandbox| {
+        insert_after(
+            &sandbox.join(".github/workflows/m5-conformance.yml"),
+            "postgres: [\"15\", \"18\"]\n",
+            "        include:\n          - postgres: \"16\"\n",
+        )
+    })?;
+    assert!(
+        !passed,
+        "an additional matrix execution point must fail even though the literal \
+         postgres: [\"15\", \"18\"] declaration is still present",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_a_narrowed_matrix() -> Result<(), Box<dyn Error>> {
+    let passed = run_conformance_contract_check(|sandbox| {
+        let workflow = sandbox.join(".github/workflows/m5-conformance.yml");
+        let source = fs::read_to_string(&workflow)?;
+        let mutated = source.replace("postgres: [\"15\", \"18\"]", "postgres: [\"15\"]");
+        assert_ne!(
+            source, mutated,
+            "the matrix literal was not found to mutate"
+        );
+        fs::write(&workflow, mutated)?;
+        Ok(())
+    })?;
+    assert!(
+        !passed,
+        "a matrix reduced to one point must fail even though the literal declaration was \
+         rewritten consistently",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_a_changed_timeout() -> Result<(), Box<dyn Error>> {
+    let passed = run_conformance_contract_check(|sandbox| {
+        let workflow = sandbox.join(".github/workflows/m5-conformance.yml");
+        let source = fs::read_to_string(&workflow)?;
+        let mutated = source.replace("timeout-minutes: 55", "timeout-minutes: 5");
+        assert_ne!(
+            source, mutated,
+            "the timeout literal was not found to mutate"
+        );
+        fs::write(&workflow, mutated)?;
+        Ok(())
+    })?;
+    assert!(
+        !passed,
+        "a changed timeout must fail the contract check even though every other literal is \
+         unchanged",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_a_changed_report_or_artifact_path() -> Result<(), Box<dyn Error>> {
+    let passed = run_conformance_contract_check(|sandbox| {
+        let workflow = sandbox.join(".github/workflows/m5-conformance.yml");
+        let source = fs::read_to_string(&workflow)?;
+        let mutated = source.replace(
+            "path: target/m5-campaigns/conformance-campaign.json",
+            "path: target/m5-campaigns/conformance-campaign-renamed.json",
+        );
+        assert_ne!(
+            source, mutated,
+            "the report path literal was not found to mutate"
+        );
+        fs::write(&workflow, mutated)?;
+        Ok(())
+    })?;
+    assert!(
+        !passed,
+        "a changed retained-report path must fail even though the producer command is unchanged",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_an_additional_producer_command() -> Result<(), Box<dyn Error>> {
+    let passed = run_conformance_contract_check(|sandbox| {
+        insert_after(
+            &sandbox.join(".github/workflows/m5-conformance.yml"),
+            "run: ./tests/fixtures/conformance/run-ci-campaign.sh ${{ matrix.postgres }}\n",
+            "      - name: Run something else\n        run: echo \"an extra producer step\"\n",
+        )
+    })?;
+    assert!(
+        !passed,
+        "an additional step after the campaign producer must fail even though the declared \
+         producer command is still present unmodified",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_an_appended_script_command() -> Result<(), Box<dyn Error>> {
+    let passed = run_conformance_contract_check(|sandbox| {
+        append_line(
+            &sandbox.join("tests/fixtures/conformance/run-ci-campaign.sh"),
+            "echo \"extra command\"",
+        )
+    })?;
+    assert!(
+        !passed,
+        "an appended command must fail even though the expected cargo command is still present",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_a_changed_producer_command() -> Result<(), Box<dyn Error>> {
+    let passed = run_conformance_contract_check(|sandbox| {
+        let script = sandbox.join("tests/fixtures/conformance/run-ci-campaign.sh");
+        let source = fs::read_to_string(&script)?;
+        let mutated = source.replace(
+            "cargo run --package oxide-batch-xtask -- conformance",
+            "cargo run --package oxide-batch-xtask -- conformance --extra-flag",
+        );
+        assert_ne!(
+            source, mutated,
+            "the producer command was not found to mutate"
+        );
+        fs::write(&script, mutated)?;
+        Ok(())
+    })?;
+    assert!(
+        !passed,
+        "a changed producer command must fail even though it still contains the declared command \
+         as a substring",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_a_harmless_comment_byte() -> Result<(), Box<dyn Error>> {
+    let passed = run_conformance_contract_check(|sandbox| {
+        append_line(
+            &sandbox.join(".github/workflows/m5-conformance.yml"),
+            "# harmless comment",
+        )
+    })?;
+    assert!(
+        !passed,
+        "exact git blob identity, not heuristic literal parsing, is the retained-evidence \
+         boundary: even a harmless trailing comment must fail",
+    );
+    Ok(())
+}
+
+/// Copies the real workflow, script, and contract into an isolated sandbox,
+/// applies `mutate` to that sandbox, then runs the real `verify-ci-contract.sh`
+/// against the (possibly mutated) copy and reports whether it exited zero.
+///
+/// The sandbox mirrors the relative layout the script assumes
+/// (`tests/fixtures/conformance/execution-contract.json` beside its working
+/// directory), so the check runs exactly as CI runs it, and `mutate` can never
+/// affect the real repository files.
+fn run_conformance_contract_check(
+    mutate: impl FnOnce(&Path) -> Result<(), Box<dyn Error>>,
+) -> Result<bool, Box<dyn Error>> {
+    let root = workspace_root();
+    let sandbox = Sandbox::new("conformance-contract-check")?;
+
+    let workflow_dir = sandbox.path().join(".github/workflows");
+    fs::create_dir_all(&workflow_dir)?;
+    fs::copy(
+        root.join(".github/workflows/m5-conformance.yml"),
+        workflow_dir.join("m5-conformance.yml"),
+    )?;
+
+    let fixture_dir = sandbox.path().join("tests/fixtures/conformance");
+    fs::create_dir_all(&fixture_dir)?;
+    for name in [
+        "execution-contract.json",
+        "run-ci-campaign.sh",
+        "verify-ci-contract.sh",
+    ] {
+        fs::copy(
+            root.join("tests/fixtures/conformance").join(name),
+            fixture_dir.join(name),
+        )?;
+    }
+    let checker = fixture_dir.join("verify-ci-contract.sh");
+    let mut permissions = fs::metadata(&checker)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&checker, permissions)?;
+
+    mutate(sandbox.path())?;
+
+    let status = Command::new(&checker)
+        .arg(".github/workflows/m5-conformance.yml")
+        .current_dir(sandbox.path())
+        .status()?;
+    Ok(status.success())
+}
+
+/// Inserts `insertion` immediately after the first occurrence of `anchor`.
+fn insert_after(path: &Path, anchor: &str, insertion: &str) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(path)?;
+    let position = contents.find(anchor).ok_or_else(|| {
+        Box::new(Failure(format!(
+            "no {anchor:?} anchor found in {}",
+            path.display()
+        ))) as Box<dyn Error>
+    })?;
+    let insert_at = position + anchor.len();
+    let mut mutated = String::with_capacity(contents.len() + insertion.len());
+    mutated.push_str(&contents[..insert_at]);
+    mutated.push_str(insertion);
+    mutated.push_str(&contents[insert_at..]);
+    fs::write(path, mutated)?;
+    Ok(())
+}
+
+/// Appends one line to a file.
+fn append_line(path: &Path, line: &str) -> Result<(), Box<dyn Error>> {
+    let mut contents = fs::read_to_string(path)?;
+    contents.push('\n');
+    contents.push_str(line);
+    contents.push('\n');
+    fs::write(path, contents)?;
+    Ok(())
+}
+
+/// A uniquely named temporary directory, removed when it goes out of scope
+/// regardless of how the test exits.
+struct Sandbox(PathBuf);
+
+impl Sandbox {
+    fn new(label: &str) -> Result<Self, Box<dyn Error>> {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos());
+        let dir = std::env::temp_dir().join(format!(
+            "oxide-batch-{label}-{}-{unique}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir)?;
+        Ok(Self(dir))
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Sandbox {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Reads one canonical document from the workspace.
+fn read_document(path: &str) -> Result<String, Box<dyn Error>> {
+    Ok(fs::read_to_string(workspace_root().join(path))?)
 }
 
 /// A reconciliation input the campaign could not read.

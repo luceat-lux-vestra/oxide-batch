@@ -1,0 +1,73 @@
+name: M5 Conformance
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m5-conformance-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  conformance-campaign:
+    name: postgres-${{ matrix.postgres }}-conformance-campaign
+    runs-on: ubuntu-24.04
+    # The campaign runs every workspace test target plus the documentation
+    # tests, not one bounded workload, so its ceiling is wider than the other
+    # M5 campaigns'. Still a ceiling: a campaign that stopped making progress
+    # must fail rather than occupy a runner.
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["15", "18"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oxide_batch_campaign
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username postgres --dbname oxide_batch_campaign"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      OXIDEBATCH_POSTGRES_ADMIN_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_campaign
+      OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_campaign
+      OXIDEBATCH_POSTGRES_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_campaign
+      OXIDEBATCH_CAMPAIGN_DIR: target/m5-campaigns
+      OXIDEBATCH_CAMPAIGN_MATRIX: postgres-${{ matrix.postgres }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Fail closed if the execution contract drifts
+        run: ./tests/fixtures/conformance/verify-ci-contract.sh .github/workflows/m5-conformance.yml
+
+      - name: Run the full embedded conformance suite over the accepted scope
+        run: ./tests/fixtures/conformance/run-ci-campaign.sh ${{ matrix.postgres }}
+
+      # Retained on failure as well as on success. A failed conformance
+      # campaign is mostly worth reading for which accepted row or which
+      # target it lost, and a job that uploaded only green reports would
+      # discard exactly that.
+      - name: Retain the campaign report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: conformance-campaign-postgres-${{ matrix.postgres }}
+          path: target/m5-campaigns/conformance-campaign.json
+          if-no-files-found: error

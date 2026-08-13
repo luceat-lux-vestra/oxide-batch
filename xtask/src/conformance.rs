@@ -35,6 +35,9 @@ use crate::suite::{self, TargetCommand};
 /// The report this campaign retains.
 const REPORT: &str = "conformance-campaign.json";
 
+/// The declared semantic closure of the conformance campaign.
+const SEMANTICS: &str = "tests/fixtures/conformance/campaign-semantics.json";
+
 /// One campaign run and everything it observed.
 pub struct Campaign {
     /// Every reconciliation failure, as a human-readable line.
@@ -56,11 +59,19 @@ pub struct Campaign {
 pub fn run() -> Result<Campaign, String> {
     let root = suite::workspace_root()?;
     let scope = Scope::read(&root)?;
+    let manifest = execution_manifest(&root)?;
 
     let mut violations = Vec::new();
     let fixtures = resolve_fixtures(&scope, &mut violations);
     if !violations.is_empty() {
-        let report = write_report(&root, &scope, &fixtures, &Suite::default(), &violations)?;
+        let report = write_report(
+            &root,
+            &scope,
+            &fixtures,
+            &Suite::default(),
+            &violations,
+            &manifest,
+        )?;
         return Ok(Campaign { violations, report });
     }
 
@@ -68,8 +79,92 @@ pub fn run() -> Result<Campaign, String> {
     let suite = run_suite(&root, &targets)?;
     violations.extend(reconcile(&scope, &suite));
 
-    let report = write_report(&root, &scope, &fixtures, &suite, &violations)?;
+    let report = write_report(&root, &scope, &fixtures, &suite, &violations, &manifest)?;
     Ok(Campaign { violations, report })
+}
+
+/// Records the object identity of the campaign's closure, as executed.
+///
+/// Taken here, by the producer itself running inside its own checkout, rather
+/// than reconstructed later: this process is the campaign, so the tree it can
+/// see is by definition the tree that ran. In CI that is the pull-request
+/// merge commit the workflow checked out — an ephemeral object no later clone
+/// can resolve — so a verifier that tried to re-derive these identities from
+/// a commit name would depend on something GitHub throws away. Matches the
+/// pattern the performance, soak, and cancellation producers already use.
+fn execution_manifest(root: &Path) -> Result<Value, String> {
+    let commit = git(root, &["rev-parse", "HEAD"])
+        .ok_or_else(|| "the campaign is not running inside a git tree".to_owned())?;
+    let mut objects = serde_json::Map::new();
+    for path in semantics_paths(root)? {
+        let object = git(root, &["rev-parse", &format!("HEAD:{path}")]).ok_or_else(|| {
+            format!("{path} is declared as campaign semantics and is not present")
+        })?;
+        objects.insert(path, Value::String(object));
+    }
+    Ok(json!({
+        "execution_commit": commit,
+        "execution_commit_note": "The tree this run actually executed against, read from the \
+                                  checkout the campaign is running in. In CI this is the \
+                                  pull-request merge commit rather than the branch head, and it \
+                                  is the authority: the objects below are its objects.",
+        "tree_clean": git(root, &["status", "--porcelain"]).map(|status| status.is_empty()),
+        "objects": Value::Object(objects),
+    }))
+}
+
+/// Reads the canonical closure of what the campaign executes.
+///
+/// Read from `tests/fixtures/conformance/campaign-semantics.json` rather than
+/// listed here, because the verifier reads the same document: a closure kept
+/// in two places is one that will disagree.
+fn semantics_paths(root: &Path) -> Result<Vec<String>, String> {
+    let path = root.join(SEMANTICS);
+    let source = fs::read_to_string(&path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let document: Value = serde_json::from_str(&source)
+        .map_err(|error| format!("could not parse {}: {error}", path.display()))?;
+    let categories = document
+        .get("categories")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "the semantics document declares no categories".to_owned())?;
+    let mut paths = categories
+        .values()
+        .filter_map(|category| category.get("paths").and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    if paths.is_empty() {
+        return Err("the semantics document declares no paths".to_owned());
+    }
+    Ok(paths)
+}
+
+/// Reads the `PostgreSQL` major the campaign was configured to run at.
+///
+/// A runner cannot see the database version through a fixture, which is a
+/// connection string it never opens, so the campaign matrix variable is the
+/// recorded major — the same source of truth `suite::environment`'s own
+/// `matrix` field already reads.
+fn expected_matrix_major() -> Option<String> {
+    let matrix = env::var(suite::MATRIX).ok()?;
+    matrix.strip_prefix("postgres-").map(str::to_owned)
+}
+
+/// Runs one git command against the workspace, tolerating failure.
+fn git(root: &Path, arguments: &[&str]) -> Option<String> {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(arguments)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 /// Reports which declared fixtures the environment supplies.
@@ -273,6 +368,7 @@ fn write_report(
     fixtures: &BTreeMap<String, bool>,
     suite: &Suite,
     violations: &[String],
+    manifest: &Value,
 ) -> Result<PathBuf, String> {
     let directory = suite::directory(root);
     fs::create_dir_all(&directory)
@@ -313,7 +409,11 @@ fn write_report(
         "report": "conformance",
         "campaign": "full embedded conformance on the accepted M0-M4 scope",
         "scenario": "full_embedded_conformance_suite_passes_on_the_accepted_scope",
+        "postgresql_major_version": expected_matrix_major(),
         "environment": suite::environment(),
+        "observation": {
+            "execution_manifest": manifest,
+        },
         "fixtures": fixtures,
         "suite": {
             "targets": suite.targets,

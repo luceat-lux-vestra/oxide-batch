@@ -1,0 +1,91 @@
+{
+  "document": "The executable closure of the M5 conformance campaign",
+  "note": "The single source of truth for what the conformance campaign is made of. The producer reads it to record the object identity of every path at the tree it actually ran on; the verifier reads it to require those identities to still hold. Neither restates the list, because a list kept in two places is a list that will disagree.",
+  "rule": "A change to anything here changes what the evidence is evidence of, so retained reports produced before the change may not be promoted after it: the campaign has to be run again. A change to anything not here — documentation, the changelog, or unrelated jobs in `.github/workflows/ci.yml` — leaves retained evidence valid. The dedicated `.github/workflows/m5-conformance.yml` is bound as one object, so changes to the conformance provisioning or call layer invalidate conformance evidence without binding the rest of CI.",
+  "closure_scope_note": "This closure is wider than the other three M5 campaigns' by design, not by accident: the conformance campaign's own producer enumerates and runs every workspace test target `cargo metadata` reports, plus the workspace documentation tests, and requires every target to exit successfully — not only the 133 scenarios the accepted-scope document assigns to a ledger row. A defect anywhere in the workspace that made an unrelated target fail would fail the campaign, so the whole workspace's test-affecting source is genuinely part of what this evidence is evidence of. Coarse, whole-crate and whole-directory entries are used here for that reason, where the narrower campaigns list individual subdirectories they alone exercise.",
+  "categories": {
+    "workspace framework and adapter source": {
+      "why": "Every scenario the accepted scope assigns runs against this code, and so does every other workspace test the campaign's pass/fail gate depends on through the failed-target check.",
+      "paths": [
+        "crates/oxide-batch/src",
+        "crates/oxide-batch-core/src",
+        "crates/oxide-batch-plan/src",
+        "crates/oxide-batch-repository/src",
+        "crates/oxide-batch-cli/src"
+      ]
+    },
+    "spike source": {
+      "why": "The M0 architecture and M6 item-hot-path spikes are workspace test targets `cargo metadata` reports, so the campaign runs their tests too and its failed-target gate depends on them building and passing.",
+      "paths": [
+        "spikes/m0-architecture/src",
+        "spikes/m6-item-hot-path/src"
+      ]
+    },
+    "migrations": {
+      "why": "The durable schema the accepted scope's PostgreSQL-backed scenarios migrate to before they run.",
+      "paths": [
+        "crates/oxide-batch/migrations",
+        "spikes/m0-architecture/migrations"
+      ]
+    },
+    "workspace test suite": {
+      "why": "The scenarios themselves, and every other test in these directories the campaign's failed-target gate also requires to pass. This is the campaign's own scenario source for the 133 assigned scenarios, and it is also every other test cargo metadata resolves under these packages.",
+      "paths": [
+        "crates/oxide-batch/tests",
+        "crates/oxide-batch-cli/tests",
+        "spikes/m0-architecture/tests",
+        "spikes/m6-item-hot-path/tests"
+      ]
+    },
+    "cargo manifests": {
+      "why": "Feature selection, dependency ranges, and which targets `cargo metadata` reports at all. A campaign built with different features, or over a different target set, is a different campaign.",
+      "paths": [
+        "Cargo.toml",
+        "crates/oxide-batch/Cargo.toml",
+        "crates/oxide-batch-core/Cargo.toml",
+        "crates/oxide-batch-plan/Cargo.toml",
+        "crates/oxide-batch-repository/Cargo.toml",
+        "crates/oxide-batch-cli/Cargo.toml",
+        "spikes/m0-architecture/Cargo.toml",
+        "spikes/m6-item-hot-path/Cargo.toml",
+        "xtask/Cargo.toml"
+      ]
+    },
+    "dependency resolution": {
+      "why": "The exact dependency graph the whole workspace suite was built from.",
+      "paths": [
+        "Cargo.lock"
+      ]
+    },
+    "toolchain and build configuration": {
+      "why": "The compiler the whole workspace is built with, and the cargo configuration it is built under.",
+      "paths": [
+        "rust-toolchain.toml",
+        ".cargo/config.toml"
+      ]
+    },
+    "campaign fixtures": {
+      "why": "The declared denominator — the accepted M0-M4 ledger disposition, the 42-row scope, and the 133 scenario assignments — and this closure itself.",
+      "paths": [
+        "tests/fixtures/conformance/accepted-scope.json",
+        "tests/fixtures/conformance/campaign-semantics.json"
+      ]
+    },
+    "conformance execution contract": {
+      "why": "How CI actually runs the campaign: the supported matrix, the database it is given, the command, and the environment. The dedicated workflow is included with them, and its contract-check step fails closed if the workflow drifts from the contract. An unrelated CI job in ci.yml does not invalidate retained conformance evidence, while any change to the dedicated conformance workflow does.",
+      "paths": [
+        "tests/fixtures/conformance/execution-contract.json",
+        "tests/fixtures/conformance/run-ci-campaign.sh",
+        "tests/fixtures/conformance/verify-ci-contract.sh",
+        ".github/workflows/m5-conformance.yml"
+      ]
+    },
+    "independent verifier": {
+      "why": "The program that decides whether a report proved what it owed and whether retained evidence is still what it says. Its verdicts are part of the campaign result, so a report produced under a different verifier is a result under a different standard. `xtask/src` and `xtask/tests` are listed whole rather than file-by-file: xtask is itself a workspace package with its own test targets the campaign's failed-target gate depends on, and it is also the program reading and enforcing this document.",
+      "paths": [
+        "xtask/src",
+        "xtask/tests"
+      ]
+    }
+  }
+}
