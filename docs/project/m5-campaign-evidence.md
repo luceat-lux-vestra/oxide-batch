@@ -7,7 +7,7 @@ full exit criteria.
 
 **Issue:** [#102](https://github.com/luceat-lux-vestra/oxide-batch/issues/102)
 
-**Date:** 2026-08-13
+**Date:** 2026-08-14
 
 This record is the evidence for the sixth M5 workstream: running the campaigns
 the [design gate](m5-design-gate-evidence.md) named and retaining reproducible
@@ -137,25 +137,47 @@ soak, cancellation, and performance campaigns already use.
 
 ### Results
 
-Both matrix points pass. Each run executed `66` test targets and `473` tests,
+Both matrix points pass. Each run executed `90` test targets and `811` tests,
 every one reporting `ok`, with the workspace documentation tests passing and
-all three fixtures present. All `42` accepted rows are proved.
+all three fixtures present. All `42` accepted rows are proved. The target and
+test counts are higher than earlier retentions of this campaign recorded,
+because the workspace has grown since; nothing about the accepted denominator
+changed.
 
 | Report | Matrix | Targets | Tests | Outcomes | Result |
 | --- | --- | --- | --- | --- | --- |
-| [`conformance-campaign-postgres-15.json`](../engineering/campaigns/m5/conformance-campaign-postgres-15.json) | PostgreSQL 15 | 66 | 473 | 473 `ok` | Passed |
-| [`conformance-campaign-postgres-18.json`](../engineering/campaigns/m5/conformance-campaign-postgres-18.json) | PostgreSQL 18 | 66 | 473 | 473 `ok` | Passed |
+| [`conformance-campaign-postgres-15.json`](../engineering/campaigns/m5/conformance-campaign-postgres-15.json) | PostgreSQL 15 | 90 | 811 | 811 `ok` | Passed |
+| [`conformance-campaign-postgres-18.json`](../engineering/campaigns/m5/conformance-campaign-postgres-18.json) | PostgreSQL 18 | 90 | 811 | 811 `ok` | Passed |
 
-Both were produced by commit `0f41aad`, which is the merge commit the workflow
-checked out rather than a branch tip.
+Both were produced by dedicated workflow run
+[31749761115](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/31749761115),
+which executed tree `e191a3fdb7e137ace98de0ecd3a0e071bad9c950` — the
+pull-request merge commit the workflow checked out — from branch head
+`7860e19fddd2fd3a57acc7d94187b72db9ac41cd`. The execution tree is the
+provenance root and the branch head is recorded beside it as metadata; they
+are different commits and are never used interchangeably. The reports record
+`rustc 1.97.1` and Linux `x86_64`. The command is
+`./tests/fixtures/conformance/run-ci-campaign.sh <major>`, which the dedicated
+workflow calls and which runs `cargo xtask conformance` — so the independent
+recomputation is what the producing job itself executed. Each artifact's own
+sha256 digest was computed directly over the downloaded ZIP bytes at
+promotion, matched the GitHub API's recorded digest, and the extracted report
+matched the retained bytes exactly before retention:
+PostgreSQL 15's job `94612609577` produced artifact `9200771982`
+(`sha256:606cba3e339daba75ffeb179404fa5c5fce7e76036d79e38cc838f5533d8033e`,
+`5913` bytes, retained blob `d5df85cb0b75adda3c1500e53293b7345d2b7af1`);
+PostgreSQL 18's job `94612609550` produced artifact `9200776513`
+(`sha256:faea724f789731cef115589bf67c5e2f3d77d1966936e972084b77adf782a9cb`,
+`5913` bytes, retained blob `eae7700fd61a7d0ab3d4efa010796eb065af4e90`).
 
 The `133` scenario assignments break down by ledger evidence class as `42`
 conformance, `53` unit, `20` integration, `9` crash, `5` performance, and `4`
 migration. Every row has at least one conformance-class scenario, which the
 in-process reconciliation requires.
 
-No correctness P0 or P1 is open against this campaign. The two findings below
-are recorded and both are closed.
+No correctness P0 or P1 is open against this campaign. The three findings
+below are recorded; F1 and F2 are closed defects, and F36 records the
+retained-evidence provenance hardening this campaign's record now carries.
 
 ### What this campaign does not establish
 
@@ -169,6 +191,13 @@ are recorded and both are closed.
   rows are untouched and stay visible.
 - **A parity claim.** Passing the accepted scope is not parity with the ledger
   population, and the record's own denominator says so.
+- **Strong provenance for the other four M5 campaigns.** Crash/restore,
+  upgrade, security, and resource-bound still run as jobs inside
+  `.github/workflows/ci.yml` and are not declared in `evidence-
+  provenance.json`; their retained reports are not bound to a specific
+  workflow run, job, or artifact digest the way conformance, soak,
+  cancellation, and performance now are. Closing that gap for each of them is
+  left to a follow-up, tracked under #102.
 
 ### Findings
 
@@ -204,6 +233,50 @@ that list would have been reading the wrong list. The campaign does not reuse
 it: the accepted-scope document is keyed by ledger row identifier, and the two
 lists stay separate because they answer different questions. The stale doc
 comment is corrected in place.
+
+**F36. Conformance was the last of the four PostgreSQL-matrixed M5 campaigns
+still missing the strong retained-evidence provenance model, and #102's
+"raw evidence retained/reproducible for every campaign" exit criterion could
+not fully close until it had one.** Soak, cancellation, and performance each
+record their own execution manifest (execution commit, tree cleanliness, and
+their closure's object identities) from inside the producer's own checkout,
+declare a semantic closure, and bind their retained reports to a specific
+workflow run, job, and artifact digest that `cargo xtask evidence` checks
+offline on every CI run. Conformance had none of this: it ran as one job
+inside `.github/workflows/ci.yml`, and its retained reports carried only
+`environment.source_commit` — a real commit, but nothing tying the retained
+bytes to a specific workflow run, job, or artifact, and nothing that would
+catch a report kept beside a campaign whose semantics had since changed.
+
+Conformance is now extracted into its own dedicated
+`.github/workflows/m5-conformance.yml`, with a fail-closed execution contract
+bound by exact git blob identity
+(`tests/fixtures/conformance/execution-contract.json`,
+`run-ci-campaign.sh`, `verify-ci-contract.sh`) matching the pattern the other
+three campaigns already use, and a declared semantic closure
+(`tests/fixtures/conformance/campaign-semantics.json`) that the producer
+records its own execution manifest against. The closure is deliberately wider
+than the other three campaigns' closures: conformance's producer enumerates
+and runs every workspace test target `cargo metadata` reports, not a fixed
+report set, so a defect anywhere in the workspace that failed an unrelated
+target would fail the campaign, and the whole workspace's test-affecting
+source is genuinely part of what this evidence is evidence of. `evidence-
+provenance.json` now declares `M5 PostgreSQL conformance` as a campaign
+alongside soak, cancellation, and performance, with its own required
+`postgres-15`/`postgres-18` matrix.
+
+None of this changed what the campaign proves. The accepted M0-M4 ledger
+scope, the 42-row denominator, the 133 scenario assignments, and the
+pass/fail reconciliation logic (`xtask/src/conformance.rs`'s `reconcile`
+function) are byte-for-byte what they were before this change — only
+`xtask/src/conformance.rs`'s report-writing path gained the two new fields
+(`postgresql_major_version` and `observation.execution_manifest`) the
+provenance model requires, and the workflow moved without changing its
+fixture provisioning, its command, or its artifact naming. Crash/restore,
+upgrade, security, and resource-bound are not part of this closure and remain
+outside the strong provenance model; closing their gaps is left to a
+follow-up, as this campaign's own scope note explains under "what this
+campaign does not establish" below.
 
 ## Crash and restore campaign
 
