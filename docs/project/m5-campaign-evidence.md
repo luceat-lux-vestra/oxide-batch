@@ -1652,11 +1652,11 @@ The retained reports are immutable CI artifacts produced from the recorded
 producer commit. The later evidence-retention commit only records those
 artifacts and their provenance.
 
-Both were produced by run `31663572248` of the dedicated `M5 Soak` workflow —
+Both were produced by run `31666926265` of the dedicated `M5 Soak` workflow —
 which concluded successfully as a whole — from execution tree
-`6146434f465242eefa7523f4153a56dffbb755a4`, the pull-request merge commit the
+`fa8245ab90473873ee1fb3a147f8c1686ee2ff41`, the pull-request merge commit the
 workflow actually checked out, off branch head
-`923221934be11769793f80b56b11eb6aba6fb7e4`. The execution tree is the
+`167d9d8708c716843b67b0b7df3e11200f809fbc`. The execution tree is the
 provenance root and the branch head is recorded beside it as metadata; they are
 different commits and are never used interchangeably. The reports record
 `rustc 1.97.1`, Linux `x86_64` on kernel `6.17.0-1020-azure`, `4` Tokio worker
@@ -1667,10 +1667,12 @@ producing job itself executed. Each artifact's own sha256 digest was read from
 the GitHub API at promotion, matched the downloaded archive, and the extracted
 report matched the retained bytes exactly before retention.
 
-This is the first producer run after the dedicated-workflow extraction. The
-pre-isolation reports were invalidated rather than reinterpreted because their
-execution manifest named the old `ci.yml` closure; no figure below is carried
-across from them, and none of their numbers was adjusted by hand.
+This is the second producer run after the dedicated-workflow extraction. The
+first run's reports were invalidated rather than reinterpreted because
+`execution-contract.json` and `verify-ci-contract.sh` moved from a literal
+presence check to an exact git-blob identity binding, which changed both
+campaigns' declared closures; no figure below is carried across from them, and
+none of their numbers was adjusted by hand.
 
 The full provenance is
 [`evidence-provenance.json`](../engineering/campaigns/m5/evidence-provenance.json),
@@ -1683,7 +1685,7 @@ matrix points. Elapsed time, pool-reading count, and resident-memory series are
 runner observations and differ between points.
 
 **The window.** `32` warmup and `600` measured cycles, `632` completed, one
-sample per cycle, and `37538` and `41871` pool readings taken while the
+sample per cycle, and `37440` and `37885` pool readings taken while the
 cycles ran, none of which failed to read the gauge.
 
 **Correctness.** All fifteen obligations held in all `600` measured cycles, on
@@ -1711,8 +1713,8 @@ and `0` after the close, which the server reached within a millisecond.
 boundaries, on both majors.
 
 **Memory.** The retained reports record warmup/measured resident-memory rates of
-`13.677419`/`0.520868` KiB per cycle on PostgreSQL 15 and
-`14.967741`/`0.400667` on PostgreSQL 18. Both satisfy the existing
+`15.096774`/`0.467445` KiB per cycle on PostgreSQL 15 and
+`13.419354`/`0.520868` on PostgreSQL 18. Both satisfy the existing
 warmup-relative decay rule of `0.25`. These are observational run results; no
 numeric performance or memory budget is promoted by this campaign.
 
@@ -2241,21 +2243,21 @@ reconciles perfectly inside a run of another.
 
 Both matrix points passed with no violations. Every figure below is an
 observation from dedicated workflow run
-[31663572265](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/31663572265),
+[31666926214](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/31666926214),
 debug profile, on shared GitHub-hosted runners. The run executed tree
-`6146434f465242eefa7523f4153a56dffbb755a4` from branch head
-`923221934be11769793f80b56b11eb6aba6fb7e4`; **nothing is asserted against any
+`fa8245ab90473873ee1fb3a147f8c1686ee2ff41` from branch head
+`167d9d8708c716843b67b0b7df3e11200f809fbc`; **nothing is asserted against any
 of these measurements**, and the spread discussed under F25 and F26 below is
 the reason that matters rather than a caveat on it.
 
 | Observation | PostgreSQL 15 | PostgreSQL 18 |
 | --- | --- | --- |
 | Server | `15.18 (Debian 15.18-1.pgdg13+1)` | `18.4 (Debian 18.4-1.pgdg13+1)` |
-| Request to intake stop | `10 080 µs` | `9 889 µs` |
-| Request to durable terminal | `468 952 µs` | `497 939 µs` |
+| Request to intake stop | `112 173 µs` | `10 524 µs` |
+| Request to durable terminal | `534 652 µs` | `495 207 µs` |
 | Ordering holds | yes | yes |
 | Durable terminal | `STOPPED` / exit `STOPPED` | `STOPPED` / exit `STOPPED` |
-| Committed partitions, before → after | `1` → `2` | `1` → `2` |
+| Committed partitions, before → after | `1` → `4` | `1` → `2` |
 | Workers outliving the attempt | `0` | `0` |
 
 Request-to-durable-terminal separated by phase, with the process intake path
@@ -2263,10 +2265,10 @@ beside it:
 
 | Phase | Mechanism | Intake stop, 15 | Terminal, 15 | Intake stop, 18 | Terminal, 18 |
 | --- | --- | --- | --- | --- | --- |
-| async | tasklet awaiting the cooperative token | `85 342 µs` | `544 759 µs` | `88 949 µs` | `534 620 µs` |
-| blocking | `BlockingTaskletAdapter` | `92 440 µs` | `921 569 µs` | `7 567 µs` | `1 724 714 µs` |
-| transaction | tasklet holding an open repository unit | `90 781 µs` | `545 649 µs` | `91 794 µs` | `563 215 µs` |
-| process intake | `request_shutdown` then `ensure_accepting` | `3 µs` | — | `2 µs` | — |
+| async | tasklet awaiting the cooperative token | `34 090 µs` | `519 707 µs` | `91 116 µs` | `575 816 µs` |
+| blocking | `BlockingTaskletAdapter` | `37 790 µs` | `994 858 µs` | `92 986 µs` | `933 163 µs` |
+| transaction | tasklet holding an open repository unit | `99 431 µs` | `1 996 570 µs` | `98 232 µs` | `614 821 µs` |
+| process intake | `request_shutdown` then `ensure_accepting` | `2 µs` | — | `2 µs` | — |
 
 Unjoined counts. Every declared deadline was run both ways; the completing
 column is the drain's join cost when its tasks finish, and the expiring column
@@ -2274,19 +2276,20 @@ is what the coordinator still owned when the deadline won.
 
 | Deadline | Held | Completing (unjoined / cost, 15) | Expiring (15) | Completing (18) | Expiring (18) |
 | --- | --- | --- | --- | --- | --- |
-| `minimum`, `1 000 ms` | `3` | `0` / `83 014 µs` | `3` | `0` / `74 228 µs` | `3` |
-| `intermediate`, `5 000 ms` | `5` | `0` / `72 295 µs` | `5` | `0` / `60 133 µs` | `5` |
-| `default`, `30 000 ms` | `7` | `0` / `6 182 µs` | `7` | `0` / `5 604 µs` | `7` |
-| escalation | `4` | — | `4`, in `43 µs` | — | `4`, in `52 µs` |
+| `minimum`, `1 000 ms` | `3` | `0` / `56 411 µs` | `3` | `0` / `83 563 µs` | `3` |
+| `intermediate`, `5 000 ms` | `5` | `0` / `59 533 µs` | `5` | `0` / `59 984 µs` | `5` |
+| `default`, `30 000 ms` | `7` | `0` / `3 926 µs` | `7` | `0` / `7 067 µs` | `7` |
+| escalation | `4` | — | `4`, in `39 µs` | — | `4`, in `50 µs` |
 
 Every expiring count is attributed across the three observed phases and sums to
 the total: `Tasklet`/`ChunkReadProcess`/`Transaction` of `1`/`1`/`1`, `2`/`2`/`1`,
 and `3`/`2`/`2` respectively, identically on both majors. Every completing drain
 joined every owned task and reported nothing unjoined.
 
-Restart after cancellation, both majors: the restart was a new execution of the
-same instance, re-ran `62` partitions, re-ran **none** of the partitions the
-cancelled attempt had committed, and reached `COMPLETED`.
+Restart after cancellation: the restart was a new execution of the same
+instance on both majors, re-ran `63` partitions on PostgreSQL 15 and `62` on
+PostgreSQL 18, re-ran **none** of the partitions the cancelled attempt had
+committed on either major, and reached `COMPLETED` on both.
 
 ### Correctness assertions
 
@@ -2328,13 +2331,15 @@ the async, blocking, and transaction phases separately, and this campaign
 measures them separately — but it measures each one *once* per matrix point, and
 the retained numbers show that is not enough to order them.
 
-On PostgreSQL 15 the blocking phase reached its terminal at `922 ms` against
-`545 ms` for async, while PostgreSQL 18 measured `535`, `1 725`, and `563 ms`
-for async, blocking, and transaction. `BlockingTaskletAdapter`'s synchronous
-body runs to completion once started and the adapter reports the stop afterwards,
-which is the accepted late-stop limitation stated in its own documentation. The
-single run measures the phases but does not establish a general ordering or
-budget.
+On PostgreSQL 15 the transaction phase reached its terminal at `1 997 ms`,
+past blocking's `995 ms` and async's `520 ms`; PostgreSQL 18 measured `576`,
+`933`, and `615 ms` for async, blocking, and transaction — blocking highest
+there, transaction highest on 15. `BlockingTaskletAdapter`'s synchronous body
+runs to completion once started and the adapter reports the stop afterwards,
+which is the accepted late-stop limitation stated in its own documentation.
+The single run measures the phases but does not establish a general ordering
+or budget — this pair of runs disagreeing on which phase is slowest is exactly
+that point.
 
 An earlier draft of this section reported the phase difference as a ratio, from
 a development run where blocking came in at `2.7x` the async phase. That number
@@ -2350,7 +2355,7 @@ cannot be read as a typical value.** The configured stop poll interval bounds ho
 long the owning runtime may go without re-reading the durable stop request;
 where inside that window an operator's request happens to land is arbitrary. The
 campaign configures the accepted minimum of `100 ms`, and the retained
-observations range from `7 567 µs` to `92 440 µs` across phases and matrix
+observations range from `34 090 µs` to `99 431 µs` across phases and matrix
 points. That spread is within the configured polling window and is an offset of
 where the request lands, not a representative latency.
 
@@ -2364,9 +2369,9 @@ either.
 
 **F27. The two intake paths differ by three orders of magnitude and must not be
 reported as one number.** Process intake stop — `request_shutdown` followed by
-`ensure_accepting` — completed in `3 µs` on PostgreSQL 15 and `2 µs` on
-PostgreSQL 18, against `10 080 µs` and `9 889 µs` for the durable operator path.
-The first is an atomic state
+`ensure_accepting` — completed in `2 µs` on both PostgreSQL 15 and
+PostgreSQL 18, against `112 173 µs` and `10 524 µs` for the durable operator
+path. The first is an atomic state
 transition in memory; the second is a committed transaction observed at a poll
 interval. They are both truthfully called "request to intake stop", and a report
 that averaged them, or quoted whichever suited, would be describing neither.
