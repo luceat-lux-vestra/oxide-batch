@@ -127,6 +127,10 @@ const REPORT_SPECS: &[ReportSpec] = &[
 const EXPECTED_PERFORMANCE_ROW: &str = "P-001 fixed overhead and P-003 enlisted-writer throughput against the M4 provisional budgets, plus P-010 at `1`, `10`, and the largest configured worker count";
 const EXPECTED_REFERENCE_WORKLOAD_ROW: &str = "One published end-to-end workload derived from P-003, run at a fixed dataset size on PostgreSQL 15 and 18, reporting throughput, per-item and per-chunk overhead, metadata write count, peak memory, and connection count";
 const EXPECTED_P001_WORKLOAD_DESCRIPTION: &str = "In-memory no-op tasklet lifecycle";
+const EXPECTED_P003_WORKLOAD_DESCRIPTION: &str = "CSV to PostgreSQL with enlisted writer";
+const EXPECTED_P003_SOURCE: &str =
+    "deterministically-generated RFC 4180 CSV with a header and three scalar columns";
+const EXPECTED_MATRIX_RULE: &str = "Every report runs exactly once at each supported matrix point.";
 
 // ---------------------------------------------------------------------
 // The real fixture, exercised end to end against the file on disk.
@@ -175,8 +179,13 @@ fn p010_workload_values_are_fixed_exactly() -> Result<(), Box<dyn Error>> {
 
 #[test]
 fn the_performance_row_states_exactly_the_accepted_contract() -> Result<(), Box<dyn Error>> {
+    let scope = read_scope()?;
+    let campaigns = get_array(&scope, "campaigns", "the scope")?;
+    let performance = object_with_id(campaigns, "campaigns", "performance")?;
+    let plan_row_name = get_str(performance, "plan_row", "the performance campaign")?;
+
     let plan = read_document("docs/engineering/performance-plan.md")?;
-    let cells = plan_row_cells(&plan, "Performance")?;
+    let cells = plan_row_cells(&plan, plan_row_name, 2)?;
     let obligation = cells
         .get(1)
         .ok_or_else(|| Failure("the Performance row has no obligation cell".to_owned()))?;
@@ -194,8 +203,13 @@ fn the_performance_row_states_exactly_the_accepted_contract() -> Result<(), Box<
 
 #[test]
 fn the_reference_workload_row_states_exactly_the_accepted_contract() -> Result<(), Box<dyn Error>> {
+    let scope = read_scope()?;
+    let campaigns = get_array(&scope, "campaigns", "the scope")?;
+    let reference = object_with_id(campaigns, "campaigns", "reference-workload")?;
+    let plan_row_name = get_str(reference, "plan_row", "the reference-workload campaign")?;
+
     let plan = read_document("docs/engineering/performance-plan.md")?;
-    let cells = plan_row_cells(&plan, "Reference workload")?;
+    let cells = plan_row_cells(&plan, plan_row_name, 2)?;
     let obligation = cells
         .get(1)
         .ok_or_else(|| Failure("the Reference workload row has no obligation cell".to_owned()))?;
@@ -214,7 +228,7 @@ fn p001_workload_semantics_are_reconciled_between_scope_and_plan() -> Result<(),
     let against_database = get_bool(p001, "against_database", "p001-fixed-overhead")?;
 
     let plan = read_document("docs/engineering/performance-plan.md")?;
-    let cells = plan_row_cells(&plan, "P-001")?;
+    let cells = plan_row_cells(&plan, "P-001", 3)?;
     let description = cells.get(1).ok_or_else(|| {
         Failure("the workload table's P-001 row has no description cell".to_owned())
     })?;
@@ -226,6 +240,36 @@ fn p001_workload_semantics_are_reconciled_between_scope_and_plan() -> Result<(),
     assert!(
         !against_database,
         "the accepted workload table defines P-001 as {description:?}, an in-memory measurement independent of the PostgreSQL major; the scope must not declare against_database=true for it",
+    );
+    Ok(())
+}
+
+#[test]
+fn p003_workload_semantics_are_reconciled_between_scope_and_plan() -> Result<(), Box<dyn Error>> {
+    let scope = read_scope()?;
+    let p003 = scope
+        .pointer("/workloads/p003")
+        .ok_or_else(|| Failure("the scope declares no P-003 workload".to_owned()))?;
+    let source = get_str(p003, "source", "workloads.p003")?;
+    let writer = get_str(p003, "writer", "workloads.p003")?;
+
+    let plan = read_document("docs/engineering/performance-plan.md")?;
+    let cells = plan_row_cells(&plan, "P-003", 3)?;
+    let description = cells.get(1).ok_or_else(|| {
+        Failure("the workload table's P-003 row has no description cell".to_owned())
+    })?;
+
+    assert_eq!(
+        description, EXPECTED_P003_WORKLOAD_DESCRIPTION,
+        "the accepted workload table's P-003 description changed; the scope's source and writer fields assume it still names a CSV-to-PostgreSQL workload, so any change here needs an explicit reconciliation, not a silent pass",
+    );
+    assert!(
+        source.contains("CSV"),
+        "the scope's P-003 source no longer names CSV, contradicting the plan's {description:?} workload",
+    );
+    assert!(
+        writer.contains("PostgreSQL"),
+        "the scope's P-003 writer no longer names PostgreSQL, contradicting the plan's {description:?} workload",
     );
     Ok(())
 }
@@ -320,7 +364,7 @@ fn the_design_gate_gap_and_later_scope_are_explicit() -> Result<(), Box<dyn Erro
 #[test]
 fn performance_row_parser_detects_an_added_workload_obligation() -> Result<(), Box<dyn Error>> {
     let augmented = "| Performance | P-001 fixed overhead and P-003 enlisted-writer throughput against the M4 provisional budgets, plus P-010 at `1`, `10`, and the largest configured worker count, plus P-099 something new |";
-    let cells = plan_row_cells(augmented, "Performance")?;
+    let cells = plan_row_cells(augmented, "Performance", 2)?;
     assert_ne!(cells[1], EXPECTED_PERFORMANCE_ROW);
     assert_ne!(
         workload_ids_mentioned(&cells[1]),
@@ -333,7 +377,7 @@ fn performance_row_parser_detects_an_added_workload_obligation() -> Result<(), B
 #[test]
 fn performance_row_parser_detects_a_removed_workload_obligation() -> Result<(), Box<dyn Error>> {
     let reduced = "| Performance | P-001 fixed overhead against the M4 provisional budgets, plus P-010 at `1`, `10`, and the largest configured worker count |";
-    let cells = plan_row_cells(reduced, "Performance")?;
+    let cells = plan_row_cells(reduced, "Performance", 2)?;
     assert_ne!(cells[1], EXPECTED_PERFORMANCE_ROW);
     assert!(!workload_ids_mentioned(&cells[1]).contains("P-003"));
     Ok(())
@@ -342,7 +386,53 @@ fn performance_row_parser_detects_a_removed_workload_obligation() -> Result<(), 
 #[test]
 fn plan_row_parser_rejects_a_table_with_no_matching_row() {
     let plan = "| Other | something else |";
-    assert!(plan_row_cells(plan, "Performance").is_err());
+    assert!(plan_row_cells(plan, "Performance", 2).is_err());
+}
+
+#[test]
+fn plan_row_parser_rejects_a_duplicated_performance_row() {
+    let plan = "| Performance | first obligation |\n| Performance | second obligation |";
+    assert!(plan_row_cells(plan, "Performance", 2).is_err());
+}
+
+#[test]
+fn plan_row_parser_rejects_a_duplicated_reference_workload_row() {
+    let plan =
+        "| Reference workload | first obligation |\n| Reference workload | second obligation |";
+    assert!(plan_row_cells(plan, "Reference workload", 2).is_err());
+}
+
+#[test]
+fn plan_row_parser_rejects_a_performance_row_with_an_extra_cell() {
+    let plan = "| Performance | obligation | unexpected extra cell |";
+    assert!(plan_row_cells(plan, "Performance", 2).is_err());
+}
+
+#[test]
+fn plan_row_parser_rejects_a_reference_workload_row_with_an_extra_cell() {
+    let plan = "| Reference workload | obligation | unexpected extra cell |";
+    assert!(plan_row_cells(plan, "Reference workload", 2).is_err());
+}
+
+#[test]
+fn plan_row_parser_rejects_a_workload_row_with_a_missing_cell() {
+    let plan = "| P-001 | In-memory no-op tasklet lifecycle |";
+    assert!(plan_row_cells(plan, "P-001", 3).is_err());
+}
+
+#[test]
+fn plan_row_parser_rejects_a_workload_row_with_an_extra_cell() {
+    let plan =
+        "| P-001 | In-memory no-op tasklet lifecycle | fixed framework overhead | extra cell |";
+    assert!(plan_row_cells(plan, "P-001", 3).is_err());
+}
+
+#[test]
+fn p003_workload_table_row_change_is_detected_by_the_parser() -> Result<(), Box<dyn Error>> {
+    let mutated = "| P-003 | CSV to Parquet with enlisted writer | parser, batch write, transaction, metadata |";
+    let cells = plan_row_cells(mutated, "P-003", 3)?;
+    assert_ne!(cells[1], EXPECTED_P003_WORKLOAD_DESCRIPTION);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------
@@ -558,6 +648,104 @@ fn p001_declared_against_a_live_database_fails_reconciliation() -> Result<(), Bo
     Ok(())
 }
 
+#[test]
+fn p003_source_missing_fails_reconciliation() -> Result<(), Box<dyn Error>> {
+    let mut scope = read_scope()?;
+    scope["workloads"]["p003"]
+        .as_object_mut()
+        .ok_or_else(|| Failure("workloads.p003 is not an object".to_owned()))?
+        .remove("source");
+    assert!(validate_scope(&scope).is_err());
+    Ok(())
+}
+
+#[test]
+fn p003_source_non_string_fails_reconciliation() -> Result<(), Box<dyn Error>> {
+    let mut scope = read_scope()?;
+    scope["workloads"]["p003"]["source"] = Value::from(1);
+    assert!(validate_scope(&scope).is_err());
+    Ok(())
+}
+
+#[test]
+fn p003_source_drift_fails_reconciliation() -> Result<(), Box<dyn Error>> {
+    let mut scope = read_scope()?;
+    scope["workloads"]["p003"]["source"] =
+        Value::String("a differently generated dataset".to_owned());
+    assert!(validate_scope(&scope).is_err());
+    Ok(())
+}
+
+#[test]
+fn performance_plan_row_missing_fails_reconciliation() -> Result<(), Box<dyn Error>> {
+    let mut scope = read_scope()?;
+    let index = campaign_position(&scope, "performance")?;
+    scope["campaigns"][index]
+        .as_object_mut()
+        .ok_or_else(|| Failure("campaign is not an object".to_owned()))?
+        .remove("plan_row");
+    assert!(validate_scope(&scope).is_err());
+    Ok(())
+}
+
+#[test]
+fn performance_plan_row_wrong_value_fails_reconciliation() -> Result<(), Box<dyn Error>> {
+    let mut scope = read_scope()?;
+    let index = campaign_position(&scope, "performance")?;
+    scope["campaigns"][index]["plan_row"] = Value::String("Reference workload".to_owned());
+    assert!(validate_scope(&scope).is_err());
+    Ok(())
+}
+
+#[test]
+fn reference_workload_plan_row_missing_fails_reconciliation() -> Result<(), Box<dyn Error>> {
+    let mut scope = read_scope()?;
+    let index = campaign_position(&scope, "reference-workload")?;
+    scope["campaigns"][index]
+        .as_object_mut()
+        .ok_or_else(|| Failure("campaign is not an object".to_owned()))?
+        .remove("plan_row");
+    assert!(validate_scope(&scope).is_err());
+    Ok(())
+}
+
+#[test]
+fn reference_workload_plan_row_non_string_fails_reconciliation() -> Result<(), Box<dyn Error>> {
+    let mut scope = read_scope()?;
+    let index = campaign_position(&scope, "reference-workload")?;
+    scope["campaigns"][index]["plan_row"] = Value::from(1);
+    assert!(validate_scope(&scope).is_err());
+    Ok(())
+}
+
+#[test]
+fn matrix_rule_missing_fails_reconciliation() -> Result<(), Box<dyn Error>> {
+    let mut scope = read_scope()?;
+    scope["execution"]
+        .as_object_mut()
+        .ok_or_else(|| Failure("execution is not an object".to_owned()))?
+        .remove("matrix_rule");
+    assert!(validate_scope(&scope).is_err());
+    Ok(())
+}
+
+#[test]
+fn matrix_rule_non_string_fails_reconciliation() -> Result<(), Box<dyn Error>> {
+    let mut scope = read_scope()?;
+    scope["execution"]["matrix_rule"] = Value::from(1);
+    assert!(validate_scope(&scope).is_err());
+    Ok(())
+}
+
+#[test]
+fn matrix_rule_wrong_value_fails_reconciliation() -> Result<(), Box<dyn Error>> {
+    let mut scope = read_scope()?;
+    scope["execution"]["matrix_rule"] =
+        Value::String("Some reports may run at fewer matrix points.".to_owned());
+    assert!(validate_scope(&scope).is_err());
+    Ok(())
+}
+
 // ---------------------------------------------------------------------
 // The pure denominator contract. `Value -> Result<(), Failure>` throughout,
 // so both the on-disk fixture and a mutated in-memory clone can drive it.
@@ -594,6 +782,13 @@ fn validate_campaigns(scope: &Value) -> Result<(), Failure> {
                 .to_owned(),
         ));
     }
+    if get_str(performance, "plan_row", "the performance campaign")? != "Performance" {
+        return Err(Failure(
+            "the performance campaign must bind plan_row exactly to the accepted plan's \
+             Performance row"
+                .to_owned(),
+        ));
+    }
 
     let reference = object_with_id(campaigns, "campaigns", "reference-workload")?;
     let reference_reports = get_array(reference, "reports", "the reference-workload campaign")?;
@@ -606,6 +801,13 @@ fn validate_campaigns(scope: &Value) -> Result<(), Failure> {
             "the reference-workload campaign must declare exactly the shared \
              p003-reference-workload report: running the same fixed workload twice would \
              produce two samples, not two different obligations"
+                .to_owned(),
+        ));
+    }
+    if get_str(reference, "plan_row", "the reference-workload campaign")? != "Reference workload" {
+        return Err(Failure(
+            "the reference-workload campaign must bind plan_row exactly to the accepted plan's \
+             Reference workload row"
                 .to_owned(),
         ));
     }
@@ -705,6 +907,12 @@ fn validate_execution(scope: &Value) -> Result<(), Failure> {
                 .to_owned(),
         ));
     }
+    if get_str(execution, "matrix_rule", "execution")? != EXPECTED_MATRIX_RULE {
+        return Err(Failure(format!(
+            "execution.matrix_rule must state the accepted execution cardinality exactly: \
+             {EXPECTED_MATRIX_RULE:?}",
+        )));
+    }
     Ok(())
 }
 
@@ -760,6 +968,11 @@ fn validate_workload_p003(scope: &Value) -> Result<(), Failure> {
              path exactly"
                 .to_owned(),
         ));
+    }
+    if get_str(p003, "source", "workloads.p003")? != EXPECTED_P003_SOURCE {
+        return Err(Failure(format!(
+            "workloads.p003.source must name the accepted deterministic dataset exactly: {EXPECTED_P003_SOURCE:?}",
+        )));
     }
     Ok(())
 }
@@ -909,23 +1122,47 @@ fn object_with_id<'a>(values: &'a [Value], context: &str, id: &str) -> Result<&'
 // fails the comparison the same way one removed from it does.
 // ---------------------------------------------------------------------
 
-/// Splits a `| Name | ... | ... |` table row into its trimmed cells.
+/// Splits the `| Name | ... |` table row whose first cell is exactly `name`
+/// into its trimmed cells, requiring the row to appear exactly once and to
+/// have exactly `expected_cells` cells.
 ///
-/// Matches the row whose first cell is exactly `name`. Used for both the
-/// two-column M5 campaign table and the three-column workload table.
-fn plan_row_cells(plan: &str, name: &str) -> Result<Vec<String>, Failure> {
+/// Both requirements are fail-closed on purpose: a `.find()` over duplicated
+/// rows would silently ignore obligation drift in every row after the first,
+/// and accepting whatever cell count a row happens to have would let an
+/// obligation move into (or disappear from) an unread trailing cell. The
+/// two-column M5 campaign table (`| Campaign | Required reports |`) passes
+/// `expected_cells: 2`; the three-column workload table
+/// (`| ID | Workload | Primary pressure |`) passes `expected_cells: 3`.
+fn plan_row_cells(plan: &str, name: &str, expected_cells: usize) -> Result<Vec<String>, Failure> {
     let prefix = format!("| {name} |");
-    let line = plan
+    let matches: Vec<&str> = plan
         .lines()
-        .find(|line| line.trim_start().starts_with(&prefix))
-        .ok_or_else(|| Failure(format!("the plan has no {name} row")))?;
-    Ok(line
+        .filter(|line| line.trim_start().starts_with(&prefix))
+        .collect();
+    let line = match matches.as_slice() {
+        [] => return Err(Failure(format!("the plan has no {name} row"))),
+        [line] => *line,
+        _ => {
+            return Err(Failure(format!(
+                "the plan names {name} in {} rows, not exactly one",
+                matches.len()
+            )));
+        }
+    };
+    let cells: Vec<String> = line
         .trim()
         .trim_start_matches('|')
         .trim_end_matches('|')
         .split('|')
         .map(|cell| cell.trim().to_owned())
-        .collect())
+        .collect();
+    if cells.len() != expected_cells {
+        return Err(Failure(format!(
+            "the {name} row has {} cell(s), not exactly the expected {expected_cells}",
+            cells.len()
+        )));
+    }
+    Ok(cells)
 }
 
 /// Every `P-###` token mentioned in `text`, matched on a word boundary so
@@ -965,6 +1202,15 @@ fn report_position(scope: &Value, id: &str) -> Result<usize, Failure> {
         .iter()
         .position(|report| report["id"] == id)
         .ok_or_else(|| Failure(format!("no report named {id} in the fixture")))
+}
+
+fn campaign_position(scope: &Value, id: &str) -> Result<usize, Failure> {
+    scope["campaigns"]
+        .as_array()
+        .ok_or_else(|| Failure("campaigns is not an array".to_owned()))?
+        .iter()
+        .position(|campaign| campaign["id"] == id)
+        .ok_or_else(|| Failure(format!("no campaign named {id} in the fixture")))
 }
 
 fn report_pointer(scope: &Value, id: &str, field: &str) -> Result<String, Failure> {
