@@ -18,6 +18,24 @@ require_literal() {
   grep -Fq -- "${literal}" "${workflow_path}" || fail "${label} is missing: ${literal}"
 }
 
+# The fail-closed authority. A literal check only proves an expected string
+# is present; it says nothing about whether something *else* was added
+# beside it — an extra trigger, a job-level permission override, a widened
+# matrix, an appended command. Exact git blob identity catches all of that,
+# and any other byte-level change, uniformly: the file the workflow run
+# actually executed either has the identity this contract recorded, or the
+# contract is stale and the campaign has to be re-run and re-retained
+# against the new one, deliberately.
+require_exact_identity() {
+  local label="$1"
+  local file="$2"
+  local expected="$3"
+  local actual
+  actual="$(git hash-object "${file}")"
+  test "${actual}" = "${expected}" ||
+    fail "${label} (${file}) has git blob identity ${actual}, and the contract records ${expected}; a byte-level change here — even one that leaves every literal check below satisfied — means the retained evidence's execution semantics are stale and the contract must be deliberately updated before this campaign runs again"
+}
+
 expand_matrix() {
   printf '%s' "$1" | sed 's/{major}/${{ matrix.postgres }}/g'
 }
@@ -55,5 +73,8 @@ grep -Fq -- "cargo run" "${script_path}" || fail "campaign is not run through ca
 test "$(jq -er '.cargo_profile' "${contract}")" = "debug" ||
   fail "unexpected cargo profile in the cancellation contract"
 ! grep -Fq -- "--release" "${script_path}" || fail "debug campaign unexpectedly uses --release"
+
+require_exact_identity "dedicated workflow" "${workflow_path}" "$(jq -er '.workflow_git_blob' "${contract}")"
+require_exact_identity "campaign script" "${script_path}" "$(jq -er '.script_git_blob' "${contract}")"
 
 echo "cancellation execution contract matches ${workflow_path}"
