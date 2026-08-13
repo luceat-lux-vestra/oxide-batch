@@ -290,6 +290,116 @@
         "execution_commit_matches_report": true,
         "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network."
       }
+    },
+    {
+      "report": "performance-campaign-postgres-15.json",
+      "campaign": "M5 PostgreSQL performance",
+      "scenarios": [
+        "p001_fixed_tasklet_lifecycle_overhead",
+        "p003_csv_to_postgres_reference_workload",
+        "p010_postgres_local_partition_scaling"
+      ],
+      "matrix_point": "postgres-15",
+      "postgres_major_version": "15",
+      "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
+      "producer": {
+        "execution_commit": "2757ed460356ba155374bfad00cf45246e9a03a1",
+        "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
+        "branch_head_sha": "ee5a75d5527cd5431abe6ef8b9733fefb9ec12a8",
+        "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "M5 Performance",
+        "workflow_file": ".github/workflows/m5-performance.yml",
+        "id": 31677650719,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "postgres-15-performance-campaign",
+        "id": 94375664562,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "performance-campaign-postgres-15",
+        "id": 9172217923,
+        "digest": "sha256:354104f0a374726a39a7dc64c65b8469c2a6356f2797e8fc20362257fb617494",
+        "size_bytes": 5351
+      },
+      "retained_report_git_blob": "cd7a5ea7e49ac61030831281463a899912b2c526",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-13T07:43:46Z",
+        "run_id": 31677650719,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network."
+      }
+    },
+    {
+      "report": "performance-campaign-postgres-18.json",
+      "campaign": "M5 PostgreSQL performance",
+      "scenarios": [
+        "p001_fixed_tasklet_lifecycle_overhead",
+        "p003_csv_to_postgres_reference_workload",
+        "p010_postgres_local_partition_scaling"
+      ],
+      "matrix_point": "postgres-18",
+      "postgres_major_version": "18",
+      "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+      "producer": {
+        "execution_commit": "2757ed460356ba155374bfad00cf45246e9a03a1",
+        "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
+        "branch_head_sha": "ee5a75d5527cd5431abe6ef8b9733fefb9ec12a8",
+        "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "M5 Performance",
+        "workflow_file": ".github/workflows/m5-performance.yml",
+        "id": 31677650719,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "postgres-18-performance-campaign",
+        "id": 94375664657,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "performance-campaign-postgres-18",
+        "id": 9172214516,
+        "digest": "sha256:3f67aa46f10e70eaf51eb00d0b474bb85ef45b23a5b921612b28a887336b9f36",
+        "size_bytes": 5348
+      },
+      "retained_report_git_blob": "1467578625ccf1e0e95f18b4d9270904f0f82089",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-13T07:43:46Z",
+        "run_id": 31677650719,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network."
+      }
     }
   ]
 }

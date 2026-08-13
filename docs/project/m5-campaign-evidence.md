@@ -1,12 +1,13 @@
 # M5 Evidence Campaign Record
 
 **State:** In progress. The conformance, crash-and-restore, upgrade, security,
-resource-bound, and soak campaigns are delivered; the cancellation,
-performance, and reference-workload campaigns are not.
+resource-bound, soak, cancellation, performance, and reference-workload
+campaigns are delivered. Issue #102 remains open pending completion of its
+full exit criteria.
 
 **Issue:** [#102](https://github.com/luceat-lux-vestra/oxide-batch/issues/102)
 
-**Date:** 2026-08-10
+**Date:** 2026-08-13
 
 This record is the evidence for the sixth M5 workstream: running the campaigns
 the [design gate](m5-design-gate-evidence.md) named and retaining reproducible
@@ -31,8 +32,8 @@ named released version, and that stays with
 | Resource bounds | `declared_ceilings_hold_under_stress_with_backpressure`, plus the bounded query-path, payload, and shedding reports | Delivered |
 | Soak | `soak_reports_no_task_connection_handle_or_memory_growth` | Delivered |
 | Cancellation | `operator_stop_reaches_a_durable_terminal_status`, `cancellation_latency_is_measured_separately_per_phase`, `drain_reports_unjoined_tasks_at_every_declared_deadline`, `restart_after_cancellation_resumes_without_rerunning_committed_work` | Delivered |
-| Performance | P-001, P-003, P-010 reports | Not started |
-| Reference workload | Published P-003 run | Not started |
+| Performance | P-001, P-003, P-010 reports | Delivered |
+| Reference workload | Published P-003 run | Delivered |
 | Extraction | Build, size, and dependency observations | Delivered by [#99](https://github.com/luceat-lux-vestra/oxide-batch/issues/99) and recorded in the [crate-extraction evidence](m5-crate-extraction-evidence.md) |
 
 ## Conformance campaign
@@ -2459,4 +2460,273 @@ denominator reconciliation runs without a database:
 
 ```sh
 cargo test --package oxide-batch --all-features --test m5_cancellation_campaign
+```
+
+## Performance and reference-workload campaign
+
+### What the campaign owes
+
+The performance plan's Performance row promises P-001 fixed overhead and P-003
+enlisted-writer throughput against the M4 provisional budgets, plus P-010 at
+`1`, `10`, and the largest configured worker count; its Reference workload row
+promises one published end-to-end workload derived from P-003, run at a fixed
+dataset size on PostgreSQL 15 and 18. The campaign delivers three reports.
+
+| Report | Scenario | What it must show |
+| --- | --- | --- |
+| P-001 fixed overhead | `p001_fixed_tasklet_lifecycle_overhead` | In-memory no-op tasklet lifecycle overhead, independent of the PostgreSQL major: every attempt durably completes, every job and step status is `COMPLETED`, and no attempt reuses a prior job-execution identifier. |
+| P-003 reference workload | `p003_csv_to_postgres_reference_workload` | A fixed, seeded, digest-verified CSV dataset written to PostgreSQL through an enlisted writer under `AtomicSameResource`: the written row count and digest match the source, and the checkpoint covers the whole dataset. |
+| P-010 local partition scaling | `p010_postgres_local_partition_scaling` | The same 100-partition workload run at worker points `1`, `10`, and `oxide_batch::MAX_PARTITION_WORKERS`, with identical durable observations at every point and every declared resource ceiling respected. |
+
+Like cancellation, this campaign's scenario names are not fixed by the design
+gate — its named-scenario table lists ten IDs and none is a performance or
+reference-workload scenario. The accepted performance plan is the normative
+denominator instead, and
+[`m5_performance_campaign.rs`](../../crates/oxide-batch/tests/m5_performance_campaign.rs)
+reconciles the committed scope against it in both directions in an ordinary
+`cargo test`, independently of whether a database is available.
+
+### P-003 is one execution, not two
+
+The plan states two obligations against the same fixed workload: Performance
+owes P-003 enlisted-writer throughput, and Reference workload owes the same
+workload published as one end-to-end run. Running the fixed dataset twice
+would produce two *samples* of the same measurement, not two different
+obligations, so
+[`campaign-scope.json`](../../tests/fixtures/performance/campaign-scope.json)
+declares `p003-reference-workload` exactly once in its flat `reports` list and
+both campaign rows name that one entry.
+
+`cargo xtask performance` runs the declared reports list once per matrix job,
+not once per campaign row, which is what makes the sharing mechanical rather
+than a rule to remember: there is one `postgres_performance` binary, one
+`p003_csv_to_postgres_reference_workload` test function, and one retained
+observation per PostgreSQL major. `reconcile_shared_p003` in
+[`xtask/src/performance.rs`](../../xtask/src/performance.rs) independently
+requires both campaign rows to name that one report and requires exactly one
+retained observation to exist for it, and
+`p003_reference_workload_is_declared_exactly_once_and_shared_by_both_campaigns`
+in `m5_performance_campaign.rs` proves the scope document cannot declare it
+twice. Across the two-point PostgreSQL matrix this campaign retains exactly
+two P-001, two P-003, and two P-010 reports — six total, never four P-003
+reports from a second, reference-workload-only execution.
+
+### Why this campaign runs release profile
+
+Every other M5 campaign runs debug so its matrix points are comparable with
+each other at the lowest common build cost. Performance is the one campaign
+where that would defeat the purpose: a debug-build duration is not comparable
+to anything release planning could use, so the accepted denominator requires
+`--release` here specifically, and `xtask/src/performance.rs` builds and runs
+each report through `cargo test --release`. `execution_stays_release_profile_and_observational`
+in `m5_performance_campaign.rs` checks the scope declares this, and the
+runner's own `reconcile` independently requires every retained observation's
+`environment.profile` to read `"release"` before accepting it.
+
+### Correctness first, then resources, then observation
+
+Three different kinds of claim appear in a performance report and this
+campaign keeps them separate rather than folding them into one pass/fail:
+
+- **Correctness is a gate.** Every attempt completing, every job and step
+  status landing `COMPLETED`, the written row count and digest matching the
+  source, the checkpoint covering the fixed dataset, and every P-010 worker
+  point producing identical durable observations — a false value or a missing
+  boolean here fails the campaign regardless of how fast or slow the run was.
+- **Finite resource ceilings are a gate.** P-010's worker and pool-connection
+  ceilings are *derived* from the execution model — `required_connections =
+  concurrent_workers + 1`, the same formula the framework's own launcher
+  enforces before admitting the first worker — and recorded in the report
+  alongside a proof that requesting one connection fewer than the derived
+  ceiling is refused with `FlowRuntimeError::InsufficientPoolCapacity` rather
+  than merely observing that peak usage happened to stay under some number.
+- **Duration, rate, and efficiency figures are observational.** No accepted
+  document states a binding M5 throughput, latency, or scaling-efficiency
+  limit. `campaign-scope.json` records `numeric_status: observational`, and
+  the runner never compares a retained duration or rate against a limit — it
+  requires only that every declared measurement is present and non-null.
+  **Nothing below is a commitment, an SLA, or evidence of enterprise or GA
+  readiness.**
+
+### Matrix and CI execution
+
+`postgres-15-performance-campaign` and `postgres-18-performance-campaign` in
+[`.github/workflows/m5-performance.yml`](../../.github/workflows/m5-performance.yml)
+run the two ends of the supported range, each provisioning its own server and
+calling
+[`run-ci-campaign.sh`](../../tests/fixtures/performance/run-ci-campaign.sh);
+how the campaign is executed lives in
+[`execution-contract.json`](../../tests/fixtures/performance/execution-contract.json)
+beside the campaign rather than in the workflow, bound by exact `git
+hash-object` identity rather than literal parsing alone — a harmless comment
+added to the workflow fails the contract check exactly as an added trigger or
+a widened matrix would, which eight sandboxed negative-mutation tests in
+`m5_performance_campaign.rs` exercise against the real script. A single
+matrix job produces all three required reports for its PostgreSQL major, which
+is what makes a second, reference-workload-only P-003 execution structurally
+impossible rather than merely undesired.
+
+`runs-on: ubuntu-24.04` names a runner image, not stable hardware. GitHub
+does not guarantee identical physical or virtual hardware between runs, and
+this record does not claim it: the CPU model, logical core count, and OS and
+kernel identity are recorded in every report rather than assumed constant, and
+no duration below is compared across runs as if the hardware were held fixed.
+
+### Results
+
+Both matrix points passed with no violations. Every figure below is an
+observation from dedicated workflow run
+[31677650719](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/31677650719),
+release profile, on shared GitHub-hosted runners. The run executed tree
+`2757ed460356ba155374bfad00cf45246e9a03a1` from branch head
+`ee5a75d5527cd5431abe6ef8b9733fefb9ec12a8`; **nothing is asserted against any
+of these measurements.**
+
+P-001, in-memory, independent of the PostgreSQL major:
+
+| Observation | PostgreSQL 15 | PostgreSQL 18 |
+| --- | --- | --- |
+| Warmup / measured attempts | `16` / `256` | `16` / `256` |
+| End-to-end duration (mean) | `1 111 µs` | `1 006 µs` |
+| Job overhead (mean) | `562 µs` | `507 µs` |
+| Step overhead (mean) | `549 µs` | `498 µs` |
+| Repository round trips / attempt | `6` | `6` |
+| Distinct execution identifiers | `272` / `272` attempts | `272` / `272` attempts |
+
+P-003, the shared reference workload, 10 000 rows, seed `102`, chunk size
+`100`:
+
+| Observation | PostgreSQL 15 | PostgreSQL 18 |
+| --- | --- | --- |
+| Server | `15.18 (Debian 15.18-1.pgdg13+1)` | `18.4 (Debian 18.4-1.pgdg13+1)` |
+| Items / second | `4 998` | `5 036` |
+| Chunks / second | `49.98` | `50.36` |
+| End-to-end duration | `2 000 754 µs` | `1 985 578 µs` |
+| Per-item overhead | `200.1 µs` | `198.6 µs` |
+| Per-chunk overhead | `20 008 µs` | `19 856 µs` |
+| Source digest = written digest | yes | yes |
+| Written row count | `10 000` | `10 000` |
+| Delivery mode | `AtomicSameResource` | `AtomicSameResource` |
+
+P-010, 100 partitions per point, three worker points:
+
+| Workers | Pool budget | Wall time, 15 | Partitions/s, 15 | Efficiency, 15 | Wall time, 18 | Partitions/s, 18 | Efficiency, 18 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `1` | `2` | `1 259 509 µs` | `79.4` | baseline | `1 247 680 µs` | `80.2` | baseline |
+| `10` | `11` | `679 610 µs` | `147.1` | `0.185` | `682 522 µs` | `146.5` | `0.183` |
+| `64` | `65` | `1 052 298 µs` | `95.0` | `0.019` | `1 041 384 µs` | `96.0` | `0.019` |
+
+Peak combined connections (framework pool at the largest worker point plus the
+constant 8-connection business pool) reached `73` on both majors, against the
+image default of `100`. Peak owned tasks reached `64`, the configured budget,
+on both majors.
+
+### Correctness assertions
+
+Every one of these held on both matrix points:
+
+- P-001: every attempt durably completed, every job and step status was
+  `COMPLETED`, and all `272` execution identifiers (`16` warmup + `256`
+  measured) were distinct;
+- P-003: the written row count equalled the source row count, the written
+  digest equalled the source digest, the checkpoint covered the fixed
+  dataset, and the business write and checkpoint committed under
+  `AtomicSameResource`;
+- P-010: all three worker points produced structurally identical durable
+  observations (job status, parent status, and every partition's status),
+  peak workers never exceeded the configured budget, peak connections never
+  exceeded the derived pool budget, and no worker outlived its parent — the
+  pool-ceiling proof additionally confirmed that requesting one connection
+  fewer than the derived ceiling was refused before any worker ran.
+
+### Findings
+
+**F31. Requesting `MAX_PARTITION_WORKERS` concurrent workers did not produce
+observed concurrent execution on either matrix point, and the low
+`64`-worker scaling efficiency should be read in that light rather than as a
+verdict on the partitioning mechanism.** Each report tracks how many
+partition-worker tasklets are simultaneously between entering and leaving
+their business write with a shared atomic gauge. At every one of the three
+worker points, on both PostgreSQL 15 and PostgreSQL 18, the peak observed
+value was `1`: the framework's `buffer_unordered(max_partition_workers())`
+admits up to the configured budget concurrently, but each partition here does
+one sub-millisecond insert against a database on the same runner, and no two
+of the 100 per point were ever caught overlapping. The `10`-worker point
+still ran faster in wall time than the `1`-worker point on both majors
+(`680 ms` and `683 ms` against `1 260 ms` and `1 248 ms`), which is consistent
+with real, if unmeasured-by-this-gauge, overlap somewhere in the pipeline;
+the `64`-worker point was slower than the `10`-worker point on both majors,
+consistent with per-partition repository round-trip and connection-pool
+contention dominating once concurrency is requested well past what this tiny,
+network-bound workload needs. Nothing here is asserted as a scaling limit —
+P-010's declared obligations concern identical durable observations and
+resource ceilings, not a minimum degree of measured overlap — but a reader
+should not take the `64`-worker efficiency figure as evidence that
+partitioning failed to scale a workload it was never large enough to need
+scaling for.
+
+**F32. Adding this campaign invalidated the retained soak and cancellation
+evidence, and that is the closure mechanism working, not a defect in this
+change.** Registering `cargo xtask performance` in `xtask/src/main.rs` and
+adding opt-in release-profile support to `xtask/src/suite.rs` changed two
+paths that were already inside the soak and cancellation campaigns'
+previously-declared semantic closures, so `cargo xtask evidence` correctly
+refuses the soak and cancellation reports retained before this change: they
+describe a campaign tree those two campaigns no longer run under. This PR
+does not re-run and re-retain soak or cancellation evidence — that is a
+follow-up, scoped to those two campaigns rather than folded into this one —
+so `cargo xtask evidence` continues to report those two campaigns' evidence
+as stale until that follow-up lands. `.github/workflows/ci.yml` was not
+touched and remains outside every M5 campaign's semantic closure.
+
+### What this campaign does not establish
+
+- **No throughput, latency, or scaling-efficiency budget.** Every rate and
+  duration here is an observation. Nothing is asserted against any of them,
+  and none is a release commitment, an SLA, or evidence of enterprise or GA
+  readiness.
+- **No claim about stable benchmark hardware.** `runs-on: ubuntu-24.04` names
+  an image, not fixed physical or virtual hardware; the recorded CPU model and
+  core count are what each run actually had, not a controlled variable.
+- **No public CSV component.** P-003's reader and writer are test-local
+  evidence code, published with their generator, seed, schema, and digest
+  rule so the workload is reproducible; they are not IO-FLAT-001 or any other
+  advertised component surface, which remains M6 scope.
+- **No enlisted-transaction support for `Tasklet` or partition workers.**
+  P-010's business write is a direct, transactional insert on its own
+  connection, documented as such in the report and in
+  `postgres_performance.rs`: `AtomicSameResource` is wired to chunk steps
+  through `WriteContext`, which a plain `Tasklet` is not handed. P-010's
+  declared correctness set does not require atomic enlistment, unlike
+  P-003's, and this campaign does not claim it has one.
+- **P-002, remote workers, distributed execution, or additional database
+  backends.** Out of scope for the accepted denominator and unexamined here.
+- **A promoted ledger row or a selected preview release version.** Promotion
+  needs a named released version and stays with
+  [#103](https://github.com/luceat-lux-vestra/oxide-batch/issues/103).
+
+### Reproduction
+
+```sh
+# A supported PostgreSQL, schema 3, with both URLs pointing at it.
+export OXIDEBATCH_POSTGRES_TEST_URL=postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_performance
+export OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL="$OXIDEBATCH_POSTGRES_TEST_URL"
+export OXIDEBATCH_CAMPAIGN_DIR=target/m5-campaigns
+export OXIDEBATCH_CAMPAIGN_MATRIX=postgres-18
+
+cargo run --package oxide-batch-xtask -- performance
+```
+
+Or exactly as CI runs it, which is the same command through the committed
+execution contract:
+
+```sh
+./tests/fixtures/performance/run-ci-campaign.sh 18
+```
+
+The report is written to `target/m5-campaigns/performance-campaign.json`. The
+denominator reconciliation runs without a database:
+
+```sh
+cargo test --package oxide-batch --all-features --test m5_performance_campaign
 ```

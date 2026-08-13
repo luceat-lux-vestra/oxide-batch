@@ -1,0 +1,505 @@
+{
+  "campaigns": [
+    {
+      "id": "performance",
+      "plan_row": "Performance",
+      "reports": [
+        "p001-fixed-overhead",
+        "p003-reference-workload",
+        "p010-local-partition-scaling"
+      ]
+    },
+    {
+      "id": "reference-workload",
+      "plan_row": "Reference workload",
+      "reports": [
+        "p003-reference-workload"
+      ]
+    }
+  ],
+  "environment": {
+    "arch": "x86_64",
+    "matrix": "postgres-15",
+    "os": "linux",
+    "profile": "release",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "source_commit": "2757ed460356ba155374bfad00cf45246e9a03a1",
+    "source_tree_clean": true
+  },
+  "fixtures": {
+    "postgres-performance": true
+  },
+  "numeric_status": {
+    "note": "No accepted document states a binding M5 throughput, latency, or scaling-efficiency limit. This campaign measures and reports the declared figures and compares none of them against a number; only a missing or malformed measurement fails.",
+    "status": "observational"
+  },
+  "observation": {
+    "execution_manifest": {
+      "execution_commit": "2757ed460356ba155374bfad00cf45246e9a03a1",
+      "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+      "objects": {
+        ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+        ".github/workflows/m5-performance.yml": "d4690058f34e324f0bdb919fb2f1c77a6b40b4df",
+        "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+        "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+        "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+        "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+        "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+        "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+        "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+        "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+        "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+        "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+        "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+        "crates/oxide-batch/tests/performance": "9046bbc493cae3df58495006cc26cc2ed4e399db",
+        "crates/oxide-batch/tests/postgres_performance.rs": "2bafe5568b6f4b7f7978fb061203265c45d98696",
+        "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+        "tests/fixtures/performance/campaign-scope.json": "b957007b7c6997d926e9caa4ca61c9da6187edeb",
+        "tests/fixtures/performance/campaign-semantics.json": "7450e7ac898e1eff49db1ab3b36cfc1189b0932d",
+        "tests/fixtures/performance/execution-contract.json": "6c07c2fe7561b4a95bdca3881f3e51250b9ab5f0",
+        "tests/fixtures/performance/run-ci-campaign.sh": "906a49cbcbb6ac2df485fdf011ad26342b45093b",
+        "tests/fixtures/performance/verify-ci-contract.sh": "a42eb62df29d0c711a880deff06f409af9ff5b87",
+        "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+        "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
+        "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
+        "xtask/src/performance.rs": "0be7318b79220bfe12cd55a720b1bcde2df59ddd",
+        "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
+      },
+      "tree_clean": true
+    }
+  },
+  "passed": true,
+  "postgresql_major_version": "15",
+  "reports": [
+    {
+      "against_database": false,
+      "correctness": [
+        "every-attempt-completes",
+        "durable-job-and-step-statuses-are-completed",
+        "no-attempt-is-reused"
+      ],
+      "fixture": "postgres-performance",
+      "id": "p001-fixed-overhead",
+      "measurements": [
+        "end-to-end-duration",
+        "job-overhead",
+        "step-overhead",
+        "repository-round-trips",
+        "metadata-writes",
+        "peak-resident-memory",
+        "peak-connections"
+      ],
+      "name": "p001_fixed_tasklet_lifecycle_overhead",
+      "observation": {
+        "against_database": false,
+        "correctness": {
+          "distinct_execution_ids": 272,
+          "durable_job_and_step_statuses_are_completed": true,
+          "every_attempt_completes": true,
+          "no_attempt_is_reused": true,
+          "total_attempts": 272
+        },
+        "declared": {
+          "fresh_job_parameters_per_attempt": true,
+          "measured_attempts": 256,
+          "tasklet": "no-op",
+          "warmup_attempts": 16
+        },
+        "environment": {
+          "arch": "x86_64",
+          "available_parallelism": 4,
+          "cpu_model": "AMD EPYC 7763 64-Core Processor",
+          "hardware_stability_note": "runs-on: ubuntu-24.04 names an OS image, not stable CPU hardware. GitHub-hosted runners are not a guarantee of consistent physical or virtual hardware between runs, so the CPU model and core count are recorded rather than assumed stable, and no throughput or latency figure here is compared across runs as if the hardware were held constant.",
+          "kernel": "6.17.0-1020-azure",
+          "os": "linux",
+          "profile": "release",
+          "profile_note": "The M5 performance campaign runs release, unlike the other M5 campaigns, because the accepted denominator requires it: a debug-build figure would not be comparable to anything release planning could use. Nothing here is asserted against a number regardless of profile.",
+          "resident_kib": 7332,
+          "tokio_worker_threads": 4
+        },
+        "execution_manifest": {
+          "execution_commit": "2757ed460356ba155374bfad00cf45246e9a03a1",
+          "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+          "objects": {
+            ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+            ".github/workflows/m5-performance.yml": "d4690058f34e324f0bdb919fb2f1c77a6b40b4df",
+            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+            "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+            "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+            "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+            "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+            "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+            "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+            "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+            "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+            "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+            "crates/oxide-batch/tests/performance": "9046bbc493cae3df58495006cc26cc2ed4e399db",
+            "crates/oxide-batch/tests/postgres_performance.rs": "2bafe5568b6f4b7f7978fb061203265c45d98696",
+            "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+            "tests/fixtures/performance/campaign-scope.json": "b957007b7c6997d926e9caa4ca61c9da6187edeb",
+            "tests/fixtures/performance/campaign-semantics.json": "7450e7ac898e1eff49db1ab3b36cfc1189b0932d",
+            "tests/fixtures/performance/execution-contract.json": "6c07c2fe7561b4a95bdca3881f3e51250b9ab5f0",
+            "tests/fixtures/performance/run-ci-campaign.sh": "906a49cbcbb6ac2df485fdf011ad26342b45093b",
+            "tests/fixtures/performance/verify-ci-contract.sh": "a42eb62df29d0c711a880deff06f409af9ff5b87",
+            "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+            "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
+            "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
+            "xtask/src/performance.rs": "0be7318b79220bfe12cd55a720b1bcde2df59ddd",
+            "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
+          },
+          "tree_clean": true
+        },
+        "measurement_protocol": {
+          "job_overhead_note": "Wall time from the launch call starting to the tasklet's own execute() being entered: everything the framework does before user work runs.",
+          "step_overhead_note": "Wall time from the tasklet's execute() being entered to the launch call returning: everything the framework does after user work returns, including committing the terminal status.",
+          "warmup_excluded": true
+        },
+        "measurements": {
+          "end-to-end-duration": 1111.13671875,
+          "job-overhead": 561.5703125,
+          "metadata-writes": 6.0,
+          "peak-connections": 0,
+          "peak-resident-memory": 7460,
+          "repository-round-trips": 6.0,
+          "step-overhead": 549.04296875
+        },
+        "observation": {
+          "end_to_end_duration_micros": {
+            "max": 2071,
+            "mean": 1111.13671875,
+            "median": 1277,
+            "min": 110,
+            "samples": 256,
+            "total": 284451
+          },
+          "job_overhead_micros": {
+            "max": 1169,
+            "mean": 561.5703125,
+            "median": 631,
+            "min": 56,
+            "samples": 256,
+            "total": 143762
+          },
+          "metadata_writes_note": "Counted identically to repository round trips: an in-memory repository does not distinguish a metadata write from the unit of work that carried it the way a network round trip to PostgreSQL would.",
+          "metadata_writes_per_attempt": 6.0,
+          "peak_connections": 0,
+          "peak_resident_memory_kib": 7396,
+          "peak_resident_memory_note": "A process-level snapshot taken after the measured window, not a continuously sampled peak.",
+          "repository_round_trips_per_attempt": 6.0,
+          "step_overhead_micros": {
+            "max": 1049,
+            "mean": 549.04296875,
+            "median": 641,
+            "min": 53,
+            "samples": 256,
+            "total": 140555
+          }
+        },
+        "passed": true,
+        "postgresql_major_version": null,
+        "report": "p001-fixed-overhead",
+        "violations": [],
+        "workload": "P-001"
+      },
+      "outcome": "ok",
+      "package": "oxide-batch",
+      "target": "postgres_performance"
+    },
+    {
+      "against_database": true,
+      "correctness": [
+        "source-row-count-equals-written-row-count",
+        "source-digest-equals-written-digest",
+        "checkpoint-covers-the-fixed-dataset",
+        "business-writes-and-checkpoints-use-atomic-same-resource"
+      ],
+      "fixture": "postgres-performance",
+      "id": "p003-reference-workload",
+      "measurements": [
+        "items-per-second",
+        "chunks-per-second",
+        "end-to-end-duration",
+        "per-item-overhead",
+        "per-chunk-overhead",
+        "repository-round-trips",
+        "metadata-writes",
+        "business-batch-size",
+        "peak-resident-memory",
+        "peak-connections"
+      ],
+      "name": "p003_csv_to_postgres_reference_workload",
+      "observation": {
+        "against_database": true,
+        "correctness": {
+          "business_writes_and_checkpoints_use_atomic_same_resource": true,
+          "checkpoint_covers_the_fixed_dataset": true,
+          "delivery_mode": "AtomicSameResource",
+          "job_and_step_statuses_are_completed": true,
+          "source_digest_equals_written_digest": true,
+          "source_row_count_equals_written_row_count": true
+        },
+        "declared": {
+          "chunk_size": 100,
+          "dataset_rows": 10000,
+          "digest_algorithm": "sha256",
+          "generator": "splitmix64, public-domain, implemented locally in this file",
+          "schema": "id,quantity,amount_cents",
+          "source": "deterministically-generated RFC 4180 CSV with a header and three scalar columns",
+          "source_seed": 102,
+          "writer": "test-local enlisted PostgreSQL writer using AtomicSameResource"
+        },
+        "environment": {
+          "arch": "x86_64",
+          "available_parallelism": 4,
+          "cpu_model": "AMD EPYC 7763 64-Core Processor",
+          "hardware_stability_note": "runs-on: ubuntu-24.04 names an OS image, not stable CPU hardware. GitHub-hosted runners are not a guarantee of consistent physical or virtual hardware between runs, so the CPU model and core count are recorded rather than assumed stable, and no throughput or latency figure here is compared across runs as if the hardware were held constant.",
+          "kernel": "6.17.0-1020-azure",
+          "os": "linux",
+          "profile": "release",
+          "profile_note": "The M5 performance campaign runs release, unlike the other M5 campaigns, because the accepted denominator requires it: a debug-build figure would not be comparable to anything release planning could use. Nothing here is asserted against a number regardless of profile.",
+          "resident_kib": 10548,
+          "tokio_worker_threads": 4
+        },
+        "execution_manifest": {
+          "execution_commit": "2757ed460356ba155374bfad00cf45246e9a03a1",
+          "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+          "objects": {
+            ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+            ".github/workflows/m5-performance.yml": "d4690058f34e324f0bdb919fb2f1c77a6b40b4df",
+            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+            "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+            "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+            "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+            "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+            "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+            "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+            "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+            "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+            "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+            "crates/oxide-batch/tests/performance": "9046bbc493cae3df58495006cc26cc2ed4e399db",
+            "crates/oxide-batch/tests/postgres_performance.rs": "2bafe5568b6f4b7f7978fb061203265c45d98696",
+            "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+            "tests/fixtures/performance/campaign-scope.json": "b957007b7c6997d926e9caa4ca61c9da6187edeb",
+            "tests/fixtures/performance/campaign-semantics.json": "7450e7ac898e1eff49db1ab3b36cfc1189b0932d",
+            "tests/fixtures/performance/execution-contract.json": "6c07c2fe7561b4a95bdca3881f3e51250b9ab5f0",
+            "tests/fixtures/performance/run-ci-campaign.sh": "906a49cbcbb6ac2df485fdf011ad26342b45093b",
+            "tests/fixtures/performance/verify-ci-contract.sh": "a42eb62df29d0c711a880deff06f409af9ff5b87",
+            "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+            "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
+            "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
+            "xtask/src/performance.rs": "0be7318b79220bfe12cd55a720b1bcde2df59ddd",
+            "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
+          },
+          "tree_clean": true
+        },
+        "measurements": {
+          "business-batch-size": 100,
+          "chunks-per-second": 49.98115425591973,
+          "end-to-end-duration": 2000754,
+          "items-per-second": 4998.115425591973,
+          "metadata-writes": 100,
+          "peak-connections": 2,
+          "peak-resident-memory": 10548,
+          "per-chunk-overhead": 20007.54,
+          "per-item-overhead": 200.0754,
+          "repository-round-trips": 6
+        },
+        "observation": {
+          "business_batch_size": 100,
+          "chunks_per_second": 49.98115425591973,
+          "end_to_end_duration_micros": 2000754,
+          "items_per_second": 4998.115425591973,
+          "metadata_writes": 100,
+          "metadata_writes_note": "One checkpoint commit per chunk: the number of times the durable position advanced.",
+          "peak_connections": 2,
+          "peak_connections_note": "The configured pool capacity for this sequential one-step job, not a live peak-usage sample.",
+          "peak_resident_memory_kib": 10548,
+          "per_chunk_overhead_micros": 20007.54,
+          "per_item_overhead_micros": 200.0754,
+          "repository_round_trips": 6,
+          "source_digest": "e1d9ee97a96ab349f6a2acb0aa889ec1fb13572e25b15ba7761e0fbcf1c02023",
+          "written_digest": "e1d9ee97a96ab349f6a2acb0aa889ec1fb13572e25b15ba7761e0fbcf1c02023",
+          "written_row_count": 10000
+        },
+        "passed": true,
+        "postgresql_major_version": "15",
+        "report": "p003-reference-workload",
+        "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
+        "violations": [],
+        "workload": "P-003"
+      },
+      "outcome": "ok",
+      "package": "oxide-batch",
+      "target": "postgres_performance"
+    },
+    {
+      "against_database": true,
+      "correctness": [
+        "every-scale-point-has-identical-durable-observations",
+        "peak-workers-do-not-exceed-the-configured-budget",
+        "peak-connections-do-not-exceed-the-derived-pool-budget",
+        "no-worker-outlives-its-parent"
+      ],
+      "fixture": "postgres-performance",
+      "id": "p010-local-partition-scaling",
+      "measurements": [
+        "partitions-per-second",
+        "end-to-end-duration",
+        "scaling-efficiency",
+        "worker-skew",
+        "aggregation-duration",
+        "repository-round-trips",
+        "metadata-writes",
+        "peak-resident-memory",
+        "peak-connections",
+        "peak-owned-tasks"
+      ],
+      "name": "p010_postgres_local_partition_scaling",
+      "observation": {
+        "against_database": true,
+        "correctness": {
+          "every_scale_point_has_identical_durable_observations": true,
+          "no_worker_outlives_its_parent": true,
+          "peak_connections_do_not_exceed_the_derived_pool_budget": true,
+          "peak_workers_do_not_exceed_the_configured_budget": true
+        },
+        "declared": {
+          "largest_worker_point_source": "oxide_batch::MAX_PARTITION_WORKERS",
+          "partitions": 100,
+          "work_per_partition": "one deterministic enlisted business write and one durable partition result",
+          "worker_points": [
+            1,
+            10,
+            64
+          ]
+        },
+        "environment": {
+          "arch": "x86_64",
+          "available_parallelism": 4,
+          "cpu_model": "AMD EPYC 7763 64-Core Processor",
+          "hardware_stability_note": "runs-on: ubuntu-24.04 names an OS image, not stable CPU hardware. GitHub-hosted runners are not a guarantee of consistent physical or virtual hardware between runs, so the CPU model and core count are recorded rather than assumed stable, and no throughput or latency figure here is compared across runs as if the hardware were held constant.",
+          "kernel": "6.17.0-1020-azure",
+          "os": "linux",
+          "profile": "release",
+          "profile_note": "The M5 performance campaign runs release, unlike the other M5 campaigns, because the accepted denominator requires it: a debug-build figure would not be comparable to anything release planning could use. Nothing here is asserted against a number regardless of profile.",
+          "resident_kib": 11984,
+          "tokio_worker_threads": 4
+        },
+        "execution_manifest": {
+          "execution_commit": "2757ed460356ba155374bfad00cf45246e9a03a1",
+          "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+          "objects": {
+            ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+            ".github/workflows/m5-performance.yml": "d4690058f34e324f0bdb919fb2f1c77a6b40b4df",
+            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+            "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+            "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+            "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+            "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+            "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+            "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+            "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+            "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+            "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+            "crates/oxide-batch/tests/performance": "9046bbc493cae3df58495006cc26cc2ed4e399db",
+            "crates/oxide-batch/tests/postgres_performance.rs": "2bafe5568b6f4b7f7978fb061203265c45d98696",
+            "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+            "tests/fixtures/performance/campaign-scope.json": "b957007b7c6997d926e9caa4ca61c9da6187edeb",
+            "tests/fixtures/performance/campaign-semantics.json": "7450e7ac898e1eff49db1ab3b36cfc1189b0932d",
+            "tests/fixtures/performance/execution-contract.json": "6c07c2fe7561b4a95bdca3881f3e51250b9ab5f0",
+            "tests/fixtures/performance/run-ci-campaign.sh": "906a49cbcbb6ac2df485fdf011ad26342b45093b",
+            "tests/fixtures/performance/verify-ci-contract.sh": "a42eb62df29d0c711a880deff06f409af9ff5b87",
+            "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+            "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
+            "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
+            "xtask/src/performance.rs": "0be7318b79220bfe12cd55a720b1bcde2df59ddd",
+            "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
+          },
+          "tree_clean": true
+        },
+        "measured_at_worker_point": 64,
+        "measured_at_worker_point_note": "The flat measurements object above reports the largest (MAX_PARTITION_WORKERS) scale point's figures; the full per-point series is under observation.points.",
+        "measurements": {
+          "aggregation-duration": 41580,
+          "end-to-end-duration": 1052298,
+          "metadata-writes": 100,
+          "metadata-writes-note": "One durable partition-result commit per partition.",
+          "partitions-per-second": 95.03003385732896,
+          "peak-connections": 73,
+          "peak-owned-tasks": 64,
+          "peak-resident-memory": 11984,
+          "repository-round-trips": 511,
+          "scaling-efficiency": 0.018701751369028092,
+          "worker-skew": 23099
+        },
+        "observation": {
+          "peak_connections": 73,
+          "peak_connections_note": "The framework's derived pool ceiling at the largest worker point, plus the constant business-write pool: the two largest configured connection budgets this report used at once, not a live peak-usage sample.",
+          "peak_owned_tasks": 64,
+          "peak_resident_memory_kib": 11984,
+          "points": [
+            {
+              "active_workers_after_join": 0,
+              "aggregation_duration_micros": 39765,
+              "configured_pool": 2,
+              "partitions": 100,
+              "partitions_per_second": 79.39600146111508,
+              "peak_active_workers": 1,
+              "repository_round_trips": 511,
+              "scaling_efficiency": null,
+              "wall_micros": 1259509,
+              "worker_duration_max_micros": 1208,
+              "worker_duration_min_micros": 466,
+              "worker_skew_micros": 741,
+              "workers": 1
+            },
+            {
+              "active_workers_after_join": 0,
+              "aggregation_duration_micros": 39359,
+              "configured_pool": 11,
+              "partitions": 100,
+              "partitions_per_second": 147.14310688464838,
+              "peak_active_workers": 1,
+              "repository_round_trips": 511,
+              "scaling_efficiency": 0.18532810743210168,
+              "wall_micros": 679610,
+              "worker_duration_max_micros": 1609,
+              "worker_duration_min_micros": 488,
+              "worker_skew_micros": 1121,
+              "workers": 10
+            },
+            {
+              "active_workers_after_join": 0,
+              "aggregation_duration_micros": 41580,
+              "configured_pool": 65,
+              "partitions": 100,
+              "partitions_per_second": 95.03003385732896,
+              "peak_active_workers": 1,
+              "repository_round_trips": 511,
+              "scaling_efficiency": 0.018701751369028092,
+              "wall_micros": 1052298,
+              "worker_duration_max_micros": 23589,
+              "worker_duration_min_micros": 490,
+              "worker_skew_micros": 23099,
+              "workers": 64
+            }
+          ],
+          "pool_ceiling_derivation": "required_connections = concurrent_workers + 1, the same formula the framework's own launcher enforces before admitting the first worker."
+        },
+        "passed": true,
+        "postgresql_major_version": "15",
+        "report": "p010-local-partition-scaling",
+        "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
+        "violations": [],
+        "workload": "P-010"
+      },
+      "outcome": "ok",
+      "package": "oxide-batch",
+      "target": "postgres_performance"
+    }
+  ],
+  "violations": []
+}
