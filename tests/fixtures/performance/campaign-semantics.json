@@ -1,0 +1,83 @@
+{
+  "document": "The executable closure of the M5 performance and reference-workload campaigns",
+  "note": "The single source of truth for what the performance campaign is made of. The producer reads it to record the object identity of every path at the tree it actually ran on; the verifier reads it to require those identities to still hold. Neither restates the list, because a list kept in two places is a list that will disagree.",
+  "rule": "A change to anything here changes what the evidence is evidence of, so retained reports produced before the change may not be promoted after it: the campaign has to be run again. A change to anything not here — documentation, the changelog, unrelated xtask commands, or unrelated jobs in `.github/workflows/ci.yml` — leaves retained evidence valid. The dedicated `.github/workflows/m5-performance.yml` is bound as one object, so changes to the performance provisioning or call layer invalidate performance evidence without binding the rest of CI.",
+  "categories": {
+    "framework source": {
+      "why": "The code under test. P-001 measures the tasklet lifecycle, P-003 measures the chunk step and its AtomicSameResource delivery, and P-010 measures the local-partition runtime, so all three live here.",
+      "paths": [
+        "crates/oxide-batch/src",
+        "crates/oxide-batch-core/src",
+        "crates/oxide-batch-plan/src"
+      ]
+    },
+    "repository source": {
+      "why": "The PostgreSQL adapter P-003 and P-010 run through: the enlisted chunk transaction manager, the partition plan persistence, and the connection-pool accounting the derived ceilings depend on.",
+      "paths": [
+        "crates/oxide-batch-repository/src"
+      ]
+    },
+    "migrations": {
+      "why": "The durable schema P-003 and P-010 migrate to before they run.",
+      "paths": [
+        "crates/oxide-batch/migrations"
+      ]
+    },
+    "cargo manifests": {
+      "why": "Feature selection and dependency ranges. A campaign built with different features, or without --release, is a different campaign.",
+      "paths": [
+        "Cargo.toml",
+        "crates/oxide-batch/Cargo.toml",
+        "crates/oxide-batch-core/Cargo.toml",
+        "crates/oxide-batch-plan/Cargo.toml",
+        "crates/oxide-batch-repository/Cargo.toml",
+        "xtask/Cargo.toml"
+      ]
+    },
+    "dependency resolution": {
+      "why": "The exact dependency graph the run was built from. This campaign measures throughput and latency, and the async runtime's scheduler and the PostgreSQL driver are resolved here: a version change can move every number in the report without touching a line of framework source.",
+      "paths": [
+        "Cargo.lock"
+      ]
+    },
+    "toolchain and build configuration": {
+      "why": "The compiler the whole thing is built with, in release profile, and the cargo configuration it is built under.",
+      "paths": [
+        "rust-toolchain.toml",
+        ".cargo/config.toml"
+      ]
+    },
+    "campaign implementation": {
+      "why": "The three reports themselves and the mechanics they share, including the deterministic P-003 CSV generator, digest computation, and schema, and the P-010 partition-worker business write.",
+      "paths": [
+        "crates/oxide-batch/tests/postgres_performance.rs",
+        "crates/oxide-batch/tests/performance"
+      ]
+    },
+    "campaign fixtures": {
+      "why": "The declared denominator — the fixed workload values, the required measurements, and the required correctness obligations — and this closure itself.",
+      "paths": [
+        "tests/fixtures/performance/campaign-scope.json",
+        "tests/fixtures/performance/campaign-semantics.json"
+      ]
+    },
+    "performance execution contract": {
+      "why": "How CI actually runs the campaign: the supported matrix, the release profile, the database it is given, the command, and the environment. The dedicated workflow is included with them, and its contract-check step fails closed if the workflow drifts from the contract. An unrelated CI job in ci.yml does not invalidate retained evidence, while any change to the dedicated performance workflow does.",
+      "paths": [
+        "tests/fixtures/performance/execution-contract.json",
+        "tests/fixtures/performance/run-ci-campaign.sh",
+        "tests/fixtures/performance/verify-ci-contract.sh",
+        ".github/workflows/m5-performance.yml"
+      ]
+    },
+    "independent verifier": {
+      "why": "The program that decides whether a report proved what it owed and whether retained evidence is still what it says. Its verdicts are part of the campaign result, so a report produced under a different verifier is a result under a different standard. The whole binary is listed, including its entry point and the shared suite mechanics.",
+      "paths": [
+        "xtask/src/main.rs",
+        "xtask/src/performance.rs",
+        "xtask/src/evidence.rs",
+        "xtask/src/suite.rs"
+      ]
+    }
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "document": "How CI executes the M5 performance and reference-workload campaigns",
+  "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow is a thin provisioning and call layer, and its contract-check step fails closed when the workflow drifts from these values. Only the dedicated performance workflow is in this campaign's semantic closure, so unrelated quality or build changes in ci.yml do not invalidate retained performance evidence.",
+  "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script — an added trigger, a job-level permission override, a widened matrix, a lost --release, an appended command — moves the identity and fails the contract check, whether or not every literal field below still happens to read true. The literal fields exist for a readable diagnostic, not as the boundary. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
+  "workflow_path": ".github/workflows/m5-performance.yml",
+  "workflow_git_blob": "d4690058f34e324f0bdb919fb2f1c77a6b40b4df",
+  "workflow_name": "M5 Performance",
+  "triggers": {
+    "pull_request": ["main"],
+    "push": ["main"],
+    "workflow_dispatch": true
+  },
+  "permissions": {
+    "contents": "read"
+  },
+  "runner": "ubuntu-24.04",
+  "script": "./tests/fixtures/performance/run-ci-campaign.sh ${{ matrix.postgres }}",
+  "script_path": "tests/fixtures/performance/run-ci-campaign.sh",
+  "script_git_blob": "906a49cbcbb6ac2df485fdf011ad26342b45093b",
+  "supported_matrix": ["15", "18"],
+  "matrix_note": "The two ends of the supported PostgreSQL 15-18 range. Evidence is required from both, exactly once each.",
+  "database": {
+    "image": "postgres:{major}",
+    "database_name": "oxide_batch_performance",
+    "user": "postgres",
+    "password": "postgres",
+    "port": 5432,
+    "max_connections": "the image default",
+    "max_connections_note": "P-010's largest worker point derives a framework pool of MAX_PARTITION_WORKERS + 1 (65). The report's own business-write pool is held constant at 8 regardless of worker count, so the combined ceiling this campaign ever asks for is 73, safely inside the image's default of 100, which is deliberately not raised.",
+    "health_check": "pg_isready --username postgres --dbname oxide_batch_performance"
+  },
+  "command": ["cargo", "run", "--package", "oxide-batch-xtask", "--", "performance"],
+  "cargo_profile": "release",
+  "profile_note": "Release, unlike every other M5 campaign, because the accepted denominator requires it: a debug-build figure would not be comparable to anything release planning could use. Nothing here is asserted against a number regardless of profile.",
+  "features": "the campaign target is built with --features postgres, --release, by cargo xtask performance's own target invocation",
+  "environment": {
+    "OXIDEBATCH_POSTGRES_TEST_URL": "postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_performance",
+    "OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL": "postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_performance",
+    "OXIDEBATCH_CAMPAIGN_DIR": "target/m5-campaigns",
+    "OXIDEBATCH_CAMPAIGN_MATRIX": "postgres-{major}"
+  },
+  "report_path": "target/m5-campaigns/performance-campaign.json",
+  "artifact_name": "performance-campaign-postgres-{major}",
+  "artifact_retention": "on success and on failure alike, because what a failed performance campaign is mostly worth reading for is which correctness or resource obligation it lost",
+  "timeout_minutes": 30,
+  "timeout_note": "A release build of the whole crate dominates this ceiling, not the workload: P-001 is 272 in-memory launches, P-003 is 10,000 rows in 100 chunks, and P-010 is 100 partitions at three worker points plus one pool-ceiling proof, all of which complete in seconds once built. Thirty minutes leaves generous headroom for a release compile on a shared runner and is still a ceiling."
+}

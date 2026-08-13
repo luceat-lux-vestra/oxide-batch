@@ -1,0 +1,81 @@
+name: M5 Performance
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m5-performance-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  performance-campaign:
+    name: postgres-${{ matrix.postgres }}-performance-campaign
+    runs-on: ubuntu-24.04
+    # A release build of the whole crate dominates this ceiling, not the
+    # workload: P-001 is 272 in-memory launches, P-003 is 10,000 rows in 100
+    # chunks, and P-010 is 100 partitions at three worker points plus one
+    # pool-ceiling proof, all of which complete in seconds once built. Thirty
+    # minutes leaves generous headroom for a release compile on a shared
+    # runner and is still a ceiling: a campaign that stopped making progress
+    # must fail rather than occupy a runner.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["15", "18"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oxide_batch_performance
+        ports:
+          - 5432:5432
+        # P-010's largest worker point derives a framework pool of 65
+        # (MAX_PARTITION_WORKERS + 1). The report's own business-write pool is
+        # held constant at 8 regardless of worker count for the same reason,
+        # so the combined ceiling this campaign ever asks for is 73 — safely
+        # inside the image's default of 100, which is deliberately not raised
+        # so an unexpectedly larger request fails rather than being absorbed.
+        options: >-
+          --health-cmd "pg_isready --username postgres --dbname oxide_batch_performance"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      OXIDEBATCH_POSTGRES_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_performance
+      OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_performance
+      OXIDEBATCH_CAMPAIGN_DIR: target/m5-campaigns
+      OXIDEBATCH_CAMPAIGN_MATRIX: postgres-${{ matrix.postgres }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Fail closed if the execution contract drifts
+        run: ./tests/fixtures/performance/verify-ci-contract.sh .github/workflows/m5-performance.yml
+
+      - name: Run the declared P-001, P-003, and P-010 reports in release profile
+        run: ./tests/fixtures/performance/run-ci-campaign.sh ${{ matrix.postgres }}
+
+      # Retained on failure as well as on success. A failed performance
+      # campaign is mostly worth reading for which correctness or resource
+      # obligation it lost, and a job that uploaded only green reports would
+      # discard exactly that.
+      - name: Retain the campaign report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: performance-campaign-postgres-${{ matrix.postgres }}
+          path: target/m5-campaigns/performance-campaign.json
+          if-no-files-found: error

@@ -24,6 +24,12 @@
     "postgres-15",
     "postgres-18"
   ],
+  "fixtures": {
+    "postgres-performance": [
+      "OXIDEBATCH_POSTGRES_TEST_URL",
+      "OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL"
+    ]
+  },
   "execution": {
     "cargo_profile": "release",
     "matrix_rule": "Every report runs exactly once at each supported matrix point.",

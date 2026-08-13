@@ -54,6 +54,14 @@
           "postgres-15",
           "postgres-18"
         ]
+      },
+      {
+        "campaign": "M5 PostgreSQL performance",
+        "semantics": "tests/fixtures/performance/campaign-semantics.json",
+        "required_matrix": [
+          "postgres-15",
+          "postgres-18"
+        ]
       }
     ]
   },
