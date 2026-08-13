@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "0f41aad7062a08fffc7c8713d3cf538300c243dd",
+    "source_commit": "e191a3fdb7e137ace98de0ecd3a0e071bad9c950",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -18,7 +18,50 @@
     "Documentation tests run as one target and report no per-example result that could be attributed to a ledger row, so they are recorded as a single pass or failure.",
     "A result of `ignored` is not a pass. The campaign requires every named scenario to report `ok` on a host that supplies its fixture."
   ],
+  "observation": {
+    "execution_manifest": {
+      "execution_commit": "e191a3fdb7e137ace98de0ecd3a0e071bad9c950",
+      "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+      "objects": {
+        ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+        ".github/workflows/m5-conformance.yml": "5471d08e00ac0cf7a4c6ad4b04ef6eb5264b319b",
+        "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+        "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+        "crates/oxide-batch-cli/Cargo.toml": "2ea1f690d446a7da1a3724933056238f530772e1",
+        "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
+        "crates/oxide-batch-cli/tests": "027f9b70ad7c63a8a49a0b006b4d423ad0d3284f",
+        "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+        "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+        "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+        "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+        "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+        "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+        "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+        "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+        "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+        "crates/oxide-batch/tests": "0edbfba66f30ebbec5090e3411c06ffe69341b33",
+        "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+        "spikes/m0-architecture/Cargo.toml": "1fee582cb7988ef730e2b29fbae12d6cbb6d2f53",
+        "spikes/m0-architecture/migrations": "e0a696c34ba2ee2fd60b88ac54a61f089de90026",
+        "spikes/m0-architecture/src": "8e9f879b84aba23687bc040cf38c0b79a0a6a30c",
+        "spikes/m0-architecture/tests": "860506759e8a3762d61b18c2d364facc1bb8a3b0",
+        "spikes/m6-item-hot-path/Cargo.toml": "8bf3b712701c1f13d90b63167902381c81e59163",
+        "spikes/m6-item-hot-path/src": "528e33d4c53a9484d9a024b6e732e79ff9bfeab3",
+        "spikes/m6-item-hot-path/tests": "29bebaaebdd7c45375a91a66166a9a48e7260751",
+        "tests/fixtures/conformance/accepted-scope.json": "2162beb5c91c125cb04b29d9936eefef8a662c66",
+        "tests/fixtures/conformance/campaign-semantics.json": "a5b3b41999cce8dfce9d61aa99f367d72ae7c4b9",
+        "tests/fixtures/conformance/execution-contract.json": "92535fc2283e0b6652f57cb5184a14acf92ba5b3",
+        "tests/fixtures/conformance/run-ci-campaign.sh": "bb4adf4c7b3ee24c3395f6e9256a2533b489daa2",
+        "tests/fixtures/conformance/verify-ci-contract.sh": "da010daf359f5662aed8c30f5cd0c455c1ae5989",
+        "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+        "xtask/src": "595ae642cad1275d7ddaaf88fe8bdce1445882da",
+        "xtask/tests": "afdd305c55c043ea01aa8cbcdd009d98a8f301d1"
+      },
+      "tree_clean": true
+    }
+  },
   "passed": true,
+  "postgresql_major_version": "15",
   "report": "conformance",
   "rows": [
     {
@@ -1300,10 +1343,10 @@
   "suite": {
     "documentation_tests_passed": true,
     "outcomes": {
-      "ok": 473
+      "ok": 811
     },
-    "targets": 66,
-    "tests": 473
+    "targets": 90,
+    "tests": 811
   },
   "violations": []
 }
