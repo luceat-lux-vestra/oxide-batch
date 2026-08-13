@@ -339,7 +339,10 @@ impl RssPeakSampler {
 /// An actual dedicated observer querying the isolated campaign database,
 /// rather than a copy of a configured pool ceiling: the isolated database
 /// this campaign runs against has no other client during a report's measured
-/// window, so every backend this counts belongs to the report itself.
+/// window, so every backend this counts belongs to the report itself. Counts
+/// `client backend` rows only, excluding autovacuum workers and other
+/// server-internal backends that can transiently touch the same database
+/// without being a connection the report itself opened.
 pub struct ConnectionPeakObserver {
     peak: Arc<AtomicU64>,
     stop: Arc<AtomicBool>,
@@ -366,7 +369,7 @@ impl ConnectionPeakObserver {
             while !halt.load(Ordering::Relaxed) {
                 let observed: Result<i64, _> = sqlx::query_scalar(
                     "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() \
-                     AND pid <> pg_backend_pid()",
+                     AND pid <> pg_backend_pid() AND backend_type = 'client backend'",
                 )
                 .fetch_one(&pool)
                 .await;

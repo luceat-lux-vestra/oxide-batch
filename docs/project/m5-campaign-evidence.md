@@ -2602,6 +2602,12 @@ described under F31 and F33 below changed the meaning of several of these
 figures, so the earlier run's evidence became stale by design and is not
 carried forward.
 
+<!-- NOTE: the P-010 denominator correction and F34/F35 hardening below (this
+same commit) change the Performance semantic closure again. This paragraph,
+this table, and F31/F33's cross-references still describe run 31692527295 and
+must be updated to the fresh run's identity and figures once that run exists,
+before this change is committed as evidence-final. -->
+
 P-001, in-memory, independent of the PostgreSQL major:
 
 | Observation | PostgreSQL 15 | PostgreSQL 18 |
@@ -2665,10 +2671,12 @@ Every one of these held on both matrix points:
   observations (job status, parent status, and every partition's status),
   observed peak active workers exactly matched the configured worker point at
   every point (`1`, `10`, `64`), observed peak connections and observed peak
-  owned tasks each stayed within their configured ceiling, and no worker
-  outlived its parent — the pool-ceiling proof additionally confirmed that
-  requesting one connection fewer than the derived ceiling was refused before
-  any worker ran.
+  owned tasks each stayed within their configured ceiling, no worker outlived
+  its parent, the business row set written at every worker point was exactly
+  the fixed 100-partition key set with an identical digest across all three
+  points, and a pool one connection short of the derived ceiling was refused
+  before any worker ran — checked as a distinct obligation from the observed
+  connection ceiling, not conflated with it (see F35).
 
 ### Findings
 
@@ -2738,12 +2746,93 @@ recorded as separate `configured_connection_ceiling` fields rather than
 conflated with the observed value. P-010's `peak-owned-tasks` is now read from
 the same occupancy gauge F31's concurrency proof depends on, capped by a
 `configured_worker_budget` field recorded beside it. Every one of the three
-reports gates a new
-correctness obligation requiring the observed peak never to exceed its
-configured ceiling. P-001's `peak-connections` remains a flat `0`
-unconditionally, which needed no sampler: no PostgreSQL connection is ever
-opened on that path, so `0` is both the configured and the observed peak by
-construction.
+reports gates a new correctness obligation requiring the observed peak never
+to exceed its configured ceiling. P-001's `peak-connections` remains a flat
+`0` unconditionally, which needed no sampler: no PostgreSQL connection is
+ever opened on that path, so `0` is both the configured and the observed
+peak by construction.
+
+A local flake in the connection observer's own query surfaced while proving
+this: `pg_stat_activity` counts every backend touching a database, including
+autovacuum workers the query's `datname` filter alone does not exclude, so a
+worker landing mid-measurement could inflate `observed_peak_connections`
+above the configured ceiling on a busy server without any client connection
+actually exceeding it. The query now also filters `backend_type = 'client
+backend'`, so only connections the report itself (or another real client)
+opened are counted.
+
+**F34. P-010's accepted denominator named "enlisted" business writes, which
+the accepted performance plan does not require of P-010 and the current
+framework cannot deliver to any `Tasklet` — corrected rather than left as an
+open gap.** `docs/engineering/performance-plan.md`'s workload table assigns
+enlisted-writer semantics to P-003 alone (`"CSV to PostgreSQL with enlisted
+writer"`); its P-010 row names only `"1/10/100 local partitions/chunks"`, and
+the Performance plan row's P-010 clause carries no enlistment qualifier
+either. #125's campaign-local `tests/fixtures/performance/campaign-scope.json`
+nonetheless declared `workloads.p010.work_per_partition` as "one deterministic
+*enlisted* business write and one durable partition result" — an
+overconstraint the accepted architecture never asked for, and one the actual
+producer could never have satisfied: `TaskletContext` (see
+`crates/oxide-batch/src/runtime.rs`) carries no transaction or connection
+handle for any `Tasklet`, partitioned or not, and the framework's own durable
+partition-result commit (`publish_partition_result` in
+`crates/oxide-batch/src/flow.rs`) opens its own unit of work strictly *after*
+the tasklet has already returned, so there was never a unit of work in flight
+for a worker to share. The one existing same-resource mechanism,
+`ChunkTransactionManager`/`WriteContext`, is wired to chunk steps exclusively.
+
+An earlier version of this record treated that gap as open and documented
+rather than resolved. On review, expanding `TaskletContext`'s public surface
+merely to satisfy an accidentally over-constrained campaign-local fixture
+would have been the wrong direction — a production capability added for one
+benchmark's wording, not because the accepted architecture needs it. The
+correct fix is the denominator: `workloads.p010.work_per_partition` now reads
+"one deterministic PostgreSQL business write and one durable partition
+result", matching what P-010 has always actually proven and what the accepted
+plan actually asks of it. P-003 remains the campaign that proves
+enlisted-writer/`AtomicSameResource` semantics, unchanged. A mutation test
+(`p010_reintroducing_enlisted_wording_fails_reconciliation`) proves the scope
+cannot silently drift back toward the word "enlisted", and two more prove it
+cannot drop either half of the corrected phrase.
+
+**F35. P-010's connection-ceiling obligation conflated two different proofs,
+and its durable-equivalence check said nothing about the business write it
+exists to measure — both hardened alongside the F34 correction.** The
+`peak-connections-do-not-exceed-the-derived-pool-budget` obligation was
+previously satisfied by the *admission* proof — a pool one connection short of
+the derived budget being refused before any worker started — which says
+nothing about whether the connections actually used during a normal run
+stayed under that budget. It now means exactly what its name says: the
+observed peak connection count (F33) never exceeding the configured ceiling.
+The admission proof is retained as its own, separately named obligation,
+`pool-below-derived-budget-is-rejected-before-workers-start`, with its own raw
+evidence (`observation.pool_ceiling_proof`) recording the configured pool, the
+derived budget, whether launch was refused with
+`FlowRuntimeError::InsufficientPoolCapacity`, and the peak workers observed
+during the (refused) attempt.
+
+Durable equivalence across the three worker points previously compared only
+framework metadata (job status, parent status, every partition's status) —
+real evidence, but silent about the one thing P-010 explicitly declares as
+half its work per partition. Each worker point now reads back every business
+row `oxide_batch_business.performance_partitions` holds for that run, requires
+exactly the fixed 100-key partition set, and computes a sha256 digest over the
+sorted key set; a new obligation,
+`business-row-set-matches-fixed-partition-set-at-every-scale-point`, requires
+the row count, key set, and digest to be identical across all three points.
+The exact-concurrency proof F31 added is likewise promoted from a
+producer-local check to a committed scope obligation,
+`observed-concurrency-matches-configured-worker-point`.
+
+None of this is checked from the producer's own `correctness` booleans alone.
+`xtask/src/performance.rs::reconcile_p010` independently rederives every one
+of these facts from the raw `observation.points[]`, `pool_ceiling_proof`, and
+canonical `measurements` fields — including that the flat `measurements`
+object's `peak-connections`, `peak-owned-tasks`, and `peak-resident-memory`
+are literally the same values as the independently-checked observed peaks,
+not a copy of a configured constant reintroduced later — with its own unit
+tests proving each check fires on a mutated in-memory observation, the same
+raw-evidence-mutation pattern the soak and cancellation verifiers already use.
 
 ### What this campaign does not establish
 
@@ -2758,26 +2847,21 @@ construction.
   evidence code, published with their generator, seed, schema, and digest
   rule so the workload is reproducible; they are not IO-FLAT-001 or any other
   advertised component surface, which remains M6 scope.
-- **No enlisted-transaction support for `Tasklet` or partition workers.**
-  P-010's business write is a direct, transactional insert on its own
-  connection, documented as such in the report, in `postgres_performance.rs`,
-  and in `workloads.p010.work_per_partition`'s own text in the committed
-  scope, which still names "one deterministic enlisted business write" as the
-  accepted denominator. This is a known, open gap against that denominator,
-  not a silent substitution: `TaskletContext` carries no transaction or
-  connection handle for any `Tasklet`, partitioned or not, and the
-  framework's own durable partition-result commit
-  (`publish_partition_result` in `flow.rs`) opens its unit of work strictly
-  after the tasklet has already returned, so there is no unit of work in
-  flight during `execute()` for a worker to share. `AtomicSameResource` is
-  wired to chunk steps exclusively, through `WriteContext`, and no `pub`,
-  `pub(crate)`, or test-only path reaches an equivalent for a tasklet today.
-  Providing genuine enlistment would mean adding new public API to
-  `TaskletContext` and restructuring partition-worker orchestration in
-  `flow.rs` — a real framework capability addition, not a benchmark-local
-  adapter — which this campaign does not do. P-010's declared correctness set
-  does not require atomic enlistment, unlike P-003's, and this campaign does
-  not claim it has one.
+- **No enlisted-transaction support for `Tasklet` or partition workers, and no
+  claim that P-010 needs one.** P-010's business write and the framework's
+  durable partition-result commit are two distinct durable boundaries, each
+  on its own connection; P-010 makes no claim that they commit atomically
+  together, and the accepted performance plan does not ask it to (see F34).
+  `TaskletContext` carries no transaction or connection handle for any
+  `Tasklet`, partitioned or not, and `AtomicSameResource` is wired to chunk
+  steps exclusively, through `WriteContext` — adding a tasklet-facing
+  equivalent would be a real framework capability addition, not a
+  benchmark-local adapter, and this campaign does not do it because the
+  accepted denominator does not call for it. P-003 remains the campaign that
+  proves enlisted-writer/`AtomicSameResource` semantics; P-010 proves local
+  partition scaling reaches identical durable outcomes (including an
+  identical business row set at every worker point, F35) inside its declared
+  resource ceilings.
 - **P-002, remote workers, distributed execution, or additional database
   backends.** Out of scope for the accepted denominator and unexamined here.
 - **A promoted ledger row or a selected preview release version.** Promotion

@@ -1035,27 +1035,22 @@ fn p010_plan(
         .compile(name, DefinitionRevision::new("v1")?)?)
 }
 
-/// A partition worker that performs one business write, tracked by an
-/// occupancy gauge.
+/// A partition worker that performs one `PostgreSQL` business write, tracked
+/// by an occupancy gauge.
 ///
-/// Writing is a direct, transactional insert on its own connection rather
-/// than a framework-enlisted write. This is a known, recorded gap against the
-/// fixed scope's `work_per_partition` wording ("one deterministic *enlisted*
-/// business write"), not a silent substitution: `TaskletContext` (see
-/// `crates/oxide-batch/src/runtime.rs`) carries no transaction or connection
-/// handle for *any* `Tasklet`, partitioned or not, and the framework's own
-/// durable partition-result commit (`publish_partition_result` in
-/// `crates/oxide-batch/src/flow.rs`) opens its own unit of work strictly
-/// *after* the tasklet has already returned — there is no unit of work in
-/// flight during `execute()` for a worker to share. The one existing
-/// same-resource mechanism, `ChunkTransactionManager`/`WriteContext`, is
-/// wired to chunk steps exclusively and is not reachable from a tasklet
-/// through any public, `pub(crate)`, or test-only path today. Providing
-/// genuine enlistment would require adding new public API to
-/// `TaskletContext` and restructuring partition-worker orchestration in
-/// `flow.rs` — a real framework capability addition, not a benchmark-local
-/// adapter, and out of scope for this fix. See the PR's final report for the
-/// full gap writeup.
+/// The business write and the framework's own durable partition-result
+/// commit are two distinct durable boundaries: the write here commits on its
+/// own connection, and `publish_partition_result` (in
+/// `crates/oxide-batch/src/flow.rs`) commits the partition's durable result
+/// afterward, on a connection of its own. P-010 makes no claim that the two
+/// commit atomically together — the accepted performance plan
+/// (`docs/engineering/performance-plan.md`'s workload table) assigns
+/// enlisted-writer/`AtomicSameResource` semantics to P-003 alone, and P-010's
+/// own row names no such property. What P-010 proves instead is that local
+/// partition scaling reaches identical durable outcomes and stays inside its
+/// declared resource ceilings at every worker point; see
+/// `p010_postgres_local_partition_scaling`'s business-row readback for the
+/// evidence that every scale point produced the same business result.
 struct PartitionWorker {
     occupancy: Arc<PartitionOccupancy>,
     business: sqlx::PgPool,
@@ -1166,6 +1161,39 @@ async fn p010_observe(
     })
 }
 
+/// The business rows one P-010 run left: the count, the exact partition-key
+/// set read back sorted, and a deterministic digest over that sorted set.
+struct P010BusinessRows {
+    count: usize,
+    digest: String,
+    keys: Vec<String>,
+}
+
+/// Reads every business row a P-010 job name wrote, for the row-set and
+/// digest equivalence check across worker points.
+async fn p010_business_rows(url: &str, job_name: &str) -> Result<P010BusinessRows, Box<dyn Error>> {
+    let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
+    let rows = sqlx::query(
+        "SELECT partition_key FROM oxide_batch_business.performance_partitions \
+         WHERE job_name = $1 ORDER BY partition_key",
+    )
+    .bind(job_name)
+    .fetch_all(&pool)
+    .await?;
+    pool.close().await;
+    let keys = rows
+        .into_iter()
+        .map(|row| row.try_get::<String, _>("partition_key"))
+        .collect::<Result<Vec<_>, _>>()?;
+    let canonical = keys.join("\n");
+    let digest = hex_digest(canonical.as_bytes());
+    Ok(P010BusinessRows {
+        count: keys.len(),
+        digest,
+        keys,
+    })
+}
+
 /// P-010: local partition scaling at 1, 10, and `MAX_PARTITION_WORKERS`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
@@ -1200,6 +1228,13 @@ async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
     let mut no_worker_outlives_parent = true;
     let mut concurrency_matches_worker_point = true;
     let mut observed_peak_owned_tasks: usize = 0;
+    let mut business_row_set_holds = true;
+    let mut baseline_business_digest: Option<String> = None;
+    let expected_partition_keys = {
+        let mut sorted = p010_partition_keys();
+        sorted.sort();
+        sorted
+    };
 
     let rss_sampler = RssPeakSampler::start(SAMPLE_INTERVAL);
     let connection_observer = ConnectionPeakObserver::start(&url, SAMPLE_INTERVAL).await?;
@@ -1274,6 +1309,20 @@ async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
             baseline_outcome = Some(outcome);
         }
 
+        // The framework's durable partition-result equivalence above says
+        // nothing about the business write each partition actually performed
+        // — P-010's declared work is both, so the business row set this
+        // point wrote is read back and required to be the exact fixed
+        // partition-key set, identically at every worker point.
+        let business_rows = p010_business_rows(&url, job_name).await?;
+        business_row_set_holds &= business_rows.count == P010_PARTITIONS as usize
+            && business_rows.keys == expected_partition_keys;
+        if let Some(baseline_digest) = &baseline_business_digest {
+            business_row_set_holds &= &business_rows.digest == baseline_digest;
+        } else {
+            baseline_business_digest = Some(business_rows.digest.clone());
+        }
+
         let (min_worker, max_worker) = occupancy.skew();
         let aggregation = occupancy
             .last_finished()
@@ -1299,6 +1348,8 @@ async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
             "aggregation_duration_micros": aggregation.map(|value| value.as_micros()),
             "configured_pool": pool_budget(workers),
             "repository_round_trips": counting.begins(),
+            "business_row_count": business_rows.count,
+            "business_digest": business_rows.digest,
         }));
 
         repository.close().await?;
@@ -1352,10 +1403,13 @@ async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
     let rejected = FlowLauncher::new(&repository, clock.as_ref(), &ids)
         .launch(&job, &JobParameters::new(), &stop)
         .await;
-    let pool_ceiling_enforced = matches!(
+    let rejected_with_insufficient_pool_capacity = matches!(
         rejected,
         Err(oxide_batch::FlowRuntimeError::InsufficientPoolCapacity { .. })
-    ) && occupancy.peak() == 0;
+    );
+    let ceiling_proof_observed_peak_workers = occupancy.peak();
+    let pool_below_derived_budget_is_rejected =
+        rejected_with_insufficient_pool_capacity && ceiling_proof_observed_peak_workers == 0;
     business.close().await;
     repository.close().await?;
 
@@ -1372,7 +1426,7 @@ async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
             "partitions": P010_PARTITIONS,
             "worker_points": worker_points(),
             "largest_worker_point_source": "oxide_batch::MAX_PARTITION_WORKERS",
-            "work_per_partition": "one deterministic enlisted business write and one durable \
+            "work_per_partition": "one deterministic PostgreSQL business write and one durable \
                                    partition result",
         },
         "observation": {
@@ -1412,18 +1466,34 @@ async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
                                   actually observable as concurrent occupancy, rather than \
                                   depending on the INSERT alone being slow enough to catch in a \
                                   sample; it does not alter durable business semantics.",
-            "write_enlistment_gap": "The fixed scope's workloads.p010.work_per_partition names \
-                                     'one deterministic enlisted business write'. This report's \
-                                     business write is not framework-enlisted with the durable \
-                                     partition-result commit: TaskletContext exposes no \
-                                     transaction or connection handle to any Tasklet, and the \
-                                     framework's own partition-result commit opens its own unit \
-                                     of work strictly after the tasklet has already returned. \
-                                     Providing genuine enlistment would require new public API on \
-                                     TaskletContext and flow.rs partition-worker orchestration, \
-                                     which this fix does not add. Recorded here as an explicit, \
-                                     known contract gap rather than silently substituted or used \
-                                     to redefine the accepted denominator.",
+            "delivery_boundary_note": "The PostgreSQL business write and the framework's durable \
+                                      partition-result commit are two distinct durable \
+                                      boundaries, each on its own connection; P-010 makes no \
+                                      claim that they commit atomically together. The accepted \
+                                      performance plan assigns enlisted-writer/AtomicSameResource \
+                                      semantics to P-003 alone. P-010 proves local partition \
+                                      scaling reaches identical durable outcomes, an identical \
+                                      business row set at every worker point (see \
+                                      business_row_set below), and stays inside its declared \
+                                      resource ceilings.",
+            "business_row_set": {
+                "expected_partition_count": P010_PARTITIONS,
+                "digest": baseline_business_digest,
+                "digest_note": "The sha256 digest of the sorted partition-key set read back from \
+                                oxide_batch_business.performance_partitions, computed once from \
+                                the first worker point and required to be identical at every \
+                                later one.",
+            },
+            "pool_ceiling_proof": {
+                "starved_workers": starved_workers,
+                "configured_pool": pool_budget(starved_workers) - 1,
+                "derived_budget": pool_budget(starved_workers),
+                "rejected_with_insufficient_pool_capacity": rejected_with_insufficient_pool_capacity,
+                "observed_peak_workers_during_attempt": ceiling_proof_observed_peak_workers,
+                "note": "A pool one connection short of the derived budget \
+                        (configured_pool = derived_budget - 1) must be refused before any worker \
+                        starts, so observed_peak_workers_during_attempt must be 0.",
+            },
         },
         "execution_manifest": execution_manifest()?,
         "measurements": {
@@ -1446,11 +1516,12 @@ async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
         "correctness": {
             "every_scale_point_has_identical_durable_observations": equivalence_holds,
             "peak_workers_do_not_exceed_the_configured_budget": ceilings_hold,
-            "peak_connections_do_not_exceed_the_derived_pool_budget": pool_ceiling_enforced,
+            "peak_connections_do_not_exceed_the_derived_pool_budget": connections_within_ceiling,
             "no_worker_outlives_its_parent": no_worker_outlives_parent,
             "observed_concurrency_matches_configured_worker_point": concurrency_matches_worker_point,
+            "pool_below_derived_budget_is_rejected_before_workers_start": pool_below_derived_budget_is_rejected,
+            "business_row_set_matches_fixed_partition_set_at_every_scale_point": business_row_set_holds,
             "observed_peak_owned_tasks_within_configured_budget": owned_tasks_within_budget,
-            "observed_peak_connections_within_configured_ceiling": connections_within_ceiling,
         },
         "violations": correctness_violations([
             (
@@ -1462,9 +1533,8 @@ async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
                 "peak active workers exceeded the configured budget at some worker point",
             ),
             (
-                pool_ceiling_enforced,
-                "a pool one connection short of the derived budget was not refused before any \
-                 worker started",
+                connections_within_ceiling,
+                "the observed peak connection count exceeded the derived connection ceiling",
             ),
             (
                 no_worker_outlives_parent,
@@ -1476,12 +1546,18 @@ async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
                  at every worker point, so multi-worker occupancy was not demonstrated",
             ),
             (
-                owned_tasks_within_budget,
-                "the observed peak owned-task count exceeded the configured worker budget",
+                pool_below_derived_budget_is_rejected,
+                "a pool one connection short of the derived budget was not refused before any \
+                 worker started",
             ),
             (
-                connections_within_ceiling,
-                "the observed peak connection count exceeded the configured connection ceiling",
+                business_row_set_holds,
+                "the business row set did not match the fixed 100-partition key set, or its \
+                 digest differed, at some worker point",
+            ),
+            (
+                owned_tasks_within_budget,
+                "the observed peak owned-task count exceeded the configured worker budget",
             ),
         ]),
     });

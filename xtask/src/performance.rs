@@ -258,6 +258,13 @@ fn reconcile(scope: &Scope, runs: &Runs, expected_major: Option<&str>) -> Vec<St
         }
         violations.extend(reconcile_measurements(report, observation));
         violations.extend(reconcile_correctness(report, observation));
+        if report.id == "p010-local-partition-scaling" {
+            violations.extend(reconcile_p010(
+                observation,
+                scope.p010_partitions,
+                &scope.p010_worker_points,
+            ));
+        }
         if report.against_database {
             violations.extend(verify_matrix_identity(
                 &report.id,
@@ -357,6 +364,304 @@ fn reconcile_correctness(report: &Report, observation: &Value) -> Vec<String> {
         }
     }
     violations
+}
+
+/// Independently rederives P-010's obligations from its raw per-point
+/// evidence, rather than trusting the producer's own `correctness` booleans.
+///
+/// The producer's `correctness` object is one more claim the report makes
+/// about itself, checked generically by [`reconcile_correctness`] above like
+/// every other report's. This function additionally recomputes the same
+/// facts from `observation.points[]`, `observation.business_row_set`,
+/// `observation.pool_ceiling_proof`, and the flat `measurements` object, so a
+/// producer that computed a correctness boolean correctly but reported a
+/// different (or fabricated) raw value cannot pass silently.
+fn reconcile_p010(
+    observation: &Value,
+    expected_partitions: u64,
+    expected_workers: &[u64],
+) -> Vec<String> {
+    const ID: &str = "p010-local-partition-scaling";
+    let mut violations = Vec::new();
+
+    if observation.get("report").and_then(Value::as_str) != Some(ID) {
+        violations.push(format!(
+            "{ID} retained an observation whose report field does not match"
+        ));
+    }
+    if observation.get("workload").and_then(Value::as_str) != Some("P-010") {
+        violations.push(format!(
+            "{ID} retained an observation whose workload field is not P-010"
+        ));
+    }
+    if observation
+        .pointer("/declared/partitions")
+        .and_then(Value::as_u64)
+        != Some(expected_partitions)
+    {
+        violations.push(format!(
+            "{ID} declared.partitions does not equal the committed \
+             workloads.p010.partitions ({expected_partitions})"
+        ));
+    }
+
+    let Some(points) = observation
+        .pointer("/observation/points")
+        .and_then(Value::as_array)
+    else {
+        violations.push(format!("{ID} retained no observation.points array"));
+        return violations;
+    };
+
+    let max_observed_owned_tasks = reconcile_p010_points(
+        points,
+        expected_partitions,
+        expected_workers,
+        &mut violations,
+    );
+    reconcile_p010_resource_ceilings(observation, max_observed_owned_tasks, &mut violations);
+    reconcile_p010_canonical_measurements(observation, points, &mut violations);
+    reconcile_p010_pool_ceiling_proof(observation, &mut violations);
+
+    violations
+}
+
+/// Walks `observation.points[]`, checking each scale point's own raw fields
+/// and the cross-point invariants (exact worker-point set, identical business
+/// digest), and returns the raw maximum observed occupancy across all points.
+fn reconcile_p010_points(
+    points: &[Value],
+    expected_partitions: u64,
+    expected_workers: &[u64],
+    violations: &mut Vec<String>,
+) -> u64 {
+    const ID: &str = "p010-local-partition-scaling";
+    if points.len() != expected_workers.len() {
+        violations.push(format!(
+            "{ID} retained {} scale points, not exactly the committed {}",
+            points.len(),
+            expected_workers.len()
+        ));
+    }
+
+    let mut seen_workers = Vec::new();
+    let mut max_observed_owned_tasks: u64 = 0;
+    let mut first_business_digest: Option<&str> = None;
+    for point in points {
+        let Some(workers) = point.get("workers").and_then(Value::as_u64) else {
+            violations.push(format!(
+                "{ID} retained a scale point with no integer workers field"
+            ));
+            continue;
+        };
+        seen_workers.push(workers);
+
+        if point.get("partitions").and_then(Value::as_u64) != Some(expected_partitions) {
+            violations.push(format!(
+                "{ID} worker point {workers} recorded a partitions count other than the \
+                 committed {expected_partitions}"
+            ));
+        }
+        match point.get("peak_active_workers").and_then(Value::as_u64) {
+            Some(peak) if peak == workers => {
+                max_observed_owned_tasks = max_observed_owned_tasks.max(peak);
+            }
+            Some(peak) => violations.push(format!(
+                "{ID} worker point {workers} observed peak_active_workers {peak}, not exactly \
+                 {workers}: multi-worker occupancy was not demonstrated at this point"
+            )),
+            None => violations.push(format!(
+                "{ID} worker point {workers} retained no peak_active_workers"
+            )),
+        }
+        if point
+            .get("active_workers_after_join")
+            .and_then(Value::as_u64)
+            != Some(0)
+        {
+            violations.push(format!(
+                "{ID} worker point {workers} left a worker active after its parent returned"
+            ));
+        }
+        if point.get("business_row_count").and_then(Value::as_u64) != Some(expected_partitions) {
+            violations.push(format!(
+                "{ID} worker point {workers} wrote a business row count other than the \
+                 committed {expected_partitions}"
+            ));
+        }
+        match point.get("business_digest").and_then(Value::as_str) {
+            Some(digest) => match first_business_digest {
+                None => first_business_digest = Some(digest),
+                Some(baseline) if baseline != digest => violations.push(format!(
+                    "{ID} worker point {workers} recorded a business digest that disagrees with \
+                     an earlier scale point's"
+                )),
+                Some(_) => {}
+            },
+            None => violations.push(format!(
+                "{ID} worker point {workers} retained no business_digest"
+            )),
+        }
+    }
+
+    let mut sorted_seen = seen_workers.clone();
+    sorted_seen.sort_unstable();
+    sorted_seen.dedup();
+    let mut sorted_expected = expected_workers.to_vec();
+    sorted_expected.sort_unstable();
+    if sorted_seen != sorted_expected || sorted_seen.len() != seen_workers.len() {
+        violations.push(format!(
+            "{ID} scale points are at workers {seen_workers:?}, not exactly the committed \
+             {expected_workers:?} with no duplicate"
+        ));
+    }
+    max_observed_owned_tasks
+}
+
+/// Requires the observed peak owned-task and connection counts to equal what
+/// was just independently rederived from the raw points, and each to stay
+/// within its own configured ceiling.
+fn reconcile_p010_resource_ceilings(
+    observation: &Value,
+    max_observed_owned_tasks: u64,
+    violations: &mut Vec<String>,
+) {
+    const ID: &str = "p010-local-partition-scaling";
+
+    let configured_worker_budget = observation
+        .pointer("/observation/configured_worker_budget")
+        .and_then(Value::as_u64);
+    let observed_peak_owned_tasks = observation
+        .pointer("/observation/observed_peak_owned_tasks")
+        .and_then(Value::as_u64);
+    if observed_peak_owned_tasks != Some(max_observed_owned_tasks) {
+        violations.push(format!(
+            "{ID} observation.observed_peak_owned_tasks ({observed_peak_owned_tasks:?}) does not \
+             equal the raw maximum peak_active_workers across points \
+             ({max_observed_owned_tasks})"
+        ));
+    }
+    match (observed_peak_owned_tasks, configured_worker_budget) {
+        (Some(observed), Some(budget)) if observed > budget => violations.push(format!(
+            "{ID} observed_peak_owned_tasks {observed} exceeded configured_worker_budget {budget}"
+        )),
+        (Some(_), Some(_)) => {}
+        _ => violations.push(format!(
+            "{ID} retained no configured_worker_budget/observed_peak_owned_tasks pair to check"
+        )),
+    }
+
+    let configured_connection_ceiling = observation
+        .pointer("/observation/configured_connection_ceiling")
+        .and_then(Value::as_u64);
+    let observed_peak_connections = observation
+        .pointer("/observation/observed_peak_connections")
+        .and_then(Value::as_u64);
+    match (observed_peak_connections, configured_connection_ceiling) {
+        (Some(observed), Some(ceiling)) if observed > ceiling => violations.push(format!(
+            "{ID} observed_peak_connections {observed} exceeded configured_connection_ceiling \
+             {ceiling}"
+        )),
+        (Some(_), Some(_)) => {}
+        _ => violations.push(format!(
+            "{ID} retained no configured_connection_ceiling/observed_peak_connections pair to check"
+        )),
+    }
+}
+
+/// Requires the canonical `measurements` fields to be copies of the raw
+/// observed values just checked above — never a configured constant, and
+/// never a value other than the largest worker point's own.
+fn reconcile_p010_canonical_measurements(
+    observation: &Value,
+    points: &[Value],
+    violations: &mut Vec<String>,
+) {
+    const ID: &str = "p010-local-partition-scaling";
+
+    if observation.pointer("/measurements/peak-owned-tasks")
+        != observation.pointer("/observation/observed_peak_owned_tasks")
+    {
+        violations.push(format!(
+            "{ID} measurements.\"peak-owned-tasks\" does not equal observation.\
+             observed_peak_owned_tasks"
+        ));
+    }
+    if observation.pointer("/measurements/peak-connections")
+        != observation.pointer("/observation/observed_peak_connections")
+    {
+        violations.push(format!(
+            "{ID} measurements.\"peak-connections\" does not equal observation.\
+             observed_peak_connections"
+        ));
+    }
+    if observation.pointer("/measurements/peak-resident-memory")
+        != observation.pointer("/observation/peak_resident_memory_kib")
+    {
+        violations.push(format!(
+            "{ID} measurements.\"peak-resident-memory\" does not equal the observed sampled peak"
+        ));
+    }
+
+    let Some(largest) = points
+        .iter()
+        .max_by_key(|point| point.get("workers").and_then(Value::as_u64).unwrap_or(0))
+    else {
+        return;
+    };
+    for (measurement_key, raw_key) in [
+        ("partitions-per-second", "partitions_per_second"),
+        ("end-to-end-duration", "wall_micros"),
+        ("scaling-efficiency", "scaling_efficiency"),
+        ("worker-skew", "worker_skew_micros"),
+        ("aggregation-duration", "aggregation_duration_micros"),
+        ("repository-round-trips", "repository_round_trips"),
+    ] {
+        let measured = observation.pointer(&format!("/measurements/{measurement_key}"));
+        if measured != largest.get(raw_key) {
+            violations.push(format!(
+                "{ID} measurements.\"{measurement_key}\" does not equal the largest worker \
+                 point's raw {raw_key}"
+            ));
+        }
+    }
+}
+
+/// The pool-ceiling proof is a separate, out-of-band launch attempt with its
+/// own raw evidence: independently required rather than trusted from the
+/// correctness boolean alone.
+fn reconcile_p010_pool_ceiling_proof(observation: &Value, violations: &mut Vec<String>) {
+    const ID: &str = "p010-local-partition-scaling";
+
+    let proof = observation.pointer("/observation/pool_ceiling_proof");
+    let rejected = proof
+        .and_then(|value| value.get("rejected_with_insufficient_pool_capacity"))
+        .and_then(Value::as_bool);
+    let observed_during_attempt = proof
+        .and_then(|value| value.get("observed_peak_workers_during_attempt"))
+        .and_then(Value::as_u64);
+    let configured_pool = proof
+        .and_then(|value| value.get("configured_pool"))
+        .and_then(Value::as_u64);
+    let derived_budget = proof
+        .and_then(|value| value.get("derived_budget"))
+        .and_then(Value::as_u64);
+    match (
+        rejected,
+        observed_during_attempt,
+        configured_pool,
+        derived_budget,
+    ) {
+        (Some(true), Some(0), Some(pool), Some(budget)) if pool + 1 == budget => {}
+        (Some(_), _, Some(pool), Some(budget)) if pool + 1 != budget => violations.push(format!(
+            "{ID} pool_ceiling_proof.configured_pool ({pool}) is not exactly one connection \
+             short of derived_budget ({budget})"
+        )),
+        _ => violations.push(format!(
+            "{ID} pool_ceiling_proof did not record a pool one connection short of the derived \
+             budget being refused before any worker started"
+        )),
+    }
 }
 
 /// Requires the shared P-003 report to be the one retained observation both
@@ -676,6 +981,8 @@ struct Scope {
     campaigns: Vec<CampaignRow>,
     reports: Vec<Report>,
     fixtures: BTreeMap<String, Vec<String>>,
+    p010_partitions: u64,
+    p010_worker_points: Vec<u64>,
 }
 
 impl Scope {
@@ -774,11 +1081,41 @@ impl Scope {
             })
             .unwrap_or_default();
 
+        let (p010_partitions, p010_worker_points) = Self::read_p010_workload(&document)?;
+
         Ok(Self {
             campaigns,
             reports,
             fixtures,
+            p010_partitions,
+            p010_worker_points,
         })
+    }
+
+    /// Reads `workloads.p010.partitions` and `workloads.p010.worker_points`
+    /// once, from the committed scope, rather than hardcoded here:
+    /// `m5_performance_campaign.rs` already reconciles these against
+    /// `oxide_batch::MAX_PARTITION_WORKERS` and the accepted plan, so this
+    /// runner rederives P-010's raw evidence against the same document
+    /// review already checked, instead of a second, possibly-drifting
+    /// literal.
+    fn read_p010_workload(document: &Value) -> Result<(u64, Vec<u64>), String> {
+        let partitions = document
+            .pointer("/workloads/p010/partitions")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "the scope declares no workloads.p010.partitions".to_owned())?;
+        let worker_points = document
+            .pointer("/workloads/p010/worker_points")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "the scope declares no workloads.p010.worker_points".to_owned())?
+            .iter()
+            .map(|value| {
+                value.as_u64().ok_or_else(|| {
+                    "workloads.p010.worker_points has a non-integer entry".to_owned()
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok((partitions, worker_points))
     }
 }
 
@@ -788,4 +1125,241 @@ struct Runs {
     failed_targets: Vec<String>,
     outcomes: BTreeMap<(String, String), Option<String>>,
     observations: BTreeMap<String, Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    use serde_json::json;
+
+    use super::reconcile_p010;
+
+    /// A fully valid P-010 observation, shaped exactly like the retained
+    /// `p010-local-partition-scaling.json` the producer writes: three scale
+    /// points (1/10/64) with exact occupancy, an identical business digest at
+    /// every point, canonical measurements copied from the observed values,
+    /// and a pool-ceiling proof that rejected before any worker started.
+    /// Every test below starts from this and mutates exactly one thing.
+    fn canonical_observation() -> serde_json::Value {
+        let point = |workers: u64| {
+            json!({
+                "workers": workers,
+                "partitions": 100,
+                "peak_active_workers": workers,
+                "active_workers_after_join": 0,
+                "business_row_count": 100,
+                "business_digest": "same-digest",
+                "partitions_per_second": 1.0,
+                "wall_micros": 1000,
+                "scaling_efficiency": 1.0,
+                "worker_skew_micros": 0,
+                "aggregation_duration_micros": 0,
+                "repository_round_trips": 6,
+            })
+        };
+        json!({
+            "report": "p010-local-partition-scaling",
+            "workload": "P-010",
+            "declared": { "partitions": 100 },
+            "observation": {
+                "points": [point(1), point(10), point(64)],
+                "configured_worker_budget": 64,
+                "observed_peak_owned_tasks": 64,
+                "configured_connection_ceiling": 73,
+                "observed_peak_connections": 66,
+                "peak_resident_memory_kib": 9000,
+                "pool_ceiling_proof": {
+                    "rejected_with_insufficient_pool_capacity": true,
+                    "observed_peak_workers_during_attempt": 0,
+                    "configured_pool": 4,
+                    "derived_budget": 5,
+                },
+            },
+            "measurements": {
+                "peak-owned-tasks": 64,
+                "peak-connections": 66,
+                "peak-resident-memory": 9000,
+                "partitions-per-second": 1.0,
+                "end-to-end-duration": 1000,
+                "scaling-efficiency": 1.0,
+                "worker-skew": 0,
+                "aggregation-duration": 0,
+                "repository-round-trips": 6,
+            },
+        })
+    }
+
+    const EXPECTED_WORKERS: &[u64] = &[1, 10, 64];
+
+    #[test]
+    fn canonical_observation_passes() {
+        let violations = reconcile_p010(&canonical_observation(), 100, EXPECTED_WORKERS);
+        assert!(violations.is_empty(), "{violations:?}");
+    }
+
+    #[test]
+    fn worker_10_peak_mismatch_fails() {
+        let mut observation = canonical_observation();
+        observation["observation"]["points"][1]["peak_active_workers"] = json!(1);
+        // observed_peak_owned_tasks must also disagree with the new raw max
+        // for a realistic single-field mutation, but leaving it at 64 alone
+        // already proves the point-level check fires independently.
+        let violations = reconcile_p010(&observation, 100, EXPECTED_WORKERS);
+        assert!(
+            violations.iter().any(|v| v.contains("worker point 10")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn worker_64_peak_mismatch_fails() {
+        let mut observation = canonical_observation();
+        observation["observation"]["points"][2]["peak_active_workers"] = json!(1);
+        let violations = reconcile_p010(&observation, 100, EXPECTED_WORKERS);
+        assert!(
+            violations.iter().any(|v| v.contains("worker point 64")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn missing_scale_point_fails() {
+        let mut observation = canonical_observation();
+        observation["observation"]["points"]
+            .as_array_mut()
+            .expect("points is an array")
+            .truncate(2);
+        let violations = reconcile_p010(&observation, 100, EXPECTED_WORKERS);
+        assert!(!violations.is_empty());
+    }
+
+    #[test]
+    fn duplicate_scale_point_fails() {
+        let mut observation = canonical_observation();
+        let duplicate = observation["observation"]["points"][0].clone();
+        observation["observation"]["points"]
+            .as_array_mut()
+            .expect("points is an array")
+            .push(duplicate);
+        let violations = reconcile_p010(&observation, 100, EXPECTED_WORKERS);
+        assert!(!violations.is_empty());
+    }
+
+    #[test]
+    fn wrong_worker_point_fails() {
+        let mut observation = canonical_observation();
+        observation["observation"]["points"][1]["workers"] = json!(5);
+        observation["observation"]["points"][1]["peak_active_workers"] = json!(5);
+        let violations = reconcile_p010(&observation, 100, EXPECTED_WORKERS);
+        assert!(!violations.is_empty());
+    }
+
+    #[test]
+    fn active_workers_after_join_nonzero_fails() {
+        let mut observation = canonical_observation();
+        observation["observation"]["points"][0]["active_workers_after_join"] = json!(1);
+        let violations = reconcile_p010(&observation, 100, EXPECTED_WORKERS);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("left a worker active")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn observed_connections_exceeding_ceiling_fails() {
+        let mut observation = canonical_observation();
+        observation["observation"]["observed_peak_connections"] = json!(80);
+        let violations = reconcile_p010(&observation, 100, EXPECTED_WORKERS);
+        assert!(
+            violations.iter().any(|v| v.contains("exceeded")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn canonical_peak_connections_copied_from_ceiling_instead_of_observation_fails() {
+        let mut observation = canonical_observation();
+        // The measured field silently reverts to a configured-looking
+        // constant instead of the observed value.
+        observation["measurements"]["peak-connections"] = json!(73);
+        let violations = reconcile_p010(&observation, 100, EXPECTED_WORKERS);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("\"peak-connections\"")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn canonical_peak_owned_tasks_differing_from_raw_peak_fails() {
+        let mut observation = canonical_observation();
+        observation["measurements"]["peak-owned-tasks"] = json!(10);
+        let violations = reconcile_p010(&observation, 100, EXPECTED_WORKERS);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("\"peak-owned-tasks\"")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn missing_business_row_fails() {
+        let mut observation = canonical_observation();
+        observation["observation"]["points"][0]["business_row_count"] = json!(99);
+        let violations = reconcile_p010(&observation, 100, EXPECTED_WORKERS);
+        assert!(
+            violations.iter().any(|v| v.contains("business row count")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn wrong_business_digest_fails() {
+        let mut observation = canonical_observation();
+        observation["observation"]["points"][1]["business_digest"] = json!("different-digest");
+        let violations = reconcile_p010(&observation, 100, EXPECTED_WORKERS);
+        assert!(
+            violations.iter().any(|v| v.contains("business digest")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn undersized_pool_proof_false_fails() {
+        let mut observation = canonical_observation();
+        observation["observation"]["pool_ceiling_proof"]["rejected_with_insufficient_pool_capacity"] =
+            json!(false);
+        let violations = reconcile_p010(&observation, 100, EXPECTED_WORKERS);
+        assert!(
+            violations.iter().any(|v| v.contains("pool_ceiling_proof")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn undersized_pool_proof_missing_fails() {
+        let mut observation = canonical_observation();
+        observation["observation"]
+            .as_object_mut()
+            .expect("observation is an object")
+            .remove("pool_ceiling_proof");
+        let violations = reconcile_p010(&observation, 100, EXPECTED_WORKERS);
+        assert!(
+            violations.iter().any(|v| v.contains("pool_ceiling_proof")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn partition_count_drift_fails() {
+        let mut observation = canonical_observation();
+        observation["observation"]["points"][0]["partitions"] = json!(64);
+        let violations = reconcile_p010(&observation, 100, EXPECTED_WORKERS);
+        assert!(!violations.is_empty());
+    }
 }

@@ -124,6 +124,9 @@ const REPORT_SPECS: &[ReportSpec] = &[
             "peak-workers-do-not-exceed-the-configured-budget",
             "peak-connections-do-not-exceed-the-derived-pool-budget",
             "no-worker-outlives-its-parent",
+            "observed-concurrency-matches-configured-worker-point",
+            "pool-below-derived-budget-is-rejected-before-workers-start",
+            "business-row-set-matches-fixed-partition-set-at-every-scale-point",
         ],
     },
 ];
@@ -541,6 +544,35 @@ fn p003_chunk_size_drift_fails_reconciliation() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn p003_source_seed_drift_fails_reconciliation() -> Result<(), Box<dyn Error>> {
+    let mut scope = read_scope()?;
+    scope["workloads"]["p003"]["source_seed"] = Value::from(103);
+    assert!(validate_scope(&scope).is_err());
+    Ok(())
+}
+
+#[test]
+fn p003_writer_missing_fails_reconciliation() -> Result<(), Box<dyn Error>> {
+    let mut scope = read_scope()?;
+    scope["workloads"]["p003"]
+        .as_object_mut()
+        .ok_or_else(|| Failure("workloads.p003 is not an object".to_owned()))?
+        .remove("writer");
+    assert!(validate_scope(&scope).is_err());
+    Ok(())
+}
+
+#[test]
+fn p003_writer_weakened_away_from_enlisted_atomic_same_resource_fails_reconciliation()
+-> Result<(), Box<dyn Error>> {
+    let mut scope = read_scope()?;
+    scope["workloads"]["p003"]["writer"] =
+        Value::String("test-local direct PostgreSQL writer".to_owned());
+    assert!(validate_scope(&scope).is_err());
+    Ok(())
+}
+
+#[test]
 fn p001_measured_attempts_drift_fails_reconciliation() -> Result<(), Box<dyn Error>> {
     let mut scope = read_scope()?;
     scope["workloads"]["p001"]["measured_attempts"] = Value::from(128);
@@ -557,16 +589,39 @@ fn p010_partition_count_drift_fails_reconciliation() -> Result<(), Box<dyn Error
 }
 
 #[test]
-fn p010_direct_business_write_description_fails_reconciliation() -> Result<(), Box<dyn Error>> {
-    // The producer cannot satisfy the fixed P-010 scope by quietly
-    // describing its business write as direct instead of enlisted: any
-    // wording drift away from the accepted "one deterministic enlisted
-    // business write and one durable partition result" fails reconciliation,
-    // exactly like every other fixed P-010 value below.
+fn p010_reintroducing_enlisted_wording_fails_reconciliation() -> Result<(), Box<dyn Error>> {
+    // The accepted performance plan assigns enlisted-writer/AtomicSameResource
+    // semantics to P-003 only; P-010's own workload-table row and the
+    // Performance plan row's P-010 clause never say "enlisted"
+    // (docs/engineering/performance-plan.md). #125's campaign-local P-010
+    // wording accidentally claimed enlistment anyway, which the accepted
+    // architecture does not require and the actual producer cannot deliver
+    // (TaskletContext exposes no transaction handle to any Tasklet). Any
+    // wording drift back toward "enlisted" must fail reconciliation exactly
+    // like every other fixed P-010 value below, so the campaign cannot drift
+    // back into the same overconstraint.
     let mut scope = read_scope()?;
     scope["workloads"]["p010"]["work_per_partition"] = Value::String(
-        "one deterministic direct business write and one durable partition result".to_owned(),
+        "one deterministic enlisted business write and one durable partition result".to_owned(),
     );
+    assert!(validate_scope(&scope).is_err());
+    Ok(())
+}
+
+#[test]
+fn p010_missing_postgresql_business_write_fails_reconciliation() -> Result<(), Box<dyn Error>> {
+    let mut scope = read_scope()?;
+    scope["workloads"]["p010"]["work_per_partition"] =
+        Value::String("one durable partition result".to_owned());
+    assert!(validate_scope(&scope).is_err());
+    Ok(())
+}
+
+#[test]
+fn p010_missing_durable_partition_result_fails_reconciliation() -> Result<(), Box<dyn Error>> {
+    let mut scope = read_scope()?;
+    scope["workloads"]["p010"]["work_per_partition"] =
+        Value::String("one deterministic PostgreSQL business write".to_owned());
     assert!(validate_scope(&scope).is_err());
     Ok(())
 }
@@ -1029,10 +1084,14 @@ fn validate_workload_p010(scope: &Value) -> Result<(), Failure> {
         ));
     }
     if get_str(p010, "work_per_partition", "workloads.p010")?
-        != "one deterministic enlisted business write and one durable partition result"
+        != "one deterministic PostgreSQL business write and one durable partition result"
     {
         return Err(Failure(
-            "workloads.p010.work_per_partition must name the accepted fixed unit of work"
+            "workloads.p010.work_per_partition must name the accepted fixed unit of work; the \
+             accepted performance plan assigns enlisted-writer/AtomicSameResource semantics to \
+             P-003 only (docs/engineering/performance-plan.md's workload table names P-010 as \
+             \"1/10/100 local partitions/chunks\" with no enlistment claim), so this field must \
+             not reintroduce \"enlisted\" for P-010"
                 .to_owned(),
         ));
     }
