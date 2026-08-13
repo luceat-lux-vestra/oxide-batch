@@ -75,9 +75,9 @@
       "postgres_major_version": "15",
       "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
       "producer": {
-        "execution_commit": "107941f7d446c5d47388e3fb4cc11327cb516853",
+        "execution_commit": "6146434f465242eefa7523f4153a56dffbb755a4",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "73668371a68e0556e29523eabd5a036aa7a63979",
+        "branch_head_sha": "923221934be11769793f80b56b11eb6aba6fb7e4",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -85,29 +85,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": "Rust",
-        "workflow_file": ".github/workflows/ci.yml",
-        "id": 31452399059,
+        "workflow": "M5 Soak",
+        "workflow_file": ".github/workflows/m5-soak.yml",
+        "id": 31663572248,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-soak-campaign",
-        "id": 93659257907,
+        "id": 94333322719,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-15",
-        "id": 9086858878,
-        "digest": "sha256:55314b04b1c0989b2a0281b1e49f03972e9f639a39e8a007cb8b7e16ce5570df",
-        "size_bytes": 88225
+        "id": 9167171512,
+        "digest": "sha256:4314346fc0df28c288bc7bf63fc759de8df63b04d71aad0e14291dde818689c2",
+        "size_bytes": 88325
       },
-      "retained_report_git_blob": "a3cabf782697c97f256bdc0b74643bf619887207",
+      "retained_report_git_blob": "a104791391ec20432d54f2566a42cb85d309392b",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-11T02:39:02Z",
-        "run_id": 31452399059,
+        "verified_at": "2026-08-13T03:27:25Z",
+        "run_id": 31663572248,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -128,9 +128,9 @@
       "postgres_major_version": "18",
       "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
       "producer": {
-        "execution_commit": "107941f7d446c5d47388e3fb4cc11327cb516853",
+        "execution_commit": "6146434f465242eefa7523f4153a56dffbb755a4",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "73668371a68e0556e29523eabd5a036aa7a63979",
+        "branch_head_sha": "923221934be11769793f80b56b11eb6aba6fb7e4",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -138,29 +138,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": "Rust",
-        "workflow_file": ".github/workflows/ci.yml",
-        "id": 31452399059,
+        "workflow": "M5 Soak",
+        "workflow_file": ".github/workflows/m5-soak.yml",
+        "id": 31663572248,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-soak-campaign",
-        "id": 93659257923,
+        "id": 94333322870,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-18",
-        "id": 9086863010,
-        "digest": "sha256:9199b04ed819c17d2cfa771048ba27bc115ac1f43600260a5ca9bec9524771e3",
-        "size_bytes": 89725
+        "id": 9167181706,
+        "digest": "sha256:a8296988687fe55e7af2cb44d79f44a3807b2cdd23889dd8383433b83fa30f91",
+        "size_bytes": 88981
       },
-      "retained_report_git_blob": "15c62823023d109c5347bc74496b23ed24277864",
+      "retained_report_git_blob": "056a2a2437a4f1c4092b4480dde9e7455ce3f69e",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-11T02:39:02Z",
-        "run_id": 31452399059,
+        "verified_at": "2026-08-13T03:27:25Z",
+        "run_id": 31663572248,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -184,9 +184,9 @@
       "postgres_major_version": "15",
       "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
       "producer": {
-        "execution_commit": "2a518982c7acc19abf4f95828d761322356a3776",
+        "execution_commit": "6146434f465242eefa7523f4153a56dffbb755a4",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "cec39b5158f0d688619d0b7821a5c582c8ed8cb1",
+        "branch_head_sha": "923221934be11769793f80b56b11eb6aba6fb7e4",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -194,29 +194,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": "Rust",
-        "workflow_file": ".github/workflows/ci.yml",
-        "id": 31625254574,
+        "workflow": "M5 Cancellation",
+        "workflow_file": ".github/workflows/m5-cancellation.yml",
+        "id": 31663572265,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-cancellation-campaign",
-        "id": 94210145377,
+        "id": 94333322913,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-15",
-        "id": 9152942465,
-        "digest": "sha256:29abb2df6b570fd697dcca96390d812e14c207902955b09a0e76ed4377d02f34",
-        "size_bytes": 5695
+        "id": 9167118722,
+        "digest": "sha256:8658a8ca4ad5e882b1ead1b92887de177af7e3fb63d72843c6ccb324df7ee07e",
+        "size_bytes": 5745
       },
-      "retained_report_git_blob": "1b36c84b4327e61aacd57d6b5308ac7d3ff50826",
+      "retained_report_git_blob": "8bebcb24bb0ea86ff0e209598ad712018ee82abc",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-12T18:02:54Z",
-        "run_id": 31625254574,
+        "verified_at": "2026-08-13T03:27:25Z",
+        "run_id": 31663572265,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -240,9 +240,9 @@
       "postgres_major_version": "18",
       "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
       "producer": {
-        "execution_commit": "2a518982c7acc19abf4f95828d761322356a3776",
+        "execution_commit": "6146434f465242eefa7523f4153a56dffbb755a4",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "cec39b5158f0d688619d0b7821a5c582c8ed8cb1",
+        "branch_head_sha": "923221934be11769793f80b56b11eb6aba6fb7e4",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -250,29 +250,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": "Rust",
-        "workflow_file": ".github/workflows/ci.yml",
-        "id": 31625254574,
+        "workflow": "M5 Cancellation",
+        "workflow_file": ".github/workflows/m5-cancellation.yml",
+        "id": 31663572265,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-cancellation-campaign",
-        "id": 94210145361,
+        "id": 94333322953,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-18",
-        "id": 9152938260,
-        "digest": "sha256:178d48f9cd90fadb5138b2d229a647099235ca6e034b6ede2528c9bed3a37f1f",
-        "size_bytes": 5702
+        "id": 9167120562,
+        "digest": "sha256:c03604476159b763339de6d4f2fb44b601db8839020aeef9a3ce48a7d1d87b47",
+        "size_bytes": 5755
       },
-      "retained_report_git_blob": "fecc209c5d43210c185f6220fbbbf55db45a479d",
+      "retained_report_git_blob": "5d7d48016f77e72d8f952f271c4882e1895c7817",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-12T18:02:54Z",
-        "run_id": 31625254574,
+        "verified_at": "2026-08-13T03:27:25Z",
+        "run_id": 31663572265,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
