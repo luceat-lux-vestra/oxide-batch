@@ -1629,14 +1629,15 @@ major would otherwise reconcile perfectly inside a run of another.
 ### Where it runs
 
 `postgres-15-soak-campaign` and `postgres-18-soak-campaign` in
-`.github/workflows/ci.yml`, on the two ends of the supported PostgreSQL
+`.github/workflows/m5-soak.yml`, on the two ends of the supported PostgreSQL
 `15`-`18` range, each retaining its report as a build artifact on success and
 failure alike. Failure is the case that retention exists for: what a failed
 soak needs is the resource trajectory that led to it, and a job that uploaded
 only green reports would discard exactly the evidence worth reading. The job's
 timeout is `60` minutes — higher than the other campaigns because the window is
 minutes of work rather than seconds, and still a ceiling, because a soak that
-stopped making progress must fail rather than occupy a runner.
+stopped making progress must fail rather than occupy a runner. It uses the
+explicit `ubuntu-24.04` label and `contents: read` permissions.
 
 ### Results
 
@@ -1651,25 +1652,27 @@ The retained reports are immutable CI artifacts produced from the recorded
 producer commit. The later evidence-retention commit only records those
 artifacts and their provenance.
 
-Both were produced by run `31418389250` of the `Rust` workflow — which concluded
-successfully as a whole, not merely in its soak jobs — from execution tree
-`e947dc0`, the merge commit the workflow actually checked out, off branch head
-`e999f91`. The execution tree is the provenance root and the branch head is
-recorded beside it as metadata; they are different commits and are never used
-interchangeably. `rustc 1.97.1`, Linux `x86_64` on kernel `6.17.0-1020-azure`,
-servers `15.18` and `18.4`, `4` Tokio worker threads. The command is
+Both were produced by run `31666926265` of the dedicated `M5 Soak` workflow —
+which concluded successfully as a whole — from execution tree
+`fa8245ab90473873ee1fb3a147f8c1686ee2ff41`, the pull-request merge commit the
+workflow actually checked out, off branch head
+`167d9d8708c716843b67b0b7df3e11200f809fbc`. The execution tree is the
+provenance root and the branch head is recorded beside it as metadata; they are
+different commits and are never used interchangeably. The reports record
+`rustc 1.97.1`, Linux `x86_64` on kernel `6.17.0-1020-azure`, `4` Tokio worker
+threads, and servers `15.18` and `18.4`. The command is
 `./tests/fixtures/soak/run-ci-campaign.sh <major>`, which the workflow calls and
 which runs `cargo xtask soak` — so the independent recomputation is what the
-producing job itself executed. The runs took `246` and `224` seconds. Each
-artifact's own sha256 digest was read from the GitHub API at promotion and
-matched the downloaded bytes exactly before those bytes were retained.
+producing job itself executed. Each artifact's own sha256 digest was read from
+the GitHub API at promotion, matched the downloaded archive, and the extracted
+report matched the retained bytes exactly before retention.
 
-This is the campaign's second producer run. The first, `31387759020`, was
-discarded rather than reinterpreted: F23 corrected the memory statistic's
-denominator and the workflow-closure corrections touched three closure files, so
-those reports described a campaign this tree no longer runs. No figure below is
-carried across from them, and none of their numbers was adjusted by hand to the
-new rule.
+This is the second producer run after the dedicated-workflow extraction. The
+first run's reports were invalidated rather than reinterpreted because
+`execution-contract.json` and `verify-ci-contract.sh` moved from a literal
+presence check to an exact git-blob identity binding, which changed both
+campaigns' declared closures; no figure below is carried across from them, and
+none of their numbers was adjusted by hand.
 
 The full provenance is
 [`evidence-provenance.json`](../engineering/campaigns/m5/evidence-provenance.json),
@@ -1677,12 +1680,12 @@ and `cargo xtask evidence` checks it on every CI run rather than leaving it as
 prose — including that the campaign these reports describe is still the campaign
 this tree runs. See "How retained evidence is bound" below.
 
-Every exact figure below is identical on the two matrix points. The resident
-series differ, which is the one place this campaign expects them to: it is the
-only observation that is not an integer the framework controls.
+The controlled workload and correctness figures below are identical on the two
+matrix points. Elapsed time, pool-reading count, and resident-memory series are
+runner observations and differ between points.
 
 **The window.** `32` warmup and `600` measured cycles, `632` completed, one
-sample per cycle, and `40906` and `37117` pool readings taken while the
+sample per cycle, and `37440` and `37885` pool readings taken while the
 cycles ran, none of which failed to read the gauge.
 
 **Correctness.** All fifteen obligations held in all `600` measured cycles, on
@@ -1691,12 +1694,9 @@ injected partition failed, `Failed` recorded durably, a new job execution on the
 same instance, exactly `partition-0015` re-run, `16` partitions `Completed`,
 `108` repository transactions, and a drain that joined all `4` owned tasks with
 no panic. `10744` partition executions per matrix point. No worker was still
-holding when a step returned, and peak worker occupancy never exceeded the
-budget of `4` — it reached `2` and `3` on the CI runners and `4` on the
-development host, which is a property of the host's parallelism rather than of
-the bound, and is why the campaign requires occupancy to stay within the budget
-rather than to reach it. Reaching a ceiling is the resource-bound campaign's
-obligation.
+holding when a step returned, and peak worker occupancy was `2` on both runners,
+below the configured budget of `4`. That peak is an observation of this run's
+available parallelism, not a threshold or a performance claim.
 
 **Tasks.** `4` alive at the post-warmup baseline and `4` at all `600` measured
 boundaries, on both majors. No drain left a task unjoined and none panicked, in
@@ -1712,25 +1712,11 @@ and `0` after the close, which the server reached within a millisecond.
 **Handles.** `17` at the post-warmup baseline and `17` at all `600` measured
 boundaries, on both majors.
 
-**Memory.** Resident memory grew at `13.161` KiB per cycle across warmup and
-`0.574` across the measured window on PostgreSQL 15 — a ratio of `0.044` — and
-at `14.839` and `0.474` on PostgreSQL 18, a ratio of `0.032`. Each rate is the
-window's rise over the cycle intervals it spans: `408` KiB over `31` warmup
-intervals and `344` over `599` measured ones on 15, `460` and `284` on 18. The
-rule allows `0.25` and a straight line gives exactly `1.00`, so the two sit
-`5.7` and `7.8` times inside the limit.
-
-One of them is worth stating rather than rounding past. The statistic was
-characterised over ten runs whose ratios, restated for the interval denominator,
-span `0.030` to `0.043`; PostgreSQL 15's `0.0436` here is marginally *above* the
-top of that range. It is a new observation extending a ten-run sample, not a
-regression — the margin to the limit is still `5.7×`, and PostgreSQL 18 sits
-comfortably inside — but the characterised range in the scope document was not
-widened to absorb it, because that document is inside the semantic closure and
-editing it would invalidate the evidence being retained. The next campaign that
-touches the closure for its own reasons should fold these two runs into the
-characterisation. Recording the exceedance is the point: the F20/F21/F22
-sequence is a record of statistics whose healthy range was discovered late.
+**Memory.** The retained reports record warmup/measured resident-memory rates of
+`15.096774`/`0.467445` KiB per cycle on PostgreSQL 15 and
+`13.419354`/`0.520868` on PostgreSQL 18. Both satisfy the existing
+warmup-relative decay rule of `0.25`. These are observational run results; no
+numeric performance or memory budget is promoted by this campaign.
 
 What that establishes is convergence and not the absence of a leak. The rule
 compares a rate against a rate, so a leak much smaller than the warmup settling
@@ -1838,17 +1824,15 @@ execution contract, and the verifier itself. Two of those were learned the hard
 way: an earlier closure was assembled from the code the campaign obviously
 touches and omitted every input that reaches it indirectly.
 
-The **soak execution contract** covers how CI runs the campaign — the matrix,
-the database, the command, the environment — and lives in
+The **soak execution contract** covers how CI runs the campaign — the workflow
+path and name, triggers, permissions, runner, matrix, database, command,
+environment, timeout, report, and artifact policy — and lives in
 [`execution-contract.json`](../../tests/fixtures/soak/execution-contract.json)
-and `run-ci-campaign.sh` beside the campaign. `.github/workflows/ci.yml` is in
-the closure with them. That is deliberately blunt, and the bluntness has a cost
-worth stating plainly: an unrelated CI job now invalidates retained soak
-evidence and forces a rerun. The alternative was to trust that the contract
-file, the script and the workflow agree with each other, and agreement
-maintained by review is not a mechanism. Extracting the soak job into its own
-workflow, so that only that file sits in the closure, is the right fix and is
-left to its own change.
+and `run-ci-campaign.sh` beside the campaign. The closure also includes
+`verify-ci-contract.sh` and `.github/workflows/m5-soak.yml`; the checker fails
+closed before execution if the important workflow values drift from the
+contract. An unrelated CI job in `.github/workflows/ci.yml` is outside the
+closure and does not invalidate retained soak evidence.
 
 A retained report cannot be produced by the commit that contains it — the
 artifact records the tree it ran on and the commit storing it comes after — so
@@ -2238,15 +2222,17 @@ the two cannot drift apart in either direction.
 
 ### Matrix and CI execution
 
-`postgres-15-cancellation-campaign` and `postgres-18-cancellation-campaign` run
-the two ends of the supported range, each provisioning its own server and
-calling
+`postgres-15-cancellation-campaign` and `postgres-18-cancellation-campaign` in
+`.github/workflows/m5-cancellation.yml` run the two ends of the supported
+range, each provisioning its own server and calling
 [`run-ci-campaign.sh`](../../tests/fixtures/cancellation/run-ci-campaign.sh);
 how the campaign is executed lives in
 [`execution-contract.json`](../../tests/fixtures/cancellation/execution-contract.json)
-beside the campaign rather than in the workflow. Reports are retained on failure
-as well as success, because a failed cancellation campaign is mostly worth
-reading for the latency and unjoined-count detail that led there.
+beside the campaign rather than in the workflow. The workflow uses the explicit
+`ubuntu-24.04` label, `contents: read` permissions, and the contract checker.
+Reports are retained on failure as well as success, because a failed
+cancellation campaign is mostly worth reading for the latency and
+unjoined-count detail that led there.
 
 Every report names the PostgreSQL major it ran against, and the runner requires
 it to match the matrix point the run declares. A matrix point is invisible in a
@@ -2256,20 +2242,22 @@ reconciles perfectly inside a run of another.
 ### Results
 
 Both matrix points passed with no violations. Every figure below is an
-observation from workflow run
-[31452399059](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/31452399059),
-debug profile, on shared GitHub-hosted runners. **Nothing is asserted against
-any of them**, and the spread discussed under F25 and F26 below is the reason
-that matters rather than a caveat on it.
+observation from dedicated workflow run
+[31666926214](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/31666926214),
+debug profile, on shared GitHub-hosted runners. The run executed tree
+`fa8245ab90473873ee1fb3a147f8c1686ee2ff41` from branch head
+`167d9d8708c716843b67b0b7df3e11200f809fbc`; **nothing is asserted against any
+of these measurements**, and the spread discussed under F25 and F26 below is
+the reason that matters rather than a caveat on it.
 
 | Observation | PostgreSQL 15 | PostgreSQL 18 |
 | --- | --- | --- |
 | Server | `15.18 (Debian 15.18-1.pgdg13+1)` | `18.4 (Debian 18.4-1.pgdg13+1)` |
-| Request to intake stop | `9 257 µs` | `10 539 µs` |
-| Request to durable terminal | `478 900 µs` | `491 779 µs` |
+| Request to intake stop | `112 173 µs` | `10 524 µs` |
+| Request to durable terminal | `534 652 µs` | `495 207 µs` |
 | Ordering holds | yes | yes |
 | Durable terminal | `STOPPED` / exit `STOPPED` | `STOPPED` / exit `STOPPED` |
-| Committed partitions, before → after | `1` → `2` | `1` → `2` |
+| Committed partitions, before → after | `1` → `4` | `1` → `2` |
 | Workers outliving the attempt | `0` | `0` |
 
 Request-to-durable-terminal separated by phase, with the process intake path
@@ -2277,9 +2265,9 @@ beside it:
 
 | Phase | Mechanism | Intake stop, 15 | Terminal, 15 | Intake stop, 18 | Terminal, 18 |
 | --- | --- | --- | --- | --- | --- |
-| async | tasklet awaiting the cooperative token | `9 392 µs` | `446 430 µs` | `9 132 µs` | `498 433 µs` |
-| blocking | `BlockingTaskletAdapter` | `9 164 µs` | `564 004 µs` | `15 409 µs` | `508 166 µs` |
-| transaction | tasklet holding an open repository unit | `113 268 µs` | `551 483 µs` | `9 102 µs` | `482 037 µs` |
+| async | tasklet awaiting the cooperative token | `34 090 µs` | `519 707 µs` | `91 116 µs` | `575 816 µs` |
+| blocking | `BlockingTaskletAdapter` | `37 790 µs` | `994 858 µs` | `92 986 µs` | `933 163 µs` |
+| transaction | tasklet holding an open repository unit | `99 431 µs` | `1 996 570 µs` | `98 232 µs` | `614 821 µs` |
 | process intake | `request_shutdown` then `ensure_accepting` | `2 µs` | — | `2 µs` | — |
 
 Unjoined counts. Every declared deadline was run both ways; the completing
@@ -2288,19 +2276,20 @@ is what the coordinator still owned when the deadline won.
 
 | Deadline | Held | Completing (unjoined / cost, 15) | Expiring (15) | Completing (18) | Expiring (18) |
 | --- | --- | --- | --- | --- | --- |
-| `minimum`, `1 000 ms` | `3` | `0` / `70 237 µs` | `3` | `0` / `80 354 µs` | `3` |
-| `intermediate`, `5 000 ms` | `5` | `0` / `78 349 µs` | `5` | `0` / `70 117 µs` | `5` |
-| `default`, `30 000 ms` | `7` | `0` / `5 796 µs` | `7` | `0` / `5 853 µs` | `7` |
-| escalation | `4` | — | `4`, in `41 µs` | — | `4`, in `48 µs` |
+| `minimum`, `1 000 ms` | `3` | `0` / `56 411 µs` | `3` | `0` / `83 563 µs` | `3` |
+| `intermediate`, `5 000 ms` | `5` | `0` / `59 533 µs` | `5` | `0` / `59 984 µs` | `5` |
+| `default`, `30 000 ms` | `7` | `0` / `3 926 µs` | `7` | `0` / `7 067 µs` | `7` |
+| escalation | `4` | — | `4`, in `39 µs` | — | `4`, in `50 µs` |
 
 Every expiring count is attributed across the three observed phases and sums to
 the total: `Tasklet`/`ChunkReadProcess`/`Transaction` of `1`/`1`/`1`, `2`/`2`/`1`,
 and `3`/`2`/`2` respectively, identically on both majors. Every completing drain
 joined every owned task and reported nothing unjoined.
 
-Restart after cancellation, both majors: the restart was a new execution of the
-same instance, re-ran `62` partitions, re-ran **none** of the partitions the
-cancelled attempt had committed, and reached `COMPLETED`.
+Restart after cancellation: the restart was a new execution of the same
+instance on both majors, re-ran `63` partitions on PostgreSQL 15 and `62` on
+PostgreSQL 18, re-ran **none** of the partitions the cancelled attempt had
+committed on either major, and reached `COMPLETED` on both.
 
 ### Correctness assertions
 
@@ -2342,14 +2331,15 @@ the async, blocking, and transaction phases separately, and this campaign
 measures them separately — but it measures each one *once* per matrix point, and
 the retained numbers show that is not enough to order them.
 
-On PostgreSQL 15 the blocking phase reached its terminal at `564 ms` against
-`446 ms` for async, which looks like a clear effect and has a ready-made
-explanation: `BlockingTaskletAdapter`'s synchronous body runs to completion once
-started and the adapter reports the stop afterwards, which is the accepted
-late-stop limitation stated in its own documentation. On PostgreSQL 18 the same
-three phases came in at `498`, `508`, and `482 ms` — a spread of `5 %`, with the
-phases in a different order. The explanation is still true and the data does not
-demonstrate it.
+On PostgreSQL 15 the transaction phase reached its terminal at `1 997 ms`,
+past blocking's `995 ms` and async's `520 ms`; PostgreSQL 18 measured `576`,
+`933`, and `615 ms` for async, blocking, and transaction — blocking highest
+there, transaction highest on 15. `BlockingTaskletAdapter`'s synchronous body
+runs to completion once started and the adapter reports the stop afterwards,
+which is the accepted late-stop limitation stated in its own documentation.
+The single run measures the phases but does not establish a general ordering
+or budget — this pair of runs disagreeing on which phase is slowest is exactly
+that point.
 
 An earlier draft of this section reported the phase difference as a ratio, from
 a development run where blocking came in at `2.7x` the async phase. That number
@@ -2365,14 +2355,13 @@ cannot be read as a typical value.** The configured stop poll interval bounds ho
 long the owning runtime may go without re-reading the durable stop request;
 where inside that window an operator's request happens to land is arbitrary. The
 campaign configures the accepted minimum of `100 ms`, and the retained
-observations range from `9 102 µs` to `113 268 µs` — the full width of the
-interval, across phases of the same run on the same server, with the extreme
-being the transaction phase on PostgreSQL 15 while the other five readings sit
-near `10 ms`.
+observations range from `34 090 µs` to `99 431 µs` across phases and matrix
+points. That spread is within the configured polling window and is an offset of
+where the request lands, not a representative latency.
 
 That spread is the expected behaviour of a poll offset and not a defect, and it
-is recorded because a reader given the headline `9 257 µs` would reasonably take
-it for a latency the framework achieves. It is not. The honest summary is that
+is recorded because a reader given one headline value would reasonably take it
+for a latency the framework achieves. It is not. The honest summary is that
 request-to-intake-stop on the durable operator path is bounded by the configured
 poll interval and distributed within it, and both that interval and the accepted
 default of `1 s` are recorded in every report so the figure can be read against
@@ -2380,8 +2369,9 @@ either.
 
 **F27. The two intake paths differ by three orders of magnitude and must not be
 reported as one number.** Process intake stop — `request_shutdown` followed by
-`ensure_accepting` — completed in `2 µs` on both majors, against `9 257 µs` and
-`10 539 µs` for the durable operator path. The first is an atomic state
+`ensure_accepting` — completed in `2 µs` on both PostgreSQL 15 and
+PostgreSQL 18, against `112 173 µs` and `10 524 µs` for the durable operator
+path. The first is an atomic state
 transition in memory; the second is a committed transaction observed at a poll
 interval. They are both truthfully called "request to intake stop", and a report
 that averaged them, or quoted whichever suited, would be describing neither.
@@ -2390,18 +2380,12 @@ They are recorded as separate observations for that reason.
 **F28. Adding this campaign invalidated the retained soak evidence, and that is
 the closure mechanism working.** Registering `cargo xtask cancellation` in
 `xtask/src/main.rs` and adding the two CI jobs to `.github/workflows/ci.yml`
-changed two paths inside the *soak* campaign's declared semantic closure, so
-`cargo xtask evidence` correctly refused the retained soak reports: they
-describe a campaign this tree no longer runs. The soak was re-run in the same
-workflow run and its evidence re-retained.
-
-The cost is real and was accepted knowingly when the soak declared the workflow
-file as one bound object. Its own closure document anticipates this case in as
-many words, and names the fix — extracting each campaign into its own workflow
-so that only that file is in the closure — as belonging to its own change rather
-than to whichever campaign happens to trigger it next. This is the second
-campaign to pay the cost, which is the argument for doing it; it is still not
-this PR's change to make.
+changed two paths inside the *soak* campaign's then-declared semantic closure,
+so `cargo xtask evidence` correctly refused the retained soak reports: they
+described a campaign this tree no longer ran. The soak was re-run in the same
+workflow run and its evidence re-retained. That historical cost is why the
+dedicated workflow extraction below is evidence architecture work rather than
+mere YAML rearrangement.
 
 **F29. A campaign whose workload finishes before its cancellation lands measures
 nothing, and reports it as a failure of the framework.** The first declared
@@ -2417,6 +2401,18 @@ workload is now derived from what the campaign must be able to do rather than
 chosen for convenience — `64` partitions of `500 ms`, about eight seconds of
 work — and the derivation is recorded in the scope so that a later change that
 shortens it has to argue against the reasoning rather than merely pass.
+
+**F30. Dedicated campaign workflows close the historical CI-coupling debt.**
+Soak evidence now binds `.github/workflows/m5-soak.yml` and cancellation
+evidence binds `.github/workflows/m5-cancellation.yml`; neither closure binds
+`.github/workflows/ci.yml`. The dedicated workflows preserve the existing
+PostgreSQL 15/18 matrices, debug profile, commands, report paths, artifact
+names, failure retention, resource assumptions, and 60/20 minute ceilings.
+Each workflow checks those values against its execution contract before running,
+so a drift fails closed and requires new evidence instead of silently changing
+what a retained report means. Changing an unrelated quality/build job in
+`ci.yml` therefore leaves both campaign closures unchanged, while changing one
+dedicated workflow invalidates only that campaign's retained evidence.
 
 ### What this campaign does not establish
 

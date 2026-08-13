@@ -1,7 +1,7 @@
 {
   "document": "The executable closure of the M5 PostgreSQL soak campaign",
   "note": "The single source of truth for what the soak campaign is made of. The producer reads it to record the object identity of every path at the tree it actually ran on; the verifier reads it to require those identities to still hold. Neither restates the list, because a list kept in two places is a list that will disagree \u2014 the first version of this closure lived in the provenance document and was assembled by hand from the code the campaign obviously touches, which is how it came to omit the resolved dependency graph, the schema the run migrates to, and the compiler it is built with.",
-  "rule": "A change to anything here changes what the evidence is evidence of, so retained reports produced before the change may not be promoted after it: the campaign has to be run again. A change to anything not here \u2014 documentation, the changelog, unrelated xtask commands \u2014 leaves retained evidence valid. Note that `.github/workflows/ci.yml` is bound whole, as one object: a change anywhere in that file, including to a job the soak has nothing to do with, invalidates retained evidence and forces a rerun.",
+  "rule": "A change to anything here changes what the evidence is evidence of, so retained reports produced before the change may not be promoted after it: the campaign has to be run again. A change to anything not here \u2014 documentation, the changelog, unrelated xtask commands, or unrelated jobs in `.github/workflows/ci.yml` \u2014 leaves retained evidence valid. The dedicated `.github/workflows/m5-soak.yml` is bound as one object, so changes to the soak provisioning or call layer invalidate soak evidence without binding the rest of CI.",
   "categories": {
     "framework source": {
       "why": "The code under test. Its behaviour is what every observation in the report is about.",
@@ -63,11 +63,12 @@
       ]
     },
     "soak execution contract": {
-      "why": "How CI actually runs the campaign: the supported matrix, the database it is given, the command, and the environment. The workflow file is included with them, which is deliberately blunt \u2014 an unrelated CI job now invalidates retained evidence. The alternative was to trust that the contract file, the script and the workflow agree, and agreement maintained by review is not a mechanism. Extracting the soak job into its own workflow so that only that file is in the closure is the right fix and is left to its own change.",
+      "why": "How CI actually runs the campaign: the supported matrix, the database it is given, the command, and the environment. The dedicated workflow is included with them, and its contract-check step fails closed if the workflow drifts from the contract. An unrelated CI job in ci.yml does not invalidate retained evidence, while any change to the dedicated soak workflow does.",
       "paths": [
         "tests/fixtures/soak/execution-contract.json",
         "tests/fixtures/soak/run-ci-campaign.sh",
-        ".github/workflows/ci.yml"
+        "tests/fixtures/soak/verify-ci-contract.sh",
+        ".github/workflows/m5-soak.yml"
       ]
     },
     "independent verifier": {

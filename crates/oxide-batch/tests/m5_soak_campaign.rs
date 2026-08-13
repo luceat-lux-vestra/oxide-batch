@@ -44,7 +44,11 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::fs;
-use std::path::PathBuf;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
@@ -380,6 +384,39 @@ fn the_m4_soak_measurement_is_retained_rather_than_replaced() -> Result<(), Box<
 }
 
 #[test]
+fn the_semantic_closure_covers_the_dedicated_workflow_contract() -> Result<(), Box<dyn Error>> {
+    let closure = read_json("tests/fixtures/soak/campaign-semantics.json")?;
+    let paths = closure
+        .get("categories")
+        .and_then(Value::as_object)
+        .ok_or_else(|| Failure("the closure declares no categories".to_owned()))?
+        .values()
+        .filter_map(|category| category.get("paths").and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+
+    for required in [
+        "tests/fixtures/soak/execution-contract.json",
+        "tests/fixtures/soak/run-ci-campaign.sh",
+        "tests/fixtures/soak/verify-ci-contract.sh",
+        ".github/workflows/m5-soak.yml",
+    ] {
+        assert!(
+            paths.contains(&required),
+            "{required} is not in the campaign's semantic closure, so a change to it would leave \
+             retained evidence looking valid when it is evidence of something else",
+        );
+    }
+
+    assert!(
+        !paths.contains(&".github/workflows/ci.yml"),
+        "ci.yml is unrelated to the dedicated soak campaign and must not invalidate its evidence",
+    );
+    Ok(())
+}
+
+#[test]
 fn the_campaign_does_not_claim_the_neighbouring_campaigns() -> Result<(), Box<dyn Error>> {
     let scope = Scope::read()?;
 
@@ -561,6 +598,11 @@ fn read_document(relative: &str) -> Result<String, Box<dyn Error>> {
     Ok(fs::read_to_string(workspace_root().join(relative))?)
 }
 
+/// Reads and parses one JSON document relative to the workspace root.
+fn read_json(relative: &str) -> Result<Value, Box<dyn Error>> {
+    Ok(serde_json::from_str(&read_document(relative)?)?)
+}
+
 /// Reads one required array field.
 fn array<'a>(document: &'a Value, name: &str) -> Result<&'a Vec<Value>, Box<dyn Error>> {
     document.get(name).and_then(Value::as_array).ok_or_else(|| {
@@ -596,3 +638,205 @@ impl fmt::Display for Failure {
 }
 
 impl Error for Failure {}
+
+// ---------------------------------------------------------------------
+// Contract-check exactness. `verify-ci-contract.sh` binds two files —
+// `.github/workflows/m5-soak.yml` and `run-ci-campaign.sh` — by exact git
+// blob identity, not by the literal presence checks alone. These tests
+// drive the real script against an isolated sandbox copy of those files, so
+// a mutation proves the checker's actual behaviour rather than one helper's
+// return value, and never touches the repository working tree.
+// ---------------------------------------------------------------------
+
+#[test]
+fn contract_check_passes_on_the_canonical_workflow_and_script() -> Result<(), Box<dyn Error>> {
+    assert!(run_soak_contract_check(|_sandbox| Ok(()))?);
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_an_added_trigger() -> Result<(), Box<dyn Error>> {
+    let passed = run_soak_contract_check(|sandbox| {
+        insert_after(
+            &sandbox.join(".github/workflows/m5-soak.yml"),
+            "  workflow_dispatch:\n",
+            "  schedule:\n    - cron: '0 0 * * *'\n",
+        )
+    })?;
+    assert!(
+        !passed,
+        "an added trigger must fail the contract check even though every expected trigger is \
+         still present",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_a_job_level_write_permission() -> Result<(), Box<dyn Error>> {
+    let passed = run_soak_contract_check(|sandbox| {
+        insert_after(
+            &sandbox.join(".github/workflows/m5-soak.yml"),
+            "runs-on: ubuntu-24.04\n",
+            "    permissions:\n      contents: write\n",
+        )
+    })?;
+    assert!(
+        !passed,
+        "a job-level permission override must fail even though the workflow-level contents: \
+         read line is still present",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_a_widened_matrix() -> Result<(), Box<dyn Error>> {
+    let passed = run_soak_contract_check(|sandbox| {
+        insert_after(
+            &sandbox.join(".github/workflows/m5-soak.yml"),
+            "postgres: [\"15\", \"18\"]\n",
+            "        include:\n          - postgres: \"16\"\n",
+        )
+    })?;
+    assert!(
+        !passed,
+        "an additional matrix execution point must fail even though the literal \
+         postgres: [\"15\", \"18\"] declaration is still present",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_an_appended_script_command() -> Result<(), Box<dyn Error>> {
+    let passed = run_soak_contract_check(|sandbox| {
+        append_line(
+            &sandbox.join("tests/fixtures/soak/run-ci-campaign.sh"),
+            "echo \"extra command\"",
+        )
+    })?;
+    assert!(
+        !passed,
+        "an appended command must fail even though the expected cargo command is still present",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_a_harmless_comment_byte() -> Result<(), Box<dyn Error>> {
+    let passed = run_soak_contract_check(|sandbox| {
+        append_line(
+            &sandbox.join(".github/workflows/m5-soak.yml"),
+            "# harmless comment",
+        )
+    })?;
+    assert!(
+        !passed,
+        "exact git blob identity, not heuristic literal parsing, is the retained-evidence \
+         boundary: even a harmless trailing comment must fail",
+    );
+    Ok(())
+}
+
+/// Copies the real workflow, script, and contract into an isolated sandbox,
+/// applies `mutate` to that sandbox, then runs the real `verify-ci-contract.sh`
+/// against the (possibly mutated) copy and reports whether it exited zero.
+///
+/// The sandbox mirrors the relative layout the script assumes
+/// (`tests/fixtures/soak/execution-contract.json` beside its working
+/// directory), so the check runs exactly as CI runs it, and `mutate` can
+/// never affect the real repository files.
+fn run_soak_contract_check(
+    mutate: impl FnOnce(&Path) -> Result<(), Box<dyn Error>>,
+) -> Result<bool, Box<dyn Error>> {
+    let root = workspace_root();
+    let sandbox = Sandbox::new("soak-contract-check")?;
+
+    let workflow_dir = sandbox.path().join(".github/workflows");
+    fs::create_dir_all(&workflow_dir)?;
+    fs::copy(
+        root.join(".github/workflows/m5-soak.yml"),
+        workflow_dir.join("m5-soak.yml"),
+    )?;
+
+    let fixture_dir = sandbox.path().join("tests/fixtures/soak");
+    fs::create_dir_all(&fixture_dir)?;
+    for name in [
+        "execution-contract.json",
+        "run-ci-campaign.sh",
+        "verify-ci-contract.sh",
+    ] {
+        fs::copy(
+            root.join("tests/fixtures/soak").join(name),
+            fixture_dir.join(name),
+        )?;
+    }
+    let checker = fixture_dir.join("verify-ci-contract.sh");
+    let mut permissions = fs::metadata(&checker)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&checker, permissions)?;
+
+    mutate(sandbox.path())?;
+
+    let status = Command::new(&checker)
+        .arg(".github/workflows/m5-soak.yml")
+        .current_dir(sandbox.path())
+        .status()?;
+    Ok(status.success())
+}
+
+/// Inserts `insertion` immediately after the first occurrence of `anchor`.
+fn insert_after(path: &Path, anchor: &str, insertion: &str) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(path)?;
+    let position = contents.find(anchor).ok_or_else(|| {
+        Box::new(Failure(format!(
+            "no {anchor:?} anchor found in {}",
+            path.display()
+        ))) as Box<dyn Error>
+    })?;
+    let insert_at = position + anchor.len();
+    let mut mutated = String::with_capacity(contents.len() + insertion.len());
+    mutated.push_str(&contents[..insert_at]);
+    mutated.push_str(insertion);
+    mutated.push_str(&contents[insert_at..]);
+    fs::write(path, mutated)?;
+    Ok(())
+}
+
+/// Appends one line to a file.
+fn append_line(path: &Path, line: &str) -> Result<(), Box<dyn Error>> {
+    let mut contents = fs::read_to_string(path)?;
+    contents.push('\n');
+    contents.push_str(line);
+    contents.push('\n');
+    fs::write(path, contents)?;
+    Ok(())
+}
+
+/// A uniquely named temporary directory, removed when it goes out of scope
+/// regardless of how the test exits.
+struct Sandbox(PathBuf);
+
+impl Sandbox {
+    fn new(label: &str) -> Result<Self, Box<dyn Error>> {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos());
+        let dir = std::env::temp_dir().join(format!(
+            "oxide-batch-{label}-{}-{unique}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir)?;
+        Ok(Self(dir))
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Sandbox {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}

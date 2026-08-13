@@ -74,20 +74,20 @@ campaign's evidence against the other's would pass while checking the wrong
 thing, and a matrix point covered once by each of two campaigns is not a matrix
 point covered twice.
 
-How CI executes each campaign lives in its own `execution-contract.json` and
-`run-ci-campaign.sh`, inside that campaign's closure, with the workflow only
-calling them. That keeps the execution semantics reviewable in one place beside
-the campaign. It does not narrow the closure: `.github/workflows/ci.yml` is
-bound whole by both, so an unrelated CI job invalidates retained evidence too.
-The bluntness is deliberate — agreement between the workflow, the contract and
-the script is a mechanism this way and a review habit otherwise.
+How CI executes each campaign lives in its own `execution-contract.json`,
+`run-ci-campaign.sh`, and contract-check script, inside that campaign's closure.
+The dedicated workflow only provisions the runner and database, verifies the
+contract, calls the script, and retains the report. Soak is owned by
+`.github/workflows/m5-soak.yml`; cancellation is owned by
+`.github/workflows/m5-cancellation.yml`. An unrelated quality or build change
+in `.github/workflows/ci.yml` therefore does not invalidate either campaign's
+retained evidence, while a change to the relevant dedicated workflow does.
 
-Adding the cancellation campaign is the second time this has been paid: its two
-CI jobs and its xtask command changed paths inside the soak's closure and
-invalidated the retained soak evidence, which was re-run and re-retained in the
-same workflow run. Extracting each campaign into its own workflow, so that only
-that file is in its closure, is the right fix and is still left to its own
-change rather than to whichever campaign triggers the cost next.
+The contract-check scripts compare the important workflow values — triggers,
+permissions, runner, PostgreSQL matrix and provisioning, timeout, command,
+report path, artifact name, and failure-retention policy — against the JSON
+contract and fail closed before the campaign runs. This keeps the workflow
+boundary narrow without relaxing the evidence verifier.
 
 The permanent verifier is offline: no commit resolution, no fetch, nothing but
 the retained report, the closure and the working tree. The one-time remote check
