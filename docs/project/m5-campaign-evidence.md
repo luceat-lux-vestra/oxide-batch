@@ -2592,33 +2592,29 @@ no duration below is compared across runs as if the hardware were held fixed.
 
 Both matrix points passed with no violations. Every figure below is an
 observation from dedicated workflow run
-[31692527295](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/31692527295),
+[31706269943](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/31706269943),
 release profile, on shared GitHub-hosted runners. The run executed tree
-`da31ac8306ccee9ed33b263028ebd1cedf09cb62` from branch head
-`23a967e68a003e969de02054c4d4b0dcd24cd737`; **nothing is asserted against any
+`513d235d12d2a58dc1955eb4cbe49662d34df69b` from branch head
+`9616432f343977dd86dd26f610edc2afb16275ac`; **nothing is asserted against any
 of these measurements.** This replaces evidence originally retained from run
-`31677650719`: P-010's worker-occupancy and resource-instrumentation fix
-described under F31 and F33 below changed the meaning of several of these
-figures, so the earlier run's evidence became stale by design and is not
-carried forward.
-
-<!-- NOTE: the P-010 denominator correction and F34/F35 hardening below (this
-same commit) change the Performance semantic closure again. This paragraph,
-this table, and F31/F33's cross-references still describe run 31692527295 and
-must be updated to the fresh run's identity and figures once that run exists,
-before this change is committed as evidence-final. -->
+`31677650719`, and then from run `31692527295`: the P-010 denominator
+correction (F34) and the pool-ceiling/business-row/canonical-measurement
+hardening (F35), together with the earlier worker-occupancy and
+resource-instrumentation fix (F31/F33), changed both the wording being
+measured against and the meaning of several figures, so earlier runs'
+evidence became stale by design and is not carried forward.
 
 P-001, in-memory, independent of the PostgreSQL major:
 
 | Observation | PostgreSQL 15 | PostgreSQL 18 |
 | --- | --- | --- |
 | Warmup / measured attempts | `16` / `256` | `16` / `256` |
-| End-to-end duration (mean) | `1 005 µs` | `1 105 µs` |
-| Job overhead (mean) | `507 µs` | `558 µs` |
-| Step overhead (mean) | `497 µs` | `546 µs` |
+| End-to-end duration (mean) | `989 µs` | `1 015 µs` |
+| Job overhead (mean) | `500 µs` | `512 µs` |
+| Step overhead (mean) | `488 µs` | `503 µs` |
 | Repository round trips / attempt | `6` | `6` |
 | Distinct execution identifiers | `272` / `272` attempts | `272` / `272` attempts |
-| Observed peak resident memory | `7 680 KiB` | `7 716 KiB` |
+| Observed peak resident memory | `7 548 KiB` | `7 688 KiB` |
 
 P-003, the shared reference workload, 10 000 rows, seed `102`, chunk size
 `100`:
@@ -2626,35 +2622,50 @@ P-003, the shared reference workload, 10 000 rows, seed `102`, chunk size
 | Observation | PostgreSQL 15 | PostgreSQL 18 |
 | --- | --- | --- |
 | Server | `15.18 (Debian 15.18-1.pgdg13+1)` | `18.4 (Debian 18.4-1.pgdg13+1)` |
-| Items / second | `4 747` | `4 815` |
-| Chunks / second | `47.47` | `48.15` |
-| End-to-end duration | `2 106 668 µs` | `2 076 731 µs` |
-| Per-item overhead | `210.7 µs` | `207.7 µs` |
-| Per-chunk overhead | `21 067 µs` | `20 767 µs` |
+| Items / second | `6 294` | `5 094` |
+| Chunks / second | `62.94` | `50.94` |
+| End-to-end duration | `1 588 729 µs` | `1 963 248 µs` |
+| Per-item overhead | `158.9 µs` | `196.3 µs` |
+| Per-chunk overhead | `15 887 µs` | `19 632 µs` |
 | Source digest = written digest | yes | yes |
 | Written row count | `10 000` | `10 000` |
 | Delivery mode | `AtomicSameResource` | `AtomicSameResource` |
 | Configured connection ceiling / observed peak | `2` / `2` | `2` / `2` |
-| Observed peak resident memory | `9 764 KiB` | `9 560 KiB` |
+| Observed peak resident memory | `9 684 KiB` | `9 724 KiB` |
 
 P-010, 100 partitions per point, three worker points, each worker awaiting a
-fixed `750 ms` deterministic dwell before its business write (see F33):
+fixed `750 ms` deterministic dwell before its `PostgreSQL` business write
+(see F33):
 
 | Workers | Pool budget | Wall time, 15 | Partitions/s, 15 | Efficiency, 15 | Wall time, 18 | Partitions/s, 18 | Efficiency, 18 | Peak active workers (15 / 18) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `1` | `2` | `76 548 727 µs` | `1.31` | baseline | `76 502 037 µs` | `1.31` | baseline | `1` / `1` |
-| `10` | `11` | `7 852 420 µs` | `12.73` | `0.975` | `7 878 690 µs` | `12.69` | `0.971` | `10` / `10` |
-| `64` | `65` | `2 059 561 µs` | `48.55` | `0.581` | `2 069 642 µs` | `48.32` | `0.578` | `64` / `64` |
+| `1` | `2` | `76 277 493 µs` | `1.31` | baseline | `76 442 734 µs` | `1.31` | baseline | `1` / `1` |
+| `10` | `11` | `7 812 011 µs` | `12.80` | `0.976` | `7 871 009 µs` | `12.70` | `0.971` | `10` / `10` |
+| `64` | `65` | `2 026 986 µs` | `49.33` | `0.588` | `2 062 263 µs` | `48.49` | `0.579` | `64` / `64` |
 
 Observed peak active workers exactly matched the configured worker point at
 every point on both majors — `1`, `10`, and `64` — which is the fail-closed
-concurrency proof F33 adds. Observed peak connections reached `66` on both
-majors, against a configured ceiling of `73` (framework pool at the largest
-worker point plus the constant 8-connection business pool, itself well inside
-the image default of `100`). Observed peak owned tasks reached `64`, matching
-the configured budget exactly, on both majors — read from the same occupancy
-gauge that proves the concurrency claim above, not copied from the configured
-constant.
+concurrency proof F31/F35 requires as a committed obligation, not merely a
+producer-local check. Observed peak connections reached `66` on both majors,
+against a configured ceiling of `73` (framework pool at the largest worker
+point plus the constant 8-connection business pool, itself well inside the
+image default of `100`) — this is now its own obligation, distinct from the
+pool-ceiling admission proof (F35), which separately confirmed a pool one
+connection short of the derived budget (`4` configured against a derived
+budget of `5`) was refused before any worker started, with zero workers
+observed during that refused attempt, on both majors. Observed peak owned
+tasks reached `64`, matching the configured budget exactly, on both majors —
+read from the same occupancy gauge that proves the concurrency claim above,
+not copied from the configured constant.
+
+The business row set F35 requires now confirms the business half of P-010's
+declared work per partition, not only the framework's durable metadata: every
+worker point wrote exactly the fixed 100-key partition set, and the sha256
+digest over the sorted key set was identical across all three points — and
+identical between the two PostgreSQL majors,
+`4ce4c7da00a706ce7fdd34fe56fa5058e59105aed99b6651a48886f04b56a77b` — which is
+expected, since the partition-key set is fixed by the workload rather than
+derived from anything major-specific.
 
 ### Correctness assertions
 

@@ -303,9 +303,9 @@
       "postgres_major_version": "15",
       "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
       "producer": {
-        "execution_commit": "da31ac8306ccee9ed33b263028ebd1cedf09cb62",
+        "execution_commit": "513d235d12d2a58dc1955eb4cbe49662d34df69b",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "23a967e68a003e969de02054c4d4b0dcd24cd737",
+        "branch_head_sha": "9616432f343977dd86dd26f610edc2afb16275ac",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -315,27 +315,27 @@
       "workflow_run": {
         "workflow": "M5 Performance",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 31692527295,
+        "id": 31706269943,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-performance-campaign",
-        "id": 94422807380,
+        "id": 94467507505,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-15",
-        "id": 9178069044,
-        "digest": "sha256:1896851702c66e0d4262018fbb0c2c97f869606572947d94d257372860cb70dd",
-        "size_bytes": 6151
+        "id": 9183416793,
+        "digest": "sha256:495a5d0963cae8debc60def39421e4aab470479e1a6146116c72510ad0c6d969",
+        "size_bytes": 6481
       },
-      "retained_report_git_blob": "bf1f0fc741bd4a454f15d624d250ac4603378caa",
+      "retained_report_git_blob": "7871ceb5327f526c240925fad61dc987cdd0bbb4",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-13T11:18:47Z",
-        "run_id": 31692527295,
+        "verified_at": "2026-08-13T13:56:21Z",
+        "run_id": 31706269943,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -343,7 +343,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes evidence originally promoted from run 31677650719: the P-010 worker-occupancy and resource-instrumentation fix changed the meaning of several retained measurements, so the earlier evidence became stale by design; see docs/project/m5-campaign-evidence.md."
+        "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes evidence originally promoted from run 31692527295: the P-010 enlistment-wording denominator correction and the pool-ceiling/business-row/canonical-measurement hardening (F34/F35) changed the meaning of several retained fields, so the earlier evidence became stale by design; see docs/project/m5-campaign-evidence.md."
       }
     },
     {
@@ -358,9 +358,9 @@
       "postgres_major_version": "18",
       "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
       "producer": {
-        "execution_commit": "da31ac8306ccee9ed33b263028ebd1cedf09cb62",
+        "execution_commit": "513d235d12d2a58dc1955eb4cbe49662d34df69b",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "23a967e68a003e969de02054c4d4b0dcd24cd737",
+        "branch_head_sha": "9616432f343977dd86dd26f610edc2afb16275ac",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -370,27 +370,27 @@
       "workflow_run": {
         "workflow": "M5 Performance",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 31692527295,
+        "id": 31706269943,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-performance-campaign",
-        "id": 94422807426,
+        "id": 94467507463,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-18",
-        "id": 9178068905,
-        "digest": "sha256:d3df5a5c69ea247b4a03edd667738615bf2466b5c8b38b49eedb3bef24393c69",
-        "size_bytes": 6158
+        "id": 9183418761,
+        "digest": "sha256:8f7bfedd57eda44f127b09d9f2aea9de2eea530d8fa7de1b59356de722dbcf43",
+        "size_bytes": 6472
       },
-      "retained_report_git_blob": "1b9312188500244fee713899fd271f5feabac4af",
+      "retained_report_git_blob": "89d44050e0f5a93a672a7698d37ea3f04c456f76",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-13T11:18:47Z",
-        "run_id": 31692527295,
+        "verified_at": "2026-08-13T13:56:21Z",
+        "run_id": 31706269943,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -398,7 +398,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes evidence originally promoted from run 31677650719: the P-010 worker-occupancy and resource-instrumentation fix changed the meaning of several retained measurements, so the earlier evidence became stale by design; see docs/project/m5-campaign-evidence.md."
+        "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes evidence originally promoted from run 31692527295: the P-010 enlistment-wording denominator correction and the pool-ceiling/business-row/canonical-measurement hardening (F34/F35) changed the meaning of several retained fields, so the earlier evidence became stale by design; see docs/project/m5-campaign-evidence.md."
       }
     }
   ]
