@@ -40,7 +40,7 @@ use std::error::Error;
 use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use oxide_batch::{
     BatchStatus, BoxFuture, BusinessStatement, BusinessValue, Checkpoint, ChunkCommitReceipt,
@@ -65,9 +65,19 @@ use sqlx::Row;
 use sqlx::postgres::PgPoolOptions;
 
 use performance::{
-    Failure, FixedClock, config, execution_manifest, major_version, measurement_environment,
-    migrator_url, remove_job, resident_kib, retain_observation, runtime_url,
+    ConnectionPeakObserver, Failure, FixedClock, RssPeakSampler, config, execution_manifest,
+    major_version, measurement_environment, migrator_url, remove_job, resident_kib,
+    retain_observation, runtime_url,
 };
+
+/// The bounded interval every peak sampler in this file polls at.
+///
+/// Not a guarantee of catching the true instantaneous peak — a
+/// bounded-interval sample never is — but it replaces a configured-ceiling
+/// value copied into a field named "peak" with an actual observation of the
+/// measured window, which is what `peak-resident-memory` and
+/// `peak-connections` are declared to be.
+const SAMPLE_INTERVAL: Duration = Duration::from_millis(2);
 
 // ---------------------------------------------------------------------
 // P-001: in-memory no-op tasklet lifecycle overhead.
@@ -153,8 +163,12 @@ async fn p001_fixed_tasklet_lifecycle_overhead() -> Result<(), Box<dyn Error>> {
     let mut execution_ids = BTreeSet::new();
     let mut every_attempt_completed = true;
     let mut every_status_completed = true;
+    let mut rss_sampler: Option<RssPeakSampler> = None;
 
     for attempt in 0..total_attempts {
+        if attempt == P001_WARMUP_ATTEMPTS {
+            rss_sampler = Some(RssPeakSampler::start(SAMPLE_INTERVAL));
+        }
         let name = JobName::new(format!("p001-fixed-overhead-{attempt}"))?;
         let tasklet = Arc::new(NoOpTasklet {
             entered_at: Mutex::new(None),
@@ -198,6 +212,10 @@ async fn p001_fixed_tasklet_lifecycle_overhead() -> Result<(), Box<dyn Error>> {
             // are warm before the measured window starts.
         }
     }
+    let observed_peak_resident_kib = match rss_sampler {
+        Some(sampler) => sampler.stop().await,
+        None => resident_kib(),
+    };
 
     let measured_end_to_end = &end_to_end_micros[P001_WARMUP_ATTEMPTS..];
     let measured_job = &job_overhead_micros[P001_WARMUP_ATTEMPTS..];
@@ -236,10 +254,17 @@ async fn p001_fixed_tasklet_lifecycle_overhead() -> Result<(), Box<dyn Error>> {
                                      repository does not distinguish a metadata write from the \
                                      unit of work that carried it the way a network round trip \
                                      to PostgreSQL would.",
-            "peak_resident_memory_kib": resident_kib(),
-            "peak_resident_memory_note": "A process-level snapshot taken after the measured \
-                                          window, not a continuously sampled peak.",
+            "peak_resident_memory_kib": observed_peak_resident_kib,
+            "peak_resident_memory_note": format!(
+                "A process-level RSS value sampled every {} ms for the duration of the measured \
+                 attempts, retaining the maximum observed value — not a single end-of-run \
+                 snapshot.",
+                SAMPLE_INTERVAL.as_millis(),
+            ),
             "peak_connections": 0,
+            "peak_connections_note": "P-001 opens no PostgreSQL connection at all: this is a \
+                                      structural zero, not a live sample, because there is \
+                                      nothing to sample.",
         },
         "execution_manifest": execution_manifest()?,
         "measurements": {
@@ -248,7 +273,7 @@ async fn p001_fixed_tasklet_lifecycle_overhead() -> Result<(), Box<dyn Error>> {
             "step-overhead": summary(measured_step)["mean"],
             "repository-round-trips": counting.begins() as f64 / total_attempts as f64,
             "metadata-writes": counting.begins() as f64 / total_attempts as f64,
-            "peak-resident-memory": resident_kib(),
+            "peak-resident-memory": observed_peak_resident_kib,
             "peak-connections": 0,
         },
         "correctness": {
@@ -333,6 +358,10 @@ const P003_DATASET_ROWS: u64 = 10_000;
 const P003_CHUNK_SIZE: u64 = 100;
 const P003_SOURCE_SEED: u64 = 102;
 const P003_JOB: &str = "p003-reference-workload";
+/// The configured pool capacity for this sequential one-step job: the
+/// connection ceiling `observed_peak_connections` is checked against, not a
+/// claim about how many connections were actually live at once.
+const P003_CONFIGURED_CONNECTION_CEILING: u32 = 2;
 
 /// One row of the fixed reference dataset: an identity plus two scalar
 /// columns derived from the seeded generator.
@@ -624,7 +653,11 @@ async fn p003_csv_to_postgres_reference_workload() -> Result<(), Box<dyn Error>>
     let source_digest = hex_digest(csv.as_bytes());
 
     let clock = Arc::new(FixedClock::default());
-    let repository = PostgresJobRepository::connect(config(url.clone(), 2)?, clock.clone()).await?;
+    let repository = PostgresJobRepository::connect(
+        config(url.clone(), P003_CONFIGURED_CONNECTION_CEILING)?,
+        clock.clone(),
+    )
+    .await?;
     let watcher = PgPoolOptions::new()
         .max_connections(1)
         .connect(&url)
@@ -671,11 +704,15 @@ async fn p003_csv_to_postgres_reference_workload() -> Result<(), Box<dyn Error>>
     let launcher = JobLauncher::new(&counting, clock.as_ref(), &ids);
     let (_source, stop) = StopSource::new();
 
+    let rss_sampler = RssPeakSampler::start(SAMPLE_INTERVAL);
+    let connection_observer = ConnectionPeakObserver::start(&url, SAMPLE_INTERVAL).await?;
     let started = Instant::now();
     let report = launcher
         .launch_chunk(&mut job, &JobParameters::new(), &stop)
         .await?;
     let elapsed = started.elapsed();
+    let observed_peak_resident_kib = rss_sampler.stop().await;
+    let observed_peak_connections = connection_observer.stop().await;
 
     let job_execution = report.launch().job_execution();
     let step_execution = report.launch().step_execution();
@@ -710,6 +747,8 @@ async fn p003_csv_to_postgres_reference_workload() -> Result<(), Box<dyn Error>>
     // inject, so this is corroborating rather than a fault-injection proof.
     let atomic_same_resource_evidence =
         checkpoint_covers_dataset && source_row_count_equals_written;
+    let connections_within_ceiling =
+        observed_peak_connections <= u64::from(P003_CONFIGURED_CONNECTION_CEILING);
 
     let chunk_count = P003_DATASET_ROWS.div_ceil(P003_CHUNK_SIZE);
     let elapsed_secs = elapsed.as_secs_f64().max(f64::MIN_POSITIVE);
@@ -743,10 +782,21 @@ async fn p003_csv_to_postgres_reference_workload() -> Result<(), Box<dyn Error>>
             "metadata_writes_note": "One checkpoint commit per chunk: the number of times the \
                                      durable position advanced.",
             "business_batch_size": P003_CHUNK_SIZE,
-            "peak_resident_memory_kib": resident_kib(),
-            "peak_connections": 2,
-            "peak_connections_note": "The configured pool capacity for this sequential one-step \
-                                      job, not a live peak-usage sample.",
+            "peak_resident_memory_kib": observed_peak_resident_kib,
+            "peak_resident_memory_note": format!(
+                "A process-level RSS value sampled every {} ms across the measured window, \
+                 retaining the maximum observed value.",
+                SAMPLE_INTERVAL.as_millis(),
+            ),
+            "configured_connection_ceiling": P003_CONFIGURED_CONNECTION_CEILING,
+            "observed_peak_connections": observed_peak_connections,
+            "observed_peak_connections_note": format!(
+                "The maximum PostgreSQL backend count observed against the isolated campaign \
+                 database, sampled every {} ms across the measured window by a dedicated \
+                 observer connection excluded from its own count — not the configured pool \
+                 capacity.",
+                SAMPLE_INTERVAL.as_millis(),
+            ),
             "source_digest": source_digest,
             "written_digest": written_digest,
             "written_row_count": written.len(),
@@ -761,8 +811,8 @@ async fn p003_csv_to_postgres_reference_workload() -> Result<(), Box<dyn Error>>
             "repository-round-trips": counting.begins(),
             "metadata-writes": chunk_count,
             "business-batch-size": P003_CHUNK_SIZE,
-            "peak-resident-memory": resident_kib(),
-            "peak-connections": 2,
+            "peak-resident-memory": observed_peak_resident_kib,
+            "peak-connections": observed_peak_connections,
         },
         "correctness": {
             "job_and_step_statuses_are_completed": job_completed && step_completed,
@@ -770,6 +820,7 @@ async fn p003_csv_to_postgres_reference_workload() -> Result<(), Box<dyn Error>>
             "source_digest_equals_written_digest": digest_matches,
             "checkpoint_covers_the_fixed_dataset": checkpoint_covers_dataset,
             "business_writes_and_checkpoints_use_atomic_same_resource": atomic_same_resource_evidence,
+            "observed_peak_connections_within_configured_ceiling": connections_within_ceiling,
             "delivery_mode": "AtomicSameResource",
         },
         "violations": correctness_violations([
@@ -789,6 +840,10 @@ async fn p003_csv_to_postgres_reference_workload() -> Result<(), Box<dyn Error>>
             (
                 atomic_same_resource_evidence,
                 "the checkpoint and the business row count were not in lockstep",
+            ),
+            (
+                connections_within_ceiling,
+                "the observed peak connection count exceeded the configured connection ceiling",
             ),
         ]),
     });
@@ -847,6 +902,22 @@ const P010_JOB_PREFIX: &str = "p010-local-partition-scaling";
 /// under the server's default `max_connections` even at the largest worker
 /// point, where the framework's own derived pool alone needs 65.
 const BUSINESS_POOL_CONNECTIONS: u32 = 8;
+
+/// A fixed, deterministic, bounded async dwell every worker awaits before its
+/// business write, identical at every worker point.
+///
+/// Precedent: M4's own P-010 (`docs/engineering/measurements/m4/p-010.json`)
+/// used the same mechanism — `worker_await_millis: 4` — and observed
+/// `peak_active_workers` equal to the configured worker count at both its 10-
+/// and 64-worker points. Without a deterministic overlap window, 100
+/// partitions completing a single fast INSERT can finish sequentially fast
+/// enough that the launcher never has more than one worker in flight at once,
+/// which is exactly what this report observed before this dwell was added:
+/// `peak_active_workers == 1` at every worker point, including 10 and 64.
+/// This is a bounded `tokio::time::sleep`, not a CPU busy-loop and not an
+/// unbounded barrier wait, so it creates an admission window without
+/// contaminating the workload with unbounded coordination.
+const WORKER_DWELL: std::time::Duration = std::time::Duration::from_millis(750);
 
 /// The declared worker points: the sequential fallback, ten workers, and the
 /// largest accepted worker budget. Read from the framework's own constant
@@ -968,13 +1039,23 @@ fn p010_plan(
 /// occupancy gauge.
 ///
 /// Writing is a direct, transactional insert on its own connection rather
-/// than a framework-enlisted write: `Tasklet` (the trait every partition
-/// worker implements) is not handed the same-transaction business handle
-/// `ItemWriter` gets under `AtomicSameResource` — that mechanism is wired to
-/// chunk steps only in the accepted API. The declared correctness set for
-/// P-010 does not require atomic enlistment (unlike P-003's), so this reports
-/// the write it actually performs rather than a claim the framework does not
-/// support for a partitioned tasklet.
+/// than a framework-enlisted write. This is a known, recorded gap against the
+/// fixed scope's `work_per_partition` wording ("one deterministic *enlisted*
+/// business write"), not a silent substitution: `TaskletContext` (see
+/// `crates/oxide-batch/src/runtime.rs`) carries no transaction or connection
+/// handle for *any* `Tasklet`, partitioned or not, and the framework's own
+/// durable partition-result commit (`publish_partition_result` in
+/// `crates/oxide-batch/src/flow.rs`) opens its own unit of work strictly
+/// *after* the tasklet has already returned — there is no unit of work in
+/// flight during `execute()` for a worker to share. The one existing
+/// same-resource mechanism, `ChunkTransactionManager`/`WriteContext`, is
+/// wired to chunk steps exclusively and is not reachable from a tasklet
+/// through any public, `pub(crate)`, or test-only path today. Providing
+/// genuine enlistment would require adding new public API to
+/// `TaskletContext` and restructuring partition-worker orchestration in
+/// `flow.rs` — a real framework capability addition, not a benchmark-local
+/// adapter, and out of scope for this fix. See the PR's final report for the
+/// full gap writeup.
 struct PartitionWorker {
     occupancy: Arc<PartitionOccupancy>,
     business: sqlx::PgPool,
@@ -990,6 +1071,12 @@ impl Tasklet for PartitionWorker {
         Box::pin(async move {
             self.occupancy.enter();
             let started = Instant::now();
+            // A fixed, deterministic, bounded dwell — identical at every
+            // worker point — so a launcher admitting up to the configured
+            // worker budget actually has that many workers overlapping in
+            // time to observe, rather than depending on the INSERT alone
+            // being slow enough to catch in a sample. See WORKER_DWELL.
+            tokio::time::sleep(WORKER_DWELL).await;
             let write = sqlx::query(
                 "INSERT INTO oxide_batch_business.performance_partitions \
                  (job_name, partition_key) VALUES ($1, $2)",
@@ -1111,6 +1198,11 @@ async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
     let mut equivalence_holds = true;
     let mut ceilings_hold = true;
     let mut no_worker_outlives_parent = true;
+    let mut concurrency_matches_worker_point = true;
+    let mut observed_peak_owned_tasks: usize = 0;
+
+    let rss_sampler = RssPeakSampler::start(SAMPLE_INTERVAL);
+    let connection_observer = ConnectionPeakObserver::start(&url, SAMPLE_INTERVAL).await?;
 
     for workers in worker_points() {
         let job_name_owned = format!("{P010_JOB_PREFIX}-{workers}");
@@ -1167,6 +1259,13 @@ async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
         ceilings_hold &= occupancy.peak() <= usize::from(workers);
         no_worker_outlives_parent &= occupancy.active() == 0;
         equivalence_holds &= *launched.outcome() == oxide_batch::FlowExecutionOutcome::Completed;
+        // The deterministic WORKER_DWELL every worker awaits makes the
+        // admitted worker population observable rather than hoped-for: with
+        // 100 partitions and a bounded overlap window identical at every
+        // point, the launcher is expected to reach exactly the configured
+        // worker count, not merely stay under it.
+        concurrency_matches_worker_point &= occupancy.peak() == usize::from(workers);
+        observed_peak_owned_tasks = observed_peak_owned_tasks.max(occupancy.peak());
 
         let outcome = p010_observe(&repository, &launched).await?;
         if let Some(baseline) = &baseline_outcome {
@@ -1204,6 +1303,15 @@ async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
 
         repository.close().await?;
     }
+    let observed_peak_resident_kib = rss_sampler.stop().await;
+    let observed_peak_connections = connection_observer.stop().await;
+    let configured_worker_budget = worker_points().into_iter().max().unwrap_or(1);
+    let configured_connection_ceiling =
+        pool_budget(configured_worker_budget) + BUSINESS_POOL_CONNECTIONS;
+    let owned_tasks_within_budget =
+        observed_peak_owned_tasks <= usize::from(configured_worker_budget);
+    let connections_within_ceiling =
+        observed_peak_connections <= u64::from(configured_connection_ceiling);
 
     // The derived pool is the connection ceiling, so a pool one connection
     // short of the budget must be refused before any worker starts, rather
@@ -1272,14 +1380,50 @@ async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
             "pool_ceiling_derivation": "required_connections = concurrent_workers + 1, the same \
                                         formula the framework's own launcher enforces before \
                                         admitting the first worker.",
-            "peak_resident_memory_kib": resident_kib(),
-            "peak_connections": pool_budget(worker_points().into_iter().max().unwrap_or(1))
-                + BUSINESS_POOL_CONNECTIONS,
-            "peak_connections_note": "The framework's derived pool ceiling at the largest worker \
-                                      point, plus the constant business-write pool: the two \
-                                      largest configured connection budgets this report used at \
-                                      once, not a live peak-usage sample.",
-            "peak_owned_tasks": worker_points().iter().copied().max().unwrap_or(0),
+            "peak_resident_memory_kib": observed_peak_resident_kib,
+            "peak_resident_memory_note": format!(
+                "A process-level RSS value sampled every {} ms across the three worker points' \
+                 combined measured window, retaining the maximum observed value.",
+                SAMPLE_INTERVAL.as_millis(),
+            ),
+            "configured_worker_budget": configured_worker_budget,
+            "observed_peak_owned_tasks": observed_peak_owned_tasks,
+            "observed_peak_owned_tasks_note": "The maximum concurrently-active partition-worker \
+                                               count actually observed by the occupancy gauge \
+                                               across all three worker points, not the configured \
+                                               worker budget copied into the field.",
+            "configured_connection_ceiling": configured_connection_ceiling,
+            "configured_connection_ceiling_note": "The framework's derived pool ceiling at the \
+                                                   largest worker point, plus the constant \
+                                                   business-write pool: the largest configured \
+                                                   connection budget this report ever requests.",
+            "observed_peak_connections": observed_peak_connections,
+            "observed_peak_connections_note": format!(
+                "The maximum PostgreSQL backend count observed against the isolated campaign \
+                 database, sampled every {} ms across the three worker points' combined measured \
+                 window by a dedicated observer connection excluded from its own count.",
+                SAMPLE_INTERVAL.as_millis(),
+            ),
+            "worker_dwell_millis": WORKER_DWELL.as_millis(),
+            "worker_dwell_note": "A fixed, deterministic, bounded async sleep every worker awaits \
+                                  before its business write, identical at every worker point \
+                                  (precedent: M4 P-010's worker_await_millis). It creates a \
+                                  bounded overlap window so the configured worker budget is \
+                                  actually observable as concurrent occupancy, rather than \
+                                  depending on the INSERT alone being slow enough to catch in a \
+                                  sample; it does not alter durable business semantics.",
+            "write_enlistment_gap": "The fixed scope's workloads.p010.work_per_partition names \
+                                     'one deterministic enlisted business write'. This report's \
+                                     business write is not framework-enlisted with the durable \
+                                     partition-result commit: TaskletContext exposes no \
+                                     transaction or connection handle to any Tasklet, and the \
+                                     framework's own partition-result commit opens its own unit \
+                                     of work strictly after the tasklet has already returned. \
+                                     Providing genuine enlistment would require new public API on \
+                                     TaskletContext and flow.rs partition-worker orchestration, \
+                                     which this fix does not add. Recorded here as an explicit, \
+                                     known contract gap rather than silently substituted or used \
+                                     to redefine the accepted denominator.",
         },
         "execution_manifest": execution_manifest()?,
         "measurements": {
@@ -1291,10 +1435,9 @@ async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
             "repository-round-trips": largest_point["repository_round_trips"].clone(),
             "metadata-writes": P010_PARTITIONS,
             "metadata-writes-note": "One durable partition-result commit per partition.",
-            "peak-resident-memory": resident_kib(),
-            "peak-connections": pool_budget(worker_points().into_iter().max().unwrap_or(1))
-                + BUSINESS_POOL_CONNECTIONS,
-            "peak-owned-tasks": worker_points().iter().copied().max().unwrap_or(0),
+            "peak-resident-memory": observed_peak_resident_kib,
+            "peak-connections": observed_peak_connections,
+            "peak-owned-tasks": observed_peak_owned_tasks,
         },
         "measured_at_worker_point": worker_points().into_iter().max().unwrap_or(1),
         "measured_at_worker_point_note": "The flat measurements object above reports the largest \
@@ -1305,6 +1448,9 @@ async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
             "peak_workers_do_not_exceed_the_configured_budget": ceilings_hold,
             "peak_connections_do_not_exceed_the_derived_pool_budget": pool_ceiling_enforced,
             "no_worker_outlives_its_parent": no_worker_outlives_parent,
+            "observed_concurrency_matches_configured_worker_point": concurrency_matches_worker_point,
+            "observed_peak_owned_tasks_within_configured_budget": owned_tasks_within_budget,
+            "observed_peak_connections_within_configured_ceiling": connections_within_ceiling,
         },
         "violations": correctness_violations([
             (
@@ -1323,6 +1469,19 @@ async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
             (
                 no_worker_outlives_parent,
                 "a worker was still active after its parent returned",
+            ),
+            (
+                concurrency_matches_worker_point,
+                "observed peak active workers did not exactly match the configured worker point \
+                 at every worker point, so multi-worker occupancy was not demonstrated",
+            ),
+            (
+                owned_tasks_within_budget,
+                "the observed peak owned-task count exceeded the configured worker budget",
+            ),
+            (
+                connections_within_ceiling,
+                "the observed peak connection count exceeded the configured connection ceiling",
             ),
         ]),
     });

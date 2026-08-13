@@ -25,6 +25,8 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 use std::{env, process};
 
@@ -286,6 +288,104 @@ pub fn resident_kib() -> Option<u64> {
         return None;
     }
     String::from_utf8_lossy(&output.stdout).trim().parse().ok()
+}
+
+/// Samples resident memory at a bounded interval for as long as it is alive,
+/// retaining the maximum observed value.
+///
+/// Replaces a single end-of-run snapshot labelled "peak" with an actual
+/// sampled peak of the measured window: a report starts this immediately
+/// before the window it wants to characterize and stops (and joins) it
+/// immediately after, so no sampler task is ever left running past its
+/// report's own measured work.
+pub struct RssPeakSampler {
+    peak: Arc<AtomicU64>,
+    stop: Arc<AtomicBool>,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+impl RssPeakSampler {
+    /// Starts sampling immediately, including one sample taken before the
+    /// first bounded-interval tick, so a window shorter than `interval` still
+    /// observes at least one point.
+    #[must_use]
+    pub fn start(interval: Duration) -> Self {
+        let peak = Arc::new(AtomicU64::new(resident_kib().unwrap_or(0)));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (sampled, halt) = (Arc::clone(&peak), Arc::clone(&stop));
+        let handle = tokio::spawn(async move {
+            while !halt.load(Ordering::Relaxed) {
+                if let Some(kib) = resident_kib() {
+                    sampled.fetch_max(kib, Ordering::Relaxed);
+                }
+                tokio::time::sleep(interval).await;
+            }
+        });
+        Self { peak, stop, handle }
+    }
+
+    /// Stops sampling, joins the sampler task, and returns the observed peak.
+    pub async fn stop(self) -> Option<u64> {
+        self.stop.store(true, Ordering::Relaxed);
+        let _ = self.handle.await;
+        Some(self.peak.load(Ordering::Relaxed))
+    }
+}
+
+/// Samples the number of live `PostgreSQL` backends against one database at a
+/// bounded interval, excluding its own observer connection, retaining the
+/// maximum observed value.
+///
+/// An actual dedicated observer querying the isolated campaign database,
+/// rather than a copy of a configured pool ceiling: the isolated database
+/// this campaign runs against has no other client during a report's measured
+/// window, so every backend this counts belongs to the report itself.
+pub struct ConnectionPeakObserver {
+    peak: Arc<AtomicU64>,
+    stop: Arc<AtomicBool>,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+impl ConnectionPeakObserver {
+    /// Opens its own single dedicated connection and starts sampling
+    /// immediately.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure when the observer's own connection cannot be
+    /// opened.
+    pub async fn start(url: &str, interval: Duration) -> Result<Self, Box<dyn Error>> {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect(url)
+            .await?;
+        let peak = Arc::new(AtomicU64::new(0));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (sampled, halt) = (Arc::clone(&peak), Arc::clone(&stop));
+        let handle = tokio::spawn(async move {
+            while !halt.load(Ordering::Relaxed) {
+                let observed: Result<i64, _> = sqlx::query_scalar(
+                    "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() \
+                     AND pid <> pg_backend_pid()",
+                )
+                .fetch_one(&pool)
+                .await;
+                if let Ok(count) = observed {
+                    sampled.fetch_max(u64::try_from(count).unwrap_or(0), Ordering::Relaxed);
+                }
+                tokio::time::sleep(interval).await;
+            }
+            pool.close().await;
+        });
+        Ok(Self { peak, stop, handle })
+    }
+
+    /// Stops sampling, joins the sampler task, and returns the observed peak.
+    pub async fn stop(self) -> u64 {
+        self.stop.store(true, Ordering::Relaxed);
+        let _ = self.handle.await;
+        self.peak.load(Ordering::Relaxed)
+    }
 }
 
 /// Reads the kernel release string where the platform exposes `uname -r`.

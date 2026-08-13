@@ -557,6 +557,21 @@ fn p010_partition_count_drift_fails_reconciliation() -> Result<(), Box<dyn Error
 }
 
 #[test]
+fn p010_direct_business_write_description_fails_reconciliation() -> Result<(), Box<dyn Error>> {
+    // The producer cannot satisfy the fixed P-010 scope by quietly
+    // describing its business write as direct instead of enlisted: any
+    // wording drift away from the accepted "one deterministic enlisted
+    // business write and one durable partition result" fails reconciliation,
+    // exactly like every other fixed P-010 value below.
+    let mut scope = read_scope()?;
+    scope["workloads"]["p010"]["work_per_partition"] = Value::String(
+        "one deterministic direct business write and one durable partition result".to_owned(),
+    );
+    assert!(validate_scope(&scope).is_err());
+    Ok(())
+}
+
+#[test]
 fn p010_missing_partitions_per_second_fails_reconciliation() -> Result<(), Box<dyn Error>> {
     let mut scope = read_scope()?;
     let pointer = report_pointer(&scope, "p010-local-partition-scaling", "measurements")?;
