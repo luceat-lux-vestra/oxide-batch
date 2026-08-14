@@ -174,10 +174,10 @@ campaign this one no longer is.
 | [`conformance-campaign-postgres-18.json`](../engineering/campaigns/m5/conformance-campaign-postgres-18.json) | PostgreSQL 18 | 30 | 291 | 291 `ok` | Passed |
 
 Both were produced by dedicated workflow run
-[31778510395](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/31778510395),
-which executed tree `b29bdc19b20d871d37a4e22e83570042daa4508e` — the
+[31781696338](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/31781696338),
+which executed tree `afee38e86b8ba79fdb5edd17e22b3d058fc087ca` — the
 pull-request merge commit the workflow checked out — from branch head
-`17166438c9a512eaaae776c80fed2f2c3f02e6bd`. The execution tree is the
+`828e84a9980cfc805c47112970e06fa81cd8b849`. The execution tree is the
 provenance root and the branch head is recorded beside it as metadata; they
 are different commits and are never used interchangeably. The reports record
 `rustc 1.97.1` and Linux `x86_64`, and a clean source tree. The command is
@@ -187,22 +187,29 @@ recomputation is what the producing job itself executed. Each artifact's own
 sha256 digest was computed directly over the downloaded ZIP bytes at
 promotion, matched the GitHub API's recorded digest, and the extracted report
 matched the retained bytes exactly before retention:
-PostgreSQL 15's job `94698974303` produced artifact `9210846977`
-(`sha256:a8bcc200c27be2ec309329dc7733b42b371fe4084e3f0e3781ea13eda61b314a`,
-`7135` bytes, retained blob `b00ed017fc0fa388e15878422e6cbc626cb4d546`);
-PostgreSQL 18's job `94698974416` produced artifact `9210851115`
-(`sha256:3ff320f44f2540532f5ffaf4486cd18a8717e96aed68d52b33e421af8d0a0fca`,
-`7135` bytes, retained blob `487a5b0ce770d7a7e73063c23676379bab95728a`).
+PostgreSQL 15's job `94708653693` produced artifact `9212009570`
+(`sha256:b8a61b1089d1f6ac7223180b973d57c720a7a43ce4521c065cf6e686162d12e9`,
+`7137` bytes, retained blob `5c6aba12eb78ff28fb076e9f3fff8f178627e2b8`);
+PostgreSQL 18's job `94708653713` produced artifact `9212010377`
+(`sha256:bb31e5550ae796d087177ee958432423e91d817c82fbb0d6fc9203992352ae97`,
+`7137` bytes, retained blob `558e9e7127fddf7d64a0e599b6771dccb59f8762`).
+Both matrix points again select the same `30`-target envelope and observe
+`291` tests, confirming the envelope itself did not change — only the
+canonical description of what running it means was corrected.
 
-This supersedes two earlier retentions on this same branch, and both
-supersessions are recorded in full in `evidence-provenance.json`'s
-`remote_verification.note` for each entry: run 31749761115 (F37's
-execution-surface narrowing itself, which changed the campaign's target and
-test counts), and run 31777568454 (a follow-up fix to
-`xtask/src/conformance.rs` — a closure path — that added the
+This supersedes three earlier retentions on this same branch, all recorded in
+full in `evidence-provenance.json`'s `remote_verification.note` for each
+entry: run 31749761115 (F37's execution-envelope narrowing itself, which
+changed the campaign's selected-target and test counts), run 31777568454 (a
+follow-up fix to `xtask/src/conformance.rs` — a closure path — that added the
 `#![allow(clippy::expect_used)]` its own new test module needed; unrelated to
 the campaign's denominator, but still a byte-level change to a file the exact
-object-identity binding tracks).
+object-identity binding tracks), and run 31778510395 (this canonical-contract
+accuracy fix: correcting stale "runs nothing else" / "every workspace test
+target" prose across the dedicated workflow, `execution-contract.json`,
+`campaign-semantics.json`, and `xtask/src/conformance.rs` so the canonical
+description matches what selecting and running a target has always actually
+meant).
 
 The `133` scenario assignments break down by ledger evidence class as `42`
 conformance, `53` unit, `20` integration, `9` crash, `5` performance, and `4`
