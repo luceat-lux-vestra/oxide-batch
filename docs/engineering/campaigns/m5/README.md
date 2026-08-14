@@ -67,20 +67,25 @@ and the conformance campaign's is
 All four cover framework source, migrations, cargo manifests, `Cargo.lock`,
 toolchain and build configuration, the campaign implementation and fixtures,
 the execution contract, and the verifier. The conformance campaign's producer
-derives its required-target set from the accepted-scope document's `133`
-scenario assignments and runs exactly those targets, so its `campaign
-implementation` category lists the specific target files those assignments
-name rather than a whole directory — the same granularity the narrower
-campaigns already used. It used to enumerate and run every workspace test
-target `cargo metadata` reported; that let workspace tests the accepted scope
-never named affect the campaign's pass/fail gate, including other M5
-campaigns' own reconciliation tests, and is recorded as a corrected defect
-(F37) in [`m5-campaign-evidence.md`](../../../project/m5-campaign-evidence.md).
-The one obligation that does stay whole-workspace is the documentation tests,
-because they execute only committed rustdoc examples and read nothing
-dynamic. If any closure path differs from what a report recorded, that report
-describes a campaign this tree no longer runs and may not be promoted — the
-campaign has to be run again.
+distinguishes its row-proof denominator (the `42` accepted rows and their
+`133` assigned scenarios) from its execution envelope (the `30` unique test
+targets those assignments touch): it selects exactly those `30` targets, but
+each one still runs in full, unfiltered, so a test inside a selected target
+that no assigned scenario names still runs and can still fail the campaign —
+only a target outside the envelope entirely cannot. `campaign implementation`
+lists the specific `30` target files those assignments name rather than a
+whole directory — the same granularity the narrower campaigns already used.
+The producer used to select every workspace test target `cargo metadata`
+reported, not only the `30` the assignments touch; that let a workspace
+target the accepted scope never touched at all affect the campaign's
+pass/fail gate, including other M5 campaigns' own reconciliation tests, and
+is recorded as a corrected defect (F37) in
+[`m5-campaign-evidence.md`](../../../project/m5-campaign-evidence.md). The one
+obligation that does stay whole-workspace is the documentation tests, because
+they execute only committed rustdoc examples and read nothing dynamic. If any
+closure path differs from what a report recorded, that report describes a
+campaign this tree no longer runs and may not be promoted — the campaign has
+to be run again.
 
 Which closure applies to which report is decided by the campaign the report
 belongs to, recorded in `campaigns.declared` in the provenance document along

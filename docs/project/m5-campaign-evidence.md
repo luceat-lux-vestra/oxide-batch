@@ -41,12 +41,20 @@ named released version, and that stays with
 ### What the campaign runs
 
 The accepted M0-M4 scope is the ledger's `29` `Implemented` and `13` `Partial`
-rows. The campaign's execution surface is exactly this denominator: it runs
-the `30` test targets the `133` scenario assignments name — no more, no fewer
-— plus the workspace documentation tests, and requires each of the `42` rows
-to be proved by scenarios that ran and passed. See F37 below: it used to run
-every workspace test target `cargo metadata` reported, which let a workspace
-test the accepted scope never named affect its pass/fail gate.
+rows: `42` rows, proved by `133` assigned scenarios. That is the **row-proof
+denominator**, and it is not the same thing as what the campaign executes.
+The **execution envelope** is the `30` unique test targets those `133`
+assignments touch — no more, no fewer targets are selected — but each
+selected target runs in full, not filtered down to only its assigned
+scenarios: every test in that target binary runs, and the target's own exit
+status gates the campaign the same way an assigned scenario's outcome does.
+A test inside a selected target that the accepted scope never named still
+runs and can still fail the campaign; only a workspace test target outside
+the envelope entirely cannot. Workspace documentation tests are a third,
+separate obligation, required regardless of the envelope. See F37 below: it
+used to select every workspace test target `cargo metadata` reported, which
+let a target the accepted scope never touched at all — not merely an
+unassigned test inside a touched one — affect the campaign's pass/fail gate.
 
 The assignment is committed as
 [`tests/fixtures/conformance/accepted-scope.json`](../../tests/fixtures/conformance/accepted-scope.json).
@@ -110,7 +118,9 @@ test process.
    A required target `cargo metadata` no longer reports is not silently
    dropped: the scenarios it would have carried report as never having run in
    step 5.
-3. It runs each target through cargo, one at a time, with one test thread, and
+3. It runs each selected target through cargo, one at a time, with one test
+   thread and no libtest filter — every test the target binary contains
+   runs, not only the scenarios that put the target in the envelope — and
    attributes every `test <path> ... <outcome>` line to that target. Running
    through cargo rather than executing the built binary matters: the
    compile-fail suite needs the environment cargo supplies, and executing its
@@ -145,14 +155,18 @@ soak, cancellation, and performance campaigns already use.
 
 ### Results
 
-Both matrix points pass. Each run executes `30` test targets and `291` tests
-— the exact target set the `133` scenario assignments name, not the whole
-workspace suite — every one reporting `ok`, with the workspace documentation
-tests passing and all three fixtures present. All `42` accepted rows are
-proved. See F37 below: the run this table names is fresh, produced after the
-execution-surface narrowing it describes, because the prior retained reports
-(run 31749761115, run every workspace target rather than the accepted
-denominator) are evidence of a campaign this one no longer is.
+Both matrix points pass. Each run selects the `30`-target execution envelope
+the `133` scenario assignments name — not the whole workspace suite — and
+runs each selected target in full; the `tests` column below is what that run
+actually observed, not a fixed denominator, and grows if a selected target
+gains an ordinary regression test unrelated to the accepted scope. Every test
+reports `ok`, the workspace documentation tests pass, and all three fixtures
+are present. All `42` accepted rows are proved by their assigned scenarios.
+See F37 below: the run this table names is fresh, produced after the
+execution-envelope narrowing it describes, because the prior retained reports
+(run 31749761115, which selected every workspace target rather than the
+30-target envelope the accepted denominator implies) are evidence of a
+campaign this one no longer is.
 
 | Report | Matrix | Targets | Tests | Outcomes | Result |
 | --- | --- | --- | --- | --- | --- |
@@ -289,7 +303,7 @@ its own required `postgres-15`/`postgres-18` matrix.
 
 The accepted M0-M4 ledger scope, the 42-row denominator, and the 133 scenario
 assignments were, and remain after F37, byte-for-byte what they were before
-this change; only the campaign's execution surface around them was
+this change; only the campaign's execution envelope around them was
 incomplete, which F37 corrects. `xtask/src/conformance.rs`'s report-writing
 path gained the two new fields (`postgresql_major_version` and
 `observation.execution_manifest`) the provenance model requires, and the
@@ -317,45 +331,58 @@ the F36 closure gave no way to add this file without creating a
 self-reference: the file cannot be a semantic input of a campaign whose own
 retention step is what changes it.
 
-The fix is not a wider closure. It narrows the campaign's execution surface to
-match the denominator it already claimed: `xtask/src/conformance.rs` now
-derives its required-target set from the `(package, target)` pairs the
+The fix is not a wider closure. It narrows the campaign's execution envelope
+— which targets are *selected* — to match the denominator it already claimed,
+without changing what running a selected target means: `xtask/src/conformance.rs`
+now derives its required-target set from the `(package, target)` pairs the
 accepted-scope document's `133` scenario assignments name (`required_targets`,
-covered by two inline unit tests against the real production code), runs
-exactly those `30` targets, and gates on nothing else. `m5_campaign_record`
-and the other seven M5 campaigns' own reconciliation tests are not part of the
+covered by two inline unit tests against the real production code) and
+selects exactly those `30` targets. Each selected target still runs in full,
+exactly as before the narrowing: a test inside a selected target that no
+accepted scenario names still runs, and its failure still fails the campaign.
+What changed is which targets are selected at all — `m5_campaign_record` and
+the other seven M5 campaigns' own reconciliation tests are not part of the
 required set, and cannot be, because none of them is named by an
-accepted-scope scenario. `tests/fixtures/conformance/campaign-semantics.json`
-is narrowed to match — `campaign implementation` now lists the `30` target
-files and the shared support modules they compile against, in place of the
-whole `crates/oxide-batch/tests` directory — and
+accepted-scope scenario, so a change to any of them is now outside the
+envelope entirely rather than merely unassigned within it.
+`tests/fixtures/conformance/campaign-semantics.json` is narrowed to match —
+`campaign implementation` now lists the `30` target files and the shared
+support modules they compile against, in place of the whole
+`crates/oxide-batch/tests` directory — and
 `the_semantic_closure_covers_what_the_campaign_runs` in
 `crates/oxide-batch/tests/m5_conformance_campaign.rs` derives the required set
 from the scope document itself and asserts every required target resolves to
-a covered path, so the closure and the execution surface cannot drift apart
+a covered path, so the closure and the execution envelope cannot drift apart
 silently again. `the_evidence_record_mutation_counterexample_stays_closed`
 locks the exact counterexample: the evidence record and the soak fixtures
 `m5_campaign_record` reads are asserted absent from the closure, and
 `m5_campaign_record` is asserted absent from the required-target set.
+`the_canonical_contract_describes_the_real_producer_behavior` and
+`no_stale_whole_workspace_language_remains_in_the_contract_or_workflow` hold
+`execution-contract.json` and the dedicated workflow to the same distinction,
+so the canonical contract cannot silently drift back to describing
+whole-workspace selection, or start claiming a selected target runs anything
+less than in full, without a test failing.
 
 This was also proven end to end, not only by closure inspection: with
 `docs/project/m5-campaign-evidence.md` locally mutated to duplicate a
 campaign heading — the same shape of defect `m5_campaign_record` exists to
 catch — `cargo test -p oxide-batch --test m5_campaign_record` failed as
 expected, and `cargo xtask conformance`, run immediately after against the
-same mutated tree, still reported `30` targets, `291` tests, and `passed:
-true`. Ordinary Rust CI is what catches a broken evidence record; the
-conformance campaign's result no longer depends on it.
+same mutated tree, still selected the same `30`-target envelope and reported
+`passed: true`. Ordinary Rust CI is what catches a broken evidence record;
+the conformance campaign's result no longer depends on it, because
+`m5_campaign_record` was never inside the envelope to begin with.
 
 The one obligation that stays whole-workspace on purpose is the documentation
 tests: `cargo test --workspace --all-features --doc` still runs across every
 crate including the two spikes, because it executes only committed rustdoc
 examples rather than reading anything dynamic, so it carries none of the
-hazard the target-enumeration change removes. `workspace framework and
-adapter source` and `spike source` stay in the closure for that reason.
+hazard the envelope narrowing removes. `workspace framework and adapter
+source` and `spike source` stay in the closure for that reason.
 
-Because this changed what test targets the campaign runs — not the accepted
-denominator, but the execution surface around it — the retained reports F36
+Because this changed which test targets the campaign selects — not the
+accepted denominator, but the envelope around it — the retained reports F36
 promoted (run 31749761115) are evidence of a campaign this repository no
 longer runs. They are not edited in place or reused; this PR retains a fresh
 run of the corrected producer instead, identified in the Results section

@@ -723,6 +723,126 @@ fn covered(paths: &[String], candidate: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------
+// Canonical contract accuracy. `execution-contract.json` is prose and
+// structured fields beside the exact-identity check above, and prose can go
+// stale in a way `verify-ci-contract.sh` never catches: an earlier revision
+// of this contract still described the pre-narrowing whole-workspace
+// enumeration ("every workspace test target cargo metadata reports (66 at
+// the time this contract was written)") for months after the producer no
+// longer worked that way. These tests hold the contract's structured claims
+// to the real producer source, not to themselves: each assertion below reads
+// `xtask/src/conformance.rs`'s actual text for the specific code shape that
+// would have to exist for the claim to be true, so a contract edited to
+// re-describe whole-workspace semantics without a matching producer change
+// fails here, and a producer change without a matching contract update fails
+// here too.
+// ---------------------------------------------------------------------
+
+#[test]
+fn the_canonical_contract_describes_the_real_producer_behavior() -> Result<(), Box<dyn Error>> {
+    let contract: Value = serde_json::from_str(&read_document(
+        "tests/fixtures/conformance/execution-contract.json",
+    )?)?;
+    let producer = read_document("xtask/src/conformance.rs")?;
+
+    let selection = contract
+        .get("target_selection")
+        .ok_or_else(|| Failure("the contract declares no target_selection".to_owned()))?;
+    assert_eq!(
+        selection.get("selected_targets_run_in_full"),
+        Some(&Value::Bool(true)),
+        "the contract must claim selected targets run in full: that is what the producer does",
+    );
+    assert_eq!(
+        selection.get("unselected_workspace_targets_excluded"),
+        Some(&Value::Bool(true)),
+        "the contract must claim unselected workspace targets are excluded: that is what \
+         required_targets narrows to",
+    );
+
+    let pass_condition = contract
+        .get("pass_condition")
+        .ok_or_else(|| Failure("the contract declares no pass_condition".to_owned()))?;
+    for key in [
+        "assigned_scenarios_must_report_ok",
+        "selected_target_exit_must_succeed",
+        "workspace_documentation_tests_must_pass",
+    ] {
+        assert_eq!(
+            pass_condition.get(key),
+            Some(&Value::Bool(true)),
+            "the contract's pass_condition.{key} must be true, matching the producer's real \
+             reconciliation logic",
+        );
+    }
+
+    // selected_targets_run_in_full / selected_target_exit_must_succeed: a
+    // selected target is run without a libtest filter, so every test in it
+    // runs, and the process's own exit status — not only its assigned
+    // scenarios' outcomes — becomes a campaign violation on failure.
+    assert!(
+        producer.contains("filters: &[],"),
+        "the contract claims selected targets run in full (unfiltered), but run_suite no longer \
+         passes an empty filter list to each target invocation",
+    );
+    assert!(
+        producer.contains("suite.failed_targets.push(format!("),
+        "the contract claims a selected target's own exit failure gates the campaign, but \
+         run_suite no longer records failed targets separately from scenario outcomes",
+    );
+    assert!(
+        producer.contains("let mut violations = suite.failed_targets.clone();"),
+        "the contract claims a selected target's exit failure fails the campaign, but reconcile \
+         no longer folds failed_targets into the violation list",
+    );
+
+    // assigned_scenarios_must_report_ok: reconcile still requires the exact
+    // `ok` outcome for each of the 133 assignments.
+    assert!(
+        producer.contains("Some(\"ok\") => {}"),
+        "the contract claims every assigned scenario must report ok, but reconcile no longer \
+         requires that exact outcome",
+    );
+
+    // workspace_documentation_tests_must_pass: run unconditionally, not
+    // gated on the accepted scope or the execution envelope.
+    assert!(
+        producer.contains("suite.documentation = run_documentation_tests(root)?;"),
+        "the contract claims the workspace documentation tests are a required, separate \
+         obligation, but run_suite no longer calls run_documentation_tests unconditionally",
+    );
+
+    Ok(())
+}
+
+#[test]
+fn no_stale_whole_workspace_language_remains_in_the_contract_or_workflow()
+-> Result<(), Box<dyn Error>> {
+    let contract = read_document("tests/fixtures/conformance/execution-contract.json")?;
+    let workflow = read_document(".github/workflows/m5-conformance.yml")?;
+
+    for forbidden in [
+        "every workspace test target",
+        "unrelated target",
+        "133 scenarios and nothing else",
+        "gates on nothing else",
+    ] {
+        assert!(
+            !contract.contains(forbidden),
+            "{forbidden:?} in execution-contract.json describes the pre-narrowing producer, not \
+             the current one, which selects a 30-target envelope derived from the accepted scope",
+        );
+        assert!(
+            !workflow.contains(forbidden),
+            "{forbidden:?} in the dedicated workflow describes the pre-narrowing producer, not \
+             the current one",
+        );
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
 // Contract-check exactness. `verify-ci-contract.sh` binds two files —
 // `.github/workflows/m5-conformance.yml` and `run-ci-campaign.sh` — by exact
 // git blob identity, not by the literal presence checks alone. These tests

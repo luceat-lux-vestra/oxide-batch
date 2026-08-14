@@ -3,7 +3,7 @@
   "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow is a thin provisioning and call layer, and its contract-check step fails closed when the workflow drifts from these values. Only the dedicated conformance workflow is in this campaign's semantic closure, so unrelated quality or build changes in ci.yml do not invalidate retained conformance evidence.",
   "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script — an added trigger, a job-level permission override, a widened matrix, a changed command, an appended line — moves the identity and fails the contract check, whether or not every literal field below still happens to read true. The literal fields exist for a readable diagnostic, not as the boundary. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
   "workflow_path": ".github/workflows/m5-conformance.yml",
-  "workflow_git_blob": "5471d08e00ac0cf7a4c6ad4b04ef6eb5264b319b",
+  "workflow_git_blob": "39e3e1fefaf2ac8284847c1f86995e109cca335c",
   "workflow_name": "M5 Conformance",
   "triggers": {
     "pull_request": ["main"],
@@ -30,7 +30,22 @@
   "command": ["cargo", "run", "--package", "oxide-batch-xtask", "--", "conformance"],
   "cargo_profile": "debug",
   "profile_note": "Debug, like every M5 campaign except performance, whose denominator requires release for figures comparable to release planning. The conformance campaign gates correctness — every accepted row's scenarios ran and passed, on both PostgreSQL majors — not a duration, so nothing here depends on the profile.",
-  "features": "the workspace test suite the campaign runs is built and run with --all-features by cargo xtask conformance's own target invocations",
+  "features": "the execution envelope's selected targets are built and run with --all-features by cargo xtask conformance's own target invocations",
+  "target_selection": {
+    "source": "the (package, target) pairs the accepted-scope document's scenario assignments name",
+    "note": "This is the execution envelope, not the row-proof denominator. The 133 assigned scenarios name 30 unique targets; the producer selects exactly those 30 and no others. A workspace test target outside this set cannot affect the campaign regardless of whether it passes or fails.",
+    "selected_targets_run_in_full": true,
+    "selected_targets_run_in_full_note": "A selected target is not filtered down to only the scenarios that put it in the envelope: every test in that target binary runs, and the target's own exit status gates the campaign. A test inside a selected target that the accepted scope never named still runs and can still fail the campaign; only a target outside the envelope entirely is excluded.",
+    "unselected_workspace_targets_excluded": true
+  },
+  "pass_condition": {
+    "assigned_scenarios_must_report_ok": true,
+    "assigned_scenarios_must_report_ok_note": "Every one of the 133 assignments must resolve to a test that ran and reported ok. ignored, FAILED, or never having run is a violation.",
+    "selected_target_exit_must_succeed": true,
+    "selected_target_exit_must_succeed_note": "Every one of the 30 selected targets must exit successfully as a process, independent of the scenario-level check above. This is the source of the 'selected targets run in full' behavior: a non-assigned test failing inside a selected target fails this condition even though no assigned scenario failed.",
+    "workspace_documentation_tests_must_pass": true,
+    "workspace_documentation_tests_must_pass_note": "A third, separate obligation: cargo test --workspace --all-features --doc, run regardless of the accepted scope, because it executes only committed rustdoc examples across every workspace crate rather than reading anything the envelope narrowing is about."
+  },
   "environment": {
     "OXIDEBATCH_POSTGRES_ADMIN_TEST_URL": "postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_campaign",
     "OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL": "postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_campaign",
@@ -40,7 +55,7 @@
   },
   "report_path": "target/m5-campaigns/conformance-campaign.json",
   "artifact_name": "conformance-campaign-postgres-{major}",
-  "artifact_retention": "on success and on failure alike, because what a failed conformance campaign is mostly worth reading for is which accepted row, or which unrelated target, it lost",
+  "artifact_retention": "on success and on failure alike, because what a failed conformance campaign is mostly worth reading for is which accepted row, or which selected target, it lost",
   "timeout_minutes": 55,
-  "timeout_note": "The campaign runs every workspace test target cargo metadata reports (66 at the time this contract was written) plus the workspace documentation tests, not one bounded workload, so its ceiling is the widest of the M5 campaigns. Still a ceiling: a campaign that stopped making progress must fail rather than occupy a runner."
+  "timeout_note": "The campaign's execution envelope is 30 selected test targets, each run in full, plus the workspace documentation tests as a separate obligation — not one bounded workload, so its ceiling is the widest of the M5 campaigns. Still a ceiling: a campaign that stopped making progress must fail rather than occupy a runner."
 }

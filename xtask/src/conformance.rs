@@ -2,24 +2,42 @@
 //!
 //! The M5 design gate names
 //! `full_embedded_conformance_suite_passes_on_the_accepted_scope` as the
-//! evidence the conformance campaign owes. This command is that scenario. It
-//! runs exactly the test targets the accepted-scope document assigns a
-//! scenario to — no more, no fewer — attributes each result to the target
-//! that produced it, and reconciles the document against what actually ran.
+//! evidence the conformance campaign owes. This command is that scenario, and
+//! it distinguishes two things that earlier revisions of this file
+//! conflated:
+//!
+//! - **the row-proof denominator**: the `42` accepted M0-M4 rows and the
+//!   `133` scenarios the accepted-scope document assigns to them. Every
+//!   assigned scenario must report `ok`, and every row must be proved by at
+//!   least one.
+//! - **the execution envelope**: the `30` unique `(package, target)` test
+//!   binaries [`required_targets`] derives from those `133` assignments. Each
+//!   selected target is run in full — not filtered down to only its assigned
+//!   scenarios — so a test inside a selected target that the accepted scope
+//!   never named still runs, and its failure still fails the campaign,
+//!   exactly as an assigned scenario's failure would. Only a test outside
+//!   every selected target is unable to affect the campaign's result.
+//!   Workspace documentation tests are a third, separate obligation, run
+//!   regardless of the envelope.
 //!
 //! The target set is derived from the scope document rather than enumerated
 //! from `cargo metadata` directly, and that used to be the other way around:
-//! every workspace test target that carried the `test` kind ran, and any of
+//! every workspace test target that carried the `test` kind was selected —
+//! not merely the `30` the accepted scope's assignments touch — and any of
 //! them exiting unsuccessfully failed the campaign. That made the campaign's
-//! pass/fail gate depend on tests the accepted scope never named — including
-//! the other M5 campaigns' own reconciliation tests, several of which read
-//! fixtures and the shared evidence record no accepted scenario's semantic
-//! closure could name without creating a retention-time self-reference (the
-//! record is rewritten with a report's own provenance after the report is
-//! produced). `required_targets` is the fix: the campaign's execution surface
-//! is exactly the denominator it claims to prove, so a workspace test outside
-//! that denominator can change and the campaign's result is unaffected by it,
-//! and general Rust CI is still what runs and fails on it.
+//! pass/fail gate depend on targets the accepted scope never named at all —
+//! including the other M5 campaigns' own reconciliation tests, several of
+//! which read fixtures and the shared evidence record no accepted scenario's
+//! semantic closure could name without creating a retention-time
+//! self-reference (the record is rewritten with a report's own provenance
+//! after the report is produced). `required_targets` is the fix: the
+//! execution envelope is the set of targets the row-proof denominator
+//! actually touches, so an entire workspace test target outside that
+//! envelope can change freely and the campaign's result is unaffected by it,
+//! and general Rust CI is still what runs and fails on it. A test *inside* a
+//! selected target that is not itself an assigned scenario is not covered by
+//! this narrowing, and never was: the campaign has always run selected
+//! targets in full.
 //!
 //! It is a command rather than a test for two reasons, and both are about not
 //! forging a pass:
@@ -216,10 +234,12 @@ fn resolve_fixtures(scope: &Scope, violations: &mut Vec<String>) -> BTreeMap<Str
 /// Returns the package/target pairs the accepted scope assigns at least one
 /// scenario to.
 ///
-/// This is the campaign's execution surface. It is derived from the same
-/// document the ledger reconciliation test validates rather than stated
-/// again here, for the reason every other derived value in this file is
-/// derived rather than restated: a second list is a list that will drift.
+/// This is the campaign's execution envelope: each pair names one test
+/// binary that is run in full, not filtered to the scenarios that put it
+/// here. It is derived from the same document the ledger reconciliation test
+/// validates rather than stated again here, for the reason every other
+/// derived value in this file is derived rather than restated: a second list
+/// is a list that will drift.
 fn required_targets(scope: &Scope) -> BTreeSet<(String, String)> {
     scope
         .rows
@@ -635,7 +655,7 @@ mod tests {
             assert!(
                 !required.contains(&("oxide-batch".to_owned(), (*governance).to_owned())),
                 "{governance} is a governance test, not an accepted-scope scenario, and must not \
-                 be part of the campaign's execution surface",
+                 be part of the campaign's execution envelope",
             );
         }
     }

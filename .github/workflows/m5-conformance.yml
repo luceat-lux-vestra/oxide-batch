@@ -20,10 +20,12 @@ jobs:
   conformance-campaign:
     name: postgres-${{ matrix.postgres }}-conformance-campaign
     runs-on: ubuntu-24.04
-    # The campaign runs every workspace test target plus the documentation
-    # tests, not one bounded workload, so its ceiling is wider than the other
-    # M5 campaigns'. Still a ceiling: a campaign that stopped making progress
-    # must fail rather than occupy a runner.
+    # The campaign's execution envelope is 30 test targets derived from the
+    # accepted-scope document, each run in full, plus the workspace
+    # documentation tests as a separate obligation — not one bounded
+    # workload, so its ceiling is wider than the other M5 campaigns'. Still a
+    # ceiling: a campaign that stopped making progress must fail rather than
+    # occupy a runner.
     timeout-minutes: 55
     strategy:
       fail-fast: false
