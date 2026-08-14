@@ -159,9 +159,29 @@ denominator) are evidence of a campaign this one no longer is.
 | [`conformance-campaign-postgres-15.json`](../engineering/campaigns/m5/conformance-campaign-postgres-15.json) | PostgreSQL 15 | 30 | 291 | 291 `ok` | Passed |
 | [`conformance-campaign-postgres-18.json`](../engineering/campaigns/m5/conformance-campaign-postgres-18.json) | PostgreSQL 18 | 30 | 291 | 291 `ok` | Passed |
 
-<!-- PROVENANCE-PENDING: filled in from the fresh dedicated-workflow run once
-     it is retained. Do not promote by editing these numbers by hand — they
-     come from the run identified below. -->
+Both were produced by dedicated workflow run
+[31777568454](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/31777568454),
+which executed tree `254c21a90c0a7104681d492c75a8efbecff19786` — the
+pull-request merge commit the workflow checked out — from branch head
+`28401b3b03c3aa3904f704b65ee95be2f5e5f919`, the commit that narrowed the
+execution surface. The execution tree is the provenance root and the branch
+head is recorded beside it as metadata; they are different commits and are
+never used interchangeably. The reports record `rustc 1.97.1` and Linux
+`x86_64`, and a clean source tree. The command is
+`./tests/fixtures/conformance/run-ci-campaign.sh <major>`, which the dedicated
+workflow calls and which runs `cargo xtask conformance` — so the independent
+recomputation is what the producing job itself executed. Each artifact's own
+sha256 digest was computed directly over the downloaded ZIP bytes at
+promotion, matched the GitHub API's recorded digest, and the extracted report
+matched the retained bytes exactly before retention:
+PostgreSQL 15's job `94696125125` produced artifact `9210517093`
+(`sha256:ebfc3b14370bd7c003fab59a7ae515d42944398728ff6a705b465d53411a73e5`,
+`7134` bytes, retained blob `bbdb2309642cb689f82c2550145ccf332fe4e111`);
+PostgreSQL 18's job `94696125067` produced artifact `9210514647`
+(`sha256:e0998caa219ba5e599f9b318f5d1e7aa5fa092f910c91b01d6be939068fe942f`,
+`7134` bytes, retained blob `dd055e9b37fbee6c5343aec3d56e19f6d75a068f`). Both
+supersede the reports run 31749761115 produced, invalidated by F37's
+execution-surface narrowing.
 
 The `133` scenario assignments break down by ledger evidence class as `42`
 conformance, `53` unit, `20` integration, `9` crash, `5` performance, and `4`

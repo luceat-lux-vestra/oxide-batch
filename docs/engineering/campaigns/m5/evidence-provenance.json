@@ -408,6 +408,110 @@
         "execution_commit_matches_report": true,
         "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes evidence originally promoted from run 31692527295: the P-010 enlistment-wording denominator correction and the pool-ceiling/business-row/canonical-measurement hardening (F34/F35) changed the meaning of several retained fields, so the earlier evidence became stale by design; see docs/project/m5-campaign-evidence.md."
       }
+    },
+    {
+      "report": "conformance-campaign-postgres-15.json",
+      "campaign": "M5 PostgreSQL conformance",
+      "scenarios": [
+        "full_embedded_conformance_suite_passes_on_the_accepted_scope"
+      ],
+      "matrix_point": "postgres-15",
+      "postgres_major_version": "15",
+      "producer": {
+        "execution_commit": "254c21a90c0a7104681d492c75a8efbecff19786",
+        "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
+        "branch_head_sha": "28401b3b03c3aa3904f704b65ee95be2f5e5f919",
+        "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "M5 Conformance",
+        "workflow_file": ".github/workflows/m5-conformance.yml",
+        "id": 31777568454,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "postgres-15-conformance-campaign",
+        "id": 94696125125,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "conformance-campaign-postgres-15",
+        "id": 9210517093,
+        "digest": "sha256:ebfc3b14370bd7c003fab59a7ae515d42944398728ff6a705b465d53411a73e5",
+        "size_bytes": 7134
+      },
+      "retained_report_git_blob": "bbdb2309642cb689f82c2550145ccf332fe4e111",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-14T06:52:18Z",
+        "run_id": 31777568454,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes evidence originally promoted from run 31749761115: F37's execution-surface narrowing (the producer now derives its required-target set from the accepted-scope document instead of enumerating every workspace test target) changed both the campaign's target/test counts and its semantic closure, so the earlier evidence describes a campaign this tree no longer runs; see docs/project/m5-campaign-evidence.md."
+      }
+    },
+    {
+      "report": "conformance-campaign-postgres-18.json",
+      "campaign": "M5 PostgreSQL conformance",
+      "scenarios": [
+        "full_embedded_conformance_suite_passes_on_the_accepted_scope"
+      ],
+      "matrix_point": "postgres-18",
+      "postgres_major_version": "18",
+      "producer": {
+        "execution_commit": "254c21a90c0a7104681d492c75a8efbecff19786",
+        "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
+        "branch_head_sha": "28401b3b03c3aa3904f704b65ee95be2f5e5f919",
+        "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "M5 Conformance",
+        "workflow_file": ".github/workflows/m5-conformance.yml",
+        "id": 31777568454,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "postgres-18-conformance-campaign",
+        "id": 94696125067,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "conformance-campaign-postgres-18",
+        "id": 9210514647,
+        "digest": "sha256:e0998caa219ba5e599f9b318f5d1e7aa5fa092f910c91b01d6be939068fe942f",
+        "size_bytes": 7134
+      },
+      "retained_report_git_blob": "dd055e9b37fbee6c5343aec3d56e19f6d75a068f",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-14T06:52:18Z",
+        "run_id": 31777568454,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes evidence originally promoted from run 31749761115: F37's execution-surface narrowing (the producer now derives its required-target set from the accepted-scope document instead of enumerating every workspace test target) changed both the campaign's target/test counts and its semantic closure, so the earlier evidence describes a campaign this tree no longer runs; see docs/project/m5-campaign-evidence.md."
+      }
     }
   ]
 }
