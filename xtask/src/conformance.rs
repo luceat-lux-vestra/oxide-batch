@@ -591,6 +591,8 @@ impl Scope {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used)]
+
     use std::collections::BTreeSet;
 
     use super::{Scope, required_targets, suite_targets};
