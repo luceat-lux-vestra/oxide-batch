@@ -418,9 +418,9 @@
       "matrix_point": "postgres-15",
       "postgres_major_version": "15",
       "producer": {
-        "execution_commit": "254c21a90c0a7104681d492c75a8efbecff19786",
+        "execution_commit": "b29bdc19b20d871d37a4e22e83570042daa4508e",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "28401b3b03c3aa3904f704b65ee95be2f5e5f919",
+        "branch_head_sha": "17166438c9a512eaaae776c80fed2f2c3f02e6bd",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -430,27 +430,27 @@
       "workflow_run": {
         "workflow": "M5 Conformance",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 31777568454,
+        "id": 31778510395,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-conformance-campaign",
-        "id": 94696125125,
+        "id": 94698974303,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-15",
-        "id": 9210517093,
-        "digest": "sha256:ebfc3b14370bd7c003fab59a7ae515d42944398728ff6a705b465d53411a73e5",
-        "size_bytes": 7134
+        "id": 9210846977,
+        "digest": "sha256:a8bcc200c27be2ec309329dc7733b42b371fe4084e3f0e3781ea13eda61b314a",
+        "size_bytes": 7135
       },
-      "retained_report_git_blob": "bbdb2309642cb689f82c2550145ccf332fe4e111",
+      "retained_report_git_blob": "b00ed017fc0fa388e15878422e6cbc626cb4d546",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-14T06:52:18Z",
-        "run_id": 31777568454,
+        "verified_at": "2026-08-14T07:08:00Z",
+        "run_id": 31778510395,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -458,7 +458,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes evidence originally promoted from run 31749761115: F37's execution-surface narrowing (the producer now derives its required-target set from the accepted-scope document instead of enumerating every workspace test target) changed both the campaign's target/test counts and its semantic closure, so the earlier evidence describes a campaign this tree no longer runs; see docs/project/m5-campaign-evidence.md."
+        "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes evidence originally promoted from run 31777568454: xtask/src/conformance.rs (a closure path) changed after that promotion to add the missing #![allow(clippy::expect_used)] its own new test module needed, which is unrelated to the campaign's denominator or semantics but still invalidates the prior evidence under exact object-identity binding; see docs/project/m5-campaign-evidence.md."
       }
     },
     {
@@ -470,9 +470,9 @@
       "matrix_point": "postgres-18",
       "postgres_major_version": "18",
       "producer": {
-        "execution_commit": "254c21a90c0a7104681d492c75a8efbecff19786",
+        "execution_commit": "b29bdc19b20d871d37a4e22e83570042daa4508e",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "28401b3b03c3aa3904f704b65ee95be2f5e5f919",
+        "branch_head_sha": "17166438c9a512eaaae776c80fed2f2c3f02e6bd",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -482,27 +482,27 @@
       "workflow_run": {
         "workflow": "M5 Conformance",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 31777568454,
+        "id": 31778510395,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-conformance-campaign",
-        "id": 94696125067,
+        "id": 94698974416,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-18",
-        "id": 9210514647,
-        "digest": "sha256:e0998caa219ba5e599f9b318f5d1e7aa5fa092f910c91b01d6be939068fe942f",
-        "size_bytes": 7134
+        "id": 9210851115,
+        "digest": "sha256:3ff320f44f2540532f5ffaf4486cd18a8717e96aed68d52b33e421af8d0a0fca",
+        "size_bytes": 7135
       },
-      "retained_report_git_blob": "dd055e9b37fbee6c5343aec3d56e19f6d75a068f",
+      "retained_report_git_blob": "487a5b0ce770d7a7e73063c23676379bab95728a",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-14T06:52:18Z",
-        "run_id": 31777568454,
+        "verified_at": "2026-08-14T07:08:00Z",
+        "run_id": 31778510395,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -510,7 +510,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes evidence originally promoted from run 31749761115: F37's execution-surface narrowing (the producer now derives its required-target set from the accepted-scope document instead of enumerating every workspace test target) changed both the campaign's target/test counts and its semantic closure, so the earlier evidence describes a campaign this tree no longer runs; see docs/project/m5-campaign-evidence.md."
+        "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes evidence originally promoted from run 31777568454: xtask/src/conformance.rs (a closure path) changed after that promotion to add the missing #![allow(clippy::expect_used)] its own new test module needed, which is unrelated to the campaign's denominator or semantics but still invalidates the prior evidence under exact object-identity binding; see docs/project/m5-campaign-evidence.md."
       }
     }
   ]

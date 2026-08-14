@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "254c21a90c0a7104681d492c75a8efbecff19786",
+    "source_commit": "b29bdc19b20d871d37a4e22e83570042daa4508e",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -20,7 +20,7 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "254c21a90c0a7104681d492c75a8efbecff19786",
+      "execution_commit": "b29bdc19b20d871d37a4e22e83570042daa4508e",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -87,7 +87,7 @@
         "tests/fixtures/conformance/run-ci-campaign.sh": "bb4adf4c7b3ee24c3395f6e9256a2533b489daa2",
         "tests/fixtures/conformance/verify-ci-contract.sh": "da010daf359f5662aed8c30f5cd0c455c1ae5989",
         "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
-        "xtask/src/conformance.rs": "031f531d8c967c679d4ab0958c1739ee429b4164",
+        "xtask/src/conformance.rs": "cef9fe20bc87dfb356c1e3bb97a988ce1cbce033",
         "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
         "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
         "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
