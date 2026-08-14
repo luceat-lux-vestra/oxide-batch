@@ -514,40 +514,107 @@ fn tests_in(source: &str) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------
-// Semantic closure. The conformance campaign's own closure is wider than the
-// other three M5 campaigns' by design (see campaign-semantics.json's own
-// closure_scope_note): its producer enumerates and runs every workspace test
-// target, not a fixed report set, so the whole workspace's test-affecting
-// source is genuinely part of what its evidence is evidence of.
+// Semantic closure. The conformance campaign's execution surface is exactly
+// the accepted-scope document's denominator: the producer derives its
+// required-target set from the `(package, target)` pairs the 133 scenario
+// assignments name and runs nothing else. It used to enumerate and run every
+// workspace test target `cargo metadata` reported, which pulled workspace
+// tests the accepted scope never named into the campaign's pass/fail gate —
+// including other M5 campaigns' own reconciliation tests, some of which read
+// a shared evidence document this campaign's own retention step rewrites
+// after the report is produced. `the_semantic_closure_covers_what_the_campaign_runs`
+// proves the closure matches the denominator exactly, and the tests after it
+// lock the specific counterexample review found: `m5_campaign_record`,
+// `docs/project/m5-campaign-evidence.md`, and another campaign's fixtures.
 // ---------------------------------------------------------------------
+
+/// Every other M5 campaign's own reconciliation/contract test, plus this
+/// campaign's own. None of them is named by any accepted-scope scenario.
+const GOVERNANCE_TARGETS: &[&str] = &[
+    "m5_campaign_record",
+    "m5_cancellation_campaign",
+    "m5_conformance_campaign",
+    "m5_crash_restore_campaign",
+    "m5_performance_campaign",
+    "m5_resource_bounds_campaign",
+    "m5_security_campaign",
+    "m5_soak_campaign",
+    "m5_upgrade_campaign",
+];
 
 #[test]
 fn the_semantic_closure_covers_what_the_campaign_runs() -> Result<(), Box<dyn Error>> {
-    let closure: Value = serde_json::from_str(&read_document(
-        "tests/fixtures/conformance/campaign-semantics.json",
-    )?)?;
-    let paths = closure
-        .get("categories")
-        .and_then(Value::as_object)
-        .ok_or_else(|| Failure("the closure declares no categories".to_owned()))?
-        .values()
-        .filter_map(|category| category.get("paths").and_then(Value::as_array))
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
+    let scope = Scope::read()?;
+    let paths = closure_paths()?;
+
+    // The denominator-derived target set: every (package, target) the scope
+    // document actually names. Each one must resolve to a file the closure
+    // covers, or a change to that file could change the campaign's result
+    // without invalidating the evidence it produced.
+    let mut required_targets = BTreeSet::new();
+    for row in scope.rows.values() {
+        for scenario in &row.scenarios {
+            required_targets.insert((scenario.package.clone(), scenario.target.clone()));
+        }
+    }
+    assert!(
+        !required_targets.is_empty(),
+        "the accepted scope named no required target, so this test checks nothing",
+    );
+
+    for (package, target) in &required_targets {
+        let relative = format!("crates/{package}/tests/{target}.rs");
+        assert!(
+            covered(&paths, &relative),
+            "{relative} backs an accepted-scope scenario in package {package}, and is not \
+             covered by any path in the campaign's semantic closure",
+        );
+    }
+
+    // The governance targets a change to the closure must never bring in:
+    // none of them names an accepted scenario, so none of them should be
+    // resolvable as a required target, and — separately — none of the files
+    // they are known to read dynamically should appear in the closure. Both
+    // conditions held for the workspace enumeration this replaced only by
+    // accident (the old closure listed the whole `tests` directory, so it
+    // technically covered `m5_campaign_record.rs`'s own source, while the
+    // producer still ran it and gated on its exit status).
+    for governance in GOVERNANCE_TARGETS {
+        assert!(
+            !required_targets.contains(&("oxide-batch".to_owned(), (*governance).to_owned())),
+            "{governance} is a governance test, not an accepted-scope scenario, and must not be \
+             part of the campaign's required-target set",
+        );
+    }
+
+    for excluded in [
+        // The retention-time document `m5_campaign_record` reads: rewritten
+        // with a report's own provenance after the report is produced, so a
+        // closure that covered it could never converge.
+        "docs/project/m5-campaign-evidence.md",
+        // Another campaign's fixtures, also read by `m5_campaign_record`.
+        // Conformance's own correctness must not depend on the soak
+        // provenance verifier happening to catch drift here separately.
+        "tests/fixtures/soak/campaign-scope.json",
+        "tests/fixtures/soak/campaign-semantics.json",
+    ] {
+        assert!(
+            !paths.iter().any(|path| path == excluded),
+            "{excluded} must not be in the conformance closure: it is read only by a governance \
+             test the campaign does not run, and including it would either create a retention-time \
+             self-reference or bind conformance evidence to another campaign's fixtures",
+        );
+    }
 
     for required in [
-        // Every workspace package's test-affecting source, since the
-        // producer runs every workspace test target.
+        // Framework and adapter source every accepted scenario runs against.
         "crates/oxide-batch/src",
-        "crates/oxide-batch/tests",
         "crates/oxide-batch-cli/src",
-        "crates/oxide-batch-cli/tests",
-        // The denominator.
+        // The denominator, which also determines the required-target set.
         "tests/fixtures/conformance/accepted-scope.json",
         // The verifier, whose verdicts are part of the result.
-        "xtask/src",
+        "xtask/src/conformance.rs",
+        "xtask/src/evidence.rs",
         // The resolved dependency graph, and the toolchain the suite is
         // built with.
         "Cargo.lock",
@@ -579,6 +646,80 @@ fn the_semantic_closure_covers_what_the_campaign_runs() -> Result<(), Box<dyn Er
         );
     }
     Ok(())
+}
+
+#[test]
+fn the_evidence_record_mutation_counterexample_stays_closed() -> Result<(), Box<dyn Error>> {
+    // Regression lock for the exact counterexample review found: mutating
+    // `docs/project/m5-campaign-evidence.md` can make `m5_campaign_record`
+    // fail, and that must never be able to change what the conformance
+    // campaign reports. Proven two ways: the document is not a semantic
+    // input of any required target (checked structurally, since actually
+    // running the suite needs PostgreSQL), and `m5_campaign_record` itself is
+    // outside the required-target set, so ordinary Rust CI — not this
+    // campaign — is what runs and fails on it.
+    let paths = closure_paths()?;
+    assert!(
+        !paths
+            .iter()
+            .any(|path| path == "docs/project/m5-campaign-evidence.md"),
+        "the evidence record is not a conformance semantic input; a mutation to it must be caught \
+         only by cargo test running m5_campaign_record directly, never by this campaign",
+    );
+
+    // m5_campaign_record is a real, existing workspace test — the workspace-
+    // wide scan finds its test functions same as any other target's — so its
+    // absence from the campaign below is deliberate narrowing, not an
+    // accident of the file not existing or declaring no tests.
+    let declared = declared_tests(&workspace_root())?;
+    assert!(
+        declared
+            .iter()
+            .any(|(package, target, _)| package.as_str() == "oxide-batch"
+                && target.as_str() == "m5_campaign_record"),
+        "m5_campaign_record declares no test the workspace-wide scan can find, so this \
+         regression lock is not exercising a real target",
+    );
+
+    let scope = Scope::read()?;
+    let required_targets = scope
+        .rows
+        .values()
+        .flat_map(|row| &row.scenarios)
+        .map(|scenario| (scenario.package.as_str(), scenario.target.as_str()))
+        .collect::<BTreeSet<_>>();
+    assert!(
+        !required_targets.contains(&("oxide-batch", "m5_campaign_record")),
+        "m5_campaign_record must never become a required target: it is a governance test over a \
+         retention-time document, not an accepted-scope scenario",
+    );
+
+    Ok(())
+}
+
+/// Returns every path the campaign's semantic closure declares.
+fn closure_paths() -> Result<Vec<String>, Box<dyn Error>> {
+    let closure: Value = serde_json::from_str(&read_document(
+        "tests/fixtures/conformance/campaign-semantics.json",
+    )?)?;
+    Ok(closure
+        .get("categories")
+        .and_then(Value::as_object)
+        .ok_or_else(|| Failure("the closure declares no categories".to_owned()))?
+        .values()
+        .filter_map(|category| category.get("paths").and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>())
+}
+
+/// Reports whether a repository-relative path is covered by the closure:
+/// named exactly, or nested under a closure path that names a directory.
+fn covered(paths: &[String], candidate: &str) -> bool {
+    paths
+        .iter()
+        .any(|path| path == candidate || candidate.starts_with(&format!("{path}/")))
 }
 
 // ---------------------------------------------------------------------

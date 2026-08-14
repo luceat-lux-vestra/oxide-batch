@@ -2,10 +2,10 @@
   "document": "The executable closure of the M5 conformance campaign",
   "note": "The single source of truth for what the conformance campaign is made of. The producer reads it to record the object identity of every path at the tree it actually ran on; the verifier reads it to require those identities to still hold. Neither restates the list, because a list kept in two places is a list that will disagree.",
   "rule": "A change to anything here changes what the evidence is evidence of, so retained reports produced before the change may not be promoted after it: the campaign has to be run again. A change to anything not here — documentation, the changelog, or unrelated jobs in `.github/workflows/ci.yml` — leaves retained evidence valid. The dedicated `.github/workflows/m5-conformance.yml` is bound as one object, so changes to the conformance provisioning or call layer invalidate conformance evidence without binding the rest of CI.",
-  "closure_scope_note": "This closure is wider than the other three M5 campaigns' by design, not by accident: the conformance campaign's own producer enumerates and runs every workspace test target `cargo metadata` reports, plus the workspace documentation tests, and requires every target to exit successfully — not only the 133 scenarios the accepted-scope document assigns to a ledger row. A defect anywhere in the workspace that made an unrelated target fail would fail the campaign, so the whole workspace's test-affecting source is genuinely part of what this evidence is evidence of. Coarse, whole-crate and whole-directory entries are used here for that reason, where the narrower campaigns list individual subdirectories they alone exercise.",
+  "closure_scope_note": "The campaign's execution surface is exactly the accepted-scope document's denominator: the producer derives its target set from the `(package, target)` pairs the 133 scenario assignments name, runs nothing else, and gates on nothing else through the failed-target check. It used to run every workspace test target `cargo metadata` reported, which made a workspace test the accepted scope never named — including every other M5 campaign's own reconciliation test — able to fail this campaign. Two of those tests read `docs/project/m5-campaign-evidence.md`, a document this campaign's own retention step rewrites with a report's provenance after the report is produced; a closure that included it would never converge. Narrowing the execution surface to the accepted-scope denominator removes the dependency rather than papering over it: a workspace test outside the 133 assigned scenarios can change freely, and only ordinary Rust CI — not this campaign — runs and fails on it. The one exception is the workspace documentation tests, which the campaign has always run as one target regardless of the accepted scope, because they execute committed rustdoc examples rather than reading anything dynamic; `workspace framework and adapter source` and `spike source` below stay whole-crate for that reason, not because every workspace test target runs.",
   "categories": {
     "workspace framework and adapter source": {
-      "why": "Every scenario the accepted scope assigns runs against this code, and so does every other workspace test the campaign's pass/fail gate depends on through the failed-target check.",
+      "why": "Every scenario the accepted scope assigns runs against this code, and the workspace documentation tests exercise the rustdoc examples committed in it.",
       "paths": [
         "crates/oxide-batch/src",
         "crates/oxide-batch-core/src",
@@ -15,7 +15,7 @@
       ]
     },
     "spike source": {
-      "why": "The M0 architecture and M6 item-hot-path spikes are workspace test targets `cargo metadata` reports, so the campaign runs their tests too and its failed-target gate depends on them building and passing.",
+      "why": "The M0 architecture and M6 item-hot-path spikes are workspace members `cargo test --workspace --all-features --doc` covers, so a failing rustdoc example there fails the campaign's documentation-test obligation even though the campaign does not run either spike's own test targets.",
       "paths": [
         "spikes/m0-architecture/src",
         "spikes/m6-item-hot-path/src"
@@ -24,21 +24,54 @@
     "migrations": {
       "why": "The durable schema the accepted scope's PostgreSQL-backed scenarios migrate to before they run.",
       "paths": [
-        "crates/oxide-batch/migrations",
-        "spikes/m0-architecture/migrations"
+        "crates/oxide-batch/migrations"
       ]
     },
-    "workspace test suite": {
-      "why": "The scenarios themselves, and every other test in these directories the campaign's failed-target gate also requires to pass. This is the campaign's own scenario source for the 133 assigned scenarios, and it is also every other test cargo metadata resolves under these packages.",
+    "campaign implementation": {
+      "why": "The exact test targets the accepted-scope document names, plus the shared support modules those targets compile against. This is the campaign's own scenario source for the 133 assigned scenarios and nothing beyond it: a workspace test file not listed here is neither run by the campaign nor able to affect its result, including every other M5 campaign's own reconciliation test.",
       "paths": [
-        "crates/oxide-batch/tests",
-        "crates/oxide-batch-cli/tests",
-        "spikes/m0-architecture/tests",
-        "spikes/m6-item-hot-path/tests"
+        "crates/oxide-batch/tests/chunk_fault_runtime.rs",
+        "crates/oxide-batch/tests/chunk_runtime.rs",
+        "crates/oxide-batch/tests/definition.rs",
+        "crates/oxide-batch/tests/domain.rs",
+        "crates/oxide-batch/tests/durable_state_codec.rs",
+        "crates/oxide-batch/tests/fault_policy.rs",
+        "crates/oxide-batch/tests/flow.rs",
+        "crates/oxide-batch/tests/harness.rs",
+        "crates/oxide-batch/tests/item_listeners.rs",
+        "crates/oxide-batch/tests/lifecycle_conformance.rs",
+        "crates/oxide-batch/tests/lifecycle_conformance",
+        "crates/oxide-batch/tests/lifecycle_property.rs",
+        "crates/oxide-batch/tests/lifecycle_property",
+        "crates/oxide-batch/tests/listeners.rs",
+        "crates/oxide-batch/tests/local_partition_runtime.rs",
+        "crates/oxide-batch/tests/local_split_runtime.rs",
+        "crates/oxide-batch/tests/m4_exit_measurements.rs",
+        "crates/oxide-batch/tests/plan.rs",
+        "crates/oxide-batch/tests/plan_equivalence.rs",
+        "crates/oxide-batch/tests/plan_fingerprint.rs",
+        "crates/oxide-batch/tests/postgres_crash_recovery.rs",
+        "crates/oxide-batch/tests/postgres_fault_crash_recovery.rs",
+        "crates/oxide-batch/tests/postgres_flow.rs",
+        "crates/oxide-batch/tests/postgres_flow_crash_recovery.rs",
+        "crates/oxide-batch/tests/postgres_local_partition_crash_recovery.rs",
+        "crates/oxide-batch/tests/postgres_local_split_crash_recovery.rs",
+        "crates/oxide-batch/tests/postgres_repository.rs",
+        "crates/oxide-batch/tests/repository.rs",
+        "crates/oxide-batch/tests/services.rs",
+        "crates/oxide-batch/tests/tasklet.rs",
+        "crates/oxide-batch/tests/telemetry.rs",
+        "crates/oxide-batch/tests/support",
+        "crates/oxide-batch/tests/contract",
+        "crates/oxide-batch/tests/conformance",
+        "crates/oxide-batch/tests/measurement",
+        "crates/oxide-batch/tests/fixtures/LIFE-DEFINITION-001",
+        "crates/oxide-batch-cli/tests/operator_cli.rs",
+        "crates/oxide-batch-cli/tests/support"
       ]
     },
     "cargo manifests": {
-      "why": "Feature selection, dependency ranges, and which targets `cargo metadata` reports at all. A campaign built with different features, or over a different target set, is a different campaign.",
+      "why": "Feature selection, dependency ranges, and which targets `cargo metadata` reports at all. A campaign built with different features, or resolving its required targets against a different metadata graph, is a different campaign. Every workspace member's manifest is listed, including the spikes and xtask: `cargo metadata` resolves the whole workspace at once, so a malformed manifest anywhere prevents the producer from resolving its target set.",
       "paths": [
         "Cargo.toml",
         "crates/oxide-batch/Cargo.toml",
@@ -65,7 +98,7 @@
       ]
     },
     "campaign fixtures": {
-      "why": "The declared denominator — the accepted M0-M4 ledger disposition, the 42-row scope, and the 133 scenario assignments — and this closure itself.",
+      "why": "The declared denominator — the accepted M0-M4 ledger disposition, the 42-row scope, and the 133 scenario assignments — and this closure itself. The producer derives its required-target set from this document, so a change to it can change which test targets the campaign runs as well as which scenarios it requires from them.",
       "paths": [
         "tests/fixtures/conformance/accepted-scope.json",
         "tests/fixtures/conformance/campaign-semantics.json"
@@ -81,10 +114,12 @@
       ]
     },
     "independent verifier": {
-      "why": "The program that decides whether a report proved what it owed and whether retained evidence is still what it says. Its verdicts are part of the campaign result, so a report produced under a different verifier is a result under a different standard. `xtask/src` and `xtask/tests` are listed whole rather than file-by-file: xtask is itself a workspace package with its own test targets the campaign's failed-target gate depends on, and it is also the program reading and enforcing this document.",
+      "why": "The program that decides whether a report proved what it owed and whether retained evidence is still what it says. Its verdicts are part of the campaign result, so a report produced under a different verifier is a result under a different standard. Listed as the specific files that implement it, matching the soak, cancellation, and performance campaigns' own closures, rather than the whole `xtask/src` directory: `main.rs` dispatches the command, `conformance.rs` derives the required-target set and reconciles the suite against it, `evidence.rs` is the permanent offline verifier, and `suite.rs` is the target-running and libtest-parsing mechanics every M5 runner shares.",
       "paths": [
-        "xtask/src",
-        "xtask/tests"
+        "xtask/src/main.rs",
+        "xtask/src/conformance.rs",
+        "xtask/src/evidence.rs",
+        "xtask/src/suite.rs"
       ]
     }
   }
