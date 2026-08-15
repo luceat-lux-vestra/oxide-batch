@@ -200,6 +200,17 @@ fn resolve_fixtures(scope: &Scope, violations: &mut Vec<String>) -> BTreeMap<Str
     resolved
 }
 
+/// Reads the `PostgreSQL` major the campaign was configured to run at.
+///
+/// A runner cannot see the database version through a fixture, which is a
+/// connection string it never opens, so the campaign matrix variable is the
+/// recorded major — the same source of truth `suite::environment`'s own
+/// `matrix` field already reads.
+fn expected_matrix_major() -> Option<String> {
+    let matrix = env::var(suite::MATRIX).ok()?;
+    matrix.strip_prefix("postgres-").map(str::to_owned)
+}
+
 /// Creates an empty observation directory and returns it.
 ///
 /// It is emptied rather than reused so a report retained by an earlier run can
@@ -399,6 +410,7 @@ fn write_report(
     let document = json!({
         "report": "upgrade",
         "campaign": "M5 PostgreSQL upgrade",
+        "postgresql_major_version": expected_matrix_major(),
         "scenarios": [
             "schema1_and_schema2_upgrade_directly_to_schema3",
             "schema2_runtime_rejects_schema3",

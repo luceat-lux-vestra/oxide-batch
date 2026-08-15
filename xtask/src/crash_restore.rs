@@ -162,6 +162,17 @@ fn execution_manifest(reports: &[Report], runs: &Runs) -> (Value, Vec<String>) {
     )
 }
 
+/// Reads the `PostgreSQL` major the campaign was configured to run at.
+///
+/// A runner cannot see the database version through a fixture, which is a
+/// connection string it never opens, so the campaign matrix variable is the
+/// recorded major — the same source of truth `suite::environment`'s own
+/// `matrix` field already reads.
+fn expected_matrix_major() -> Option<String> {
+    let matrix = env::var(suite::MATRIX).ok()?;
+    matrix.strip_prefix("postgres-").map(str::to_owned)
+}
+
 /// Reports which declared fixtures the environment supplies.
 ///
 /// Every fixture this document declares is needed by something it runs, so an
@@ -370,6 +381,7 @@ fn write_report(
     let document = json!({
         "report": "crash-restore",
         "campaign": "M5 crash and restore",
+        "postgresql_major_version": expected_matrix_major(),
         "scenarios": [
             "process_kill_at_each_commit_phase_recovers_without_a_forged_status",
             "restart_after_many_chunks_matches_an_uninterrupted_run",
