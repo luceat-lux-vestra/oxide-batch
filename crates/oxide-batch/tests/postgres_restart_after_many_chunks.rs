@@ -36,9 +36,9 @@ use serde_json::json;
 use crash_restore::{
     CampaignJob, Failure, FixedClock, HANDSHAKE_BOUND, TerminalShape, announce, business_items,
     checkpoint_position, commit_chunk, complete_and_shape, config, counts, create_attempt,
-    discover, epoch, handshake_directory, instance_key, migrator_url, observe, park_until_killed,
-    prepare_fixture, resolve, retain_observation, runtime_url, start_attempt, transaction_manager,
-    wait_for_file,
+    discover, epoch, execution_manifest, handshake_directory, instance_key, migrator_url, observe,
+    park_until_killed, prepare_fixture, resolve, retain_observation, runtime_url, start_attempt,
+    transaction_manager, wait_for_file,
 };
 
 /// Marks the child process that commits chunks and parks.
@@ -294,6 +294,7 @@ async fn run_report(runtime_url: String, migrator_url: String) -> Result<(), Box
                 "discovery": millis(discovery_in),
                 "resume": millis(resume_in),
             },
+            "execution_manifest": execution_manifest()?,
             "violations": Vec::<String>::new(),
             "passed": true,
         }),

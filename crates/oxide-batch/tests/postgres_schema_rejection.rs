@@ -38,9 +38,9 @@ use serde_json::{Value, json};
 
 use upgrade::{
     DurableDigest, Failure, FixedClock, ProbeRun, SourceColumns, admin_url, apply_seed,
-    assert_historical_shape, config, durable_tables, fixtures, install_historical_schema,
-    major_version, migrator_url, read_through_port, recreate_database, retain_observation,
-    run_schema2_runtime, schema_version, server_version, with_database,
+    assert_historical_shape, config, durable_tables, execution_manifest, fixtures,
+    install_historical_schema, major_version, migrator_url, read_through_port, recreate_database,
+    retain_observation, run_schema2_runtime, schema_version, server_version, with_database,
 };
 
 /// The schema the rejected runtime supports.
@@ -216,6 +216,7 @@ async fn run_report(migrator: &str, admin: &str) -> Result<(), Box<dyn Error>> {
                 "violations": Vec::<String>::new(),
                 "passed": true,
             }],
+            "execution_manifest": execution_manifest()?,
             "violations": Vec::<String>::new(),
             "passed": true,
         }),

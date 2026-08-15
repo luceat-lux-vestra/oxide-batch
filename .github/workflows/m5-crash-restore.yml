@@ -1,0 +1,94 @@
+name: M5 Crash and Restore
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m5-crash-restore-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  crash-restore-campaign:
+    name: postgres-${{ matrix.postgres }}-crash-restore-campaign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["15", "18"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oxide_batch_crash_restore
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username postgres --dbname oxide_batch_crash_restore"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      OXIDEBATCH_POSTGRES_ADMIN_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_crash_restore
+      OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_crash_restore
+      OXIDEBATCH_POSTGRES_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_crash_restore
+      # The backup and restore report creates and drops the database it restores
+      # into, which cannot be done from inside that database or from the one
+      # being dumped, so it connects through the maintenance database instead.
+      OXIDEBATCH_POSTGRES_BACKUP_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      OXIDEBATCH_CAMPAIGN_DIR: target/m5-campaigns
+      OXIDEBATCH_CAMPAIGN_MATRIX: postgres-${{ matrix.postgres }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Install the matching PostgreSQL client tools
+        # The logical backup is taken with the real pg_dump and loaded with the
+        # real pg_restore, so the client must match the matrix point. The runner
+        # image ships a different major version and its wrapper would silently
+        # select that one, which would make the retained report name a tool the
+        # campaign did not intend.
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install --yes "postgresql-client-${{ matrix.postgres }}"
+          echo "/usr/lib/postgresql/${{ matrix.postgres }}/bin" >> "${GITHUB_PATH}"
+
+      - name: Show the client tools the campaign will use
+        run: |
+          pg_dump --version
+          pg_restore --version
+
+      - name: Fail closed if the execution contract drifts
+        run: ./tests/fixtures/crash-restore/verify-ci-contract.sh .github/workflows/m5-crash-restore.yml
+
+      - name: Run the crash, restart, and logical restore campaign
+        run: ./tests/fixtures/crash-restore/run-ci-campaign.sh ${{ matrix.postgres }}
+
+      # Retained on failure as well as on success. A failed crash-restore
+      # campaign is mostly worth reading for which phase or which reused
+      # scenario it lost, and a job that uploaded only green reports would
+      # discard exactly that.
+      - name: Retain the campaign report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: crash-restore-campaign-postgres-${{ matrix.postgres }}
+          path: target/m5-campaigns/crash-restore-campaign.json
+          if-no-files-found: error

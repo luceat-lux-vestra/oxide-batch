@@ -1,0 +1,87 @@
+{
+  "document": "The executable closure of the M5 crash and restore campaign",
+  "note": "The single source of truth for what the crash and restore campaign is made of. The producer reads it to record the object identity of every path at the tree it actually ran on; the verifier reads it to require those identities to still hold. Neither restates the list, because a list kept in two places is a list that will disagree.",
+  "rule": "A change to anything here changes what the evidence is evidence of, so retained reports produced before the change may not be promoted after it: the campaign has to be run again. A change to anything not here — documentation, the changelog, or unrelated jobs in `.github/workflows/ci.yml` — leaves retained evidence valid. The dedicated `.github/workflows/m5-crash-restore.yml` is bound as one object, so changes to the crash-restore provisioning or call layer invalidate crash-restore evidence without binding the rest of CI.",
+  "categories": {
+    "workspace framework and adapter source": {
+      "why": "Every report and every reused M2-M4 scenario runs the runtime and the PostgreSQL adapter this code declares, including the chunk transaction manager, the repository and explorer ports, and the operator recovery path the campaign drives directly.",
+      "paths": [
+        "crates/oxide-batch/src",
+        "crates/oxide-batch-core/src",
+        "crates/oxide-batch-plan/src",
+        "crates/oxide-batch-repository/src"
+      ]
+    },
+    "migrations": {
+      "why": "The durable schema every report and reused scenario migrates the fixture database to before it runs.",
+      "paths": [
+        "crates/oxide-batch/migrations"
+      ]
+    },
+    "campaign implementation": {
+      "why": "The exact test targets the committed scope document's reports and reused scenarios name, plus the shared support modules those targets compile against. A workspace test file not listed here is outside the campaign: it is not selected, so it is neither run nor able to affect the campaign's result.",
+      "paths": [
+        "crates/oxide-batch/tests/postgres_commit_phase_process_kill.rs",
+        "crates/oxide-batch/tests/postgres_restart_after_many_chunks.rs",
+        "crates/oxide-batch/tests/postgres_logical_backup_restore.rs",
+        "crates/oxide-batch/tests/postgres_crash_recovery.rs",
+        "crates/oxide-batch/tests/postgres_fault_crash_recovery.rs",
+        "crates/oxide-batch/tests/postgres_flow_crash_recovery.rs",
+        "crates/oxide-batch/tests/postgres_local_partition_crash_recovery.rs",
+        "crates/oxide-batch/tests/postgres_local_split_crash_recovery.rs",
+        "crates/oxide-batch/tests/postgres_repository.rs",
+        "crates/oxide-batch/tests/crash_restore",
+        "crates/oxide-batch/tests/contract"
+      ]
+    },
+    "cargo manifests": {
+      "why": "Feature selection and dependency ranges for every crate the campaign builds and runs. A campaign built with different features is a different campaign.",
+      "paths": [
+        "Cargo.toml",
+        "crates/oxide-batch/Cargo.toml",
+        "crates/oxide-batch-core/Cargo.toml",
+        "crates/oxide-batch-plan/Cargo.toml",
+        "crates/oxide-batch-repository/Cargo.toml",
+        "xtask/Cargo.toml"
+      ]
+    },
+    "dependency resolution": {
+      "why": "The exact dependency graph every target the campaign runs was built from.",
+      "paths": [
+        "Cargo.lock"
+      ]
+    },
+    "toolchain and build configuration": {
+      "why": "The compiler the campaign is built with, and the cargo configuration it is built under.",
+      "paths": [
+        "rust-toolchain.toml",
+        ".cargo/config.toml"
+      ]
+    },
+    "campaign fixtures": {
+      "why": "The declared denominator — the five commit-protocol phases, the three reports, and the reused M2-M4 scenarios — and this closure itself. The producer derives what it runs from this document, so a change to it can change which targets and scenarios the campaign requires.",
+      "paths": [
+        "tests/fixtures/crash-restore/campaign-scope.json",
+        "tests/fixtures/crash-restore/campaign-semantics.json"
+      ]
+    },
+    "crash and restore execution contract": {
+      "why": "How CI actually runs the campaign: the supported matrix, the database and maintenance connection it is given, the command, and the environment. The dedicated workflow is included with them, and its contract-check step fails closed if the workflow drifts from the contract. An unrelated CI job in ci.yml does not invalidate retained crash-restore evidence, while any change to the dedicated crash-restore workflow does.",
+      "paths": [
+        "tests/fixtures/crash-restore/execution-contract.json",
+        "tests/fixtures/crash-restore/run-ci-campaign.sh",
+        "tests/fixtures/crash-restore/verify-ci-contract.sh",
+        ".github/workflows/m5-crash-restore.yml"
+      ]
+    },
+    "independent verifier": {
+      "why": "The program that decides whether a run proved what it owed and whether retained evidence is still what it says. Its verdicts are part of the campaign result, so a report produced under a different verifier is a result under a different standard. Listed as the specific files that implement it, matching the soak, cancellation, performance, and conformance campaigns' own closures: `main.rs` dispatches the command, `crash_restore.rs` runs the scope and reconciles the observations against it, `evidence.rs` is the permanent offline verifier, and `suite.rs` is the target-running and libtest-parsing mechanics every M5 runner shares.",
+      "paths": [
+        "xtask/src/main.rs",
+        "xtask/src/crash_restore.rs",
+        "xtask/src/evidence.rs",
+        "xtask/src/suite.rs"
+      ]
+    }
+  }
+}

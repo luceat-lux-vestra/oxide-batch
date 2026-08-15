@@ -24,7 +24,11 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::fs;
-use std::path::PathBuf;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
@@ -197,6 +201,370 @@ fn reused_evidence_covers_every_durable_write_protocol_m2_to_m4_delivered()
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------
+// Semantic closure. The producer records the object identity of every path
+// listed in tests/fixtures/crash-restore/campaign-semantics.json from inside
+// its own checkout, and the offline evidence verifier requires those
+// identities to still hold. Neither restates the list here; this proves the
+// closure actually covers what the campaign runs and excludes what it must
+// not — mirroring the coverage the conformance campaign's own closure test
+// proves, over this campaign's own denominator.
+// ---------------------------------------------------------------------
+
+/// Every other M5 campaign's own reconciliation/contract test, plus this
+/// campaign's own. None of them is a scenario this campaign runs, and their
+/// inclusion in the closure would either create a retention-time
+/// self-reference (`m5_campaign_record` reads
+/// `docs/project/m5-campaign-evidence.md`, rewritten with a report's own
+/// provenance after the report is produced) or bind this campaign's evidence
+/// to another campaign's fixtures.
+const GOVERNANCE_TARGETS: &[&str] = &[
+    "m5_campaign_record",
+    "m5_cancellation_campaign",
+    "m5_conformance_campaign",
+    "m5_crash_restore_campaign",
+    "m5_performance_campaign",
+    "m5_resource_bounds_campaign",
+    "m5_security_campaign",
+    "m5_soak_campaign",
+    "m5_upgrade_campaign",
+];
+
+#[test]
+fn the_semantic_closure_covers_what_the_campaign_runs() -> Result<(), Box<dyn Error>> {
+    let scope = Scope::read()?;
+    let paths = closure_paths()?;
+
+    let mut required_targets = BTreeSet::new();
+    for scenario in scope
+        .reports
+        .iter()
+        .map(|report| &report.scenario)
+        .chain(&scope.reused)
+    {
+        required_targets.insert(("oxide-batch".to_owned(), scenario.target.clone()));
+    }
+    assert!(
+        !required_targets.is_empty(),
+        "the campaign scope named no required target, so this test checks nothing",
+    );
+
+    for (package, target) in &required_targets {
+        let relative = format!("crates/{package}/tests/{target}.rs");
+        assert!(
+            covered(&paths, &relative),
+            "{relative} backs a report or reused scenario in package {package}, and is not \
+             covered by any path in the campaign's semantic closure",
+        );
+    }
+
+    for governance in GOVERNANCE_TARGETS {
+        assert!(
+            !required_targets.contains(&("oxide-batch".to_owned(), (*governance).to_owned())),
+            "{governance} is a governance test, not a crash-restore scenario, and must not be \
+             part of the campaign's required-target set",
+        );
+    }
+
+    for excluded in [
+        "docs/project/m5-campaign-evidence.md",
+        "tests/fixtures/soak/campaign-scope.json",
+        "tests/fixtures/soak/campaign-semantics.json",
+        "tests/fixtures/conformance/accepted-scope.json",
+        "tests/fixtures/conformance/campaign-semantics.json",
+    ] {
+        assert!(
+            !paths.iter().any(|path| path == excluded),
+            "{excluded} must not be in the crash-restore closure: including it would either \
+             create a retention-time self-reference or bind crash-restore evidence to another \
+             campaign's fixtures",
+        );
+    }
+
+    for required in [
+        "crates/oxide-batch/src",
+        "tests/fixtures/crash-restore/campaign-scope.json",
+        "xtask/src/crash_restore.rs",
+        "xtask/src/evidence.rs",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        ".github/workflows/m5-crash-restore.yml",
+        "tests/fixtures/crash-restore/execution-contract.json",
+        "tests/fixtures/crash-restore/run-ci-campaign.sh",
+        "tests/fixtures/crash-restore/verify-ci-contract.sh",
+    ] {
+        assert!(
+            paths.iter().any(|path| path == required),
+            "{required} is not in the campaign's semantic closure, so a change to it would leave \
+             retained evidence looking valid when it is evidence of something else",
+        );
+    }
+
+    assert!(
+        !paths.iter().any(|path| path == ".github/workflows/ci.yml"),
+        "ci.yml is unrelated to the dedicated crash-restore campaign and must not invalidate its \
+         evidence",
+    );
+
+    for path in &paths {
+        assert!(
+            workspace_root().join(path).exists(),
+            "{path} is declared as campaign semantics and does not exist, so the producer cannot \
+             record its object identity",
+        );
+    }
+    Ok(())
+}
+
+/// Returns every path the campaign's semantic closure declares.
+fn closure_paths() -> Result<Vec<String>, Box<dyn Error>> {
+    let closure: Value = serde_json::from_str(&read_document(
+        "tests/fixtures/crash-restore/campaign-semantics.json",
+    )?)?;
+    Ok(closure
+        .get("categories")
+        .and_then(Value::as_object)
+        .ok_or_else(|| Failure("the closure declares no categories".to_owned()))?
+        .values()
+        .filter_map(|category| category.get("paths").and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>())
+}
+
+/// Reports whether a repository-relative path is covered by the closure:
+/// named exactly, or nested under a closure path that names a directory.
+fn covered(paths: &[String], candidate: &str) -> bool {
+    paths
+        .iter()
+        .any(|path| path == candidate || candidate.starts_with(&format!("{path}/")))
+}
+
+// ---------------------------------------------------------------------
+// Contract-check exactness. `verify-ci-contract.sh` binds the dedicated
+// workflow and `run-ci-campaign.sh` by exact git blob identity, not by the
+// literal presence checks alone. These tests drive the real script against
+// an isolated sandbox copy of those files, so a mutation proves the
+// checker's actual behaviour rather than one helper's return value, and
+// never touches the repository working tree.
+// ---------------------------------------------------------------------
+
+#[test]
+fn contract_check_passes_on_the_canonical_workflow_and_script() -> Result<(), Box<dyn Error>> {
+    assert!(run_crash_restore_contract_check(|_sandbox| Ok(()))?);
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_an_added_trigger() -> Result<(), Box<dyn Error>> {
+    let passed = run_crash_restore_contract_check(|sandbox| {
+        insert_after(
+            &sandbox.join(".github/workflows/m5-crash-restore.yml"),
+            "  workflow_dispatch:\n",
+            "  schedule:\n    - cron: '0 0 * * *'\n",
+        )
+    })?;
+    assert!(
+        !passed,
+        "an added trigger must fail the contract check even though every expected trigger is \
+         still present",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_a_widened_matrix() -> Result<(), Box<dyn Error>> {
+    let passed = run_crash_restore_contract_check(|sandbox| {
+        insert_after(
+            &sandbox.join(".github/workflows/m5-crash-restore.yml"),
+            "postgres: [\"15\", \"18\"]\n",
+            "        include:\n          - postgres: \"16\"\n",
+        )
+    })?;
+    assert!(
+        !passed,
+        "an additional matrix execution point must fail even though the literal \
+         postgres: [\"15\", \"18\"] declaration is still present",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_a_changed_timeout() -> Result<(), Box<dyn Error>> {
+    let passed = run_crash_restore_contract_check(|sandbox| {
+        let workflow = sandbox.join(".github/workflows/m5-crash-restore.yml");
+        let source = fs::read_to_string(&workflow)?;
+        let mutated = source.replace("timeout-minutes: 45", "timeout-minutes: 5");
+        assert_ne!(
+            source, mutated,
+            "the timeout literal was not found to mutate"
+        );
+        fs::write(&workflow, mutated)?;
+        Ok(())
+    })?;
+    assert!(
+        !passed,
+        "a changed timeout must fail the contract check even though every other literal is \
+         unchanged",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_a_changed_report_or_artifact_path() -> Result<(), Box<dyn Error>> {
+    let passed = run_crash_restore_contract_check(|sandbox| {
+        let workflow = sandbox.join(".github/workflows/m5-crash-restore.yml");
+        let source = fs::read_to_string(&workflow)?;
+        let mutated = source.replace(
+            "path: target/m5-campaigns/crash-restore-campaign.json",
+            "path: target/m5-campaigns/crash-restore-campaign-renamed.json",
+        );
+        assert_ne!(
+            source, mutated,
+            "the report path literal was not found to mutate"
+        );
+        fs::write(&workflow, mutated)?;
+        Ok(())
+    })?;
+    assert!(
+        !passed,
+        "a changed retained-report path must fail even though the producer command is unchanged",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_an_appended_script_command() -> Result<(), Box<dyn Error>> {
+    let passed = run_crash_restore_contract_check(|sandbox| {
+        append_line(
+            &sandbox.join("tests/fixtures/crash-restore/run-ci-campaign.sh"),
+            "echo \"extra command\"",
+        )
+    })?;
+    assert!(
+        !passed,
+        "an appended command must fail even though the expected cargo command is still present",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_a_harmless_comment_byte() -> Result<(), Box<dyn Error>> {
+    let passed = run_crash_restore_contract_check(|sandbox| {
+        append_line(
+            &sandbox.join(".github/workflows/m5-crash-restore.yml"),
+            "# harmless comment",
+        )
+    })?;
+    assert!(
+        !passed,
+        "exact git blob identity, not heuristic literal parsing, is the retained-evidence \
+         boundary: even a harmless trailing comment must fail",
+    );
+    Ok(())
+}
+
+/// Copies the real workflow, script, and contract into an isolated sandbox,
+/// applies `mutate` to that sandbox, then runs the real `verify-ci-contract.sh`
+/// against the (possibly mutated) copy and reports whether it exited zero.
+fn run_crash_restore_contract_check(
+    mutate: impl FnOnce(&Path) -> Result<(), Box<dyn Error>>,
+) -> Result<bool, Box<dyn Error>> {
+    let root = workspace_root();
+    let sandbox = Sandbox::new("crash-restore-contract-check")?;
+
+    let workflow_dir = sandbox.path().join(".github/workflows");
+    fs::create_dir_all(&workflow_dir)?;
+    fs::copy(
+        root.join(".github/workflows/m5-crash-restore.yml"),
+        workflow_dir.join("m5-crash-restore.yml"),
+    )?;
+
+    let fixture_dir = sandbox.path().join("tests/fixtures/crash-restore");
+    fs::create_dir_all(&fixture_dir)?;
+    for name in [
+        "execution-contract.json",
+        "run-ci-campaign.sh",
+        "verify-ci-contract.sh",
+    ] {
+        fs::copy(
+            root.join("tests/fixtures/crash-restore").join(name),
+            fixture_dir.join(name),
+        )?;
+    }
+    let checker = fixture_dir.join("verify-ci-contract.sh");
+    let mut permissions = fs::metadata(&checker)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&checker, permissions)?;
+
+    mutate(sandbox.path())?;
+
+    let status = Command::new(&checker)
+        .arg(".github/workflows/m5-crash-restore.yml")
+        .current_dir(sandbox.path())
+        .status()?;
+    Ok(status.success())
+}
+
+/// Inserts `insertion` immediately after the first occurrence of `anchor`.
+fn insert_after(path: &Path, anchor: &str, insertion: &str) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(path)?;
+    let position = contents.find(anchor).ok_or_else(|| {
+        Box::new(Failure(format!(
+            "no {anchor:?} anchor found in {}",
+            path.display()
+        ))) as Box<dyn Error>
+    })?;
+    let insert_at = position + anchor.len();
+    let mut mutated = String::with_capacity(contents.len() + insertion.len());
+    mutated.push_str(&contents[..insert_at]);
+    mutated.push_str(insertion);
+    mutated.push_str(&contents[insert_at..]);
+    fs::write(path, mutated)?;
+    Ok(())
+}
+
+/// Appends one line to a file.
+fn append_line(path: &Path, line: &str) -> Result<(), Box<dyn Error>> {
+    let mut contents = fs::read_to_string(path)?;
+    contents.push('\n');
+    contents.push_str(line);
+    contents.push('\n');
+    fs::write(path, contents)?;
+    Ok(())
+}
+
+/// A uniquely named temporary directory, removed when it goes out of scope
+/// regardless of how the test exits.
+struct Sandbox(PathBuf);
+
+impl Sandbox {
+    fn new(label: &str) -> Result<Self, Box<dyn Error>> {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos());
+        let dir = std::env::temp_dir().join(format!(
+            "oxide-batch-{label}-{}-{unique}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir)?;
+        Ok(Self(dir))
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Sandbox {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
 }
 
 /// The committed campaign scope document.

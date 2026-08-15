@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "8ec060b646518b763e2084de48702066da959cdb",
+    "source_commit": "f0a2cdb0343c3b3e821a104c575e440063560678",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -18,6 +18,50 @@
     "A passing scenario is not sufficient on its own. Each report also retains an observation into a directory this runner creates empty, and a missing observation, a phase that did not end in SIGKILL, or a recorded violation fails the campaign.",
     "The reused M2-M4 scenarios are run rather than cited. The campaign does not rewrite the evidence those milestones delivered, and it does not take their passing on trust either."
   ],
+  "observation": {
+    "execution_manifest": {
+      "execution_commit": "f0a2cdb0343c3b3e821a104c575e440063560678",
+      "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+      "objects": {
+        ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+        ".github/workflows/m5-crash-restore.yml": "560c0c40e6b5a8385ba07defcafb63caed840925",
+        "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+        "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+        "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+        "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+        "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+        "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+        "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+        "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+        "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+        "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+        "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+        "crates/oxide-batch/tests/contract": "5f182baf15b796b19fb49d43aeaac410e2d1922e",
+        "crates/oxide-batch/tests/crash_restore": "cb297a3e4b83fa3dd1cfb918a5a87a6312266b44",
+        "crates/oxide-batch/tests/postgres_commit_phase_process_kill.rs": "3dce4b8bd0116caf620c4ae8728ff244581d3690",
+        "crates/oxide-batch/tests/postgres_crash_recovery.rs": "e7393e20a657b7584ee9eb11402a145f69765b90",
+        "crates/oxide-batch/tests/postgres_fault_crash_recovery.rs": "934365469bbe098b235fb16adb5c8a5c17386018",
+        "crates/oxide-batch/tests/postgres_flow_crash_recovery.rs": "c5d4a354b2a4ae2fc026319a8873bd01f811a133",
+        "crates/oxide-batch/tests/postgres_local_partition_crash_recovery.rs": "e8fe4d8894f119f4e8ce743eed83c7d04610bbf6",
+        "crates/oxide-batch/tests/postgres_local_split_crash_recovery.rs": "d5ce0a17c7d1834bee44ee759b16cbfa226ac59f",
+        "crates/oxide-batch/tests/postgres_logical_backup_restore.rs": "5402b048e4458a4a3027647b0901be622152ac49",
+        "crates/oxide-batch/tests/postgres_repository.rs": "3b3a4b1fd98c1fdce1051960f4d79b9b8552f52e",
+        "crates/oxide-batch/tests/postgres_restart_after_many_chunks.rs": "4271e2468fa25be8e08bdda829e5f8d93a2fd004",
+        "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+        "tests/fixtures/crash-restore/campaign-scope.json": "a91affe2a69568978ef9343a69fd962a6774113b",
+        "tests/fixtures/crash-restore/campaign-semantics.json": "b995b8d74f3efda9632b7b0308cae420a817b63e",
+        "tests/fixtures/crash-restore/execution-contract.json": "5aa1293fb5f9a0990e7a481491cbf6c94dbdcc96",
+        "tests/fixtures/crash-restore/run-ci-campaign.sh": "6537ee1543f50f9c0373049af13b192a3592f250",
+        "tests/fixtures/crash-restore/verify-ci-contract.sh": "cfdc06ea559890ac1509dfc9cb547d271a0b6cec",
+        "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+        "xtask/src/crash_restore.rs": "38edf0099c6354ab09afed54b7499ad425f53335",
+        "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
+        "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
+        "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
+      },
+      "tree_clean": true
+    }
+  },
   "passed": true,
   "phases": [
     {
@@ -56,6 +100,7 @@
       "termination": "SIGKILL"
     }
   ],
+  "postgresql_major_version": "18",
   "report": "crash-restore",
   "reports": [
     {
@@ -83,10 +128,52 @@
           "job_status": "COMPLETED",
           "step_status": "COMPLETED"
         },
+        "execution_manifest": {
+          "execution_commit": "f0a2cdb0343c3b3e821a104c575e440063560678",
+          "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+          "objects": {
+            ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+            ".github/workflows/m5-crash-restore.yml": "560c0c40e6b5a8385ba07defcafb63caed840925",
+            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+            "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+            "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+            "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+            "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+            "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+            "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+            "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+            "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+            "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+            "crates/oxide-batch/tests/contract": "5f182baf15b796b19fb49d43aeaac410e2d1922e",
+            "crates/oxide-batch/tests/crash_restore": "cb297a3e4b83fa3dd1cfb918a5a87a6312266b44",
+            "crates/oxide-batch/tests/postgres_commit_phase_process_kill.rs": "3dce4b8bd0116caf620c4ae8728ff244581d3690",
+            "crates/oxide-batch/tests/postgres_crash_recovery.rs": "e7393e20a657b7584ee9eb11402a145f69765b90",
+            "crates/oxide-batch/tests/postgres_fault_crash_recovery.rs": "934365469bbe098b235fb16adb5c8a5c17386018",
+            "crates/oxide-batch/tests/postgres_flow_crash_recovery.rs": "c5d4a354b2a4ae2fc026319a8873bd01f811a133",
+            "crates/oxide-batch/tests/postgres_local_partition_crash_recovery.rs": "e8fe4d8894f119f4e8ce743eed83c7d04610bbf6",
+            "crates/oxide-batch/tests/postgres_local_split_crash_recovery.rs": "d5ce0a17c7d1834bee44ee759b16cbfa226ac59f",
+            "crates/oxide-batch/tests/postgres_logical_backup_restore.rs": "5402b048e4458a4a3027647b0901be622152ac49",
+            "crates/oxide-batch/tests/postgres_repository.rs": "3b3a4b1fd98c1fdce1051960f4d79b9b8552f52e",
+            "crates/oxide-batch/tests/postgres_restart_after_many_chunks.rs": "4271e2468fa25be8e08bdda829e5f8d93a2fd004",
+            "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+            "tests/fixtures/crash-restore/campaign-scope.json": "a91affe2a69568978ef9343a69fd962a6774113b",
+            "tests/fixtures/crash-restore/campaign-semantics.json": "b995b8d74f3efda9632b7b0308cae420a817b63e",
+            "tests/fixtures/crash-restore/execution-contract.json": "5aa1293fb5f9a0990e7a481491cbf6c94dbdcc96",
+            "tests/fixtures/crash-restore/run-ci-campaign.sh": "6537ee1543f50f9c0373049af13b192a3592f250",
+            "tests/fixtures/crash-restore/verify-ci-contract.sh": "cfdc06ea559890ac1509dfc9cb547d271a0b6cec",
+            "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+            "xtask/src/crash_restore.rs": "38edf0099c6354ab09afed54b7499ad425f53335",
+            "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
+            "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
+            "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
+          },
+          "tree_clean": true
+        },
         "passed": true,
         "phases": [
           {
-            "child_pid": 7463,
+            "child_pid": 8006,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -101,9 +188,9 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 2,
-              "reach_phase": 20,
-              "resume": 16
+              "discovery": 4,
+              "reach_phase": 42,
+              "resume": 24
             },
             "expected": "the enlisted rows were never committed, so the chunk replays whole",
             "fixture": "postgres",
@@ -210,7 +297,7 @@
             "violations": []
           },
           {
-            "child_pid": 7500,
+            "child_pid": 8045,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -225,9 +312,9 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 2,
-              "reach_phase": 21,
-              "resume": 18
+              "discovery": 4,
+              "reach_phase": 42,
+              "resume": 25
             },
             "expected": "durable state was produced inside the commit and never bound, so the chunk replays whole",
             "fixture": "postgres",
@@ -334,7 +421,7 @@
             "violations": []
           },
           {
-            "child_pid": 7516,
+            "child_pid": 8061,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -349,9 +436,9 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 2,
-              "reach_phase": 26,
-              "resume": 17
+              "discovery": 4,
+              "reach_phase": 53,
+              "resume": 25
             },
             "expected": "the progress write was issued and blocked, so neither it nor the enlisted rows are durable and the chunk replays whole",
             "fixture": "postgres",
@@ -458,7 +545,7 @@
             "violations": []
           },
           {
-            "child_pid": 7534,
+            "child_pid": 8080,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -473,9 +560,9 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 2,
-              "reach_phase": 27,
-              "resume": 15
+              "discovery": 4,
+              "reach_phase": 54,
+              "resume": 21
             },
             "expected": "the server completed the commit the killed process never saw acknowledged, so the chunk is durable and must not replay",
             "fixture": "postgres",
@@ -584,7 +671,7 @@
             "violations": []
           },
           {
-            "child_pid": 7552,
+            "child_pid": 8119,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -599,9 +686,9 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 2,
-              "reach_phase": 20,
-              "resume": 13
+              "discovery": 4,
+              "reach_phase": 21,
+              "resume": 21
             },
             "expected": "the commit was acknowledged before the kill, so the chunk is durable and must not replay",
             "fixture": "postgres",
@@ -743,7 +830,7 @@
           "job_status": "COMPLETED",
           "step_status": "COMPLETED"
         },
-        "child_pid": 7840,
+        "child_pid": 8447,
         "decision": {
           "class": "APPLIED",
           "path": "operator recover",
@@ -759,10 +846,52 @@
           "unknown_commit": false
         },
         "durations_ms": {
-          "commit_chunks_before_kill": 443,
-          "discovery": 38,
-          "resume": 266,
-          "uninterrupted_run": 759
+          "commit_chunks_before_kill": 634,
+          "discovery": 70,
+          "resume": 535,
+          "uninterrupted_run": 1098
+        },
+        "execution_manifest": {
+          "execution_commit": "f0a2cdb0343c3b3e821a104c575e440063560678",
+          "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+          "objects": {
+            ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+            ".github/workflows/m5-crash-restore.yml": "560c0c40e6b5a8385ba07defcafb63caed840925",
+            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+            "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+            "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+            "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+            "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+            "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+            "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+            "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+            "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+            "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+            "crates/oxide-batch/tests/contract": "5f182baf15b796b19fb49d43aeaac410e2d1922e",
+            "crates/oxide-batch/tests/crash_restore": "cb297a3e4b83fa3dd1cfb918a5a87a6312266b44",
+            "crates/oxide-batch/tests/postgres_commit_phase_process_kill.rs": "3dce4b8bd0116caf620c4ae8728ff244581d3690",
+            "crates/oxide-batch/tests/postgres_crash_recovery.rs": "e7393e20a657b7584ee9eb11402a145f69765b90",
+            "crates/oxide-batch/tests/postgres_fault_crash_recovery.rs": "934365469bbe098b235fb16adb5c8a5c17386018",
+            "crates/oxide-batch/tests/postgres_flow_crash_recovery.rs": "c5d4a354b2a4ae2fc026319a8873bd01f811a133",
+            "crates/oxide-batch/tests/postgres_local_partition_crash_recovery.rs": "e8fe4d8894f119f4e8ce743eed83c7d04610bbf6",
+            "crates/oxide-batch/tests/postgres_local_split_crash_recovery.rs": "d5ce0a17c7d1834bee44ee759b16cbfa226ac59f",
+            "crates/oxide-batch/tests/postgres_logical_backup_restore.rs": "5402b048e4458a4a3027647b0901be622152ac49",
+            "crates/oxide-batch/tests/postgres_repository.rs": "3b3a4b1fd98c1fdce1051960f4d79b9b8552f52e",
+            "crates/oxide-batch/tests/postgres_restart_after_many_chunks.rs": "4271e2468fa25be8e08bdda829e5f8d93a2fd004",
+            "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+            "tests/fixtures/crash-restore/campaign-scope.json": "a91affe2a69568978ef9343a69fd962a6774113b",
+            "tests/fixtures/crash-restore/campaign-semantics.json": "b995b8d74f3efda9632b7b0308cae420a817b63e",
+            "tests/fixtures/crash-restore/execution-contract.json": "5aa1293fb5f9a0990e7a481491cbf6c94dbdcc96",
+            "tests/fixtures/crash-restore/run-ci-campaign.sh": "6537ee1543f50f9c0373049af13b192a3592f250",
+            "tests/fixtures/crash-restore/verify-ci-contract.sh": "cfdc06ea559890ac1509dfc9cb547d271a0b6cec",
+            "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+            "xtask/src/crash_restore.rs": "38edf0099c6354ab09afed54b7499ad425f53335",
+            "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
+            "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
+            "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
+          },
+          "tree_clean": true
         },
         "expected": "the durable checkpoint names exactly the committed chunks, the restart inherits it, and the finished job matches an uninterrupted run",
         "fixture": "postgres",
@@ -913,11 +1042,53 @@
         "databases": {
           "restored_into": "oxide_batch_m5_restore"
         },
+        "execution_manifest": {
+          "execution_commit": "f0a2cdb0343c3b3e821a104c575e440063560678",
+          "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+          "objects": {
+            ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+            ".github/workflows/m5-crash-restore.yml": "560c0c40e6b5a8385ba07defcafb63caed840925",
+            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+            "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+            "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+            "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+            "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+            "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+            "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+            "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+            "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+            "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+            "crates/oxide-batch/tests/contract": "5f182baf15b796b19fb49d43aeaac410e2d1922e",
+            "crates/oxide-batch/tests/crash_restore": "cb297a3e4b83fa3dd1cfb918a5a87a6312266b44",
+            "crates/oxide-batch/tests/postgres_commit_phase_process_kill.rs": "3dce4b8bd0116caf620c4ae8728ff244581d3690",
+            "crates/oxide-batch/tests/postgres_crash_recovery.rs": "e7393e20a657b7584ee9eb11402a145f69765b90",
+            "crates/oxide-batch/tests/postgres_fault_crash_recovery.rs": "934365469bbe098b235fb16adb5c8a5c17386018",
+            "crates/oxide-batch/tests/postgres_flow_crash_recovery.rs": "c5d4a354b2a4ae2fc026319a8873bd01f811a133",
+            "crates/oxide-batch/tests/postgres_local_partition_crash_recovery.rs": "e8fe4d8894f119f4e8ce743eed83c7d04610bbf6",
+            "crates/oxide-batch/tests/postgres_local_split_crash_recovery.rs": "d5ce0a17c7d1834bee44ee759b16cbfa226ac59f",
+            "crates/oxide-batch/tests/postgres_logical_backup_restore.rs": "5402b048e4458a4a3027647b0901be622152ac49",
+            "crates/oxide-batch/tests/postgres_repository.rs": "3b3a4b1fd98c1fdce1051960f4d79b9b8552f52e",
+            "crates/oxide-batch/tests/postgres_restart_after_many_chunks.rs": "4271e2468fa25be8e08bdda829e5f8d93a2fd004",
+            "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+            "tests/fixtures/crash-restore/campaign-scope.json": "a91affe2a69568978ef9343a69fd962a6774113b",
+            "tests/fixtures/crash-restore/campaign-semantics.json": "b995b8d74f3efda9632b7b0308cae420a817b63e",
+            "tests/fixtures/crash-restore/execution-contract.json": "5aa1293fb5f9a0990e7a481491cbf6c94dbdcc96",
+            "tests/fixtures/crash-restore/run-ci-campaign.sh": "6537ee1543f50f9c0373049af13b192a3592f250",
+            "tests/fixtures/crash-restore/verify-ci-contract.sh": "cfdc06ea559890ac1509dfc9cb547d271a0b6cec",
+            "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+            "xtask/src/crash_restore.rs": "38edf0099c6354ab09afed54b7499ad425f53335",
+            "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
+            "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
+            "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
+          },
+          "tree_clean": true
+        },
         "fixture": "postgres-backup",
         "passed": true,
         "report": "logical backup and restore",
         "restart_on_restored": {
-          "duration_ms": 77,
+          "duration_ms": 758,
           "resumed_chunks": 2,
           "terminal": {
             "business_rows": 25,
@@ -936,7 +1107,7 @@
         },
         "restored_matches_source": true,
         "scenario": "logical_backup_restores_the_durable_state_and_the_job_restarts_on_it",
-        "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+        "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
         "state_at_backup": {
           "chunk_job": {
             "attempts": 2,
@@ -1193,10 +1364,10 @@
           ]
         },
         "tooling": {
-          "archive_bytes": 78716,
+          "archive_bytes": 78681,
           "format": "custom",
-          "pg_dump": "pg_dump (PostgreSQL) 18.4 (Ubuntu 18.4-1.pgdg24.04+1)",
-          "pg_restore": "pg_restore (PostgreSQL) 18.4 (Ubuntu 18.4-1.pgdg24.04+1)",
+          "pg_dump": "pg_dump (PostgreSQL) 18.6 (Ubuntu 18.6-1.pgdg24.04+2)",
+          "pg_restore": "pg_restore (PostgreSQL) 18.6 (Ubuntu 18.6-1.pgdg24.04+2)",
           "schemas": [
             "oxide_batch",
             "oxide_batch_business"

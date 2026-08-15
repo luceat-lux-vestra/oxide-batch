@@ -48,8 +48,8 @@ use sqlx::{Connection, PgConnection};
 use crash_restore::{
     CampaignJob, Failure, FixedClock, HANDSHAKE_BOUND, ProviderPark, TerminalShape, announce,
     business_items, checkpoint_position, commit_chunk, complete_and_shape, config, counts,
-    create_attempt, discover, epoch, handshake_directory, instance_key, latest_attempt,
-    migrator_url, observe, park_until_killed, prepare_fixture, remove_job, resolve,
+    create_attempt, discover, epoch, execution_manifest, handshake_directory, instance_key,
+    latest_attempt, migrator_url, observe, park_until_killed, prepare_fixture, remove_job, resolve,
     retain_observation, runtime_url, start_attempt, transaction_manager,
     wait_for_blocked_statement, wait_for_file, write_items,
 };
@@ -215,6 +215,7 @@ async fn run_campaign(runtime_url: String, migrator_url: String) -> Result<(), B
                 "step_status": canonical.step_status.as_str(),
             },
             "phases": phases,
+            "execution_manifest": execution_manifest()?,
             "violations": Vec::<String>::new(),
             "passed": true,
         }),

@@ -71,44 +71,101 @@ pub fn run() -> Result<Campaign, String> {
 
     let mut violations = Vec::new();
     let fixtures = resolve_fixtures(&scope, &mut violations);
-    if !violations.is_empty() {
-        let report = write_report(&root, &scope, &fixtures, &Runs::default(), &violations)?;
-        return Ok(Campaign { violations, report });
-    }
-
-    let observations = prepare_observations(&root)?;
     let mut runs = Runs::default();
-    for report in &scope.reports {
-        eprintln!("==> {} {}", report.target, report.name);
-        let run = suite::run_target(
-            &root,
-            &TargetCommand {
-                package: &report.package,
-                selector: &["--test".to_owned(), report.target.clone()],
-                filters: &["--exact", &report.name],
-                environment: &[(OBSERVATIONS_ENV, observations.display().to_string())],
-                nocapture: true,
-                release: false,
-            },
-        )?;
+    if violations.is_empty() {
+        let observations = prepare_observations(&root)?;
+        for report in &scope.reports {
+            eprintln!("==> {} {}", report.target, report.name);
+            let run = suite::run_target(
+                &root,
+                &TargetCommand {
+                    package: &report.package,
+                    selector: &["--test".to_owned(), report.target.clone()],
+                    filters: &["--exact", &report.name],
+                    environment: &[(OBSERVATIONS_ENV, observations.display().to_string())],
+                    nocapture: true,
+                    release: false,
+                },
+            )?;
 
-        if !run.succeeded {
-            runs.failed_targets.push(format!(
-                "{} {} exited unsuccessfully",
-                report.package, report.target
-            ));
+            if !run.succeeded {
+                runs.failed_targets.push(format!(
+                    "{} {} exited unsuccessfully",
+                    report.package, report.target
+                ));
+            }
+            runs.outcomes.insert(
+                (report.target.clone(), report.name.clone()),
+                run.results.get(&report.name).cloned(),
+            );
         }
-        runs.outcomes.insert(
-            (report.target.clone(), report.name.clone()),
-            run.results.get(&report.name).cloned(),
-        );
+        runs.observations = read_observations(&observations)?;
     }
 
-    runs.observations = read_observations(&observations)?;
     violations.extend(reconcile(&scope, &runs));
+    let (execution_manifest, manifest_violations) = execution_manifest(&scope.reports, &runs);
+    violations.extend(manifest_violations);
 
-    let report = write_report(&root, &scope, &fixtures, &runs, &violations)?;
+    let report = write_report(
+        &root,
+        &scope,
+        &fixtures,
+        &runs,
+        &violations,
+        &execution_manifest,
+    )?;
     Ok(Campaign { violations, report })
+}
+
+/// Hoists the execution manifest the reports recorded to the campaign report.
+///
+/// Every declared report is required to have one and they must agree, so a
+/// report that retained no manifest, a null one, or one that disagreed with
+/// another cannot pass silently. The manifest itself is recorded by each
+/// report from inside its own test process — see
+/// `crates/oxide-batch/tests/upgrade/mod.rs`'s `execution_manifest` — because
+/// that is the tree the campaign actually ran against; this function only
+/// requires the declared reports to agree on it.
+fn execution_manifest(reports: &[Report], runs: &Runs) -> (Value, Vec<String>) {
+    let mut violations = Vec::new();
+    let mut first: Option<(&str, &Value)> = None;
+    for report in reports {
+        let Some(observation) = runs.observations.get(&report.id) else {
+            violations.push(format!(
+                "{} retained no observation and therefore no execution manifest",
+                report.id
+            ));
+            continue;
+        };
+        let Some(manifest) = observation.get("execution_manifest") else {
+            violations.push(format!(
+                "{} retained no execution_manifest field",
+                report.id
+            ));
+            continue;
+        };
+        if manifest.is_null() {
+            violations.push(format!("{} retained a null execution manifest", report.id));
+            continue;
+        }
+
+        if let Some((first_id, first_manifest)) = first {
+            if manifest != first_manifest {
+                violations.push(format!(
+                    "{} and {first_id} recorded different execution manifests, so the campaign \
+                     ran against a tree that changed underneath it",
+                    report.id
+                ));
+            }
+        } else {
+            first = Some((&report.id, manifest));
+        }
+    }
+
+    (
+        first.map_or(Value::Null, |(_, manifest)| manifest.clone()),
+        violations,
+    )
 }
 
 /// Reports which declared fixtures the environment supplies.
@@ -141,6 +198,17 @@ fn resolve_fixtures(scope: &Scope, violations: &mut Vec<String>) -> BTreeMap<Str
     }
 
     resolved
+}
+
+/// Reads the `PostgreSQL` major the campaign was configured to run at.
+///
+/// A runner cannot see the database version through a fixture, which is a
+/// connection string it never opens, so the campaign matrix variable is the
+/// recorded major — the same source of truth `suite::environment`'s own
+/// `matrix` field already reads.
+fn expected_matrix_major() -> Option<String> {
+    let matrix = env::var(suite::MATRIX).ok()?;
+    matrix.strip_prefix("postgres-").map(str::to_owned)
 }
 
 /// Creates an empty observation directory and returns it.
@@ -293,6 +361,7 @@ fn write_report(
     fixtures: &BTreeMap<String, bool>,
     runs: &Runs,
     violations: &[String],
+    manifest: &Value,
 ) -> Result<PathBuf, String> {
     let directory = suite::directory(root);
     fs::create_dir_all(&directory)
@@ -341,12 +410,14 @@ fn write_report(
     let document = json!({
         "report": "upgrade",
         "campaign": "M5 PostgreSQL upgrade",
+        "postgresql_major_version": expected_matrix_major(),
         "scenarios": [
             "schema1_and_schema2_upgrade_directly_to_schema3",
             "schema2_runtime_rejects_schema3",
             "schema3_backup_restores_the_prior_schema",
         ],
         "environment": suite::environment(),
+        "observation": { "execution_manifest": manifest },
         "fixtures": fixtures,
         "sources": scope.sources,
         "schema2_runtime": scope.runtime,

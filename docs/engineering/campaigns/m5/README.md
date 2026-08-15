@@ -62,11 +62,26 @@ the cancellation campaign's is
 [`cancellation/campaign-semantics.json`](../../../../tests/fixtures/cancellation/campaign-semantics.json),
 the performance campaign's is
 [`performance/campaign-semantics.json`](../../../../tests/fixtures/performance/campaign-semantics.json),
-and the conformance campaign's is
-[`conformance/campaign-semantics.json`](../../../../tests/fixtures/conformance/campaign-semantics.json).
-All four cover framework source, migrations, cargo manifests, `Cargo.lock`,
+the conformance campaign's is
+[`conformance/campaign-semantics.json`](../../../../tests/fixtures/conformance/campaign-semantics.json),
+the crash and restore campaign's is
+[`crash-restore/campaign-semantics.json`](../../../../tests/fixtures/crash-restore/campaign-semantics.json),
+and the upgrade campaign's is
+[`upgrade/campaign-semantics.json`](../../../../tests/fixtures/upgrade/campaign-semantics.json).
+All six cover framework source, migrations, cargo manifests, `Cargo.lock`,
 toolchain and build configuration, the campaign implementation and fixtures,
-the execution contract, and the verifier. The conformance campaign's producer
+the execution contract, and the verifier. The upgrade campaign's closure
+additionally binds a historical revision that is not itself a path any
+closure can hash: the rejection report builds a real schema-2 runtime from
+the commit before schema 3 was added, pinned by hash in
+`crates/oxide-batch/tests/upgrade/mod.rs`'s `SCHEMA2_RUNTIME_REVISION`
+constant, which the closure covers as part of the campaign implementation, and
+cross-checked byte-for-byte against the same value in
+`tests/fixtures/upgrade/campaign-scope.json` and
+`tests/fixtures/upgrade/execution-contract.json` — both by
+`verify-ci-contract.sh` on every CI run and by
+`crates/oxide-batch/tests/m5_upgrade_campaign.rs` in ordinary review. The
+conformance campaign's producer
 distinguishes its row-proof denominator (the `42` accepted rows and their
 `133` assigned scenarios) from its execution envelope (the `30` unique test
 targets those assignments touch): it selects exactly those `30` targets, but
@@ -102,8 +117,10 @@ contract, calls the script, and retains the report. Soak is owned by
 `.github/workflows/m5-soak.yml`; cancellation is owned by
 `.github/workflows/m5-cancellation.yml`; performance is owned by
 `.github/workflows/m5-performance.yml`; conformance is owned by
-`.github/workflows/m5-conformance.yml`. An unrelated quality or build change
-in `.github/workflows/ci.yml` therefore does not invalidate any campaign's
+`.github/workflows/m5-conformance.yml`; crash and restore is owned by
+`.github/workflows/m5-crash-restore.yml`; upgrade is owned by
+`.github/workflows/m5-upgrade.yml`. An unrelated quality or build change in
+`.github/workflows/ci.yml` therefore does not invalidate any campaign's
 retained evidence, while a change to the relevant dedicated workflow does.
 
 The contract-check scripts compare the important workflow values — triggers,
@@ -156,7 +173,9 @@ The crash and restore campaign requires those two variables and
 create and drop the database the archive is restored into. It also needs
 `pg_dump` and `pg_restore` on `PATH`, because the backup report takes a real
 archive rather than simulating one. Its committed files come from the
-`postgres-<version>-crash-restore-campaign` CI jobs.
+dedicated `.github/workflows/m5-crash-restore.yml` workflow's
+`postgres-<version>-crash-restore-campaign` jobs, which run it on the
+supported matrix. That is the only place these results are produced.
 
 The upgrade campaign requires `OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL` and
 `OXIDEBATCH_POSTGRES_BACKUP_TEST_URL`, and needs `pg_dump` and `pg_restore` for
@@ -167,7 +186,10 @@ else had already migrated would not be a report about an upgrade. It also needs
 the repository's full history and `git`, because the rejection report builds the
 runtime that shipped against schema 2 from the revision before schema 3 was
 added; a shallow clone fails the campaign rather than skipping that report. Its
-committed files come from the `postgres-<version>-upgrade-campaign` CI jobs.
+committed files come from the dedicated `.github/workflows/m5-upgrade.yml`
+workflow's `postgres-<version>-upgrade-campaign` jobs, which run it on the
+supported matrix and check out full history for exactly that reason. That is
+the only place these results are produced.
 
 The resource-bound campaign requires `OXIDEBATCH_POSTGRES_TEST_URL` and
 `OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL`, and fails before running anything when
