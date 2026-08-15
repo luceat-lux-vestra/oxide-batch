@@ -514,17 +514,25 @@ fn tests_in(source: &str) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------
-// Semantic closure. The conformance campaign's execution surface is exactly
-// the accepted-scope document's denominator: the producer derives its
-// required-target set from the `(package, target)` pairs the 133 scenario
-// assignments name and runs nothing else. It used to enumerate and run every
-// workspace test target `cargo metadata` reported, which pulled workspace
-// tests the accepted scope never named into the campaign's pass/fail gate —
-// including other M5 campaigns' own reconciliation tests, some of which read
-// a shared evidence document this campaign's own retention step rewrites
-// after the report is produced. `the_semantic_closure_covers_what_the_campaign_runs`
-// proves the closure matches the denominator exactly, and the tests after it
-// lock the specific counterexample review found: `m5_campaign_record`,
+// Semantic closure. The row-proof denominator and the execution envelope are
+// distinct. The accepted scope defines 42 rows and 133 scenario assignments;
+// those assignments derive the 30 unique (package, target) test binaries the
+// producer selects (`required_targets`). No target outside that envelope is
+// selected, but every selected target still runs in full, with no libtest
+// filter, so a test inside a selected target that no assigned scenario names
+// still runs and can still fail the campaign — selecting a target and
+// filtering it down to only its assigned scenarios are not the same thing,
+// and this campaign has never done the latter.
+//
+// The producer used to select every workspace test target `cargo metadata`
+// reported, not only the 30 the assignments touch, which pulled workspace
+// targets the accepted scope never named at all into the campaign's
+// pass/fail gate — including other M5 campaigns' own reconciliation tests,
+// some of which read a shared evidence document this campaign's own
+// retention step rewrites after the report is produced.
+// `the_semantic_closure_covers_what_the_campaign_runs` proves the closure
+// covers exactly the envelope the denominator implies, and the tests after
+// it lock the specific counterexample review found: `m5_campaign_record`,
 // `docs/project/m5-campaign-evidence.md`, and another campaign's fixtures.
 // ---------------------------------------------------------------------
 
