@@ -402,14 +402,24 @@ fn check_identity(
 /// a swept table entry. The first two carry evidence this runner reconciles
 /// numerically; construction and swept-table entries carry evidence this
 /// runner reconciles as an accept-at-the-ceiling and refuse-one-past-it pair.
-/// Every entry's identity is checked against the denominator as it is
-/// gathered, so an undeclared resource, a resource recorded by the wrong
-/// report, or a resource claimed twice is a violation rather than silent
-/// coverage.
+///
+/// A resource may legitimately appear in both categories at once — a report
+/// can offer a numeric, ceiling-checked entry for the same resource its
+/// construction cells also bound at the boundary — so identity is tracked
+/// separately per category rather than in one shared map: what must not
+/// happen is two different observations both claiming to be *the* numeric
+/// entry for a resource, or two different observations both claiming to be
+/// its construction cells, not a resource being evidenced in more than one
+/// way by the report the denominator already names for it. Every entry's
+/// identity is still checked against the denominator as it is gathered, so
+/// an undeclared resource, a resource recorded by the wrong report, or a
+/// resource claimed twice within one category is a violation rather than
+/// silent coverage.
 fn collect_evidence(scope: &Scope, runs: &Runs) -> (Evidence, Vec<String>) {
     let mut evidence = Evidence::default();
     let mut violations = Vec::new();
-    let mut claimed_by: BTreeMap<String, String> = BTreeMap::new();
+    let mut claimed_numeric: BTreeMap<String, String> = BTreeMap::new();
+    let mut claimed_construction: BTreeMap<String, String> = BTreeMap::new();
 
     for (id, observation) in &runs.observations {
         let numeric = observation
@@ -422,7 +432,7 @@ fn collect_evidence(scope: &Scope, runs: &Runs) -> (Evidence, Vec<String>) {
             let Some(resource) = entry.get("resource").and_then(Value::as_str) else {
                 continue;
             };
-            if let Some(violation) = check_identity(scope, &mut claimed_by, resource, id) {
+            if let Some(violation) = check_identity(scope, &mut claimed_numeric, resource, id) {
                 violations.push(violation);
             } else {
                 evidence.covered.insert(resource.to_owned());
@@ -450,7 +460,8 @@ fn collect_evidence(scope: &Scope, runs: &Runs) -> (Evidence, Vec<String>) {
                 .push(entry.clone());
         }
         for (resource, cells) in cells {
-            if let Some(violation) = check_identity(scope, &mut claimed_by, &resource, id) {
+            if let Some(violation) = check_identity(scope, &mut claimed_construction, &resource, id)
+            {
                 violations.push(violation);
             } else {
                 evidence.covered.insert(resource.clone());
@@ -516,15 +527,15 @@ fn reconcile_denominator(scope: &Scope, evidence: &Evidence) -> Vec<String> {
         };
         let accepted_at_ceiling = cells.iter().any(|cell| {
             cell.get("value").and_then(Value::as_i64) == Some(declared)
-                && cell.get("accepted").and_then(Value::as_bool) == Some(true)
-                && cell.get("expected").and_then(Value::as_bool) == Some(true)
+                && cell.get("expected").and_then(Value::as_str) == Some("accepted")
+                && cell.get("observed").and_then(Value::as_str) == Some("accepted")
         });
         let refused_past_ceiling = cells.iter().any(|cell| {
             cell.get("value")
                 .and_then(Value::as_i64)
                 .is_some_and(|value| value > declared)
-                && cell.get("accepted").and_then(Value::as_bool) == Some(false)
-                && cell.get("expected").and_then(Value::as_bool) == Some(false)
+                && cell.get("expected").and_then(Value::as_str) == Some("refused")
+                && cell.get("observed").and_then(Value::as_str) == Some("refused")
         });
         if !accepted_at_ceiling {
             violations.push(format!(
@@ -1381,8 +1392,8 @@ mod tests {
                 },
             ],
             "construction": [
-                { "resource": "resource-b", "case": "at the ceiling", "value": 5, "accepted": true, "expected": true },
-                { "resource": "resource-b", "case": "one past", "value": 6, "accepted": false, "expected": false },
+                { "resource": "resource-b", "case": "at the ceiling", "value": 5, "expected": "accepted", "observed": "accepted" },
+                { "resource": "resource-b", "case": "one past", "value": 6, "expected": "refused", "observed": "refused" },
             ],
             "durable_equivalence": {
                 "fields_compared": [{ "field": "field-x", "agrees": true }],

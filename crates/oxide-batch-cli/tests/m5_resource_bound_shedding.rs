@@ -785,9 +785,9 @@ fn configuration_construction_cells() -> Vec<Cell> {
         ),
         Cell::new(
             "cli-configuration-document",
-            "a document inside the ceiling",
-            1_024,
-            configuration_accepted(0),
+            "at the ceiling",
+            CONFIG_CEILING as u64,
+            configuration_accepted(CONFIG_CEILING),
             true,
         ),
     ]
@@ -816,9 +816,12 @@ fn configuration_accepted(bytes: usize) -> bool {
     let contents = if bytes == 0 {
         r#"{"config_version":1,"output":{"page_size":10}}"#.to_owned()
     } else {
-        let prefix = r#"{"config_version":1,"output":{"page_size":10},"note":""#;
-        let filler = bytes.saturating_sub(prefix.len() + 2);
-        format!("{prefix}{}\"}}", "f".repeat(filler))
+        // Padded through a declared key (`repository.url`) rather than an
+        // arbitrary field name: an unrecognized key is refused regardless of
+        // size, which would make this padding prove the wrong ceiling.
+        let prefix = "{\"config_version\":1,\"output\":{\"page_size\":10},\"repository\":{\"url\":\"postgres://user:pass@host/db?note=";
+        let filler = bytes.saturating_sub(prefix.len() + 3);
+        format!("{prefix}{}\"}}}}", "f".repeat(filler))
     };
 
     let (services, _repository) = services();
