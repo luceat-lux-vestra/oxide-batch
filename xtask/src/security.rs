@@ -616,6 +616,67 @@ fn reconcile_classes(scope: &Scope, runs: &Runs) -> Vec<String> {
         ));
     }
 
+    // The exact identity set the committed role-matrix denominator declares,
+    // not merely its shape. The checks above are counts, and a count is not
+    // an identity: a report that removed one legitimate boundary and added a
+    // same-class, same-surface, same-expected bogus cell in its place would
+    // keep every count above unchanged and pass all of them. This is the
+    // check that catches that substitution.
+    let observed_identities = matrix
+        .iter()
+        .map(|cell| {
+            (
+                cell.get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
+                cell.get("class")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
+                cell.get("surface")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
+                cell.get("expected")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    for missing in scope.role_matrix_cells.difference(&observed_identities) {
+        violations.push(format!(
+            "the role matrix denominator declares {missing:?} and the observation does not \
+             record it"
+        ));
+    }
+    for undeclared in observed_identities.difference(&scope.role_matrix_cells) {
+        violations.push(format!(
+            "the role matrix records {undeclared:?}, which the committed denominator at \
+             tests/fixtures/security/role-matrix.json does not declare"
+        ));
+    }
+
+    // A cell's declared side must be what the server actually did, not only
+    // what the identity check above found present. A cell recorded as
+    // allowed whose server outcome was not a success, or one recorded as
+    // forbidden whose server outcome was not a refusal, is not evidence of
+    // either side of the boundary.
+    for cell in &matrix {
+        let id = cell.get("id").and_then(Value::as_str).unwrap_or("<no id>");
+        let observed = cell.get("observed").and_then(Value::as_str);
+        match cell.get("expected").and_then(Value::as_str) {
+            Some("allowed") if observed != Some("succeeded") => violations.push(format!(
+                "{id} is declared allowed and the server recorded {observed:?}"
+            )),
+            Some("forbidden") if observed != Some("refused") => violations.push(format!(
+                "{id} is declared forbidden and the server recorded {observed:?}"
+            )),
+            _ => {}
+        }
+    }
+
     // A refusal that was not a privilege refusal is not evidence of a boundary.
     // A constraint violation and a missing table both merely fail.
     for cell in &matrix {
@@ -645,6 +706,13 @@ fn reconcile_classes(scope: &Scope, runs: &Runs) -> Vec<String> {
 }
 
 /// Reports what the redaction sweep required and did not show.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the exact surface set, the exact value-class set, their duplicate checks, and the \
+              non-vacuous scan checks all reconcile the same observation against the same scope, \
+              and splitting them would scatter checks that have to see the whole observation to \
+              be exact"
+)]
 fn reconcile_redaction(scope: &Scope, runs: &Runs) -> Vec<String> {
     let mut violations = Vec::new();
     let Some(observation) = runs.observations.get(&scope.redaction.report) else {
@@ -666,6 +734,37 @@ fn reconcile_redaction(scope: &Scope, runs: &Runs) -> Vec<String> {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let required_surfaces = scope
+        .redaction
+        .surfaces
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let observed_surfaces = surfaces
+        .iter()
+        .map(|entry| {
+            entry
+                .get("surface")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned()
+        })
+        .collect::<BTreeSet<_>>();
+    // Exact set, not "every required one is present somewhere": a surface the
+    // scope does not declare says nothing about what the scope requires, and
+    // letting it stand unremarked is how a sweep that quietly stopped
+    // covering a required surface, while adding an unrelated one, could look
+    // unchanged in size.
+    for missing in required_surfaces.difference(&observed_surfaces) {
+        violations.push(format!(
+            "the {missing} surface is required and the sweep recorded nothing for it"
+        ));
+    }
+    for extra in observed_surfaces.difference(&required_surfaces) {
+        violations.push(format!(
+            "the sweep recorded the {extra} surface, which the scope does not declare"
+        ));
+    }
     for required in &scope.redaction.surfaces {
         let scanned = surfaces
             .iter()
@@ -703,15 +802,31 @@ fn reconcile_redaction(scope: &Scope, runs: &Runs) -> Vec<String> {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    for required in &scope.redaction.value_classes {
-        if !classes
-            .iter()
-            .any(|entry| entry.get("class").and_then(Value::as_str) == Some(required.as_str()))
-        {
-            violations.push(format!(
-                "the {required} value class is required and the sweep injected no canary for it"
-            ));
-        }
+    let required_classes = scope
+        .redaction
+        .value_classes
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let observed_classes = classes
+        .iter()
+        .map(|entry| {
+            entry
+                .get("class")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned()
+        })
+        .collect::<BTreeSet<_>>();
+    for missing in required_classes.difference(&observed_classes) {
+        violations.push(format!(
+            "the {missing} value class is required and the sweep injected no canary for it"
+        ));
+    }
+    for extra in observed_classes.difference(&required_classes) {
+        violations.push(format!(
+            "the sweep injected the {extra} value class, which the scope does not declare"
+        ));
     }
     let mut class_counts = BTreeMap::new();
     for entry in &classes {
@@ -948,6 +1063,9 @@ struct Scope {
     class_document: Value,
     /// The exact total cell count the role matrix must record.
     role_matrix_total_cells: u64,
+    /// The exact cell identity set (id, class, surface, expected) the role
+    /// matrix must equal, from `tests/fixtures/security/role-matrix.json`.
+    role_matrix_cells: BTreeSet<(String, String, String, String)>,
     /// What the redaction sweep must cover.
     redaction: Redaction,
     /// The committed policy, as declared.
@@ -1054,6 +1172,31 @@ impl Scope {
             .get("role_matrix")
             .ok_or_else(|| "the scope document declares no role matrix denominator".to_owned())?;
 
+        let role_matrix_path = root
+            .join("tests")
+            .join("fixtures")
+            .join("security")
+            .join("role-matrix.json");
+        let role_matrix_source = fs::read_to_string(&role_matrix_path)
+            .map_err(|error| format!("could not read {}: {error}", role_matrix_path.display()))?;
+        let role_matrix_document: Value = serde_json::from_str(&role_matrix_source)
+            .map_err(|error| format!("could not parse {}: {error}", role_matrix_path.display()))?;
+        let mut role_matrix_cells = BTreeSet::new();
+        for cell in array(&role_matrix_document, "cells")? {
+            role_matrix_cells.insert((
+                suite::string(cell, "id")?,
+                suite::string(cell, "class")?,
+                suite::string(cell, "surface")?,
+                suite::string(cell, "expected")?,
+            ));
+        }
+        if role_matrix_cells.len() != array(&role_matrix_document, "cells")?.len() {
+            return Err(
+                "tests/fixtures/security/role-matrix.json declares a duplicate cell identity"
+                    .to_owned(),
+            );
+        }
+
         let redaction_document = document
             .get("redaction")
             .ok_or_else(|| "the scope document declares no redaction obligations".to_owned())?;
@@ -1080,6 +1223,7 @@ impl Scope {
                 .get("total_cells")
                 .and_then(Value::as_u64)
                 .ok_or_else(|| "the role matrix declares no total_cells".to_owned())?,
+            role_matrix_cells,
             redaction: Redaction {
                 report: suite::string(redaction_document, "report")?,
                 surfaces: text_list(redaction_document, "surfaces"),
@@ -1203,6 +1347,7 @@ mod tests {
             ],
             class_document: Value::Null,
             role_matrix_total_cells: 40,
+            role_matrix_cells: role_matrix_cells(),
             redaction: Redaction {
                 report: "redaction-sweep".to_owned(),
                 surfaces: ["errors", "telemetry", "cli", "bundle"]
@@ -1367,50 +1512,85 @@ mod tests {
         );
     }
 
+    /// The path to the committed role-matrix denominator.
+    fn role_matrix_path() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("tests")
+            .join("fixtures")
+            .join("security")
+            .join("role-matrix.json")
+    }
+
+    /// Reads the committed role-matrix denominator.
+    fn role_matrix_document() -> Value {
+        let source = std::fs::read_to_string(role_matrix_path()).expect("role-matrix.json");
+        serde_json::from_str(&source).expect("role-matrix.json is valid JSON")
+    }
+
+    /// The exact cell identity set the committed denominator declares, in the
+    /// shape [`Scope`] carries it — read from the real file rather than
+    /// hand-copied, so these tests exercise the real committed denominator
+    /// and cannot silently drift from it.
+    fn role_matrix_cells() -> std::collections::BTreeSet<(String, String, String, String)> {
+        role_matrix_document()
+            .get("cells")
+            .and_then(Value::as_array)
+            .expect("cells")
+            .iter()
+            .map(|cell| {
+                (
+                    cell["id"].as_str().expect("id").to_owned(),
+                    cell["class"].as_str().expect("class").to_owned(),
+                    cell["surface"].as_str().expect("surface").to_owned(),
+                    cell["expected"].as_str().expect("expected").to_owned(),
+                )
+            })
+            .collect()
+    }
+
     /// A role-matrix observation that satisfies every requirement `scope()`
-    /// declares: forty cells across five classes, no `PUBLIC` grant, schema 3.
+    /// declares: exactly the committed denominator's cells, each with the
+    /// server outcome its declared side requires, no `PUBLIC` grant, schema
+    /// 3.
     fn valid_role_matrix_observation() -> Value {
-        let classes = [
-            ("migration", 4, 2),
-            ("runtime", 8, 2),
-            ("explorer", 6, 1),
-            ("operator", 6, 2),
-            ("retention", 6, 3),
-        ];
-        let mut matrix = Vec::new();
-        let mut attributes = Vec::new();
-        for (class, forbidden, allowed) in classes {
-            attributes.push(json!({
-                "class": class,
-                "superuser": false,
-                "createdb": false,
-                "createrole": false,
-                "replication": false,
-            }));
-            for index in 0..forbidden {
-                matrix.push(json!({
+        let matrix = role_matrix_document()
+            .get("cells")
+            .and_then(Value::as_array)
+            .expect("cells")
+            .iter()
+            .map(|cell| {
+                let expected = cell["expected"].as_str().expect("expected");
+                let (observed, error_class) = if expected == "allowed" {
+                    ("succeeded", Value::Null)
+                } else {
+                    ("refused", json!("42501"))
+                };
+                json!({
+                    "id": cell["id"],
+                    "class": cell["class"],
+                    "operation": format!("operation for {}", cell["id"].as_str().unwrap_or("")),
+                    "surface": cell["surface"],
+                    "expected": cell["expected"],
+                    "observed": observed,
+                    "error_class": error_class,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let attributes = ["migration", "runtime", "explorer", "operator", "retention"]
+            .into_iter()
+            .map(|class| {
+                json!({
                     "class": class,
-                    "operation": format!("forbidden-{index}"),
-                    "surface": "statement",
-                    "expected": "forbidden",
-                    "error_class": "42501",
-                }));
-            }
-            matrix.push(json!({
-                "class": class,
-                "operation": "service-path-operation",
-                "surface": "service-path",
-                "expected": "allowed",
-            }));
-            for index in 1..allowed {
-                matrix.push(json!({
-                    "class": class,
-                    "operation": format!("allowed-{index}"),
-                    "surface": "statement",
-                    "expected": "allowed",
-                }));
-            }
-        }
+                    "superuser": false,
+                    "createdb": false,
+                    "createrole": false,
+                    "replication": false,
+                })
+            })
+            .collect::<Vec<_>>();
+
         json!({
             "public_grants": [],
             "schema_version": 3,
@@ -1544,6 +1724,160 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_extra_cell_beyond_the_denominator_is_rejected() {
+        let mut observation = valid_role_matrix_observation();
+        observation["matrix"]
+            .as_array_mut()
+            .expect("matrix array")
+            .push(json!({
+                "id": "runtime.an-extra-cell-nothing-declares",
+                "class": "runtime",
+                "operation": "an extra operation",
+                "surface": "statement",
+                "expected": "forbidden",
+                "observed": "refused",
+                "error_class": "42501",
+            }));
+        let runs = runs_with("least-privilege-roles", observation);
+        let violations = reconcile_classes(&scope(), &runs);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("runtime.an-extra-cell-nothing-declares")),
+            "{violations:?}"
+        );
+    }
+
+    /// The central regression this corrective pass exists for: a legitimate
+    /// cell is removed and a same-class, same-surface, same-expected bogus
+    /// cell is substituted for it, so the total cell count, every per-class
+    /// allowed/forbidden count, and the duplicate check all stay exactly as
+    /// a passing report would report them. Only an exact identity
+    /// reconciliation against the committed denominator — not a count of any
+    /// kind — can catch this, and this test is the proof that it does: a
+    /// verifier that checked shape and counts alone passes this mutation.
+    #[test]
+    fn a_same_shaped_bogus_cell_substituted_for_a_removed_one_is_rejected() {
+        let mut observation = valid_role_matrix_observation();
+        let matrix = observation["matrix"].as_array_mut().expect("matrix array");
+        let removed_index = matrix
+            .iter()
+            .position(|cell| {
+                cell.get("id").and_then(Value::as_str) == Some("explorer.create-job-instance")
+            })
+            .expect("the explorer.create-job-instance cell");
+        matrix.remove(removed_index);
+        // Same class, same surface, same expected side as the cell just
+        // removed — the total and every per-class count this file's other
+        // checks look at are unchanged by this substitution.
+        matrix.push(json!({
+            "id": "explorer.a-bogus-operation-nothing-declares",
+            "class": "explorer",
+            "operation": "a bogus operation nothing declares",
+            "surface": "statement",
+            "expected": "forbidden",
+            "observed": "refused",
+            "error_class": "42501",
+        }));
+
+        let total_before = 40;
+        assert_eq!(
+            matrix.len(),
+            total_before,
+            "the mutation must not change the total cell count, or a weaker verifier that only \
+             checked the total would also catch it",
+        );
+
+        let runs = runs_with("least-privilege-roles", observation);
+        let violations = reconcile_classes(&scope(), &runs);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("explorer.create-job-instance")),
+            "the missing legitimate cell must be reported: {violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("explorer.a-bogus-operation-nothing-declares")),
+            "the substituted bogus cell must be reported: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_cell_recorded_under_the_wrong_expected_side_is_rejected() {
+        let mut observation = valid_role_matrix_observation();
+        let matrix = observation["matrix"].as_array_mut().expect("matrix array");
+        let index = matrix
+            .iter()
+            .position(|cell| cell.get("id").and_then(Value::as_str) == Some("runtime.service-path"))
+            .expect("the runtime.service-path cell");
+        // Flipped in place: same id, class, and surface, but the side the
+        // committed denominator declares for this identity is "allowed".
+        matrix[index]["expected"] = json!("forbidden");
+        matrix[index]["observed"] = json!("refused");
+        matrix[index]["error_class"] = json!("42501");
+
+        let runs = runs_with("least-privilege-roles", observation);
+        let violations = reconcile_classes(&scope(), &runs);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("runtime.service-path")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_cell_recorded_under_the_wrong_surface_is_rejected() {
+        let mut observation = valid_role_matrix_observation();
+        let matrix = observation["matrix"].as_array_mut().expect("matrix array");
+        let index = matrix
+            .iter()
+            .position(|cell| {
+                cell.get("id").and_then(Value::as_str) == Some("retention.place-retention-hold")
+            })
+            .expect("the retention.place-retention-hold cell");
+        // The denominator declares this identity on the statement surface;
+        // recording it under service-path instead is a different claim.
+        matrix[index]["surface"] = json!("service-path");
+
+        let runs = runs_with("least-privilege-roles", observation);
+        let violations = reconcile_classes(&scope(), &runs);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("retention.place-retention-hold")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_cell_recorded_under_the_wrong_class_is_rejected() {
+        let mut observation = valid_role_matrix_observation();
+        let matrix = observation["matrix"].as_array_mut().expect("matrix array");
+        let index = matrix
+            .iter()
+            .position(|cell| {
+                cell.get("id").and_then(Value::as_str) == Some("operator.ask-execution-to-stop")
+            })
+            .expect("the operator.ask-execution-to-stop cell");
+        // The identity is declared for the operator class; recording the
+        // same id under a different (still declared) class is a different
+        // claim, not a relabeling.
+        matrix[index]["class"] = json!("runtime");
+
+        let runs = runs_with("least-privilege-roles", observation);
+        let violations = reconcile_classes(&scope(), &runs);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("operator.ask-execution-to-stop")),
+            "{violations:?}"
+        );
+    }
+
     /// A redaction observation that satisfies every requirement `scope()`
     /// declares.
     fn valid_redaction_observation() -> Value {
@@ -1602,6 +1936,40 @@ mod tests {
             violations
                 .iter()
                 .any(|violation| violation.contains("certificate")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn an_undeclared_redaction_surface_is_rejected() {
+        let mut observation = valid_redaction_observation();
+        observation["surfaces_scanned"]
+            .as_array_mut()
+            .expect("surfaces_scanned array")
+            .push(json!({ "surface": "an-undeclared-surface", "artifacts": 3 }));
+        let runs = runs_with("redaction-sweep", observation);
+        let violations = reconcile_redaction(&scope(), &runs);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("an-undeclared-surface")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn an_undeclared_redaction_value_class_is_rejected() {
+        let mut observation = valid_redaction_observation();
+        observation["value_classes_scanned"]
+            .as_array_mut()
+            .expect("value_classes_scanned array")
+            .push(json!({ "class": "an-undeclared-class", "entered_through": "somewhere" }));
+        let runs = runs_with("redaction-sweep", observation);
+        let violations = reconcile_redaction(&scope(), &runs);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("an-undeclared-class")),
             "{violations:?}"
         );
     }

@@ -60,7 +60,7 @@ use sqlx::Row;
 use sqlx::postgres::PgPoolOptions;
 
 use security::{
-    FixedClock, INSUFFICIENT_PRIVILEGE, StatementOutcome, admin_url, apply_script,
+    Failure, FixedClock, INSUFFICIENT_PRIVILEGE, StatementOutcome, admin_url, apply_script,
     attempt_statement, execution_manifest, fixture_config, fixtures, major_version,
     recreate_database, retain_observation, run_statement, server_version, with_database, with_role,
 };
@@ -174,6 +174,10 @@ impl Surface {
 
 /// One statement a class must not be able to run.
 struct Boundary {
+    /// The stable identity the committed role-matrix denominator uses. Prose
+    /// may be revised without moving this; the denominator moves only when
+    /// this does.
+    id: &'static str,
     /// The class attempting it.
     class: Class,
     /// What the attempt would amount to if it succeeded.
@@ -194,24 +198,28 @@ const BOUNDARIES: &[Boundary] = &[
     // The migration class owns the schema, so its boundary is not inside it.
     // What must hold is that it cannot reach past the database it migrates.
     Boundary {
+        id: "migration.create-login-role",
         class: Class::Migration,
         operation: "create a login role",
         belongs_to: "no class: role administration is outside the preview",
         statement: "CREATE ROLE oxide_batch_m5_escalated LOGIN",
     },
     Boundary {
+        id: "migration.create-database",
         class: Class::Migration,
         operation: "create a database",
         belongs_to: "no class: database administration is outside the preview",
         statement: "CREATE DATABASE oxide_batch_m5_escalated",
     },
     Boundary {
+        id: "migration.read-cluster-credentials",
         class: Class::Migration,
         operation: "read the cluster's stored credentials",
         belongs_to: "no class: only a superuser may read pg_authid",
         statement: "SELECT rolname FROM pg_authid WHERE false",
     },
     Boundary {
+        id: "migration.execute-program-on-server",
         class: Class::Migration,
         operation: "execute a program on the server",
         belongs_to: "no class: server-side execution is outside the preview",
@@ -219,30 +227,35 @@ const BOUNDARIES: &[Boundary] = &[
     },
     // The runtime drives the lifecycle and may do nothing else to the schema.
     Boundary {
+        id: "runtime.add-table-to-metadata-schema",
         class: Class::Runtime,
         operation: "add a table to the metadata schema",
         belongs_to: "migration",
         statement: "CREATE TABLE oxide_batch.ob_m5_runtime_probe (id integer)",
     },
     Boundary {
+        id: "runtime.drop-metadata-table",
         class: Class::Runtime,
         operation: "drop a metadata table",
         belongs_to: "migration",
         statement: "DROP TABLE oxide_batch.ob_flow_decision",
     },
     Boundary {
+        id: "runtime.rewrite-schema-version",
         class: Class::Runtime,
         operation: "rewrite the recorded schema version",
         belongs_to: "migration",
         statement: "UPDATE oxide_batch.ob_schema_version SET version = 99 WHERE false",
     },
     Boundary {
+        id: "runtime.read-migration-bookkeeping",
         class: Class::Runtime,
         operation: "read the migration bookkeeping",
         belongs_to: "migration",
         statement: "SELECT version FROM oxide_batch._sqlx_migrations WHERE false",
     },
     Boundary {
+        id: "runtime.record-recovery-decision",
         class: Class::Runtime,
         operation: "record a recovery decision",
         belongs_to: "operator",
@@ -250,6 +263,7 @@ const BOUNDARIES: &[Boundary] = &[
                     SELECT * FROM oxide_batch.ob_recovery_decision WHERE false",
     },
     Boundary {
+        id: "runtime.record-retention-action",
         class: Class::Runtime,
         operation: "record a retention action",
         belongs_to: "retention",
@@ -257,6 +271,7 @@ const BOUNDARIES: &[Boundary] = &[
                     SELECT * FROM oxide_batch.ob_retention_action WHERE false",
     },
     Boundary {
+        id: "runtime.delete-job-execution",
         class: Class::Runtime,
         operation: "delete a job execution",
         belongs_to: "retention",
@@ -266,6 +281,7 @@ const BOUNDARIES: &[Boundary] = &[
     // created. The hold columns on the same table are retention's, and the
     // column-level split is what keeps that true.
     Boundary {
+        id: "runtime.place-retention-hold",
         class: Class::Runtime,
         operation: "place a retention hold",
         belongs_to: "retention",
@@ -273,6 +289,7 @@ const BOUNDARIES: &[Boundary] = &[
     },
     // The explorer reads and does nothing else at all.
     Boundary {
+        id: "explorer.create-job-instance",
         class: Class::Explorer,
         operation: "create a job instance",
         belongs_to: "runtime",
@@ -280,30 +297,35 @@ const BOUNDARIES: &[Boundary] = &[
                     SELECT * FROM oxide_batch.ob_job_instance WHERE false",
     },
     Boundary {
+        id: "explorer.move-execution-status",
         class: Class::Explorer,
         operation: "move an execution's status",
         belongs_to: "runtime and operator",
         statement: "UPDATE oxide_batch.ob_job_execution SET status = 'STOPPED' WHERE false",
     },
     Boundary {
+        id: "explorer.place-retention-hold",
         class: Class::Explorer,
         operation: "place a retention hold",
         belongs_to: "retention",
         statement: "UPDATE oxide_batch.ob_job_instance SET hold_actor = 'probe' WHERE false",
     },
     Boundary {
+        id: "explorer.delete-flow-decision",
         class: Class::Explorer,
         operation: "delete a flow decision",
         belongs_to: "retention",
         statement: "DELETE FROM oxide_batch.ob_flow_decision WHERE false",
     },
     Boundary {
+        id: "explorer.add-table-to-metadata-schema",
         class: Class::Explorer,
         operation: "add a table to the metadata schema",
         belongs_to: "migration",
         statement: "CREATE TABLE oxide_batch.ob_m5_explorer_probe (id integer)",
     },
     Boundary {
+        id: "explorer.read-migration-bookkeeping",
         class: Class::Explorer,
         operation: "read the migration bookkeeping",
         belongs_to: "migration",
@@ -312,12 +334,14 @@ const BOUNDARIES: &[Boundary] = &[
     // The operator records guarded decisions. It resolves executions; it does
     // not run them, own them, or remove them.
     Boundary {
+        id: "operator.claim-ownership-of-execution",
         class: Class::Operator,
         operation: "claim ownership of a live execution",
         belongs_to: "runtime",
         statement: "UPDATE oxide_batch.ob_job_execution SET owner_token = NULL WHERE false",
     },
     Boundary {
+        id: "operator.create-step-execution",
         class: Class::Operator,
         operation: "create a step execution",
         belongs_to: "runtime",
@@ -325,12 +349,14 @@ const BOUNDARIES: &[Boundary] = &[
                     SELECT * FROM oxide_batch.ob_step_execution WHERE false",
     },
     Boundary {
+        id: "operator.delete-job-execution",
         class: Class::Operator,
         operation: "delete a job execution",
         belongs_to: "retention",
         statement: "DELETE FROM oxide_batch.ob_job_execution WHERE false",
     },
     Boundary {
+        id: "operator.record-retention-action",
         class: Class::Operator,
         operation: "record a retention action",
         belongs_to: "retention",
@@ -338,12 +364,14 @@ const BOUNDARIES: &[Boundary] = &[
                     SELECT * FROM oxide_batch.ob_retention_action WHERE false",
     },
     Boundary {
+        id: "operator.add-table-to-metadata-schema",
         class: Class::Operator,
         operation: "add a table to the metadata schema",
         belongs_to: "migration",
         statement: "CREATE TABLE oxide_batch.ob_m5_operator_probe (id integer)",
     },
     Boundary {
+        id: "operator.read-migration-bookkeeping",
         class: Class::Operator,
         operation: "read the migration bookkeeping",
         belongs_to: "migration",
@@ -352,6 +380,7 @@ const BOUNDARIES: &[Boundary] = &[
     // Retention removes history and holds instances. It does not run jobs and
     // does not decide operator questions.
     Boundary {
+        id: "retention.create-step-execution",
         class: Class::Retention,
         operation: "create a step execution",
         belongs_to: "runtime",
@@ -359,12 +388,14 @@ const BOUNDARIES: &[Boundary] = &[
                     SELECT * FROM oxide_batch.ob_step_execution WHERE false",
     },
     Boundary {
+        id: "retention.move-execution-status",
         class: Class::Retention,
         operation: "move an execution's status",
         belongs_to: "runtime and operator",
         statement: "UPDATE oxide_batch.ob_job_execution SET status = 'STOPPED' WHERE false",
     },
     Boundary {
+        id: "retention.record-operator-request",
         class: Class::Retention,
         operation: "record an operator request",
         belongs_to: "operator",
@@ -372,18 +403,21 @@ const BOUNDARIES: &[Boundary] = &[
                     SELECT * FROM oxide_batch.ob_operator_request WHERE false",
     },
     Boundary {
+        id: "retention.rewrite-instance-identity",
         class: Class::Retention,
         operation: "rewrite an instance's identity",
         belongs_to: "runtime",
         statement: "UPDATE oxide_batch.ob_job_instance SET job_name = 'renamed' WHERE false",
     },
     Boundary {
+        id: "retention.add-table-to-metadata-schema",
         class: Class::Retention,
         operation: "add a table to the metadata schema",
         belongs_to: "migration",
         statement: "CREATE TABLE oxide_batch.ob_m5_retention_probe (id integer)",
     },
     Boundary {
+        id: "retention.read-migration-bookkeeping",
         class: Class::Retention,
         operation: "read the migration bookkeeping",
         belongs_to: "migration",
@@ -393,6 +427,8 @@ const BOUNDARIES: &[Boundary] = &[
 
 /// One statement a class must be able to run, beside its service path.
 struct Permitted {
+    /// The stable identity the committed role-matrix denominator uses.
+    id: &'static str,
     /// The class attempting it.
     class: Class,
     /// What the attempt amounts to.
@@ -410,27 +446,147 @@ struct Permitted {
 /// on both sides of the matrix under different classes.
 const PERMITTED: &[Permitted] = &[
     Permitted {
+        id: "runtime.claim-ownership-of-execution",
         class: Class::Runtime,
         operation: "claim ownership of an execution",
         statement: "UPDATE oxide_batch.ob_job_execution SET owner_token = NULL WHERE false",
     },
     Permitted {
+        id: "retention.delete-flow-decision",
         class: Class::Retention,
         operation: "delete a flow decision",
         statement: "DELETE FROM oxide_batch.ob_flow_decision WHERE false",
     },
     Permitted {
+        id: "retention.place-retention-hold",
         class: Class::Retention,
         operation: "place a retention hold",
         statement: "UPDATE oxide_batch.ob_job_instance SET hold_actor = 'probe' WHERE false",
     },
     Permitted {
+        id: "operator.ask-execution-to-stop",
         class: Class::Operator,
         operation: "ask an execution to stop",
         statement: "UPDATE oxide_batch.ob_job_execution SET stop_requested_by = 'probe' \
                     WHERE false",
     },
 ];
+
+/// One cell proved through the path an operator would use rather than by one
+/// statement.
+struct ServicePathCell {
+    /// The stable identity the committed role-matrix denominator uses.
+    id: &'static str,
+    /// The class exercising its service.
+    class: Class,
+    /// What the service call amounts to.
+    operation: &'static str,
+}
+
+/// The one service-path cell each class contributes.
+///
+/// Looked up by [`service_cell`] rather than written inline at each call
+/// site, so the identity, class, and prose a function reports are the same
+/// values the role-matrix denominator is reconciled against — a call site
+/// cannot silently drift from what is declared here.
+const SERVICE_PATH_CELLS: &[ServicePathCell] = &[
+    ServicePathCell {
+        id: "runtime.service-path",
+        class: Class::Runtime,
+        operation: "create a job instance, execution, and step execution and move the step to \
+                    STARTED through JobRepository",
+    },
+    ServicePathCell {
+        id: "explorer.service-path",
+        class: Class::Explorer,
+        operation: "project one execution and page its step executions through JobExplorer",
+    },
+    ServicePathCell {
+        id: "operator.service-path",
+        class: Class::Operator,
+        operation: "apply a guarded, audited stop through JobOperator, recording the request and \
+                    the execution's stop columns",
+    },
+    ServicePathCell {
+        id: "retention.service-path",
+        class: Class::Retention,
+        operation: "place and release an audited hold and plan a purge through RetentionService",
+    },
+    ServicePathCell {
+        id: "migration.service-path",
+        class: Class::Migration,
+        operation: "apply the shipped migrator and report the installed schema version",
+    },
+];
+
+/// One allowed statement-level cell beside [`PERMITTED`] and the service
+/// paths.
+struct ExtraAllowedCell {
+    /// The stable identity the committed role-matrix denominator uses.
+    id: &'static str,
+    /// The class attempting it.
+    class: Class,
+    /// What the attempt amounts to.
+    operation: &'static str,
+}
+
+/// The migration class's one statement-level allowed cell.
+///
+/// It owns the schema its service path installs, so it must also be able to
+/// add and remove an object inside it — a claim the migrator's own
+/// installation step does not exercise. Looked up by
+/// [`extra_allowed_cell`] for the same reason [`SERVICE_PATH_CELLS`] is
+/// looked up rather than written inline.
+const EXTRA_ALLOWED_CELLS: &[ExtraAllowedCell] = &[ExtraAllowedCell {
+    id: "migration.add-remove-table-in-owned-schema",
+    class: Class::Migration,
+    operation: "add and remove a table in the metadata schema it owns",
+}];
+
+/// Every cell identity [`BOUNDARIES`], [`PERMITTED`], [`SERVICE_PATH_CELLS`],
+/// and [`EXTRA_ALLOWED_CELLS`] declare, as the committed role-matrix
+/// denominator records them.
+///
+/// This is the producer half of the producer/denominator reconciliation: it
+/// is derived from the same tables the report actually attempts against the
+/// database, so it cannot drift from what the report does without also
+/// changing what this function returns.
+fn declared_cell_identities() -> Vec<Value> {
+    let mut identities = Vec::new();
+    for boundary in BOUNDARIES {
+        identities.push(json!({
+            "id": boundary.id,
+            "class": boundary.class.as_str(),
+            "surface": Surface::Statement.as_str(),
+            "expected": Expected::Forbidden.as_str(),
+        }));
+    }
+    for permitted in PERMITTED {
+        identities.push(json!({
+            "id": permitted.id,
+            "class": permitted.class.as_str(),
+            "surface": Surface::Statement.as_str(),
+            "expected": Expected::Allowed.as_str(),
+        }));
+    }
+    for service in SERVICE_PATH_CELLS {
+        identities.push(json!({
+            "id": service.id,
+            "class": service.class.as_str(),
+            "surface": Surface::ServicePath.as_str(),
+            "expected": Expected::Allowed.as_str(),
+        }));
+    }
+    for extra in EXTRA_ALLOWED_CELLS {
+        identities.push(json!({
+            "id": extra.id,
+            "class": extra.class.as_str(),
+            "surface": Surface::Statement.as_str(),
+            "expected": Expected::Allowed.as_str(),
+        }));
+    }
+    identities
+}
 
 #[test]
 fn least_privilege_role_cannot_exceed_its_class() -> Result<(), Box<dyn Error>> {
@@ -501,6 +657,7 @@ async fn run_report(admin: &str) -> Result<(), Box<dyn Error>> {
             outcome.as_str(),
         );
         cells.push(cell(
+            permitted.id,
             permitted.class,
             permitted.operation,
             Surface::Statement,
@@ -523,6 +680,7 @@ async fn run_report(admin: &str) -> Result<(), Box<dyn Error>> {
             outcome.as_str(),
         );
         cells.push(cell(
+            boundary.id,
             boundary.class,
             boundary.operation,
             Surface::Statement,
@@ -589,6 +747,7 @@ async fn run_report(admin: &str) -> Result<(), Box<dyn Error>> {
 
 /// Renders one matrix cell.
 fn cell(
+    id: &str,
     class: Class,
     operation: &str,
     surface: Surface,
@@ -597,6 +756,7 @@ fn cell(
     belongs_to: Option<&str>,
 ) -> Value {
     json!({
+        "id": id,
         "class": class.as_str(),
         "role": class.role(),
         "operation": operation,
@@ -612,16 +772,60 @@ fn cell(
     })
 }
 
-/// Renders one matrix cell for work done through a service.
-fn service_cell(class: Class, operation: &str) -> Value {
-    cell(
-        class,
-        operation,
+/// Renders the one declared service-path cell for `id`.
+///
+/// Looked up from [`SERVICE_PATH_CELLS`] rather than taking a class and
+/// prose directly, so a call site cannot report a class or an operation the
+/// committed role-matrix denominator does not also declare for that
+/// identity.
+///
+/// # Panics
+///
+/// Panics when `id` names no declared service-path cell, which is a defect in
+/// this file rather than a database result.
+///
+/// # Errors
+///
+/// Returns the failure when `id` names no declared service-path cell, which
+/// is a defect in this file rather than a database result.
+fn service_cell(id: &str) -> Result<Value, Box<dyn Error>> {
+    let declared = SERVICE_PATH_CELLS
+        .iter()
+        .find(|entry| entry.id == id)
+        .ok_or_else(|| Failure(format!("{id} is not a declared service-path cell")))?;
+    Ok(cell(
+        declared.id,
+        declared.class,
+        declared.operation,
         Surface::ServicePath,
         Expected::Allowed,
         &StatementOutcome::Succeeded,
         None,
-    )
+    ))
+}
+
+/// Renders the one declared extra allowed cell for `id`.
+///
+/// See [`service_cell`]: looked up from [`EXTRA_ALLOWED_CELLS`] for the same
+/// reason.
+///
+/// # Errors
+///
+/// Returns the failure when `id` names no declared extra allowed cell.
+fn extra_allowed_cell(id: &str) -> Result<Value, Box<dyn Error>> {
+    let declared = EXTRA_ALLOWED_CELLS
+        .iter()
+        .find(|entry| entry.id == id)
+        .ok_or_else(|| Failure(format!("{id} is not a declared extra allowed cell")))?;
+    Ok(cell(
+        declared.id,
+        declared.class,
+        declared.operation,
+        Surface::Statement,
+        Expected::Allowed,
+        &StatementOutcome::Succeeded,
+        None,
+    ))
 }
 
 /// What the runtime class created, for the classes that act on it afterwards.
@@ -669,11 +873,7 @@ async fn seed_through_runtime(url: &str, cells: &mut Vec<Value>) -> Result<Seede
     .await?;
     unit.commit().await?;
 
-    cells.push(service_cell(
-        Class::Runtime,
-        "create a job instance, execution, and step execution and move the step to STARTED \
-         through JobRepository",
-    ));
+    cells.push(service_cell("runtime.service-path")?);
 
     repository.close().await?;
     Ok(Seeded {
@@ -707,10 +907,7 @@ async fn explore_through_service(
         "the explorer class must be able to read the step the runtime created",
     );
 
-    cells.push(service_cell(
-        Class::Explorer,
-        "project one execution and page its step executions through JobExplorer",
-    ));
+    cells.push(service_cell("explorer.service-path")?);
 
     repository.close().await?;
     Ok(())
@@ -741,11 +938,7 @@ async fn operate_through_service(
         outcome.class(),
     );
 
-    cells.push(service_cell(
-        Class::Operator,
-        "apply a guarded, audited stop through JobOperator, recording the request and the \
-         execution's stop columns",
-    ));
+    cells.push(service_cell("operator.service-path")?);
 
     repository.close().await?;
     Ok(())
@@ -793,10 +986,7 @@ async fn retain_through_service(
             PurgeBatchBound::new(10)?,
         )?)
         .await?;
-    cells.push(service_cell(
-        Class::Retention,
-        "place and release an audited hold and plan a purge through RetentionService",
-    ));
+    cells.push(service_cell("retention.service-path")?);
 
     repository.close().await?;
     Ok(())
@@ -835,18 +1025,10 @@ async fn migrate_through_service(url: &str, cells: &mut Vec<Value>) -> Result<()
         "the migration class must be able to remove a table it added",
     );
 
-    cells.push(service_cell(
-        Class::Migration,
-        "apply the shipped migrator and report the installed schema version",
-    ));
-    cells.push(cell(
-        Class::Migration,
-        "add and remove a table in the metadata schema it owns",
-        Surface::Statement,
-        Expected::Allowed,
-        &StatementOutcome::Succeeded,
-        None,
-    ));
+    cells.push(service_cell("migration.service-path")?);
+    cells.push(extra_allowed_cell(
+        "migration.add-remove-table-in-owned-schema",
+    )?);
     Ok(())
 }
 
@@ -948,4 +1130,99 @@ fn disposable_password() -> String {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_nanos());
     format!("m5s{:x}{:x}", std::process::id(), nanos)
+}
+
+/// Reconciles this file's declared cells against the committed exact
+/// denominator.
+///
+/// This runs without a database and without the `postgres` fixture, so it
+/// runs in ordinary review rather than only in the campaign. It is the
+/// producer half of the bidirectional binding: `xtask/src/security.rs`
+/// reconciles the same committed file against the raw observation this
+/// report retains, so a mismatch on either side — the source declaring a
+/// cell the denominator does not, or the denominator declaring one the
+/// source does not — fails closed somewhere before evidence is ever
+/// promoted.
+#[test]
+fn declared_cells_match_the_committed_role_matrix_denominator() -> Result<(), Box<dyn Error>> {
+    let path = fixtures().join("role-matrix.json");
+    let source = std::fs::read_to_string(&path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let document: Value = serde_json::from_str(&source)?;
+
+    // Each cell's identity is normalized to a plain tuple rather than
+    // compared as `serde_json::Value` — which has no total order — so what
+    // is checked is the (id, class, surface, expected) member set of each
+    // cell, not a serialized byte order that a harmless field reordering
+    // could disturb.
+    let identity = |cell: &Value| -> (String, String, String, String) {
+        (
+            cell.get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+            cell.get("class")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+            cell.get("surface")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+            cell.get("expected")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+        )
+    };
+
+    let committed = document
+        .get("cells")
+        .and_then(Value::as_array)
+        .ok_or("the role-matrix denominator declares no cells")?
+        .iter()
+        .map(identity)
+        .collect::<std::collections::BTreeSet<_>>();
+
+    let declared_cells = declared_cell_identities();
+    let declared = declared_cells
+        .iter()
+        .map(identity)
+        .collect::<std::collections::BTreeSet<_>>();
+
+    let missing = committed.difference(&declared).collect::<Vec<_>>();
+    assert!(
+        missing.is_empty(),
+        "the role-matrix denominator declares {missing:?} and no BOUNDARIES, PERMITTED, \
+         SERVICE_PATH_CELLS, or EXTRA_ALLOWED_CELLS entry in this file produces it",
+    );
+    let undeclared = declared.difference(&committed).collect::<Vec<_>>();
+    assert!(
+        undeclared.is_empty(),
+        "this file declares {undeclared:?} and tests/fixtures/security/role-matrix.json does not, \
+         so the campaign's committed denominator no longer matches what the report actually \
+         attempts",
+    );
+
+    assert_eq!(
+        document.get("total_cells").and_then(Value::as_u64),
+        Some(declared.len() as u64),
+        "the denominator's total_cells must equal the number of cells this file declares",
+    );
+
+    let ids = declared_cells
+        .iter()
+        .filter_map(|cell| cell.get("id").and_then(Value::as_str).map(str::to_owned))
+        .collect::<Vec<_>>();
+    let unique_ids = ids
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        ids.len(),
+        unique_ids.len(),
+        "every declared cell identity must be unique within this file",
+    );
+
+    Ok(())
 }

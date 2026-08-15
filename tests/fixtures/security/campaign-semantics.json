@@ -62,10 +62,16 @@
       ]
     },
     "campaign fixtures": {
-      "why": "The declared denominator — the three reports, the TLS refusals, the privilege classes, the exact role-matrix cell counts, and the redaction surfaces and value classes — and this closure itself. The producer derives what it runs from this document, so a change to it can change which targets and which properties the campaign requires.",
+      "why": "The declared denominator — the three reports, the TLS refusals, the privilege classes, and the redaction surfaces and value classes — and this closure itself. The producer derives what it runs from this document, so a change to it can change which targets and which properties the campaign requires.",
       "paths": [
         "tests/fixtures/security/campaign-scope.json",
         "tests/fixtures/security/campaign-semantics.json"
+      ]
+    },
+    "role-matrix denominator": {
+      "why": "The exact cell-identity set (id, class, surface, expected) the least-privilege matrix must equal, cell for cell, not merely by count. Reconciled bidirectionally: crates/oxide-batch/tests/postgres_least_privilege_roles.rs's own BOUNDARIES, PERMITTED, SERVICE_PATH_CELLS, and EXTRA_ALLOWED_CELLS tables (already bound by the campaign implementation category above, since that file is a selected test target) are checked against this file in an ordinary cargo test, and this file is checked against the raw retained observation in xtask/src/security.rs.",
+      "paths": [
+        "tests/fixtures/security/role-matrix.json"
       ]
     },
     "security execution contract": {
