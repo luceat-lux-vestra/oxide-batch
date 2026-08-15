@@ -48,7 +48,7 @@ use serde_json::{Value, json};
 
 use upgrade::{
     DurableDigest, Failure, FixedClock, SourceColumns, admin_url, apply_seed,
-    assert_historical_shape, config, drop_database, durable_tables, fixtures,
+    assert_historical_shape, config, drop_database, durable_tables, execution_manifest, fixtures,
     install_historical_schema, major_version, migrator_url, read_through_port, recreate_database,
     retain_observation, run_tool, schema_version, server_version, with_database,
 };
@@ -105,6 +105,7 @@ async fn run_report(migrator: &str, admin: &str) -> Result<(), Box<dyn Error>> {
                        pg_restore into a separate freshly created database",
             "no_downgrade_migration": true,
             "paths": paths,
+            "execution_manifest": execution_manifest()?,
             "violations": Vec::<String>::new(),
             "passed": true,
         }),

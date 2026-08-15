@@ -45,8 +45,9 @@ use sqlx::{AssertSqlSafe, Row};
 use crash_restore::{
     CampaignJob, DurableObservation, Failure, FixedClock, TerminalShape, business_items,
     checkpoint_position, commit_chunk, complete_and_shape, config, counts, create_attempt,
-    discover, epoch, instance_key, latest_attempt, migrator_url, observe, prepare_fixture,
-    remove_job, resolve, retain_observation, runtime_url, start_attempt, transaction_manager,
+    discover, epoch, execution_manifest, instance_key, latest_attempt, migrator_url, observe,
+    prepare_fixture, remove_job, resolve, retain_observation, runtime_url, start_attempt,
+    transaction_manager,
 };
 
 /// The chunk size the report runs at.
@@ -278,6 +279,7 @@ async fn run_report(fixture: Fixture) -> Result<(), Box<dyn Error>> {
             },
             "canonical": canonical.to_json(),
             "terminal": summary,
+            "execution_manifest": execution_manifest()?,
             "violations": Vec::<String>::new(),
             "passed": true,
         }),

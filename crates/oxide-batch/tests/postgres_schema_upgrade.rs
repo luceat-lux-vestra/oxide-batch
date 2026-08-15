@@ -44,9 +44,9 @@ use sqlx::postgres::PgPoolOptions;
 
 use upgrade::{
     DurableDigest, FixedClock, SourceColumns, admin_url, apply_seed, assert_historical_shape,
-    config, durable_tables, fixtures, install_historical_schema, major_version, migrator_url,
-    read_through_port, recreate_database, retain_observation, schema_version, server_version,
-    with_database,
+    config, durable_tables, execution_manifest, fixtures, install_historical_schema, major_version,
+    migrator_url, read_through_port, recreate_database, retain_observation, schema_version,
+    server_version, with_database,
 };
 
 /// The schema versions the M5 preview promises a direct upgrade from.
@@ -89,6 +89,7 @@ async fn run_report(migrator: &str, admin: &str) -> Result<(), Box<dyn Error>> {
             "server_version": server,
             "postgres_major_version": major_version(&server),
             "paths": paths,
+            "execution_manifest": execution_manifest()?,
             "violations": Vec::<String>::new(),
             "passed": true,
         }),

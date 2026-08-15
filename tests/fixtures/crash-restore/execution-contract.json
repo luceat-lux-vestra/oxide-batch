@@ -1,0 +1,68 @@
+{
+  "document": "How CI executes the M5 crash and restore campaign",
+  "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow is a thin provisioning and call layer, and its contract-check step fails closed when the workflow drifts from these values. Only the dedicated crash-restore workflow is in this campaign's semantic closure, so unrelated quality or build changes in ci.yml do not invalidate retained crash-restore evidence.",
+  "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script — an added trigger, a job-level permission override, a widened matrix, a changed command, an appended line — moves the identity and fails the contract check, whether or not every literal field below still happens to read true. The literal fields exist for a readable diagnostic, not as the boundary. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
+  "workflow_path": ".github/workflows/m5-crash-restore.yml",
+  "workflow_git_blob": "560c0c40e6b5a8385ba07defcafb63caed840925",
+  "workflow_name": "M5 Crash and Restore",
+  "triggers": {
+    "pull_request": ["main"],
+    "push": ["main"],
+    "workflow_dispatch": true
+  },
+  "permissions": {
+    "contents": "read"
+  },
+  "runner": "ubuntu-24.04",
+  "script": "./tests/fixtures/crash-restore/run-ci-campaign.sh ${{ matrix.postgres }}",
+  "script_path": "tests/fixtures/crash-restore/run-ci-campaign.sh",
+  "script_git_blob": "6537ee1543f50f9c0373049af13b192a3592f250",
+  "supported_matrix": ["15", "18"],
+  "matrix_note": "The two ends of the supported PostgreSQL 15-18 range. Evidence is required from both, exactly once each.",
+  "database": {
+    "image": "postgres:{major}",
+    "database_name": "oxide_batch_crash_restore",
+    "user": "postgres",
+    "password": "postgres",
+    "port": 5432,
+    "health_check": "pg_isready --username postgres --dbname oxide_batch_crash_restore",
+    "maintenance_database": "postgres",
+    "maintenance_database_note": "The logical backup and restore report creates and drops a database, which cannot be done from inside the database being dumped or restored into, so it connects through the server's maintenance database instead."
+  },
+  "client_tools": {
+    "note": "The logical backup report takes its dump with the real pg_dump and loads it with the real pg_restore, matched to the matrix's PostgreSQL major. The runner image ships a different major version, whose wrapper would silently select that one instead.",
+    "installed_from": "the PGDG apt repository",
+    "package": "postgresql-client-{major}"
+  },
+  "command": ["cargo", "run", "--package", "oxide-batch-xtask", "--", "crash-restore"],
+  "cargo_profile": "debug",
+  "profile_note": "Debug, like every M5 campaign except performance, whose denominator requires release for figures comparable to release planning. The crash-restore campaign gates correctness — every commit phase killed a live process and recovered without a forged status, and every reused M2-M4 scenario still passes — not a duration, so nothing here depends on the profile.",
+  "target_selection": {
+    "source": "the (package, target) pairs the committed scope document's reports and reused scenarios name",
+    "selected_targets_run_with_an_exact_filter": true,
+    "selected_targets_run_with_an_exact_filter_note": "Unlike the conformance campaign, each crash-restore scenario is run with an exact libtest filter for its own name, one target invocation per declared scenario, because several scenario names exist in more than one target and running a target unfiltered would attribute a result to the wrong scenario."
+  },
+  "pass_condition": {
+    "every_declared_scenario_must_report_ok": true,
+    "every_declared_scenario_must_report_ok_note": "Every report and every reused M2-M4 scenario the scope document names must resolve to a test that ran and reported ok. A target that exited unsuccessfully is recorded as a failed target and also fails the campaign.",
+    "every_declared_phase_must_be_observed": true,
+    "every_declared_phase_must_be_observed_note": "Each of the five commit-protocol phases must appear in the commit-phase-process-kill report's retained observation, ending in a SIGKILL termination, and that observation must itself report passed.",
+    "every_declared_report_must_retain_a_passing_observation": true,
+    "every_declared_report_must_retain_a_passing_observation_note": "A report that ran and reported ok is not sufficient: it must also have retained a machine-readable observation that itself says passed and carries no recorded violation.",
+    "declared_reports_must_agree_on_one_execution_manifest": true,
+    "declared_reports_must_agree_on_one_execution_manifest_note": "Each report records the object identity of the campaign's semantic closure from inside its own test process. All three must agree, or the campaign ran against a tree that changed underneath it."
+  },
+  "environment": {
+    "OXIDEBATCH_POSTGRES_ADMIN_TEST_URL": "postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_crash_restore",
+    "OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL": "postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_crash_restore",
+    "OXIDEBATCH_POSTGRES_TEST_URL": "postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_crash_restore",
+    "OXIDEBATCH_POSTGRES_BACKUP_TEST_URL": "postgres://postgres:postgres@127.0.0.1:5432/postgres",
+    "OXIDEBATCH_CAMPAIGN_DIR": "target/m5-campaigns",
+    "OXIDEBATCH_CAMPAIGN_MATRIX": "postgres-{major}"
+  },
+  "report_path": "target/m5-campaigns/crash-restore-campaign.json",
+  "artifact_name": "crash-restore-campaign-postgres-{major}",
+  "artifact_retention": "on success and on failure alike, because what a failed crash-restore campaign is mostly worth reading for is which phase, which report, or which reused scenario it lost",
+  "timeout_minutes": 45,
+  "timeout_note": "The campaign's execution envelope is five process-kill phases, two further reports, and nine reused M2-M4 scenarios, a bounded workload rather than a whole-workspace suite. Still a ceiling: a campaign that stopped making progress must fail rather than occupy a runner."
+}

@@ -1,0 +1,78 @@
+{
+  "document": "How CI executes the M5 PostgreSQL upgrade campaign",
+  "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow is a thin provisioning and call layer, and its contract-check step fails closed when the workflow drifts from these values. Only the dedicated upgrade workflow is in this campaign's semantic closure, so unrelated quality or build changes in ci.yml do not invalidate retained upgrade evidence.",
+  "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script — an added trigger, a job-level permission override, a widened matrix, a changed command, an appended line — moves the identity and fails the contract check, whether or not every literal field below still happens to read true. The literal fields exist for a readable diagnostic, not as the boundary. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
+  "workflow_path": ".github/workflows/m5-upgrade.yml",
+  "workflow_git_blob": "6c80543a0c280cf72711316c175c1046b6942688",
+  "workflow_name": "M5 Upgrade",
+  "triggers": {
+    "pull_request": ["main"],
+    "push": ["main"],
+    "workflow_dispatch": true
+  },
+  "permissions": {
+    "contents": "read"
+  },
+  "runner": "ubuntu-24.04",
+  "script": "./tests/fixtures/upgrade/run-ci-campaign.sh ${{ matrix.postgres }}",
+  "script_path": "tests/fixtures/upgrade/run-ci-campaign.sh",
+  "script_git_blob": "f10774dc3a88644577159354cf44f79abbe3a62d",
+  "supported_matrix": ["15", "18"],
+  "matrix_note": "The two ends of the supported PostgreSQL 15-18 range. Evidence is required from both, exactly once each.",
+  "database": {
+    "image": "postgres:{major}",
+    "database_name": "oxide_batch_upgrade",
+    "user": "postgres",
+    "password": "postgres",
+    "port": 5432,
+    "health_check": "pg_isready --username postgres --dbname oxide_batch_upgrade",
+    "maintenance_database": "postgres",
+    "maintenance_database_note": "Creating and dropping a database cannot be done from inside the database being created, dropped, or dumped, so the campaign does it through the server's maintenance database instead. The campaign never migrates the service database itself; it reads the server, the role, and the connection parameters off it and creates every database it reports on."
+  },
+  "checkout": {
+    "fetch_depth": 0,
+    "fetch_depth_note": "The rejection report builds the schema-2 runtime named below from full repository history, in a `git worktree add` of that revision. The default shallow checkout does not contain it, and the report fails closed rather than skipping without it — cargo xtask upgrade does not treat an absent historical revision as a reason to pass."
+  },
+  "historical_schema2_runtime": {
+    "revision": "397a38bcada93d961dbb2ca3d9960311a3fb4395",
+    "revision_source": "crates/oxide-batch/tests/upgrade/mod.rs, SCHEMA2_RUNTIME_REVISION",
+    "supported_schema_version": 2,
+    "why": "The rejection report needs a runtime whose supported schema version really is 2, and no such runtime can be built from the working tree: the version is a constant of the crate. This is the commit immediately before schema 3 was added, so the runtime built from it is the one that shipped against schema 2 rather than a reconstruction of it. Pinned by hash rather than by branch name, because a branch reference could move and the report would then be about a different runtime than the one it names.",
+    "resolution": "A worktree of this revision is added under target/m5-upgrade/schema2-runtime and built with CARGO_TARGET_DIR pointed outside it, so the checkout contract above (full history) is what makes the revision resolvable at all; a shallow checkout makes `git worktree add` fail and the campaign fails closed rather than skipping the rejection report.",
+    "drift_contract": "crates/oxide-batch/tests/upgrade/mod.rs's SCHEMA2_RUNTIME_REVISION constant and tests/fixtures/upgrade/campaign-scope.json's schema2_runtime.revision field must name the same commit. crates/oxide-batch/tests/m5_upgrade_campaign.rs asserts the two are byte-identical, and separately reads the named revision's source to require it actually reports supported_schema_version 2, so the runner and the scope cannot silently point at different revisions."
+  },
+  "client_tools": {
+    "note": "The rollback report takes its pre-upgrade backup with the real pg_dump and loads it with the real pg_restore, matched to the matrix's PostgreSQL major. The runner image ships a different major version, whose wrapper would silently select that one instead.",
+    "installed_from": "the PGDG apt repository",
+    "package": "postgresql-client-{major}"
+  },
+  "command": ["cargo", "run", "--package", "oxide-batch-xtask", "--", "upgrade"],
+  "cargo_profile": "debug",
+  "profile_note": "Debug, like every M5 campaign except performance, whose denominator requires release for figures comparable to release planning. The upgrade campaign gates correctness — every declared schema path was observed doing what the support contract promises — not a duration, so nothing here depends on the profile.",
+  "target_selection": {
+    "source": "the (package, target) pairs the committed scope document's reports name",
+    "selected_targets_run_with_an_exact_filter": true,
+    "selected_targets_run_with_an_exact_filter_note": "Each declared report is run with an exact libtest filter for its own name, one target invocation per report, so a report that needs to build the historical schema-2 runtime does so inside its own invocation rather than another report's."
+  },
+  "pass_condition": {
+    "every_declared_report_must_report_ok": true,
+    "every_declared_report_must_report_ok_note": "Every report the scope document names must resolve to a test that ran and reported ok. A target that exited unsuccessfully is recorded as a failed target and also fails the campaign.",
+    "every_declared_schema_path_must_be_observed": true,
+    "every_declared_schema_path_must_be_observed_note": "Each of the five declared schema paths must appear in its report's retained observation, carrying the exact source and target schema version, migration result, repository-open result, durable-state comparison, and backup/restore result the support contract promises for it.",
+    "every_declared_report_must_retain_a_passing_observation": true,
+    "every_declared_report_must_retain_a_passing_observation_note": "A report that ran and reported ok is not sufficient: it must also have retained a machine-readable observation that itself says passed and carries no recorded violation.",
+    "declared_reports_must_agree_on_one_execution_manifest": true,
+    "declared_reports_must_agree_on_one_execution_manifest_note": "Each report records the object identity of the campaign's semantic closure from inside its own test process. All three must agree, or the campaign ran against a tree that changed underneath it."
+  },
+  "environment": {
+    "OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL": "postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_upgrade",
+    "OXIDEBATCH_POSTGRES_BACKUP_TEST_URL": "postgres://postgres:postgres@127.0.0.1:5432/postgres",
+    "OXIDEBATCH_CAMPAIGN_DIR": "target/m5-campaigns",
+    "OXIDEBATCH_CAMPAIGN_MATRIX": "postgres-{major}"
+  },
+  "report_path": "target/m5-campaigns/upgrade-campaign.json",
+  "artifact_name": "upgrade-campaign-postgres-{major}",
+  "artifact_retention": "on success and on failure alike, because what a failed upgrade campaign is mostly worth reading for is which schema path or which report it lost",
+  "timeout_minutes": 45,
+  "timeout_note": "The campaign's execution envelope is three reports covering five schema paths, including a one-time build of the historical schema-2 runtime in a worktree. A bounded workload rather than a whole-workspace suite, but still a ceiling: a campaign that stopped making progress must fail rather than occupy a runner."
+}

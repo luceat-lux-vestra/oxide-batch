@@ -66,43 +66,100 @@ pub fn run() -> Result<Campaign, String> {
 
     let mut violations = Vec::new();
     let fixtures = resolve_fixtures(&scope, &mut violations);
-    if !violations.is_empty() {
-        let report = write_report(&root, &scope, &fixtures, &Runs::default(), &violations)?;
-        return Ok(Campaign { violations, report });
-    }
-
-    let observations = prepare_observations(&root)?;
     let mut runs = Runs::default();
-    for scenario in scope.scenarios() {
-        eprintln!("==> {} {}", scenario.target, scenario.name);
-        let run = suite::run_target(
-            &root,
-            &TargetCommand {
-                package: &scenario.package,
-                selector: &["--test".to_owned(), scenario.target.clone()],
-                filters: &["--exact", &scenario.name],
-                environment: &[(OBSERVATIONS_ENV, observations.display().to_string())],
-                nocapture: true,
-                release: false,
-            },
-        )?;
+    if violations.is_empty() {
+        let observations = prepare_observations(&root)?;
+        for scenario in scope.scenarios() {
+            eprintln!("==> {} {}", scenario.target, scenario.name);
+            let run = suite::run_target(
+                &root,
+                &TargetCommand {
+                    package: &scenario.package,
+                    selector: &["--test".to_owned(), scenario.target.clone()],
+                    filters: &["--exact", &scenario.name],
+                    environment: &[(OBSERVATIONS_ENV, observations.display().to_string())],
+                    nocapture: true,
+                    release: false,
+                },
+            )?;
 
-        let outcome = run.results.get(&scenario.name).cloned();
-        if !run.succeeded {
-            runs.failed_targets.push(format!(
-                "{} {} exited unsuccessfully",
-                scenario.package, scenario.target
-            ));
+            let outcome = run.results.get(&scenario.name).cloned();
+            if !run.succeeded {
+                runs.failed_targets.push(format!(
+                    "{} {} exited unsuccessfully",
+                    scenario.package, scenario.target
+                ));
+            }
+            runs.outcomes
+                .insert((scenario.target.clone(), scenario.name.clone()), outcome);
         }
-        runs.outcomes
-            .insert((scenario.target.clone(), scenario.name.clone()), outcome);
+        runs.observations = read_observations(&observations)?;
     }
 
-    runs.observations = read_observations(&observations)?;
     violations.extend(reconcile(&scope, &runs));
+    let (execution_manifest, manifest_violations) = execution_manifest(&scope.reports, &runs);
+    violations.extend(manifest_violations);
 
-    let report = write_report(&root, &scope, &fixtures, &runs, &violations)?;
+    let report = write_report(
+        &root,
+        &scope,
+        &fixtures,
+        &runs,
+        &violations,
+        &execution_manifest,
+    )?;
     Ok(Campaign { violations, report })
+}
+
+/// Hoists the execution manifest the reports recorded to the campaign report.
+///
+/// Every declared report is required to have one and they must agree, so a
+/// report that retained no manifest, a null one, or one that disagreed with
+/// another cannot pass silently. The manifest itself is recorded by each
+/// report from inside its own test process — see
+/// `crates/oxide-batch/tests/crash_restore/mod.rs`'s `execution_manifest` —
+/// because that is the tree the campaign actually ran against; this function
+/// only requires the declared reports to agree on it.
+fn execution_manifest(reports: &[Report], runs: &Runs) -> (Value, Vec<String>) {
+    let mut violations = Vec::new();
+    let mut first: Option<(&str, &Value)> = None;
+    for report in reports {
+        let Some(observation) = runs.observations.get(&report.id) else {
+            violations.push(format!(
+                "{} retained no observation and therefore no execution manifest",
+                report.id
+            ));
+            continue;
+        };
+        let Some(manifest) = observation.get("execution_manifest") else {
+            violations.push(format!(
+                "{} retained no execution_manifest field",
+                report.id
+            ));
+            continue;
+        };
+        if manifest.is_null() {
+            violations.push(format!("{} retained a null execution manifest", report.id));
+            continue;
+        }
+
+        if let Some((first_id, first_manifest)) = first {
+            if manifest != first_manifest {
+                violations.push(format!(
+                    "{} and {first_id} recorded different execution manifests, so the campaign \
+                     ran against a tree that changed underneath it",
+                    report.id
+                ));
+            }
+        } else {
+            first = Some((&report.id, manifest));
+        }
+    }
+
+    (
+        first.map_or(Value::Null, |(_, manifest)| manifest.clone()),
+        violations,
+    )
 }
 
 /// Reports which declared fixtures the environment supplies.
@@ -262,6 +319,7 @@ fn write_report(
     fixtures: &BTreeMap<String, bool>,
     runs: &Runs,
     violations: &[String],
+    manifest: &Value,
 ) -> Result<PathBuf, String> {
     let directory = suite::directory(root);
     fs::create_dir_all(&directory)
@@ -318,6 +376,7 @@ fn write_report(
             "logical_backup_restores_the_durable_state_and_the_job_restarts_on_it",
         ],
         "environment": suite::environment(),
+        "observation": { "execution_manifest": manifest },
         "fixtures": fixtures,
         "reports": reports,
         "phases": phases,
