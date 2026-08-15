@@ -1,0 +1,84 @@
+{
+  "document": "How CI executes the M5 PostgreSQL security campaign",
+  "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow is a thin provisioning and call layer, and its contract-check step fails closed when the workflow drifts from these values. Only the dedicated security workflow is in this campaign's semantic closure, so unrelated quality or build changes in ci.yml do not invalidate retained security evidence.",
+  "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script — an added trigger, a job-level permission override, a widened matrix, a changed command, an appended comment — moves the identity and fails the contract check, whether or not every literal field below still happens to read true. The literal fields exist for a readable diagnostic, not as the boundary. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
+  "workflow_path": ".github/workflows/m5-security.yml",
+  "workflow_git_blob": "2d3c8f6d16fc29e1476b172e3b2ba61e95fd11d6",
+  "workflow_name": "M5 Security",
+  "triggers": {
+    "pull_request": ["main"],
+    "push": ["main"],
+    "workflow_dispatch": true
+  },
+  "permissions": {
+    "contents": "read"
+  },
+  "runner": "ubuntu-24.04",
+  "script": "./tests/fixtures/security/provision.sh ${{ matrix.postgres }}",
+  "script_path": "tests/fixtures/security/provision.sh",
+  "script_git_blob": "4d4d2e22af0630ec535de3e24d1c3dbc0442b9c8",
+  "supported_matrix": ["15", "18"],
+  "matrix_note": "The two ends of the supported PostgreSQL 15-18 range. Evidence is required from both, exactly once each.",
+  "no_services_block": true,
+  "no_services_block_note": "The campaign needs a server whose certificate was signed by an authority generated for this run, and a `services:` container starts before any step has run and therefore before that certificate exists. provision.sh builds both servers itself, after generating the material. A workflow that added a `services:` postgres block would not replace this fixture — a TLS report run against it would simply never observe the properties this campaign owes — so its absence is a first-class invariant of this contract, not an implementation detail.",
+  "fixture_servers": {
+    "tls_server": {
+      "note": "A container started by provision.sh with TLS configured against a certificate authority generated moments earlier for this run, and a server certificate carrying only DNS:localhost, so a connection to it by address is a host-name mismatch and nothing else.",
+      "image": "postgres:{major}",
+      "ssl": "on"
+    },
+    "plaintext_server": {
+      "note": "A second container provision.sh starts with TLS switched off entirely and nothing else different. Without it the campaign can only show that a bad certificate is refused, which a client that silently fell back to an unencrypted session whenever TLS was unavailable would also show.",
+      "image": "postgres:{major}",
+      "ssl": "off"
+    }
+  },
+  "command": ["cargo", "run", "--package", "oxide-batch-xtask", "--", "security"],
+  "cargo_profile": "debug",
+  "profile_note": "Debug, like every M5 campaign except performance, whose denominator requires release for figures comparable to release planning. The security campaign gates correctness and refusal behavior, not a duration, so nothing here depends on the profile.",
+  "target_selection": {
+    "source": "the (package, target, name) triples the committed scope document's reports name",
+    "selected_targets_run_with_an_exact_filter": true,
+    "selected_targets_run_with_an_exact_filter_note": "Each report is run with an exact libtest filter for its own name, one target invocation per declared report, so its result is attributable."
+  },
+  "pass_condition": {
+    "every_declared_report_must_report_ok": true,
+    "every_declared_report_must_retain_a_passing_observation": true,
+    "every_declared_report_must_retain_a_passing_observation_note": "A report that ran and reported ok is not sufficient: it must also have retained a machine-readable observation that itself says passed and carries no recorded violation.",
+    "tls_report_must_observe_exactly_the_required_attempt_set": true,
+    "tls_report_must_observe_exactly_the_required_attempt_set_note": "trusted-authority-and-name (connects), untrusted-authority, hostname-mismatch, and server-without-tls — no fewer, no more, no duplicates — each carrying the failure class the scope document names and leaving no residual plaintext session.",
+    "role_matrix_must_match_the_declared_cell_counts_exactly": true,
+    "role_matrix_must_match_the_declared_cell_counts_exactly_note": "The independent verifier requires the exact per-class allowed and forbidden cell counts tests/fixtures/security/campaign-scope.json declares (40 cells total: 30 forbidden, 10 allowed), with no duplicate cell identity, every forbidden cell refused under SQLSTATE 42501, and no PUBLIC grant in the metadata schema.",
+    "redaction_sweep_must_be_non_vacuous": true,
+    "redaction_sweep_must_be_non_vacuous_note": "artifacts_scanned and strings_scanned must both be greater than zero, every declared surface must have collected at least one artifact, every declared value class must have injected a canary, and prohibited_occurrences must be exactly zero.",
+    "declared_reports_must_agree_on_one_execution_manifest": true,
+    "declared_reports_must_agree_on_one_execution_manifest_note": "Each report records the object identity of the campaign's semantic closure from inside its own test process, including the redaction sweep, which runs in a different workspace crate. All three must agree, or the campaign ran against a tree that changed underneath it."
+  },
+  "environment": {
+    "OXIDEBATCH_CAMPAIGN_DIR": "target/m5-campaigns",
+    "OXIDEBATCH_CAMPAIGN_MATRIX": "postgres-{major}"
+  },
+  "report_path": "target/m5-campaigns/security-campaign.json",
+  "artifact_name": "security-campaign-postgres-{major}",
+  "artifact_retention": "on success and on failure alike, because what a failed security campaign is mostly worth reading for is which report, which TLS attempt, which privilege cell, or which surface it lost",
+  "timeout_minutes": 45,
+  "timeout_note": "The campaign's execution envelope is one TLS report of four attempts, one role matrix of forty cells across five classes, and one redaction sweep across four surfaces, a bounded workload rather than a whole-workspace suite. Still a ceiling: a campaign that stopped making progress must fail rather than occupy a runner.",
+  "required_reports": ["verify-full-tls", "least-privilege-roles", "redaction-sweep"],
+  "required_scenarios": [
+    "verify_full_tls_is_required_in_the_supported_mode",
+    "least_privilege_role_cannot_exceed_its_class",
+    "redaction_sweep_finds_no_prohibited_value_class"
+  ],
+  "required_tls_attempts": [
+    "trusted-authority-and-name",
+    "untrusted-authority",
+    "hostname-mismatch",
+    "server-without-tls"
+  ],
+  "required_privilege_classes": ["migration", "runtime", "explorer", "operator", "retention"],
+  "required_redaction_surfaces": ["errors", "telemetry", "cli", "bundle"],
+  "required_redaction_value_classes": ["password", "database-url-endpoint", "certificate", "payload"],
+  "database_reports_must_self_identify_postgresql_major": true,
+  "database_reports": ["verify-full-tls", "least-privilege-roles"],
+  "database_free_reports": ["redaction-sweep"]
+}

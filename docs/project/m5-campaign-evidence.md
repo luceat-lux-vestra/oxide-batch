@@ -1171,10 +1171,20 @@ supported major would otherwise reconcile perfectly inside a run of another.
 
 ### Where it runs
 
-`postgres-15-security-campaign` and `postgres-18-security-campaign` in
-`.github/workflows/ci.yml`, on the two ends of the supported PostgreSQL `15`-`18`
-range, each retaining its report as a build artifact on success and failure
-alike.
+`postgres-15-security-campaign` and `postgres-18-security-campaign` in the
+dedicated [`.github/workflows/m5-security.yml`](../../.github/workflows/m5-security.yml)
+(promoted out of `ci.yml`, matching the soak, cancellation, performance,
+conformance, crash-restore, and upgrade campaigns' own dedicated workflows), on
+the two ends of the supported PostgreSQL `15`-`18` range, each retaining its
+report as a build artifact on success and failure alike. The job declares no
+`services:` block: the campaign needs a server whose certificate was signed by
+an authority generated for that run and a second server that offers no TLS at
+all, and `tests/fixtures/security/provision.sh` builds both after generating
+the material, which a service container — started before any step runs — could
+not do. The workflow's contract-check step fails closed against
+[`tests/fixtures/security/execution-contract.json`](../../tests/fixtures/security/execution-contract.json)
+before the campaign runs, and the campaign's semantic closure is declared in
+[`tests/fixtures/security/campaign-semantics.json`](../../tests/fixtures/security/campaign-semantics.json).
 
 The M2 `postgres-design-gate` axis is untouched and keeps running over `15`
 through `18`. It is not this campaign renamed: it predates the adapter,

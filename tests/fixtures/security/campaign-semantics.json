@@ -1,0 +1,90 @@
+{
+  "document": "The executable closure of the M5 PostgreSQL security campaign",
+  "note": "The single source of truth for what the security campaign is made of. The producer reads it to record the object identity of every path at the tree it actually ran on; the verifier reads it to require those identities to still hold. Neither restates the list, because a list kept in two places is a list that will disagree.",
+  "rule": "A change to anything here changes what the evidence is evidence of, so retained reports produced before the change may not be promoted after it: the campaign has to be run again. A change to anything not here — documentation, the changelog, or unrelated jobs in `.github/workflows/ci.yml` — leaves retained evidence valid. The dedicated `.github/workflows/m5-security.yml` is bound as one object, so changes to the security provisioning or call layer invalidate security evidence without binding the rest of CI.",
+  "categories": {
+    "workspace framework and adapter source": {
+      "why": "The TLS report and the least-privilege report run the PostgreSQL adapter this code declares — the connection path, `PostgresConfig`, the TLS mode, and the migrator — and the redaction sweep runs the in-memory services, the CLI launch path, and the diagnostic bundle assembly this code declares.",
+      "paths": [
+        "crates/oxide-batch/src",
+        "crates/oxide-batch-core/src",
+        "crates/oxide-batch-plan/src",
+        "crates/oxide-batch-repository/src",
+        "crates/oxide-batch-cli/src"
+      ]
+    },
+    "migrations": {
+      "why": "The durable schema (schema 3) the migration class installs and the least-privilege matrix is checked on.",
+      "paths": [
+        "crates/oxide-batch/migrations"
+      ]
+    },
+    "campaign implementation": {
+      "why": "The exact test targets the committed scope document's reports name, plus the shared support modules those targets compile against. A workspace test file not listed here is outside the campaign: it is not selected, so it is neither run nor able to affect the campaign's result.",
+      "paths": [
+        "crates/oxide-batch/tests/postgres_verify_full_tls.rs",
+        "crates/oxide-batch/tests/postgres_least_privilege_roles.rs",
+        "crates/oxide-batch/tests/security",
+        "crates/oxide-batch-cli/tests/m5_redaction_sweep.rs",
+        "crates/oxide-batch-cli/tests/support"
+      ]
+    },
+    "least-privilege policy": {
+      "why": "What each of the five privilege classes may reach in the schema-3 metadata, committed as SQL rather than assembled by a test, so what each class may do is reviewable on its own and a change to it shows up as a change to the policy rather than as a change to a test.",
+      "paths": [
+        "tests/fixtures/security/roles.sql",
+        "tests/fixtures/security/grants.sql"
+      ]
+    },
+    "cargo manifests": {
+      "why": "Feature selection and dependency ranges for every crate the campaign builds and runs. A campaign built with different features is a different campaign.",
+      "paths": [
+        "Cargo.toml",
+        "crates/oxide-batch/Cargo.toml",
+        "crates/oxide-batch-core/Cargo.toml",
+        "crates/oxide-batch-plan/Cargo.toml",
+        "crates/oxide-batch-repository/Cargo.toml",
+        "crates/oxide-batch-cli/Cargo.toml",
+        "xtask/Cargo.toml"
+      ]
+    },
+    "dependency resolution": {
+      "why": "The exact dependency graph every target the campaign runs was built from.",
+      "paths": [
+        "Cargo.lock"
+      ]
+    },
+    "toolchain and build configuration": {
+      "why": "The compiler the campaign is built with, and the cargo configuration it is built under.",
+      "paths": [
+        "rust-toolchain.toml",
+        ".cargo/config.toml"
+      ]
+    },
+    "campaign fixtures": {
+      "why": "The declared denominator — the three reports, the TLS refusals, the privilege classes, the exact role-matrix cell counts, and the redaction surfaces and value classes — and this closure itself. The producer derives what it runs from this document, so a change to it can change which targets and which properties the campaign requires.",
+      "paths": [
+        "tests/fixtures/security/campaign-scope.json",
+        "tests/fixtures/security/campaign-semantics.json"
+      ]
+    },
+    "security execution contract": {
+      "why": "How CI actually runs the campaign: the supported matrix, the TLS and plaintext fixture servers `provision.sh` builds, the command, and the environment. The dedicated workflow is included with them, and its contract-check step fails closed if the workflow drifts from the contract. An unrelated CI job in ci.yml does not invalidate retained security evidence, while any change to the dedicated security workflow does.",
+      "paths": [
+        "tests/fixtures/security/execution-contract.json",
+        "tests/fixtures/security/provision.sh",
+        "tests/fixtures/security/verify-ci-contract.sh",
+        ".github/workflows/m5-security.yml"
+      ]
+    },
+    "independent verifier": {
+      "why": "The program that decides whether a run proved what it owed and whether retained evidence is still what it says. Its verdicts are part of the campaign result, so a report produced under a different verifier is a result under a different standard. Listed as the specific files that implement it, matching the soak, cancellation, performance, conformance, crash-restore, and upgrade campaigns' own closures: `main.rs` dispatches the command, `security.rs` runs the scope and independently reconciles the observations against it, `evidence.rs` is the permanent offline verifier, and `suite.rs` is the target-running and libtest-parsing mechanics every M5 runner shares.",
+      "paths": [
+        "xtask/src/main.rs",
+        "xtask/src/security.rs",
+        "xtask/src/evidence.rs",
+        "xtask/src/suite.rs"
+      ]
+    }
+  }
+}

@@ -66,11 +66,19 @@ the conformance campaign's is
 [`conformance/campaign-semantics.json`](../../../../tests/fixtures/conformance/campaign-semantics.json),
 the crash and restore campaign's is
 [`crash-restore/campaign-semantics.json`](../../../../tests/fixtures/crash-restore/campaign-semantics.json),
-and the upgrade campaign's is
-[`upgrade/campaign-semantics.json`](../../../../tests/fixtures/upgrade/campaign-semantics.json).
-All six cover framework source, migrations, cargo manifests, `Cargo.lock`,
+the upgrade campaign's is
+[`upgrade/campaign-semantics.json`](../../../../tests/fixtures/upgrade/campaign-semantics.json),
+and the security campaign's is
+[`security/campaign-semantics.json`](../../../../tests/fixtures/security/campaign-semantics.json).
+All seven cover framework source, migrations, cargo manifests, `Cargo.lock`,
 toolchain and build configuration, the campaign implementation and fixtures,
-the execution contract, and the verifier. The upgrade campaign's closure
+the execution contract, and the verifier. The security campaign's closure
+additionally binds the committed least-privilege policy —
+`tests/fixtures/security/roles.sql` and `tests/fixtures/security/grants.sql`
+— as its own category, distinct from the campaign fixtures that declare which
+reports and denominators the runner reads, because the policy is what the
+matrix's allowed and forbidden cells are checked against rather than what
+decides which cells exist. The upgrade campaign's closure
 additionally binds a historical revision that is not itself a path any
 closure can hash: the rejection report builds a real schema-2 runtime from
 the commit before schema 3 was added, pinned by hash in
@@ -119,9 +127,19 @@ contract, calls the script, and retains the report. Soak is owned by
 `.github/workflows/m5-performance.yml`; conformance is owned by
 `.github/workflows/m5-conformance.yml`; crash and restore is owned by
 `.github/workflows/m5-crash-restore.yml`; upgrade is owned by
-`.github/workflows/m5-upgrade.yml`. An unrelated quality or build change in
+`.github/workflows/m5-upgrade.yml`; security is owned by
+`.github/workflows/m5-security.yml`. An unrelated quality or build change in
 `.github/workflows/ci.yml` therefore does not invalidate any campaign's
-retained evidence, while a change to the relevant dedicated workflow does.
+retained evidence, while a change to the relevant dedicated workflow does. The
+security workflow is the one exception to "provisions the runner and
+database": it provisions no `services:` database at all, because the campaign
+needs a server whose certificate was signed by an authority generated for that
+run and a second server that offers no TLS, neither of which a service
+container started before any step runs could be. Its canonical runner,
+`tests/fixtures/security/provision.sh`, builds both servers itself before
+calling the verifier and the campaign, which is why it is the security
+campaign's canonical runner in place of a `run-ci-campaign.sh`: it already does
+the provisioning work that script would otherwise only wrap.
 
 The contract-check scripts compare the important workflow values — triggers,
 permissions, runner, PostgreSQL matrix and provisioning, timeout, command,

@@ -161,6 +161,66 @@ fn campaign_scope_matches_the_accepted_security_obligations() -> Result<(), Box<
     Ok(())
 }
 
+/// The role-matrix cell-count denominator xtask's independent verifier
+/// requires exact agreement with, counted from the `PERMITTED` and
+/// `BOUNDARIES` tables `postgres_least_privilege_roles.rs` declares (see that
+/// file's module documentation): every class's allowed and forbidden cell
+/// counts and the total they sum to. A class removed from the document, a
+/// count edited without the source it counts, or a total that stops matching
+/// the sum of the per-class counts would otherwise let the independent
+/// verifier check an exact count against a denominator nothing keeps honest.
+#[test]
+fn role_matrix_denominator_is_internally_consistent() -> Result<(), Box<dyn Error>> {
+    let scope = Scope::read()?;
+
+    assert_eq!(
+        scope
+            .class_cells
+            .iter()
+            .map(|(class, ..)| class.as_str())
+            .collect::<BTreeSet<_>>(),
+        REQUIRED_CLASSES.iter().copied().collect::<BTreeSet<_>>(),
+        "the role matrix denominator must declare exactly the five required classes",
+    );
+    for (class, allowed, forbidden) in &scope.class_cells {
+        assert!(
+            *allowed > 0,
+            "the {class} class declares zero allowed cells, so the matrix could never prove it \
+             does its own work",
+        );
+        assert!(
+            *forbidden > 0,
+            "the {class} class declares zero forbidden cells, so the matrix could never prove a \
+             boundary",
+        );
+    }
+    let sum = scope
+        .class_cells
+        .iter()
+        .map(|(_, allowed, forbidden)| allowed + forbidden)
+        .sum::<u64>();
+    assert_eq!(
+        sum, scope.role_matrix_total_cells,
+        "the role matrix's declared total must equal the sum of every class's declared cells",
+    );
+
+    Ok(())
+}
+
+/// The committed policy files the least-privilege matrix is checked against
+/// must still be the two SQL files the scope names, so an edit that pointed
+/// the policy at a different path could not silently substitute what the
+/// matrix reconciles evidence against.
+#[test]
+fn the_scope_names_the_committed_policy_files() -> Result<(), Box<dyn Error>> {
+    let scope = Scope::read()?;
+
+    assert_eq!(scope.roles_policy, "tests/fixtures/security/roles.sql");
+    assert_eq!(scope.grants_policy, "tests/fixtures/security/grants.sql");
+
+    Ok(())
+}
+
 #[test]
 fn every_report_declares_the_fixture_it_needs() -> Result<(), Box<dyn Error>> {
     let scope = Scope::read()?;
@@ -322,10 +382,17 @@ struct Scope {
     roles_policy: String,
     grants_policy: String,
     related: Vec<String>,
+    role_matrix_total_cells: u64,
+    class_cells: Vec<(String, u64, u64)>,
 }
 
 impl Scope {
     /// Reads the campaign scope document from the workspace.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the scope document is one denominator, and splitting its reading would scatter \
+                  the fields this reconciliation and xtask's runner both depend on"
+    )]
     fn read() -> Result<Self, Box<dyn Error>> {
         let path = workspace_root()
             .join("tests")
@@ -380,6 +447,25 @@ impl Scope {
         let policy = document
             .get("policy")
             .ok_or_else(|| Failure("the scope declares no committed policy".to_owned()))?;
+        let role_matrix = document
+            .get("role_matrix")
+            .ok_or_else(|| Failure("the scope declares no role matrix denominator".to_owned()))?;
+        let class_cells = array(&document, "privilege_classes")?
+            .iter()
+            .map(|class| {
+                Ok::<_, Box<dyn Error>>((
+                    text(class, "class")?,
+                    class
+                        .get("allowed_cells")
+                        .and_then(Value::as_u64)
+                        .ok_or_else(|| Failure("a class declares no allowed_cells".to_owned()))?,
+                    class
+                        .get("forbidden_cells")
+                        .and_then(Value::as_u64)
+                        .ok_or_else(|| Failure("a class declares no forbidden_cells".to_owned()))?,
+                ))
+            })
+            .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
 
         Ok(Self {
             reports,
@@ -410,6 +496,11 @@ impl Scope {
                 .flatten()
                 .map(ToString::to_string)
                 .collect(),
+            role_matrix_total_cells: role_matrix
+                .get("total_cells")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| Failure("the role matrix declares no total_cells".to_owned()))?,
+            class_cells,
         })
     }
 }

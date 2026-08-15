@@ -61,8 +61,8 @@ use sqlx::postgres::PgPoolOptions;
 
 use security::{
     FixedClock, INSUFFICIENT_PRIVILEGE, StatementOutcome, admin_url, apply_script,
-    attempt_statement, fixture_config, fixtures, major_version, recreate_database,
-    retain_observation, run_statement, server_version, with_database, with_role,
+    attempt_statement, execution_manifest, fixture_config, fixtures, major_version,
+    recreate_database, retain_observation, run_statement, server_version, with_database, with_role,
 };
 
 /// The database this report builds and reports on.
@@ -580,6 +580,7 @@ async fn run_report(admin: &str) -> Result<(), Box<dyn Error>> {
             "matrix": cells,
             "violations": Vec::<String>::new(),
             "passed": true,
+            "execution_manifest": execution_manifest()?,
         }),
     )?;
 

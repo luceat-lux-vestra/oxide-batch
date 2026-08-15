@@ -63,9 +63,9 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
 use sqlx::{Connection, PgConnection, Row};
 
 use security::{
-    Failure, FixedClock, admin_url, major_version, plaintext_url, read_ca, recreate_database,
-    retain_observation, server_version, supported_config, tls_ca, tls_host, tls_mismatch_host,
-    tls_untrusted_ca, with_database, with_host,
+    Failure, FixedClock, admin_url, execution_manifest, major_version, plaintext_url, read_ca,
+    recreate_database, retain_observation, server_version, supported_config, tls_ca, tls_host,
+    tls_mismatch_host, tls_untrusted_ca, with_database, with_host,
 };
 
 /// The database this report builds and reports on.
@@ -321,6 +321,7 @@ async fn run_report(fixture: Fixture) -> Result<(), Box<dyn Error>> {
             "attempts": results,
             "violations": Vec::<String>::new(),
             "passed": true,
+            "execution_manifest": execution_manifest()?,
         }),
     )?;
 
