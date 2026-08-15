@@ -62,8 +62,8 @@ use oxide_batch::{
 use serde_json::{Value, json};
 
 use resource_bounds::{
-    Failure, FixedClock, config, major_version, migrator_url, remove_job, retain_observation,
-    runtime_url, server_version,
+    Failure, FixedClock, config, execution_manifest, major_version, migrator_url, remove_job,
+    retain_observation, runtime_url, server_version,
 };
 
 /// The report identifier the runner reconciles this observation under.
@@ -156,6 +156,7 @@ async fn report(runtime: String, migrator: String) -> Result<(), Box<dyn Error>>
         }),
         "durable_round_trip": durable.evidence(),
         "instance_key": key.evidence(),
+        "execution_manifest": execution_manifest()?,
         "violations": violations,
         "passed": violations.is_empty(),
     });

@@ -1,0 +1,72 @@
+name: M5 Resource Bounds
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m5-resource-bounds-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  resource-bounds-campaign:
+    name: postgres-${{ matrix.postgres }}-resource-bounds-campaign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["15", "18"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oxide_batch_resource
+        ports:
+          - 5432:5432
+        # The worker report saturates a partition budget of 64, which needs 65
+        # connections plus the parent's own pool and the fixture's. The default
+        # of 100 is enough; raising it here would make the campaign prove a
+        # ceiling the image does not otherwise offer.
+        options: >-
+          --health-cmd "pg_isready --username postgres --dbname oxide_batch_resource"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      OXIDEBATCH_POSTGRES_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_resource
+      OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_resource
+      OXIDEBATCH_CAMPAIGN_DIR: target/m5-campaigns
+      OXIDEBATCH_CAMPAIGN_MATRIX: postgres-${{ matrix.postgres }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Fail closed if the execution contract drifts
+        run: ./tests/fixtures/resource-bounds/verify-ci-contract.sh .github/workflows/m5-resource-bounds.yml
+
+      - name: Prove every declared ceiling holds and is reached under stress
+        run: ./tests/fixtures/resource-bounds/run-ci-campaign.sh ${{ matrix.postgres }}
+
+      # Retained on failure as well as on success. A failed resource-bounds
+      # campaign is mostly worth reading for which resource, which report, or
+      # which stress requirement it lost, and a job that uploaded only green
+      # reports would discard exactly that.
+      - name: Retain the campaign report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: resource-bounds-campaign-postgres-${{ matrix.postgres }}
+          path: target/m5-campaigns/resource-bounds-campaign.json
+          if-no-files-found: error

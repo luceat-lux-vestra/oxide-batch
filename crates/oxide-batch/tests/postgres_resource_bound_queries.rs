@@ -60,8 +60,8 @@ use oxide_batch_repository::ExplorerRow;
 use serde_json::{Value, json};
 
 use resource_bounds::{
-    FixedClock, config, major_version, migrator_url, remove_job, remove_retention_action,
-    retain_observation, runtime_url, server_version,
+    FixedClock, config, execution_manifest, major_version, migrator_url, remove_job,
+    remove_retention_action, retain_observation, runtime_url, server_version,
 };
 
 /// The report identifier the runner reconciles this observation under.
@@ -155,6 +155,7 @@ async fn report(runtime: String, migrator: String) -> Result<(), Box<dyn Error>>
             .iter()
             .map(Cell::evidence)
             .collect::<Vec<_>>(),
+        "execution_manifest": execution_manifest()?,
         "violations": violations,
         "passed": violations.is_empty(),
     });

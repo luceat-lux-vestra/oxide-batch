@@ -130,6 +130,7 @@ fn bounded_queues_shed_under_overload_without_blocking_batch_work() -> Result<()
         "resources": resources,
         "construction": cells.iter().map(Cell::evidence).collect::<Vec<_>>(),
         "durable_equivalence": equivalence.evidence(),
+        "execution_manifest": execution_manifest()?,
         "violations": violations,
         "passed": violations.is_empty(),
     });
@@ -853,6 +854,107 @@ fn retain(document: &Value) -> Result<(), Box<dyn Error>> {
     )?;
     Ok(())
 }
+
+/// Returns the workspace root that contains this package.
+fn workspace_root() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+/// Reads the declared semantic closure of the resource-bounds campaign.
+///
+/// Read from `tests/fixtures/resource-bounds/campaign-semantics.json` rather
+/// than listed here, because the xtask verifier reads the same document: a
+/// closure kept in two places is one that will disagree. This is a separate
+/// copy of `crates/oxide-batch/tests/resource_bounds/mod.rs`'s function of the
+/// same name, because this report runs in a different workspace crate and
+/// test binaries do not share code across crates; both read the one committed
+/// closure document, so they cannot disagree about what it declares.
+fn semantics_paths() -> Result<Vec<String>, Box<dyn Error>> {
+    let path = workspace_root()
+        .join("tests")
+        .join("fixtures")
+        .join("resource-bounds")
+        .join("campaign-semantics.json");
+    let document: Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+    let categories = document
+        .get("categories")
+        .and_then(Value::as_object)
+        .ok_or_else(|| ReportFailure("the semantics document declares no categories".to_owned()))?;
+    let mut paths = categories
+        .values()
+        .filter_map(|category| category.get("paths").and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    if paths.is_empty() {
+        return Err(Box::new(ReportFailure(
+            "the semantics document declares no paths".to_owned(),
+        )));
+    }
+    Ok(paths)
+}
+
+/// Records the object identity of the campaign's closure, as executed.
+///
+/// See `crates/oxide-batch/tests/resource_bounds/mod.rs`'s function of the
+/// same name: this process is the campaign, so the tree it can see is by
+/// definition the tree that ran, and recording that here makes the binding
+/// permanent and offline rather than dependent on a commit name a later clone
+/// might not be able to resolve. This report needs no database, and records
+/// no `PostgreSQL` major for that reason: the campaign-level matrix identity is
+/// recorded once, at the environment level, not manufactured for a report
+/// that used no database.
+fn execution_manifest() -> Result<Value, Box<dyn Error>> {
+    let root = workspace_root();
+    let commit = git(&root, &["rev-parse", "HEAD"])
+        .ok_or_else(|| ReportFailure("the campaign is not running inside a git tree".to_owned()))?;
+    let mut objects = serde_json::Map::new();
+    for path in semantics_paths()? {
+        let object = git(&root, &["rev-parse", &format!("HEAD:{path}")]).ok_or_else(|| {
+            ReportFailure(format!(
+                "{path} is declared as campaign semantics and is not present"
+            ))
+        })?;
+        objects.insert(path, Value::String(object));
+    }
+    Ok(json!({
+        "execution_commit": commit,
+        "execution_commit_note": "The tree this run actually executed against, read from the \
+                                  checkout the campaign is running in. In CI this is the \
+                                  pull-request merge commit rather than the branch head, and it \
+                                  is the authority: the objects below are its objects.",
+        "tree_clean": git(&root, &["status", "--porcelain"]).map(|status| status.is_empty()),
+        "objects": Value::Object(objects),
+    }))
+}
+
+/// Runs one git command against the workspace, tolerating failure.
+fn git(root: &std::path::Path, arguments: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .current_dir(root)
+        .args(arguments)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+/// A report failure that is not otherwise typed.
+#[derive(Debug)]
+struct ReportFailure(String);
+
+impl std::fmt::Display for ReportFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl Error for ReportFailure {}
 
 /// A sink that offers every record to a bounded queue and counts the drops.
 struct SheddingSink {

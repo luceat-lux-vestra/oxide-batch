@@ -88,7 +88,14 @@ pub fn run() -> Result<Campaign, String> {
     let mut violations = Vec::new();
     let fixtures = resolve_fixtures(&scope, &mut violations);
     if !violations.is_empty() {
-        let report = write_report(&root, &scope, &fixtures, &Runs::default(), &violations)?;
+        let report = write_report(
+            &root,
+            &scope,
+            &fixtures,
+            &Runs::default(),
+            &violations,
+            &Value::Null,
+        )?;
         return Ok(Campaign { violations, report });
     }
 
@@ -122,9 +129,72 @@ pub fn run() -> Result<Campaign, String> {
 
     runs.observations = read_observations(&observations)?;
     violations.extend(reconcile(&scope, &runs));
+    let (execution_manifest, manifest_violations) = execution_manifest(&scope.reports, &runs);
+    violations.extend(manifest_violations);
 
-    let report = write_report(&root, &scope, &fixtures, &runs, &violations)?;
+    let report = write_report(
+        &root,
+        &scope,
+        &fixtures,
+        &runs,
+        &violations,
+        &execution_manifest,
+    )?;
     Ok(Campaign { violations, report })
+}
+
+/// Hoists the execution manifest the reports recorded to the campaign report.
+///
+/// Every declared report is required to have one and they must agree, so a
+/// report that retained no manifest, a null one, or one that disagreed with
+/// another cannot pass silently. The manifest itself is recorded by each
+/// report from inside its own test process — see
+/// `crates/oxide-batch/tests/resource_bounds/mod.rs`'s `execution_manifest`
+/// for the three database reports, and
+/// `crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs`'s own copy for
+/// the shedding report, which runs in a different workspace crate — because
+/// that is the tree the campaign actually ran against; this function only
+/// requires the declared reports to agree on it.
+fn execution_manifest(reports: &[Report], runs: &Runs) -> (Value, Vec<String>) {
+    let mut violations = Vec::new();
+    let mut first: Option<(&str, &Value)> = None;
+    for report in reports {
+        let Some(observation) = runs.observations.get(&report.id) else {
+            violations.push(format!(
+                "{} retained no observation and therefore no execution manifest",
+                report.id
+            ));
+            continue;
+        };
+        let Some(manifest) = observation.get("execution_manifest") else {
+            violations.push(format!(
+                "{} retained no execution_manifest field",
+                report.id
+            ));
+            continue;
+        };
+        if manifest.is_null() {
+            violations.push(format!("{} retained a null execution manifest", report.id));
+            continue;
+        }
+
+        if let Some((first_id, first_manifest)) = first {
+            if manifest != first_manifest {
+                violations.push(format!(
+                    "{} and {first_id} recorded different execution manifests, so the campaign \
+                     ran against a tree that changed underneath it",
+                    report.id
+                ));
+            }
+        } else {
+            first = Some((&report.id, manifest));
+        }
+    }
+
+    (
+        first.map_or(Value::Null, |(_, manifest)| manifest.clone()),
+        violations,
+    )
 }
 
 /// Reports which declared fixtures the environment supplies.
@@ -235,11 +305,19 @@ fn reconcile(scope: &Scope, runs: &Runs) -> Vec<String> {
             violations.push(format!("{}: {violation}", report.id));
         }
         if report.against_database {
-            violations.extend(reconcile_matrix_point(&report.id, observation));
+            let expected = env::var(suite::MATRIX)
+                .ok()
+                .filter(|value| !value.is_empty());
+            violations.extend(reconcile_matrix_point(
+                &report.id,
+                observation,
+                expected.as_deref(),
+            ));
         }
     }
 
-    let evidence = collect_evidence(runs);
+    let (evidence, identity_violations) = collect_evidence(scope, runs);
+    violations.extend(identity_violations);
     violations.extend(reconcile_denominator(scope, &evidence));
     violations.extend(reconcile_stress(scope, &evidence));
     violations.extend(reconcile_equivalence(scope, runs));
@@ -252,16 +330,13 @@ fn reconcile(scope: &Scope, runs: &Runs) -> Vec<String> {
 /// The matrix point is invisible in a connection string, so without this an
 /// observation produced against one supported major would reconcile perfectly
 /// inside a run of another.
-fn reconcile_matrix_point(id: &str, observation: &Value) -> Vec<String> {
-    let Some(expected) = env::var(suite::MATRIX)
-        .ok()
-        .filter(|value| !value.is_empty())
-    else {
+fn reconcile_matrix_point(id: &str, observation: &Value, expected: Option<&str>) -> Vec<String> {
+    let Some(expected) = expected else {
         return Vec::new();
     };
     let expected = expected
         .rsplit_once('-')
-        .map_or(expected.clone(), |(_, major)| major.to_owned());
+        .map_or(expected.to_owned(), |(_, major)| major.to_owned());
     let observed = observation
         .get("postgres_major_version")
         .and_then(Value::as_str);
@@ -275,52 +350,126 @@ fn reconcile_matrix_point(id: &str, observation: &Value) -> Vec<String> {
     )]
 }
 
+/// Checks one resource's evidence identity against the denominator, and
+/// records the claim so a second one is rejected as a duplicate.
+///
+/// Raw evidence identity is the tuple `(resource, expected report)`, not the
+/// resource name alone: a resource this document does not declare, one
+/// recorded by a report other than the one the denominator names for it, and
+/// one already claimed by an earlier observation are each rejected rather
+/// than silently accepted, misattributed, or overwritten. `claimed_by` is an
+/// ordinary map checked with `contains_key` before every insert for exactly
+/// that reason — a bare `insert` would let a second observation win silently.
+///
+/// Returns the violation, when the identity does not hold.
+fn check_identity(
+    scope: &Scope,
+    claimed_by: &mut BTreeMap<String, String>,
+    resource: &str,
+    id: &str,
+) -> Option<String> {
+    let Some(expected) = scope
+        .resources
+        .iter()
+        .find(|candidate| candidate.name == resource)
+    else {
+        return Some(format!(
+            "{resource} appears in the {id} report's evidence and is not one of the campaign's \
+             declared resources",
+        ));
+    };
+    if expected.report != id {
+        return Some(format!(
+            "{resource} is declared to be proved by the {} report and its evidence was recorded \
+             by {id} instead",
+            expected.report,
+        ));
+    }
+    if claimed_by.contains_key(resource) {
+        return Some(format!(
+            "{resource} was recorded more than once, by more than one observation",
+        ));
+    }
+    claimed_by.insert(resource.to_owned(), id.to_owned());
+    None
+}
+
 /// Gathers what every report said about every resource it touched.
 ///
-/// A report records a resource in one of three places: as a saturated or
-/// refused resource with its offered load and observed peak, as a construction
-/// cell at or past a ceiling, or as a swept table entry. The first carries
-/// evidence the runner reconciles; all three count as coverage, because a
-/// resource whose only proof is a pair of constructor calls is still proved.
-fn collect_evidence(runs: &Runs) -> Evidence {
+/// A report records a resource in one of four places: as a saturated or
+/// refused resource with its offered load and observed peak, as one durable
+/// instance-key rejection, as a construction cell at or past a ceiling, or as
+/// a swept table entry. The first two carry evidence this runner reconciles
+/// numerically; construction and swept-table entries carry evidence this
+/// runner reconciles as an accept-at-the-ceiling and refuse-one-past-it pair.
+/// Every entry's identity is checked against the denominator as it is
+/// gathered, so an undeclared resource, a resource recorded by the wrong
+/// report, or a resource claimed twice is a violation rather than silent
+/// coverage.
+fn collect_evidence(scope: &Scope, runs: &Runs) -> (Evidence, Vec<String>) {
     let mut evidence = Evidence::default();
+    let mut violations = Vec::new();
+    let mut claimed_by: BTreeMap<String, String> = BTreeMap::new();
 
     for (id, observation) in &runs.observations {
-        for array in ["resources", "construction", "cells"] {
-            for entry in observation
+        let numeric = observation
+            .get("resources")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .chain(observation.get("instance_key"));
+        for entry in numeric {
+            let Some(resource) = entry.get("resource").and_then(Value::as_str) else {
+                continue;
+            };
+            if let Some(violation) = check_identity(scope, &mut claimed_by, resource, id) {
+                violations.push(violation);
+            } else {
+                evidence.covered.insert(resource.to_owned());
+                evidence
+                    .observed
+                    .insert(resource.to_owned(), (id.clone(), entry.clone()));
+            }
+        }
+
+        let mut cells: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+        let constructions = ["construction", "cells"].into_iter().flat_map(|array| {
+            observation
                 .get(array)
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
-            {
-                let Some(resource) = entry.get("resource").and_then(Value::as_str) else {
-                    continue;
-                };
-                evidence.covered.insert(resource.to_owned());
-                if array == "resources" {
-                    evidence
-                        .observed
-                        .insert(resource.to_owned(), (id.clone(), entry.clone()));
-                }
-            }
+        });
+        for entry in constructions {
+            let Some(resource) = entry.get("resource").and_then(Value::as_str) else {
+                continue;
+            };
+            cells
+                .entry(resource.to_owned())
+                .or_default()
+                .push(entry.clone());
         }
-
-        // The instance-key bound is recorded on its own because it is neither a
-        // constructor call nor a saturated run: it is one durable rejection.
-        if let Some(entry) = observation.get("instance_key")
-            && let Some(resource) = entry.get("resource").and_then(Value::as_str)
-        {
-            evidence.covered.insert(resource.to_owned());
-            evidence
-                .observed
-                .insert(resource.to_owned(), (id.clone(), entry.clone()));
+        for (resource, cells) in cells {
+            if let Some(violation) = check_identity(scope, &mut claimed_by, &resource, id) {
+                violations.push(violation);
+            } else {
+                evidence.covered.insert(resource.clone());
+                evidence.construction.insert(resource, (id.clone(), cells));
+            }
         }
     }
 
-    evidence
+    (evidence, violations)
 }
 
 /// Requires every declared resource to have been observed, at its ceiling.
+///
+/// A resource whose only evidence is a pair of construction cells is proved
+/// numerically by the pair rather than by a single reconcilable entry: the
+/// declared ceiling must have been accepted exactly, and one past it must
+/// have been refused. Neither side alone is non-vacuous proof — an all-accept
+/// or all-refuse report would say nothing about where the ceiling actually
+/// falls.
 fn reconcile_denominator(scope: &Scope, evidence: &Evidence) -> Vec<String> {
     let mut violations = Vec::new();
 
@@ -334,27 +483,60 @@ fn reconcile_denominator(scope: &Scope, evidence: &Evidence) -> Vec<String> {
             continue;
         }
 
-        let Some((report, entry)) = evidence.observed.get(&resource.name) else {
+        if let Some((report, entry)) = evidence.observed.get(&resource.name) {
+            if entry.get("passed").and_then(Value::as_bool) == Some(false) {
+                violations.push(format!("{} failed in the {report} report", resource.name));
+            }
+
+            // The ceiling the report says it checked has to be the one the
+            // denominator declares. Without this, a report could quietly
+            // narrow a bound and still reconcile.
+            let Some(declared) = resource.ceiling else {
+                continue;
+            };
+            let observed = entry
+                .get("declared_ceiling")
+                .or_else(|| entry.get("configured_ceiling"))
+                .and_then(Value::as_i64);
+            if observed != Some(declared) {
+                violations.push(format!(
+                    "{} is declared with a ceiling of {declared} and the {report} report \
+                     checked {observed:?}",
+                    resource.name,
+                ));
+            }
             continue;
-        };
-        if entry.get("passed").and_then(Value::as_bool) == Some(false) {
-            violations.push(format!("{} failed in the {report} report", resource.name));
         }
 
-        // The ceiling the report says it checked has to be the one the
-        // denominator declares. Without this, a report could quietly narrow a
-        // bound and still reconcile.
+        let Some((report, cells)) = evidence.construction.get(&resource.name) else {
+            continue;
+        };
         let Some(declared) = resource.ceiling else {
             continue;
         };
-        let observed = entry
-            .get("declared_ceiling")
-            .or_else(|| entry.get("configured_ceiling"))
-            .and_then(Value::as_i64);
-        if observed != Some(declared) {
+        let accepted_at_ceiling = cells.iter().any(|cell| {
+            cell.get("value").and_then(Value::as_i64) == Some(declared)
+                && cell.get("accepted").and_then(Value::as_bool) == Some(true)
+                && cell.get("expected").and_then(Value::as_bool) == Some(true)
+        });
+        let refused_past_ceiling = cells.iter().any(|cell| {
+            cell.get("value")
+                .and_then(Value::as_i64)
+                .is_some_and(|value| value > declared)
+                && cell.get("accepted").and_then(Value::as_bool) == Some(false)
+                && cell.get("expected").and_then(Value::as_bool) == Some(false)
+        });
+        if !accepted_at_ceiling {
             violations.push(format!(
-                "{} is declared with a ceiling of {declared} and the {report} report checked \
-                 {observed:?}",
+                "{} is declared with a ceiling of {declared} and the {report} report recorded \
+                 no construction accepted exactly at it",
+                resource.name,
+            ));
+        }
+        if !refused_past_ceiling {
+            violations.push(format!(
+                "{} is declared with a ceiling of {declared} and the {report} report recorded \
+                 no construction refused one past it",
                 resource.name,
             ));
         }
@@ -375,6 +557,14 @@ fn reconcile_stress(scope: &Scope, evidence: &Evidence) -> Vec<String> {
             ));
             continue;
         };
+        if report != &requirement.report {
+            violations.push(format!(
+                "{} is declared to be stressed by the {} report and its evidence was recorded \
+                 by {report} instead",
+                requirement.resource, requirement.report,
+            ));
+            continue;
+        }
         let ceiling = entry
             .get("configured_ceiling")
             .and_then(Value::as_i64)
@@ -502,6 +692,14 @@ fn reconcile_closed_rejection(resource: &str, entry: &Value) -> Vec<String> {
 }
 
 /// Requires the stressed runs to have matched their sequential baselines.
+///
+/// The producer's own `passed` summary is not trusted as root evidence: this
+/// re-derives pass or fail from the raw `fields_compared` and
+/// `must_not_observe` entries, requiring the exact set of fields the scope
+/// declares (missing or duplicated is a failure, and an undeclared extra
+/// field cannot mask a missing required one), each required field's own
+/// `agrees` literally `true`, and each declared regression's own `observed`
+/// literally `false`.
 fn reconcile_equivalence(scope: &Scope, runs: &Runs) -> Vec<String> {
     let mut violations = Vec::new();
 
@@ -518,36 +716,84 @@ fn reconcile_equivalence(scope: &Scope, runs: &Runs) -> Vec<String> {
             ));
             continue;
         };
-        if equivalence.get("passed").and_then(Value::as_bool) != Some(true) {
-            violations.push(format!(
-                "the {} report's stressed run does not match its sequential baseline",
-                comparison.report,
-            ));
-        }
         for violation in strings(equivalence, "violations") {
             violations.push(format!("{}: {violation}", comparison.report));
         }
 
-        // A comparison of nothing against nothing passes. Every field the scope
-        // requires has to appear among the ones the report actually compared.
-        let compared = equivalence
+        let mut compared: BTreeMap<String, bool> = BTreeMap::new();
+        for field in equivalence
             .get("fields_compared")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
-            .filter_map(|field| field.get("field").and_then(Value::as_str))
-            .map(str::to_owned)
-            .collect::<BTreeSet<_>>();
-        if compared.is_empty() {
-            continue;
+        {
+            let Some(name) = field.get("field").and_then(Value::as_str) else {
+                continue;
+            };
+            if compared.contains_key(name) {
+                violations.push(format!(
+                    "the {} comparison recorded {name} more than once",
+                    comparison.report,
+                ));
+                continue;
+            }
+            compared.insert(
+                name.to_owned(),
+                field.get("agrees").and_then(Value::as_bool) == Some(true),
+            );
         }
         for required in &comparison.must_agree_on {
-            if !compared.contains(required) {
-                violations.push(format!(
+            match compared.get(required) {
+                None => violations.push(format!(
                     "the {} comparison is required to agree on {required} and compared no such \
                      field",
                     comparison.report,
+                )),
+                Some(false) => violations.push(format!(
+                    "the {} comparison recorded {required} as disagreeing, and a concurrency \
+                     result that changes a durable observation is invalid regardless of its \
+                     throughput",
+                    comparison.report,
+                )),
+                Some(true) => {}
+            }
+        }
+
+        let mut observed_conditions: BTreeMap<String, bool> = BTreeMap::new();
+        for entry in equivalence
+            .get("must_not_observe")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let Some(condition) = entry.get("condition").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(observed) = entry.get("observed").and_then(Value::as_bool) else {
+                continue;
+            };
+            if observed_conditions.contains_key(condition) {
+                violations.push(format!(
+                    "the {} comparison recorded {condition} more than once",
+                    comparison.report,
                 ));
+                continue;
+            }
+            observed_conditions.insert(condition.to_owned(), observed);
+        }
+        for condition in &comparison.must_not_observe {
+            match observed_conditions.get(condition) {
+                None => violations.push(format!(
+                    "the {} comparison is required to report on {condition} and recorded no \
+                     such condition",
+                    comparison.report,
+                )),
+                Some(true) => violations.push(format!(
+                    "the {} comparison observed {condition}, which the campaign requires it not \
+                     to",
+                    comparison.report,
+                )),
+                Some(false) => {}
             }
         }
     }
@@ -579,13 +825,14 @@ fn write_report(
     fixtures: &BTreeMap<String, bool>,
     runs: &Runs,
     violations: &[String],
+    execution_manifest: &Value,
 ) -> Result<PathBuf, String> {
     let directory = suite::directory(root);
     fs::create_dir_all(&directory)
         .map_err(|error| format!("could not create {}: {error}", directory.display()))?;
     let path = directory.join(REPORT);
 
-    let evidence = collect_evidence(runs);
+    let (evidence, _) = collect_evidence(scope, runs);
     let reports = scope
         .reports
         .iter()
@@ -661,6 +908,7 @@ fn write_report(
             .map(|report| report.name.clone())
             .collect::<Vec<_>>(),
         "environment": suite::environment(),
+        "observation": { "execution_manifest": execution_manifest },
         "postgresql_version": any.and_then(|observation| observation.get("server_version").cloned()),
         "postgresql_major_version": any
             .and_then(|observation| observation.get("postgres_major_version").cloned()),
@@ -750,6 +998,9 @@ struct Evidence {
     covered: BTreeSet<String>,
     /// The reconcilable entry for a resource, and the report that wrote it.
     observed: BTreeMap<String, (String, Value)>,
+    /// The construction cells for a resource proved only that way, and the
+    /// report that wrote them.
+    construction: BTreeMap<String, (String, Vec<Value>)>,
 }
 
 /// The committed campaign scope document.
@@ -878,6 +1129,7 @@ fn read_stress(document: &Value) -> Result<Vec<StressRequirement>, String> {
     for requirement in array(document, "requirements")? {
         stress.push(StressRequirement {
             resource: suite::string(requirement, "resource")?,
+            report: suite::string(requirement, "report")?,
             requires: suite::string(requirement, "requires")?,
         });
     }
@@ -895,6 +1147,14 @@ fn read_equivalence(document: &Value) -> Result<Vec<Comparison>, String> {
             report: suite::string(comparison, "report")?,
             must_agree_on: comparison
                 .get("must_agree_on")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+            must_not_observe: comparison
+                .get("must_not_observe")
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
@@ -954,6 +1214,8 @@ struct Resource {
 struct StressRequirement {
     /// The resource that must be reached.
     resource: String,
+    /// The report the raw observation for this requirement must come from.
+    report: String,
     /// What reaching it means for this resource's policy.
     requires: String,
 }
@@ -964,4 +1226,585 @@ struct Comparison {
     report: String,
     /// The fields the two runs must agree on.
     must_agree_on: Vec<String>,
+    /// The regressions the two runs must not exhibit.
+    must_not_observe: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used, clippy::panic)]
+
+    use std::collections::BTreeMap;
+
+    use serde_json::{Value, json};
+
+    use super::{
+        Comparison, Report, Resource, Runs, Scope, StressRequirement, collect_evidence,
+        execution_manifest, reconcile_denominator, reconcile_equivalence, reconcile_matrix_point,
+        reconcile_stress,
+    };
+
+    /// A scope shaped like the committed `campaign-scope.json`, without the
+    /// filesystem: every reconciliation function under test reads only the
+    /// fields built here. Three resources cover the three ways this campaign
+    /// proves one: `resource-a` is a saturated worker-style ceiling proved by
+    /// `report-a`, `resource-b` is proved only by construction cells in
+    /// `report-a`, and `resource-c` is a shedding queue proved by `report-b`.
+    /// `resource-d` is the fail-closed resource the rejection test needs.
+    fn scope() -> Scope {
+        Scope {
+            fixtures: BTreeMap::new(),
+            reports: vec![report("report-a"), report("report-b")],
+            resources: vec![
+                resource(
+                    "resource-a",
+                    "worker-assignment",
+                    "bounded-concurrency",
+                    "report-a",
+                    Some(10),
+                    true,
+                ),
+                resource(
+                    "resource-b",
+                    "buffer",
+                    "fail-closed",
+                    "report-a",
+                    Some(5),
+                    false,
+                ),
+                resource(
+                    "resource-c",
+                    "queue",
+                    "bounded-shedding",
+                    "report-b",
+                    Some(20),
+                    false,
+                ),
+                resource("resource-d", "queue", "fail-closed", "report-a", None, true),
+            ],
+            classes: Value::Null,
+            policies: Value::Null,
+            stress: vec![
+                StressRequirement {
+                    resource: "resource-a".to_owned(),
+                    report: "report-a".to_owned(),
+                    requires: "peak-equals-ceiling".to_owned(),
+                },
+                StressRequirement {
+                    resource: "resource-c".to_owned(),
+                    report: "report-b".to_owned(),
+                    requires: "offered-exceeds-ceiling".to_owned(),
+                },
+                StressRequirement {
+                    resource: "resource-d".to_owned(),
+                    report: "report-a".to_owned(),
+                    requires: "rejected-before-any-durable-write".to_owned(),
+                },
+            ],
+            stress_document: Value::Null,
+            equivalence: vec![Comparison {
+                report: "report-a".to_owned(),
+                must_agree_on: vec!["field-x".to_owned()],
+                must_not_observe: vec!["regression-y".to_owned()],
+            }],
+            excluded: Value::Null,
+            related: Value::Null,
+        }
+    }
+
+    fn report(id: &str) -> Report {
+        Report {
+            id: id.to_owned(),
+            title: id.to_owned(),
+            owes: id.to_owned(),
+            package: "oxide-batch".to_owned(),
+            target: id.to_owned(),
+            name: id.to_owned(),
+            fixture: None,
+            against_database: true,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resource(
+        name: &str,
+        class: &str,
+        policy: &str,
+        report: &str,
+        ceiling: Option<i64>,
+        postgres: bool,
+    ) -> Resource {
+        Resource {
+            name: name.to_owned(),
+            class: class.to_owned(),
+            policy: policy.to_owned(),
+            report: report.to_owned(),
+            ceiling,
+            postgres,
+        }
+    }
+
+    fn runs_with(observations: &[(&str, Value)]) -> Runs {
+        let mut runs = Runs::default();
+        for (id, observation) in observations {
+            runs.observations
+                .insert((*id).to_owned(), observation.clone());
+        }
+        runs
+    }
+
+    /// An observation for `report-a` that satisfies every requirement
+    /// `scope()` declares of it: `resource-a` saturated exactly at its
+    /// ceiling, `resource-b` proved by an accept-at-ceiling and
+    /// refuse-one-past-it construction pair, `resource-d` refused before any
+    /// row exists, and a durable-equivalence comparison that agrees on
+    /// `field-x` and does not observe `regression-y`.
+    fn valid_report_a() -> Value {
+        json!({
+            "passed": true,
+            "resources": [
+                {
+                    "resource": "resource-a",
+                    "declared_ceiling": 10,
+                    "configured_ceiling": 10,
+                    "offered_load": 25,
+                    "observed_peak_occupancy": 10,
+                    "drops": 0,
+                    "passed": true,
+                },
+                {
+                    "resource": "resource-d",
+                    "declared_ceiling": Value::Null,
+                    "rejections": 1,
+                    "detail": { "residue_after_refusal": { "ob_job_instance": 0 } },
+                    "passed": true,
+                },
+            ],
+            "construction": [
+                { "resource": "resource-b", "case": "at the ceiling", "value": 5, "accepted": true, "expected": true },
+                { "resource": "resource-b", "case": "one past", "value": 6, "accepted": false, "expected": false },
+            ],
+            "durable_equivalence": {
+                "fields_compared": [{ "field": "field-x", "agrees": true }],
+                "must_not_observe": [{ "condition": "regression-y", "observed": false }],
+                "violations": [],
+            },
+            "execution_manifest": manifest("deadbeef"),
+            "violations": [],
+        })
+    }
+
+    /// An observation for `report-b` that satisfies every requirement
+    /// `scope()` declares of it: `resource-c` offered well past its ceiling
+    /// and shedding the excess.
+    fn valid_report_b() -> Value {
+        json!({
+            "passed": true,
+            "resources": [
+                {
+                    "resource": "resource-c",
+                    "declared_ceiling": 20,
+                    "configured_ceiling": 20,
+                    "offered_load": 50,
+                    "observed_peak_occupancy": 20,
+                    "drops": 30,
+                    "passed": true,
+                },
+            ],
+            "execution_manifest": manifest("deadbeef"),
+            "violations": [],
+        })
+    }
+
+    fn manifest(commit: &str) -> Value {
+        json!({ "execution_commit": commit, "objects": { "Cargo.lock": "abc123" } })
+    }
+
+    fn any_violation<'a>(violations: &'a [String], needle: &str) -> Option<&'a String> {
+        violations
+            .iter()
+            .find(|violation| violation.contains(needle))
+    }
+
+    #[test]
+    fn a_valid_pair_of_observations_reconciles_clean() {
+        let scope = scope();
+        let runs = runs_with(&[
+            ("report-a", valid_report_a()),
+            ("report-b", valid_report_b()),
+        ]);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        assert!(identity_violations.is_empty(), "{identity_violations:?}");
+        assert!(reconcile_denominator(&scope, &evidence).is_empty());
+        assert!(reconcile_stress(&scope, &evidence).is_empty());
+        assert!(reconcile_equivalence(&scope, &runs).is_empty());
+    }
+
+    #[test]
+    fn a_required_resource_deleted_is_rejected() {
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        report_a["resources"]
+            .as_array_mut()
+            .expect("resources array")
+            .retain(|entry| entry.get("resource").and_then(Value::as_str) != Some("resource-a"));
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        assert!(identity_violations.is_empty(), "{identity_violations:?}");
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-a").is_some(),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn an_undeclared_resource_added_is_rejected() {
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        report_a["resources"]
+            .as_array_mut()
+            .expect("resources array")
+            .push(json!({
+                "resource": "resource-z",
+                "declared_ceiling": 1,
+                "configured_ceiling": 1,
+                "offered_load": 1,
+                "observed_peak_occupancy": 1,
+                "drops": 0,
+                "passed": true,
+            }));
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let (_, violations) = collect_evidence(&scope, &runs);
+        assert!(
+            any_violation(&violations, "resource-z").is_some_and(
+                |violation| violation.contains("not one of the campaign's declared resources")
+            ),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_same_count_bogus_resource_substituted_for_a_removed_one_is_rejected() {
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        let resources = report_a["resources"]
+            .as_array_mut()
+            .expect("resources array");
+        resources
+            .retain(|entry| entry.get("resource").and_then(Value::as_str) != Some("resource-a"));
+        resources.push(json!({
+            "resource": "resource-z",
+            "declared_ceiling": 10,
+            "configured_ceiling": 10,
+            "offered_load": 25,
+            "observed_peak_occupancy": 10,
+            "drops": 0,
+            "passed": true,
+        }));
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        // The count of resources this report claims is unchanged, so only an
+        // exact-identity check — not a count check — catches the swap.
+        assert!(
+            any_violation(&identity_violations, "resource-z").is_some(),
+            "{identity_violations:?}"
+        );
+        let denominator_violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&denominator_violations, "resource-a").is_some(),
+            "{denominator_violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_duplicated_resource_is_rejected() {
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        let duplicate = report_a["resources"][0].clone();
+        report_a["resources"]
+            .as_array_mut()
+            .expect("resources array")
+            .push(duplicate);
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let (_, violations) = collect_evidence(&scope, &runs);
+        assert!(
+            any_violation(&violations, "resource-a")
+                .is_some_and(|violation| violation.contains("more than once")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_resource_recorded_under_the_wrong_report_is_rejected() {
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        let moved = report_a["resources"]
+            .as_array_mut()
+            .expect("resources array")
+            .remove(0);
+        assert_eq!(moved["resource"], "resource-a");
+        let mut report_b = valid_report_b();
+        report_b["resources"]
+            .as_array_mut()
+            .expect("resources array")
+            .push(moved);
+        let runs = runs_with(&[("report-a", report_a), ("report-b", report_b)]);
+        let (_, violations) = collect_evidence(&scope, &runs);
+        assert!(
+            any_violation(&violations, "resource-a")
+                .is_some_and(|violation| violation.contains("recorded by report-b instead")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_stress_resource_report_mismatch_is_rejected() {
+        let mut scope = scope();
+        scope.stress[0].report = "report-b".to_owned();
+        let runs = runs_with(&[
+            ("report-a", valid_report_a()),
+            ("report-b", valid_report_b()),
+        ]);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        assert!(identity_violations.is_empty(), "{identity_violations:?}");
+        let violations = reconcile_stress(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-a")
+                .is_some_and(|violation| violation.contains("recorded by report-a instead")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn offered_at_or_below_the_ceiling_is_rejected() {
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        report_a["resources"][0]["offered_load"] = json!(10);
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_stress(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "nothing to hold back").is_some(),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_peak_below_a_reachable_ceiling_is_rejected() {
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        report_a["resources"][0]["observed_peak_occupancy"] = json!(3);
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_stress(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "never reached").is_some(),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_peak_above_the_ceiling_is_rejected() {
+        let scope = scope();
+        let mut report_b = valid_report_b();
+        report_b["resources"][0]["observed_peak_occupancy"] = json!(21);
+        let runs = runs_with(&[("report-a", valid_report_a()), ("report-b", report_b)]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_stress(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-c")
+                .is_some_and(|violation| violation.contains("held 21")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn shedding_under_overload_with_zero_drops_is_rejected() {
+        let scope = scope();
+        let mut report_b = valid_report_b();
+        report_b["resources"][0]["drops"] = json!(0);
+        let runs = runs_with(&[("report-a", valid_report_a()), ("report-b", report_b)]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_stress(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "shed nothing").is_some(),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_fail_closed_partial_write_is_rejected() {
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        report_a["resources"][1]["detail"]["residue_after_refusal"]["ob_job_instance"] = json!(1);
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_stress(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-d")
+                .is_some_and(|violation| violation.contains("left 1 row")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_required_durable_equivalence_field_is_rejected() {
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        report_a["durable_equivalence"]["fields_compared"] = json!([]);
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let violations = reconcile_equivalence(&scope, &runs);
+        assert!(
+            any_violation(&violations, "field-x")
+                .is_some_and(|violation| violation.contains("compared no such field")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_disagreeing_durable_equivalence_field_is_rejected() {
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        report_a["durable_equivalence"]["fields_compared"][0]["agrees"] = json!(false);
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let violations = reconcile_equivalence(&scope, &runs);
+        assert!(
+            any_violation(&violations, "field-x")
+                .is_some_and(|violation| violation.contains("disagreeing")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_duplicated_comparison_field_is_rejected() {
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        let duplicate = report_a["durable_equivalence"]["fields_compared"][0].clone();
+        report_a["durable_equivalence"]["fields_compared"]
+            .as_array_mut()
+            .expect("fields_compared array")
+            .push(duplicate);
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let violations = reconcile_equivalence(&scope, &runs);
+        assert!(
+            any_violation(&violations, "more than once").is_some(),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn an_observed_forbidden_regression_is_rejected() {
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        report_a["durable_equivalence"]["must_not_observe"][0]["observed"] = json!(true);
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let violations = reconcile_equivalence(&scope, &runs);
+        assert!(
+            any_violation(&violations, "regression-y")
+                .is_some_and(|violation| violation.contains("requires it not to")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_must_not_observe_condition_is_rejected() {
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        report_a["durable_equivalence"]["must_not_observe"] = json!([]);
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let violations = reconcile_equivalence(&scope, &runs);
+        assert!(
+            any_violation(&violations, "regression-y")
+                .is_some_and(|violation| violation.contains("recorded no such condition")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_construction_only_resource_missing_the_refused_side_is_rejected() {
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        report_a["construction"]
+            .as_array_mut()
+            .expect("construction array")
+            .retain(|cell| cell.get("case").and_then(Value::as_str) != Some("one past"));
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        assert!(identity_violations.is_empty(), "{identity_violations:?}");
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-b")
+                .is_some_and(|violation| violation.contains("refused one past it")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_construction_only_resource_missing_the_accepted_side_is_rejected() {
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        report_a["construction"]
+            .as_array_mut()
+            .expect("construction array")
+            .retain(|cell| cell.get("case").and_then(Value::as_str) != Some("at the ceiling"));
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        assert!(identity_violations.is_empty(), "{identity_violations:?}");
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-b")
+                .is_some_and(|violation| violation.contains("accepted exactly at it")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_execution_manifest_is_rejected() {
+        let reports = vec![report("report-a"), report("report-b")];
+        let mut report_b = valid_report_b();
+        report_b
+            .as_object_mut()
+            .expect("object")
+            .remove("execution_manifest");
+        let runs = runs_with(&[("report-a", valid_report_a()), ("report-b", report_b)]);
+        let (_, violations) = execution_manifest(&reports, &runs);
+        assert!(
+            any_violation(&violations, "report-b")
+                .is_some_and(|violation| violation.contains("execution_manifest")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn disagreeing_execution_manifests_are_rejected() {
+        let reports = vec![report("report-a"), report("report-b")];
+        let mut report_b = valid_report_b();
+        report_b["execution_manifest"] = manifest("cafef00d");
+        let runs = runs_with(&[("report-a", valid_report_a()), ("report-b", report_b)]);
+        let (_, violations) = execution_manifest(&reports, &runs);
+        assert!(
+            any_violation(&violations, "different execution manifests").is_some(),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn agreeing_execution_manifests_hoist_cleanly() {
+        let reports = vec![report("report-a"), report("report-b")];
+        let runs = runs_with(&[
+            ("report-a", valid_report_a()),
+            ("report-b", valid_report_b()),
+        ]);
+        let (hoisted, violations) = execution_manifest(&reports, &runs);
+        assert!(violations.is_empty(), "{violations:?}");
+        assert_eq!(hoisted, manifest("deadbeef"));
+    }
+
+    #[test]
+    fn a_postgresql_major_mismatch_is_rejected() {
+        let observation = json!({ "postgres_major_version": "15" });
+        let violations = reconcile_matrix_point("report-a", &observation, Some("postgres-18"));
+        assert!(any_violation(&violations, "18").is_some(), "{violations:?}");
+    }
 }
