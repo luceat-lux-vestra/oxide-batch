@@ -1200,11 +1200,14 @@ Both matrix points pass. All three scenarios ran and none skipped.
 | [`security-campaign-postgres-15.json`](../engineering/campaigns/m5/security-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
 | [`security-campaign-postgres-18.json`](../engineering/campaigns/m5/security-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
 
-Both were produced by commit `9a87a35`, which is the merge commit the workflow
-checked out rather than a branch tip, on `rustc 1.97.1` and Linux `x86_64`,
-against servers `15.18` and `18.4`. The command is
-`./tests/fixtures/security/provision.sh <major>`, which provisions the fixture
-and runs `cargo run --package oxide-batch-xtask -- security`.
+Both were produced by commit `b506affb`, which is the merge commit the
+dedicated `M5 Security` workflow checked out rather than a branch tip, on
+`rustc 1.97.1` and Linux `x86_64`, against servers `15.19` and `18.6`. The
+command is `./tests/fixtures/security/provision.sh <major>`, which provisions
+the fixture and runs `cargo run --package oxide-batch-xtask -- security`. This
+is the first promotion of security evidence under the strong-provenance model
+described in [`evidence-provenance.json`](../engineering/campaigns/m5/evidence-provenance.json):
+the prior PR #119 producer run is not reused as evidence for it.
 
 **`verify-full` TLS.** The supported configuration — `PostgresConfig` with the
 default TLS mode, no production-mode switch anywhere — connected once and was
