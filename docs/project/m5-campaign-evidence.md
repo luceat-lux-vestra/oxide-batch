@@ -233,13 +233,13 @@ execution-surface narrowing this run reflects.
   rows are untouched and stay visible.
 - **A parity claim.** Passing the accepted scope is not parity with the ledger
   population, and the record's own denominator says so.
-- **Strong provenance for the other four M5 campaigns.** Crash/restore,
-  upgrade, security, and resource-bound still run as jobs inside
-  `.github/workflows/ci.yml` and are not declared in `evidence-
-  provenance.json`; their retained reports are not bound to a specific
-  workflow run, job, or artifact digest the way conformance, soak,
-  cancellation, and performance now are. Closing that gap for each of them is
-  left to a follow-up, tracked under #102.
+- **Strong provenance for the remaining two M5 campaigns.** Security and
+  resource-bound still run as jobs inside `.github/workflows/ci.yml` and are
+  not declared in `evidence-provenance.json`; their retained reports are not
+  bound to a specific workflow run, job, or artifact digest the way
+  conformance, soak, cancellation, performance, crash-and-restore, and upgrade
+  now are (F38). Closing that gap for each of them is left to a follow-up,
+  tracked under #102.
 
 ### Findings
 
@@ -315,10 +315,12 @@ incomplete, which F37 corrects. `xtask/src/conformance.rs`'s report-writing
 path gained the two new fields (`postgresql_major_version` and
 `observation.execution_manifest`) the provenance model requires, and the
 workflow moved without changing its fixture provisioning, its command, or its
-artifact naming. Crash/restore, upgrade, security, and resource-bound are not
-part of this closure and remain outside the strong provenance model; closing
-their gaps is left to a follow-up, as this campaign's own scope note explains
-under "what this campaign does not establish" below.
+artifact naming. At the time this finding was recorded, crash/restore,
+upgrade, security, and resource-bound were not part of this closure and
+remained outside the strong provenance model; F38 closes that gap for
+crash-and-restore and upgrade. Security and resource-bound remain outside it;
+closing their gaps is left to a follow-up, as this campaign's own scope note
+explains under "what this campaign does not establish" below.
 
 **F37. F36's closure was wider than the other three M5 campaigns' by design,
 and that design was itself a latent gap: the producer ran every workspace
@@ -405,6 +407,77 @@ file, and the retained file's own `git hash-object` recorded.
 No P0 or P1 correctness defect was found in the framework or adapter code
 during this review; the gap was entirely in the campaign's own execution
 model, not in the code the accepted scenarios exercise.
+
+**F38. Crash-and-restore and upgrade were the last two of #102's PostgreSQL
+job-count campaigns still missing the strong retained-evidence provenance
+model after F36 closed the gap for conformance.** Both ran as jobs inside
+`.github/workflows/ci.yml`, were absent from `evidence-provenance.json`'s
+`campaigns.declared`, and their runners wrote no `postgresql_major_version` or
+`observation.execution_manifest` field — the same two fields F36 added to
+`xtask/src/conformance.rs`.
+
+Both campaigns are now extracted into their own dedicated workflows,
+`.github/workflows/m5-crash-restore.yml` and
+`.github/workflows/m5-upgrade.yml`, each with a fail-closed execution contract
+bound by exact git blob identity and a declared semantic closure
+(`tests/fixtures/{crash-restore,upgrade}/{execution-contract.json,
+run-ci-campaign.sh, verify-ci-contract.sh, campaign-semantics.json}`) built
+from that campaign's own production dependencies rather than copied from
+conformance's: crash-and-restore's closure covers the nine reused M2-M4 test
+targets and the `crash_restore`/`contract` shared support modules alongside
+its three report targets; upgrade's additionally covers the immutable
+migration set, the schema-1 and schema-2 seed fixtures, and the schema-2
+runtime probe program. Neither closure lists `.github/workflows/ci.yml` or
+either other campaign's fixtures, and both exclude every M5 campaign's own
+governance test by the same reasoning F37 established.
+
+`xtask/src/crash_restore.rs` and `xtask/src/upgrade.rs` gained the same
+report-writing fields F36 added to conformance. Because neither campaign's
+individual scenarios are plain reconciliation tests the way conformance's
+are — each report-producing test already retains its own machine-readable
+observation, the pattern soak, cancellation, and performance use — the
+execution manifest is recorded the same way theirs is: each report computes
+it from inside its own test process
+(`crates/oxide-batch/tests/{crash_restore,upgrade}/mod.rs`'s
+`execution_manifest`) and the runner hoists it to the campaign report,
+requiring every declared report to agree on one manifest before it can pass.
+
+The upgrade campaign carries one closure problem the other five M5 campaigns
+do not: the rejection report depends on a historical git revision
+(`397a38bcada93d961dbb2ca3d9960311a3fb4395`) that is not itself a path any
+closure can hash. Three places name that revision — the scope document, the
+runner's `SCHEMA2_RUNTIME_REVISION` constant, and the execution contract —
+and all three are now bound to agree: `verify-ci-contract.sh` fails closed if
+the contract's named revision disagrees with the scope document's, or if the
+runner's pinning constant does not contain the contract's revision, and
+`crates/oxide-batch/tests/m5_upgrade_campaign.rs`'s
+`the_historical_revision_is_bound_across_scope_runner_and_contract` asserts
+the same three-way agreement in ordinary review, plus that the execution
+contract declares the full-history checkout (`fetch-depth: 0`) the revision
+needs to resolve at all. The scope document and the runner constant were
+already identical before this change; what was missing was a check that
+would fail if they ever stopped being identical, and a structured record of
+which revision and why beside the workflow that resolves it.
+
+Both dedicated workflows produced fresh evidence on this PR: crash-and-restore
+from workflow run `31858308476` (jobs `94947011719` and `94947011779`), and
+upgrade from workflow run `31858308484` (jobs `94947011678` and
+`94947011623`), both against merge commit `f0a2cdb0343c3b3e821a104c575e440063560678`.
+An earlier producer run on the same PR (`31857956201` for crash-and-restore,
+`31857956155` for upgrade) was discarded before promotion rather than
+promoted and superseded: it predated the `postgresql_major_version` fix
+above, so `cargo xtask evidence`'s matrix-filing check could not have
+verified which PostgreSQL major each of its reports actually ran against, and
+its reports were never committed as evidence. `evidence-provenance.json` now
+declares `M5 crash and restore` and `M5 PostgreSQL upgrade` alongside the
+other four campaigns, each with its own required `postgres-15`/`postgres-18`
+matrix, bringing `cargo xtask evidence`'s retained-report count from `8` to
+`12` — derived from declared-campaign × required-matrix coverage, not
+hardcoded.
+
+Security and resource-bound remain outside the strong provenance model.
+Closing their gaps, and reconciling #102's full exit criteria, is left to a
+follow-up.
 
 ## Crash and restore campaign
 
@@ -505,14 +578,18 @@ passing on trust.
 ### Where it runs
 
 `postgres-15-crash-restore-campaign` and `postgres-18-crash-restore-campaign`
-in `.github/workflows/ci.yml`, on the two ends of the supported PostgreSQL
-`15`-`18` range. Each job installs the client tools matching its matrix point,
-because the backup report takes a real `pg_dump` archive and loads it with a
-real `pg_restore`; the runner image ships a different major version whose
-wrapper would otherwise be selected silently. Each job retains its report as a
-build artifact, and the committed copies in
+in the dedicated `.github/workflows/m5-crash-restore.yml`, on the two ends of
+the supported PostgreSQL `15`-`18` range. Each job installs the client tools
+matching its matrix point, because the backup report takes a real `pg_dump`
+archive and loads it with a real `pg_restore`; the runner image ships a
+different major version whose wrapper would otherwise be selected silently.
+Each job retains its report as a build artifact, and the committed copies in
 [`docs/engineering/campaigns/m5`](../engineering/campaigns/m5/README.md) come
-from those jobs.
+from those jobs. A fail-closed execution contract bound by exact git blob
+identity (`tests/fixtures/crash-restore/execution-contract.json`,
+`run-ci-campaign.sh`, `verify-ci-contract.sh`) and a declared semantic closure
+(`tests/fixtures/crash-restore/campaign-semantics.json`) follow the pattern
+soak, cancellation, performance, and conformance already use; see F38.
 
 ### Results
 
@@ -525,8 +602,13 @@ scenarios ran and reported `ok`.
 | [`crash-restore-campaign-postgres-15.json`](../engineering/campaigns/m5/crash-restore-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
 | [`crash-restore-campaign-postgres-18.json`](../engineering/campaigns/m5/crash-restore-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
 
-Both were produced by commit `8ec060b`, which is the merge commit the workflow
-checked out rather than a branch tip, on `rustc 1.97.1` and Linux `x86_64`.
+Both were produced by commit `f0a2cdb`, which is the merge commit the
+dedicated workflow checked out rather than a branch tip, on `rustc 1.97.1` and
+Linux `x86_64`. Provenance for both — workflow run `31858308476`, jobs
+`94947011719` (PostgreSQL 15) and `94947011779` (PostgreSQL 18), and their
+artifact digests — is recorded in
+[`evidence-provenance.json`](../engineering/campaigns/m5/evidence-provenance.json)
+and independently verified offline by `cargo xtask evidence`.
 
 **Commit phases.** All five phases behaved as the accepted contract requires,
 identically on both matrix points. The three phases before the commit record
@@ -816,13 +898,23 @@ disagrees with the committed scope, fails the campaign.
 
 ### Where it runs
 
-`postgres-15-upgrade-campaign` and `postgres-18-upgrade-campaign` in
-`.github/workflows/ci.yml`, on the two ends of the supported PostgreSQL `15`-`18`
-range. Two things separate these jobs from the other campaign jobs.
+`postgres-15-upgrade-campaign` and `postgres-18-upgrade-campaign` in the
+dedicated `.github/workflows/m5-upgrade.yml`, on the two ends of the supported
+PostgreSQL `15`-`18` range. Two things separate these jobs from the other
+campaign jobs.
 
 Their checkout is not shallow. The rejection report builds a previous revision
 of this crate, and that revision is not in a shallow clone; the report fails
-rather than skipping without it.
+rather than skipping without it. This is now a machine-checkable contract
+rather than only a workflow comment: `execution-contract.json` declares
+`checkout.fetch_depth: 0` and names the pinned revision under
+`historical_schema2_runtime`, `verify-ci-contract.sh` fails closed if the
+workflow's checkout narrows or the revision named there disagrees with
+`tests/fixtures/upgrade/campaign-scope.json`, and
+`crates/oxide-batch/tests/m5_upgrade_campaign.rs` additionally asserts in
+review that the contract, the scope document, and the runner's
+`SCHEMA2_RUNTIME_REVISION` constant in
+`crates/oxide-batch/tests/upgrade/mod.rs` all name the same commit; see F38.
 
 Their service database is never migrated by anything but the campaign. It
 supplies the server, the role, and the connection parameters, and every database
@@ -832,7 +924,12 @@ upgrade.
 
 Each job installs the client tools matching its matrix point, because the
 rollback report takes a real `pg_dump` archive and loads it with a real
-`pg_restore`, and retains its report as a build artifact.
+`pg_restore`, and retains its report as a build artifact. A fail-closed
+execution contract bound by exact git blob identity
+(`tests/fixtures/upgrade/execution-contract.json`, `run-ci-campaign.sh`,
+`verify-ci-contract.sh`) and a declared semantic closure
+(`tests/fixtures/upgrade/campaign-semantics.json`) follow the pattern soak,
+cancellation, performance, and conformance already use.
 
 ### Results
 
@@ -844,10 +941,14 @@ cover two source schemas covered both, and no report skipped.
 | [`upgrade-campaign-postgres-15.json`](../engineering/campaigns/m5/upgrade-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
 | [`upgrade-campaign-postgres-18.json`](../engineering/campaigns/m5/upgrade-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
 
-Both were produced by commit `ce5fe10`, which is the merge commit the workflow
-checked out rather than a branch tip, on `rustc 1.97.1` and Linux `x86_64`,
-against servers `15.18` and `18.4`. The command is
-`cargo run --package oxide-batch-xtask -- upgrade`.
+Both were produced by commit `f0a2cdb`, which is the merge commit the
+dedicated workflow checked out rather than a branch tip, on `rustc 1.97.1` and
+Linux `x86_64`, against servers `15.19` and `18.6`. The command is
+`cargo run --package oxide-batch-xtask -- upgrade`. Provenance for both —
+workflow run `31858308484`, jobs `94947011678` (PostgreSQL 15) and
+`94947011623` (PostgreSQL 18), and their artifact digests — is recorded in
+[`evidence-provenance.json`](../engineering/campaigns/m5/evidence-provenance.json)
+and independently verified offline by `cargo xtask evidence`.
 
 **Schema 1 and schema 2 to schema 3.** Both upgrades succeeded in one migrator
 invocation and left the recorded version at `3`, identically on both matrix

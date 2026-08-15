@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "ce5fe10156801d7f090c87743a0b14e9f3758b82",
+    "source_commit": "f0a2cdb0343c3b3e821a104c575e440063560678",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -18,6 +18,46 @@
     "The prior schemas are not reconstructed. Each is installed by running this crate's immutable migration set up to that version and stopping, and the reports refuse to proceed against a fixture that carries a structure a later schema introduced.",
     "The runtime the rejection report is about is built from the last revision before schema 3 existed, because no build of this tree can report a supported schema version of 2. The campaign needs the repository's full history for that; a shallow clone fails it rather than skipping it."
   ],
+  "observation": {
+    "execution_manifest": {
+      "execution_commit": "f0a2cdb0343c3b3e821a104c575e440063560678",
+      "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+      "objects": {
+        ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+        ".github/workflows/m5-upgrade.yml": "6c80543a0c280cf72711316c175c1046b6942688",
+        "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+        "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+        "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+        "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+        "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+        "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+        "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+        "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+        "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+        "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+        "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+        "crates/oxide-batch/tests/postgres_schema_rejection.rs": "968fa4ac9a11c9de9e5b3492e799d4d9eeb864b0",
+        "crates/oxide-batch/tests/postgres_schema_upgrade.rs": "99dfa1b26b56bd71e41ae9ac3805d697d2863092",
+        "crates/oxide-batch/tests/postgres_upgrade_rollback.rs": "b45264f32bab6816e369e4d0dadba153c0a0f049",
+        "crates/oxide-batch/tests/upgrade": "56853998586d2bcf748a2b4ac79315cba77139ab",
+        "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+        "tests/fixtures/upgrade/campaign-scope.json": "42ff867a7d7c6e68cb5fcab7dc387be8d8e73705",
+        "tests/fixtures/upgrade/campaign-semantics.json": "fdb548854197c71e2e2efc8e58df059a3072db01",
+        "tests/fixtures/upgrade/execution-contract.json": "dea85766257581358fe7cfe2f9a9e7606e990b0c",
+        "tests/fixtures/upgrade/run-ci-campaign.sh": "f10774dc3a88644577159354cf44f79abbe3a62d",
+        "tests/fixtures/upgrade/schema-1/seed.sql": "aaba54dd66ce9de0fff776c2b0881d42f49f6bc1",
+        "tests/fixtures/upgrade/schema-2-runtime/probe.rs": "478f1edcd7d84ce595b08b9583917236720f1d60",
+        "tests/fixtures/upgrade/schema-2/seed.sql": "0b9da1242eccb0dad485bdefc3e090bddf8f1aeb",
+        "tests/fixtures/upgrade/verify-ci-contract.sh": "4802f911995d97d4e5e73e5e9d16ed5fe66fdb75",
+        "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+        "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
+        "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
+        "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6",
+        "xtask/src/upgrade.rs": "13defa568ffd0a8454bbb3442a8df97f09841c24"
+      },
+      "tree_clean": true
+    }
+  },
   "passed": true,
   "paths": [
     {
@@ -71,6 +111,7 @@
       "target_schema_version": 3
     }
   ],
+  "postgresql_major_version": "15",
   "related": [
     {
       "invariant": "newer schema rejection",
@@ -88,6 +129,44 @@
       "id": "schema-upgrade",
       "name": "schema1_and_schema2_upgrade_directly_to_schema3",
       "observation": {
+        "execution_manifest": {
+          "execution_commit": "f0a2cdb0343c3b3e821a104c575e440063560678",
+          "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+          "objects": {
+            ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+            ".github/workflows/m5-upgrade.yml": "6c80543a0c280cf72711316c175c1046b6942688",
+            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+            "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+            "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+            "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+            "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+            "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+            "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+            "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+            "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+            "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+            "crates/oxide-batch/tests/postgres_schema_rejection.rs": "968fa4ac9a11c9de9e5b3492e799d4d9eeb864b0",
+            "crates/oxide-batch/tests/postgres_schema_upgrade.rs": "99dfa1b26b56bd71e41ae9ac3805d697d2863092",
+            "crates/oxide-batch/tests/postgres_upgrade_rollback.rs": "b45264f32bab6816e369e4d0dadba153c0a0f049",
+            "crates/oxide-batch/tests/upgrade": "56853998586d2bcf748a2b4ac79315cba77139ab",
+            "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+            "tests/fixtures/upgrade/campaign-scope.json": "42ff867a7d7c6e68cb5fcab7dc387be8d8e73705",
+            "tests/fixtures/upgrade/campaign-semantics.json": "fdb548854197c71e2e2efc8e58df059a3072db01",
+            "tests/fixtures/upgrade/execution-contract.json": "dea85766257581358fe7cfe2f9a9e7606e990b0c",
+            "tests/fixtures/upgrade/run-ci-campaign.sh": "f10774dc3a88644577159354cf44f79abbe3a62d",
+            "tests/fixtures/upgrade/schema-1/seed.sql": "aaba54dd66ce9de0fff776c2b0881d42f49f6bc1",
+            "tests/fixtures/upgrade/schema-2-runtime/probe.rs": "478f1edcd7d84ce595b08b9583917236720f1d60",
+            "tests/fixtures/upgrade/schema-2/seed.sql": "0b9da1242eccb0dad485bdefc3e090bddf8f1aeb",
+            "tests/fixtures/upgrade/verify-ci-contract.sh": "4802f911995d97d4e5e73e5e9d16ed5fe66fdb75",
+            "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+            "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
+            "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
+            "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6",
+            "xtask/src/upgrade.rs": "13defa568ffd0a8454bbb3442a8df97f09841c24"
+          },
+          "tree_clean": true
+        },
         "fixture": "postgres-upgrade",
         "passed": true,
         "paths": [
@@ -265,7 +344,7 @@
         "postgres_major_version": "15",
         "report": "direct upgrade to schema 3",
         "scenario": "schema1_and_schema2_upgrade_directly_to_schema3",
-        "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
+        "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
         "violations": []
       },
       "owes": "Schema 1 and 2 to schema 3 direct upgrade",
@@ -279,6 +358,44 @@
       "id": "schema-rejection",
       "name": "schema2_runtime_rejects_schema3",
       "observation": {
+        "execution_manifest": {
+          "execution_commit": "f0a2cdb0343c3b3e821a104c575e440063560678",
+          "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+          "objects": {
+            ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+            ".github/workflows/m5-upgrade.yml": "6c80543a0c280cf72711316c175c1046b6942688",
+            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+            "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+            "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+            "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+            "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+            "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+            "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+            "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+            "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+            "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+            "crates/oxide-batch/tests/postgres_schema_rejection.rs": "968fa4ac9a11c9de9e5b3492e799d4d9eeb864b0",
+            "crates/oxide-batch/tests/postgres_schema_upgrade.rs": "99dfa1b26b56bd71e41ae9ac3805d697d2863092",
+            "crates/oxide-batch/tests/postgres_upgrade_rollback.rs": "b45264f32bab6816e369e4d0dadba153c0a0f049",
+            "crates/oxide-batch/tests/upgrade": "56853998586d2bcf748a2b4ac79315cba77139ab",
+            "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+            "tests/fixtures/upgrade/campaign-scope.json": "42ff867a7d7c6e68cb5fcab7dc387be8d8e73705",
+            "tests/fixtures/upgrade/campaign-semantics.json": "fdb548854197c71e2e2efc8e58df059a3072db01",
+            "tests/fixtures/upgrade/execution-contract.json": "dea85766257581358fe7cfe2f9a9e7606e990b0c",
+            "tests/fixtures/upgrade/run-ci-campaign.sh": "f10774dc3a88644577159354cf44f79abbe3a62d",
+            "tests/fixtures/upgrade/schema-1/seed.sql": "aaba54dd66ce9de0fff776c2b0881d42f49f6bc1",
+            "tests/fixtures/upgrade/schema-2-runtime/probe.rs": "478f1edcd7d84ce595b08b9583917236720f1d60",
+            "tests/fixtures/upgrade/schema-2/seed.sql": "0b9da1242eccb0dad485bdefc3e090bddf8f1aeb",
+            "tests/fixtures/upgrade/verify-ci-contract.sh": "4802f911995d97d4e5e73e5e9d16ed5fe66fdb75",
+            "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+            "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
+            "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
+            "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6",
+            "xtask/src/upgrade.rs": "13defa568ffd0a8454bbb3442a8df97f09841c24"
+          },
+          "tree_clean": true
+        },
         "fixture": "postgres-upgrade",
         "passed": true,
         "paths": [
@@ -333,7 +450,7 @@
         "postgres_major_version": "15",
         "report": "a schema-2 runtime refusing a schema-3 database",
         "scenario": "schema2_runtime_rejects_schema3",
-        "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
+        "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
         "violations": []
       },
       "owes": "newer-schema rejection",
@@ -347,6 +464,44 @@
       "id": "upgrade-rollback",
       "name": "schema3_backup_restores_the_prior_schema",
       "observation": {
+        "execution_manifest": {
+          "execution_commit": "f0a2cdb0343c3b3e821a104c575e440063560678",
+          "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+          "objects": {
+            ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+            ".github/workflows/m5-upgrade.yml": "6c80543a0c280cf72711316c175c1046b6942688",
+            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+            "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+            "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+            "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+            "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+            "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+            "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+            "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+            "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+            "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+            "crates/oxide-batch/tests/postgres_schema_rejection.rs": "968fa4ac9a11c9de9e5b3492e799d4d9eeb864b0",
+            "crates/oxide-batch/tests/postgres_schema_upgrade.rs": "99dfa1b26b56bd71e41ae9ac3805d697d2863092",
+            "crates/oxide-batch/tests/postgres_upgrade_rollback.rs": "b45264f32bab6816e369e4d0dadba153c0a0f049",
+            "crates/oxide-batch/tests/upgrade": "56853998586d2bcf748a2b4ac79315cba77139ab",
+            "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+            "tests/fixtures/upgrade/campaign-scope.json": "42ff867a7d7c6e68cb5fcab7dc387be8d8e73705",
+            "tests/fixtures/upgrade/campaign-semantics.json": "fdb548854197c71e2e2efc8e58df059a3072db01",
+            "tests/fixtures/upgrade/execution-contract.json": "dea85766257581358fe7cfe2f9a9e7606e990b0c",
+            "tests/fixtures/upgrade/run-ci-campaign.sh": "f10774dc3a88644577159354cf44f79abbe3a62d",
+            "tests/fixtures/upgrade/schema-1/seed.sql": "aaba54dd66ce9de0fff776c2b0881d42f49f6bc1",
+            "tests/fixtures/upgrade/schema-2-runtime/probe.rs": "478f1edcd7d84ce595b08b9583917236720f1d60",
+            "tests/fixtures/upgrade/schema-2/seed.sql": "0b9da1242eccb0dad485bdefc3e090bddf8f1aeb",
+            "tests/fixtures/upgrade/verify-ci-contract.sh": "4802f911995d97d4e5e73e5e9d16ed5fe66fdb75",
+            "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+            "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
+            "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
+            "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6",
+            "xtask/src/upgrade.rs": "13defa568ffd0a8454bbb3442a8df97f09841c24"
+          },
+          "tree_clean": true
+        },
         "fixture": "postgres-upgrade",
         "method": "a logical pg_dump archive taken before the upgrade, restored with pg_restore into a separate freshly created database",
         "no_downgrade_migration": true,
@@ -366,7 +521,7 @@
               },
               "schema": "oxide_batch",
               "taken_at_schema_version": 1,
-              "tool": "pg_dump (PostgreSQL) 15.18 (Ubuntu 15.18-1.pgdg24.04+1)"
+              "tool": "pg_dump (PostgreSQL) 15.19 (Ubuntu 15.19-1.pgdg24.04+2)"
             },
             "backup_restore_result": "ok",
             "current_runtime_refuses_restored_database": "MigrationRequired { current: 1, supported: 3 }",
@@ -382,7 +537,7 @@
             "restore": {
               "downgrade_migration_applied": false,
               "into": "a separate database created empty for the restore",
-              "tool": "pg_restore (PostgreSQL) 15.18 (Ubuntu 15.18-1.pgdg24.04+1)"
+              "tool": "pg_restore (PostgreSQL) 15.19 (Ubuntu 15.19-1.pgdg24.04+2)"
             },
             "restored_schema_version": 1,
             "restored_state_matches_backup": true,
@@ -414,7 +569,7 @@
               },
               "schema": "oxide_batch",
               "taken_at_schema_version": 2,
-              "tool": "pg_dump (PostgreSQL) 15.18 (Ubuntu 15.18-1.pgdg24.04+1)"
+              "tool": "pg_dump (PostgreSQL) 15.19 (Ubuntu 15.19-1.pgdg24.04+2)"
             },
             "backup_restore_result": "ok",
             "current_runtime_refuses_restored_database": "MigrationRequired { current: 2, supported: 3 }",
@@ -430,7 +585,7 @@
             "restore": {
               "downgrade_migration_applied": false,
               "into": "a separate database created empty for the restore",
-              "tool": "pg_restore (PostgreSQL) 15.18 (Ubuntu 15.18-1.pgdg24.04+1)"
+              "tool": "pg_restore (PostgreSQL) 15.19 (Ubuntu 15.19-1.pgdg24.04+2)"
             },
             "restored_schema_version": 2,
             "restored_state_matches_backup": true,
@@ -451,7 +606,7 @@
         "postgres_major_version": "15",
         "report": "restore-based rollback of an upgrade to schema 3",
         "scenario": "schema3_backup_restores_the_prior_schema",
-        "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
+        "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
         "violations": []
       },
       "owes": "restore-based rollback",

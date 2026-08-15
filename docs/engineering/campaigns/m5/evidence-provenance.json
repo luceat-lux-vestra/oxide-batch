@@ -70,6 +70,22 @@
           "postgres-15",
           "postgres-18"
         ]
+      },
+      {
+        "campaign": "M5 crash and restore",
+        "semantics": "tests/fixtures/crash-restore/campaign-semantics.json",
+        "required_matrix": [
+          "postgres-15",
+          "postgres-18"
+        ]
+      },
+      {
+        "campaign": "M5 PostgreSQL upgrade",
+        "semantics": "tests/fixtures/upgrade/campaign-semantics.json",
+        "required_matrix": [
+          "postgres-15",
+          "postgres-18"
+        ]
       }
     ]
   },
@@ -511,6 +527,226 @@
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
         "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes evidence originally promoted from run 31778510395: the dedicated workflow, campaign-semantics.json, execution-contract.json, and xtask/src/conformance.rs (all closure paths) changed to correct stale whole-workspace prose and add machine-readable target_selection/pass_condition fields distinguishing the row-proof denominator from the execution envelope. The accepted 42-row/133-scenario denominator and the 30-target envelope derivation are unchanged; only the canonical description of what a selected target running 'in full' means was corrected. See docs/project/m5-campaign-evidence.md."
+      }
+    },
+    {
+      "report": "crash-restore-campaign-postgres-15.json",
+      "campaign": "M5 crash and restore",
+      "scenarios": [
+        "process_kill_at_each_commit_phase_recovers_without_a_forged_status",
+        "restart_after_many_chunks_matches_an_uninterrupted_run",
+        "logical_backup_restores_the_durable_state_and_the_job_restarts_on_it"
+      ],
+      "matrix_point": "postgres-15",
+      "postgres_major_version": "15",
+      "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
+      "producer": {
+        "execution_commit": "f0a2cdb0343c3b3e821a104c575e440063560678",
+        "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
+        "branch_head_sha": "f5d6abaecba72381f10d47e5c1115a5e9d490f60",
+        "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "M5 Crash and Restore",
+        "workflow_file": ".github/workflows/m5-crash-restore.yml",
+        "id": 31858308476,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "postgres-15-crash-restore-campaign",
+        "id": 94947011719,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "crash-restore-campaign-postgres-15",
+        "id": 9239746171,
+        "digest": "sha256:db4cd3f8c2ea996286306a5455eacd7b1d9edead074600fe48c96e73381caedf",
+        "size_bytes": 6687
+      },
+      "retained_report_git_blob": "4fd16678659a0e532db6cf14796ada95274ff6ba",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-15T02:10:29Z",
+        "run_id": 31858308476,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. First promotion of crash-restore evidence under the strong provenance model: the dedicated .github/workflows/m5-crash-restore.yml, its campaign-semantics.json and execution-contract.json, and the execution_manifest the campaign's three reports now each record replace the ci.yml crash-restore-campaign job this evidence previously had no strong-provenance binding for. An earlier producer run (31857956201, same PR) was discarded before promotion: it predated a fix to xtask/src/crash_restore.rs (a closure path) that made the runner record postgresql_major_version, which cargo xtask evidence's matrix-filing check reads and the runner had never written, so that run's reports were never committed as evidence. See docs/project/m5-campaign-evidence.md."
+      }
+    },
+    {
+      "report": "crash-restore-campaign-postgres-18.json",
+      "campaign": "M5 crash and restore",
+      "scenarios": [
+        "process_kill_at_each_commit_phase_recovers_without_a_forged_status",
+        "restart_after_many_chunks_matches_an_uninterrupted_run",
+        "logical_backup_restores_the_durable_state_and_the_job_restarts_on_it"
+      ],
+      "matrix_point": "postgres-18",
+      "postgres_major_version": "18",
+      "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
+      "producer": {
+        "execution_commit": "f0a2cdb0343c3b3e821a104c575e440063560678",
+        "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
+        "branch_head_sha": "f5d6abaecba72381f10d47e5c1115a5e9d490f60",
+        "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "M5 Crash and Restore",
+        "workflow_file": ".github/workflows/m5-crash-restore.yml",
+        "id": 31858308476,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "postgres-18-crash-restore-campaign",
+        "id": 94947011779,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "crash-restore-campaign-postgres-18",
+        "id": 9239744035,
+        "digest": "sha256:24ad94b8279e6deb55fece8f84c9ae588953e7e4d4e0f9aa5a0b2bc7b227520b",
+        "size_bytes": 6676
+      },
+      "retained_report_git_blob": "05a88f74f872032cab26235855478c8806197b88",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-15T02:10:29Z",
+        "run_id": 31858308476,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. First promotion of crash-restore evidence under the strong provenance model: the dedicated .github/workflows/m5-crash-restore.yml, its campaign-semantics.json and execution-contract.json, and the execution_manifest the campaign's three reports now each record replace the ci.yml crash-restore-campaign job this evidence previously had no strong-provenance binding for. An earlier producer run (31857956201, same PR) was discarded before promotion: it predated a fix to xtask/src/crash_restore.rs (a closure path) that made the runner record postgresql_major_version, which cargo xtask evidence's matrix-filing check reads and the runner had never written, so that run's reports were never committed as evidence. See docs/project/m5-campaign-evidence.md."
+      }
+    },
+    {
+      "report": "upgrade-campaign-postgres-15.json",
+      "campaign": "M5 PostgreSQL upgrade",
+      "scenarios": [
+        "schema1_and_schema2_upgrade_directly_to_schema3",
+        "schema2_runtime_rejects_schema3",
+        "schema3_backup_restores_the_prior_schema"
+      ],
+      "matrix_point": "postgres-15",
+      "postgres_major_version": "15",
+      "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
+      "producer": {
+        "execution_commit": "f0a2cdb0343c3b3e821a104c575e440063560678",
+        "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
+        "branch_head_sha": "f5d6abaecba72381f10d47e5c1115a5e9d490f60",
+        "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "M5 Upgrade",
+        "workflow_file": ".github/workflows/m5-upgrade.yml",
+        "id": 31858308484,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "postgres-15-upgrade-campaign",
+        "id": 94947011678,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "upgrade-campaign-postgres-15",
+        "id": 9239752240,
+        "digest": "sha256:ea78b7f1dece982190604fb423472db43e0332c85f49b6bb22c28836b77da5b6",
+        "size_bytes": 5173
+      },
+      "retained_report_git_blob": "c5f6e989b293c091fca9b6adb350a1f42a15b3db",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-15T02:10:29Z",
+        "run_id": 31858308484,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. First promotion of upgrade evidence under the strong provenance model: the dedicated .github/workflows/m5-upgrade.yml, its campaign-semantics.json and execution-contract.json binding the pinned schema-2 runtime revision across the scope document and the runner, and the execution_manifest the campaign's three reports now each record replace the ci.yml upgrade-campaign job this evidence previously had no strong-provenance binding for. An earlier producer run (31857956155, same PR) was discarded before promotion: it predated a fix to xtask/src/upgrade.rs (a closure path) that made the runner record postgresql_major_version, which cargo xtask evidence's matrix-filing check reads and the runner had never written, so that run's reports were never committed as evidence. See docs/project/m5-campaign-evidence.md."
+      }
+    },
+    {
+      "report": "upgrade-campaign-postgres-18.json",
+      "campaign": "M5 PostgreSQL upgrade",
+      "scenarios": [
+        "schema1_and_schema2_upgrade_directly_to_schema3",
+        "schema2_runtime_rejects_schema3",
+        "schema3_backup_restores_the_prior_schema"
+      ],
+      "matrix_point": "postgres-18",
+      "postgres_major_version": "18",
+      "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
+      "producer": {
+        "execution_commit": "f0a2cdb0343c3b3e821a104c575e440063560678",
+        "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
+        "branch_head_sha": "f5d6abaecba72381f10d47e5c1115a5e9d490f60",
+        "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "M5 Upgrade",
+        "workflow_file": ".github/workflows/m5-upgrade.yml",
+        "id": 31858308484,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "postgres-18-upgrade-campaign",
+        "id": 94947011623,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "upgrade-campaign-postgres-18",
+        "id": 9239745943,
+        "digest": "sha256:993eb8787578b98a3228d1c2ee7d481cbe3102ef09a1139852ef10b627543245",
+        "size_bytes": 5171
+      },
+      "retained_report_git_blob": "58107800fee9bcffd170ffb96682ad5364fe85dd",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-15T02:10:29Z",
+        "run_id": 31858308484,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. First promotion of upgrade evidence under the strong provenance model: the dedicated .github/workflows/m5-upgrade.yml, its campaign-semantics.json and execution-contract.json binding the pinned schema-2 runtime revision across the scope document and the runner, and the execution_manifest the campaign's three reports now each record replace the ci.yml upgrade-campaign job this evidence previously had no strong-provenance binding for. An earlier producer run (31857956155, same PR) was discarded before promotion: it predated a fix to xtask/src/upgrade.rs (a closure path) that made the runner record postgresql_major_version, which cargo xtask evidence's matrix-filing check reads and the runner had never written, so that run's reports were never committed as evidence. See docs/project/m5-campaign-evidence.md."
       }
     }
   ]
