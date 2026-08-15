@@ -1200,14 +1200,18 @@ Both matrix points pass. All three scenarios ran and none skipped.
 | [`security-campaign-postgres-15.json`](../engineering/campaigns/m5/security-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
 | [`security-campaign-postgres-18.json`](../engineering/campaigns/m5/security-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
 
-Both were produced by commit `b506affb`, which is the merge commit the
+Both were produced by commit `44423c6a`, which is the merge commit the
 dedicated `M5 Security` workflow checked out rather than a branch tip, on
 `rustc 1.97.1` and Linux `x86_64`, against servers `15.19` and `18.6`. The
 command is `./tests/fixtures/security/provision.sh <major>`, which provisions
 the fixture and runs `cargo run --package oxide-batch-xtask -- security`. This
-is the first promotion of security evidence under the strong-provenance model
-described in [`evidence-provenance.json`](../engineering/campaigns/m5/evidence-provenance.json):
-the prior PR #119 producer run is not reused as evidence for it.
+producer superseded an earlier one (commit `b506affb`, run `31862711341`):
+that run predated the exact-set role-matrix reconciliation added afterward, so
+the campaign's semantic closure changed (`role-matrix.json` joined it) and
+fresh evidence was mandatory. The earlier run was, in turn, the first
+promotion of security evidence under the strong-provenance model described in
+[`evidence-provenance.json`](../engineering/campaigns/m5/evidence-provenance.json);
+the prior PR #119 producer run was never reused as evidence for either.
 
 **`verify-full` TLS.** The supported configuration — `PostgresConfig` with the
 default TLS mode, no production-mode switch anywhere — connected once and was
@@ -1314,6 +1318,26 @@ PostgreSQL requires `UPDATE` on at least one column to take that lock. The grant
 is confined to the identity columns the runtime writes when it creates the
 instance, which leaves the hold columns to retention and keeps the boundary the
 matrix checks in both directions.
+
+**F39. A count is not an identity, and the independent verifier checked only
+counts.** The strong-provenance promotion in this PR's earlier commits gave
+the least-privilege verifier exact per-class and total role-matrix cell
+counts, which is stronger than the presence check it replaced but still not
+closed: a raw observation that removed one legitimate boundary and
+substituted a same-class, same-surface, same-expected bogus cell in its place
+would leave every count unchanged and pass. Closed by giving every
+`BOUNDARIES`, `PERMITTED`, service-path, and extra-allowed cell in
+`postgres_least_privilege_roles.rs` a stable id, committing the exact
+40-identity denominator as
+[`tests/fixtures/security/role-matrix.json`](../../tests/fixtures/security/role-matrix.json),
+and reconciling it bidirectionally — the producer's own tables against the
+committed file in an ordinary `cargo test`, and the committed file against
+the raw retained observation in `xtask/src/security.rs`, as an exact set, not
+a count. The redaction sweep's surface and value-class sets were closed the
+same way, so an undeclared extra surface or value class now also fails
+closed. This forced re-promotion of the security evidence: see
+[`evidence-provenance.json`](../engineering/campaigns/m5/evidence-provenance.json)'s
+`remote_verification` notes for the superseded producer.
 
 ## Resource-bound campaign
 

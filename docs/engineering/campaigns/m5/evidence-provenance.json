@@ -769,9 +769,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "b506affb96f62d563955cbeee477694d9947e5c0",
+        "execution_commit": "44423c6a49376d686b2e466f41e682850381645c",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "074e0b2a658caee371abd4396a77810e4e1e2470",
+        "branch_head_sha": "121cb6209f62d3dec3b92ae0df2308f173a9d952",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -781,27 +781,27 @@
       "workflow_run": {
         "workflow": "M5 Security",
         "workflow_file": ".github/workflows/m5-security.yml",
-        "id": 31862711341,
+        "id": 31873728290,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-security-campaign",
-        "id": 94958741909,
+        "id": 94986169859,
         "conclusion": "success"
       },
       "artifact": {
         "name": "security-campaign-postgres-15",
-        "id": 9241094695,
-        "digest": "sha256:16304cfd4369c54ffe8133f6f42e7be4f52170fbdd77310c1e10235c0eeb2852",
-        "size_bytes": 6570
+        "id": 9244163534,
+        "digest": "sha256:babf04be30c3e8298fc397f6cc392b7a41d2477644893453cd0c804a07ff3a7b",
+        "size_bytes": 6951
       },
-      "retained_report_git_blob": "d728742c5a4450383473b6153c60d419f3cf1287",
+      "retained_report_git_blob": "c4abca1036fec8656b4f8a948fbde3df2834a8c2",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-15T03:50:22Z",
-        "run_id": 31862711341,
+        "verified_at": "2026-08-15T08:11:14Z",
+        "run_id": 31873728290,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -809,7 +809,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. First promotion of security evidence under the strong provenance model: the dedicated .github/workflows/m5-security.yml (split out of ci.yml's security-campaign job, declaring no services: block since the campaign builds its own TLS and TLS-disabled PostgreSQL fixtures), its campaign-semantics.json and execution-contract.json, and the execution_manifest each of the campaign's three reports now records (including the redaction sweep, which runs in the oxide-batch-cli crate and reads the same closure document independently) replace the prior PR #119 security-campaign evidence, which this promotion does not reuse. The independent verifier in xtask/src/security.rs was also strengthened in the same commit: exact TLS attempt-set checking, an exact 40-cell least-privilege matrix denominator (30 forbidden, 10 allowed) reconciled against tests/fixtures/security/campaign-scope.json's role_matrix, and non-vacuous redaction-sweep checks. See docs/project/m5-campaign-evidence.md."
+        "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes the run 31862711341 promotion (artifacts 9241094695/9241094179): that producer predated the exact-set role-matrix reconciliation added afterward — a verifier that checked only per-class and total cell counts could not distinguish a report that removed one legitimate least-privilege boundary and substituted a same-class, same-surface, same-expected bogus cell in its place, so the semantic closure changed (tests/fixtures/security/role-matrix.json joined it, and postgres_least_privilege_roles.rs and xtask/src/security.rs both changed within it) and fresh evidence was mandatory rather than optional. This run's reports carry the new role-matrix.json object identity in their execution_manifest and an id on every matrix cell. The run 31862711341 promotion itself, in turn, was the first promotion of security evidence under the strong provenance model, replacing the ci.yml security-campaign job and the prior PR #119 security-campaign evidence this campaign never reused. See docs/project/m5-campaign-evidence.md."
       }
     },
     {
@@ -824,9 +824,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "b506affb96f62d563955cbeee477694d9947e5c0",
+        "execution_commit": "44423c6a49376d686b2e466f41e682850381645c",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "074e0b2a658caee371abd4396a77810e4e1e2470",
+        "branch_head_sha": "121cb6209f62d3dec3b92ae0df2308f173a9d952",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -836,27 +836,27 @@
       "workflow_run": {
         "workflow": "M5 Security",
         "workflow_file": ".github/workflows/m5-security.yml",
-        "id": 31862711341,
+        "id": 31873728290,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-security-campaign",
-        "id": 94958741869,
+        "id": 94986169897,
         "conclusion": "success"
       },
       "artifact": {
         "name": "security-campaign-postgres-18",
-        "id": 9241094179,
-        "digest": "sha256:af4ae81157c66d5805fc06ded204163db26a5b143b2ba6f9e921ee91a391299d",
-        "size_bytes": 6569
+        "id": 9244164138,
+        "digest": "sha256:035fcca36ba6bf5bf2187b115848c31c7f20c3c030071ec30614a42656b195a5",
+        "size_bytes": 6951
       },
-      "retained_report_git_blob": "ed24122f58b24f48df98dcb927d215c7f013bf0f",
+      "retained_report_git_blob": "257b0a7ef542debba679cb2435a9c025ad862f05",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-15T03:50:22Z",
-        "run_id": 31862711341,
+        "verified_at": "2026-08-15T08:11:14Z",
+        "run_id": 31873728290,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -864,7 +864,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. First promotion of security evidence under the strong provenance model: the dedicated .github/workflows/m5-security.yml (split out of ci.yml's security-campaign job, declaring no services: block since the campaign builds its own TLS and TLS-disabled PostgreSQL fixtures), its campaign-semantics.json and execution-contract.json, and the execution_manifest each of the campaign's three reports now records (including the redaction sweep, which runs in the oxide-batch-cli crate and reads the same closure document independently) replace the prior PR #119 security-campaign evidence, which this promotion does not reuse. The independent verifier in xtask/src/security.rs was also strengthened in the same commit: exact TLS attempt-set checking, an exact 40-cell least-privilege matrix denominator (30 forbidden, 10 allowed) reconciled against tests/fixtures/security/campaign-scope.json's role_matrix, and non-vacuous redaction-sweep checks. See docs/project/m5-campaign-evidence.md."
+        "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes the run 31862711341 promotion (artifacts 9241094695/9241094179): that producer predated the exact-set role-matrix reconciliation added afterward — a verifier that checked only per-class and total cell counts could not distinguish a report that removed one legitimate least-privilege boundary and substituted a same-class, same-surface, same-expected bogus cell in its place, so the semantic closure changed (tests/fixtures/security/role-matrix.json joined it, and postgres_least_privilege_roles.rs and xtask/src/security.rs both changed within it) and fresh evidence was mandatory rather than optional. This run's reports carry the new role-matrix.json object identity in their execution_manifest and an id on every matrix cell. The run 31862711341 promotion itself, in turn, was the first promotion of security evidence under the strong provenance model, replacing the ci.yml security-campaign job and the prior PR #119 security-campaign evidence this campaign never reused. See docs/project/m5-campaign-evidence.md."
       }
     }
   ]
