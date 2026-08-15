@@ -2,10 +2,42 @@
 //!
 //! The M5 design gate names
 //! `full_embedded_conformance_suite_passes_on_the_accepted_scope` as the
-//! evidence the conformance campaign owes. This command is that scenario. It
-//! runs every test target in the workspace, attributes each result to the
-//! target that produced it, and reconciles the accepted-scope document in
-//! `tests/fixtures/conformance/accepted-scope.json` against what actually ran.
+//! evidence the conformance campaign owes. This command is that scenario, and
+//! it distinguishes two things that earlier revisions of this file
+//! conflated:
+//!
+//! - **the row-proof denominator**: the `42` accepted M0-M4 rows and the
+//!   `133` scenarios the accepted-scope document assigns to them. Every
+//!   assigned scenario must report `ok`, and every row must be proved by at
+//!   least one.
+//! - **the execution envelope**: the `30` unique `(package, target)` test
+//!   binaries [`required_targets`] derives from those `133` assignments. Each
+//!   selected target is run in full — not filtered down to only its assigned
+//!   scenarios — so a test inside a selected target that the accepted scope
+//!   never named still runs, and its failure still fails the campaign,
+//!   exactly as an assigned scenario's failure would. Only a test outside
+//!   every selected target is unable to affect the campaign's result.
+//!   Workspace documentation tests are a third, separate obligation, run
+//!   regardless of the envelope.
+//!
+//! The target set is derived from the scope document rather than enumerated
+//! from `cargo metadata` directly, and that used to be the other way around:
+//! every workspace test target that carried the `test` kind was selected —
+//! not merely the `30` the accepted scope's assignments touch — and any of
+//! them exiting unsuccessfully failed the campaign. That made the campaign's
+//! pass/fail gate depend on targets the accepted scope never named at all —
+//! including the other M5 campaigns' own reconciliation tests, several of
+//! which read fixtures and the shared evidence record no accepted scenario's
+//! semantic closure could name without creating a retention-time
+//! self-reference (the record is rewritten with a report's own provenance
+//! after the report is produced). `required_targets` is the fix: the
+//! execution envelope is the set of targets the row-proof denominator
+//! actually touches, so an entire workspace test target outside that
+//! envelope can change freely and the campaign's result is unaffected by it,
+//! and general Rust CI is still what runs and fails on it. A test *inside* a
+//! selected target that is not itself an assigned scenario is not covered by
+//! this narrowing, and never was: the campaign has always run selected
+//! targets in full.
 //!
 //! It is a command rather than a test for two reasons, and both are about not
 //! forging a pass:
@@ -35,6 +67,9 @@ use crate::suite::{self, TargetCommand};
 /// The report this campaign retains.
 const REPORT: &str = "conformance-campaign.json";
 
+/// The declared semantic closure of the conformance campaign.
+const SEMANTICS: &str = "tests/fixtures/conformance/campaign-semantics.json";
+
 /// One campaign run and everything it observed.
 pub struct Campaign {
     /// Every reconciliation failure, as a human-readable line.
@@ -56,20 +91,112 @@ pub struct Campaign {
 pub fn run() -> Result<Campaign, String> {
     let root = suite::workspace_root()?;
     let scope = Scope::read(&root)?;
+    let manifest = execution_manifest(&root)?;
 
     let mut violations = Vec::new();
     let fixtures = resolve_fixtures(&scope, &mut violations);
     if !violations.is_empty() {
-        let report = write_report(&root, &scope, &fixtures, &Suite::default(), &violations)?;
+        let report = write_report(
+            &root,
+            &scope,
+            &fixtures,
+            &Suite::default(),
+            &violations,
+            &manifest,
+        )?;
         return Ok(Campaign { violations, report });
     }
 
-    let targets = suite_targets()?;
+    let targets = suite_targets(&scope)?;
     let suite = run_suite(&root, &targets)?;
     violations.extend(reconcile(&scope, &suite));
 
-    let report = write_report(&root, &scope, &fixtures, &suite, &violations)?;
+    let report = write_report(&root, &scope, &fixtures, &suite, &violations, &manifest)?;
     Ok(Campaign { violations, report })
+}
+
+/// Records the object identity of the campaign's closure, as executed.
+///
+/// Taken here, by the producer itself running inside its own checkout, rather
+/// than reconstructed later: this process is the campaign, so the tree it can
+/// see is by definition the tree that ran. In CI that is the pull-request
+/// merge commit the workflow checked out — an ephemeral object no later clone
+/// can resolve — so a verifier that tried to re-derive these identities from
+/// a commit name would depend on something GitHub throws away. Matches the
+/// pattern the performance, soak, and cancellation producers already use.
+fn execution_manifest(root: &Path) -> Result<Value, String> {
+    let commit = git(root, &["rev-parse", "HEAD"])
+        .ok_or_else(|| "the campaign is not running inside a git tree".to_owned())?;
+    let mut objects = serde_json::Map::new();
+    for path in semantics_paths(root)? {
+        let object = git(root, &["rev-parse", &format!("HEAD:{path}")]).ok_or_else(|| {
+            format!("{path} is declared as campaign semantics and is not present")
+        })?;
+        objects.insert(path, Value::String(object));
+    }
+    Ok(json!({
+        "execution_commit": commit,
+        "execution_commit_note": "The tree this run actually executed against, read from the \
+                                  checkout the campaign is running in. In CI this is the \
+                                  pull-request merge commit rather than the branch head, and it \
+                                  is the authority: the objects below are its objects.",
+        "tree_clean": git(root, &["status", "--porcelain"]).map(|status| status.is_empty()),
+        "objects": Value::Object(objects),
+    }))
+}
+
+/// Reads the canonical closure of what the campaign executes.
+///
+/// Read from `tests/fixtures/conformance/campaign-semantics.json` rather than
+/// listed here, because the verifier reads the same document: a closure kept
+/// in two places is one that will disagree.
+fn semantics_paths(root: &Path) -> Result<Vec<String>, String> {
+    let path = root.join(SEMANTICS);
+    let source = fs::read_to_string(&path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let document: Value = serde_json::from_str(&source)
+        .map_err(|error| format!("could not parse {}: {error}", path.display()))?;
+    let categories = document
+        .get("categories")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "the semantics document declares no categories".to_owned())?;
+    let mut paths = categories
+        .values()
+        .filter_map(|category| category.get("paths").and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    if paths.is_empty() {
+        return Err("the semantics document declares no paths".to_owned());
+    }
+    Ok(paths)
+}
+
+/// Reads the `PostgreSQL` major the campaign was configured to run at.
+///
+/// A runner cannot see the database version through a fixture, which is a
+/// connection string it never opens, so the campaign matrix variable is the
+/// recorded major — the same source of truth `suite::environment`'s own
+/// `matrix` field already reads.
+fn expected_matrix_major() -> Option<String> {
+    let matrix = env::var(suite::MATRIX).ok()?;
+    matrix.strip_prefix("postgres-").map(str::to_owned)
+}
+
+/// Runs one git command against the workspace, tolerating failure.
+fn git(root: &Path, arguments: &[&str]) -> Option<String> {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(arguments)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 /// Reports which declared fixtures the environment supplies.
@@ -104,12 +231,37 @@ fn resolve_fixtures(scope: &Scope, violations: &mut Vec<String>) -> BTreeMap<Str
     resolved
 }
 
-/// Enumerates every test target in the workspace with its package and kind.
+/// Returns the package/target pairs the accepted scope assigns at least one
+/// scenario to.
+///
+/// This is the campaign's execution envelope: each pair names one test
+/// binary that is run in full, not filtered to the scenarios that put it
+/// here. It is derived from the same document the ledger reconciliation test
+/// validates rather than stated again here, for the reason every other
+/// derived value in this file is derived rather than restated: a second list
+/// is a list that will drift.
+fn required_targets(scope: &Scope) -> BTreeSet<(String, String)> {
+    scope
+        .rows
+        .values()
+        .flatten()
+        .map(|scenario| (scenario.package.clone(), scenario.target.clone()))
+        .collect()
+}
+
+/// Resolves the accepted scope's required targets against the workspace
+/// metadata, so each carries the cargo selector its kind requires.
 ///
 /// The list comes from the workspace metadata rather than from a build,
 /// because a build is not needed to know what exists and building the whole
 /// workspace only to rebuild it per package wastes the larger part of the run.
-fn suite_targets() -> Result<Vec<Target>, String> {
+/// Metadata is still consulted, rather than trusting the scope document's
+/// target names outright, because a scope entry naming a target that no
+/// longer exists (or now has a different kind) must be caught: `reconcile`
+/// reports it as a scenario that never ran, exactly as it would for a
+/// deleted test function.
+fn suite_targets(scope: &Scope) -> Result<Vec<Target>, String> {
+    let required = required_targets(scope);
     let metadata = suite::metadata()?;
     let packages = metadata
         .get("packages")
@@ -135,6 +287,9 @@ fn suite_targets() -> Result<Vec<Target>, String> {
             ) else {
                 continue;
             };
+            if !required.contains(&(package_name.to_owned(), name.to_owned())) {
+                continue;
+            }
             let Some(selector) = selector(name, kinds) else {
                 continue;
             };
@@ -273,6 +428,7 @@ fn write_report(
     fixtures: &BTreeMap<String, bool>,
     suite: &Suite,
     violations: &[String],
+    manifest: &Value,
 ) -> Result<PathBuf, String> {
     let directory = suite::directory(root);
     fs::create_dir_all(&directory)
@@ -313,7 +469,11 @@ fn write_report(
         "report": "conformance",
         "campaign": "full embedded conformance on the accepted M0-M4 scope",
         "scenario": "full_embedded_conformance_suite_passes_on_the_accepted_scope",
+        "postgresql_major_version": expected_matrix_major(),
         "environment": suite::environment(),
+        "observation": {
+            "execution_manifest": manifest,
+        },
         "fixtures": fixtures,
         "suite": {
             "targets": suite.targets,
@@ -446,5 +606,84 @@ impl Scope {
         }
 
         Ok(Self { rows, fixtures })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    use std::collections::BTreeSet;
+
+    use super::{Scope, required_targets, suite_targets};
+    use crate::suite;
+
+    /// Every other M5 campaign's own reconciliation/contract test, plus this
+    /// campaign's own. None of them is named by any accepted-scope scenario,
+    /// and several of them read a shared evidence document or another
+    /// campaign's fixtures — semantic inputs that cannot be added to this
+    /// campaign's closure without creating the retention-time self-reference
+    /// this narrowing exists to avoid. Regression coverage for the exact
+    /// counterexample found in review: `m5_campaign_record` reads
+    /// `docs/project/m5-campaign-evidence.md`, which this campaign's own
+    /// retention step rewrites with the report's own provenance after the
+    /// report is produced.
+    const GOVERNANCE_TARGETS: &[&str] = &[
+        "m5_campaign_record",
+        "m5_cancellation_campaign",
+        "m5_conformance_campaign",
+        "m5_crash_restore_campaign",
+        "m5_performance_campaign",
+        "m5_resource_bounds_campaign",
+        "m5_security_campaign",
+        "m5_soak_campaign",
+        "m5_upgrade_campaign",
+    ];
+
+    #[test]
+    fn required_targets_excludes_every_m5_governance_test() {
+        let root = suite::workspace_root().expect("workspace root");
+        let scope = Scope::read(&root).expect("accepted-scope.json");
+        let required = required_targets(&scope);
+
+        assert!(
+            !required.is_empty(),
+            "the accepted scope named no required target, so this test checks nothing",
+        );
+
+        for governance in GOVERNANCE_TARGETS {
+            assert!(
+                !required.contains(&("oxide-batch".to_owned(), (*governance).to_owned())),
+                "{governance} is a governance test, not an accepted-scope scenario, and must not \
+                 be part of the campaign's execution envelope",
+            );
+        }
+    }
+
+    #[test]
+    fn suite_targets_resolves_to_exactly_the_required_set() {
+        let root = suite::workspace_root().expect("workspace root");
+        let scope = Scope::read(&root).expect("accepted-scope.json");
+        let required = required_targets(&scope);
+
+        let resolved = suite_targets(&scope).expect("suite_targets");
+        let resolved_set = resolved
+            .iter()
+            .map(|target| (target.package.clone(), target.name.clone()))
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(
+            resolved_set, required,
+            "suite_targets must resolve to exactly the accepted scope's required set: no target \
+             cargo metadata reports may be silently dropped or added",
+        );
+
+        for governance in GOVERNANCE_TARGETS {
+            assert!(
+                !resolved_set.contains(&("oxide-batch".to_owned(), (*governance).to_owned())),
+                "{governance} was resolved as a target the campaign runs, which is exactly the \
+                 defect this narrowing exists to prevent",
+            );
+        }
     }
 }

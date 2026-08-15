@@ -62,6 +62,14 @@
           "postgres-15",
           "postgres-18"
         ]
+      },
+      {
+        "campaign": "M5 PostgreSQL conformance",
+        "semantics": "tests/fixtures/conformance/campaign-semantics.json",
+        "required_matrix": [
+          "postgres-15",
+          "postgres-18"
+        ]
       }
     ]
   },
@@ -399,6 +407,110 @@
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
         "note": "Performed once, when this evidence was promoted. Actions artifacts expire, so it is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes evidence originally promoted from run 31692527295: the P-010 enlistment-wording denominator correction and the pool-ceiling/business-row/canonical-measurement hardening (F34/F35) changed the meaning of several retained fields, so the earlier evidence became stale by design; see docs/project/m5-campaign-evidence.md."
+      }
+    },
+    {
+      "report": "conformance-campaign-postgres-15.json",
+      "campaign": "M5 PostgreSQL conformance",
+      "scenarios": [
+        "full_embedded_conformance_suite_passes_on_the_accepted_scope"
+      ],
+      "matrix_point": "postgres-15",
+      "postgres_major_version": "15",
+      "producer": {
+        "execution_commit": "afee38e86b8ba79fdb5edd17e22b3d058fc087ca",
+        "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
+        "branch_head_sha": "828e84a9980cfc805c47112970e06fa81cd8b849",
+        "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "M5 Conformance",
+        "workflow_file": ".github/workflows/m5-conformance.yml",
+        "id": 31781696338,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "postgres-15-conformance-campaign",
+        "id": 94708653693,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "conformance-campaign-postgres-15",
+        "id": 9212009570,
+        "digest": "sha256:b8a61b1089d1f6ac7223180b973d57c720a7a43ce4521c065cf6e686162d12e9",
+        "size_bytes": 7137
+      },
+      "retained_report_git_blob": "5c6aba12eb78ff28fb076e9f3fff8f178627e2b8",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-14T07:57:21Z",
+        "run_id": 31781696338,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes evidence originally promoted from run 31778510395: the dedicated workflow, campaign-semantics.json, execution-contract.json, and xtask/src/conformance.rs (all closure paths) changed to correct stale whole-workspace prose and add machine-readable target_selection/pass_condition fields distinguishing the row-proof denominator from the execution envelope. The accepted 42-row/133-scenario denominator and the 30-target envelope derivation are unchanged; only the canonical description of what a selected target running 'in full' means was corrected. See docs/project/m5-campaign-evidence.md."
+      }
+    },
+    {
+      "report": "conformance-campaign-postgres-18.json",
+      "campaign": "M5 PostgreSQL conformance",
+      "scenarios": [
+        "full_embedded_conformance_suite_passes_on_the_accepted_scope"
+      ],
+      "matrix_point": "postgres-18",
+      "postgres_major_version": "18",
+      "producer": {
+        "execution_commit": "afee38e86b8ba79fdb5edd17e22b3d058fc087ca",
+        "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
+        "branch_head_sha": "828e84a9980cfc805c47112970e06fa81cd8b849",
+        "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "M5 Conformance",
+        "workflow_file": ".github/workflows/m5-conformance.yml",
+        "id": 31781696338,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "postgres-18-conformance-campaign",
+        "id": 94708653713,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "conformance-campaign-postgres-18",
+        "id": 9212010377,
+        "digest": "sha256:bb31e5550ae796d087177ee958432423e91d817c82fbb0d6fc9203992352ae97",
+        "size_bytes": 7137
+      },
+      "retained_report_git_blob": "558e9e7127fddf7d64a0e599b6771dccb59f8762",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-14T07:57:21Z",
+        "run_id": 31781696338,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes evidence originally promoted from run 31778510395: the dedicated workflow, campaign-semantics.json, execution-contract.json, and xtask/src/conformance.rs (all closure paths) changed to correct stale whole-workspace prose and add machine-readable target_selection/pass_condition fields distinguishing the row-proof denominator from the execution envelope. The accepted 42-row/133-scenario denominator and the 30-target envelope derivation are unchanged; only the canonical description of what a selected target running 'in full' means was corrected. See docs/project/m5-campaign-evidence.md."
       }
     }
   ]

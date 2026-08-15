@@ -7,7 +7,7 @@ full exit criteria.
 
 **Issue:** [#102](https://github.com/luceat-lux-vestra/oxide-batch/issues/102)
 
-**Date:** 2026-08-13
+**Date:** 2026-08-14
 
 This record is the evidence for the sixth M5 workstream: running the campaigns
 the [design gate](m5-design-gate-evidence.md) named and retaining reproducible
@@ -41,8 +41,20 @@ named released version, and that stays with
 ### What the campaign runs
 
 The accepted M0-M4 scope is the ledger's `29` `Implemented` and `13` `Partial`
-rows. The campaign runs the whole workspace test suite and requires each of
-those `42` rows to be proved by scenarios that ran and passed.
+rows: `42` rows, proved by `133` assigned scenarios. That is the **row-proof
+denominator**, and it is not the same thing as what the campaign executes.
+The **execution envelope** is the `30` unique test targets those `133`
+assignments touch — no more, no fewer targets are selected — but each
+selected target runs in full, not filtered down to only its assigned
+scenarios: every test in that target binary runs, and the target's own exit
+status gates the campaign the same way an assigned scenario's outcome does.
+A test inside a selected target that the accepted scope never named still
+runs and can still fail the campaign; only a workspace test target outside
+the envelope entirely cannot. Workspace documentation tests are a third,
+separate obligation, required regardless of the envelope. See F37 below: it
+used to select every workspace test target `cargo metadata` reported, which
+let a target the accepted scope never touched at all — not merely an
+unassigned test inside a touched one — affect the campaign's pass/fail gate.
 
 The assignment is committed as
 [`tests/fixtures/conformance/accepted-scope.json`](../../tests/fixtures/conformance/accepted-scope.json).
@@ -100,9 +112,15 @@ test process.
 1. It reads the scope document and resolves each declared fixture against the
    environment. A fixture some scenario needs and the environment lacks is a
    violation, and the run stops there with a report recording the absence.
-2. It enumerates every test target from `cargo metadata` — every target whose
-   `test` flag is set, as a `--lib`, `--bin`, or `--test` selector.
-3. It runs each target through cargo, one at a time, with one test thread, and
+2. It derives the required-target set from the scope document — the
+   `(package, target)` pairs the `133` scenario assignments name — and
+   resolves each against `cargo metadata` for the selector its kind requires.
+   A required target `cargo metadata` no longer reports is not silently
+   dropped: the scenarios it would have carried report as never having run in
+   step 5.
+3. It runs each selected target through cargo, one at a time, with one test
+   thread and no libtest filter — every test the target binary contains
+   runs, not only the scenarios that put the target in the envelope — and
    attributes every `test <path> ... <outcome>` line to that target. Running
    through cargo rather than executing the built binary matters: the
    compile-fail suite needs the environment cargo supplies, and executing its
@@ -125,33 +143,83 @@ test process.
 ### Where it runs
 
 `postgres-15-conformance-campaign` and `postgres-18-conformance-campaign` in
-`.github/workflows/ci.yml`, on the two ends of the supported PostgreSQL
-`15`-`18` range, matching the existing `postgres-repository` matrix. Each job
-retains its report as a build artifact, and the committed copies in
+the dedicated [`.github/workflows/m5-conformance.yml`](../../.github/workflows/m5-conformance.yml),
+on the two ends of the supported PostgreSQL `15`-`18` range, matching the
+existing `postgres-repository` matrix. Each job retains its report as a build
+artifact on success and failure alike, and the committed copies in
 [`docs/engineering/campaigns/m5`](../engineering/campaigns/m5/README.md) come
-from those jobs.
+from those jobs. See F36 below: the campaign was originally a job inside
+`.github/workflows/ci.yml` and has since been extracted into this dedicated
+workflow, with the same fail-closed retained-evidence provenance model the
+soak, cancellation, and performance campaigns already use.
 
 ### Results
 
-Both matrix points pass. Each run executed `66` test targets and `473` tests,
-every one reporting `ok`, with the workspace documentation tests passing and
-all three fixtures present. All `42` accepted rows are proved.
+Both matrix points pass. Each run selects the `30`-target execution envelope
+the `133` scenario assignments name — not the whole workspace suite — and
+runs each selected target in full; the `tests` column below is what that run
+actually observed, not a fixed denominator, and grows if a selected target
+gains an ordinary regression test unrelated to the accepted scope. Every test
+reports `ok`, the workspace documentation tests pass, and all three fixtures
+are present. All `42` accepted rows are proved by their assigned scenarios.
+See F37 below: the run this table names is fresh, produced after the
+execution-envelope narrowing it describes, because the prior retained reports
+(run 31749761115, which selected every workspace target rather than the
+30-target envelope the accepted denominator implies) are evidence of a
+campaign this one no longer is.
 
 | Report | Matrix | Targets | Tests | Outcomes | Result |
 | --- | --- | --- | --- | --- | --- |
-| [`conformance-campaign-postgres-15.json`](../engineering/campaigns/m5/conformance-campaign-postgres-15.json) | PostgreSQL 15 | 66 | 473 | 473 `ok` | Passed |
-| [`conformance-campaign-postgres-18.json`](../engineering/campaigns/m5/conformance-campaign-postgres-18.json) | PostgreSQL 18 | 66 | 473 | 473 `ok` | Passed |
+| [`conformance-campaign-postgres-15.json`](../engineering/campaigns/m5/conformance-campaign-postgres-15.json) | PostgreSQL 15 | 30 | 291 | 291 `ok` | Passed |
+| [`conformance-campaign-postgres-18.json`](../engineering/campaigns/m5/conformance-campaign-postgres-18.json) | PostgreSQL 18 | 30 | 291 | 291 `ok` | Passed |
 
-Both were produced by commit `0f41aad`, which is the merge commit the workflow
-checked out rather than a branch tip.
+Both were produced by dedicated workflow run
+[31781696338](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/31781696338),
+which executed tree `afee38e86b8ba79fdb5edd17e22b3d058fc087ca` — the
+pull-request merge commit the workflow checked out — from branch head
+`828e84a9980cfc805c47112970e06fa81cd8b849`. The execution tree is the
+provenance root and the branch head is recorded beside it as metadata; they
+are different commits and are never used interchangeably. The reports record
+`rustc 1.97.1` and Linux `x86_64`, and a clean source tree. The command is
+`./tests/fixtures/conformance/run-ci-campaign.sh <major>`, which the dedicated
+workflow calls and which runs `cargo xtask conformance` — so the independent
+recomputation is what the producing job itself executed. Each artifact's own
+sha256 digest was computed directly over the downloaded ZIP bytes at
+promotion, matched the GitHub API's recorded digest, and the extracted report
+matched the retained bytes exactly before retention:
+PostgreSQL 15's job `94708653693` produced artifact `9212009570`
+(`sha256:b8a61b1089d1f6ac7223180b973d57c720a7a43ce4521c065cf6e686162d12e9`,
+`7137` bytes, retained blob `5c6aba12eb78ff28fb076e9f3fff8f178627e2b8`);
+PostgreSQL 18's job `94708653713` produced artifact `9212010377`
+(`sha256:bb31e5550ae796d087177ee958432423e91d817c82fbb0d6fc9203992352ae97`,
+`7137` bytes, retained blob `558e9e7127fddf7d64a0e599b6771dccb59f8762`).
+Both matrix points again select the same `30`-target envelope and observe
+`291` tests, confirming the envelope itself did not change — only the
+canonical description of what running it means was corrected.
+
+This supersedes three earlier retentions on this same branch, all recorded in
+full in `evidence-provenance.json`'s `remote_verification.note` for each
+entry: run 31749761115 (F37's execution-envelope narrowing itself, which
+changed the campaign's selected-target and test counts), run 31777568454 (a
+follow-up fix to `xtask/src/conformance.rs` — a closure path — that added the
+`#![allow(clippy::expect_used)]` its own new test module needed; unrelated to
+the campaign's denominator, but still a byte-level change to a file the exact
+object-identity binding tracks), and run 31778510395 (this canonical-contract
+accuracy fix: correcting stale "runs nothing else" / "every workspace test
+target" prose across the dedicated workflow, `execution-contract.json`,
+`campaign-semantics.json`, and `xtask/src/conformance.rs` so the canonical
+description matches what selecting and running a target has always actually
+meant).
 
 The `133` scenario assignments break down by ledger evidence class as `42`
 conformance, `53` unit, `20` integration, `9` crash, `5` performance, and `4`
 migration. Every row has at least one conformance-class scenario, which the
 in-process reconciliation requires.
 
-No correctness P0 or P1 is open against this campaign. The two findings below
-are recorded and both are closed.
+No correctness P0 or P1 is open against this campaign. The findings below are
+recorded; F1 and F2 are closed defects, F36 records the retained-evidence
+provenance hardening this campaign's record carries, and F37 records the
+execution-surface narrowing this run reflects.
 
 ### What this campaign does not establish
 
@@ -165,6 +233,13 @@ are recorded and both are closed.
   rows are untouched and stay visible.
 - **A parity claim.** Passing the accepted scope is not parity with the ledger
   population, and the record's own denominator says so.
+- **Strong provenance for the other four M5 campaigns.** Crash/restore,
+  upgrade, security, and resource-bound still run as jobs inside
+  `.github/workflows/ci.yml` and are not declared in `evidence-
+  provenance.json`; their retained reports are not bound to a specific
+  workflow run, job, or artifact digest the way conformance, soak,
+  cancellation, and performance now are. Closing that gap for each of them is
+  left to a follow-up, tracked under #102.
 
 ### Findings
 
@@ -200,6 +275,136 @@ that list would have been reading the wrong list. The campaign does not reuse
 it: the accepted-scope document is keyed by ledger row identifier, and the two
 lists stay separate because they answer different questions. The stale doc
 comment is corrected in place.
+
+**F36. Conformance was the last of the four PostgreSQL-matrixed M5 campaigns
+still missing the strong retained-evidence provenance model, and #102's
+"raw evidence retained/reproducible for every campaign" exit criterion could
+not fully close until it had one.** Soak, cancellation, and performance each
+record their own execution manifest (execution commit, tree cleanliness, and
+their closure's object identities) from inside the producer's own checkout,
+declare a semantic closure, and bind their retained reports to a specific
+workflow run, job, and artifact digest that `cargo xtask evidence` checks
+offline on every CI run. Conformance had none of this: it ran as one job
+inside `.github/workflows/ci.yml`, and its retained reports carried only
+`environment.source_commit` — a real commit, but nothing tying the retained
+bytes to a specific workflow run, job, or artifact, and nothing that would
+catch a report kept beside a campaign whose semantics had since changed.
+
+Conformance is now extracted into its own dedicated
+`.github/workflows/m5-conformance.yml`, with a fail-closed execution contract
+bound by exact git blob identity
+(`tests/fixtures/conformance/execution-contract.json`,
+`run-ci-campaign.sh`, `verify-ci-contract.sh`) matching the pattern the other
+three campaigns already use, and a declared semantic closure
+(`tests/fixtures/conformance/campaign-semantics.json`) that the producer
+records its own execution manifest against. The closure is deliberately wider
+than the other three campaigns' closures: conformance's producer enumerates
+and runs every workspace test target `cargo metadata` reports, not a fixed
+report set, so a defect anywhere in the workspace that failed an unrelated
+target would fail the campaign, and the whole workspace's test-affecting
+source is genuinely part of what this evidence is evidence of. (Superseded by
+F37: the closure's width was itself a defect, not a design feature, and F37
+narrows it.) `evidence-provenance.json` now declares `M5 PostgreSQL
+conformance` as a campaign alongside soak, cancellation, and performance, with
+its own required `postgres-15`/`postgres-18` matrix.
+
+The accepted M0-M4 ledger scope, the 42-row denominator, and the 133 scenario
+assignments were, and remain after F37, byte-for-byte what they were before
+this change; only the campaign's execution envelope around them was
+incomplete, which F37 corrects. `xtask/src/conformance.rs`'s report-writing
+path gained the two new fields (`postgresql_major_version` and
+`observation.execution_manifest`) the provenance model requires, and the
+workflow moved without changing its fixture provisioning, its command, or its
+artifact naming. Crash/restore, upgrade, security, and resource-bound are not
+part of this closure and remain outside the strong provenance model; closing
+their gaps is left to a follow-up, as this campaign's own scope note explains
+under "what this campaign does not establish" below.
+
+**F37. F36's closure was wider than the other three M5 campaigns' by design,
+and that design was itself a latent gap: the producer ran every workspace
+test target `cargo metadata` reported, so the campaign's pass/fail gate
+depended on tests the accepted scope never named.** Two of them read a
+document this campaign's own retention step rewrites after a report is
+produced. `crates/oxide-batch/tests/m5_campaign_record.rs` — a governance test
+holding the shared evidence record's own structural integrity, unrelated to
+any accepted-scope scenario — reads `docs/project/m5-campaign-evidence.md`
+(this file) and `tests/fixtures/soak/campaign-scope.json`. Concretely: this
+PR's own F36 edit to this file changed the conformance campaign's retained
+report count from two findings to three, and the retention step that follows
+a promotion always rewrites this file with the just-produced run's identity —
+so under the F36 closure, the ordinary act of retaining conformance evidence
+could make `m5_campaign_record` fail on the very commit that retained it, and
+the F36 closure gave no way to add this file without creating a
+self-reference: the file cannot be a semantic input of a campaign whose own
+retention step is what changes it.
+
+The fix is not a wider closure. It narrows the campaign's execution envelope
+— which targets are *selected* — to match the denominator it already claimed,
+without changing what running a selected target means: `xtask/src/conformance.rs`
+now derives its required-target set from the `(package, target)` pairs the
+accepted-scope document's `133` scenario assignments name (`required_targets`,
+covered by two inline unit tests against the real production code) and
+selects exactly those `30` targets. Each selected target still runs in full,
+exactly as before the narrowing: a test inside a selected target that no
+accepted scenario names still runs, and its failure still fails the campaign.
+What changed is which targets are selected at all — `m5_campaign_record` and
+the other seven M5 campaigns' own reconciliation tests are not part of the
+required set, and cannot be, because none of them is named by an
+accepted-scope scenario, so a change to any of them is now outside the
+envelope entirely rather than merely unassigned within it.
+`tests/fixtures/conformance/campaign-semantics.json` is narrowed to match —
+`campaign implementation` now lists the `30` target files and the shared
+support modules they compile against, in place of the whole
+`crates/oxide-batch/tests` directory — and
+`the_semantic_closure_covers_what_the_campaign_runs` in
+`crates/oxide-batch/tests/m5_conformance_campaign.rs` derives the required set
+from the scope document itself and asserts every required target resolves to
+a covered path, so the closure and the execution envelope cannot drift apart
+silently again. `the_evidence_record_mutation_counterexample_stays_closed`
+locks the exact counterexample: the evidence record and the soak fixtures
+`m5_campaign_record` reads are asserted absent from the closure, and
+`m5_campaign_record` is asserted absent from the required-target set.
+`the_canonical_contract_describes_the_real_producer_behavior` and
+`no_stale_whole_workspace_language_remains_in_the_contract_or_workflow` hold
+`execution-contract.json` and the dedicated workflow to the same distinction,
+so the canonical contract cannot silently drift back to describing
+whole-workspace selection, or start claiming a selected target runs anything
+less than in full, without a test failing.
+
+This was also proven end to end, not only by closure inspection: with
+`docs/project/m5-campaign-evidence.md` locally mutated to duplicate a
+campaign heading — the same shape of defect `m5_campaign_record` exists to
+catch — `cargo test -p oxide-batch --test m5_campaign_record` failed as
+expected, and `cargo xtask conformance`, run immediately after against the
+same mutated tree, still selected the same `30`-target envelope and reported
+`passed: true`. Ordinary Rust CI is what catches a broken evidence record;
+the conformance campaign's result no longer depends on it, because
+`m5_campaign_record` was never inside the envelope to begin with.
+
+The one obligation that stays whole-workspace on purpose is the documentation
+tests: `cargo test --workspace --all-features --doc` still runs across every
+crate including the two spikes, because it executes only committed rustdoc
+examples rather than reading anything dynamic, so it carries none of the
+hazard the envelope narrowing removes. `workspace framework and adapter
+source` and `spike source` stay in the closure for that reason.
+
+Because this changed which test targets the campaign selects — not the
+accepted denominator, but the envelope around it — the retained reports F36
+promoted (run 31749761115) are evidence of a campaign this repository no
+longer runs. They are not edited in place or reused; this PR retains a fresh
+run of the corrected producer instead, identified in the Results section
+above. `evidence-provenance.json`'s `producer.execution_commit`,
+`workflow_run`, `producing_job`, `artifact`, `retained_report_git_blob`, and
+`remote_verification` fields for both matrix points are replaced with that
+run's, following the same real-verification steps the soak and cancellation
+campaigns' own supersession notes record: the artifact ZIP downloaded from the
+GitHub Actions API and hashed directly, the digest compared against the API's
+own record, the extracted report compared byte-for-byte against the retained
+file, and the retained file's own `git hash-object` recorded.
+
+No P0 or P1 correctness defect was found in the framework or adapter code
+during this review; the gap was entirely in the campaign's own execution
+model, not in the code the accepted scenarios exercise.
 
 ## Crash and restore campaign
 
