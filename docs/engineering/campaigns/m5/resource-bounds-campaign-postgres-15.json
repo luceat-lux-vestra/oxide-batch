@@ -59,6 +59,32 @@
             "field": "partition-context-per-key"
           }
         ],
+        "must_not_observe": [
+          {
+            "condition": "duplicate-partition-execution",
+            "observed": false
+          },
+          {
+            "condition": "missing-partition",
+            "observed": false
+          },
+          {
+            "condition": "unfinished-child",
+            "observed": false
+          },
+          {
+            "condition": "leaked-durable-execution",
+            "observed": false
+          },
+          {
+            "condition": "forged-execution-status",
+            "observed": false
+          },
+          {
+            "condition": "partial-launch-after-rejection",
+            "observed": false
+          }
+        ],
         "partitions": 128,
         "passed": true,
         "stressed_workers": 64,
@@ -73,7 +99,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "3a4a962816405a39f3b3e100c1eb982790852ee7",
+    "source_commit": "601560efacb76864ba1d2097d41a1dffe77dc3da",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -86,6 +112,47 @@
     "Each database report is required to name the PostgreSQL major it ran against, because a matrix point is invisible in a connection string and an observation from one supported major would otherwise reconcile perfectly inside a run of another.",
     "The denominator this reconciles against is checked from the other side by an ordinary cargo test, which parses every library crate and fails when a constant declared under the repository's bound declaration convention is neither proved nor argued out of scope. That convention is what the guarantee is bounded by: a ceiling written as a bare literal or named outside it is ruled out by review rather than by the scan."
   ],
+  "observation": {
+    "execution_manifest": {
+      "execution_commit": "601560efacb76864ba1d2097d41a1dffe77dc3da",
+      "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+      "objects": {
+        ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+        ".github/workflows/m5-resource-bounds.yml": "c9a953191ba47f4af05c39404aee3821082e0f2d",
+        "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+        "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+        "crates/oxide-batch-cli/Cargo.toml": "2ea1f690d446a7da1a3724933056238f530772e1",
+        "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
+        "crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs": "9cdeeee83cdee09f2ba7a3c77765d1fcf019dd49",
+        "crates/oxide-batch-cli/tests/support": "54529b16ee9ab48eb2b32b197aaa2aabb6d4c25a",
+        "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+        "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+        "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+        "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+        "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+        "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+        "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+        "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+        "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+        "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "b7d0895f80b953a0183446fff680566e956c6afe",
+        "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "583e7b3d08a6de0f049f2cf27b9dfeb7ab537161",
+        "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "8e21faee3a073d6dd9b2697f59f974ae73f0cd4f",
+        "crates/oxide-batch/tests/resource_bounds": "3e90ae5015649f6f8086e86082cee17d97b71006",
+        "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+        "tests/fixtures/resource-bounds/campaign-scope.json": "c139c022da421c9e123c3e8b055ff3eb1c619234",
+        "tests/fixtures/resource-bounds/campaign-semantics.json": "7f491c7d9960af9218e455f47861aecd2e28a075",
+        "tests/fixtures/resource-bounds/execution-contract.json": "b40bd36435adcd5e8638ebb69651e5ed897b142c",
+        "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
+        "tests/fixtures/resource-bounds/verify-ci-contract.sh": "f980d37a1fa70a79a27994e07625e17f4a87bd7e",
+        "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+        "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
+        "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
+        "xtask/src/resource_bounds.rs": "a84450ba1d621568031cdec8a01b0af4d2efe8c6",
+        "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
+      },
+      "tree_clean": true
+    }
+  },
   "observed_resources": 36,
   "observed_scenarios": [
     "declared_ceilings_hold_under_stress_with_backpressure",
@@ -151,7 +218,7 @@
   ],
   "passed": true,
   "postgresql_major_version": "15",
-  "postgresql_version": "15.18 (Debian 15.18-1.pgdg13+1)",
+  "postgresql_version": "15.19 (Debian 15.19-1.pgdg13+2)",
   "related": [
     {
       "invariant": "peak worker occupancy equals the configured budget at 1, 10, and 64 workers",
@@ -348,10 +415,75 @@
               "field": "partition-context-per-key"
             }
           ],
+          "must_not_observe": [
+            {
+              "condition": "duplicate-partition-execution",
+              "observed": false
+            },
+            {
+              "condition": "missing-partition",
+              "observed": false
+            },
+            {
+              "condition": "unfinished-child",
+              "observed": false
+            },
+            {
+              "condition": "leaked-durable-execution",
+              "observed": false
+            },
+            {
+              "condition": "forged-execution-status",
+              "observed": false
+            },
+            {
+              "condition": "partial-launch-after-rejection",
+              "observed": false
+            }
+          ],
           "partitions": 128,
           "passed": true,
           "stressed_workers": 64,
           "violations": []
+        },
+        "execution_manifest": {
+          "execution_commit": "601560efacb76864ba1d2097d41a1dffe77dc3da",
+          "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+          "objects": {
+            ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+            ".github/workflows/m5-resource-bounds.yml": "c9a953191ba47f4af05c39404aee3821082e0f2d",
+            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+            "crates/oxide-batch-cli/Cargo.toml": "2ea1f690d446a7da1a3724933056238f530772e1",
+            "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
+            "crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs": "9cdeeee83cdee09f2ba7a3c77765d1fcf019dd49",
+            "crates/oxide-batch-cli/tests/support": "54529b16ee9ab48eb2b32b197aaa2aabb6d4c25a",
+            "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+            "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+            "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+            "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+            "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+            "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+            "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+            "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+            "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+            "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "b7d0895f80b953a0183446fff680566e956c6afe",
+            "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "583e7b3d08a6de0f049f2cf27b9dfeb7ab537161",
+            "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "8e21faee3a073d6dd9b2697f59f974ae73f0cd4f",
+            "crates/oxide-batch/tests/resource_bounds": "3e90ae5015649f6f8086e86082cee17d97b71006",
+            "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+            "tests/fixtures/resource-bounds/campaign-scope.json": "c139c022da421c9e123c3e8b055ff3eb1c619234",
+            "tests/fixtures/resource-bounds/campaign-semantics.json": "7f491c7d9960af9218e455f47861aecd2e28a075",
+            "tests/fixtures/resource-bounds/execution-contract.json": "b40bd36435adcd5e8638ebb69651e5ed897b142c",
+            "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
+            "tests/fixtures/resource-bounds/verify-ci-contract.sh": "f980d37a1fa70a79a27994e07625e17f4a87bd7e",
+            "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+            "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
+            "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
+            "xtask/src/resource_bounds.rs": "a84450ba1d621568031cdec8a01b0af4d2efe8c6",
+            "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
+          },
+          "tree_clean": true
         },
         "passed": true,
         "postgres_major_version": "15",
@@ -437,7 +569,7 @@
           }
         ],
         "scenario": "declared_ceilings_hold_under_stress_with_backpressure",
-        "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
+        "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
         "violations": []
       },
       "owes": "declared ceiling proof for every worker assignment, with backpressure propagation under stress",
@@ -516,6 +648,45 @@
             "value": 0
           }
         ],
+        "execution_manifest": {
+          "execution_commit": "601560efacb76864ba1d2097d41a1dffe77dc3da",
+          "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+          "objects": {
+            ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+            ".github/workflows/m5-resource-bounds.yml": "c9a953191ba47f4af05c39404aee3821082e0f2d",
+            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+            "crates/oxide-batch-cli/Cargo.toml": "2ea1f690d446a7da1a3724933056238f530772e1",
+            "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
+            "crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs": "9cdeeee83cdee09f2ba7a3c77765d1fcf019dd49",
+            "crates/oxide-batch-cli/tests/support": "54529b16ee9ab48eb2b32b197aaa2aabb6d4c25a",
+            "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+            "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+            "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+            "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+            "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+            "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+            "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+            "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+            "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+            "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "b7d0895f80b953a0183446fff680566e956c6afe",
+            "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "583e7b3d08a6de0f049f2cf27b9dfeb7ab537161",
+            "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "8e21faee3a073d6dd9b2697f59f974ae73f0cd4f",
+            "crates/oxide-batch/tests/resource_bounds": "3e90ae5015649f6f8086e86082cee17d97b71006",
+            "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+            "tests/fixtures/resource-bounds/campaign-scope.json": "c139c022da421c9e123c3e8b055ff3eb1c619234",
+            "tests/fixtures/resource-bounds/campaign-semantics.json": "7f491c7d9960af9218e455f47861aecd2e28a075",
+            "tests/fixtures/resource-bounds/execution-contract.json": "b40bd36435adcd5e8638ebb69651e5ed897b142c",
+            "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
+            "tests/fixtures/resource-bounds/verify-ci-contract.sh": "f980d37a1fa70a79a27994e07625e17f4a87bd7e",
+            "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+            "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
+            "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
+            "xtask/src/resource_bounds.rs": "a84450ba1d621568031cdec8a01b0af4d2efe8c6",
+            "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
+          },
+          "tree_clean": true
+        },
         "passed": true,
         "postgres_major_version": "15",
         "report": "bounded-query-paths",
@@ -578,7 +749,7 @@
         ],
         "scenario": "bounded_query_paths_stay_bounded_as_history_grows",
         "seeded_instances": 1200,
-        "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
+        "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
         "violations": []
       },
       "owes": "declared ceiling proof for every page and result set",
@@ -998,6 +1169,45 @@
           "partition_key_bytes_written": 128,
           "violations": []
         },
+        "execution_manifest": {
+          "execution_commit": "601560efacb76864ba1d2097d41a1dffe77dc3da",
+          "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+          "objects": {
+            ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+            ".github/workflows/m5-resource-bounds.yml": "c9a953191ba47f4af05c39404aee3821082e0f2d",
+            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+            "crates/oxide-batch-cli/Cargo.toml": "2ea1f690d446a7da1a3724933056238f530772e1",
+            "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
+            "crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs": "9cdeeee83cdee09f2ba7a3c77765d1fcf019dd49",
+            "crates/oxide-batch-cli/tests/support": "54529b16ee9ab48eb2b32b197aaa2aabb6d4c25a",
+            "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+            "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+            "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+            "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+            "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+            "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+            "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+            "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+            "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+            "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "b7d0895f80b953a0183446fff680566e956c6afe",
+            "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "583e7b3d08a6de0f049f2cf27b9dfeb7ab537161",
+            "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "8e21faee3a073d6dd9b2697f59f974ae73f0cd4f",
+            "crates/oxide-batch/tests/resource_bounds": "3e90ae5015649f6f8086e86082cee17d97b71006",
+            "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+            "tests/fixtures/resource-bounds/campaign-scope.json": "c139c022da421c9e123c3e8b055ff3eb1c619234",
+            "tests/fixtures/resource-bounds/campaign-semantics.json": "7f491c7d9960af9218e455f47861aecd2e28a075",
+            "tests/fixtures/resource-bounds/execution-contract.json": "b40bd36435adcd5e8638ebb69651e5ed897b142c",
+            "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
+            "tests/fixtures/resource-bounds/verify-ci-contract.sh": "f980d37a1fa70a79a27994e07625e17f4a87bd7e",
+            "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+            "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
+            "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
+            "xtask/src/resource_bounds.rs": "a84450ba1d621568031cdec8a01b0af4d2efe8c6",
+            "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
+          },
+          "tree_clean": true
+        },
         "instance_key": {
           "configured_ceiling": 1048576,
           "offered_load": 1310720,
@@ -1195,7 +1405,7 @@
           }
         ],
         "scenario": "bounded_payloads_are_refused_one_byte_over_the_ceiling",
-        "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
+        "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
         "violations": []
       },
       "owes": "declared ceiling proof for every buffer and for the retry cache",
@@ -1330,11 +1540,11 @@
             "value": 262145
           },
           {
-            "case": "a document inside the ceiling",
+            "case": "at the ceiling",
             "expected": "accepted",
             "observed": "accepted",
             "resource": "cli-configuration-document",
-            "value": 1024
+            "value": 262144
           }
         ],
         "durable_equivalence": {
@@ -1355,6 +1565,45 @@
             "version": 0
           },
           "violations": []
+        },
+        "execution_manifest": {
+          "execution_commit": "601560efacb76864ba1d2097d41a1dffe77dc3da",
+          "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
+          "objects": {
+            ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+            ".github/workflows/m5-resource-bounds.yml": "c9a953191ba47f4af05c39404aee3821082e0f2d",
+            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
+            "crates/oxide-batch-cli/Cargo.toml": "2ea1f690d446a7da1a3724933056238f530772e1",
+            "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
+            "crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs": "9cdeeee83cdee09f2ba7a3c77765d1fcf019dd49",
+            "crates/oxide-batch-cli/tests/support": "54529b16ee9ab48eb2b32b197aaa2aabb6d4c25a",
+            "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+            "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
+            "crates/oxide-batch-plan/Cargo.toml": "b4a3d2a499c520fa02931720e80cfd146fa0aeaa",
+            "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+            "crates/oxide-batch-repository/Cargo.toml": "a81dbefa7facf4eca63b6b001a03d7ddc2d1fb8a",
+            "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+            "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
+            "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
+            "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
+            "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "b7d0895f80b953a0183446fff680566e956c6afe",
+            "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "583e7b3d08a6de0f049f2cf27b9dfeb7ab537161",
+            "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "8e21faee3a073d6dd9b2697f59f974ae73f0cd4f",
+            "crates/oxide-batch/tests/resource_bounds": "3e90ae5015649f6f8086e86082cee17d97b71006",
+            "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+            "tests/fixtures/resource-bounds/campaign-scope.json": "c139c022da421c9e123c3e8b055ff3eb1c619234",
+            "tests/fixtures/resource-bounds/campaign-semantics.json": "7f491c7d9960af9218e455f47861aecd2e28a075",
+            "tests/fixtures/resource-bounds/execution-contract.json": "b40bd36435adcd5e8638ebb69651e5ed897b142c",
+            "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
+            "tests/fixtures/resource-bounds/verify-ci-contract.sh": "f980d37a1fa70a79a27994e07625e17f4a87bd7e",
+            "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+            "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
+            "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
+            "xtask/src/resource_bounds.rs": "a84450ba1d621568031cdec8a01b0af4d2efe8c6",
+            "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
+          },
+          "tree_clean": true
         },
         "passed": true,
         "report": "bounded-shedding",

@@ -1508,10 +1508,22 @@ supported major would otherwise reconcile perfectly inside a run of another.
 
 ### Where it runs
 
-`postgres-15-resource-bound-campaign` and `postgres-18-resource-bound-campaign`
-in `.github/workflows/ci.yml`, on the two ends of the supported PostgreSQL
-`15`-`18` range, each retaining its report as a build artifact on success and
-failure alike.
+`postgres-15-resource-bounds-campaign` and `postgres-18-resource-bounds-campaign`
+in the dedicated
+[`.github/workflows/m5-resource-bounds.yml`](../../.github/workflows/m5-resource-bounds.yml)
+(promoted out of `ci.yml`, matching the soak, cancellation, performance,
+conformance, crash-restore, upgrade, and security campaigns' own dedicated
+workflows), on the two ends of the supported PostgreSQL `15`-`18` range, each
+retaining its report as a build artifact on success and failure alike. The
+job keeps the `services:` PostgreSQL container the campaign always used,
+including the deliberate absence of a `max_connections` override: the worker
+report saturates a partition budget of `64`, which needs `65` connections
+plus the parent's own pool and the fixture's, and the default of `100` is
+enough, so raising it would make the campaign prove a ceiling the image does
+not otherwise offer. The workflow's contract-check step fails closed against
+[`tests/fixtures/resource-bounds/execution-contract.json`](../../tests/fixtures/resource-bounds/execution-contract.json)
+before the campaign runs, and the campaign's semantic closure is declared in
+[`tests/fixtures/resource-bounds/campaign-semantics.json`](../../tests/fixtures/resource-bounds/campaign-semantics.json).
 
 ### Results
 
@@ -1523,10 +1535,16 @@ resources, `36` observed.
 | [`resource-bounds-campaign-postgres-15.json`](../engineering/campaigns/m5/resource-bounds-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
 | [`resource-bounds-campaign-postgres-18.json`](../engineering/campaigns/m5/resource-bounds-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
 
-Both were produced by commit `3a4a962`, which is the merge commit the workflow
-checked out rather than a branch tip, on `rustc 1.97.1` and Linux `x86_64`,
-against servers `15.18` and `18.4`. The command is
-`cargo run --package oxide-batch-xtask -- resource-bounds`.
+Both were produced by commit `601560ef`, which is the pull-request merge
+commit the dedicated `M5 Resource Bounds` workflow checked out rather than a
+branch tip, on `rustc 1.97.1` and Linux `x86_64`, against servers `15.19` and
+`18.6`. The command is `cargo run --package oxide-batch-xtask -- resource-bounds`.
+This producer superseded the two reports the prior `ci.yml`
+`resource-bound-campaign` job had retained (produced 2026-08-11): those
+predated the dedicated workflow, the execution contract, the semantic
+closure, and the execution manifest this promotion introduces, and were
+never reused as strong-provenance evidence. See
+[`evidence-provenance.json`](../engineering/campaigns/m5/evidence-provenance.json).
 
 Every structural figure below is identical on the two matrix points, which is
 what the campaign claims: it asserts occupancy, counts, and refusals rather than

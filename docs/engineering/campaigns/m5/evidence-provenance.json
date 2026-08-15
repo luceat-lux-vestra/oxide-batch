@@ -94,6 +94,14 @@
           "postgres-15",
           "postgres-18"
         ]
+      },
+      {
+        "campaign": "M5 PostgreSQL resource bounds",
+        "semantics": "tests/fixtures/resource-bounds/campaign-semantics.json",
+        "required_matrix": [
+          "postgres-15",
+          "postgres-18"
+        ]
       }
     ]
   },
@@ -865,6 +873,118 @@
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
         "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. Supersedes the run 31862711341 promotion (artifacts 9241094695/9241094179): that producer predated the exact-set role-matrix reconciliation added afterward — a verifier that checked only per-class and total cell counts could not distinguish a report that removed one legitimate least-privilege boundary and substituted a same-class, same-surface, same-expected bogus cell in its place, so the semantic closure changed (tests/fixtures/security/role-matrix.json joined it, and postgres_least_privilege_roles.rs and xtask/src/security.rs both changed within it) and fresh evidence was mandatory rather than optional. This run's reports carry the new role-matrix.json object identity in their execution_manifest and an id on every matrix cell. The run 31862711341 promotion itself, in turn, was the first promotion of security evidence under the strong provenance model, replacing the ci.yml security-campaign job and the prior PR #119 security-campaign evidence this campaign never reused. See docs/project/m5-campaign-evidence.md."
+      }
+    },
+    {
+      "report": "resource-bounds-campaign-postgres-15.json",
+      "campaign": "M5 PostgreSQL resource bounds",
+      "scenarios": [
+        "declared_ceilings_hold_under_stress_with_backpressure",
+        "bounded_query_paths_stay_bounded_as_history_grows",
+        "bounded_payloads_are_refused_one_byte_over_the_ceiling",
+        "bounded_queues_shed_under_overload_without_blocking_batch_work"
+      ],
+      "matrix_point": "postgres-15",
+      "postgres_major_version": "15",
+      "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
+      "producer": {
+        "execution_commit": "601560efacb76864ba1d2097d41a1dffe77dc3da",
+        "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
+        "branch_head_sha": "b0dbf384497c000022a06ae593688fdcbf45c5ba",
+        "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "M5 Resource Bounds",
+        "workflow_file": ".github/workflows/m5-resource-bounds.yml",
+        "id": 31884727684,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "postgres-15-resource-bounds-campaign",
+        "id": 95012253817,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "resource-bounds-campaign-postgres-15",
+        "id": 9246968574,
+        "digest": "sha256:06b19b1d71fe012b6851b212023cabe1484fb6a34729340dce2d94c4038b5a50",
+        "size_bytes": 11120
+      },
+      "retained_report_git_blob": "c842a8f374766a104219931a14d2753ce26e6941",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-15T12:43:25Z",
+        "run_id": 31884727684,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. The two pre-existing resource-bounds-campaign-postgres-{15,18}.json reports this promotion replaces (produced 2026-08-11 under the prior ci.yml resource-bound-campaign job) were not reused as strong-provenance evidence: they predate the dedicated workflow, the execution contract, the semantic closure, and the execution manifest this promotion introduces, and were superseded rather than promoted. See docs/project/m5-campaign-evidence.md."
+      }
+    },
+    {
+      "report": "resource-bounds-campaign-postgres-18.json",
+      "campaign": "M5 PostgreSQL resource bounds",
+      "scenarios": [
+        "declared_ceilings_hold_under_stress_with_backpressure",
+        "bounded_query_paths_stay_bounded_as_history_grows",
+        "bounded_payloads_are_refused_one_byte_over_the_ceiling",
+        "bounded_queues_shed_under_overload_without_blocking_batch_work"
+      ],
+      "matrix_point": "postgres-18",
+      "postgres_major_version": "18",
+      "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
+      "producer": {
+        "execution_commit": "601560efacb76864ba1d2097d41a1dffe77dc3da",
+        "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
+        "branch_head_sha": "b0dbf384497c000022a06ae593688fdcbf45c5ba",
+        "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "M5 Resource Bounds",
+        "workflow_file": ".github/workflows/m5-resource-bounds.yml",
+        "id": 31884727684,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "postgres-18-resource-bounds-campaign",
+        "id": 95012253924,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "resource-bounds-campaign-postgres-18",
+        "id": 9246970432,
+        "digest": "sha256:e2b23a5d58503cf2a2c1af91121493420a66a1f92cff915a6bdd1db3252a3a3b",
+        "size_bytes": 11119
+      },
+      "retained_report_git_blob": "dacd31e4d3eea6c42aae625ad6bfcea90ad765bf",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-15T12:43:25Z",
+        "run_id": 31884727684,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. The two pre-existing resource-bounds-campaign-postgres-{15,18}.json reports this promotion replaces (produced 2026-08-11 under the prior ci.yml resource-bound-campaign job) were not reused as strong-provenance evidence: they predate the dedicated workflow, the execution contract, the semantic closure, and the execution manifest this promotion introduces, and were superseded rather than promoted. See docs/project/m5-campaign-evidence.md."
       }
     }
   ]
