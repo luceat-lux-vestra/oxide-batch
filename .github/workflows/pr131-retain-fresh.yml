@@ -1,6 +1,8 @@
 name: PR131 retain fresh resource-bound evidence
 
 on:
+  push:
+    branches: [ci/m5-resource-bounds-provenance]
   pull_request:
     branches: [main]
 
@@ -10,7 +12,7 @@ permissions:
 
 jobs:
   retain:
-    if: github.event.pull_request.number == 131
+    if: github.event_name == 'push' || github.event.pull_request.number == 131
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
