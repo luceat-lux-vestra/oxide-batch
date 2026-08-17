@@ -473,14 +473,15 @@ fn collect_evidence(scope: &Scope, runs: &Runs) -> (Evidence, Vec<String>) {
     (evidence, violations)
 }
 
-/// Requires every declared resource to have been observed, at its ceiling.
+/// Requires every declared resource to have been observed, and every proof
+/// kind it declares to be satisfied by its raw evidence.
 ///
-/// A resource whose only evidence is a pair of construction cells is proved
-/// numerically by the pair rather than by a single reconcilable entry: the
-/// declared ceiling must have been accepted exactly, and one past it must
-/// have been refused. Neither side alone is non-vacuous proof — an all-accept
-/// or all-refuse report would say nothing about where the ceiling actually
-/// falls.
+/// Numeric and construction evidence are not mutually exclusive: a resource
+/// with both is checked on both, because a report could otherwise narrow a
+/// hard ceiling behind a stress-only saturation proof, or vice versa. Each
+/// declared proof kind is dispatched to its own check; a kind with no
+/// matching evidence is a violation, and a resource that declares no proof
+/// kinds fails to parse at all (`Scope::read` requires at least one).
 fn reconcile_denominator(scope: &Scope, evidence: &Evidence) -> Vec<String> {
     let mut violations = Vec::new();
 
@@ -502,57 +503,561 @@ fn reconcile_denominator(scope: &Scope, evidence: &Evidence) -> Vec<String> {
             // The ceiling the report says it checked has to be the one the
             // denominator declares. Without this, a report could quietly
             // narrow a bound and still reconcile.
-            let Some(declared) = resource.ceiling else {
-                continue;
-            };
-            let observed = entry
-                .get("declared_ceiling")
-                .or_else(|| entry.get("configured_ceiling"))
-                .and_then(Value::as_i64);
-            if observed != Some(declared) {
-                violations.push(format!(
-                    "{} is declared with a ceiling of {declared} and the {report} report \
-                     checked {observed:?}",
-                    resource.name,
-                ));
+            if let Some(declared) = resource.ceiling {
+                let observed = entry
+                    .get("declared_ceiling")
+                    .or_else(|| entry.get("configured_ceiling"))
+                    .and_then(Value::as_i64);
+                if observed != Some(declared) {
+                    violations.push(format!(
+                        "{} is declared with a ceiling of {declared} and the {report} report \
+                         checked {observed:?}",
+                        resource.name,
+                    ));
+                }
             }
-            continue;
         }
 
-        let Some((report, cells)) = evidence.construction.get(&resource.name) else {
-            continue;
-        };
-        let Some(declared) = resource.ceiling else {
-            continue;
-        };
-        let accepted_at_ceiling = cells.iter().any(|cell| {
-            cell.get("value").and_then(Value::as_i64) == Some(declared)
-                && cell.get("expected").and_then(Value::as_str) == Some("accepted")
-                && cell.get("observed").and_then(Value::as_str) == Some("accepted")
-        });
-        let refused_past_ceiling = cells.iter().any(|cell| {
-            cell.get("value")
-                .and_then(Value::as_i64)
-                .is_some_and(|value| value > declared)
-                && cell.get("expected").and_then(Value::as_str) == Some("refused")
-                && cell.get("observed").and_then(Value::as_str) == Some("refused")
-        });
-        if !accepted_at_ceiling {
+        for proof in &resource.proofs {
+            violations.extend(match proof.as_str() {
+                "construction-boundary" => reconcile_construction_boundary(resource, evidence),
+                "range-boundary" => reconcile_range_boundary(resource, evidence),
+                "subject-boundary" => reconcile_subject_boundary(resource, evidence),
+                "derived-capacity" => reconcile_derived_capacity(resource, evidence),
+                "dual-budget-boundary" => reconcile_dual_budget_boundary(resource, evidence),
+                "search-bounded-construction" => {
+                    reconcile_search_bounded_construction(resource, evidence)
+                }
+                "upper-bound-only" => reconcile_upper_bound_only(resource, evidence),
+                "truncation" => reconcile_truncation(resource, evidence),
+                "refusal-past-ceiling" => reconcile_refusal_past_ceiling(resource, evidence),
+                // Checked elsewhere: stress-saturation by reconcile_stress
+                // against scope.stress, durable-round-trip by the producer's
+                // own byte-identity assertion before it would ever retain a
+                // passing observation.
+                "stress-saturation" | "durable-round-trip" => Vec::new(),
+                other => vec![format!(
+                    "{} declares a proof kind ({other}) this runner does not know how to check",
+                    resource.name,
+                )],
+            });
+        }
+    }
+
+    violations
+}
+
+/// Requires the declared ceiling accepted exactly, and one past it refused
+/// exactly. Neither side alone is non-vacuous proof — an all-accept or
+/// all-refuse report says nothing about where the ceiling actually falls.
+fn reconcile_construction_boundary(resource: &Resource, evidence: &Evidence) -> Vec<String> {
+    let mut violations = Vec::new();
+    let Some(declared) = resource.ceiling else {
+        violations.push(format!(
+            "{} declares a construction-boundary proof and has no numeric ceiling to check it \
+             against",
+            resource.name,
+        ));
+        return violations;
+    };
+    let Some((report, cells)) = evidence.construction.get(&resource.name) else {
+        // A numeric entry proving stress-saturation does not stand in for
+        // this: construction-boundary declared for a resource requires its
+        // own construction cells regardless of what else was recorded for it,
+        // so a numeric-only observation is still a missing proof here.
+        violations.push(format!(
+            "{} declares a construction-boundary proof and no report recorded any construction \
+             cells for it",
+            resource.name,
+        ));
+        return violations;
+    };
+    let Some(past) = declared.checked_add(1) else {
+        violations.push(format!(
+            "{} has a declared ceiling of {declared} that overflows one past it, so \
+             construction-boundary cannot be checked",
+            resource.name,
+        ));
+        return violations;
+    };
+    if !cell_matches(cells, declared, "accepted") {
+        violations.push(format!(
+            "{} is declared with a ceiling of {declared} and the {report} report recorded no \
+             construction accepted exactly at it",
+            resource.name,
+        ));
+    }
+    if !cell_matches(cells, past, "refused") {
+        violations.push(format!(
+            "{} is declared with a ceiling of {declared} and the {report} report recorded no \
+             construction refused at exactly {past}",
+            resource.name,
+        ));
+    }
+    violations
+}
+
+/// Returns whether some cell recorded exactly `value`, `expected == side`,
+/// and `observed == side`.
+fn cell_matches(cells: &[Value], value: i64, side: &str) -> bool {
+    cells.iter().any(|cell| {
+        cell.get("value").and_then(Value::as_i64) == Some(value)
+            && cell.get("expected").and_then(Value::as_str) == Some(side)
+            && cell.get("observed").and_then(Value::as_str) == Some(side)
+    })
+}
+
+/// Requires all four sides of an inclusive minimum/maximum range, in
+/// canonical milliseconds: accepted at the minimum, refused one millisecond
+/// below it, accepted at the maximum, refused one millisecond past it.
+fn reconcile_range_boundary(resource: &Resource, evidence: &Evidence) -> Vec<String> {
+    let mut violations = Vec::new();
+    let Some(bounds) = &resource.bounds else {
+        violations.push(format!(
+            "{} declares a range-boundary proof and has no bounds declared to check it against",
+            resource.name,
+        ));
+        return violations;
+    };
+    let Some((report, cells)) = evidence.construction.get(&resource.name) else {
+        violations.push(format!(
+            "{} declares a range-boundary proof and no report recorded construction cells for \
+             it",
+            resource.name,
+        ));
+        return violations;
+    };
+    let (Some(below_minimum), Some(past_maximum)) =
+        (bounds.minimum.checked_sub(1), bounds.maximum.checked_add(1))
+    else {
+        violations.push(format!(
+            "{} has a minimum of {} and a maximum of {} that overflow one step past their \
+             boundary, so range-boundary cannot be checked",
+            resource.name, bounds.minimum, bounds.maximum,
+        ));
+        return violations;
+    };
+    for (value, side, label) in [
+        (
+            bounds.minimum,
+            "accepted",
+            "accepted exactly at the minimum",
+        ),
+        (
+            below_minimum,
+            "refused",
+            "refused one millisecond below the minimum",
+        ),
+        (
+            bounds.maximum,
+            "accepted",
+            "accepted exactly at the maximum",
+        ),
+        (
+            past_maximum,
+            "refused",
+            "refused one millisecond past the maximum",
+        ),
+    ] {
+        if !cell_matches(cells, value, side) {
             violations.push(format!(
-                "{} is declared with a ceiling of {declared} and the {report} report recorded \
-                 no construction accepted exactly at it",
-                resource.name,
+                "{} is declared with a range of {}-{} milliseconds and the {report} report \
+                 recorded no construction {label}",
+                resource.name, bounds.minimum, bounds.maximum,
             ));
         }
-        if !refused_past_ceiling {
+    }
+    violations
+}
+
+/// Requires the bounded-identifier-text exact subject set, each with its own
+/// non-placeholder ceiling accepted exactly and refused one byte past it.
+fn reconcile_subject_boundary(resource: &Resource, evidence: &Evidence) -> Vec<String> {
+    let mut violations = Vec::new();
+    let Some((report, cells)) = evidence.construction.get(&resource.name) else {
+        violations.push(format!(
+            "{} declares a subject-boundary proof and no report recorded construction cells for \
+             it",
+            resource.name,
+        ));
+        return violations;
+    };
+
+    let mut by_subject: BTreeMap<&str, Vec<&Value>> = BTreeMap::new();
+    for cell in cells {
+        let Some(subject) = cell.get("subject").and_then(Value::as_str) else {
+            continue;
+        };
+        by_subject.entry(subject).or_default().push(cell);
+    }
+
+    let declared: BTreeMap<&str, i64> = resource
+        .subjects
+        .iter()
+        .map(|subject| (subject.subject.as_str(), subject.ceiling))
+        .collect();
+
+    for subject in by_subject.keys() {
+        if !declared.contains_key(subject) {
             violations.push(format!(
-                "{} is declared with a ceiling of {declared} and the {report} report recorded \
-                 no construction refused one past it",
+                "{subject} appears in the {report} report's {} evidence and is not one of its \
+                 declared subjects",
                 resource.name,
             ));
         }
     }
 
+    for (subject, &ceiling) in &declared {
+        let Some(subject_cells) = by_subject.get(subject) else {
+            violations.push(format!(
+                "{subject} is a declared subject of {} and no report recorded evidence for it",
+                resource.name,
+            ));
+            continue;
+        };
+        if subject_cells.len() > 2 {
+            violations.push(format!(
+                "{subject} was recorded more than twice in the {report} report's {} evidence",
+                resource.name,
+            ));
+        }
+        let Some(past) = ceiling.checked_add(1) else {
+            violations.push(format!(
+                "{subject} has a declared ceiling of {ceiling} that overflows one byte past it",
+            ));
+            continue;
+        };
+        let owned: Vec<Value> = subject_cells.iter().map(|cell| (*cell).clone()).collect();
+        if !cell_matches(&owned, ceiling, "accepted") {
+            violations.push(format!(
+                "{subject} is declared with a ceiling of {ceiling} and the {report} report \
+                 recorded no construction accepted exactly at it",
+            ));
+        }
+        if !cell_matches(&owned, past, "refused") {
+            violations.push(format!(
+                "{subject} is declared with a ceiling of {ceiling} and the {report} report \
+                 recorded no construction refused at exactly {past}",
+            ));
+        }
+    }
+
+    violations
+}
+
+/// Re-derives `repository-connection-capacity`'s required connection count
+/// from the raw `concurrent_children` field as `concurrent_children +
+/// parent_connections`, rather than trusting the report's own arithmetic.
+fn reconcile_derived_capacity(resource: &Resource, evidence: &Evidence) -> Vec<String> {
+    let mut violations = Vec::new();
+    let Some((report, entry)) = evidence.observed.get(&resource.name) else {
+        violations.push(format!(
+            "{} declares a derived-capacity proof and no report recorded a numeric entry for it",
+            resource.name,
+        ));
+        return violations;
+    };
+    let Some(parent) = resource.parent_connections else {
+        violations.push(format!(
+            "{} declares a derived-capacity proof and no parent_connections value to derive from",
+            resource.name,
+        ));
+        return violations;
+    };
+    if resource.bound_kind.as_deref() != Some("derived") {
+        violations.push(format!(
+            "{} declares a derived-capacity proof and its bound_kind is not \"derived\"",
+            resource.name,
+        ));
+    }
+    let Some(children) = entry
+        .pointer("/detail/concurrent_children")
+        .and_then(Value::as_i64)
+    else {
+        violations.push(format!(
+            "{} declares a derived-capacity proof and the {report} report recorded no \
+             concurrent_children detail to re-derive from",
+            resource.name,
+        ));
+        return violations;
+    };
+    let Some(required) = children.checked_add(parent) else {
+        violations.push(format!(
+            "{} has a concurrent_children of {children} that overflows adding the parent \
+             connection",
+            resource.name,
+        ));
+        return violations;
+    };
+    let recorded = entry
+        .pointer("/detail/required_connections")
+        .and_then(Value::as_i64);
+    if recorded != Some(required) {
+        violations.push(format!(
+            "{} re-derives to a required connection count of {required} from {children} \
+             concurrent children plus {parent}, and the {report} report recorded {recorded:?}",
+            resource.name,
+        ));
+    }
+    violations
+}
+
+/// Independently re-verifies `concurrent-split-branches`'s two nested runs:
+/// the budgeted run's own peak-equals-budget relation, and the ceiling run's
+/// own proof that the declared ceiling is reachable — not just the resource's
+/// top-level `configured_ceiling`/`peak` fields, which only cover the
+/// budgeted run.
+fn reconcile_dual_budget_boundary(resource: &Resource, evidence: &Evidence) -> Vec<String> {
+    let mut violations = Vec::new();
+    let Some((report, entry)) = evidence.observed.get(&resource.name) else {
+        violations.push(format!(
+            "{} declares a dual-budget-boundary proof and no report recorded a numeric entry \
+             for it",
+            resource.name,
+        ));
+        return violations;
+    };
+    let Some(declared) = resource.ceiling else {
+        return violations;
+    };
+
+    let budgeted = entry.pointer("/detail/budgeted_run");
+    let budget = budgeted
+        .and_then(|run| run.get("budget"))
+        .and_then(Value::as_i64);
+    let budgeted_offered = budgeted
+        .and_then(|run| run.get("offered"))
+        .and_then(Value::as_i64);
+    let budgeted_peak = budgeted
+        .and_then(|run| run.get("peak"))
+        .and_then(Value::as_i64);
+    if budgeted.is_none() {
+        violations.push(format!(
+            "{} declares a dual-budget-boundary proof and the {report} report recorded no \
+             budgeted_run detail",
+            resource.name,
+        ));
+    } else {
+        if budgeted_peak != budget {
+            violations.push(format!(
+                "{}'s budgeted run has a budget of {budget:?} and a peak of {budgeted_peak:?}",
+                resource.name,
+            ));
+        }
+        if budgeted_offered
+            .zip(budget)
+            .is_none_or(|(offered, budget)| offered <= budget)
+        {
+            violations.push(format!(
+                "{}'s budgeted run offered {budgeted_offered:?} against a budget of \
+                 {budget:?}, so it had nothing to hold back",
+                resource.name,
+            ));
+        }
+    }
+
+    let ceiling_run = entry.pointer("/detail/ceiling_run");
+    let ceiling_budget = ceiling_run
+        .and_then(|run| run.get("budget"))
+        .and_then(Value::as_i64);
+    let ceiling_offered = ceiling_run
+        .and_then(|run| run.get("offered"))
+        .and_then(Value::as_i64);
+    let ceiling_peak = ceiling_run
+        .and_then(|run| run.get("peak"))
+        .and_then(Value::as_i64);
+    if ceiling_run.is_none() {
+        violations.push(format!(
+            "{} declares a dual-budget-boundary proof and the {report} report recorded no \
+             ceiling_run detail",
+            resource.name,
+        ));
+    } else {
+        if ceiling_budget != Some(declared) {
+            violations.push(format!(
+                "{}'s ceiling run is budgeted at {ceiling_budget:?} and the declared ceiling is \
+                 {declared}",
+                resource.name,
+            ));
+        }
+        if ceiling_offered.is_none_or(|offered| offered < declared) {
+            violations.push(format!(
+                "{}'s ceiling run offered {ceiling_offered:?} against a declared ceiling of \
+                 {declared}, so the ceiling was not reachable",
+                resource.name,
+            ));
+        }
+        if ceiling_peak != Some(declared) {
+            violations.push(format!(
+                "{}'s ceiling run has a declared ceiling of {declared} and a peak of \
+                 {ceiling_peak:?}",
+                resource.name,
+            ));
+        }
+    }
+
+    violations
+}
+
+/// `definition-manifest` only: the canonical manifest ceiling binds before
+/// the node ceiling does, so the accepted side is the largest chain a search
+/// found that still fits the byte ceiling, and the refused side is one
+/// chain-length past it rather than one byte past it, which a refused graph
+/// has no manifest to measure.
+fn reconcile_search_bounded_construction(resource: &Resource, evidence: &Evidence) -> Vec<String> {
+    let mut violations = Vec::new();
+    let Some(declared) = resource.ceiling else {
+        return violations;
+    };
+    let Some((report, cells)) = evidence.construction.get(&resource.name) else {
+        violations.push(format!(
+            "{} declares a search-bounded-construction proof and no report recorded \
+             construction cells for it",
+            resource.name,
+        ));
+        return violations;
+    };
+    let accepted = cells.iter().any(|cell| {
+        cell.get("value")
+            .and_then(Value::as_i64)
+            .is_some_and(|value| value <= declared)
+            && cell.get("expected").and_then(Value::as_str) == Some("accepted")
+            && cell.get("observed").and_then(Value::as_str) == Some("accepted")
+    });
+    let refused = cells.iter().any(|cell| {
+        cell.get("expected").and_then(Value::as_str) == Some("refused")
+            && cell.get("observed").and_then(Value::as_str) == Some("refused")
+    });
+    if !accepted {
+        violations.push(format!(
+            "{} is declared with a ceiling of {declared} bytes and the {report} report recorded \
+             no construction accepted at or under it",
+            resource.name,
+        ));
+    }
+    if !refused {
+        violations.push(format!(
+            "{} is declared with a ceiling of {declared} bytes and the {report} report recorded \
+             no construction refused past the largest chain that fits",
+            resource.name,
+        ));
+    }
+    violations
+}
+
+/// A ceiling no accepted M5 input reaches, because a different bound always
+/// binds first or the resource composes from parts that never sum close to
+/// it. There is no refusal to require; the observed value beside the ceiling
+/// is enough, from either a numeric entry or a construction accept cell.
+fn reconcile_upper_bound_only(resource: &Resource, evidence: &Evidence) -> Vec<String> {
+    if evidence.observed.contains_key(&resource.name) {
+        // The generic declared_ceiling/configured_ceiling match above already
+        // requires the observed value to be recorded beside the ceiling.
+        return Vec::new();
+    }
+    let mut violations = Vec::new();
+    let Some(declared) = resource.ceiling else {
+        return violations;
+    };
+    let Some((report, cells)) = evidence.construction.get(&resource.name) else {
+        violations.push(format!(
+            "{} declares an upper-bound-only proof and no report recorded any evidence for it",
+            resource.name,
+        ));
+        return violations;
+    };
+    let accepted = cells.iter().any(|cell| {
+        cell.get("value")
+            .and_then(Value::as_i64)
+            .is_some_and(|value| value <= declared)
+            && cell.get("expected").and_then(Value::as_str) == Some("accepted")
+            && cell.get("observed").and_then(Value::as_str) == Some("accepted")
+    });
+    if !accepted {
+        violations.push(format!(
+            "{} is declared upper-bound-only with a ceiling of {declared} and the {report} \
+             report recorded no construction accepted at or under it",
+            resource.name,
+        ));
+    }
+    violations
+}
+
+/// `instance-key-input` only: a fail-closed resource proved by refusal alone,
+/// with no construction accept cell at the ceiling. Requires the recorded
+/// offer to actually have exceeded the declared ceiling and the report's own
+/// `refused` flag to be true — an offer at or under the ceiling, or a refusal
+/// flag left false, means the ceiling was never actually exercised.
+fn reconcile_refusal_past_ceiling(resource: &Resource, evidence: &Evidence) -> Vec<String> {
+    let mut violations = Vec::new();
+    let Some(declared) = resource.ceiling else {
+        return violations;
+    };
+    let Some((report, entry)) = evidence.observed.get(&resource.name) else {
+        violations.push(format!(
+            "{} declares a refusal-past-ceiling proof and no report recorded a numeric entry \
+             for it",
+            resource.name,
+        ));
+        return violations;
+    };
+    let offered = entry
+        .get("offered_load")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    if offered <= declared {
+        violations.push(format!(
+            "{} is declared with a ceiling of {declared} and the {report} report offered \
+             {offered}, which never exceeded it",
+            resource.name,
+        ));
+    }
+    if entry.get("refused").and_then(Value::as_bool) != Some(true) {
+        violations.push(format!(
+            "{} was offered past its declared ceiling and the {report} report did not record a \
+             refusal",
+            resource.name,
+        ));
+    }
+    violations
+}
+
+/// `explorer-response` only: `offered_load` is a row count here, not bytes,
+/// so it is not reconciled against the byte ceiling. The proof instead reads
+/// the traversal's own truncation marker and the observed byte peak.
+fn reconcile_truncation(resource: &Resource, evidence: &Evidence) -> Vec<String> {
+    let mut violations = Vec::new();
+    let Some(declared) = resource.ceiling else {
+        return violations;
+    };
+    let Some((report, entry)) = evidence.observed.get(&resource.name) else {
+        violations.push(format!(
+            "{} declares a truncation proof and no report recorded a numeric entry for it",
+            resource.name,
+        ));
+        return violations;
+    };
+    let peak = entry
+        .get("observed_peak_occupancy")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    if peak > declared {
+        violations.push(format!(
+            "{} held {peak} against a declared ceiling of {declared}",
+            resource.name,
+        ));
+    }
+    let truncated = entry
+        .get("truncated_pages")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    if truncated <= 0 {
+        violations.push(format!(
+            "{} recorded no truncated pages in the {report} report, so its bound was never \
+             actually exercised",
+            resource.name,
+        ));
+    }
     violations
 }
 
@@ -611,25 +1116,20 @@ fn reconcile_stress(scope: &Scope, evidence: &Evidence) -> Vec<String> {
                 }
             }
             "offered-exceeds-ceiling" => {
-                if offered <= ceiling {
-                    violations.push(format!(
-                        "{} sheds under overload and was offered {offered} against a ceiling of \
-                         {ceiling}, so it was never overloaded",
-                        requirement.resource,
-                    ));
-                }
-                if drops <= 0 {
-                    violations.push(format!(
-                        "{} was offered more than it holds and shed nothing",
-                        requirement.resource,
-                    ));
-                }
-                if peak > ceiling {
-                    violations.push(format!(
-                        "{} held {peak} against a ceiling of {ceiling}",
-                        requirement.resource,
-                    ));
-                }
+                let declared_rule = scope
+                    .resources
+                    .iter()
+                    .find(|candidate| candidate.name == requirement.resource)
+                    .and_then(|candidate| candidate.shedding_rule.as_deref());
+                violations.extend(reconcile_offered_exceeds_ceiling(
+                    &requirement.resource,
+                    entry,
+                    ceiling,
+                    offered,
+                    peak,
+                    drops,
+                    declared_rule,
+                ));
             }
             "history-exceeds-page" | "candidates-exceed-batch" => {
                 if offered <= ceiling {
@@ -658,6 +1158,102 @@ fn reconcile_stress(scope: &Scope, evidence: &Evidence) -> Vec<String> {
     }
 
     violations
+}
+
+/// Requires a shedding-policy resource offered past its ceiling to have
+/// actually shed, held no more than its ceiling, and accounted for every
+/// offered unit exactly under the relation its own declared shedding rule
+/// contracts for.
+#[allow(clippy::too_many_arguments)]
+fn reconcile_offered_exceeds_ceiling(
+    resource: &str,
+    entry: &Value,
+    ceiling: i64,
+    offered: i64,
+    peak: i64,
+    drops: i64,
+    declared_rule: Option<&str>,
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    if offered <= ceiling {
+        violations.push(format!(
+            "{resource} sheds under overload and was offered {offered} against a ceiling of \
+             {ceiling}, so it was never overloaded",
+        ));
+    }
+    if drops <= 0 {
+        violations.push(format!(
+            "{resource} was offered more than it holds and shed nothing",
+        ));
+    }
+    if peak > ceiling {
+        violations.push(format!(
+            "{resource} held {peak} against a ceiling of {ceiling}"
+        ));
+    }
+    let observed_rule = entry.get("shedding_rule").and_then(Value::as_str);
+    match (declared_rule, observed_rule) {
+        (Some(declared), Some(observed)) if declared != observed => {
+            violations.push(format!(
+                "{resource} is declared with the {declared} shedding rule and the report \
+                 recorded {observed} instead",
+            ));
+        }
+        (Some(_), None) => violations.push(format!(
+            "{resource} declares a shedding rule and the report recorded none",
+        )),
+        _ => {}
+    }
+    violations.extend(reconcile_shed_accounting(
+        resource,
+        entry,
+        offered,
+        drops,
+        declared_rule.or(observed_rule),
+    ));
+    violations
+}
+
+/// Requires exact accounting for a shedding-policy resource: every unit
+/// offered is either retained or discarded, and a gap between the two is loss
+/// the report failed to attribute rather than shedding.
+///
+/// Two relations are known: `drop-newest` and `evict-oldest` both retain
+/// exactly what a ceiling-sized buffer holds, so what is not retained is
+/// discarded outright. `collapse-to-reserved-series` instead carves one slot
+/// out of the ceiling for a shared reserved series that every excess unit
+/// collapses into: that slot is retained but did not come from a distinct
+/// offered unit being kept, so one fewer offered unit is truly new and one
+/// more is attributed to the reserved series than the flat relation would
+/// count.
+fn reconcile_shed_accounting(
+    resource: &str,
+    entry: &Value,
+    offered: i64,
+    drops: i64,
+    rule: Option<&str>,
+) -> Vec<String> {
+    let retained = entry
+        .get("retained")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    let expected = match rule {
+        Some("collapse-to-reserved-series") => retained
+            .checked_sub(1)
+            .and_then(|distinct| offered.checked_sub(distinct)),
+        _ => offered.checked_sub(retained),
+    };
+    match expected {
+        Some(expected) if expected == drops => Vec::new(),
+        Some(expected) => vec![format!(
+            "{resource} offered {offered} and retained {retained}, so {expected} should have \
+             been discarded, and the report recorded {drops}",
+        )],
+        None => vec![format!(
+            "{resource} retained {retained} against an offered load of {offered}, which \
+             retains more than was offered",
+        )],
+    }
 }
 
 /// Requires a fail-closed rejection to have left nothing behind.
@@ -731,81 +1327,126 @@ fn reconcile_equivalence(scope: &Scope, runs: &Runs) -> Vec<String> {
             violations.push(format!("{}: {violation}", comparison.report));
         }
 
-        let mut compared: BTreeMap<String, bool> = BTreeMap::new();
-        for field in equivalence
-            .get("fields_compared")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            let Some(name) = field.get("field").and_then(Value::as_str) else {
-                continue;
-            };
-            if compared.contains_key(name) {
-                violations.push(format!(
-                    "the {} comparison recorded {name} more than once",
-                    comparison.report,
-                ));
-                continue;
-            }
-            compared.insert(
-                name.to_owned(),
-                field.get("agrees").and_then(Value::as_bool) == Some(true),
-            );
-        }
-        for required in &comparison.must_agree_on {
-            match compared.get(required) {
-                None => violations.push(format!(
-                    "the {} comparison is required to agree on {required} and compared no such \
-                     field",
-                    comparison.report,
-                )),
-                Some(false) => violations.push(format!(
-                    "the {} comparison recorded {required} as disagreeing, and a concurrency \
-                     result that changes a durable observation is invalid regardless of its \
-                     throughput",
-                    comparison.report,
-                )),
-                Some(true) => {}
-            }
-        }
+        violations.extend(reconcile_agreement_fields(
+            &comparison.report,
+            equivalence,
+            &comparison.must_agree_on,
+        ));
+        violations.extend(reconcile_forbidden_conditions(
+            &comparison.report,
+            equivalence,
+            &comparison.must_not_observe,
+        ));
+    }
 
-        let mut observed_conditions: BTreeMap<String, bool> = BTreeMap::new();
-        for entry in equivalence
-            .get("must_not_observe")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            let Some(condition) = entry.get("condition").and_then(Value::as_str) else {
-                continue;
-            };
-            let Some(observed) = entry.get("observed").and_then(Value::as_bool) else {
-                continue;
-            };
-            if observed_conditions.contains_key(condition) {
-                violations.push(format!(
-                    "the {} comparison recorded {condition} more than once",
-                    comparison.report,
-                ));
-                continue;
-            }
-            observed_conditions.insert(condition.to_owned(), observed);
+    violations
+}
+
+/// Requires `fields_compared` to be the exact set `must_agree_on` declares: a
+/// required field missing or disagreeing fails, and a compared field not
+/// declared also fails, so an undeclared extra cannot mask a missing
+/// required one.
+fn reconcile_agreement_fields(
+    report: &str,
+    equivalence: &Value,
+    must_agree_on: &[String],
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    let mut compared: BTreeMap<String, bool> = BTreeMap::new();
+    for field in equivalence
+        .get("fields_compared")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(name) = field.get("field").and_then(Value::as_str) else {
+            continue;
+        };
+        if compared.contains_key(name) {
+            violations.push(format!(
+                "the {report} comparison recorded {name} more than once"
+            ));
+            continue;
         }
-        for condition in &comparison.must_not_observe {
-            match observed_conditions.get(condition) {
-                None => violations.push(format!(
-                    "the {} comparison is required to report on {condition} and recorded no \
-                     such condition",
-                    comparison.report,
-                )),
-                Some(true) => violations.push(format!(
-                    "the {} comparison observed {condition}, which the campaign requires it not \
-                     to",
-                    comparison.report,
-                )),
-                Some(false) => {}
-            }
+        compared.insert(
+            name.to_owned(),
+            field.get("agrees").and_then(Value::as_bool) == Some(true),
+        );
+    }
+    for required in must_agree_on {
+        match compared.get(required) {
+            None => violations.push(format!(
+                "the {report} comparison is required to agree on {required} and compared no \
+                 such field",
+            )),
+            Some(false) => violations.push(format!(
+                "the {report} comparison recorded {required} as disagreeing, and a concurrency \
+                 result that changes a durable observation is invalid regardless of its \
+                 throughput",
+            )),
+            Some(true) => {}
+        }
+    }
+    for name in compared.keys() {
+        if !must_agree_on.iter().any(|required| required == name) {
+            violations.push(format!(
+                "the {report} comparison compared {name}, which is not one of its declared \
+                 must_agree_on fields",
+            ));
+        }
+    }
+    violations
+}
+
+/// Requires `must_not_observe` conditions to be reported on exactly: a
+/// required condition missing or observed true fails, and a reported
+/// condition not declared also fails.
+fn reconcile_forbidden_conditions(
+    report: &str,
+    equivalence: &Value,
+    must_not_observe: &[String],
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    let mut observed_conditions: BTreeMap<String, bool> = BTreeMap::new();
+    for entry in equivalence
+        .get("must_not_observe")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(condition) = entry.get("condition").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(observed) = entry.get("observed").and_then(Value::as_bool) else {
+            continue;
+        };
+        if observed_conditions.contains_key(condition) {
+            violations.push(format!(
+                "the {report} comparison recorded {condition} more than once",
+            ));
+            continue;
+        }
+        observed_conditions.insert(condition.to_owned(), observed);
+    }
+    for condition in must_not_observe {
+        match observed_conditions.get(condition) {
+            None => violations.push(format!(
+                "the {report} comparison is required to report on {condition} and recorded no \
+                 such condition",
+            )),
+            Some(true) => violations.push(format!(
+                "the {report} comparison observed {condition}, which the campaign requires it \
+                 not to",
+            )),
+            Some(false) => {}
+        }
+    }
+    for name in observed_conditions.keys() {
+        if !must_not_observe.iter().any(|condition| condition == name) {
+            violations.push(format!(
+                "the {report} comparison reported on {name}, which is not one of its declared \
+                 must_not_observe conditions",
+            ));
         }
     }
 
@@ -1089,17 +1730,7 @@ impl Scope {
 
         let mut resources = Vec::new();
         for resource in array(&document, "resources")? {
-            resources.push(Resource {
-                name: suite::string(resource, "resource")?,
-                class: suite::string(resource, "class")?,
-                policy: suite::string(resource, "policy")?,
-                report: suite::string(resource, "report")?,
-                ceiling: resource.get("ceiling").and_then(Value::as_i64),
-                postgres: resource
-                    .get("postgres")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-            });
+            resources.push(read_resource(resource)?);
         }
 
         let stress_document = document
@@ -1132,6 +1763,74 @@ impl Scope {
             related: document.get("related").cloned().unwrap_or(Value::Null),
         })
     }
+}
+
+/// Reads one declared resource, including its proof kinds and whichever of
+/// `bounds`, `bound_kind`, `parent_connections`, or `subjects` its proof
+/// kinds require.
+fn read_resource(resource: &Value) -> Result<Resource, String> {
+    let proofs = resource
+        .get("proofs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if proofs.is_empty() {
+        return Err(format!(
+            "{} declares no proof kinds",
+            resource
+                .get("resource")
+                .and_then(Value::as_str)
+                .unwrap_or("<unnamed>"),
+        ));
+    }
+    let bounds = resource.get("bounds").map(|bounds| Bounds {
+        minimum: bounds
+            .pointer("/minimum/value")
+            .and_then(Value::as_i64)
+            .unwrap_or_default(),
+        maximum: bounds
+            .pointer("/maximum/value")
+            .and_then(Value::as_i64)
+            .unwrap_or_default(),
+    });
+    let subjects = resource
+        .get("subjects")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            Some(Subject {
+                subject: entry.get("subject").and_then(Value::as_str)?.to_owned(),
+                ceiling: entry.get("ceiling").and_then(Value::as_i64)?,
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(Resource {
+        name: suite::string(resource, "resource")?,
+        class: suite::string(resource, "class")?,
+        policy: suite::string(resource, "policy")?,
+        report: suite::string(resource, "report")?,
+        ceiling: resource.get("ceiling").and_then(Value::as_i64),
+        postgres: resource
+            .get("postgres")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        proofs,
+        bounds,
+        bound_kind: resource
+            .get("bound_kind")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        parent_connections: resource.get("parent_connections").and_then(Value::as_i64),
+        subjects,
+        shedding_rule: resource
+            .get("shedding_rule")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    })
 }
 
 /// Reads the ceilings the campaign must reach rather than respect.
@@ -1219,6 +1918,33 @@ struct Resource {
     ceiling: Option<i64>,
     /// Whether the proof is required to be on `PostgreSQL`.
     postgres: bool,
+    /// The proof kinds this resource's raw evidence must satisfy exactly.
+    proofs: Vec<String>,
+    /// The inclusive minimum/maximum range, in canonical milliseconds, for a
+    /// range-boundary resource.
+    bounds: Option<Bounds>,
+    /// How a resource with no declared ceiling is bounded instead, when it is
+    /// not a range: `"derived"` for `repository-connection-capacity`.
+    bound_kind: Option<String>,
+    /// The parent's own share of a derived connection-capacity resource.
+    parent_connections: Option<i64>,
+    /// The per-subject denominator for a subject-boundary resource.
+    subjects: Vec<Subject>,
+    /// The overload-shedding relation a bounded-shedding resource contracts
+    /// for, when its policy is `"bounded-shedding"`.
+    shedding_rule: Option<String>,
+}
+
+/// An inclusive minimum/maximum range, in canonical milliseconds.
+struct Bounds {
+    minimum: i64,
+    maximum: i64,
+}
+
+/// One subject a subject-boundary resource sweeps, with its own real ceiling.
+struct Subject {
+    subject: String,
+    ceiling: i64,
 }
 
 /// One obligation to reach a ceiling rather than stay under it.
@@ -1250,9 +1976,9 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        Comparison, Report, Resource, Runs, Scope, StressRequirement, collect_evidence,
-        execution_manifest, reconcile_denominator, reconcile_equivalence, reconcile_matrix_point,
-        reconcile_stress,
+        Bounds, Comparison, Report, Resource, Runs, Scope, StressRequirement, Subject,
+        collect_evidence, execution_manifest, reconcile_denominator, reconcile_equivalence,
+        reconcile_matrix_point, reconcile_stress,
     };
 
     /// A scope shaped like the committed `campaign-scope.json`, without the
@@ -1274,6 +2000,7 @@ mod tests {
                     "report-a",
                     Some(10),
                     true,
+                    &["construction-boundary", "stress-saturation"],
                 ),
                 resource(
                     "resource-b",
@@ -1282,6 +2009,7 @@ mod tests {
                     "report-a",
                     Some(5),
                     false,
+                    &["construction-boundary"],
                 ),
                 resource(
                     "resource-c",
@@ -1290,8 +2018,17 @@ mod tests {
                     "report-b",
                     Some(20),
                     false,
+                    &["stress-saturation"],
                 ),
-                resource("resource-d", "queue", "fail-closed", "report-a", None, true),
+                resource(
+                    "resource-d",
+                    "queue",
+                    "fail-closed",
+                    "report-a",
+                    None,
+                    true,
+                    &["stress-saturation"],
+                ),
             ],
             classes: Value::Null,
             policies: Value::Null,
@@ -1344,6 +2081,7 @@ mod tests {
         report: &str,
         ceiling: Option<i64>,
         postgres: bool,
+        proofs: &[&str],
     ) -> Resource {
         Resource {
             name: name.to_owned(),
@@ -1352,6 +2090,12 @@ mod tests {
             report: report.to_owned(),
             ceiling,
             postgres,
+            proofs: proofs.iter().map(|proof| (*proof).to_owned()).collect(),
+            bounds: None,
+            bound_kind: None,
+            parent_connections: None,
+            subjects: Vec::new(),
+            shedding_rule: None,
         }
     }
 
@@ -1392,6 +2136,8 @@ mod tests {
                 },
             ],
             "construction": [
+                { "resource": "resource-a", "case": "at the ceiling", "value": 10, "expected": "accepted", "observed": "accepted" },
+                { "resource": "resource-a", "case": "one past", "value": 11, "expected": "refused", "observed": "refused" },
                 { "resource": "resource-b", "case": "at the ceiling", "value": 5, "expected": "accepted", "observed": "accepted" },
                 { "resource": "resource-b", "case": "one past", "value": 6, "expected": "refused", "observed": "refused" },
             ],
@@ -1418,6 +2164,7 @@ mod tests {
                     "configured_ceiling": 20,
                     "offered_load": 50,
                     "observed_peak_occupancy": 20,
+                    "retained": 20,
                     "drops": 30,
                     "passed": true,
                 },
@@ -1459,6 +2206,10 @@ mod tests {
             .as_array_mut()
             .expect("resources array")
             .retain(|entry| entry.get("resource").and_then(Value::as_str) != Some("resource-a"));
+        report_a["construction"]
+            .as_array_mut()
+            .expect("construction array")
+            .retain(|entry| entry.get("resource").and_then(Value::as_str) != Some("resource-a"));
         let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
         let (evidence, identity_violations) = collect_evidence(&scope, &runs);
         assert!(identity_violations.is_empty(), "{identity_violations:?}");
@@ -1499,6 +2250,10 @@ mod tests {
     fn a_same_count_bogus_resource_substituted_for_a_removed_one_is_rejected() {
         let scope = scope();
         let mut report_a = valid_report_a();
+        report_a["construction"]
+            .as_array_mut()
+            .expect("construction array")
+            .retain(|entry| entry.get("resource").and_then(Value::as_str) != Some("resource-a"));
         let resources = report_a["resources"]
             .as_array_mut()
             .expect("resources array");
@@ -1746,7 +2501,7 @@ mod tests {
         let violations = reconcile_denominator(&scope, &evidence);
         assert!(
             any_violation(&violations, "resource-b")
-                .is_some_and(|violation| violation.contains("refused one past it")),
+                .is_some_and(|violation| violation.contains("refused at exactly 6")),
             "{violations:?}"
         );
     }
@@ -1817,5 +2572,627 @@ mod tests {
         let observation = json!({ "postgres_major_version": "15" });
         let violations = reconcile_matrix_point("report-a", &observation, Some("postgres-18"));
         assert!(any_violation(&violations, "18").is_some(), "{violations:?}");
+    }
+
+    /// A scope with exactly one report and one resource, for a proof-kind
+    /// check whose evidence shape does not depend on anything `scope()`'s
+    /// four resources already cover.
+    fn minimal_scope(resource: Resource) -> Scope {
+        Scope {
+            fixtures: BTreeMap::new(),
+            reports: vec![report("report-x")],
+            resources: vec![resource],
+            classes: Value::Null,
+            policies: Value::Null,
+            stress: Vec::new(),
+            stress_document: Value::Null,
+            equivalence: Vec::new(),
+            excluded: Value::Null,
+            related: Value::Null,
+        }
+    }
+
+    fn range_boundary_resource() -> Resource {
+        Resource {
+            name: "resource-range".to_owned(),
+            class: "queue".to_owned(),
+            policy: "fail-closed".to_owned(),
+            report: "report-x".to_owned(),
+            ceiling: None,
+            postgres: false,
+            proofs: vec!["range-boundary".to_owned()],
+            bounds: Some(Bounds {
+                minimum: 100,
+                maximum: 1000,
+            }),
+            bound_kind: None,
+            parent_connections: None,
+            subjects: Vec::new(),
+            shedding_rule: None,
+        }
+    }
+
+    fn range_cell(value: i64, expected: &str) -> Value {
+        json!({
+            "resource": "resource-range",
+            "case": "boundary",
+            "value": value,
+            "expected": expected,
+            "observed": expected,
+        })
+    }
+
+    #[test]
+    fn a_complete_range_boundary_reconciles_clean() {
+        let scope = minimal_scope(range_boundary_resource());
+        let observation = json!({
+            "construction": [
+                range_cell(100, "accepted"),
+                range_cell(99, "refused"),
+                range_cell(1000, "accepted"),
+                range_cell(1001, "refused"),
+            ],
+        });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        assert!(identity_violations.is_empty(), "{identity_violations:?}");
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(violations.is_empty(), "{violations:?}");
+    }
+
+    #[test]
+    fn a_range_boundary_missing_the_minimum_side_is_rejected() {
+        let scope = minimal_scope(range_boundary_resource());
+        let observation = json!({
+            "construction": [
+                range_cell(1000, "accepted"),
+                range_cell(1001, "refused"),
+            ],
+        });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "accepted exactly at the minimum").is_some(),
+            "{violations:?}"
+        );
+    }
+
+    fn subject_boundary_resource() -> Resource {
+        Resource {
+            name: "resource-subjects".to_owned(),
+            class: "buffer".to_owned(),
+            policy: "fail-closed".to_owned(),
+            report: "report-x".to_owned(),
+            ceiling: None,
+            postgres: false,
+            proofs: vec!["subject-boundary".to_owned()],
+            bounds: None,
+            bound_kind: None,
+            parent_connections: None,
+            subjects: vec![
+                Subject {
+                    subject: "alpha".to_owned(),
+                    ceiling: 10,
+                },
+                Subject {
+                    subject: "beta".to_owned(),
+                    ceiling: 20,
+                },
+            ],
+            shedding_rule: None,
+        }
+    }
+
+    fn subject_cell(subject: &str, value: i64, expected: &str) -> Value {
+        json!({
+            "resource": "resource-subjects",
+            "subject": subject,
+            "case": "boundary",
+            "declared_ceiling": value,
+            "value": value,
+            "expected": expected,
+            "observed": expected,
+        })
+    }
+
+    fn valid_subject_cells() -> Vec<Value> {
+        vec![
+            subject_cell("alpha", 10, "accepted"),
+            subject_cell("alpha", 11, "refused"),
+            subject_cell("beta", 20, "accepted"),
+            subject_cell("beta", 21, "refused"),
+        ]
+    }
+
+    #[test]
+    fn a_complete_subject_boundary_reconciles_clean() {
+        let scope = minimal_scope(subject_boundary_resource());
+        let observation = json!({ "construction": valid_subject_cells() });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        assert!(identity_violations.is_empty(), "{identity_violations:?}");
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(violations.is_empty(), "{violations:?}");
+    }
+
+    #[test]
+    fn an_undeclared_subject_is_rejected() {
+        let scope = minimal_scope(subject_boundary_resource());
+        let mut cells = valid_subject_cells();
+        cells.push(subject_cell("gamma", 5, "accepted"));
+        let observation = json!({ "construction": cells });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "gamma")
+                .is_some_and(|violation| violation.contains("not one of its declared subjects")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_declared_subject_is_rejected() {
+        let scope = minimal_scope(subject_boundary_resource());
+        let mut cells = valid_subject_cells();
+        cells.retain(|cell| cell.get("subject").and_then(Value::as_str) != Some("beta"));
+        let observation = json!({ "construction": cells });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "beta")
+                .is_some_and(|violation| violation.contains("no report recorded evidence")),
+            "{violations:?}"
+        );
+    }
+
+    fn derived_capacity_resource() -> Resource {
+        Resource {
+            name: "resource-derived".to_owned(),
+            class: "worker-assignment".to_owned(),
+            policy: "fail-closed".to_owned(),
+            report: "report-x".to_owned(),
+            ceiling: None,
+            postgres: true,
+            proofs: vec!["derived-capacity".to_owned()],
+            bounds: None,
+            bound_kind: Some("derived".to_owned()),
+            parent_connections: Some(1),
+            subjects: Vec::new(),
+            shedding_rule: None,
+        }
+    }
+
+    #[test]
+    fn a_correct_derivation_reconciles_clean() {
+        let scope = minimal_scope(derived_capacity_resource());
+        let observation = json!({
+            "resources": [{
+                "resource": "resource-derived",
+                "detail": { "concurrent_children": 7, "required_connections": 8 },
+            }],
+        });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        assert!(identity_violations.is_empty(), "{identity_violations:?}");
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(violations.is_empty(), "{violations:?}");
+    }
+
+    #[test]
+    fn a_required_connections_count_that_does_not_match_its_own_derivation_is_rejected() {
+        let scope = minimal_scope(derived_capacity_resource());
+        let observation = json!({
+            "resources": [{
+                "resource": "resource-derived",
+                "detail": { "concurrent_children": 7, "required_connections": 9 },
+            }],
+        });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-derived").is_some(),
+            "{violations:?}"
+        );
+    }
+
+    fn dual_budget_resource() -> Resource {
+        Resource {
+            name: "resource-dual".to_owned(),
+            class: "worker-assignment".to_owned(),
+            policy: "bounded-concurrency".to_owned(),
+            report: "report-x".to_owned(),
+            ceiling: Some(8),
+            postgres: true,
+            proofs: vec!["dual-budget-boundary".to_owned()],
+            bounds: None,
+            bound_kind: None,
+            parent_connections: None,
+            subjects: Vec::new(),
+            shedding_rule: None,
+        }
+    }
+
+    #[test]
+    fn a_ceiling_run_that_never_reached_the_declared_ceiling_is_rejected() {
+        let scope = minimal_scope(dual_budget_resource());
+        let observation = json!({
+            "resources": [{
+                "resource": "resource-dual",
+                "declared_ceiling": 8,
+                "detail": {
+                    "budgeted_run": { "budget": 4, "offered": 10, "peak": 4 },
+                    "ceiling_run": { "budget": 8, "offered": 10, "peak": 6 },
+                },
+            }],
+        });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-dual").is_some(),
+            "{violations:?}"
+        );
+    }
+
+    fn search_bounded_resource() -> Resource {
+        Resource {
+            name: "resource-search".to_owned(),
+            class: "buffer".to_owned(),
+            policy: "fail-closed".to_owned(),
+            report: "report-x".to_owned(),
+            ceiling: Some(1000),
+            postgres: false,
+            proofs: vec!["search-bounded-construction".to_owned()],
+            bounds: None,
+            bound_kind: None,
+            parent_connections: None,
+            subjects: Vec::new(),
+            shedding_rule: None,
+        }
+    }
+
+    #[test]
+    fn a_search_bounded_accept_above_the_declared_ceiling_is_rejected() {
+        let scope = minimal_scope(search_bounded_resource());
+        let observation = json!({
+            "construction": [
+                {
+                    "resource": "resource-search",
+                    "case": "the largest chain any bound admits",
+                    "value": 1001,
+                    "expected": "accepted",
+                    "observed": "accepted",
+                },
+                {
+                    "resource": "resource-search",
+                    "case": "one node past the largest chain that fits",
+                    "value": 900,
+                    "expected": "refused",
+                    "observed": "refused",
+                },
+            ],
+        });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "no construction accepted at or under it").is_some(),
+            "{violations:?}"
+        );
+    }
+
+    fn upper_bound_only_resource() -> Resource {
+        Resource {
+            name: "resource-upper".to_owned(),
+            class: "buffer".to_owned(),
+            policy: "bounded-truncation".to_owned(),
+            report: "report-x".to_owned(),
+            ceiling: Some(4096),
+            postgres: false,
+            proofs: vec!["upper-bound-only".to_owned()],
+            bounds: None,
+            bound_kind: None,
+            parent_connections: None,
+            subjects: Vec::new(),
+            shedding_rule: None,
+        }
+    }
+
+    #[test]
+    fn an_upper_bound_only_resource_with_no_accepted_evidence_at_or_under_it_is_rejected() {
+        let scope = minimal_scope(upper_bound_only_resource());
+        let observation = json!({
+            "construction": [{
+                "resource": "resource-upper",
+                "case": "the transitions of the largest chain any bound admits",
+                "value": 5000,
+                "expected": "accepted",
+                "observed": "accepted",
+            }],
+        });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "no construction accepted at or under it").is_some(),
+            "{violations:?}"
+        );
+    }
+
+    fn truncation_resource() -> Resource {
+        Resource {
+            name: "resource-truncated".to_owned(),
+            class: "result-set".to_owned(),
+            policy: "bounded-truncation".to_owned(),
+            report: "report-x".to_owned(),
+            ceiling: Some(262_144),
+            postgres: true,
+            proofs: vec!["truncation".to_owned()],
+            bounds: None,
+            bound_kind: None,
+            parent_connections: None,
+            subjects: Vec::new(),
+            shedding_rule: None,
+        }
+    }
+
+    #[test]
+    fn a_truncation_proof_with_no_truncated_pages_is_rejected() {
+        let scope = minimal_scope(truncation_resource());
+        let observation = json!({
+            "resources": [{
+                "resource": "resource-truncated",
+                "configured_ceiling": 262_144,
+                "observed_peak_occupancy": 262_144,
+                "truncated_pages": 0,
+            }],
+        });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "never actually exercised").is_some(),
+            "{violations:?}"
+        );
+    }
+
+    fn refusal_past_ceiling_resource() -> Resource {
+        Resource {
+            name: "resource-refused".to_owned(),
+            class: "buffer".to_owned(),
+            policy: "fail-closed".to_owned(),
+            report: "report-x".to_owned(),
+            ceiling: Some(1_048_576),
+            postgres: true,
+            proofs: vec!["refusal-past-ceiling".to_owned()],
+            bounds: None,
+            bound_kind: None,
+            parent_connections: None,
+            subjects: Vec::new(),
+            shedding_rule: None,
+        }
+    }
+
+    #[test]
+    fn a_refusal_past_ceiling_resource_with_the_refused_flag_false_is_rejected() {
+        let scope = minimal_scope(refusal_past_ceiling_resource());
+        let observation = json!({
+            "resources": [{
+                "resource": "resource-refused",
+                "configured_ceiling": 1_048_576,
+                "offered_load": 1_048_577,
+                "refused": false,
+            }],
+        });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "did not record a refusal").is_some(),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_refusal_past_ceiling_resource_offered_at_or_under_the_ceiling_is_rejected() {
+        let scope = minimal_scope(refusal_past_ceiling_resource());
+        let observation = json!({
+            "resources": [{
+                "resource": "resource-refused",
+                "configured_ceiling": 1_048_576,
+                "offered_load": 1_048_576,
+                "refused": true,
+            }],
+        });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "never exceeded it").is_some(),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_numeric_pass_with_no_construction_evidence_still_fails_construction_boundary() {
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        report_a["construction"]
+            .as_array_mut()
+            .expect("construction array")
+            .retain(|cell| cell.get("resource").and_then(Value::as_str) != Some("resource-a"));
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        assert!(identity_violations.is_empty(), "{identity_violations:?}");
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-a").is_some_and(|violation| violation.contains(
+                "no report recorded any construction \
+                                                               cells"
+            )),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_construction_refusal_two_past_the_ceiling_instead_of_one_is_rejected() {
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        report_a["construction"]
+            .as_array_mut()
+            .expect("construction array")
+            .iter_mut()
+            .filter(|cell| cell.get("resource").and_then(Value::as_str) == Some("resource-b"))
+            .for_each(|cell| {
+                if cell.get("case").and_then(Value::as_str) == Some("one past") {
+                    cell["value"] = json!(7);
+                }
+            });
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        assert!(identity_violations.is_empty(), "{identity_violations:?}");
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-b")
+                .is_some_and(|violation| violation.contains("refused at exactly 6")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn an_undeclared_compared_field_is_rejected() {
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        report_a["durable_equivalence"]["fields_compared"]
+            .as_array_mut()
+            .expect("fields_compared array")
+            .push(json!({ "field": "field-z", "agrees": true }));
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let violations = reconcile_equivalence(&scope, &runs);
+        assert!(
+            any_violation(&violations, "field-z").is_some_and(|violation| violation.contains(
+                "not one of its declared \
+                                                               must_agree_on fields"
+            )),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn an_undeclared_reported_condition_is_rejected() {
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        report_a["durable_equivalence"]["must_not_observe"]
+            .as_array_mut()
+            .expect("must_not_observe array")
+            .push(json!({ "condition": "regression-z", "observed": false }));
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let violations = reconcile_equivalence(&scope, &runs);
+        assert!(
+            any_violation(&violations, "regression-z").is_some_and(|violation| violation.contains(
+                "not one of its declared \
+                                                               must_not_observe conditions"
+            )),
+            "{violations:?}"
+        );
+    }
+
+    fn shedding_rule_resource() -> Resource {
+        Resource {
+            name: "resource-shed".to_owned(),
+            class: "queue".to_owned(),
+            policy: "bounded-shedding".to_owned(),
+            report: "report-x".to_owned(),
+            ceiling: Some(200),
+            postgres: false,
+            proofs: vec!["stress-saturation".to_owned()],
+            bounds: None,
+            bound_kind: None,
+            parent_connections: None,
+            subjects: Vec::new(),
+            shedding_rule: Some("collapse-to-reserved-series".to_owned()),
+        }
+    }
+
+    fn shedding_scope() -> Scope {
+        let mut scope = minimal_scope(shedding_rule_resource());
+        scope.stress.push(StressRequirement {
+            resource: "resource-shed".to_owned(),
+            report: "report-x".to_owned(),
+            requires: "offered-exceeds-ceiling".to_owned(),
+        });
+        scope
+    }
+
+    #[test]
+    fn a_shedding_rule_that_does_not_match_the_report_is_rejected() {
+        let scope = shedding_scope();
+        let observation = json!({
+            "resources": [{
+                "resource": "resource-shed",
+                "configured_ceiling": 200,
+                "offered_load": 400,
+                "observed_peak_occupancy": 200,
+                "retained": 200,
+                "drops": 200,
+                "shedding_rule": "drop-newest",
+            }],
+        });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_stress(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-shed")
+                .is_some_and(|violation| violation.contains("recorded drop-newest instead")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_collapse_to_reserved_series_accounting_using_the_flat_relation_is_rejected() {
+        let scope = shedding_scope();
+        let observation = json!({
+            "resources": [{
+                "resource": "resource-shed",
+                "configured_ceiling": 200,
+                "offered_load": 400,
+                "observed_peak_occupancy": 200,
+                "retained": 200,
+                "drops": 200,
+                "shedding_rule": "collapse-to-reserved-series",
+            }],
+        });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_stress(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-shed")
+                .is_some_and(|violation| violation.contains("201 should have been discarded")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_collapse_to_reserved_series_accounting_with_the_reserved_slot_offset_reconciles_clean() {
+        let scope = shedding_scope();
+        let observation = json!({
+            "resources": [{
+                "resource": "resource-shed",
+                "configured_ceiling": 200,
+                "offered_load": 400,
+                "observed_peak_occupancy": 200,
+                "retained": 200,
+                "drops": 201,
+                "shedding_rule": "collapse-to-reserved-series",
+            }],
+        });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_stress(&scope, &evidence);
+        assert!(violations.is_empty(), "{violations:?}");
     }
 }

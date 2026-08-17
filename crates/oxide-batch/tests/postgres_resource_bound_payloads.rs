@@ -46,18 +46,18 @@ use std::sync::Arc;
 use oxide_batch::BoxFuture;
 use oxide_batch::{
     ActorRef, CaCertificate, ClassifierRevision, ComponentRevision, DefinitionRevision,
-    ExecutionContext, ExitCode, ExitPattern, FailureCategory, FaultPhase, FaultStateEntry,
-    FaultStateEnvelope, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget, ItemListenerSet,
-    JobInstanceKey, JobName, JobParameter, JobParameters, JobRepository, MAX_CURSOR_BYTES,
-    MAX_NODES, MAX_OPERATION_ID_BYTES, MAX_OUTGOING_TRANSITIONS, MAX_PARTITION_CONTEXT_BYTES,
-    MAX_PARTITION_KEY_BYTES, MAX_PATTERN_BYTES, MAX_REASON_CODE_BYTES, MAX_TRANSITIONS, NodeId,
-    OperationId, ParameterName, ParameterRole, ParameterValue, PartitionBudget, PartitionCount,
-    PartitionKey, PartitionPlanEntry, PartitionPlanFactory, PartitionTaskletFactory,
-    PartitionedStepNode, PostgresJobRepository, PostgresMigrator, ReadListener, ReasonCode,
-    RetryKey, RetryOrdinal, RetryStateLimit, SequentialIdGenerator, StateCodecError, StateLimits,
-    StateSchemaId, StateSchemaUpgrade, StateSchemaVersion, StepComponents, StepName, StepNode,
-    StopSource, Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
-    VersionedStateCodec,
+    ExecutionContext, ExecutionVersion, ExitCode, ExitPattern, FailureCategory, FaultPhase,
+    FaultStateEntry, FaultStateEnvelope, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget,
+    ItemListenerSet, JobInstanceKey, JobName, JobParameter, JobParameters, JobRepository,
+    MAX_ACTOR_REF_BYTES, MAX_NODES, MAX_OPERATION_ID_BYTES, MAX_OUTGOING_TRANSITIONS,
+    MAX_PARTITION_CONTEXT_BYTES, MAX_PARTITION_KEY_BYTES, MAX_PATTERN_BYTES, MAX_REASON_CODE_BYTES,
+    MAX_TRANSITIONS, NodeId, OperationId, ParameterName, ParameterRole, ParameterValue,
+    PartitionBudget, PartitionCount, PartitionKey, PartitionPlanEntry, PartitionPlanFactory,
+    PartitionTaskletFactory, PartitionedStepNode, PostgresJobRepository, PostgresMigrator,
+    ReadListener, ReasonCode, RecoveryRequest, RetryKey, RetryOrdinal, RetryStateLimit,
+    SequentialIdGenerator, StateCodecError, StateLimits, StateSchemaId, StateSchemaUpgrade,
+    StateSchemaVersion, StepComponents, StepName, StepNode, StopSource, Tasklet, TaskletContext,
+    TaskletError, TaskletOutcome, TaskletStep, TerminalKind, VersionedStateCodec,
 };
 use serde_json::{Value, json};
 
@@ -452,6 +452,14 @@ fn state_cells() -> Vec<Cell> {
         Cell::new(
             "ca-certificate",
             CA_CERTIFICATE_CEILING as u64,
+            "at the ceiling",
+            CA_CERTIFICATE_CEILING as u64,
+            CaCertificate::new(vec![b'-'; CA_CERTIFICATE_CEILING]).is_ok(),
+            true,
+        ),
+        Cell::new(
+            "ca-certificate",
+            CA_CERTIFICATE_CEILING as u64,
             "one byte past the ceiling",
             CA_CERTIFICATE_CEILING as u64 + 1,
             CaCertificate::new(vec![b'-'; CA_CERTIFICATE_CEILING + 1]).is_ok(),
@@ -511,68 +519,169 @@ fn listener_cells() -> Vec<Cell> {
 }
 
 /// Reports every bounded identifier and reference, as one table.
+///
+/// Twelve subjects, not the fourteen symbols the scope names: two of the
+/// fourteen — the cursor-name column encoding and the CLI's interactive
+/// confirmation read — are validated only by a function this campaign's
+/// public-API surface cannot reach (an internal cursor encoder and a raw
+/// `io::stdin()` byte loop respectively, neither a constructible type), and
+/// the scope document argues them out of scope by name rather than silently
+/// dropping them. Each of the twelve real subjects here carries its own
+/// declared ceiling and the value actually offered, not a placeholder,
+/// because a subject proved only by a boolean accept/refuse pair is not a
+/// non-vacuous boundary proof.
+///
+/// Four of the twelve ceilings have no `pub` constant to import: the bound
+/// declaration convention makes visibility irrelevant to what the campaign
+/// is answerable for, so a private ceiling is still declared here as a
+/// literal that mirrors it, commented with the constant it stands for.
 fn identifier_cells() -> Vec<Cell> {
     let mut cells = Vec::new();
-
-    for (case, at, over) in [
-        (
-            "operation-id",
-            OperationId::new("o".repeat(MAX_OPERATION_ID_BYTES)).is_ok(),
-            OperationId::new("o".repeat(MAX_OPERATION_ID_BYTES + 1)).is_ok(),
-        ),
-        (
-            "reason-code",
-            ReasonCode::new("R".repeat(MAX_REASON_CODE_BYTES)).is_ok(),
-            ReasonCode::new("R".repeat(MAX_REASON_CODE_BYTES + 1)).is_ok(),
-        ),
-        (
-            "actor-ref",
-            ActorRef::new("a".repeat(128)).is_ok(),
-            ActorRef::new("a".repeat(129)).is_ok(),
-        ),
-        (
-            "exit-pattern",
-            ExitPattern::new("P".repeat(MAX_PATTERN_BYTES)).is_ok(),
-            ExitPattern::new("P".repeat(MAX_PATTERN_BYTES + 1)).is_ok(),
-        ),
-        (
-            "exit-code",
-            ExitCode::new("C".repeat(64)).is_ok(),
-            ExitCode::new("C".repeat(65)).is_ok(),
-        ),
-        (
-            "parameter-name",
-            ParameterName::new("p".repeat(128)).is_ok(),
-            ParameterName::new("p".repeat(129)).is_ok(),
-        ),
-        (
-            "parameter-string",
-            ParameterValue::string("v".repeat(64 * 1024)).is_ok(),
-            ParameterValue::string("v".repeat(64 * 1024 + 1)).is_ok(),
-        ),
-        (
-            "cursor-token",
-            oxide_batch::Cursor::from_bytes(vec![b'c'; MAX_CURSOR_BYTES]).is_ok(),
-            oxide_batch::Cursor::from_bytes(vec![b'c'; MAX_CURSOR_BYTES + 1]).is_ok(),
-        ),
-    ] {
+    for (subject, ceiling, at, over) in identifier_subjects() {
+        let ceiling = ceiling as u64;
         cells.push(Cell::named(
             "bounded-identifier-text",
-            case,
+            subject,
             "at the ceiling",
+            ceiling,
+            ceiling,
             at,
             true,
         ));
         cells.push(Cell::named(
             "bounded-identifier-text",
-            case,
+            subject,
             "one byte past the ceiling",
+            ceiling,
+            ceiling + 1,
             over,
             false,
         ));
     }
-
     cells
+}
+
+/// One accept/refuse pair per bounded-identifier-text subject: its name, its
+/// declared ceiling, whether a value exactly at the ceiling was accepted, and
+/// whether one byte past it was refused.
+///
+/// Private ceilings this campaign cannot import are mirrored here as
+/// literals: the bound declaration convention makes visibility irrelevant to
+/// what the campaign is answerable for, so a private ceiling is still
+/// declared, commented with the constant it stands for.
+fn identifier_subjects() -> Vec<(&'static str, usize, bool, bool)> {
+    const MAX_EXIT_CODE_BYTES: usize = 64;
+    const MAX_PARAMETER_NAME_BYTES: usize = 128;
+    const MAX_PARAMETER_STRING_BYTES: usize = 64 * 1024;
+    const MAX_SCHEMA_ID_BYTES: usize = 128;
+    const MAX_DOMAIN_NAME_BYTES: usize = 128;
+    const MAX_TOKEN_BYTES: usize = 128;
+    const MAX_RECOVERY_REASON_BYTES: usize = 64;
+    const MAX_OPERATOR_REFERENCE_BYTES: usize = 128;
+
+    let version = ExecutionVersion::INITIAL;
+    let digest = [0_u8; 32];
+
+    let mut subjects = vec![
+        (
+            "operation-id",
+            MAX_OPERATION_ID_BYTES,
+            OperationId::new("o".repeat(MAX_OPERATION_ID_BYTES)).is_ok(),
+            OperationId::new("o".repeat(MAX_OPERATION_ID_BYTES + 1)).is_ok(),
+        ),
+        (
+            "reason-code",
+            MAX_REASON_CODE_BYTES,
+            ReasonCode::new("R".repeat(MAX_REASON_CODE_BYTES)).is_ok(),
+            ReasonCode::new("R".repeat(MAX_REASON_CODE_BYTES + 1)).is_ok(),
+        ),
+        (
+            "actor-ref",
+            MAX_ACTOR_REF_BYTES,
+            ActorRef::new("a".repeat(MAX_ACTOR_REF_BYTES)).is_ok(),
+            ActorRef::new("a".repeat(MAX_ACTOR_REF_BYTES + 1)).is_ok(),
+        ),
+        (
+            "exit-pattern",
+            MAX_PATTERN_BYTES,
+            ExitPattern::new("P".repeat(MAX_PATTERN_BYTES)).is_ok(),
+            ExitPattern::new("P".repeat(MAX_PATTERN_BYTES + 1)).is_ok(),
+        ),
+        (
+            "exit-code",
+            MAX_EXIT_CODE_BYTES,
+            ExitCode::new("C".repeat(MAX_EXIT_CODE_BYTES)).is_ok(),
+            ExitCode::new("C".repeat(MAX_EXIT_CODE_BYTES + 1)).is_ok(),
+        ),
+        (
+            "parameter-name",
+            MAX_PARAMETER_NAME_BYTES,
+            ParameterName::new("p".repeat(MAX_PARAMETER_NAME_BYTES)).is_ok(),
+            ParameterName::new("p".repeat(MAX_PARAMETER_NAME_BYTES + 1)).is_ok(),
+        ),
+        (
+            "parameter-string",
+            MAX_PARAMETER_STRING_BYTES,
+            ParameterValue::string("v".repeat(MAX_PARAMETER_STRING_BYTES)).is_ok(),
+            ParameterValue::string("v".repeat(MAX_PARAMETER_STRING_BYTES + 1)).is_ok(),
+        ),
+        (
+            "schema-id",
+            MAX_SCHEMA_ID_BYTES,
+            StateSchemaId::new("s".repeat(MAX_SCHEMA_ID_BYTES)).is_ok(),
+            StateSchemaId::new("s".repeat(MAX_SCHEMA_ID_BYTES + 1)).is_ok(),
+        ),
+        (
+            "domain-name",
+            MAX_DOMAIN_NAME_BYTES,
+            JobName::new("j".repeat(MAX_DOMAIN_NAME_BYTES)).is_ok(),
+            JobName::new("j".repeat(MAX_DOMAIN_NAME_BYTES + 1)).is_ok(),
+        ),
+        (
+            "definition-token",
+            MAX_TOKEN_BYTES,
+            DefinitionRevision::new("t".repeat(MAX_TOKEN_BYTES)).is_ok(),
+            DefinitionRevision::new("t".repeat(MAX_TOKEN_BYTES + 1)).is_ok(),
+        ),
+    ];
+    subjects.extend(recovery_text_subjects(
+        version,
+        digest,
+        MAX_RECOVERY_REASON_BYTES,
+        MAX_OPERATOR_REFERENCE_BYTES,
+    ));
+    subjects
+}
+
+/// The two subjects `RecoveryRequest::abandon` validates: its reason code and
+/// its operator reference. Each is tested at its own boundary while the other
+/// field is held at a valid, unrelated value, since the constructor checks
+/// the reason code first and a boundary value there would otherwise mask
+/// whatever the operator-reference boundary was meant to prove.
+fn recovery_text_subjects(
+    version: ExecutionVersion,
+    digest: [u8; 32],
+    reason_ceiling: usize,
+    reference_ceiling: usize,
+) -> Vec<(&'static str, usize, bool, bool)> {
+    vec![
+        (
+            "recovery-reason",
+            reason_ceiling,
+            RecoveryRequest::abandon(version, "r".repeat(reason_ceiling), "operator", digest)
+                .is_ok(),
+            RecoveryRequest::abandon(version, "r".repeat(reason_ceiling + 1), "operator", digest)
+                .is_ok(),
+        ),
+        (
+            "operator-reference",
+            reference_ceiling,
+            RecoveryRequest::abandon(version, "reason", "o".repeat(reference_ceiling), digest)
+                .is_ok(),
+            RecoveryRequest::abandon(version, "reason", "o".repeat(reference_ceiling + 1), digest)
+                .is_ok(),
+        ),
+    ]
 }
 
 /// Writes the boundary-sized durable payloads and reads them back.
@@ -1009,10 +1118,18 @@ impl Cell {
     }
 
     /// Records one construction result for one member of a swept table.
+    ///
+    /// `ceiling` and `value` are the subject's own real numbers, not a
+    /// placeholder: a subject proved only by a boolean accept/refuse pair,
+    /// with no numeric ceiling recorded, is not a non-vacuous boundary proof —
+    /// nothing distinguishes it from a bound enforced anywhere else.
+    #[allow(clippy::too_many_arguments)]
     const fn named(
         resource: &'static str,
         subject: &'static str,
         case: &'static str,
+        ceiling: u64,
+        value: u64,
         accepted: bool,
         expected: bool,
     ) -> Self {
@@ -1020,8 +1137,8 @@ impl Cell {
             resource,
             subject: Some(subject),
             case,
-            ceiling: 0,
-            value: 0,
+            ceiling,
+            value,
             accepted,
             expected,
         }

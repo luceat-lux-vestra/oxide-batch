@@ -512,42 +512,76 @@ fn the_stressed_run_is_compared_against_a_sequential_baseline() -> Result<(), Bo
             "a durable comparison names the {} report, which the campaign does not deliver",
             comparison.report,
         );
-        for required in [
-            "job-execution-status",
-            "step-execution-status",
-            "partition-key-set",
-            "partition-status-per-key",
-            "aggregate-execution-counts",
-            "read-write-commit-rollback-counters",
-            "partition-execution-count",
-            "partition-context-per-key",
-        ] {
-            assert!(
-                comparison.must_agree_on.iter().any(|item| item == required),
-                "the {} comparison no longer requires {required} to agree between the sequential \
-                 baseline and the stressed run",
-                comparison.report,
-            );
-        }
-        for required in [
-            "duplicate-partition-execution",
-            "missing-partition",
-            "unfinished-child",
-            "leaked-durable-execution",
-            "forged-execution-status",
-            "partial-launch-after-rejection",
-        ] {
-            assert!(
-                comparison
-                    .must_not_observe
-                    .iter()
-                    .any(|item| item == required),
-                "the {} comparison no longer rules out {required}, which is one of the \
-                 regressions resource pressure produces",
-                comparison.report,
-            );
-        }
     }
+
+    let worker_assignment = scope
+        .equivalence
+        .iter()
+        .find(|comparison| comparison.report == "worker-assignment")
+        .ok_or_else(|| {
+            Failure(
+                "the worker-assignment report compares no stressed run against a baseline"
+                    .to_owned(),
+            )
+        })?;
+    for required in [
+        "outcome",
+        "job-execution-status",
+        "job-exit-status",
+        "step-execution-status",
+        "step-exit-status",
+        "aggregate-execution-counts",
+        "read-write-commit-rollback-counters",
+        "partition-execution-count",
+        "step-execution-count",
+        "partition-key-set",
+        "partition-status-per-key",
+        "partition-counts-per-key",
+        "partition-context-per-key",
+    ] {
+        assert!(
+            worker_assignment
+                .must_agree_on
+                .iter()
+                .any(|item| item == required),
+            "the worker-assignment comparison no longer requires {required} to agree between the \
+             sequential baseline and the stressed run",
+        );
+    }
+    for required in [
+        "duplicate-partition-execution",
+        "missing-partition",
+        "unfinished-child",
+        "leaked-durable-execution",
+        "forged-execution-status",
+        "partial-launch-after-rejection",
+    ] {
+        assert!(
+            worker_assignment
+                .must_not_observe
+                .iter()
+                .any(|item| item == required),
+            "the worker-assignment comparison no longer rules out {required}, which is one of \
+             the regressions resource pressure produces",
+        );
+    }
+
+    let bounded_shedding = scope
+        .equivalence
+        .iter()
+        .find(|comparison| comparison.report == "bounded-shedding")
+        .ok_or_else(|| {
+            Failure(
+                "the bounded-shedding report compares no saturated launch against a baseline, \
+                 and shedding is only acceptable because batch work is unaffected by it"
+                    .to_owned(),
+            )
+        })?;
+    assert!(
+        !bounded_shedding.must_agree_on.is_empty(),
+        "the bounded-shedding comparison requires no field to agree, so a shed telemetry record \
+         changing a durable observation would pass silently",
+    );
 
     Ok(())
 }

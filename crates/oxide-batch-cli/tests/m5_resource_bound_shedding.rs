@@ -49,12 +49,13 @@ use std::num::NonZeroU64;
 use oxide_batch::{
     Clock, DropReportWindow, EnqueueResult, ExportQueueBound, InMemoryExplorer,
     InMemoryJobRepository, IncidentEventBuffer, JobExecutionId, JobExplorer, JobName, JobOperator,
-    MAX_EXPORT_QUEUE_RECORDS, MAX_METRIC_NAME_ALLOWLIST, MAX_RETAINED_EVENTS_PER_EXECUTION,
-    MAX_SHUTDOWN_DEADLINE, MAX_TELEMETRY_FLUSH_DEADLINE, METRIC_CARDINALITY_BUDGET,
-    MIN_EXPORT_QUEUE_RECORDS, MIN_SHUTDOWN_DEADLINE, MIN_TELEMETRY_FLUSH_DEADLINE,
-    MetricCardinalityGuard, MetricDimensions, MetricFamily, RetentionService,
-    SequentialIdGenerator, ShutdownDeadline, StepName, TelemetryEventKind, TelemetryEventSink,
-    TelemetryFlushDeadline, TelemetryQueue, TelemetryRecord,
+    MAX_DROP_REPORT_WINDOW, MAX_EXPORT_QUEUE_RECORDS, MAX_METRIC_NAME_ALLOWLIST,
+    MAX_RETAINED_EVENTS_PER_EXECUTION, MAX_SHUTDOWN_DEADLINE, MAX_TELEMETRY_FLUSH_DEADLINE,
+    METRIC_CARDINALITY_BUDGET, MIN_DROP_REPORT_WINDOW, MIN_EXPORT_QUEUE_RECORDS,
+    MIN_SHUTDOWN_DEADLINE, MIN_TELEMETRY_FLUSH_DEADLINE, MetricCardinalityGuard, MetricDimensions,
+    MetricFamily, RetentionService, SequentialIdGenerator, ShutdownDeadline, StepName,
+    TelemetryEventKind, TelemetryEventSink, TelemetryFlushDeadline, TelemetryQueue,
+    TelemetryRecord,
 };
 use oxide_batch_cli::{
     Command, ExitCategory, MAX_OUTPUT_BYTES, NoSchema, OutputForm, Response, Services, Writer,
@@ -707,67 +708,85 @@ fn queue_construction_cells() -> Vec<Cell> {
 }
 
 /// Reports the bounded-duration constructions the budget table declares.
+///
+/// All three resources are ranges, not single ceilings, and every value here
+/// is canonical milliseconds — the unit `campaign-scope.json` declares and
+/// the unit `DropReportWindow`'s own bound check already compares in
+/// natively. A value expressed in seconds for one resource and milliseconds
+/// for another, as an earlier version of this table did, is exactly the
+/// ambiguity a range bound cannot afford: "one second past the ceiling" and
+/// "one millisecond past the ceiling" are different claims, and only one of
+/// them is the boundary the campaign owes.
+///
+/// Each range gets all four sides: accepted at the minimum, refused one
+/// millisecond below it, accepted at the maximum, refused one millisecond
+/// past it. A range proved only by its refusals — the shape this table had
+/// before — cannot tell a bound enforced correctly from one enforced
+/// anywhere else two-sided, because nothing here shows the accepted side is
+/// reachable at all.
 fn deadline_construction_cells() -> Vec<Cell> {
+    let mut cells = Vec::new();
+    cells.extend(range_cells(
+        "telemetry-drop-report-window",
+        MIN_DROP_REPORT_WINDOW,
+        MAX_DROP_REPORT_WINDOW,
+        DropReportWindow::new,
+    ));
+    cells.extend(range_cells(
+        "shutdown-deadline",
+        MIN_SHUTDOWN_DEADLINE,
+        MAX_SHUTDOWN_DEADLINE,
+        ShutdownDeadline::new,
+    ));
+    cells.extend(range_cells(
+        "telemetry-flush-deadline",
+        MIN_TELEMETRY_FLUSH_DEADLINE,
+        MAX_TELEMETRY_FLUSH_DEADLINE,
+        TelemetryFlushDeadline::new,
+    ));
+    cells
+}
+
+/// Reports the four boundary sides of one inclusive duration range, in
+/// canonical milliseconds: accepted at the minimum, refused one millisecond
+/// below it, accepted at the maximum, refused one millisecond past it.
+fn range_cells<T, E>(
+    resource: &'static str,
+    minimum: Duration,
+    maximum: Duration,
+    construct: impl Fn(Duration) -> Result<T, E>,
+) -> Vec<Cell> {
+    let minimum_ms = u64::try_from(minimum.as_millis()).unwrap_or(u64::MAX);
+    let maximum_ms = u64::try_from(maximum.as_millis()).unwrap_or(u64::MAX);
     vec![
         Cell::new(
-            "telemetry-drop-report-window",
-            "at the ceiling",
-            MAX_DROP_REPORT_WINDOW_SECONDS,
-            DropReportWindow::new(Duration::from_secs(MAX_DROP_REPORT_WINDOW_SECONDS)).is_ok(),
+            resource,
+            "at the minimum",
+            minimum_ms,
+            construct(minimum).is_ok(),
             true,
         ),
         Cell::new(
-            "telemetry-drop-report-window",
-            "one second past the ceiling",
-            MAX_DROP_REPORT_WINDOW_SECONDS + 1,
-            DropReportWindow::new(Duration::from_secs(MAX_DROP_REPORT_WINDOW_SECONDS + 1)).is_ok(),
-            false,
-        ),
-        Cell::new(
-            "shutdown-deadline",
-            "at the ceiling",
-            MAX_SHUTDOWN_DEADLINE.as_secs(),
-            ShutdownDeadline::new(MAX_SHUTDOWN_DEADLINE).is_ok(),
-            true,
-        ),
-        Cell::new(
-            "shutdown-deadline",
-            "one second past the ceiling",
-            MAX_SHUTDOWN_DEADLINE.as_secs() + 1,
-            ShutdownDeadline::new(MAX_SHUTDOWN_DEADLINE + Duration::from_secs(1)).is_ok(),
-            false,
-        ),
-        Cell::new(
-            "shutdown-deadline",
-            "one second below the floor",
-            MIN_SHUTDOWN_DEADLINE.as_secs() - 1,
-            MIN_SHUTDOWN_DEADLINE
-                .checked_sub(Duration::from_secs(1))
-                .is_some_and(|below| ShutdownDeadline::new(below).is_ok()),
-            false,
-        ),
-        Cell::new(
-            "telemetry-flush-deadline",
-            "at the ceiling",
-            MAX_TELEMETRY_FLUSH_DEADLINE.as_secs(),
-            TelemetryFlushDeadline::new(MAX_TELEMETRY_FLUSH_DEADLINE).is_ok(),
-            true,
-        ),
-        Cell::new(
-            "telemetry-flush-deadline",
-            "one millisecond below the floor",
-            u64::try_from(MIN_TELEMETRY_FLUSH_DEADLINE.as_millis()).unwrap_or(u64::MAX) - 1,
-            MIN_TELEMETRY_FLUSH_DEADLINE
+            resource,
+            "one millisecond below the minimum",
+            minimum_ms.saturating_sub(1),
+            minimum
                 .checked_sub(Duration::from_millis(1))
-                .is_some_and(|below| TelemetryFlushDeadline::new(below).is_ok()),
+                .is_some_and(|below| construct(below).is_ok()),
             false,
         ),
         Cell::new(
-            "telemetry-flush-deadline",
-            "one second past the ceiling",
-            MAX_TELEMETRY_FLUSH_DEADLINE.as_secs() + 1,
-            TelemetryFlushDeadline::new(MAX_TELEMETRY_FLUSH_DEADLINE + Duration::from_secs(1))
-                .is_ok(),
+            resource,
+            "at the maximum",
+            maximum_ms,
+            construct(maximum).is_ok(),
+            true,
+        ),
+        Cell::new(
+            resource,
+            "one millisecond past the maximum",
+            maximum_ms.saturating_add(1),
+            construct(maximum + Duration::from_millis(1)).is_ok(),
             false,
         ),
     ]
@@ -792,9 +811,6 @@ fn configuration_construction_cells() -> Vec<Cell> {
         ),
     ]
 }
-
-/// The declared ceiling on the drop-report throttle, in seconds.
-const MAX_DROP_REPORT_WINDOW_SECONDS: u64 = 60 * 60;
 
 /// Reports whether a metric allowlist of `names` step names is accepted.
 fn allowlist_of(names: usize) -> bool {
@@ -1080,13 +1096,23 @@ struct Equivalence {
 
 impl Equivalence {
     /// Renders what the retained evidence records for the comparison.
+    ///
+    /// `fields_compared` is the shape the runner's independent reconciliation
+    /// reads — the same `[{field, agrees}]` shape the worker-assignment
+    /// report's comparison uses — so a wholesale durable-record comparison is
+    /// re-derived by the runner rather than trusted from this report's own
+    /// `passed` summary, the same as every other durable-equivalence
+    /// obligation in the campaign.
     fn evidence(&self) -> Value {
+        let agrees = self.baseline_durable == self.saturated_durable;
         json!({
             "baseline_dropped_records": self.baseline_shed,
             "saturated_dropped_records": self.saturated_shed,
             "baseline_durable": self.baseline_durable,
             "saturated_durable": self.saturated_durable,
-            "agrees": self.baseline_durable == self.saturated_durable,
+            "fields_compared": [{ "field": "durable-record", "agrees": agrees }],
+            "must_not_observe": [],
+            "agrees": agrees,
             "violations": self.violations,
             "passed": self.violations.is_empty(),
         })
