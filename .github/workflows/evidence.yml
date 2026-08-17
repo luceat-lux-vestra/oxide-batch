@@ -35,51 +35,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      # The verifier is offline by construction: it resolves no commit and
+      # fetches nothing, comparing the execution manifest each retained report
+      # carries against the working tree. A plain checkout is all it needs.
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Verify retained campaign evidence against its provenance
         run: cargo run --package oxide-batch-xtask -- evidence
-
-  pr131-fix-clippy:
-    if: github.event_name == 'pull_request' && github.event.pull_request.number == 131
-    permissions:
-      contents: write
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          ref: ci/m5-resource-bounds-provenance
-      - name: Close final verifier lint gate and self-clean
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('xtask/src/resource_bounds.rs')
-          s=p.read_text()
-          old='fn reconcile_exact_cell(\n'
-          new='#[allow(clippy::too_many_arguments)]\nfn reconcile_exact_cell(\n'
-          if new not in s:
-              assert s.count(old) == 1
-              s=s.replace(old,new,1)
-          old2='fn reconcile_search_bounded_construction(resource: &Resource, evidence: &Evidence) -> Vec<String> {'
-          new2='#[allow(clippy::too_many_lines)]\nfn reconcile_search_bounded_construction(resource: &Resource, evidence: &Evidence) -> Vec<String> {'
-          if new2 not in s:
-              assert s.count(old2) == 1
-              s=s.replace(old2,new2,1)
-          p.write_text(s)
-          PY
-          cargo fmt --all
-          cargo fmt --all -- --check
-          cargo clippy -p oxide-batch-xtask --all-targets -- -D warnings
-          git fetch origin main
-          git checkout origin/main -- .github/workflows/evidence.yml
-          git add -A
-          git diff --cached --check
-          git commit -m "ci(m5): satisfy resource-bound verifier lint gates"
-          git push origin HEAD:ci/m5-resource-bounds-provenance

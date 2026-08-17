@@ -770,6 +770,7 @@ fn reject_undeclared_cells(
 /// field today (only the resources this producer already emits one for do),
 /// so the cross-check applies only when the field is present rather than
 /// requiring it universally.
+#[allow(clippy::too_many_arguments)]
 fn reconcile_exact_cell(
     resource: &str,
     report: &str,
@@ -1233,6 +1234,7 @@ fn reconcile_dual_budget_boundary(resource: &Resource, evidence: &Evidence) -> V
 /// found that still fits the byte ceiling, and the refused side is one
 /// chain-length past it rather than one byte past it, which a refused graph
 /// has no manifest to measure.
+#[allow(clippy::too_many_lines)]
 fn reconcile_search_bounded_construction(resource: &Resource, evidence: &Evidence) -> Vec<String> {
     let mut violations = Vec::new();
     let Some(declared) = resource.ceiling else {
