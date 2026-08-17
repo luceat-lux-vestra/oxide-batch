@@ -1540,20 +1540,25 @@ resources, `36` observed.
 | [`resource-bounds-campaign-postgres-15.json`](../engineering/campaigns/m5/resource-bounds-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
 | [`resource-bounds-campaign-postgres-18.json`](../engineering/campaigns/m5/resource-bounds-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
 
-Both were produced by commit `a0d2ec05`, which is the pull-request merge
+Both were produced by commit `11490a1c`, which is the pull-request merge
 commit the dedicated `M5 Resource Bounds` workflow checked out rather than a
 branch tip, on `rustc 1.97.1` and Linux `x86_64`, against servers `15.19` and
 `18.6`. The command is `cargo run --package oxide-batch-xtask -- resource-bounds`.
-This producer superseded run `31884727684` (execution tree `601560ef`), which
-predated a corrective pass to the verifier itself: numeric and construction
-evidence are now checked independently for a resource that has both rather
-than one silently short-circuiting the other, a construction refusal must land
-at exactly ceiling `+1` rather than merely past it, and durable equivalence and
+This producer superseded run `31998681860` (execution tree `a0d2ec05`), which
+predated a second corrective pass closing every remaining multi-symbol
+resource dimension and hardening the generic verifier to require an exact
+cell count and a cross-checked declared bound and unit on every
+range-boundary and subject-boundary cell — see F41 below. That run in turn
+superseded run `31884727684` (execution tree `601560ef`), which predated the
+first corrective pass to the verifier: numeric and construction evidence are
+now checked independently for a resource that has both rather than one
+silently short-circuiting the other, a construction refusal must land at
+exactly ceiling `+1` rather than merely past it, and durable equivalence and
 the bounded-identifier-text subject set both close to exact sets rather than a
-partial list — see F40 below. That producer's own evidence was not
+partial list — see F40 below. Neither superseded producer's evidence was
 hand-preserved, because a semantic change that lands after a report is
 produced makes the report answerable to a standard it was never run against.
-It in turn superseded the two reports the prior `ci.yml`
+The chain in turn traces back to the two reports the prior `ci.yml`
 `resource-bound-campaign` job had retained (produced 2026-08-11): those
 predated the dedicated workflow, the execution contract, the semantic
 closure, and the execution manifest this promotion introduces, and were
@@ -1742,6 +1747,41 @@ resources carry a structured inclusive range in canonical milliseconds, the
 identifier sweep carries twelve subjects with real per-subject ceilings, and
 the shedding accounting reads each resource's own declared rule rather than
 assuming one relation fits all three.
+
+**F41. A resource can own more than one independent bound, and the verifier
+still only strong-reconciled the first.** Four multi-symbol resources
+declared several `MAX_`/`MIN_` symbols each but had only their single
+top-level `ceiling` checked against raw evidence: `durable-state-envelope`
+proved its byte ceiling but not `MAXIMUM_DEPTH` (a real, separately enforced
+nesting-depth ceiling, whose only existing cell — a refusal — carried the
+*byte* ceiling as its own declared bound, not the depth one);
+`telemetry-exporter-queue`'s producer already recorded both a floor and a
+ceiling construction pair, but the scope declared only the ceiling, so the
+floor cells sat in the retained report unused by anything; `declared-retry-state-capacity`
+had a real floor of `1` (`RetryStateLimit::new` checks an inclusive `1..=256`
+range) with a refusal one below it but no cell proving the floor itself
+reachable; `cli-configuration-document` declared `MAX_SECRET_BYTES` and
+`MAX_CONFIG_DEPTH` among its symbols and had proof cells for neither. None of
+the four was a defect in what the framework enforces — every bound these
+symbols name was already real and already checked by the code — the gap was
+entirely in what the campaign's own raw evidence proved about them. Closed by
+giving each resource every one of its own dimensions a real, non-placeholder
+cell: `durable-state-envelope` and `cli-configuration-document` now reuse
+subject-boundary (a "subject" generalized to mean any independently proven
+dimension of a resource, not only a caller-supplied identifier type) to prove
+bytes and depth, and bytes, secret-bytes, and depth respectively; `MAX_SECRET_BYTES`
+is proven through a real file-indirection secret (`repository.ca_certificate__FILE`)
+and `MAX_CONFIG_DEPTH` by isolating `collect()`'s own depth diagnostic from
+the unrelated unrecognized-key issue that a document reaching the ceiling
+also necessarily raises, since no real config key nests that deep;
+`telemetry-exporter-queue` and `declared-retry-state-capacity` reuse
+range-boundary for their genuine minimum/maximum pairs. The generic verifier
+gained two checks that apply to every resource using either modality: an
+exact cell count (a duplicate of a required cell, or a same-count bogus
+substitution for a missing one, both now fail — previously only presence was
+checked), and a cross-check of each cell's own declared bound and unit
+against what the denominator says, closing a forgeable-evidence path where a
+cell's numeric value could match while what it claimed to be proving did not.
 
 ## Soak campaign
 

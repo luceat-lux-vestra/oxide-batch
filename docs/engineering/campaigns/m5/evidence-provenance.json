@@ -888,9 +888,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "a0d2ec0551ff773babb23d17c6d3fa953b9318ef",
+        "execution_commit": "11490a1c91c3da822c11028311f9c3d2c43aa3eb",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "d225434f162c2079d9af41305523258d821e07da",
+        "branch_head_sha": "65efd7d91b65badf032648ac5f64e2ca6a85633a",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -900,27 +900,27 @@
       "workflow_run": {
         "workflow": "M5 Resource Bounds",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 31998681860,
+        "id": 32055594305,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-resource-bounds-campaign",
-        "id": 95294859459,
+        "id": 95464884144,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-15",
-        "id": 9277696989,
-        "digest": "sha256:e21bfb39f106fa18362df69b6152576e33d0ceaf3200ad436610d10c3e54c0d5",
-        "size_bytes": 12104
+        "id": 9296314747,
+        "digest": "sha256:7bef9a7257f4c901bc8f109b72ca470b4d7f2204d7faa2610b899ba37432ad1d",
+        "size_bytes": 12968
       },
-      "retained_report_git_blob": "52b8534052eb2802dd9d71270a4fef365376b47b",
+      "retained_report_git_blob": "6ab23eb9d82f028cb5fcc365bac624c8b77f15cd",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-17T05:43:56Z",
-        "run_id": 31998681860,
+        "verified_at": "2026-08-17T18:38:16Z",
+        "run_id": 32055594305,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -928,7 +928,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. This promotion supersedes run 31884727684 (execution tree 601560efacb76864ba1d2097d41a1dffe77dc3da): that producer predated a corrective pass to the resource-bounds semantic verifier (numeric and construction evidence are now checked independently rather than one short-circuiting the other, construction refusals must land at exactly ceiling+1, durable equivalence closes to an exact 13-field set, and several resources gained proof modalities — range-boundary, subject-boundary, derived-capacity, dual-budget-boundary — the prior verifier could not check), so its evidence answers a weaker standard than this one and was not hand-preserved. See docs/project/m5-campaign-evidence.md."
+        "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. This promotion supersedes run 31998681860 (execution tree a0d2ec0551ff773babb23d17c6d3fa953b9318ef): that producer predated a second corrective pass closing every remaining multi-symbol resource dimension (durable-state-envelope's depth, telemetry-exporter-queue's floor, declared-retry-state-capacity's floor, cli-configuration-document's secret-bytes and depth) and hardening the generic verifier to require an exact cell count and a cross-checked declared bound and unit on every range-boundary and subject-boundary cell, none of which the prior verifier checked. Its evidence answers a weaker standard than this one and was not hand-preserved. See docs/project/m5-campaign-evidence.md."
       }
     },
     {
@@ -944,9 +944,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "a0d2ec0551ff773babb23d17c6d3fa953b9318ef",
+        "execution_commit": "11490a1c91c3da822c11028311f9c3d2c43aa3eb",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "d225434f162c2079d9af41305523258d821e07da",
+        "branch_head_sha": "65efd7d91b65badf032648ac5f64e2ca6a85633a",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -956,27 +956,27 @@
       "workflow_run": {
         "workflow": "M5 Resource Bounds",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 31998681860,
+        "id": 32055594305,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-resource-bounds-campaign",
-        "id": 95294859385,
+        "id": 95464883896,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-18",
-        "id": 9277694482,
-        "digest": "sha256:de2d9064244de6a2dfa007965b1e93d9a459e09e528c8b3cb20216eac27bb065",
-        "size_bytes": 12104
+        "id": 9296318238,
+        "digest": "sha256:a70003d85578bae616c6cb86e4c2bfd7d4ea92c083de90feb2f73832133a27c5",
+        "size_bytes": 12968
       },
-      "retained_report_git_blob": "8125ea2342fbba5053390b15d5dc3b5ed892598e",
+      "retained_report_git_blob": "a517030cfbc14cfab9c2dce01f95e01e96835587",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-17T05:43:56Z",
-        "run_id": 31998681860,
+        "verified_at": "2026-08-17T18:38:16Z",
+        "run_id": 32055594305,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -984,7 +984,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. This promotion supersedes run 31884727684 (execution tree 601560efacb76864ba1d2097d41a1dffe77dc3da): that producer predated a corrective pass to the resource-bounds semantic verifier (numeric and construction evidence are now checked independently rather than one short-circuiting the other, construction refusals must land at exactly ceiling+1, durable equivalence closes to an exact 13-field set, and several resources gained proof modalities — range-boundary, subject-boundary, derived-capacity, dual-budget-boundary — the prior verifier could not check), so its evidence answers a weaker standard than this one and was not hand-preserved. See docs/project/m5-campaign-evidence.md."
+        "note": "Performed once, when this evidence was promoted: the artifact ZIP was downloaded from the GitHub Actions API by artifact ID, its sha256 computed directly over the downloaded bytes and compared against the API's recorded digest, the report extracted and compared byte-for-byte against the file retained here, and this file's own git blob computed and recorded below. Actions artifacts expire, so this is not repeated by CI; the permanent checks are repository-local and need no network. This promotion supersedes run 31998681860 (execution tree a0d2ec0551ff773babb23d17c6d3fa953b9318ef): that producer predated a second corrective pass closing every remaining multi-symbol resource dimension (durable-state-envelope's depth, telemetry-exporter-queue's floor, declared-retry-state-capacity's floor, cli-configuration-document's secret-bytes and depth) and hardening the generic verifier to require an exact cell count and a cross-checked declared bound and unit on every range-boundary and subject-boundary cell, none of which the prior verifier checked. Its evidence answers a weaker standard than this one and was not hand-preserved. See docs/project/m5-campaign-evidence.md."
       }
     }
   ]
