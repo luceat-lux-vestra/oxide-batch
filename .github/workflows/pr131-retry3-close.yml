@@ -1,0 +1,71 @@
+name: PR131 Retry3 Closure Repair
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.event.pull_request.number == 131
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ci/m5-resource-bounds-provenance
+      - name: Apply, complete fixtures, format, verify, and self-clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          src=Path('.github/workflows/pr131-close-gaps.yml').read_text().splitlines()
+          marker='        run: |'
+          i=src.index(marker)+1
+          body=[]
+          for line in src[i:]:
+              body.append(line[10:] if line.startswith('          ') else line)
+          script='\n'.join(body)+'\n'
+          script=script.replace('cargo fmt --all --check','cargo fmt --all')
+          script=script.replace('cargo test --package oxide-batch-xtask resource_bounds --lib','true # tests run after fixture completion')
+          cut=script.index("rm .github/workflows/pr131-close-gaps.yml")
+          Path('/tmp/pr131-apply.sh').write_text(script[:cut])
+          PY
+          bash /tmp/pr131-apply.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('xtask/src/resource_bounds.rs')
+          s=p.read_text()
+          before, tests=s.split('#[cfg(test)]',1)
+          # Direct test-only Resource initializers predate the new canonical unit field.
+          # Insert it only where report is immediately followed by ceiling, i.e. where
+          # this semantic patch has not already supplied a unit.
+          tests,n=re.subn(r'(\n\s*report: [^\n]+,\n)(\s*ceiling:)',r'\1            unit: "units".to_owned(),\n\2',tests)
+          if n != 10:
+              raise SystemExit(f'expected 10 direct Resource fixture initializers, updated {n}')
+          p.write_text(before+'#[cfg(test)]'+tests)
+          PY
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo test -p oxide-batch-xtask
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          rm -f \
+            .github/workflows/pr131-close-gaps.yml \
+            .github/workflows/pr131-finalize.yml \
+            .github/workflows/pr131-trigger-close.yml \
+            .github/workflows/pr131-retry-close.yml \
+            .github/workflows/pr131-retry2-close.yml \
+            .github/workflows/pr131-retry3-close.yml \
+            .pr131-trigger
+          # Remove any other temporary PR131 trigger helpers created during repair staging.
+          rm -f .github/workflows/pr131-trigger-close-v*.yml
+          git add -A
+          git diff --cached --check
+          git commit -m "ci(m5): close resource-bound root proof semantics"
+          git push origin HEAD:ci/m5-resource-bounds-provenance
