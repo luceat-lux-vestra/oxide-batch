@@ -1,0 +1,83 @@
+name: PR131 Retry6 Closure Repair
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.event.pull_request.number == 131
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ci/m5-resource-bounds-provenance
+      - name: Apply hardened semantics, align fixtures, verify, and self-clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          src=Path('.github/workflows/pr131-close-gaps.yml').read_text().splitlines()
+          i=src.index('        run: |')+1
+          body=[line[10:] if line.startswith('          ') else line for line in src[i:]]
+          script='\n'.join(body)+'\n'
+          script=script.replace('cargo fmt --all --check','cargo fmt --all')
+          script=script.replace('cargo test --package oxide-batch-xtask resource_bounds --lib','true # final xtask suite runs below')
+          cut=script.index("rm .github/workflows/pr131-close-gaps.yml")
+          Path('/tmp/pr131-apply.sh').write_text(script[:cut])
+          PY
+          bash /tmp/pr131-apply.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('xtask/src/resource_bounds.rs')
+          lines=p.read_text().splitlines(True)
+          out=[]; in_resource=False; depth=0; inserted=0; i=0
+          while i < len(lines):
+              line=lines[i]
+              if not in_resource and 'Resource {' in line:
+                  in_resource=True; depth=line.count('{')-line.count('}'); out.append(line); i+=1; continue
+              if in_resource:
+                  if line.strip().startswith('report:') and i+1 < len(lines) and lines[i+1].strip().startswith('ceiling:'):
+                      out.append(line); indent=line[:len(line)-len(line.lstrip())]
+                      out.append(indent+'unit: "units".to_owned(),\n'); inserted+=1; i+=1; continue
+                  depth += line.count('{')-line.count('}'); out.append(line)
+                  if depth <= 0: in_resource=False
+                  i+=1; continue
+              out.append(line); i+=1
+          if inserted != 10: raise SystemExit(f'expected 10 missing Resource literal units, inserted {inserted}')
+          s=''.join(out)
+          old='''                    "resource": "resource-d",\n                    "declared_ceiling": Value::Null,\n                    "rejections": 1,\n                    "detail": { "residue_after_refusal": { "ob_job_instance": 0 } },\n                    "passed": true,'''
+          new='''                    "resource": "resource-d",\n                    "declared_ceiling": Value::Null,\n                    "connection_capacity": 8,\n                    "rejections": 1,\n                    "detail": {\n                        "concurrent_children": 8,\n                        "required_connections": 9,\n                        "short_pool": 8,\n                        "sufficient_pool": 9,\n                        "residue_after_refusal": { "ob_job_instance": 0 }\n                    },\n                    "passed": true,'''
+          if s.count(old)!=1: raise SystemExit(f'canonical resource-d fixture match count={s.count(old)}')
+          s=s.replace(old,new,1)
+          # The additional-boundary test deliberately omits the extra cell; its
+          # two required cells must otherwise be canonical under the stricter unit contract.
+          anchor='fn a_declared_additional_boundary_missing_is_rejected()'
+          pos=s.index(anchor); end=s.index('\n    #[test]',pos+len(anchor))
+          chunk=s[pos:end]
+          chunk=chunk.replace('"declared_ceiling": 10,\n                    "value": 10,','"declared_ceiling": 10,\n                    "unit": "units",\n                    "value": 10,')
+          chunk=chunk.replace('"declared_ceiling": 10,\n                    "value": 11,','"declared_ceiling": 10,\n                    "unit": "units",\n                    "value": 11,')
+          s=s[:pos]+chunk+s[end:]
+          p.write_text(s)
+          PY
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo test -p oxide-batch-xtask
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          rm -f .github/workflows/pr131-close-gaps.yml .github/workflows/pr131-finalize.yml \
+            .github/workflows/pr131-trigger-close.yml .github/workflows/pr131-retry-close.yml \
+            .github/workflows/pr131-retry2-close.yml .github/workflows/pr131-retry3-close.yml \
+            .github/workflows/pr131-retry4-close.yml .github/workflows/pr131-retry5-close.yml \
+            .github/workflows/pr131-retry6-close.yml .pr131-trigger
+          rm -f .github/workflows/pr131-trigger-close-v*.yml
+          git add -A
+          git diff --cached --check
+          git commit -m "ci(m5): close resource-bound root proof semantics"
+          git push origin HEAD:ci/m5-resource-bounds-provenance
