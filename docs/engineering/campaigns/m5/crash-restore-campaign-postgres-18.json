@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "f0a2cdb0343c3b3e821a104c575e440063560678",
+    "source_commit": "977528e1a85332ddc807843c22ffc4592886a049",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -20,12 +20,12 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "f0a2cdb0343c3b3e821a104c575e440063560678",
+      "execution_commit": "977528e1a85332ddc807843c22ffc4592886a049",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
         ".github/workflows/m5-crash-restore.yml": "560c0c40e6b5a8385ba07defcafb63caed840925",
-        "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+        "Cargo.lock": "39b4d237af13ee0d01ce96f38e3d91fcbcfe00e5",
         "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
         "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
         "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
@@ -129,12 +129,12 @@
           "step_status": "COMPLETED"
         },
         "execution_manifest": {
-          "execution_commit": "f0a2cdb0343c3b3e821a104c575e440063560678",
+          "execution_commit": "977528e1a85332ddc807843c22ffc4592886a049",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-crash-restore.yml": "560c0c40e6b5a8385ba07defcafb63caed840925",
-            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.lock": "39b4d237af13ee0d01ce96f38e3d91fcbcfe00e5",
             "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
             "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
@@ -173,7 +173,7 @@
         "passed": true,
         "phases": [
           {
-            "child_pid": 8006,
+            "child_pid": 8040,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -189,8 +189,8 @@
             },
             "durations_ms": {
               "discovery": 4,
-              "reach_phase": 42,
-              "resume": 24
+              "reach_phase": 21,
+              "resume": 23
             },
             "expected": "the enlisted rows were never committed, so the chunk replays whole",
             "fixture": "postgres",
@@ -297,7 +297,7 @@
             "violations": []
           },
           {
-            "child_pid": 8045,
+            "child_pid": 8057,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -312,9 +312,9 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 4,
+              "discovery": 3,
               "reach_phase": 42,
-              "resume": 25
+              "resume": 24
             },
             "expected": "durable state was produced inside the commit and never bound, so the chunk replays whole",
             "fixture": "postgres",
@@ -421,7 +421,7 @@
             "violations": []
           },
           {
-            "child_pid": 8061,
+            "child_pid": 8073,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -436,8 +436,8 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 4,
-              "reach_phase": 53,
+              "discovery": 3,
+              "reach_phase": 54,
               "resume": 25
             },
             "expected": "the progress write was issued and blocked, so neither it nor the enlisted rows are durable and the chunk replays whole",
@@ -545,7 +545,7 @@
             "violations": []
           },
           {
-            "child_pid": 8080,
+            "child_pid": 8112,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -561,8 +561,8 @@
             },
             "durations_ms": {
               "discovery": 4,
-              "reach_phase": 54,
-              "resume": 21
+              "reach_phase": 53,
+              "resume": 19
             },
             "expected": "the server completed the commit the killed process never saw acknowledged, so the chunk is durable and must not replay",
             "fixture": "postgres",
@@ -671,7 +671,7 @@
             "violations": []
           },
           {
-            "child_pid": 8119,
+            "child_pid": 8130,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -686,9 +686,9 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 4,
-              "reach_phase": 21,
-              "resume": 21
+              "discovery": 3,
+              "reach_phase": 41,
+              "resume": 20
             },
             "expected": "the commit was acknowledged before the kill, so the chunk is durable and must not replay",
             "fixture": "postgres",
@@ -830,7 +830,7 @@
           "job_status": "COMPLETED",
           "step_status": "COMPLETED"
         },
-        "child_pid": 8447,
+        "child_pid": 8461,
         "decision": {
           "class": "APPLIED",
           "path": "operator recover",
@@ -846,18 +846,18 @@
           "unknown_commit": false
         },
         "durations_ms": {
-          "commit_chunks_before_kill": 634,
-          "discovery": 70,
-          "resume": 535,
-          "uninterrupted_run": 1098
+          "commit_chunks_before_kill": 635,
+          "discovery": 69,
+          "resume": 279,
+          "uninterrupted_run": 1057
         },
         "execution_manifest": {
-          "execution_commit": "f0a2cdb0343c3b3e821a104c575e440063560678",
+          "execution_commit": "977528e1a85332ddc807843c22ffc4592886a049",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-crash-restore.yml": "560c0c40e6b5a8385ba07defcafb63caed840925",
-            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.lock": "39b4d237af13ee0d01ce96f38e3d91fcbcfe00e5",
             "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
             "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
@@ -1043,12 +1043,12 @@
           "restored_into": "oxide_batch_m5_restore"
         },
         "execution_manifest": {
-          "execution_commit": "f0a2cdb0343c3b3e821a104c575e440063560678",
+          "execution_commit": "977528e1a85332ddc807843c22ffc4592886a049",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-crash-restore.yml": "560c0c40e6b5a8385ba07defcafb63caed840925",
-            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.lock": "39b4d237af13ee0d01ce96f38e3d91fcbcfe00e5",
             "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
             "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
@@ -1088,7 +1088,7 @@
         "passed": true,
         "report": "logical backup and restore",
         "restart_on_restored": {
-          "duration_ms": 758,
+          "duration_ms": 116,
           "resumed_chunks": 2,
           "terminal": {
             "business_rows": 25,
