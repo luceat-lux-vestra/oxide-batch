@@ -1,0 +1,539 @@
+name: PR131 Finalize
+
+on:
+  push:
+    branches: [fix/pr131-final-closure]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]' || !contains(github.event.head_commit.message, '[pr131-finalized]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: fix/pr131-final-closure
+      - name: Merge latest main and patch semantic closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+
+          python3 - <<'PY'
+          import json
+          p='docs/engineering/campaigns/m5/evidence-provenance.json'
+          d=json.load(open(p))
+          saved={
+            'declared':[x for x in d['campaigns']['declared'] if x['campaign']=='M5 PostgreSQL resource bounds'],
+            'evidence':[x for x in d['evidence'] if x['campaign']=='M5 PostgreSQL resource bounds'],
+          }
+          json.dump(saved,open('/tmp/resource-provenance.json','w'))
+          PY
+
+          git fetch origin main
+          set +e
+          git merge --no-commit origin/main
+          merge_rc=$?
+          set -e
+
+          # #132 is authoritative for Cargo.lock and the seven pre-existing campaigns.
+          git checkout --theirs -- Cargo.lock || true
+          for campaign in soak cancellation performance conformance crash-restore upgrade security; do
+            git checkout --theirs -- "docs/engineering/campaigns/m5/${campaign}-campaign-postgres-15.json" 2>/dev/null || true
+            git checkout --theirs -- "docs/engineering/campaigns/m5/${campaign}-campaign-postgres-18.json" 2>/dev/null || true
+          done
+          git checkout --theirs -- docs/engineering/campaigns/m5/evidence-provenance.json || true
+
+          python3 - <<'PY'
+          import json
+          p='docs/engineering/campaigns/m5/evidence-provenance.json'
+          d=json.load(open(p)); saved=json.load(open('/tmp/resource-provenance.json'))
+          d['campaigns']['declared']=[x for x in d['campaigns']['declared'] if x['campaign']!='M5 PostgreSQL resource bounds']+saved['declared']
+          d['evidence']=[x for x in d['evidence'] if x['campaign']!='M5 PostgreSQL resource bounds']+saved['evidence']
+          with open(p,'w') as f: json.dump(d,f,indent=2); f.write('\n')
+          PY
+
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(m5): integrate dependency evidence baseline"
+          fi
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def load(p): return Path(p).read_text()
+          def save(p,s): Path(p).write_text(s)
+          def rep(s,old,new,label):
+              if old not in s: raise SystemExit(f'missing patch anchor: {label}')
+              return s.replace(old,new,1)
+
+          # ---- independent verifier ----
+          p='xtask/src/resource_bounds.rs'; s=load(p)
+          s=rep(s,
+'''        ceiling: resource.get("ceiling").and_then(Value::as_i64),
+        postgres:''',
+'''        ceiling: resource.get("ceiling").and_then(Value::as_i64),
+        unit: suite::string(resource, "unit")?,
+        postgres:''','read resource unit')
+          s=rep(s,
+'''    /// Whether the proof is required to be on `PostgreSQL`.
+    postgres: bool,''',
+'''    /// The unit the resource's declared ceiling and root evidence use.
+    unit: String,
+    /// Whether the proof is required to be on `PostgreSQL`.
+    postgres: bool,''','resource unit field')
+          s=rep(s,
+'''            ceiling,
+            postgres,
+            proofs:''',
+'''            ceiling,
+            unit: "units".to_owned(),
+            postgres,
+            proofs:''','test helper unit')
+
+          old='''fn reconcile_exact_cell(
+    resource: &str,
+    report: &str,
+    cells: &[Value],
+    value: i64,
+    side: &str,
+    declared: i64,
+    label: &str,
+) -> Vec<String> {
+    let matches = matching_cells(cells, value, side);
+    let mut violations = Vec::new();
+    match matches.len() {
+        0 => violations.push(format!(
+            "{resource} is declared with a ceiling of {declared} and the {report} report \\
+             recorded no construction {label}",
+        )),
+        1 => {
+            if let Some(observed) = matches[0].get("declared_ceiling").and_then(Value::as_i64)
+                && observed != declared
+            {
+                violations.push(format!(
+                    "{resource}'s {label} cell in the {report} report recorded a declared \\
+                     ceiling of {observed}, and the denominator declares {declared}",
+                ));
+            }
+        }
+        n => violations.push(format!(
+            "{resource}'s {label} cell was recorded {n} times in the {report} report, and \\
+             exactly one is required",
+        )),
+    }
+    violations
+}'''
+          new='''fn reconcile_exact_cell(
+    resource: &str,
+    report: &str,
+    cells: &[Value],
+    value: i64,
+    side: &str,
+    declared: i64,
+    unit: &str,
+    label: &str,
+) -> Vec<String> {
+    let matches = matching_cells(cells, value, side);
+    let mut violations = Vec::new();
+    match matches.len() {
+        0 => violations.push(format!(
+            "{resource} is declared with a ceiling of {declared} {unit} and the {report} report \\
+             recorded no construction {label}",
+        )),
+        1 => {
+            match matches[0].get("declared_ceiling").and_then(Value::as_i64) {
+                Some(observed) if observed != declared => violations.push(format!(
+                    "{resource}'s {label} cell in the {report} report recorded a declared \\
+                     ceiling of {observed}, and the denominator declares {declared}",
+                )),
+                Some(_) => {},
+                None => violations.push(format!(
+                    "{resource}'s {label} cell in the {report} report recorded no declared \\
+                     ceiling to check against {declared}",
+                )),
+            }
+            match matches[0].get("unit").and_then(Value::as_str) {
+                Some(observed) if observed != unit => violations.push(format!(
+                    "{resource}'s {label} cell in the {report} report recorded a unit of \\
+                     {observed}, and the denominator declares {unit}",
+                )),
+                Some(_) => {},
+                None => violations.push(format!(
+                    "{resource}'s {label} cell in the {report} report recorded no unit to check \\
+                     against {unit}",
+                )),
+            }
+        }
+        n => violations.push(format!(
+            "{resource}'s {label} cell was recorded {n} times in the {report} report, and \\
+             exactly one is required",
+        )),
+    }
+    violations
+}'''
+          s=rep(s,old,new,'strict generic exact cell')
+          # Add unit argument at the three generic call sites.
+          s=s.replace('''        declared,
+        "accepted exactly at it",
+    ));''','''        declared,
+        &resource.unit,
+        "accepted exactly at it",
+    ));''',1)
+          s=s.replace('''        declared,
+        &format!("refused at exactly {past}"),
+    ));''','''        declared,
+        &resource.unit,
+        &format!("refused at exactly {past}"),
+    ));''',1)
+          s=s.replace('''            declared,
+            &extra.label,
+        ));''','''            declared,
+            &resource.unit,
+            &extra.label,
+        ));''',1)
+
+          # Malformed/contradictory extras are themselves violations, not skipped residue.
+          start=s.index('fn reject_undeclared_cells(')
+          end=s.index('\n/// Requires exactly one cell at `value`/`side`',start)
+          s=s[:start]+'''fn reject_undeclared_cells(
+    resource: &str,
+    report: &str,
+    cells: &[Value],
+    allowed: &[(i64, &str)],
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    for cell in cells {
+        let Some(value) = cell.get("value").and_then(Value::as_i64) else {
+            violations.push(format!("the {report} report recorded a malformed root cell for {resource} with no numeric value"));
+            continue;
+        };
+        let Some(side) = cell.get("expected").and_then(Value::as_str) else {
+            violations.push(format!("the {report} report recorded a malformed root cell for {resource} at {value} with no expected side"));
+            continue;
+        };
+        let Some(observed) = cell.get("observed").and_then(Value::as_str) else {
+            violations.push(format!("the {report} report recorded a malformed root cell for {resource} at {value} with no observed side"));
+            continue;
+        };
+        if side != "accepted" && side != "refused" {
+            violations.push(format!("the {report} report recorded an invalid expected side {side} for {resource} at {value}"));
+            continue;
+        }
+        if observed != side {
+            violations.push(format!("the {report} report recorded {resource} at {value} as expected {side} but observed {observed}"));
+        }
+        if !allowed.iter().any(|(allowed_value, allowed_side)| *allowed_value == value && *allowed_side == side) {
+            violations.push(format!(
+                "the {report} report recorded a construction cell for {resource} at {value}, expected {side}, which is not one of its declared root cells",
+            ));
+        }
+    }
+    violations
+}
+''' + s[end:]
+
+          # Bind derived capacity to its actual one-short end-to-end fixture.
+          anchor='''    let recorded = entry
+        .pointer("/detail/required_connections")
+        .and_then(Value::as_i64);
+    if recorded != Some(required) {
+        violations.push(format!(
+            "{} re-derives to a required connection count of {required} from {children} \\
+             concurrent children plus {parent}, and the {report} report recorded {recorded:?}",
+            resource.name,
+        ));
+    }
+    violations
+}'''
+          replacement='''    let recorded = entry
+        .pointer("/detail/required_connections")
+        .and_then(Value::as_i64);
+    if recorded != Some(required) {
+        violations.push(format!(
+            "{} re-derives to a required connection count of {required} from {children} \\
+             concurrent children plus {parent}, and the {report} report recorded {recorded:?}",
+            resource.name,
+        ));
+    }
+    let one_short = required.checked_sub(1);
+    let short_pool = entry.pointer("/detail/short_pool").and_then(Value::as_i64);
+    if short_pool != one_short {
+        violations.push(format!(
+            "{} requires {required} connections, so its fail-closed fixture must use exactly \\
+             {one_short:?}; the {report} report recorded short_pool {short_pool:?}",
+            resource.name,
+        ));
+    }
+    let sufficient = entry.pointer("/detail/sufficient_pool").and_then(Value::as_i64);
+    if sufficient != Some(required) {
+        violations.push(format!(
+            "{} re-derives to {required} connections and the {report} report recorded \\
+             sufficient_pool {sufficient:?}", resource.name,
+        ));
+    }
+    let refused_as = entry.pointer("/detail/refused_as").and_then(Value::as_str);
+    if refused_as.is_none_or(|value| !value.starts_with("InsufficientPoolCapacity(")) {
+        violations.push(format!(
+            "{}'s one-short fixture was not recorded as InsufficientPoolCapacity: {refused_as:?}",
+            resource.name,
+        ));
+    }
+    violations
+}'''
+          s=rep(s,anchor,replacement,'derived capacity one-short binding')
+
+          # Capture definition_bound as machine-readable search detail.
+          s=rep(s,
+'''    /// The construction cells for a resource proved only that way, and the
+    /// report that wrote them.
+    construction: BTreeMap<String, (String, Vec<Value>)>,
+}''',
+'''    /// The construction cells for a resource proved only that way, and the
+    /// report that wrote them.
+    construction: BTreeMap<String, (String, Vec<Value>)>,
+    /// Producer detail needed to re-derive mixed-dimension bounded searches.
+    search_detail: BTreeMap<String, Value>,
+}''','search detail field')
+          s=rep(s,
+'''        for (resource, cells) in cells {
+            if let Some(violation) = check_identity(scope, &mut claimed_construction, &resource, id)
+            {
+                violations.push(violation);
+            } else {
+                evidence.covered.insert(resource.clone());
+                evidence.construction.insert(resource, (id.clone(), cells));
+            }
+        }
+    }
+''',
+'''        for (resource, cells) in cells {
+            if let Some(violation) = check_identity(scope, &mut claimed_construction, &resource, id)
+            {
+                violations.push(violation);
+            } else {
+                evidence.covered.insert(resource.clone());
+                evidence.construction.insert(resource, (id.clone(), cells));
+            }
+        }
+        if id == "bounded-payloads" {
+            if let Some(detail) = observation.get("definition_bound") {
+                evidence.search_detail.insert("definition-manifest".to_owned(), detail.clone());
+            }
+        }
+    }
+''','collect search detail')
+
+          start=s.index('fn reconcile_search_bounded_construction(')
+          end=s.index('\n/// A ceiling no accepted M5 input reaches',start)
+          s=s[:start]+'''fn reconcile_search_bounded_construction(resource: &Resource, evidence: &Evidence) -> Vec<String> {
+    let mut violations = Vec::new();
+    let Some(declared) = resource.ceiling else { return violations; };
+    let Some((report, cells)) = evidence.construction.get(&resource.name) else {
+        return vec![format!("{} declares a search-bounded-construction proof and no report recorded construction cells for it", resource.name)];
+    };
+    if cells.len() != 2 {
+        violations.push(format!("{} requires exactly two search-bound root cells and the {report} report recorded {}", resource.name, cells.len()));
+        return violations;
+    }
+    let accepted: Vec<&Value> = cells.iter().filter(|cell| cell.get("expected").and_then(Value::as_str)==Some("accepted") && cell.get("observed").and_then(Value::as_str)==Some("accepted")).collect();
+    let refused: Vec<&Value> = cells.iter().filter(|cell| cell.get("expected").and_then(Value::as_str)==Some("refused") && cell.get("observed").and_then(Value::as_str)==Some("refused")).collect();
+    if accepted.len()!=1 || refused.len()!=1 {
+        violations.push(format!("{} requires exactly one accepted and one refused search-bound cell", resource.name));
+        return violations;
+    }
+    let a=accepted[0]; let r=refused[0];
+    for (side, cell) in [("accepted",a),("refused",r)] {
+        if cell.get("declared_ceiling").and_then(Value::as_i64) != Some(declared) {
+            violations.push(format!("{}'s {side} search cell does not carry declared ceiling {declared}", resource.name));
+        }
+        if cell.get("declared_unit").and_then(Value::as_str) != Some(resource.unit.as_str()) {
+            violations.push(format!("{}'s {side} search cell does not carry declared unit {}", resource.name, resource.unit));
+        }
+    }
+    let av=a.get("value").and_then(Value::as_i64); let rv=r.get("value").and_then(Value::as_i64);
+    match resource.name.as_str() {
+        "retry-cache-bytes" => {
+            if a.get("unit").and_then(Value::as_str)!=Some("bytes") || r.get("unit").and_then(Value::as_str)!=Some("bytes") { violations.push("retry-cache-bytes search cells must both be byte-valued".to_owned()); }
+            if av.is_none_or(|v| v>declared) { violations.push(format!("retry-cache-bytes accepted value {av:?} exceeds {declared}")); }
+            if rv != declared.checked_add(1) { violations.push(format!("retry-cache-bytes refusal must be exactly {} and was {rv:?}", declared+1)); }
+        }
+        "definition-nodes" => {
+            if a.get("unit").and_then(Value::as_str)!=Some("nodes") || r.get("unit").and_then(Value::as_str)!=Some("nodes") { violations.push("definition-nodes search cells must both be node-valued".to_owned()); }
+            if av.is_none_or(|v| v>declared) { violations.push(format!("definition-nodes accepted search value {av:?} exceeds {declared}")); }
+            if rv != declared.checked_add(1) { violations.push(format!("definition-nodes refusal must be exactly {} and was {rv:?}", declared+1)); }
+        }
+        "definition-manifest" => {
+            let detail=evidence.search_detail.get("definition-manifest");
+            let chain=detail.and_then(|d| d.get("largest_accepted_chain")).and_then(Value::as_i64);
+            let bytes=detail.and_then(|d| d.get("largest_accepted_manifest_bytes")).and_then(Value::as_i64);
+            let bound=detail.and_then(|d| d.get("manifest_ceiling")).and_then(Value::as_i64);
+            if bound != Some(declared) { violations.push(format!("definition-manifest search detail recorded manifest ceiling {bound:?}, expected {declared}")); }
+            if a.get("unit").and_then(Value::as_str)!=Some("bytes") || av != bytes || bytes.is_none_or(|v| v>declared) { violations.push(format!("definition-manifest accepted cell {av:?} is not its retained byte search result {bytes:?} within {declared}")); }
+            if r.get("unit").and_then(Value::as_str)!=Some("nodes") || rv != chain.and_then(|v| v.checked_add(1)) { violations.push(format!("definition-manifest refusal {rv:?} nodes is not exactly one past largest accepted chain {chain:?}")); }
+        }
+        other => violations.push(format!("{other} declares search-bounded-construction without a typed reconciliation rule")),
+    }
+    violations
+}
+''' + s[end:]
+          save(p,s)
+
+          # ---- worker producer: remove unrelated 64-value residue cell; emit strict metadata ----
+          p='crates/oxide-batch/tests/postgres_resource_bound_workers.rs'; s=load(p)
+          block='''    cells.push(Cell::new(
+        "repository-connection-capacity",
+        "a declared pool one short of the derivation",
+        u64::from(MAX_PARTITION_WORKERS),
+        PartitionBudget::new(MAX_PARTITION_WORKERS, u32::from(MAX_PARTITION_WORKERS)).is_ok(),
+        false,
+    ));
+'''
+          s=rep(s,block,'','remove unrelated residue cell')
+          s=rep(s,
+'''    /// Renders what the retained evidence records for this cell.
+    fn evidence(&self) -> Value {
+        json!({
+            "resource": self.resource,
+            "case": self.case,
+            "value": self.value,''',
+'''    /// Renders what the retained evidence records for this cell.
+    fn evidence(&self) -> Value {
+        let (declared, unit) = match self.resource {
+            "partitions-per-step" => (u64::from(MAX_PARTITIONS), "partitions"),
+            "concurrent-partition-workers" => (u64::from(MAX_PARTITION_WORKERS), "concurrent workers"),
+            "split-branches-per-node" => (MAX_SPLIT_BRANCHES as u64, "branches"),
+            "concurrent-split-branches" => (MAX_SPLIT_BRANCHES as u64, "concurrent branches"),
+            "steps-per-split-branch" => (MAX_BRANCH_STEPS as u64, "steps"),
+            "repository-pool-size" => (1024, "connections"),
+            _ => (0, "undeclared"),
+        };
+        json!({
+            "resource": self.resource,
+            "case": self.case,
+            "declared_ceiling": declared,
+            "unit": unit,
+            "declared_unit": unit,
+            "value": self.value,''','worker metadata')
+          save(p,s)
+
+          # ---- query producer metadata ----
+          p='crates/oxide-batch/tests/postgres_resource_bound_queries.rs'; s=load(p)
+          s=rep(s,
+'''    /// Renders what the retained evidence records for this cell.
+    fn evidence(&self) -> Value {
+        json!({
+            "resource": self.resource,
+            "case": self.case,
+            "value": self.value,''',
+'''    /// Renders what the retained evidence records for this cell.
+    fn evidence(&self) -> Value {
+        let (declared, unit) = match self.resource {
+            "explorer-page-size" => (u64::from(MAX_PAGE_SIZE), "rows"),
+            "explorer-cursor" => (MAX_CURSOR_BYTES as u64, "bytes"),
+            "retention-purge-batch" => (u64::from(MAX_PURGE_BATCH), "candidates"),
+            _ => (0, "undeclared"),
+        };
+        json!({
+            "resource": self.resource,
+            "case": self.case,
+            "declared_ceiling": declared,
+            "unit": unit,
+            "declared_unit": unit,
+            "value": self.value,''','query metadata')
+          save(p,s)
+
+          # ---- payload producer metadata, including mixed manifest dimensions ----
+          p='crates/oxide-batch/tests/postgres_resource_bound_payloads.rs'; s=load(p)
+          old='''    /// Renders what the retained evidence records for this cell.
+    fn evidence(&self) -> Value {
+        json!({
+            "resource": self.resource,
+            "subject": self.subject,
+            "case": self.case,
+            "declared_ceiling": self.ceiling,
+            "unit": self.unit,
+            "value": self.value,'''
+          new='''    /// Renders what the retained evidence records for this cell.
+    fn evidence(&self) -> Value {
+        let declared_unit = self.unit.or_else(|| match self.resource {
+            "partition-key" | "partition-context" | "retry-cache-bytes" | "definition-manifest" | "ca-certificate" => Some("bytes"),
+            "retry-cache-entries" => Some("unresolved retry keys"),
+            "definition-nodes" => Some("nodes"),
+            "definition-transitions" | "outgoing-transitions-per-node" => Some("transitions"),
+            "state-upgrade-chain" => Some("upgrade edges"),
+            "item-listeners" => Some("listeners"),
+            _ => None,
+        });
+        let value_unit = if self.resource == "definition-manifest" && !self.expected {
+            Some("nodes")
+        } else {
+            declared_unit
+        };
+        json!({
+            "resource": self.resource,
+            "subject": self.subject,
+            "case": self.case,
+            "declared_ceiling": self.ceiling,
+            "unit": value_unit,
+            "declared_unit": declared_unit,
+            "value": self.value,'''
+          s=rep(s,old,new,'payload metadata')
+          save(p,s)
+
+          # ---- shedding producer metadata ----
+          p='crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs'; s=load(p)
+          old='''    /// Renders what the retained evidence records for this cell.
+    fn evidence(&self) -> Value {
+        json!({
+            "resource": self.resource,
+            "subject": self.subject,
+            "case": self.case,
+            "declared_ceiling": self.declared,
+            "unit": self.unit,
+            "value": self.value,'''
+          new='''    /// Renders what the retained evidence records for this cell.
+    fn evidence(&self) -> Value {
+        let inferred = match self.resource {
+            "retained-incident-events" => Some((MAX_RETAINED_EVENTS_PER_EXECUTION as u64, "events")),
+            "metric-name-allowlist" => Some((MAX_METRIC_NAME_ALLOWLIST as u64, "names")),
+            "diagnostic-bundle" => Some((BUNDLE_CEILING as u64, "bytes")),
+            _ => None,
+        };
+        let declared = self.declared.or_else(|| inferred.map(|v| v.0));
+        let unit = self.unit.or_else(|| inferred.map(|v| v.1));
+        json!({
+            "resource": self.resource,
+            "subject": self.subject,
+            "case": self.case,
+            "declared_ceiling": declared,
+            "unit": unit,
+            "declared_unit": unit,
+            "value": self.value,'''
+          s=rep(s,old,new,'shedding metadata')
+          save(p,s)
+
+          # Remove the obsolete separate construction modality from the denominator.
+          p='tests/fixtures/resource-bounds/campaign-scope.json'; s=load(p)
+          s=rep(s,
+'''      "proofs": ["derived-capacity", "stress-saturation", "fail-closed-residue"],''',
+'''      "proofs": ["derived-capacity", "stress-saturation"],''','remove residue proof')
+          s=s.replace(' fail-closed-residue is the separate, construction-level refusal — a pool one short of the derivation refused by the in-memory budget constructor itself, distinct from the stress-saturation requirement\'s database-level residue check, which is why this resource carries both.',' The one-short pool and zero-residue refusal are now reconciled directly from the same end-to-end numeric observation, so no unrelated construction cell stands in for this proof.')
+          save(p,s)
+          PY
+
+          cargo fmt --all -- --check || cargo fmt --all
+          cargo test --package oxide-batch-xtask resource_bounds -- --nocapture
+          cargo test --workspace --all-targets --all-features --no-fail-fast
+
+          rm -f .github/workflows/pr131-finalize.yml
+          git add -A
+          git commit -m "ci(m5): close resource-bound root proof semantics [pr131-finalized]"
+          git push origin HEAD:fix/pr131-final-closure
