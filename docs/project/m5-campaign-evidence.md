@@ -1540,25 +1540,31 @@ resources, `36` observed.
 | [`resource-bounds-campaign-postgres-15.json`](../engineering/campaigns/m5/resource-bounds-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
 | [`resource-bounds-campaign-postgres-18.json`](../engineering/campaigns/m5/resource-bounds-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
 
-Both were produced by commit `11490a1c`, which is the pull-request merge
+Both were produced by commit `2c3fb4d4`, which is the pull-request merge
 commit the dedicated `M5 Resource Bounds` workflow checked out rather than a
 branch tip, on `rustc 1.97.1` and Linux `x86_64`, against servers `15.19` and
 `18.6`. The command is `cargo run --package oxide-batch-xtask -- resource-bounds`.
-This producer superseded run `31998681860` (execution tree `a0d2ec05`), which
-predated a second corrective pass closing every remaining multi-symbol
-resource dimension and hardening the generic verifier to require an exact
-cell count and a cross-checked declared bound and unit on every
-range-boundary and subject-boundary cell — see F41 below. That run in turn
-superseded run `31884727684` (execution tree `601560ef`), which predated the
-first corrective pass to the verifier: numeric and construction evidence are
-now checked independently for a resource that has both rather than one
-silently short-circuiting the other, a construction refusal must land at
-exactly ceiling `+1` rather than merely past it, and durable equivalence and
-the bounded-identifier-text subject set both close to exact sets rather than a
-partial list — see F40 below. Neither superseded producer's evidence was
-hand-preserved, because a semantic change that lands after a report is
-produced makes the report answerable to a standard it was never run against.
-The chain in turn traces back to the two reports the prior `ci.yml`
+This producer superseded run `32055594305` (execution tree `11490a1c`), which
+predated a third corrective pass closing the root proof-cell exact-set — a
+resource's raw evidence could carry an undeclared or bogus extra
+construction cell alongside the required ones, or record construction cells
+or a numeric entry with no declared proof kind that consumed them — see F42
+below. That run in turn superseded run `31998681860` (execution tree
+`a0d2ec05`), which predated a second corrective pass closing every remaining
+multi-symbol resource dimension and hardening the generic verifier to
+require an exact cell count and a cross-checked declared bound and unit on
+every range-boundary and subject-boundary cell — see F41 below. That run in
+turn superseded run `31884727684` (execution tree `601560ef`), which
+predated the first corrective pass to the verifier: numeric and construction
+evidence are now checked independently for a resource that has both rather
+than one silently short-circuiting the other, a construction refusal must
+land at exactly ceiling `+1` rather than merely past it, and durable
+equivalence and the bounded-identifier-text subject set both close to exact
+sets rather than a partial list — see F40 below. None of the superseded
+producers' evidence was hand-preserved, because a semantic change that lands
+after a report is produced makes the report answerable to a standard it was
+never run against. The chain in turn traces back to the two reports the
+prior `ci.yml`
 `resource-bound-campaign` job had retained (produced 2026-08-11): those
 predated the dedicated workflow, the execution contract, the semantic
 closure, and the execution manifest this promotion introduces, and were
@@ -1782,6 +1788,40 @@ substitution for a missing one, both now fail — previously only presence was
 checked), and a cross-check of each cell's own declared bound and unit
 against what the denominator says, closing a forgeable-evidence path where a
 cell's numeric value could match while what it claimed to be proving did not.
+
+**F42. Required cells were checked for presence, not for an exact set —
+a resource's raw evidence could carry an undeclared or bogus cell
+alongside the required ones and still reconcile clean.** Six
+construction-boundary resources' reports legitimately record one edge-case
+cell beyond the declared-ceiling accept/refuse pair (`concurrent-partition-workers`'
+"zero workers", `explorer-page-size`'s "an empty page",
+`retention-purge-batch`'s "an empty batch", `explorer-cursor`'s "an empty
+token", `partition-key`'s "an empty key", `split-branches-per-node`'s
+one-branch case), and the verifier's `.any()`-based presence checks read
+this to mean any extra cell was implicitly allowed, rather than reading
+the exact set the campaign was answerable for. Separately,
+`subject-boundary` reconciliation `continue`d past a construction cell with
+no `subject` field instead of treating it as a violation, and no proof kind
+checked the opposite direction of what it consumed: a resource could record
+construction cells or an independent numeric entry with no declared proof
+kind that read either, and that evidence sat in the retained report
+unverified by anything. None of this was a defect in the framework — every
+resource's real denominator claim was still true — the gap was that the
+verifier's closure had an unstated allowance for "anything else, too."
+Closed by requiring every construction-boundary, range-boundary, and
+subject-boundary resource's raw evidence to be exactly its declared root
+cell set: the six resources with a genuine extra cell now declare it
+explicitly, in a new `additional_boundaries` list, so the exact set stays
+exact rather than becoming an implicit "at least these two"; a subjectless
+cell is now itself a violation; and a new coarse
+construction/numeric-evidence-versus-declared-proof-kind check closes the
+missing reverse direction, exempting a numeric entry a producer marks
+`summarizes_construction` (a derived rollup of cells checked separately, not
+independent evidence) so a construction-only resource is not forced to
+invent a numeric proof kind for its own report's summary field.
+`repository-connection-capacity`'s one stray refusal cell, which existed
+before this pass but matched no declared proof kind either, is now the
+resource's `fail-closed-residue` proof rather than unaccounted-for evidence.
 
 ## Soak campaign
 
