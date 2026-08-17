@@ -1421,7 +1421,7 @@ cover, the cursor name-column encoding and the interactive confirmation read are
 both real bounds this campaign cannot exercise — the first is checked inside a
 private method on a `#[non_exhaustive]` enum variant nothing outside its own
 crate can construct, and the second is a raw byte cutoff on an interactive
-`io::stdin()` read no automated harness reaches — recorded as F16 below.
+`io::stdin()` read no automated harness reaches — recorded as F40 below.
 
 ### Four overload policies, not one
 
@@ -1550,7 +1550,7 @@ evidence are now checked independently for a resource that has both rather
 than one silently short-circuiting the other, a construction refusal must land
 at exactly ceiling `+1` rather than merely past it, and durable equivalence and
 the bounded-identifier-text subject set both close to exact sets rather than a
-partial list — see F16 below. That producer's own evidence was not
+partial list — see F40 below. That producer's own evidence was not
 hand-preserved, because a semantic change that lands after a report is
 produced makes the report answerable to a standard it was never run against.
 It in turn superseded the two reports the prior `ci.yml`
@@ -1706,7 +1706,7 @@ paginated reads instead. This is not a defect — a record's execution identity
 should come from whatever observed the execution — but it is the reason that one
 report is more expensive than it looks.
 
-**F16. The verifier that checked this campaign's raw evidence was itself
+**F40. The verifier that checked this campaign's raw evidence was itself
 under-specified in six places, closed in a corrective pass after the
 promotion above.** A review of the raw evidence rather than the runner's
 summary of it found: a construction refusal was accepted at any value past
@@ -1727,7 +1727,7 @@ substitution could not have been caught, and two of its fourteen symbols
 turned out to be a wrong constant (`MAX_CURSOR_BYTES`, belonging to the
 unrelated `explorer-cursor` resource, tested in place of
 `MAX_CURSOR_NAME_BYTES`) and two more genuinely unreachable from this
-harness (moved to `out_of_scope` as F16's own finding, above); and the
+harness (moved to `out_of_scope` as F40's own finding, above); and the
 `metric-series-per-family` shedding relation was checked with the same flat
 `discarded == offered − retained` formula every other shedding resource uses,
 which does not fit `collapse-to-reserved-series`: that policy carves one
