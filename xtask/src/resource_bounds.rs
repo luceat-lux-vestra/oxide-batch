@@ -531,6 +531,7 @@ fn reconcile_denominator(scope: &Scope, evidence: &Evidence) -> Vec<String> {
                 "upper-bound-only" => reconcile_upper_bound_only(resource, evidence),
                 "truncation" => reconcile_truncation(resource, evidence),
                 "refusal-past-ceiling" => reconcile_refusal_past_ceiling(resource, evidence),
+                "fail-closed-residue" => reconcile_fail_closed_residue(resource, evidence),
                 // Checked elsewhere: stress-saturation by reconcile_stress
                 // against scope.stress, durable-round-trip by the producer's
                 // own byte-identity assertion before it would ever retain a
@@ -542,8 +543,87 @@ fn reconcile_denominator(scope: &Scope, evidence: &Evidence) -> Vec<String> {
                 )],
             });
         }
+        violations.extend(reconcile_modality_coverage(resource, evidence));
     }
 
+    violations
+}
+
+/// The proof kinds whose evidence lives in construction cells, and the ones
+/// whose evidence lives in a numeric entry. A kind absent from both lists —
+/// `stress-saturation` and `durable-round-trip` — is checked elsewhere
+/// against a different raw shape entirely (`reconcile_stress`, and the
+/// producer's own byte-identity assertion, respectively).
+const CONSTRUCTION_PROOF_KINDS: &[&str] = &[
+    "construction-boundary",
+    "range-boundary",
+    "subject-boundary",
+    "search-bounded-construction",
+    "upper-bound-only",
+    "fail-closed-residue",
+];
+const NUMERIC_PROOF_KINDS: &[&str] = &[
+    "stress-saturation",
+    "derived-capacity",
+    "dual-budget-boundary",
+    "truncation",
+    "refusal-past-ceiling",
+    "upper-bound-only",
+];
+
+/// Requires every raw evidence category a resource's report actually
+/// recorded to be one some declared proof kind consumes.
+///
+/// The reverse direction — a declared proof kind with no matching evidence —
+/// is already required by each proof kind's own dispatch above; this is the
+/// direction that was missing: construction cells or a numeric entry
+/// recorded for a resource whose declared proofs read neither would sit in
+/// the raw report unverified by anything, which is indistinguishable from a
+/// stray or mistaken observation. Only the coarse construction/numeric shape
+/// is checked, not each of the eleven finer-grained proof kind names,
+/// because a raw cell does not self-identify as `range-boundary` versus
+/// `construction-boundary` versus `subject-boundary` — that distinction is
+/// the scope's declaration, not something the evidence shape carries on its
+/// own.
+///
+/// A numeric entry the producer marks `"summarizes_construction": true` is
+/// exempted from the numeric side of this check: several reports compute a
+/// numeric rollup or supplementary observation directly from a resource's
+/// own construction cells purely for the retained report's readability, and
+/// that rollup is not independent evidence any more than `passed` or
+/// `violations` are — it is a derived summary field, and requiring it to
+/// name its own proof kind would be requiring construction-only resources to
+/// declare a numeric proof kind they do not have. The construction cells it
+/// summarizes are exactly what the construction side of this same check
+/// still requires to be accounted for.
+fn reconcile_modality_coverage(resource: &Resource, evidence: &Evidence) -> Vec<String> {
+    let mut violations = Vec::new();
+    if evidence.construction.contains_key(&resource.name)
+        && !resource
+            .proofs
+            .iter()
+            .any(|proof| CONSTRUCTION_PROOF_KINDS.contains(&proof.as_str()))
+    {
+        violations.push(format!(
+            "{} recorded construction cells and declares no proof kind that requires them",
+            resource.name,
+        ));
+    }
+    if let Some((_, entry)) = evidence.observed.get(&resource.name)
+        && entry
+            .get("summarizes_construction")
+            .and_then(Value::as_bool)
+            != Some(true)
+        && !resource
+            .proofs
+            .iter()
+            .any(|proof| NUMERIC_PROOF_KINDS.contains(&proof.as_str()))
+    {
+        violations.push(format!(
+            "{} recorded a numeric entry and declares no proof kind that requires it",
+            resource.name,
+        ));
+    }
     violations
 }
 
@@ -598,6 +678,65 @@ fn reconcile_construction_boundary(resource: &Resource, evidence: &Evidence) -> 
         declared,
         &format!("refused at exactly {past}"),
     ));
+    for extra in &resource.additional_boundaries {
+        violations.extend(reconcile_exact_cell(
+            &resource.name,
+            report,
+            cells,
+            extra.value,
+            &extra.expected,
+            declared,
+            &extra.label,
+        ));
+    }
+    let allowed: Vec<(i64, &str)> = [(declared, "accepted"), (past, "refused")]
+        .into_iter()
+        .chain(
+            resource
+                .additional_boundaries
+                .iter()
+                .map(|extra| (extra.value, extra.expected.as_str())),
+        )
+        .collect();
+    violations.extend(reject_undeclared_cells(
+        &resource.name,
+        report,
+        cells,
+        &allowed,
+    ));
+    violations
+}
+
+/// Rejects any cell whose `(value, expected-side)` identity is not one of
+/// `allowed`. A construction-boundary, range-boundary, or subject-boundary
+/// resource's raw evidence may carry only the exact cells its own
+/// denominator declares — a plausible-looking extra cell that was never
+/// declared is exactly as unproven as a missing required one, because
+/// nothing here says what it was meant to show.
+fn reject_undeclared_cells(
+    resource: &str,
+    report: &str,
+    cells: &[Value],
+    allowed: &[(i64, &str)],
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    for cell in cells {
+        let Some(value) = cell.get("value").and_then(Value::as_i64) else {
+            continue;
+        };
+        let Some(side) = cell.get("expected").and_then(Value::as_str) else {
+            continue;
+        };
+        if !allowed
+            .iter()
+            .any(|(allowed_value, allowed_side)| *allowed_value == value && *allowed_side == side)
+        {
+            violations.push(format!(
+                "the {report} report recorded a construction cell for {resource} at {value}, \
+                 expected {side}, which is not one of its declared root cells",
+            ));
+        }
+    }
     violations
 }
 
@@ -789,6 +928,18 @@ fn reconcile_range_boundary(resource: &Resource, evidence: &Evidence) -> Vec<Str
             label,
         ));
     }
+    let allowed = [
+        (bounds.minimum, "accepted"),
+        (below_minimum, "refused"),
+        (bounds.maximum, "accepted"),
+        (past_maximum, "refused"),
+    ];
+    violations.extend(reject_undeclared_cells(
+        &resource.name,
+        report,
+        cells,
+        &allowed,
+    ));
     violations
 }
 
@@ -814,6 +965,13 @@ fn reconcile_subject_boundary(resource: &Resource, evidence: &Evidence) -> Vec<S
     let mut by_subject: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
     for cell in cells {
         let Some(subject) = cell.get("subject").and_then(Value::as_str) else {
+            let value = cell.get("value").and_then(Value::as_i64);
+            violations.push(format!(
+                "the {report} report recorded a construction cell for {} at {value:?} with no \
+                 subject, and every cell this resource's evidence carries must be attributed to \
+                 one of its declared subjects",
+                resource.name,
+            ));
             continue;
         };
         by_subject.entry(subject).or_default().push(cell.clone());
@@ -873,6 +1031,13 @@ fn reconcile_subject_boundary(resource: &Resource, evidence: &Evidence) -> Vec<S
             ceiling,
             unit,
             "refused one unit past its ceiling",
+        ));
+        let allowed = [(ceiling, "accepted"), (past, "refused")];
+        violations.extend(reject_undeclared_cells(
+            subject,
+            report,
+            subject_cells,
+            &allowed,
         ));
     }
 
@@ -1051,28 +1216,53 @@ fn reconcile_search_bounded_construction(resource: &Resource, evidence: &Evidenc
         ));
         return violations;
     };
-    let accepted = cells.iter().any(|cell| {
-        cell.get("value")
-            .and_then(Value::as_i64)
-            .is_some_and(|value| value <= declared)
-            && cell.get("expected").and_then(Value::as_str) == Some("accepted")
-            && cell.get("observed").and_then(Value::as_str) == Some("accepted")
-    });
-    let refused = cells.iter().any(|cell| {
-        cell.get("expected").and_then(Value::as_str) == Some("refused")
-            && cell.get("observed").and_then(Value::as_str) == Some("refused")
-    });
-    if !accepted {
-        violations.push(format!(
+    let accepted: Vec<&Value> = cells
+        .iter()
+        .filter(|cell| {
+            cell.get("value")
+                .and_then(Value::as_i64)
+                .is_some_and(|value| value <= declared)
+                && cell.get("expected").and_then(Value::as_str) == Some("accepted")
+                && cell.get("observed").and_then(Value::as_str) == Some("accepted")
+        })
+        .collect();
+    let refused: Vec<&Value> = cells
+        .iter()
+        .filter(|cell| {
+            cell.get("expected").and_then(Value::as_str) == Some("refused")
+                && cell.get("observed").and_then(Value::as_str) == Some("refused")
+        })
+        .collect();
+    match accepted.len() {
+        0 => violations.push(format!(
             "{} is declared with a ceiling of {declared} bytes and the {report} report recorded \
              no construction accepted at or under it",
             resource.name,
-        ));
+        )),
+        1 => {}
+        n => violations.push(format!(
+            "{} had a construction cell accepted at or under its ceiling recorded {n} times in \
+             the {report} report, and exactly one is required",
+            resource.name,
+        )),
     }
-    if !refused {
-        violations.push(format!(
+    match refused.len() {
+        0 => violations.push(format!(
             "{} is declared with a ceiling of {declared} bytes and the {report} report recorded \
              no construction refused past the largest chain that fits",
+            resource.name,
+        )),
+        1 => {}
+        n => violations.push(format!(
+            "{}'s refused-past-the-largest-chain-that-fits cell was recorded {n} times in the \
+             {report} report, and exactly one is required",
+            resource.name,
+        )),
+    }
+    if accepted.len() + refused.len() != cells.len() {
+        violations.push(format!(
+            "the {report} report recorded a construction cell for {} that is neither its \
+             accepted-at-or-under-the-ceiling cell nor its refused cell",
             resource.name,
         ));
     }
@@ -1100,17 +1290,34 @@ fn reconcile_upper_bound_only(resource: &Resource, evidence: &Evidence) -> Vec<S
         ));
         return violations;
     };
-    let accepted = cells.iter().any(|cell| {
-        cell.get("value")
-            .and_then(Value::as_i64)
-            .is_some_and(|value| value <= declared)
-            && cell.get("expected").and_then(Value::as_str) == Some("accepted")
-            && cell.get("observed").and_then(Value::as_str) == Some("accepted")
-    });
-    if !accepted {
-        violations.push(format!(
+    let accepted: Vec<&Value> = cells
+        .iter()
+        .filter(|cell| {
+            cell.get("value")
+                .and_then(Value::as_i64)
+                .is_some_and(|value| value <= declared)
+                && cell.get("expected").and_then(Value::as_str) == Some("accepted")
+                && cell.get("observed").and_then(Value::as_str) == Some("accepted")
+        })
+        .collect();
+    match accepted.len() {
+        0 => violations.push(format!(
             "{} is declared upper-bound-only with a ceiling of {declared} and the {report} \
              report recorded no construction accepted at or under it",
+            resource.name,
+        )),
+        1 => {}
+        n => violations.push(format!(
+            "{} had a construction cell accepted at or under its ceiling recorded {n} times in \
+             the {report} report, and exactly one is required",
+            resource.name,
+        )),
+    }
+    if accepted.len() != cells.len() {
+        violations.push(format!(
+            "the {report} report recorded a construction cell for {} that is not its \
+             accepted-at-or-under-the-ceiling cell, and upper-bound-only declares no refusal to \
+             account for one",
             resource.name,
         ));
     }
@@ -1150,6 +1357,36 @@ fn reconcile_refusal_past_ceiling(resource: &Resource, evidence: &Evidence) -> V
         violations.push(format!(
             "{} was offered past its declared ceiling and the {report} report did not record a \
              refusal",
+            resource.name,
+        ));
+    }
+    violations
+}
+
+/// `repository-connection-capacity` only: requires at least one construction
+/// cell refused, independently of the stress-saturation requirement's own
+/// database-level residue check. The two are not the same proof: this one is
+/// the in-memory budget constructor itself refusing a pool one short of the
+/// derivation, before any database round trip; `rejected-before-any-durable-write`
+/// is the full end-to-end check that the refusal left no row behind.
+fn reconcile_fail_closed_residue(resource: &Resource, evidence: &Evidence) -> Vec<String> {
+    let mut violations = Vec::new();
+    let Some((report, cells)) = evidence.construction.get(&resource.name) else {
+        violations.push(format!(
+            "{} declares a fail-closed-residue proof and no report recorded any construction \
+             cells for it",
+            resource.name,
+        ));
+        return violations;
+    };
+    let refused = cells.iter().any(|cell| {
+        cell.get("expected").and_then(Value::as_str) == Some("refused")
+            && cell.get("observed").and_then(Value::as_str) == Some("refused")
+    });
+    if !refused {
+        violations.push(format!(
+            "{} declares a fail-closed-residue proof and the {report} report recorded no \
+             construction cell refused",
             resource.name,
         ));
     }
@@ -1929,6 +2166,7 @@ fn read_resource(resource: &Value) -> Result<Resource, String> {
     let bounds = read_bounds(resource, &name)?;
     let subjects = read_subjects(resource, &name)?;
     let informational_symbols = read_informational_symbols(resource, &name)?;
+    let additional_boundaries = read_additional_boundaries(resource, &name)?;
     Ok(Resource {
         class: suite::string(resource, "class")?,
         policy: suite::string(resource, "policy")?,
@@ -1951,8 +2189,52 @@ fn read_resource(resource: &Value) -> Result<Resource, String> {
             .and_then(Value::as_str)
             .map(str::to_owned),
         informational_symbols,
+        additional_boundaries,
         name,
     })
+}
+
+/// Reads the extra root construction cells a construction-boundary
+/// resource's report legitimately records beyond its base ceiling
+/// accept/refuse pair, failing closed on a missing value, side, or label.
+fn read_additional_boundaries(
+    resource: &Value,
+    name: &str,
+) -> Result<Vec<AdditionalBoundary>, String> {
+    let mut additional = Vec::new();
+    for entry in resource
+        .get("additional_boundaries")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let value = entry
+            .get("value")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| format!("{name} declares an additional boundary with no value"))?;
+        let expected = entry
+            .get("expected")
+            .and_then(Value::as_str)
+            .filter(|side| *side == "accepted" || *side == "refused")
+            .ok_or_else(|| {
+                format!(
+                    "{name} declares an additional boundary with no \"accepted\" or \"refused\" \
+                     expected side",
+                )
+            })?
+            .to_owned();
+        let label = entry
+            .get("label")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("{name} declares an additional boundary with no label"))?
+            .to_owned();
+        additional.push(AdditionalBoundary {
+            value,
+            expected,
+            label,
+        });
+    }
+    Ok(additional)
 }
 
 /// Reads a range-boundary resource's inclusive minimum/maximum, failing
@@ -2159,6 +2441,20 @@ struct Resource {
     /// refusal exists to prove past them, so they are classified here rather
     /// than given a proof obligation the code has nothing to satisfy it with.
     informational_symbols: Vec<InformationalSymbol>,
+    /// Extra root construction cells a construction-boundary resource's own
+    /// report legitimately records beyond the declared-ceiling accept/refuse
+    /// pair — an interior edge case such as "zero workers" or "an empty
+    /// page" — each declared explicitly so the exact-set check can tell a
+    /// reviewed, intentional cell from an undeclared or bogus one.
+    additional_boundaries: Vec<AdditionalBoundary>,
+}
+
+/// One declared root cell a construction-boundary resource's evidence
+/// carries beyond its base ceiling accept/refuse pair.
+struct AdditionalBoundary {
+    value: i64,
+    expected: String,
+    label: String,
 }
 
 /// An inclusive minimum/maximum range, with the unit both sides are stated
@@ -2217,9 +2513,9 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        Bounds, Comparison, Report, Resource, Runs, Scope, StressRequirement, Subject,
-        collect_evidence, execution_manifest, reconcile_denominator, reconcile_equivalence,
-        reconcile_matrix_point, reconcile_stress,
+        AdditionalBoundary, Bounds, Comparison, Report, Resource, Runs, Scope, StressRequirement,
+        Subject, collect_evidence, execution_manifest, reconcile_denominator,
+        reconcile_equivalence, reconcile_matrix_point, reconcile_stress,
     };
 
     /// A scope shaped like the committed `campaign-scope.json`, without the
@@ -2338,6 +2634,7 @@ mod tests {
             subjects: Vec::new(),
             shedding_rule: None,
             informational_symbols: Vec::new(),
+            additional_boundaries: Vec::new(),
         }
     }
 
@@ -2853,6 +3150,7 @@ mod tests {
             subjects: Vec::new(),
             shedding_rule: None,
             informational_symbols: Vec::new(),
+            additional_boundaries: Vec::new(),
         }
     }
 
@@ -3040,6 +3338,7 @@ mod tests {
             ],
             shedding_rule: None,
             informational_symbols: Vec::new(),
+            additional_boundaries: Vec::new(),
         }
     }
 
@@ -3126,13 +3425,13 @@ mod tests {
     }
 
     #[test]
-    fn a_subjectless_construction_cell_is_ignored_rather_than_counted() {
+    fn a_subjectless_construction_cell_is_rejected() {
         // A cell with no `subject` field cannot be attributed to any
-        // declared subject, so it must not be able to silently stand in for
-        // one: the subject it was meant for is still reported missing.
+        // declared subject, so it is not silently ignored: it is itself a
+        // violation, on top of every declared subject's own pair still
+        // being required in full.
         let scope = minimal_scope(subject_boundary_resource());
         let mut cells = valid_subject_cells();
-        cells.retain(|cell| cell.get("subject").and_then(Value::as_str) != Some("alpha"));
         cells.push(json!({
             "resource": "resource-subjects",
             "case": "boundary",
@@ -3144,11 +3443,11 @@ mod tests {
         }));
         let observation = json!({ "construction": cells });
         let runs = runs_with(&[("report-x", observation)]);
-        let (evidence, _) = collect_evidence(&scope, &runs);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        assert!(identity_violations.is_empty(), "{identity_violations:?}");
         let violations = reconcile_denominator(&scope, &evidence);
         assert!(
-            any_violation(&violations, "alpha")
-                .is_some_and(|violation| violation.contains("no report recorded evidence")),
+            any_violation(&violations, "no subject").is_some(),
             "{violations:?}"
         );
     }
@@ -3200,6 +3499,7 @@ mod tests {
             subjects: Vec::new(),
             shedding_rule: None,
             informational_symbols: Vec::new(),
+            additional_boundaries: Vec::new(),
         }
     }
 
@@ -3252,6 +3552,7 @@ mod tests {
             subjects: Vec::new(),
             shedding_rule: None,
             informational_symbols: Vec::new(),
+            additional_boundaries: Vec::new(),
         }
     }
 
@@ -3292,6 +3593,7 @@ mod tests {
             subjects: Vec::new(),
             shedding_rule: None,
             informational_symbols: Vec::new(),
+            additional_boundaries: Vec::new(),
         }
     }
 
@@ -3340,6 +3642,7 @@ mod tests {
             subjects: Vec::new(),
             shedding_rule: None,
             informational_symbols: Vec::new(),
+            additional_boundaries: Vec::new(),
         }
     }
 
@@ -3379,6 +3682,7 @@ mod tests {
             subjects: Vec::new(),
             shedding_rule: None,
             informational_symbols: Vec::new(),
+            additional_boundaries: Vec::new(),
         }
     }
 
@@ -3417,6 +3721,7 @@ mod tests {
             subjects: Vec::new(),
             shedding_rule: None,
             informational_symbols: Vec::new(),
+            additional_boundaries: Vec::new(),
         }
     }
 
@@ -3565,6 +3870,219 @@ mod tests {
     }
 
     #[test]
+    fn a_construction_boundary_extra_undeclared_cell_is_rejected() {
+        // resource-b declares no additional_boundaries, so a third,
+        // otherwise-plausible-looking cell is not tolerated: the root cell
+        // set is exact, not a minimum.
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        report_a["construction"]
+            .as_array_mut()
+            .expect("construction array")
+            .push(json!({
+                "resource": "resource-b",
+                "case": "an interior value nobody declared",
+                "value": 2,
+                "expected": "refused",
+                "observed": "refused",
+            }));
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        assert!(identity_violations.is_empty(), "{identity_violations:?}");
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-b").is_some_and(|violation| violation.contains(
+                "not one of its declared root \
+                                                               cells"
+            )),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_declared_additional_boundary_missing_is_rejected() {
+        let scope = minimal_scope(Resource {
+            name: "resource-with-extra".to_owned(),
+            class: "buffer".to_owned(),
+            policy: "fail-closed".to_owned(),
+            report: "report-x".to_owned(),
+            ceiling: Some(10),
+            postgres: false,
+            proofs: vec!["construction-boundary".to_owned()],
+            bounds: None,
+            bound_kind: None,
+            parent_connections: None,
+            subjects: Vec::new(),
+            shedding_rule: None,
+            informational_symbols: Vec::new(),
+            additional_boundaries: vec![AdditionalBoundary {
+                value: 0,
+                expected: "refused".to_owned(),
+                label: "zero".to_owned(),
+            }],
+        });
+        let observation = json!({
+            "construction": [
+                {
+                    "resource": "resource-with-extra",
+                    "case": "at the ceiling",
+                    "declared_ceiling": 10,
+                    "value": 10,
+                    "expected": "accepted",
+                    "observed": "accepted",
+                },
+                {
+                    "resource": "resource-with-extra",
+                    "case": "one past the ceiling",
+                    "declared_ceiling": 10,
+                    "value": 11,
+                    "expected": "refused",
+                    "observed": "refused",
+                },
+            ],
+        });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        assert!(identity_violations.is_empty(), "{identity_violations:?}");
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-with-extra")
+                .is_some_and(|violation| violation.contains("recorded no construction zero")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_range_boundary_extra_undeclared_cell_is_rejected() {
+        let scope = minimal_scope(range_boundary_resource());
+        let mut cells = vec![
+            range_cell(100, 100, "accepted"),
+            range_cell(99, 100, "refused"),
+            range_cell(1000, 1000, "accepted"),
+            range_cell(1001, 1000, "refused"),
+        ];
+        cells.push(range_cell(500, 100, "accepted"));
+        let observation = json!({ "construction": cells });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        assert!(identity_violations.is_empty(), "{identity_violations:?}");
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-range").is_some_and(|violation| violation
+                .contains(
+                    "not one of its declared root \
+                                                               cells"
+                )),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_subject_boundary_extra_undeclared_cell_for_a_declared_subject_is_rejected() {
+        // "alpha" already has its own correct pair; a third, plausible-value
+        // cell for the same declared subject is still not tolerated.
+        let scope = minimal_scope(subject_boundary_resource());
+        let mut cells = valid_subject_cells();
+        cells.push(subject_cell("alpha", 10, 5, "refused"));
+        let observation = json!({ "construction": cells });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        assert!(identity_violations.is_empty(), "{identity_violations:?}");
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "alpha").is_some_and(|violation| violation.contains(
+                "not one of its declared root \
+                                                               cells"
+            )),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn undeclared_construction_evidence_for_a_numeric_only_resource_is_rejected() {
+        // resource-c declares only stress-saturation; construction cells
+        // recorded for it anyway are not silently tolerated as bonus
+        // evidence — they are unaccounted-for raw evidence.
+        let scope = scope();
+        let mut report_b = valid_report_b();
+        report_b["construction"] = json!([{
+            "resource": "resource-c",
+            "case": "an unexpected construction cell",
+            "value": 1,
+            "expected": "accepted",
+            "observed": "accepted",
+        }]);
+        let runs = runs_with(&[("report-a", valid_report_a()), ("report-b", report_b)]);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        assert!(identity_violations.is_empty(), "{identity_violations:?}");
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-c").is_some_and(|violation| violation.contains(
+                "declares no proof kind that \
+                                                               requires them"
+            )),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn undeclared_numeric_evidence_for_a_construction_only_resource_is_rejected() {
+        // resource-b declares only construction-boundary; a numeric entry
+        // recorded for it anyway is not silently tolerated.
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        report_a["resources"]
+            .as_array_mut()
+            .expect("resources array")
+            .push(json!({
+                "resource": "resource-b",
+                "configured_ceiling": 5,
+                "offered_load": 1,
+                "observed_peak_occupancy": 1,
+                "drops": 0,
+                "passed": true,
+            }));
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        assert!(identity_violations.is_empty(), "{identity_violations:?}");
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-b").is_some_and(|violation| violation.contains(
+                "declares no proof kind that \
+                                                               requires it"
+            )),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_summarizes_construction_numeric_entry_does_not_require_its_own_proof_kind() {
+        // A numeric entry marked summarizes_construction is a derived
+        // rollup of the construction cells already checked separately, not
+        // independent evidence — it must not force a construction-only
+        // resource to also declare a numeric-consuming proof kind.
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        report_a["resources"]
+            .as_array_mut()
+            .expect("resources array")
+            .push(json!({
+                "resource": "resource-b",
+                "configured_ceiling": 5,
+                "offered_load": 1,
+                "observed_peak_occupancy": 1,
+                "drops": 0,
+                "passed": true,
+                "summarizes_construction": true,
+            }));
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        assert!(identity_violations.is_empty(), "{identity_violations:?}");
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(violations.is_empty(), "{violations:?}");
+    }
+
+    #[test]
     fn an_undeclared_compared_field_is_rejected() {
         let scope = scope();
         let mut report_a = valid_report_a();
@@ -3617,6 +4135,7 @@ mod tests {
             subjects: Vec::new(),
             shedding_rule: Some("collapse-to-reserved-series".to_owned()),
             informational_symbols: Vec::new(),
+            additional_boundaries: Vec::new(),
         }
     }
 

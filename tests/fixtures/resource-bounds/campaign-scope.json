@@ -7,18 +7,20 @@
   "note": "This document is the campaign's denominator, and a resource campaign needs one more than most: the thing being counted is what the framework owns, and a resource that is not listed is not proved absent, it is unexamined. The runner reads this to decide what must run and what each report must have observed. The in-process reconciliation in crates/oxide-batch/tests/m5_resource_bounds_campaign.rs reads it from the other side: it parses every library crate and fails an ordinary cargo test when a constant declared under the repository's bound declaration convention is not classified here.",
   "completeness": "What the reconciliation guarantees is bounded by that convention, and the campaign states the limit rather than implying more. Every constant matching the convention in docs/engineering/coding-conventions.md is discovered and must be classified, regardless of its visibility, its module, whether it is an associated const, and how the source is formatted, because the scan parses Rust rather than reading lines. A ceiling written as a bare literal at the point it is enforced, or named outside the convention, or existing only after macro expansion, is invisible to it. Those are ruled out by the convention being a documented rule that review applies, not by the scan, and the campaign does not claim to discover every bounded resource automatically.",
   "proof_model": {
-    "note": "Every resource declares the proof kinds its own evidence must contain, in its 'proofs' array, and the runner rejects a resource whose raw evidence does not exactly match what is declared: a modality present without a declaration, or a declaration with no matching evidence, both fail. The kinds are dispatched by shape, not merely by presence, so one kind of evidence cannot stand in for another it was never meant to prove.",
+    "note": "Every resource declares the proof kinds its own evidence must contain, in its 'proofs' array. The runner enforces this in both directions: a declared kind with no matching evidence fails, in each kind's own dispatch below, and a raw evidence category (construction cells, or a numeric entry that is not itself a derived summary of construction cells) recorded for a resource whose declared proofs consume neither also fails, in one coarse construction/numeric check every resource goes through regardless of which specific kind it declares — because a raw cell does not self-identify as range-boundary versus construction-boundary versus subject-boundary, only the coarser construction/numeric shape is evidence-observable at all. Within construction-boundary, range-boundary, and subject-boundary specifically, the root cells themselves are closed further still: each resource's raw evidence must be the exact declared set of root cells — no fewer (missing), no more of the same one (duplicated), and no cell at a value or side outside the declared set (undeclared or bogus) — not merely contain the required ones. A resource whose evidence legitimately records more than the bare boundary pair (an interior edge case such as 'zero workers' or 'an empty page') declares each such cell explicitly in additional_boundaries, so the exact set stays exact rather than becoming an unstated allowance for anything extra.",
     "kinds": {
-      "construction-boundary": "A pair of construction cells: the declared ceiling accepted exactly, and the ceiling plus one refused exactly. Neither side alone is proof — an all-accept or all-refuse report says nothing about where the ceiling actually falls.",
-      "range-boundary": "Four construction cells for an inclusive minimum/maximum range, in canonical milliseconds: the minimum accepted, one millisecond below it refused, the maximum accepted, one millisecond past it refused.",
-      "subject-boundary": "The bounded-identifier-text variant of construction-boundary: one accept/refuse pair per declared subject, each carrying its own real ceiling and value, reconciled as an exact set against the resource's declared subjects.",
+      "construction-boundary": "A pair of construction cells: the declared ceiling accepted exactly, and the ceiling plus one refused exactly. Neither side alone is proof — an all-accept or all-refuse report says nothing about where the ceiling actually falls. Exactly these two root cells, plus any additional_boundaries this resource declares, and no others.",
+      "range-boundary": "Four construction cells for an inclusive minimum/maximum range, in the resource's declared unit: the minimum accepted, one unit below it refused, the maximum accepted, one unit past it refused. Exactly these four root cells and no others.",
+      "subject-boundary": "One accept/refuse pair per declared subject, each carrying its own real ceiling and unit, reconciled as an exact set against the resource's declared subjects: every cell must be attributed to a declared subject (a cell with no subject is itself a violation, not silently ignored), every declared subject must have exactly its own pair and no more, and no subject may carry a cell outside that pair. Reused beyond bounded-identifier-text for any resource whose evidence independently proves more than one dimension of itself — durable-state-envelope's bytes and depth, cli-configuration-document's bytes, secret-bytes, and depth.",
       "stress-saturation": "A numeric entry reconciled against a declared stress.requirements entry — peak-equals-ceiling, offered-exceeds-ceiling (which also requires the discarded count to equal offered minus retained under the resource's own declared shedding rule), history-exceeds-page, candidates-exceed-batch, or rejected-before-any-durable-write.",
       "dual-budget-boundary": "concurrent-split-branches only: the numeric entry's own budgeted_run and ceiling_run detail, each independently required to show its own peak-equals-budget relation, since the declared ceiling and the concurrency budget are not reachable in the same run.",
       "derived-capacity": "repository-connection-capacity only: the required connection count is re-derived from the raw concurrent_children field as concurrent_children + 1 and required to equal what the report recorded, rather than trusting the report's own arithmetic.",
+      "fail-closed-residue": "repository-connection-capacity only: at least one construction cell refused, independently of stress-saturation's own database-level rejected-before-any-durable-write check — the in-memory budget constructor refusing a pool one short of the derivation, before any database round trip, is a distinct fact from the full end-to-end residue check.",
       "durable-round-trip": "A boundary-sized payload written through the real adapter and read back byte-identical, checked by the producer's own assertion before it would ever retain a passing observation. No resource declares it today; it is named because a future PostgreSQL-backed resource proved this way should declare it rather than reuse construction-boundary for a claim construction-boundary does not make.",
       "search-bounded-construction": "retry-cache-bytes, definition-nodes, and definition-manifest: the accepted side is the largest value a search found that still fits the ceiling rather than the ceiling exactly, because the resource's own encoding does not admit constructing a value at the exact boundary, and the refused side is one step past what the search found.",
       "upper-bound-only": "A ceiling no accepted M5 input reaches, because a different bound always binds first (definition-transitions, where the manifest ceiling binds first) or because the resource composes from other bounded parts that never sum close to it (diagnostic-bundle). The observed value is still recorded beside the ceiling; there is no refusal to prove.",
-      "truncation": "explorer-response only: a truncation marker (the count of pages the traversal actually truncated) required to be positive, and the observed peak required at or under the byte ceiling. offered_load is a row count here, not bytes, so it is not reconciled against the byte ceiling the way stress-saturation's offered/ceiling pair is."
+      "truncation": "explorer-response only: a truncation marker (the count of pages the traversal actually truncated) required to be positive, and the observed peak required at or under the byte ceiling. offered_load is a row count here, not bytes, so it is not reconciled against the byte ceiling the way stress-saturation's offered/ceiling pair is.",
+      "refusal-past-ceiling": "instance-key-input only: a fail-closed resource proved by refusal alone, with no construction accept cell at the ceiling — requires the recorded offer to have actually exceeded the ceiling and the report's own refused flag to be true."
     }
   },
   "support_contract": {
@@ -219,6 +221,9 @@
       "report": "worker-assignment",
       "postgres": true,
       "proofs": ["construction-boundary", "stress-saturation"],
+      "additional_boundaries": [
+        { "value": 0, "expected": "refused", "label": "zero workers" }
+      ],
       "budget_row": "Concurrent partition workers",
       "budget_bound": "`1..=64`"
     },
@@ -233,6 +238,13 @@
       "report": "worker-assignment",
       "postgres": false,
       "proofs": ["construction-boundary"],
+      "additional_boundaries": [
+        {
+          "value": 1,
+          "expected": "refused",
+          "label": "one branch, below the two a split means"
+        }
+      ],
       "budget_row": "Split branches per node",
       "budget_bound": "`2..=8`"
     },
@@ -277,10 +289,10 @@
       "policy": "fail-closed",
       "report": "worker-assignment",
       "postgres": true,
-      "proofs": ["derived-capacity", "stress-saturation"],
+      "proofs": ["derived-capacity", "stress-saturation", "fail-closed-residue"],
       "budget_row": null,
       "budget_bound": null,
-      "note": "The one bound in the campaign that is derived rather than declared, so it has no symbol to reconcile against. The extra connection belongs to the parent, which owns planning, the per-child compare-and-swap, and the aggregate commit. bound_kind and parent_connections are the machine-readable form of the same derivation the prose states; the runner re-derives concurrent_children + parent_connections from the report's own raw detail and requires it to equal what the report recorded, rather than trusting the report's arithmetic."
+      "note": "The one bound in the campaign that is derived rather than declared, so it has no symbol to reconcile against. The extra connection belongs to the parent, which owns planning, the per-child compare-and-swap, and the aggregate commit. bound_kind and parent_connections are the machine-readable form of the same derivation the prose states; the runner re-derives concurrent_children + parent_connections from the report's own raw detail and requires it to equal what the report recorded, rather than trusting the report's arithmetic. fail-closed-residue is the separate, construction-level refusal — a pool one short of the derivation refused by the in-memory budget constructor itself, distinct from the stress-saturation requirement's database-level residue check, which is why this resource carries both."
     },
     {
       "resource": "repository-pool-size",
@@ -307,6 +319,9 @@
       "report": "bounded-query-paths",
       "postgres": true,
       "proofs": ["construction-boundary", "stress-saturation"],
+      "additional_boundaries": [
+        { "value": 0, "expected": "refused", "label": "an empty page" }
+      ],
       "budget_row": "Explorer page size",
       "budget_bound": "`1..=500` rows"
     },
@@ -335,6 +350,9 @@
       "report": "bounded-query-paths",
       "postgres": true,
       "proofs": ["construction-boundary"],
+      "additional_boundaries": [
+        { "value": 0, "expected": "refused", "label": "an empty token" }
+      ],
       "budget_row": "Explorer cursor",
       "budget_bound": "`256` bytes"
     },
@@ -349,6 +367,9 @@
       "report": "bounded-query-paths",
       "postgres": true,
       "proofs": ["construction-boundary", "stress-saturation"],
+      "additional_boundaries": [
+        { "value": 0, "expected": "refused", "label": "an empty batch" }
+      ],
       "budget_row": "Purge batch",
       "budget_bound": "`1..=1000` candidates"
     },
@@ -377,6 +398,9 @@
       "report": "bounded-payloads",
       "postgres": true,
       "proofs": ["construction-boundary"],
+      "additional_boundaries": [
+        { "value": 0, "expected": "refused", "label": "an empty key" }
+      ],
       "budget_row": "Partition key",
       "budget_bound": "`128` bytes"
     },

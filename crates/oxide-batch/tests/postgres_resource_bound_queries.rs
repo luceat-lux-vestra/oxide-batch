@@ -576,6 +576,12 @@ impl Traversal {
             "drops": 0,
             "violations": Vec::<String>::new(),
             "passed": true,
+            // Not independent evidence: explorer-cursor's ceiling is already
+            // proved by its own construction-boundary cells. This is the
+            // largest cursor a real traversal happened to produce, recorded
+            // as supplementary context rather than a second claim that would
+            // need its own proof kind.
+            "summarizes_construction": true,
         })
     }
 }

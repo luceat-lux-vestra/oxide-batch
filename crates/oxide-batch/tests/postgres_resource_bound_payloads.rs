@@ -219,6 +219,13 @@ fn resource_rollup(cells: &[Cell]) -> Vec<Value> {
             "drops": 0,
             "violations": violations,
             "passed": violations.is_empty(),
+            // Not independent evidence: every field above is computed from
+            // the construction cells already retained separately. The
+            // verifier's root-modality check reads this to know the numeric
+            // entry it is looking at imposes no proof obligation of its
+            // own — the construction cells it summarizes are what actually
+            // has to satisfy one.
+            "summarizes_construction": true,
         }));
     }
 
