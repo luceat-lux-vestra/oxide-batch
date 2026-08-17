@@ -128,7 +128,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "2c3fb4d491ae4ec8eeb58f33c9c8835697037f20",
+    "source_commit": "15d79fc4dd4e7daf887482aabfe96d56a082e4c9",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -143,16 +143,16 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "2c3fb4d491ae4ec8eeb58f33c9c8835697037f20",
+      "execution_commit": "15d79fc4dd4e7daf887482aabfe96d56a082e4c9",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
         ".github/workflows/m5-resource-bounds.yml": "c9a953191ba47f4af05c39404aee3821082e0f2d",
-        "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+        "Cargo.lock": "39b4d237af13ee0d01ce96f38e3d91fcbcfe00e5",
         "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
         "crates/oxide-batch-cli/Cargo.toml": "2ea1f690d446a7da1a3724933056238f530772e1",
         "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
-        "crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs": "323340f5020c797f43bbe765b28fed4335314fa6",
+        "crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs": "f02a6174ef72ed583998b9271538ce01bcaa95dd",
         "crates/oxide-batch-cli/tests/support": "54529b16ee9ab48eb2b32b197aaa2aabb6d4c25a",
         "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
         "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
@@ -163,12 +163,12 @@
         "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
         "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
         "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
-        "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "31b410aeb1ffafe70b9c25e2bf1c7c5407c7614b",
-        "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "9e1d0e0e922824dc24fb52ef2e2e0d59685ceb0c",
-        "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "8e21faee3a073d6dd9b2697f59f974ae73f0cd4f",
+        "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "29ffb658db5958d0a64bf0e9d58b0868537a2a0c",
+        "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "1bbb800be11c7ada42b16be604313ccdf5ba96fc",
+        "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "2ef89b558074e73bb417c07a56cddfb708af1a7a",
         "crates/oxide-batch/tests/resource_bounds": "3e90ae5015649f6f8086e86082cee17d97b71006",
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
-        "tests/fixtures/resource-bounds/campaign-scope.json": "060a9f66ab5f038083b48aa433b230e995d74005",
+        "tests/fixtures/resource-bounds/campaign-scope.json": "20b60cecd84c3481fc949f90d566ce294394cd49",
         "tests/fixtures/resource-bounds/campaign-semantics.json": "47e677ff95774ac67204adcd1821f8a8d9f707a8",
         "tests/fixtures/resource-bounds/execution-contract.json": "b40bd36435adcd5e8638ebb69651e5ed897b142c",
         "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
@@ -176,7 +176,7 @@
         "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
         "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
         "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
-        "xtask/src/resource_bounds.rs": "0ec603b473c1d75b1c5fba1333dd6663cd08b33e",
+        "xtask/src/resource_bounds.rs": "3ca7d595fa399b27a1bd50f8852e87063cb0c443",
         "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
       },
       "tree_clean": true
@@ -300,107 +300,128 @@
         "construction": [
           {
             "case": "at the ceiling",
+            "declared_ceiling": 1024,
             "expected": "accepted",
             "observed": "accepted",
             "resource": "partitions-per-step",
+            "unit": "partitions",
             "value": 1024
           },
           {
             "case": "one past the ceiling",
+            "declared_ceiling": 1024,
             "expected": "refused",
             "observed": "refused",
             "resource": "partitions-per-step",
+            "unit": "partitions",
             "value": 1025
           },
           {
             "case": "at the ceiling",
+            "declared_ceiling": 64,
             "expected": "accepted",
             "observed": "accepted",
             "resource": "concurrent-partition-workers",
+            "unit": "concurrent workers",
             "value": 64
           },
           {
             "case": "one past the ceiling",
+            "declared_ceiling": 64,
             "expected": "refused",
             "observed": "refused",
             "resource": "concurrent-partition-workers",
+            "unit": "concurrent workers",
             "value": 65
           },
           {
             "case": "zero workers",
+            "declared_ceiling": 64,
             "expected": "refused",
             "observed": "refused",
             "resource": "concurrent-partition-workers",
+            "unit": "concurrent workers",
             "value": 0
           },
           {
-            "case": "a declared pool one short of the derivation",
-            "expected": "refused",
-            "observed": "refused",
-            "resource": "repository-connection-capacity",
-            "value": 64
-          },
-          {
             "case": "at the ceiling",
+            "declared_ceiling": 8,
             "expected": "accepted",
             "observed": "accepted",
             "resource": "concurrent-split-branches",
+            "unit": "concurrent branches",
             "value": 8
           },
           {
             "case": "one past the ceiling",
+            "declared_ceiling": 8,
             "expected": "refused",
             "observed": "refused",
             "resource": "concurrent-split-branches",
+            "unit": "concurrent branches",
             "value": 9
           },
           {
             "case": "at the ceiling",
+            "declared_ceiling": 8,
             "expected": "accepted",
             "observed": "accepted",
             "resource": "split-branches-per-node",
+            "unit": "branches",
             "value": 8
           },
           {
             "case": "one past the ceiling",
+            "declared_ceiling": 8,
             "expected": "refused",
             "observed": "refused",
             "resource": "split-branches-per-node",
+            "unit": "branches",
             "value": 9
           },
           {
             "case": "one branch, below the two a split means",
+            "declared_ceiling": 8,
             "expected": "refused",
             "observed": "refused",
             "resource": "split-branches-per-node",
+            "unit": "branches",
             "value": 1
           },
           {
             "case": "at the ceiling",
+            "declared_ceiling": 8,
             "expected": "accepted",
             "observed": "accepted",
             "resource": "steps-per-split-branch",
+            "unit": "steps",
             "value": 8
           },
           {
             "case": "one past the ceiling",
+            "declared_ceiling": 8,
             "expected": "refused",
             "observed": "refused",
             "resource": "steps-per-split-branch",
+            "unit": "steps",
             "value": 9
           },
           {
             "case": "at the ceiling",
+            "declared_ceiling": 1024,
             "expected": "accepted",
             "observed": "accepted",
             "resource": "repository-pool-size",
+            "unit": "connections",
             "value": 1024
           },
           {
             "case": "one past the ceiling",
+            "declared_ceiling": 1024,
             "expected": "refused",
             "observed": "refused",
             "resource": "repository-pool-size",
+            "unit": "connections",
             "value": 1025
           }
         ],
@@ -492,16 +513,16 @@
           "violations": []
         },
         "execution_manifest": {
-          "execution_commit": "2c3fb4d491ae4ec8eeb58f33c9c8835697037f20",
+          "execution_commit": "15d79fc4dd4e7daf887482aabfe96d56a082e4c9",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-resource-bounds.yml": "c9a953191ba47f4af05c39404aee3821082e0f2d",
-            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.lock": "39b4d237af13ee0d01ce96f38e3d91fcbcfe00e5",
             "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
             "crates/oxide-batch-cli/Cargo.toml": "2ea1f690d446a7da1a3724933056238f530772e1",
             "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
-            "crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs": "323340f5020c797f43bbe765b28fed4335314fa6",
+            "crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs": "f02a6174ef72ed583998b9271538ce01bcaa95dd",
             "crates/oxide-batch-cli/tests/support": "54529b16ee9ab48eb2b32b197aaa2aabb6d4c25a",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
             "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
@@ -512,12 +533,12 @@
             "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
             "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
             "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
-            "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "31b410aeb1ffafe70b9c25e2bf1c7c5407c7614b",
-            "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "9e1d0e0e922824dc24fb52ef2e2e0d59685ceb0c",
-            "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "8e21faee3a073d6dd9b2697f59f974ae73f0cd4f",
+            "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "29ffb658db5958d0a64bf0e9d58b0868537a2a0c",
+            "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "1bbb800be11c7ada42b16be604313ccdf5ba96fc",
+            "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "2ef89b558074e73bb417c07a56cddfb708af1a7a",
             "crates/oxide-batch/tests/resource_bounds": "3e90ae5015649f6f8086e86082cee17d97b71006",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
-            "tests/fixtures/resource-bounds/campaign-scope.json": "060a9f66ab5f038083b48aa433b230e995d74005",
+            "tests/fixtures/resource-bounds/campaign-scope.json": "20b60cecd84c3481fc949f90d566ce294394cd49",
             "tests/fixtures/resource-bounds/campaign-semantics.json": "47e677ff95774ac67204adcd1821f8a8d9f707a8",
             "tests/fixtures/resource-bounds/execution-contract.json": "b40bd36435adcd5e8638ebb69651e5ed897b142c",
             "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
@@ -525,7 +546,7 @@
             "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
             "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
             "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
-            "xtask/src/resource_bounds.rs": "0ec603b473c1d75b1c5fba1333dd6663cd08b33e",
+            "xtask/src/resource_bounds.rs": "3ca7d595fa399b27a1bd50f8852e87063cb0c443",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
           },
           "tree_clean": true
@@ -631,79 +652,97 @@
         "construction": [
           {
             "case": "at the ceiling",
+            "declared_ceiling": 500,
             "expected": "accepted",
             "observed": "accepted",
             "resource": "explorer-page-size",
+            "unit": "rows",
             "value": 500
           },
           {
             "case": "one past the ceiling",
+            "declared_ceiling": 500,
             "expected": "refused",
             "observed": "refused",
             "resource": "explorer-page-size",
+            "unit": "rows",
             "value": 501
           },
           {
             "case": "an empty page",
+            "declared_ceiling": 500,
             "expected": "refused",
             "observed": "refused",
             "resource": "explorer-page-size",
+            "unit": "rows",
             "value": 0
           },
           {
             "case": "at the ceiling",
+            "declared_ceiling": 256,
             "expected": "accepted",
             "observed": "accepted",
             "resource": "explorer-cursor",
+            "unit": "bytes",
             "value": 256
           },
           {
             "case": "one past the ceiling",
+            "declared_ceiling": 256,
             "expected": "refused",
             "observed": "refused",
             "resource": "explorer-cursor",
+            "unit": "bytes",
             "value": 257
           },
           {
             "case": "an empty token",
+            "declared_ceiling": 256,
             "expected": "refused",
             "observed": "refused",
             "resource": "explorer-cursor",
+            "unit": "bytes",
             "value": 0
           },
           {
             "case": "at the ceiling",
+            "declared_ceiling": 1000,
             "expected": "accepted",
             "observed": "accepted",
             "resource": "retention-purge-batch",
+            "unit": "candidates",
             "value": 1000
           },
           {
             "case": "one past the ceiling",
+            "declared_ceiling": 1000,
             "expected": "refused",
             "observed": "refused",
             "resource": "retention-purge-batch",
+            "unit": "candidates",
             "value": 1001
           },
           {
             "case": "an empty batch",
+            "declared_ceiling": 1000,
             "expected": "refused",
             "observed": "refused",
             "resource": "retention-purge-batch",
+            "unit": "candidates",
             "value": 0
           }
         ],
         "execution_manifest": {
-          "execution_commit": "2c3fb4d491ae4ec8eeb58f33c9c8835697037f20",
+          "execution_commit": "15d79fc4dd4e7daf887482aabfe96d56a082e4c9",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-resource-bounds.yml": "c9a953191ba47f4af05c39404aee3821082e0f2d",
-            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.lock": "39b4d237af13ee0d01ce96f38e3d91fcbcfe00e5",
             "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
             "crates/oxide-batch-cli/Cargo.toml": "2ea1f690d446a7da1a3724933056238f530772e1",
             "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
-            "crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs": "323340f5020c797f43bbe765b28fed4335314fa6",
+            "crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs": "f02a6174ef72ed583998b9271538ce01bcaa95dd",
             "crates/oxide-batch-cli/tests/support": "54529b16ee9ab48eb2b32b197aaa2aabb6d4c25a",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
             "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
@@ -714,12 +753,12 @@
             "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
             "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
             "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
-            "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "31b410aeb1ffafe70b9c25e2bf1c7c5407c7614b",
-            "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "9e1d0e0e922824dc24fb52ef2e2e0d59685ceb0c",
-            "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "8e21faee3a073d6dd9b2697f59f974ae73f0cd4f",
+            "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "29ffb658db5958d0a64bf0e9d58b0868537a2a0c",
+            "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "1bbb800be11c7ada42b16be604313ccdf5ba96fc",
+            "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "2ef89b558074e73bb417c07a56cddfb708af1a7a",
             "crates/oxide-batch/tests/resource_bounds": "3e90ae5015649f6f8086e86082cee17d97b71006",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
-            "tests/fixtures/resource-bounds/campaign-scope.json": "060a9f66ab5f038083b48aa433b230e995d74005",
+            "tests/fixtures/resource-bounds/campaign-scope.json": "20b60cecd84c3481fc949f90d566ce294394cd49",
             "tests/fixtures/resource-bounds/campaign-semantics.json": "47e677ff95774ac67204adcd1821f8a8d9f707a8",
             "tests/fixtures/resource-bounds/execution-contract.json": "b40bd36435adcd5e8638ebb69651e5ed897b142c",
             "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
@@ -727,7 +766,7 @@
             "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
             "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
             "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
-            "xtask/src/resource_bounds.rs": "0ec603b473c1d75b1c5fba1333dd6663cd08b33e",
+            "xtask/src/resource_bounds.rs": "3ca7d595fa399b27a1bd50f8852e87063cb0c443",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
           },
           "tree_clean": true
@@ -817,7 +856,7 @@
             "observed": "accepted",
             "resource": "partition-key",
             "subject": null,
-            "unit": null,
+            "unit": "bytes",
             "value": 128
           },
           {
@@ -827,7 +866,7 @@
             "observed": "refused",
             "resource": "partition-key",
             "subject": null,
-            "unit": null,
+            "unit": "bytes",
             "value": 129
           },
           {
@@ -837,7 +876,7 @@
             "observed": "refused",
             "resource": "partition-key",
             "subject": null,
-            "unit": null,
+            "unit": "bytes",
             "value": 0
           },
           {
@@ -847,7 +886,7 @@
             "observed": "accepted",
             "resource": "partition-context",
             "subject": null,
-            "unit": null,
+            "unit": "bytes",
             "value": 4096
           },
           {
@@ -857,7 +896,7 @@
             "observed": "refused",
             "resource": "partition-context",
             "subject": null,
-            "unit": null,
+            "unit": "bytes",
             "value": 4097
           },
           {
@@ -867,7 +906,7 @@
             "observed": "accepted",
             "resource": "retry-cache-entries",
             "subject": null,
-            "unit": null,
+            "unit": "unresolved retry keys",
             "value": 256
           },
           {
@@ -877,7 +916,7 @@
             "observed": "refused",
             "resource": "retry-cache-entries",
             "subject": null,
-            "unit": null,
+            "unit": "unresolved retry keys",
             "value": 257
           },
           {
@@ -887,7 +926,7 @@
             "observed": "accepted",
             "resource": "retry-cache-bytes",
             "subject": null,
-            "unit": null,
+            "unit": "bytes",
             "value": 40797
           },
           {
@@ -897,7 +936,7 @@
             "observed": "refused",
             "resource": "retry-cache-bytes",
             "subject": null,
-            "unit": null,
+            "unit": "bytes",
             "value": 65537
           },
           {
@@ -947,7 +986,7 @@
             "observed": "accepted",
             "resource": "outgoing-transitions-per-node",
             "subject": null,
-            "unit": null,
+            "unit": "transitions",
             "value": 64
           },
           {
@@ -957,7 +996,7 @@
             "observed": "refused",
             "resource": "outgoing-transitions-per-node",
             "subject": null,
-            "unit": null,
+            "unit": "transitions",
             "value": 65
           },
           {
@@ -967,7 +1006,7 @@
             "observed": "accepted",
             "resource": "definition-nodes",
             "subject": null,
-            "unit": null,
+            "unit": "nodes",
             "value": 157
           },
           {
@@ -977,7 +1016,7 @@
             "observed": "refused",
             "resource": "definition-nodes",
             "subject": null,
-            "unit": null,
+            "unit": "nodes",
             "value": 1025
           },
           {
@@ -987,7 +1026,7 @@
             "observed": "accepted",
             "resource": "definition-transitions",
             "subject": null,
-            "unit": null,
+            "unit": "transitions",
             "value": 314
           },
           {
@@ -997,7 +1036,7 @@
             "observed": "accepted",
             "resource": "definition-manifest",
             "subject": null,
-            "unit": null,
+            "unit": "bytes",
             "value": 65248
           },
           {
@@ -1007,7 +1046,7 @@
             "observed": "refused",
             "resource": "definition-manifest",
             "subject": null,
-            "unit": null,
+            "unit": "nodes",
             "value": 158
           },
           {
@@ -1057,7 +1096,7 @@
             "observed": "accepted",
             "resource": "ca-certificate",
             "subject": null,
-            "unit": null,
+            "unit": "bytes",
             "value": 1048576
           },
           {
@@ -1067,7 +1106,7 @@
             "observed": "refused",
             "resource": "ca-certificate",
             "subject": null,
-            "unit": null,
+            "unit": "bytes",
             "value": 1048577
           },
           {
@@ -1077,7 +1116,7 @@
             "observed": "accepted",
             "resource": "state-upgrade-chain",
             "subject": null,
-            "unit": null,
+            "unit": "upgrade edges",
             "value": 64
           },
           {
@@ -1087,7 +1126,7 @@
             "observed": "refused",
             "resource": "state-upgrade-chain",
             "subject": null,
-            "unit": null,
+            "unit": "upgrade edges",
             "value": 65
           },
           {
@@ -1097,7 +1136,7 @@
             "observed": "accepted",
             "resource": "item-listeners",
             "subject": null,
-            "unit": null,
+            "unit": "listeners",
             "value": 32
           },
           {
@@ -1107,7 +1146,7 @@
             "observed": "refused",
             "resource": "item-listeners",
             "subject": null,
-            "unit": null,
+            "unit": "listeners",
             "value": 33
           },
           {
@@ -1369,16 +1408,16 @@
           "violations": []
         },
         "execution_manifest": {
-          "execution_commit": "2c3fb4d491ae4ec8eeb58f33c9c8835697037f20",
+          "execution_commit": "15d79fc4dd4e7daf887482aabfe96d56a082e4c9",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-resource-bounds.yml": "c9a953191ba47f4af05c39404aee3821082e0f2d",
-            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.lock": "39b4d237af13ee0d01ce96f38e3d91fcbcfe00e5",
             "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
             "crates/oxide-batch-cli/Cargo.toml": "2ea1f690d446a7da1a3724933056238f530772e1",
             "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
-            "crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs": "323340f5020c797f43bbe765b28fed4335314fa6",
+            "crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs": "f02a6174ef72ed583998b9271538ce01bcaa95dd",
             "crates/oxide-batch-cli/tests/support": "54529b16ee9ab48eb2b32b197aaa2aabb6d4c25a",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
             "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
@@ -1389,12 +1428,12 @@
             "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
             "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
             "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
-            "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "31b410aeb1ffafe70b9c25e2bf1c7c5407c7614b",
-            "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "9e1d0e0e922824dc24fb52ef2e2e0d59685ceb0c",
-            "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "8e21faee3a073d6dd9b2697f59f974ae73f0cd4f",
+            "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "29ffb658db5958d0a64bf0e9d58b0868537a2a0c",
+            "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "1bbb800be11c7ada42b16be604313ccdf5ba96fc",
+            "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "2ef89b558074e73bb417c07a56cddfb708af1a7a",
             "crates/oxide-batch/tests/resource_bounds": "3e90ae5015649f6f8086e86082cee17d97b71006",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
-            "tests/fixtures/resource-bounds/campaign-scope.json": "060a9f66ab5f038083b48aa433b230e995d74005",
+            "tests/fixtures/resource-bounds/campaign-scope.json": "20b60cecd84c3481fc949f90d566ce294394cd49",
             "tests/fixtures/resource-bounds/campaign-semantics.json": "47e677ff95774ac67204adcd1821f8a8d9f707a8",
             "tests/fixtures/resource-bounds/execution-contract.json": "b40bd36435adcd5e8638ebb69651e5ed897b142c",
             "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
@@ -1402,7 +1441,7 @@
             "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
             "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
             "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
-            "xtask/src/resource_bounds.rs": "0ec603b473c1d75b1c5fba1333dd6663cd08b33e",
+            "xtask/src/resource_bounds.rs": "3ca7d595fa399b27a1bd50f8852e87063cb0c443",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
           },
           "tree_clean": true
@@ -1675,42 +1714,42 @@
           },
           {
             "case": "at the ceiling",
-            "declared_ceiling": null,
+            "declared_ceiling": 200,
             "expected": "accepted",
             "observed": "accepted",
             "resource": "retained-incident-events",
             "subject": null,
-            "unit": null,
+            "unit": "events per execution",
             "value": 200
           },
           {
             "case": "one past the ceiling",
-            "declared_ceiling": null,
+            "declared_ceiling": 200,
             "expected": "refused",
             "observed": "refused",
             "resource": "retained-incident-events",
             "subject": null,
-            "unit": null,
+            "unit": "events per execution",
             "value": 201
           },
           {
             "case": "at the ceiling",
-            "declared_ceiling": null,
+            "declared_ceiling": 50,
             "expected": "accepted",
             "observed": "accepted",
             "resource": "metric-name-allowlist",
             "subject": null,
-            "unit": null,
+            "unit": "names",
             "value": 50
           },
           {
             "case": "one past the ceiling",
-            "declared_ceiling": null,
+            "declared_ceiling": 50,
             "expected": "refused",
             "observed": "refused",
             "resource": "metric-name-allowlist",
             "subject": null,
-            "unit": null,
+            "unit": "names",
             "value": 51
           },
           {
@@ -1921,16 +1960,16 @@
           "violations": []
         },
         "execution_manifest": {
-          "execution_commit": "2c3fb4d491ae4ec8eeb58f33c9c8835697037f20",
+          "execution_commit": "15d79fc4dd4e7daf887482aabfe96d56a082e4c9",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-resource-bounds.yml": "c9a953191ba47f4af05c39404aee3821082e0f2d",
-            "Cargo.lock": "997f2197d8333aea997665309b61555d37d96c61",
+            "Cargo.lock": "39b4d237af13ee0d01ce96f38e3d91fcbcfe00e5",
             "Cargo.toml": "cfaecab97e60c9933db4e6993e808b9c276291cf",
             "crates/oxide-batch-cli/Cargo.toml": "2ea1f690d446a7da1a3724933056238f530772e1",
             "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
-            "crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs": "323340f5020c797f43bbe765b28fed4335314fa6",
+            "crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs": "f02a6174ef72ed583998b9271538ce01bcaa95dd",
             "crates/oxide-batch-cli/tests/support": "54529b16ee9ab48eb2b32b197aaa2aabb6d4c25a",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
             "crates/oxide-batch-core/src": "7d18bc9e316e1cc3c3d2035c240074f6acc83d91",
@@ -1941,12 +1980,12 @@
             "crates/oxide-batch/Cargo.toml": "742b9fc3ed768c9d92ef86834423b74c4a0808b5",
             "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
             "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
-            "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "31b410aeb1ffafe70b9c25e2bf1c7c5407c7614b",
-            "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "9e1d0e0e922824dc24fb52ef2e2e0d59685ceb0c",
-            "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "8e21faee3a073d6dd9b2697f59f974ae73f0cd4f",
+            "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "29ffb658db5958d0a64bf0e9d58b0868537a2a0c",
+            "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "1bbb800be11c7ada42b16be604313ccdf5ba96fc",
+            "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "2ef89b558074e73bb417c07a56cddfb708af1a7a",
             "crates/oxide-batch/tests/resource_bounds": "3e90ae5015649f6f8086e86082cee17d97b71006",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
-            "tests/fixtures/resource-bounds/campaign-scope.json": "060a9f66ab5f038083b48aa433b230e995d74005",
+            "tests/fixtures/resource-bounds/campaign-scope.json": "20b60cecd84c3481fc949f90d566ce294394cd49",
             "tests/fixtures/resource-bounds/campaign-semantics.json": "47e677ff95774ac67204adcd1821f8a8d9f707a8",
             "tests/fixtures/resource-bounds/execution-contract.json": "b40bd36435adcd5e8638ebb69651e5ed897b142c",
             "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
@@ -1954,7 +1993,7 @@
             "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
             "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
             "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
-            "xtask/src/resource_bounds.rs": "0ec603b473c1d75b1c5fba1333dd6663cd08b33e",
+            "xtask/src/resource_bounds.rs": "3ca7d595fa399b27a1bd50f8852e87063cb0c443",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
           },
           "tree_clean": true

@@ -3396,3 +3396,23 @@ denominator reconciliation runs without a database:
 ```sh
 cargo test --package oxide-batch --all-features --test m5_performance_campaign
 ```
+
+### Fourth resource-bound corrective pass
+
+The final resource-bound review closed the remaining root-proof gaps after F42.
+Generic construction cells now carry and must match their declared bound and canonical
+unit, malformed or contradictory extra cells fail rather than disappearing from the
+exact-set check, and repository connection-capacity refusal is re-derived from the real
+end-to-end `concurrent_children + 1` / one-short pool observation. Search-bounded proofs
+are dimension-aware for retry-cache bytes, definition nodes, and definition-manifest
+bytes/nodes.
+
+Because `Cargo.lock` is part of the resource-bound semantic closure, producer run
+`32070824012` was superseded after #132. Fresh producer branch head
+`058a3b37bce1d94b4dc9e5565ac318a341d4cac2` executed as PR merge tree
+`15d79fc4dd4e7daf887482aabfe96d56a082e4c9` against main
+`82f995f6fcc7a0ccf1bfc1c7e61453647065b331` in run `32078689387`.
+PostgreSQL 15 job `95537210584` retained artifact `9304381036`; PostgreSQL 18 job
+`95537210537` retained artifact `9304381909`. Both report 36/36 resources, no
+violations, a clean execution tree, and one execution manifest across all four
+sub-reports.
