@@ -580,36 +580,151 @@ fn reconcile_construction_boundary(resource: &Resource, evidence: &Evidence) -> 
         ));
         return violations;
     };
-    if !cell_matches(cells, declared, "accepted") {
-        violations.push(format!(
-            "{} is declared with a ceiling of {declared} and the {report} report recorded no \
-             construction accepted exactly at it",
-            resource.name,
-        ));
-    }
-    if !cell_matches(cells, past, "refused") {
-        violations.push(format!(
-            "{} is declared with a ceiling of {declared} and the {report} report recorded no \
-             construction refused at exactly {past}",
-            resource.name,
-        ));
+    violations.extend(reconcile_exact_cell(
+        &resource.name,
+        report,
+        cells,
+        declared,
+        "accepted",
+        declared,
+        "accepted exactly at it",
+    ));
+    violations.extend(reconcile_exact_cell(
+        &resource.name,
+        report,
+        cells,
+        past,
+        "refused",
+        declared,
+        &format!("refused at exactly {past}"),
+    ));
+    violations
+}
+
+/// Requires exactly one cell at `value`/`side`, and cross-checks its own
+/// `declared_ceiling` field against `declared` when the raw cell carries one.
+///
+/// Missing (`0` matches) and duplicated (`>1` matches) both fail: a boundary
+/// proved twice is not stronger evidence than proved once, and a duplicate
+/// can mask a missing required cell the same way an undeclared substitution
+/// can — an exact count is the only way to tell a genuine second proof from
+/// either failure mode. Not every raw cell carries a `declared_ceiling`
+/// field today (only the resources this producer already emits one for do),
+/// so the cross-check applies only when the field is present rather than
+/// requiring it universally.
+fn reconcile_exact_cell(
+    resource: &str,
+    report: &str,
+    cells: &[Value],
+    value: i64,
+    side: &str,
+    declared: i64,
+    label: &str,
+) -> Vec<String> {
+    let matches = matching_cells(cells, value, side);
+    let mut violations = Vec::new();
+    match matches.len() {
+        0 => violations.push(format!(
+            "{resource} is declared with a ceiling of {declared} and the {report} report \
+             recorded no construction {label}",
+        )),
+        1 => {
+            if let Some(observed) = matches[0].get("declared_ceiling").and_then(Value::as_i64)
+                && observed != declared
+            {
+                violations.push(format!(
+                    "{resource}'s {label} cell in the {report} report recorded a declared \
+                     ceiling of {observed}, and the denominator declares {declared}",
+                ));
+            }
+        }
+        n => violations.push(format!(
+            "{resource}'s {label} cell was recorded {n} times in the {report} report, and \
+             exactly one is required",
+        )),
     }
     violations
 }
 
-/// Returns whether some cell recorded exactly `value`, `expected == side`,
-/// and `observed == side`.
-fn cell_matches(cells: &[Value], value: i64, side: &str) -> bool {
-    cells.iter().any(|cell| {
-        cell.get("value").and_then(Value::as_i64) == Some(value)
-            && cell.get("expected").and_then(Value::as_str) == Some(side)
-            && cell.get("observed").and_then(Value::as_str) == Some(side)
-    })
+/// Finds every cell exactly matching `value`, `expected == side`, and
+/// `observed == side`.
+fn matching_cells<'a>(cells: &'a [Value], value: i64, side: &str) -> Vec<&'a Value> {
+    cells
+        .iter()
+        .filter(|cell| {
+            cell.get("value").and_then(Value::as_i64) == Some(value)
+                && cell.get("expected").and_then(Value::as_str) == Some(side)
+                && cell.get("observed").and_then(Value::as_str) == Some(side)
+        })
+        .collect()
 }
 
-/// Requires all four sides of an inclusive minimum/maximum range, in
-/// canonical milliseconds: accepted at the minimum, refused one millisecond
-/// below it, accepted at the maximum, refused one millisecond past it.
+/// Requires exactly one cell at `value`/`side`, and cross-checks its own
+/// `declared_ceiling` and `unit` fields against `declared`/`unit`.
+///
+/// Used by range-boundary and subject-boundary, both of which sweep more
+/// than one boundary value on a single resource (a minimum and a maximum; one
+/// ceiling per subject or dimension), so a bare numeric match is not enough
+/// to know which fact a cell actually proves — unlike plain
+/// construction-boundary's single ceiling, where the value alone is
+/// unambiguous. Both fields are required on every cell this function checks,
+/// not merely cross-checked when present: a range-boundary or
+/// subject-boundary resource's raw evidence with no unit is exactly the gap
+/// this closes. Missing (`0` matches) and duplicated (`>1` matches) both
+/// fail, for the same reason `reconcile_exact_cell` requires an exact count.
+#[allow(clippy::too_many_arguments)]
+fn reconcile_dimensioned_cell(
+    resource: &str,
+    report: &str,
+    cells: &[Value],
+    value: i64,
+    side: &str,
+    declared: i64,
+    unit: &str,
+    label: &str,
+) -> Vec<String> {
+    let matches = matching_cells(cells, value, side);
+    let mut violations = Vec::new();
+    match matches.len() {
+        0 => violations.push(format!(
+            "{resource} is declared with a bound of {declared} {unit} and the {report} report \
+             recorded no construction {label}",
+        )),
+        1 => {
+            match matches[0].get("declared_ceiling").and_then(Value::as_i64) {
+                Some(observed) if observed != declared => violations.push(format!(
+                    "{resource}'s {label} cell in the {report} report recorded a declared \
+                     bound of {observed}, and the denominator declares {declared}",
+                )),
+                Some(_) => {}
+                None => violations.push(format!(
+                    "{resource}'s {label} cell in the {report} report recorded no declared \
+                     bound to check against {declared}",
+                )),
+            }
+            match matches[0].get("unit").and_then(Value::as_str) {
+                Some(observed) if observed != unit => violations.push(format!(
+                    "{resource}'s {label} cell in the {report} report recorded a unit of \
+                     {observed}, and the denominator declares {unit}",
+                )),
+                Some(_) => {}
+                None => violations.push(format!(
+                    "{resource}'s {label} cell in the {report} report recorded no unit to \
+                     check against {unit}",
+                )),
+            }
+        }
+        n => violations.push(format!(
+            "{resource}'s {label} cell was recorded {n} times in the {report} report, and \
+             exactly one is required",
+        )),
+    }
+    violations
+}
+
+/// Requires all four sides of an inclusive minimum/maximum range: accepted at
+/// the minimum, refused one unit below it, accepted at the maximum, refused
+/// one unit past it, all in the unit the denominator declares.
 fn reconcile_range_boundary(resource: &Resource, evidence: &Evidence) -> Vec<String> {
     let mut violations = Vec::new();
     let Some(bounds) = &resource.bounds else {
@@ -637,41 +752,54 @@ fn reconcile_range_boundary(resource: &Resource, evidence: &Evidence) -> Vec<Str
         ));
         return violations;
     };
-    for (value, side, label) in [
+    for (value, side, declared, label) in [
         (
             bounds.minimum,
             "accepted",
+            bounds.minimum,
             "accepted exactly at the minimum",
         ),
         (
             below_minimum,
             "refused",
-            "refused one millisecond below the minimum",
+            bounds.minimum,
+            "refused one unit below the minimum",
         ),
         (
             bounds.maximum,
             "accepted",
+            bounds.maximum,
             "accepted exactly at the maximum",
         ),
         (
             past_maximum,
             "refused",
-            "refused one millisecond past the maximum",
+            bounds.maximum,
+            "refused one unit past the maximum",
         ),
     ] {
-        if !cell_matches(cells, value, side) {
-            violations.push(format!(
-                "{} is declared with a range of {}-{} milliseconds and the {report} report \
-                 recorded no construction {label}",
-                resource.name, bounds.minimum, bounds.maximum,
-            ));
-        }
+        violations.extend(reconcile_dimensioned_cell(
+            &resource.name,
+            report,
+            cells,
+            value,
+            side,
+            declared,
+            &bounds.unit,
+            label,
+        ));
     }
     violations
 }
 
-/// Requires the bounded-identifier-text exact subject set, each with its own
-/// non-placeholder ceiling accepted exactly and refused one byte past it.
+/// Requires the exact declared subject set, each with its own
+/// non-placeholder ceiling accepted exactly and refused one unit past it, in
+/// its own declared unit.
+///
+/// Reused beyond bounded-identifier-text for any resource whose evidence
+/// proves more than one independent named bound on itself: `subject` here
+/// means "the name of one of the several things this resource's evidence
+/// must independently prove," not only a caller-supplied identifier type.
 fn reconcile_subject_boundary(resource: &Resource, evidence: &Evidence) -> Vec<String> {
     let mut violations = Vec::new();
     let Some((report, cells)) = evidence.construction.get(&resource.name) else {
@@ -683,18 +811,23 @@ fn reconcile_subject_boundary(resource: &Resource, evidence: &Evidence) -> Vec<S
         return violations;
     };
 
-    let mut by_subject: BTreeMap<&str, Vec<&Value>> = BTreeMap::new();
+    let mut by_subject: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
     for cell in cells {
         let Some(subject) = cell.get("subject").and_then(Value::as_str) else {
             continue;
         };
-        by_subject.entry(subject).or_default().push(cell);
+        by_subject.entry(subject).or_default().push(cell.clone());
     }
 
-    let declared: BTreeMap<&str, i64> = resource
+    let declared: BTreeMap<&str, (i64, &str)> = resource
         .subjects
         .iter()
-        .map(|subject| (subject.subject.as_str(), subject.ceiling))
+        .map(|subject| {
+            (
+                subject.subject.as_str(),
+                (subject.ceiling, subject.unit.as_str()),
+            )
+        })
         .collect();
 
     for subject in by_subject.keys() {
@@ -707,7 +840,7 @@ fn reconcile_subject_boundary(resource: &Resource, evidence: &Evidence) -> Vec<S
         }
     }
 
-    for (subject, &ceiling) in &declared {
+    for (subject, &(ceiling, unit)) in &declared {
         let Some(subject_cells) = by_subject.get(subject) else {
             violations.push(format!(
                 "{subject} is a declared subject of {} and no report recorded evidence for it",
@@ -715,31 +848,32 @@ fn reconcile_subject_boundary(resource: &Resource, evidence: &Evidence) -> Vec<S
             ));
             continue;
         };
-        if subject_cells.len() > 2 {
-            violations.push(format!(
-                "{subject} was recorded more than twice in the {report} report's {} evidence",
-                resource.name,
-            ));
-        }
         let Some(past) = ceiling.checked_add(1) else {
             violations.push(format!(
-                "{subject} has a declared ceiling of {ceiling} that overflows one byte past it",
+                "{subject} has a declared ceiling of {ceiling} that overflows one unit past it",
             ));
             continue;
         };
-        let owned: Vec<Value> = subject_cells.iter().map(|cell| (*cell).clone()).collect();
-        if !cell_matches(&owned, ceiling, "accepted") {
-            violations.push(format!(
-                "{subject} is declared with a ceiling of {ceiling} and the {report} report \
-                 recorded no construction accepted exactly at it",
-            ));
-        }
-        if !cell_matches(&owned, past, "refused") {
-            violations.push(format!(
-                "{subject} is declared with a ceiling of {ceiling} and the {report} report \
-                 recorded no construction refused at exactly {past}",
-            ));
-        }
+        violations.extend(reconcile_dimensioned_cell(
+            subject,
+            report,
+            subject_cells,
+            ceiling,
+            "accepted",
+            ceiling,
+            unit,
+            "accepted exactly at its ceiling",
+        ));
+        violations.extend(reconcile_dimensioned_cell(
+            subject,
+            report,
+            subject_cells,
+            past,
+            "refused",
+            ceiling,
+            unit,
+            "refused one unit past its ceiling",
+        ));
     }
 
     violations
@@ -1525,6 +1659,11 @@ fn write_report(
                 "covered": evidence.covered.contains(&resource.name),
                 "postgres": resource.postgres,
                 "observation": observed.map(|(_, entry)| entry.clone()),
+                "informational_symbols": resource
+                    .informational_symbols
+                    .iter()
+                    .map(|symbol| json!({ "symbol": symbol.symbol, "reason": symbol.reason }))
+                    .collect::<Vec<_>>(),
             })
         })
         .collect::<Vec<_>>();
@@ -1786,30 +1925,11 @@ fn read_resource(resource: &Value) -> Result<Resource, String> {
                 .unwrap_or("<unnamed>"),
         ));
     }
-    let bounds = resource.get("bounds").map(|bounds| Bounds {
-        minimum: bounds
-            .pointer("/minimum/value")
-            .and_then(Value::as_i64)
-            .unwrap_or_default(),
-        maximum: bounds
-            .pointer("/maximum/value")
-            .and_then(Value::as_i64)
-            .unwrap_or_default(),
-    });
-    let subjects = resource
-        .get("subjects")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| {
-            Some(Subject {
-                subject: entry.get("subject").and_then(Value::as_str)?.to_owned(),
-                ceiling: entry.get("ceiling").and_then(Value::as_i64)?,
-            })
-        })
-        .collect::<Vec<_>>();
+    let name = suite::string(resource, "resource")?;
+    let bounds = read_bounds(resource, &name)?;
+    let subjects = read_subjects(resource, &name)?;
+    let informational_symbols = read_informational_symbols(resource, &name)?;
     Ok(Resource {
-        name: suite::string(resource, "resource")?,
         class: suite::string(resource, "class")?,
         policy: suite::string(resource, "policy")?,
         report: suite::string(resource, "report")?,
@@ -1830,7 +1950,105 @@ fn read_resource(resource: &Value) -> Result<Resource, String> {
             .get("shedding_rule")
             .and_then(Value::as_str)
             .map(str::to_owned),
+        informational_symbols,
+        name,
     })
+}
+
+/// Reads a range-boundary resource's inclusive minimum/maximum, failing
+/// closed on a missing value or a unit missing or disagreeing between sides.
+fn read_bounds(resource: &Value, name: &str) -> Result<Option<Bounds>, String> {
+    let Some(bounds) = resource.get("bounds") else {
+        return Ok(None);
+    };
+    let minimum = bounds
+        .pointer("/minimum/value")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| format!("{name} declares bounds with no minimum.value"))?;
+    let maximum = bounds
+        .pointer("/maximum/value")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| format!("{name} declares bounds with no maximum.value"))?;
+    let minimum_unit = bounds.pointer("/minimum/unit").and_then(Value::as_str);
+    let maximum_unit = bounds.pointer("/maximum/unit").and_then(Value::as_str);
+    let (Some(minimum_unit), Some(maximum_unit)) = (minimum_unit, maximum_unit) else {
+        return Err(format!(
+            "{name} declares bounds with no unit on one or both sides"
+        ));
+    };
+    if minimum_unit != maximum_unit {
+        return Err(format!(
+            "{name} declares a minimum unit of {minimum_unit} and a maximum unit of \
+             {maximum_unit}, which must be the same unit",
+        ));
+    }
+    Ok(Some(Bounds {
+        minimum,
+        maximum,
+        unit: minimum_unit.to_owned(),
+    }))
+}
+
+/// Reads a subject-boundary resource's per-subject denominator, failing
+/// closed on a missing subject name, ceiling, or unit.
+fn read_subjects(resource: &Value, name: &str) -> Result<Vec<Subject>, String> {
+    let mut subjects = Vec::new();
+    for entry in resource
+        .get("subjects")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let subject = entry
+            .get("subject")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("{name} declares a subject with no subject name"))?
+            .to_owned();
+        let ceiling = entry
+            .get("ceiling")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| format!("{name}'s {subject} subject declares no numeric ceiling"))?;
+        let unit = entry
+            .get("unit")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("{name}'s {subject} subject declares no unit"))?
+            .to_owned();
+        subjects.push(Subject {
+            subject,
+            ceiling,
+            unit,
+        });
+    }
+    Ok(subjects)
+}
+
+/// Reads the symbols this resource classifies as a default or capacity hint
+/// rather than a ceiling, failing closed on a missing symbol or reason.
+fn read_informational_symbols(
+    resource: &Value,
+    name: &str,
+) -> Result<Vec<InformationalSymbol>, String> {
+    let mut informational_symbols = Vec::new();
+    for entry in resource
+        .get("informational_symbols")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        informational_symbols.push(InformationalSymbol {
+            symbol: entry
+                .get("symbol")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("{name} declares an informational symbol with no symbol"))?
+                .to_owned(),
+            reason: entry
+                .get("reason")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("{name} declares an informational symbol with no reason"))?
+                .to_owned(),
+        });
+    }
+    Ok(informational_symbols)
 }
 
 /// Reads the ceilings the campaign must reach rather than respect.
@@ -1920,31 +2138,54 @@ struct Resource {
     postgres: bool,
     /// The proof kinds this resource's raw evidence must satisfy exactly.
     proofs: Vec<String>,
-    /// The inclusive minimum/maximum range, in canonical milliseconds, for a
-    /// range-boundary resource.
+    /// The inclusive minimum/maximum range for a range-boundary resource.
     bounds: Option<Bounds>,
     /// How a resource with no declared ceiling is bounded instead, when it is
     /// not a range: `"derived"` for `repository-connection-capacity`.
     bound_kind: Option<String>,
     /// The parent's own share of a derived connection-capacity resource.
     parent_connections: Option<i64>,
-    /// The per-subject denominator for a subject-boundary resource.
+    /// The per-subject denominator for a subject-boundary resource. Reused
+    /// beyond bounded-identifier-text for any resource whose evidence must
+    /// prove more than one independent named bound — `durable-state-envelope`
+    /// and `cli-configuration-document` each sweep two or three dimensions of
+    /// themselves this way rather than one ceiling.
     subjects: Vec<Subject>,
     /// The overload-shedding relation a bounded-shedding resource contracts
     /// for, when its policy is `"bounded-shedding"`.
     shedding_rule: Option<String>,
+    /// Symbols that match the bound-declaration convention but name a default
+    /// or capacity hint rather than an independently enforced ceiling: no
+    /// refusal exists to prove past them, so they are classified here rather
+    /// than given a proof obligation the code has nothing to satisfy it with.
+    informational_symbols: Vec<InformationalSymbol>,
 }
 
-/// An inclusive minimum/maximum range, in canonical milliseconds.
+/// An inclusive minimum/maximum range, with the unit both sides are stated
+/// in. A range-boundary resource's raw evidence must carry the same unit on
+/// every cell, or the boundary values it proves are not comparable to what is
+/// declared here.
 struct Bounds {
     minimum: i64,
     maximum: i64,
+    unit: String,
 }
 
-/// One subject a subject-boundary resource sweeps, with its own real ceiling.
+/// One subject a subject-boundary resource sweeps, with its own real ceiling
+/// and the unit that ceiling and its raw evidence are both stated in.
+#[allow(clippy::struct_field_names)]
 struct Subject {
     subject: String,
     ceiling: i64,
+    unit: String,
+}
+
+/// A symbol classified as a default or capacity hint rather than a ceiling:
+/// real per the bound-declaration convention, but with no refusal boundary
+/// this campaign's harness can construct past.
+struct InformationalSymbol {
+    symbol: String,
+    reason: String,
 }
 
 /// One obligation to reach a ceiling rather than stay under it.
@@ -2096,6 +2337,7 @@ mod tests {
             parent_connections: None,
             subjects: Vec::new(),
             shedding_rule: None,
+            informational_symbols: Vec::new(),
         }
     }
 
@@ -2604,18 +2846,22 @@ mod tests {
             bounds: Some(Bounds {
                 minimum: 100,
                 maximum: 1000,
+                unit: "widgets".to_owned(),
             }),
             bound_kind: None,
             parent_connections: None,
             subjects: Vec::new(),
             shedding_rule: None,
+            informational_symbols: Vec::new(),
         }
     }
 
-    fn range_cell(value: i64, expected: &str) -> Value {
+    fn range_cell(value: i64, declared: i64, expected: &str) -> Value {
         json!({
             "resource": "resource-range",
             "case": "boundary",
+            "declared_ceiling": declared,
+            "unit": "widgets",
             "value": value,
             "expected": expected,
             "observed": expected,
@@ -2627,10 +2873,10 @@ mod tests {
         let scope = minimal_scope(range_boundary_resource());
         let observation = json!({
             "construction": [
-                range_cell(100, "accepted"),
-                range_cell(99, "refused"),
-                range_cell(1000, "accepted"),
-                range_cell(1001, "refused"),
+                range_cell(100, 100, "accepted"),
+                range_cell(99, 100, "refused"),
+                range_cell(1000, 1000, "accepted"),
+                range_cell(1001, 1000, "refused"),
             ],
         });
         let runs = runs_with(&[("report-x", observation)]);
@@ -2645,8 +2891,8 @@ mod tests {
         let scope = minimal_scope(range_boundary_resource());
         let observation = json!({
             "construction": [
-                range_cell(1000, "accepted"),
-                range_cell(1001, "refused"),
+                range_cell(1000, 1000, "accepted"),
+                range_cell(1001, 1000, "refused"),
             ],
         });
         let runs = runs_with(&[("report-x", observation)]);
@@ -2654,6 +2900,116 @@ mod tests {
         let violations = reconcile_denominator(&scope, &evidence);
         assert!(
             any_violation(&violations, "accepted exactly at the minimum").is_some(),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_duplicated_range_boundary_cell_is_rejected() {
+        let scope = minimal_scope(range_boundary_resource());
+        let observation = json!({
+            "construction": [
+                range_cell(100, 100, "accepted"),
+                range_cell(100, 100, "accepted"),
+                range_cell(99, 100, "refused"),
+                range_cell(1000, 1000, "accepted"),
+                range_cell(1001, 1000, "refused"),
+            ],
+        });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        assert!(identity_violations.is_empty(), "{identity_violations:?}");
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-range")
+                .is_some_and(|violation| violation.contains("recorded 2 times")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_same_count_bogus_range_cell_substitution_is_rejected() {
+        let scope = minimal_scope(range_boundary_resource());
+        // The minimum-accept cell is missing, and a bogus cell at an
+        // unrelated value fills its place — the total cell count is
+        // unchanged, so only exact-identity matching (not a count check)
+        // catches the swap.
+        let observation = json!({
+            "construction": [
+                range_cell(500, 100, "accepted"),
+                range_cell(99, 100, "refused"),
+                range_cell(1000, 1000, "accepted"),
+                range_cell(1001, 1000, "refused"),
+            ],
+        });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "accepted exactly at the minimum").is_some(),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_range_boundary_cell_with_the_wrong_unit_is_rejected() {
+        let scope = minimal_scope(range_boundary_resource());
+        let mut cells = vec![
+            range_cell(100, 100, "accepted"),
+            range_cell(99, 100, "refused"),
+            range_cell(1000, 1000, "accepted"),
+            range_cell(1001, 1000, "refused"),
+        ];
+        cells[0]["unit"] = json!("gadgets");
+        let observation = json!({ "construction": cells });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-range")
+                .is_some_and(|violation| violation.contains("recorded a unit of")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_range_boundary_cell_with_no_unit_is_rejected() {
+        let scope = minimal_scope(range_boundary_resource());
+        let mut cells = vec![
+            range_cell(100, 100, "accepted"),
+            range_cell(99, 100, "refused"),
+            range_cell(1000, 1000, "accepted"),
+            range_cell(1001, 1000, "refused"),
+        ];
+        cells[0].as_object_mut().expect("object").remove("unit");
+        let observation = json!({ "construction": cells });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-range")
+                .is_some_and(|violation| violation.contains("recorded no unit")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_range_boundary_cell_with_a_mismatched_declared_bound_is_rejected() {
+        let scope = minimal_scope(range_boundary_resource());
+        let mut cells = vec![
+            range_cell(100, 100, "accepted"),
+            range_cell(99, 100, "refused"),
+            range_cell(1000, 1000, "accepted"),
+            range_cell(1001, 1000, "refused"),
+        ];
+        cells[2]["declared_ceiling"] = json!(999);
+        let observation = json!({ "construction": cells });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-range")
+                .is_some_and(|violation| violation.contains("recorded a declared bound of")),
             "{violations:?}"
         );
     }
@@ -2674,22 +3030,26 @@ mod tests {
                 Subject {
                     subject: "alpha".to_owned(),
                     ceiling: 10,
+                    unit: "bytes".to_owned(),
                 },
                 Subject {
                     subject: "beta".to_owned(),
                     ceiling: 20,
+                    unit: "bytes".to_owned(),
                 },
             ],
             shedding_rule: None,
+            informational_symbols: Vec::new(),
         }
     }
 
-    fn subject_cell(subject: &str, value: i64, expected: &str) -> Value {
+    fn subject_cell(subject: &str, ceiling: i64, value: i64, expected: &str) -> Value {
         json!({
             "resource": "resource-subjects",
             "subject": subject,
             "case": "boundary",
-            "declared_ceiling": value,
+            "declared_ceiling": ceiling,
+            "unit": "bytes",
             "value": value,
             "expected": expected,
             "observed": expected,
@@ -2698,10 +3058,10 @@ mod tests {
 
     fn valid_subject_cells() -> Vec<Value> {
         vec![
-            subject_cell("alpha", 10, "accepted"),
-            subject_cell("alpha", 11, "refused"),
-            subject_cell("beta", 20, "accepted"),
-            subject_cell("beta", 21, "refused"),
+            subject_cell("alpha", 10, 10, "accepted"),
+            subject_cell("alpha", 10, 11, "refused"),
+            subject_cell("beta", 20, 20, "accepted"),
+            subject_cell("beta", 20, 21, "refused"),
         ]
     }
 
@@ -2720,7 +3080,7 @@ mod tests {
     fn an_undeclared_subject_is_rejected() {
         let scope = minimal_scope(subject_boundary_resource());
         let mut cells = valid_subject_cells();
-        cells.push(subject_cell("gamma", 5, "accepted"));
+        cells.push(subject_cell("gamma", 5, 5, "accepted"));
         let observation = json!({ "construction": cells });
         let runs = runs_with(&[("report-x", observation)]);
         let (evidence, _) = collect_evidence(&scope, &runs);
@@ -2748,6 +3108,83 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_duplicated_identifier_cell_is_rejected() {
+        let scope = minimal_scope(subject_boundary_resource());
+        let mut cells = valid_subject_cells();
+        cells.push(subject_cell("alpha", 10, 10, "accepted"));
+        let observation = json!({ "construction": cells });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        assert!(identity_violations.is_empty(), "{identity_violations:?}");
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "alpha")
+                .is_some_and(|violation| violation.contains("recorded 2 times")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_subjectless_construction_cell_is_ignored_rather_than_counted() {
+        // A cell with no `subject` field cannot be attributed to any
+        // declared subject, so it must not be able to silently stand in for
+        // one: the subject it was meant for is still reported missing.
+        let scope = minimal_scope(subject_boundary_resource());
+        let mut cells = valid_subject_cells();
+        cells.retain(|cell| cell.get("subject").and_then(Value::as_str) != Some("alpha"));
+        cells.push(json!({
+            "resource": "resource-subjects",
+            "case": "boundary",
+            "declared_ceiling": 10,
+            "unit": "bytes",
+            "value": 10,
+            "expected": "accepted",
+            "observed": "accepted",
+        }));
+        let observation = json!({ "construction": cells });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "alpha")
+                .is_some_and(|violation| violation.contains("no report recorded evidence")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_subject_boundary_cell_with_the_wrong_unit_is_rejected() {
+        let scope = minimal_scope(subject_boundary_resource());
+        let mut cells = valid_subject_cells();
+        cells[0]["unit"] = json!("characters");
+        let observation = json!({ "construction": cells });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "alpha")
+                .is_some_and(|violation| violation.contains("recorded a unit of")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_subject_boundary_cell_with_a_mismatched_declared_ceiling_is_rejected() {
+        let scope = minimal_scope(subject_boundary_resource());
+        let mut cells = valid_subject_cells();
+        cells[0]["declared_ceiling"] = json!(999);
+        let observation = json!({ "construction": cells });
+        let runs = runs_with(&[("report-x", observation)]);
+        let (evidence, _) = collect_evidence(&scope, &runs);
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "alpha")
+                .is_some_and(|violation| violation.contains("recorded a declared bound of")),
+            "{violations:?}"
+        );
+    }
+
     fn derived_capacity_resource() -> Resource {
         Resource {
             name: "resource-derived".to_owned(),
@@ -2762,6 +3199,7 @@ mod tests {
             parent_connections: Some(1),
             subjects: Vec::new(),
             shedding_rule: None,
+            informational_symbols: Vec::new(),
         }
     }
 
@@ -2813,6 +3251,7 @@ mod tests {
             parent_connections: None,
             subjects: Vec::new(),
             shedding_rule: None,
+            informational_symbols: Vec::new(),
         }
     }
 
@@ -2852,6 +3291,7 @@ mod tests {
             parent_connections: None,
             subjects: Vec::new(),
             shedding_rule: None,
+            informational_symbols: Vec::new(),
         }
     }
 
@@ -2899,6 +3339,7 @@ mod tests {
             parent_connections: None,
             subjects: Vec::new(),
             shedding_rule: None,
+            informational_symbols: Vec::new(),
         }
     }
 
@@ -2937,6 +3378,7 @@ mod tests {
             parent_connections: None,
             subjects: Vec::new(),
             shedding_rule: None,
+            informational_symbols: Vec::new(),
         }
     }
 
@@ -2974,6 +3416,7 @@ mod tests {
             parent_connections: None,
             subjects: Vec::new(),
             shedding_rule: None,
+            informational_symbols: Vec::new(),
         }
     }
 
@@ -3064,6 +3507,64 @@ mod tests {
     }
 
     #[test]
+    fn a_duplicated_construction_cell_is_rejected() {
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        let duplicate = report_a["construction"]
+            .as_array()
+            .expect("construction array")
+            .iter()
+            .find(|cell| {
+                cell.get("resource").and_then(Value::as_str) == Some("resource-b")
+                    && cell.get("case").and_then(Value::as_str) == Some("at the ceiling")
+            })
+            .cloned()
+            .expect("resource-b's accept cell");
+        report_a["construction"]
+            .as_array_mut()
+            .expect("construction array")
+            .push(duplicate);
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        assert!(identity_violations.is_empty(), "{identity_violations:?}");
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-b")
+                .is_some_and(|violation| violation.contains("recorded 2 times")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_same_count_bogus_construction_cell_substitution_is_rejected() {
+        // resource-b's accept cell is removed, and a bogus cell at an
+        // unrelated value fills its place — the total construction-cell
+        // count for resource-b is unchanged, so only exact-identity
+        // matching, not a count check, catches the swap.
+        let scope = scope();
+        let mut report_a = valid_report_a();
+        report_a["construction"]
+            .as_array_mut()
+            .expect("construction array")
+            .iter_mut()
+            .filter(|cell| cell.get("resource").and_then(Value::as_str) == Some("resource-b"))
+            .for_each(|cell| {
+                if cell.get("case").and_then(Value::as_str) == Some("at the ceiling") {
+                    cell["value"] = json!(3);
+                }
+            });
+        let runs = runs_with(&[("report-a", report_a), ("report-b", valid_report_b())]);
+        let (evidence, identity_violations) = collect_evidence(&scope, &runs);
+        assert!(identity_violations.is_empty(), "{identity_violations:?}");
+        let violations = reconcile_denominator(&scope, &evidence);
+        assert!(
+            any_violation(&violations, "resource-b")
+                .is_some_and(|violation| violation.contains("accepted exactly at it")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
     fn an_undeclared_compared_field_is_rejected() {
         let scope = scope();
         let mut report_a = valid_report_a();
@@ -3115,6 +3616,7 @@ mod tests {
             parent_connections: None,
             subjects: Vec::new(),
             shedding_rule: Some("collapse-to-reserved-series".to_owned()),
+            informational_symbols: Vec::new(),
         }
     }
 

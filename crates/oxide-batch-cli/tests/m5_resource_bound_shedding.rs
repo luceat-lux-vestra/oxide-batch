@@ -648,33 +648,45 @@ fn construction_cells() -> Vec<Cell> {
 /// Reports the queue and cardinality constructions.
 fn queue_construction_cells() -> Vec<Cell> {
     vec![
-        Cell::new(
+        Cell::dimensioned(
             "telemetry-exporter-queue",
+            None,
             "at the ceiling",
+            MAX_EXPORT_QUEUE_RECORDS as u64,
             MAX_EXPORT_QUEUE_RECORDS as u64,
             ExportQueueBound::new(MAX_EXPORT_QUEUE_RECORDS).is_ok(),
             true,
+            "records",
         ),
-        Cell::new(
+        Cell::dimensioned(
             "telemetry-exporter-queue",
+            None,
             "one past the ceiling",
+            MAX_EXPORT_QUEUE_RECORDS as u64,
             MAX_EXPORT_QUEUE_RECORDS as u64 + 1,
             ExportQueueBound::new(MAX_EXPORT_QUEUE_RECORDS + 1).is_ok(),
             false,
+            "records",
         ),
-        Cell::new(
+        Cell::dimensioned(
             "telemetry-exporter-queue",
+            None,
             "at the floor",
+            MIN_EXPORT_QUEUE_RECORDS as u64,
             MIN_EXPORT_QUEUE_RECORDS as u64,
             ExportQueueBound::new(MIN_EXPORT_QUEUE_RECORDS).is_ok(),
             true,
+            "records",
         ),
-        Cell::new(
+        Cell::dimensioned(
             "telemetry-exporter-queue",
+            None,
             "one below the floor",
+            MIN_EXPORT_QUEUE_RECORDS as u64,
             MIN_EXPORT_QUEUE_RECORDS as u64 - 1,
             ExportQueueBound::new(MIN_EXPORT_QUEUE_RECORDS - 1).is_ok(),
             false,
+            "records",
         ),
         Cell::new(
             "retained-incident-events",
@@ -759,57 +771,176 @@ fn range_cells<T, E>(
     let minimum_ms = u64::try_from(minimum.as_millis()).unwrap_or(u64::MAX);
     let maximum_ms = u64::try_from(maximum.as_millis()).unwrap_or(u64::MAX);
     vec![
-        Cell::new(
+        Cell::dimensioned(
             resource,
+            None,
             "at the minimum",
+            minimum_ms,
             minimum_ms,
             construct(minimum).is_ok(),
             true,
+            "milliseconds",
         ),
-        Cell::new(
+        Cell::dimensioned(
             resource,
+            None,
             "one millisecond below the minimum",
+            minimum_ms,
             minimum_ms.saturating_sub(1),
             minimum
                 .checked_sub(Duration::from_millis(1))
                 .is_some_and(|below| construct(below).is_ok()),
             false,
+            "milliseconds",
         ),
-        Cell::new(
+        Cell::dimensioned(
             resource,
+            None,
             "at the maximum",
+            maximum_ms,
             maximum_ms,
             construct(maximum).is_ok(),
             true,
+            "milliseconds",
         ),
-        Cell::new(
+        Cell::dimensioned(
             resource,
+            None,
             "one millisecond past the maximum",
+            maximum_ms,
             maximum_ms.saturating_add(1),
             construct(maximum + Duration::from_millis(1)).is_ok(),
             false,
+            "milliseconds",
         ),
     ]
 }
 
-/// Reports the CLI configuration-document constructions.
+/// Reports the CLI configuration-document constructions: three independent
+/// dimensions of the same document, not one. `bytes` bounds the whole file,
+/// `secret-bytes` bounds one file-indirection secret value inside it, and
+/// `depth` bounds how deep the JSON object tree may nest.
 fn configuration_construction_cells() -> Vec<Cell> {
+    const SECRET_CEILING: usize = 64 * 1024;
+    const DEPTH_CEILING: usize = 4;
     vec![
-        Cell::new(
+        Cell::dimensioned(
             "cli-configuration-document",
-            "one byte past the ceiling",
-            CONFIG_CEILING as u64 + 1,
-            configuration_accepted(CONFIG_CEILING + 1),
-            false,
-        ),
-        Cell::new(
-            "cli-configuration-document",
+            Some("bytes"),
             "at the ceiling",
+            CONFIG_CEILING as u64,
             CONFIG_CEILING as u64,
             configuration_accepted(CONFIG_CEILING),
             true,
+            "bytes",
+        ),
+        Cell::dimensioned(
+            "cli-configuration-document",
+            Some("bytes"),
+            "one byte past the ceiling",
+            CONFIG_CEILING as u64,
+            CONFIG_CEILING as u64 + 1,
+            configuration_accepted(CONFIG_CEILING + 1),
+            false,
+            "bytes",
+        ),
+        Cell::dimensioned(
+            "cli-configuration-document",
+            Some("secret-bytes"),
+            "at the ceiling",
+            SECRET_CEILING as u64,
+            SECRET_CEILING as u64,
+            secret_file_accepted(SECRET_CEILING),
+            true,
+            "bytes",
+        ),
+        Cell::dimensioned(
+            "cli-configuration-document",
+            Some("secret-bytes"),
+            "one byte past the ceiling",
+            SECRET_CEILING as u64,
+            SECRET_CEILING as u64 + 1,
+            secret_file_accepted(SECRET_CEILING + 1),
+            false,
+            "bytes",
+        ),
+        Cell::dimensioned(
+            "cli-configuration-document",
+            Some("depth"),
+            "at the depth ceiling",
+            DEPTH_CEILING as u64,
+            DEPTH_CEILING as u64,
+            nesting_avoids_the_depth_ceiling(DEPTH_CEILING),
+            true,
+            "levels",
+        ),
+        Cell::dimensioned(
+            "cli-configuration-document",
+            Some("depth"),
+            "one level past the depth ceiling",
+            DEPTH_CEILING as u64,
+            DEPTH_CEILING as u64 + 1,
+            nesting_avoids_the_depth_ceiling(DEPTH_CEILING + 1),
+            false,
+            "levels",
         ),
     ]
+}
+
+/// Reports whether the CLI accepts a `bytes`-sized file-indirection secret.
+///
+/// `repository.ca_certificate__FILE` is the file-indirection pointer this
+/// campaign already reaches from an ordinary config document without
+/// needing a live repository: the config resolves through
+/// `read_secret_file` and its byte ceiling regardless of whether anything
+/// later connects with the certificate.
+fn secret_file_accepted(bytes: usize) -> bool {
+    let contents =
+        r#"{"config_version":1,"repository":{"ca_certificate__FILE":"ca.pem"}}"#.to_owned();
+    let secret = "x".repeat(bytes);
+
+    let (services, _repository) = services();
+    let catalog = test_catalog(JOB);
+    let mut host = TestHost::new()
+        .with_file("secret-config.json", &contents)
+        .with_file("ca.pem", &secret);
+    let category = run_with_catalog(
+        &mut host,
+        &services,
+        &catalog,
+        "config show --config secret-config.json --output json",
+    );
+    category == ExitCategory::Success
+}
+
+/// Reports whether nesting a leaf value `depth` levels deep specifically
+/// avoided the configuration depth ceiling, independent of whatever else the
+/// document contains at that depth.
+///
+/// No key this schema recognizes nests to `MAX_CONFIG_DEPTH`'s own depth, so
+/// a document that reaches it also necessarily names an unrecognized key at
+/// its deepest point: `resolve()` still fails overall, on that separate,
+/// expected issue, never on the depth boundary this isolates. "Accepted"
+/// here means `collect()` never raised its own depth diagnostic for this
+/// document — not that the whole document validated, which nothing at this
+/// depth could, since no real key reaches it.
+fn nesting_avoids_the_depth_ceiling(depth: usize) -> bool {
+    let mut value = "\"leaf\"".to_owned();
+    for _ in 1..depth {
+        value = format!(r#"{{"w":{value}}}"#);
+    }
+    let contents = format!(r#"{{"config_version":1,"probe":{value}}}"#);
+
+    let (services, _repository) = services();
+    let catalog = test_catalog(JOB);
+    let mut host = TestHost::new().with_file("depth-config.json", &contents);
+    let _ = run_with_catalog(
+        &mut host,
+        &services,
+        &catalog,
+        "config show --config depth-config.json --output json",
+    );
+    !host.stderr_text().contains("nests deeper than")
 }
 
 /// Reports whether a metric allowlist of `names` step names is accepted.
@@ -1122,7 +1253,10 @@ impl Equivalence {
 /// One construction the framework must accept or refuse.
 struct Cell {
     resource: &'static str,
+    subject: Option<&'static str>,
     case: &'static str,
+    declared: Option<u64>,
+    unit: Option<&'static str>,
     value: u64,
     accepted: bool,
     expected: bool,
@@ -1139,7 +1273,38 @@ impl Cell {
     ) -> Self {
         Self {
             resource,
+            subject: None,
             case,
+            declared: None,
+            unit: None,
+            value,
+            accepted,
+            expected,
+        }
+    }
+
+    /// Records one construction result carrying its own declared bound and
+    /// unit, for a range-boundary or subject-boundary resource whose
+    /// verifier cross-checks both against the denominator. `subject` names
+    /// which of a resource's several independent dimensions this cell
+    /// proves, or is `None` for a range-boundary resource with only one.
+    #[allow(clippy::too_many_arguments)]
+    const fn dimensioned(
+        resource: &'static str,
+        subject: Option<&'static str>,
+        case: &'static str,
+        declared: u64,
+        value: u64,
+        accepted: bool,
+        expected: bool,
+        unit: &'static str,
+    ) -> Self {
+        Self {
+            resource,
+            subject,
+            case,
+            declared: Some(declared),
+            unit: Some(unit),
             value,
             accepted,
             expected,
@@ -1149,15 +1314,16 @@ impl Cell {
     /// Returns the violation this cell is, when it is one.
     fn violation(&self) -> Option<String> {
         (self.accepted != self.expected).then(|| {
+            let subject = self.subject.unwrap_or(self.resource);
             if self.expected {
                 format!(
-                    "{} refused {} {}, which is inside its declared bound",
-                    self.resource, self.case, self.value,
+                    "{subject} refused {} {}, which is inside its declared bound",
+                    self.case, self.value,
                 )
             } else {
                 format!(
-                    "{} accepted {} {}, which is outside its declared bound",
-                    self.resource, self.case, self.value,
+                    "{subject} accepted {} {}, which is outside its declared bound",
+                    self.case, self.value,
                 )
             }
         })
@@ -1167,7 +1333,10 @@ impl Cell {
     fn evidence(&self) -> Value {
         json!({
             "resource": self.resource,
+            "subject": self.subject,
             "case": self.case,
+            "declared_ceiling": self.declared,
+            "unit": self.unit,
             "value": self.value,
             "expected": if self.expected { "accepted" } else { "refused" },
             "observed": if self.accepted { "accepted" } else { "refused" },

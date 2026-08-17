@@ -324,29 +324,45 @@ fn retry_cache_cells() -> Result<Vec<Cell>, Box<dyn Error>> {
             .is_ok(),
             false,
         ),
-        Cell::new(
+        Cell::named(
             "declared-retry-state-capacity",
-            FaultStateEnvelope::MAX_ENTRIES as u64,
+            "capacity",
             "at the ceiling",
+            FaultStateEnvelope::MAX_ENTRIES as u64,
             FaultStateEnvelope::MAX_ENTRIES as u64,
             RetryStateLimit::new(u32::try_from(FaultStateEnvelope::MAX_ENTRIES)?).is_ok(),
             true,
+            "unresolved retry keys",
         ),
-        Cell::new(
+        Cell::named(
             "declared-retry-state-capacity",
-            FaultStateEnvelope::MAX_ENTRIES as u64,
+            "capacity",
             "one past the ceiling",
+            FaultStateEnvelope::MAX_ENTRIES as u64,
             FaultStateEnvelope::MAX_ENTRIES as u64 + 1,
             RetryStateLimit::new(u32::try_from(FaultStateEnvelope::MAX_ENTRIES)? + 1).is_ok(),
             false,
+            "unresolved retry keys",
         ),
-        Cell::new(
+        Cell::named(
             "declared-retry-state-capacity",
-            FaultStateEnvelope::MAX_ENTRIES as u64,
-            "zero retained keys",
+            "capacity",
+            "at the floor",
+            1,
+            1,
+            RetryStateLimit::new(1).is_ok(),
+            true,
+            "unresolved retry keys",
+        ),
+        Cell::named(
+            "declared-retry-state-capacity",
+            "capacity",
+            "one below the floor",
+            1,
             0,
             RetryStateLimit::new(0).is_ok(),
             false,
+            "unresolved retry keys",
         ),
     ])
 }
@@ -423,31 +439,58 @@ fn definition_cells(largest_chain: usize) -> Result<Vec<Cell>, Box<dyn Error>> {
 }
 
 /// Reports the durable-state envelope and upgrade-chain bounds.
+///
+/// `durable-state-envelope` proves two independent dimensions of itself: a
+/// byte ceiling and a nesting-depth ceiling, `StateLimits`'s own
+/// `MAXIMUM_BYTES` and `MAXIMUM_DEPTH` (private, mirrored here as `DEPTH_CEILING`
+/// the same way `DURABLE_STATE_CEILING` mirrors `MAXIMUM_BYTES`). The
+/// at-the-ceiling construction proves both dimensions from the same call —
+/// `StateLimits::new(DURABLE_STATE_CEILING, DEPTH_CEILING)` is simultaneously
+/// "bytes at its ceiling" and "depth at its ceiling" — but each refusal
+/// varies only its own dimension, holding the other at an interior value, so
+/// a refusal cannot be credited to the wrong one.
 fn state_cells() -> Vec<Cell> {
+    const DEPTH_CEILING: usize = 64;
     vec![
-        Cell::new(
+        Cell::named(
             "durable-state-envelope",
-            DURABLE_STATE_CEILING as u64,
+            "bytes",
             "at the ceiling",
             DURABLE_STATE_CEILING as u64,
-            StateLimits::new(DURABLE_STATE_CEILING, 64).is_ok(),
+            DURABLE_STATE_CEILING as u64,
+            StateLimits::new(DURABLE_STATE_CEILING, DEPTH_CEILING).is_ok(),
             true,
+            "bytes",
         ),
-        Cell::new(
+        Cell::named(
             "durable-state-envelope",
-            DURABLE_STATE_CEILING as u64,
+            "bytes",
             "one byte past the ceiling",
-            DURABLE_STATE_CEILING as u64 + 1,
-            StateLimits::new(DURABLE_STATE_CEILING + 1, 64).is_ok(),
-            false,
-        ),
-        Cell::new(
-            "durable-state-envelope",
             DURABLE_STATE_CEILING as u64,
-            "one level past the depth ceiling",
-            65,
-            StateLimits::new(DURABLE_STATE_CEILING, 65).is_ok(),
+            DURABLE_STATE_CEILING as u64 + 1,
+            StateLimits::new(DURABLE_STATE_CEILING + 1, DEPTH_CEILING).is_ok(),
             false,
+            "bytes",
+        ),
+        Cell::named(
+            "durable-state-envelope",
+            "depth",
+            "at the depth ceiling",
+            DEPTH_CEILING as u64,
+            DEPTH_CEILING as u64,
+            StateLimits::new(DURABLE_STATE_CEILING, DEPTH_CEILING).is_ok(),
+            true,
+            "levels",
+        ),
+        Cell::named(
+            "durable-state-envelope",
+            "depth",
+            "one level past the depth ceiling",
+            DEPTH_CEILING as u64,
+            DEPTH_CEILING as u64 + 1,
+            StateLimits::new(DURABLE_STATE_CEILING, DEPTH_CEILING + 1).is_ok(),
+            false,
+            "levels",
         ),
         Cell::new(
             "ca-certificate",
@@ -547,6 +590,7 @@ fn identifier_cells() -> Vec<Cell> {
             ceiling,
             at,
             true,
+            "bytes",
         ));
         cells.push(Cell::named(
             "bounded-identifier-text",
@@ -556,6 +600,7 @@ fn identifier_cells() -> Vec<Cell> {
             ceiling + 1,
             over,
             false,
+            "bytes",
         ));
     }
     cells
@@ -1094,6 +1139,7 @@ struct Cell {
     value: u64,
     accepted: bool,
     expected: bool,
+    unit: Option<&'static str>,
 }
 
 impl Cell {
@@ -1114,15 +1160,21 @@ impl Cell {
             value,
             accepted,
             expected,
+            unit: None,
         }
     }
 
-    /// Records one construction result for one member of a swept table.
+    /// Records one construction result for one member of a swept table, or
+    /// one named dimension of a resource that proves more than one
+    /// independent bound on itself.
     ///
     /// `ceiling` and `value` are the subject's own real numbers, not a
     /// placeholder: a subject proved only by a boolean accept/refuse pair,
     /// with no numeric ceiling recorded, is not a non-vacuous boundary proof —
-    /// nothing distinguishes it from a bound enforced anywhere else.
+    /// nothing distinguishes it from a bound enforced anywhere else. `unit`
+    /// is mandatory for the same reason: a subject-boundary resource's
+    /// verifier cross-checks it against the declared unit, so this producer
+    /// must actually name it rather than leave it implicit in prose.
     #[allow(clippy::too_many_arguments)]
     const fn named(
         resource: &'static str,
@@ -1132,6 +1184,7 @@ impl Cell {
         value: u64,
         accepted: bool,
         expected: bool,
+        unit: &'static str,
     ) -> Self {
         Self {
             resource,
@@ -1141,6 +1194,7 @@ impl Cell {
             value,
             accepted,
             expected,
+            unit: Some(unit),
         }
     }
 
@@ -1169,6 +1223,7 @@ impl Cell {
             "subject": self.subject,
             "case": self.case,
             "declared_ceiling": self.ceiling,
+            "unit": self.unit,
             "value": self.value,
             "expected": if self.expected { "accepted" } else { "refused" },
             "observed": if self.accepted { "accepted" } else { "refused" },

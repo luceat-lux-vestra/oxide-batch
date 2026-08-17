@@ -427,15 +427,19 @@
       "class": "retry-cache",
       "owner": "RetryStateLimit",
       "symbols": ["MAX_RETRY_STATE", "MIN_RETRY_STATE"],
-      "ceiling": 256,
+      "ceiling": null,
+      "bounds": {
+        "minimum": { "value": 1, "unit": "unresolved retry keys", "symbol": "MIN_RETRY_STATE" },
+        "maximum": { "value": 256, "unit": "unresolved retry keys", "symbol": "MAX_RETRY_STATE" }
+      },
       "unit": "unresolved retry keys",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": false,
-      "proofs": ["construction-boundary"],
+      "proofs": ["range-boundary"],
       "budget_row": null,
       "budget_bound": null,
-      "note": "The per-definition declaration of how much retry state a step may hold. It cannot exceed the durable format's own entry ceiling, and the report checks that relation rather than the two numbers separately."
+      "note": "The per-definition declaration of how much retry state a step may hold. It cannot exceed the durable format's own entry ceiling, and the report checks that relation rather than the two numbers separately. MIN_RETRY_STATE is a genuine floor of 1, not a degenerate 0 — RetryStateLimit::new checks an inclusive 1..=256 range — so this is a range-boundary resource with both sides independently reachable, not a single ceiling."
     },
     {
       "resource": "definition-nodes",
@@ -517,15 +521,29 @@
         "DEFAULT_MAXIMUM_BYTES",
         "DEFAULT_MAXIMUM_DEPTH"
       ],
-      "ceiling": 1048576,
+      "ceiling": null,
       "unit": "bytes",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": true,
-      "proofs": ["construction-boundary"],
+      "proofs": ["subject-boundary"],
       "budget_row": null,
       "budget_bound": null,
-      "note": "The ceiling on any durable checkpoint or execution context, above which no configured limit may go. A definition chooses its own limits inside it, so this is the bound on the bound: the partition context's 4 KiB is a framework ceiling on one use of the envelope, and this is the ceiling the envelope itself cannot be configured past."
+      "subjects": [
+        { "subject": "bytes", "symbol": "MAXIMUM_BYTES", "ceiling": 1048576, "unit": "bytes" },
+        { "subject": "depth", "symbol": "MAXIMUM_DEPTH", "ceiling": 64, "unit": "levels" }
+      ],
+      "informational_symbols": [
+        {
+          "symbol": "DEFAULT_MAXIMUM_BYTES",
+          "reason": "StateLimits::default()'s byte limit (65536), a genuinely different number from MAXIMUM_BYTES (1048576), not an alias of it. It is the config value a definition gets when it chooses none of its own, not itself a ceiling: nothing refuses a value one byte past it, since a definition remains free to configure any limit up to MAXIMUM_BYTES. There is no boundary to construct."
+        },
+        {
+          "symbol": "DEFAULT_MAXIMUM_DEPTH",
+          "reason": "StateLimits::default()'s depth limit (16), independently different from MAXIMUM_DEPTH (64) for the same reason DEFAULT_MAXIMUM_BYTES is: a default config value inside the allowed range, not an enforced ceiling with a refusal past it."
+        }
+      ],
+      "note": "The ceiling on any durable checkpoint or execution context, above which no configured limit may go. A definition chooses its own limits inside it, so this is the bound on the bound: the partition context's 4 KiB is a framework ceiling on one use of the envelope, and this is the ceiling the envelope itself cannot be configured past. Two independent dimensions of the same envelope, not one: a payload can be refused for being too many bytes or too many levels deep, and a report proving only bytes says nothing about depth. subject-boundary is reused here for that reason — 'subject' names one of the several things this resource's evidence independently proves, not only a caller-supplied identifier type the way bounded-identifier-text uses it."
     },
     {
       "resource": "instance-key-input",
@@ -616,14 +634,20 @@
       "class": "buffer",
       "owner": "oxide_batch_cli::Configuration",
       "symbols": ["MAX_CONFIG_BYTES", "MAX_SECRET_BYTES", "MAX_CONFIG_DEPTH"],
-      "ceiling": 262144,
+      "ceiling": null,
       "unit": "bytes",
       "policy": "fail-closed",
       "report": "bounded-shedding",
       "postgres": false,
-      "proofs": ["construction-boundary"],
+      "proofs": ["subject-boundary"],
       "budget_row": null,
-      "budget_bound": null
+      "budget_bound": null,
+      "subjects": [
+        { "subject": "bytes", "symbol": "MAX_CONFIG_BYTES", "ceiling": 262144, "unit": "bytes" },
+        { "subject": "secret-bytes", "symbol": "MAX_SECRET_BYTES", "ceiling": 65536, "unit": "bytes" },
+        { "subject": "depth", "symbol": "MAX_CONFIG_DEPTH", "ceiling": 4, "unit": "levels" }
+      ],
+      "note": "Three independent dimensions of the same document, not one: MAX_CONFIG_BYTES bounds the whole file, MAX_SECRET_BYTES bounds one file-indirection secret value inside it (config.rs's read_secret_file, reached through a `<key>__FILE` pointer such as `repository.ca_certificate__FILE`), and MAX_CONFIG_DEPTH bounds how deep the JSON object tree may nest before collect() refuses it. No key this schema recognizes nests as deep as MAX_CONFIG_DEPTH itself, so a document that reaches the depth ceiling necessarily also names an unrecognized key at its deepest point — the report isolates the depth boundary from that separate, expected failure by checking which specific diagnostic collect() raised, not whether the whole document resolved."
     },
     {
       "resource": "telemetry-exporter-queue",
@@ -631,15 +655,19 @@
       "owner": "ExportQueueBound",
       "symbols": ["MAX_EXPORT_QUEUE_RECORDS", "MIN_EXPORT_QUEUE_RECORDS"],
       "ceiling": 65536,
+      "bounds": {
+        "minimum": { "value": 64, "unit": "records", "symbol": "MIN_EXPORT_QUEUE_RECORDS" },
+        "maximum": { "value": 65536, "unit": "records", "symbol": "MAX_EXPORT_QUEUE_RECORDS" }
+      },
       "unit": "records",
       "policy": "bounded-shedding",
       "shedding_rule": "drop-newest",
       "report": "bounded-shedding",
       "postgres": false,
-      "proofs": ["construction-boundary", "stress-saturation"],
+      "proofs": ["range-boundary", "stress-saturation"],
       "budget_row": "Telemetry exporter queue",
       "budget_bound": "`64..=65536` records",
-      "note": "The one resource in the campaign whose contract forbids backpressure. Telemetry may not block batch work, so a full queue drops the newest record and counts the drop. Introducing a wait here to make the campaign uniform would break the accepted contract rather than strengthen it."
+      "note": "The one resource in the campaign whose contract forbids backpressure. Telemetry may not block batch work, so a full queue drops the newest record and counts the drop. Introducing a wait here to make the campaign uniform would break the accepted contract rather than strengthen it. `ceiling` stays populated alongside `bounds`, not replaced by it: `ceiling` is what the stress-saturation numeric entry is cross-checked against, and `bounds` is what the four construction cells (accepted at the floor and the ceiling, refused one unit past each) are — the same 65536 both ways, checked by two different mechanisms against two different kinds of evidence."
     },
     {
       "resource": "telemetry-drop-report-window",
@@ -648,8 +676,8 @@
       "symbols": ["MAX_DROP_REPORT_WINDOW", "MIN_DROP_REPORT_WINDOW"],
       "ceiling": null,
       "bounds": {
-        "minimum": { "value": 1000, "unit": "milliseconds" },
-        "maximum": { "value": 3600000, "unit": "milliseconds" }
+        "minimum": { "value": 1000, "unit": "milliseconds", "symbol": "MIN_DROP_REPORT_WINDOW" },
+        "maximum": { "value": 3600000, "unit": "milliseconds", "symbol": "MAX_DROP_REPORT_WINDOW" }
       },
       "unit": "duration",
       "policy": "fail-closed",
@@ -677,6 +705,12 @@
       "proofs": ["construction-boundary", "stress-saturation"],
       "budget_row": "Retained incident events",
       "budget_bound": "`200` per execution",
+      "informational_symbols": [
+        {
+          "symbol": "DEFAULT_RETAINED_EVENT_CAPACITY",
+          "reason": "An internal VecDeque::with_capacity hint and the total-events default, not an independent ceiling: IncidentEventBuffer::new validates total >= per_execution, never an absolute maximum on total, so there is no value one past which construction is refused. MAX_RETAINED_EVENTS_PER_EXECUTION is the real, independently enforced ceiling and is already proven both sides."
+        }
+      ],
       "note": "The eviction rule is the opposite of the exporter queue's, and deliberately: an incident buffer exists to be read after a failure, so the newest records are the ones worth keeping. The campaign records which rule each queue contracts for rather than requiring one of them."
     },
     {
@@ -730,8 +764,8 @@
       "symbols": ["MAX_SHUTDOWN_DEADLINE", "MIN_SHUTDOWN_DEADLINE"],
       "ceiling": null,
       "bounds": {
-        "minimum": { "value": 1000, "unit": "milliseconds" },
-        "maximum": { "value": 3600000, "unit": "milliseconds" }
+        "minimum": { "value": 1000, "unit": "milliseconds", "symbol": "MIN_SHUTDOWN_DEADLINE" },
+        "maximum": { "value": 3600000, "unit": "milliseconds", "symbol": "MAX_SHUTDOWN_DEADLINE" }
       },
       "unit": "duration",
       "policy": "fail-closed",
@@ -749,8 +783,8 @@
       "symbols": ["MAX_TELEMETRY_FLUSH_DEADLINE", "MIN_TELEMETRY_FLUSH_DEADLINE"],
       "ceiling": null,
       "bounds": {
-        "minimum": { "value": 100, "unit": "milliseconds" },
-        "maximum": { "value": 60000, "unit": "milliseconds" }
+        "minimum": { "value": 100, "unit": "milliseconds", "symbol": "MIN_TELEMETRY_FLUSH_DEADLINE" },
+        "maximum": { "value": 60000, "unit": "milliseconds", "symbol": "MAX_TELEMETRY_FLUSH_DEADLINE" }
       },
       "unit": "duration",
       "policy": "fail-closed",

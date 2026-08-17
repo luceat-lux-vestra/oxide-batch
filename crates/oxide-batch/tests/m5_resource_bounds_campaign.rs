@@ -299,6 +299,60 @@ fn every_declared_bound_is_classified() -> Result<(), Box<dyn Error>> {
         );
     }
 
+    // A resource with more than one bound symbol proves more than its
+    // top-level ceiling: durable-state-envelope's depth beside its bytes, a
+    // range's own minimum beside its maximum, a subject-boundary resource's
+    // per-subject ceiling. The single-ceiling loop above only ever compares a
+    // resource's first symbol, so every other declared symbol is checked
+    // here against its own real source value independently — that gap is
+    // exactly what let three dimensions across four resources sit
+    // unclassified against their own numbers before this closed it.
+    for resource in &scope.resources {
+        for dimension in &resource.dimensions {
+            let values = declared
+                .get(&dimension.symbol)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            if values.iter().all(Option::is_none) {
+                // A duration constant, a call, or a cross-reference: the same
+                // limitation this module's own `declared_bounds` doc comment
+                // states for every bound the scan cannot evaluate. The symbol
+                // is still required above to be declared and classified;
+                // only its number is not mechanically checkable here.
+                continue;
+            }
+            assert!(
+                values.contains(&Some(dimension.value)),
+                "{}'s {} dimension declares {} and {} is {values:?} in the source",
+                resource.name,
+                dimension.symbol,
+                dimension.value,
+                dimension.symbol,
+            );
+        }
+
+        // Every symbol a resource claims must be wired to something: its own
+        // ceiling, one of its dimensions, or an explicit informational
+        // classification — never left declared and silently unchecked by
+        // either loop above.
+        for symbol in &resource.symbols {
+            let is_the_ceiling_symbol =
+                resource.ceiling.is_some() && resource.symbols.first() == Some(symbol);
+            let is_a_dimension = resource
+                .dimensions
+                .iter()
+                .any(|dimension| &dimension.symbol == symbol);
+            let is_informational = resource.informational.contains(symbol);
+            assert!(
+                is_the_ceiling_symbol || is_a_dimension || is_informational,
+                "{} declares {symbol} among its symbols and neither its ceiling, its dimensions, \
+                 nor informational_symbols accounts for it, so nothing checks it against the \
+                 source or explains why nothing does",
+                resource.name,
+            );
+        }
+    }
+
     Ok(())
 }
 
@@ -1184,6 +1238,60 @@ impl Scope {
     fn read_resources(document: &Value) -> Result<Vec<Resource>, Box<dyn Error>> {
         let mut resources = Vec::new();
         for resource in array(document, "resources")? {
+            let mut dimensions = Vec::new();
+            for subject in resource
+                .get("subjects")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                dimensions.push(Dimension {
+                    symbol: text(subject, "symbol")?,
+                    value: subject
+                        .get("ceiling")
+                        .and_then(Value::as_i64)
+                        .map(i128::from)
+                        .ok_or_else(|| {
+                            Failure(format!(
+                                "{} declares a subject with no numeric ceiling",
+                                text(resource, "resource").unwrap_or_default(),
+                            ))
+                        })?,
+                });
+            }
+            if let Some(bounds) = resource.get("bounds") {
+                for side in ["minimum", "maximum"] {
+                    let Some(side_value) = bounds.get(side) else {
+                        continue;
+                    };
+                    let Some(symbol) = side_value.get("symbol").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let value = side_value
+                        .get("value")
+                        .and_then(Value::as_i64)
+                        .map(i128::from)
+                        .ok_or_else(|| {
+                            Failure(format!(
+                                "{} declares a {side} bound with no value",
+                                text(resource, "resource").unwrap_or_default(),
+                            ))
+                        })?;
+                    dimensions.push(Dimension {
+                        symbol: symbol.to_owned(),
+                        value,
+                    });
+                }
+            }
+            let informational = resource
+                .get("informational_symbols")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| entry.get("symbol").and_then(Value::as_str))
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+
             resources.push(Resource {
                 name: text(resource, "resource")?,
                 class: text(resource, "class")?,
@@ -1192,6 +1300,8 @@ impl Scope {
                     .get("ceiling")
                     .and_then(Value::as_i64)
                     .map(i128::from),
+                dimensions,
+                informational,
                 policy: text(resource, "policy")?,
                 report: text(resource, "report")?,
                 budget_row: resource
@@ -1281,11 +1391,28 @@ struct Resource {
     class: String,
     symbols: Vec<String>,
     ceiling: Option<i128>,
+    /// Every named dimension this resource declares beyond its single
+    /// `ceiling`: one per subject-boundary subject, and one per range-boundary
+    /// side that names its own symbol. Each is checked against the real
+    /// source value that same symbol evaluates to, independently of every
+    /// other dimension this resource has.
+    dimensions: Vec<Dimension>,
+    /// Symbols classified as a default or capacity hint rather than a
+    /// ceiling: still required to be declared in source, but with no
+    /// dimension value to cross-check.
+    informational: Vec<String>,
     policy: String,
     report: String,
     budget_row: Option<String>,
     budget_bound: Option<String>,
     shedding_rule: String,
+}
+
+/// One symbol a resource's evidence independently proves, and the numeric
+/// value the campaign declares for it.
+struct Dimension {
+    symbol: String,
+    value: i128,
 }
 
 /// One bound the campaign argues is not a framework-owned resource.
