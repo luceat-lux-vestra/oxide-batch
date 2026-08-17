@@ -1,0 +1,68 @@
+name: PR131 synchronize current main
+
+on:
+  push:
+    branches:
+      - fix/pr131-final-closure
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          ref: fix/pr131-final-closure
+      - name: Merge current main while preserving fresh base evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          cp docs/engineering/campaigns/m5/evidence-provenance.json /tmp/pr131-provenance.json
+          git fetch origin main
+          git merge origin/main -X ours --no-edit
+          git checkout origin/main -- Cargo.lock
+          for f in \
+            cancellation-campaign-postgres-15.json cancellation-campaign-postgres-18.json \
+            conformance-campaign-postgres-15.json conformance-campaign-postgres-18.json \
+            crash-restore-campaign-postgres-15.json crash-restore-campaign-postgres-18.json \
+            performance-campaign-postgres-15.json performance-campaign-postgres-18.json \
+            security-campaign-postgres-15.json security-campaign-postgres-18.json \
+            soak-campaign-postgres-15.json soak-campaign-postgres-18.json \
+            upgrade-campaign-postgres-15.json upgrade-campaign-postgres-18.json; do
+            git checkout origin/main -- "docs/engineering/campaigns/m5/$f"
+          done
+          git show origin/main:docs/engineering/campaigns/m5/evidence-provenance.json > /tmp/main-provenance.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          main=json.loads(Path('/tmp/main-provenance.json').read_text())
+          ours=json.loads(Path('/tmp/pr131-provenance.json').read_text())
+          def rb(v):
+              s=json.dumps(v, sort_keys=True).lower()
+              return 'resource-bounds' in s or 'resource bounds' in s
+          def combine(a,b):
+              if isinstance(a,dict) and isinstance(b,dict):
+                  out={}
+                  for k in a.keys() | b.keys():
+                      if k in a and k in b: out[k]=combine(a[k],b[k])
+                      elif k in a: out[k]=a[k]
+                      else: out[k]=b[k] if rb(b[k]) else None
+                  return {k:v for k,v in out.items() if v is not None}
+              if isinstance(a,list) and isinstance(b,list):
+                  base=[x for x in a if not rb(x)]
+                  extra=[x for x in b if rb(x)]
+                  return base+extra
+              return b if rb(b) else a
+          merged=combine(main,ours)
+          Path('docs/engineering/campaigns/m5/evidence-provenance.json').write_text(json.dumps(merged,indent=2)+'\n')
+          PY
+          rm .github/workflows/pr131-sync-main.yml
+          git add -A
+          git commit -m "chore(m5): rebase resource bounds onto current main"
+          git push origin HEAD:fix/pr131-final-closure
