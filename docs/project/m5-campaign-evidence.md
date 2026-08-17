@@ -1409,14 +1409,19 @@ no number.
 
 Both directions found something, recorded below as F10 and F11.
 
-The current denominator is `36` resources across the six classes, plus five
+The current denominator is `36` resources across the six classes, plus seven
 explicit exclusions. The exclusions carry reasons rather than silence, because a
 reader cannot otherwise tell an unexamined resource from an out-of-boundary one:
 operation timeouts and staleness thresholds bound *when* something happens
 rather than *how much* is held; retry and backoff limits bound a policy a
-definition declares rather than a resource the framework holds; and application
+definition declares rather than a resource the framework holds; application
 readers, writers, and item buffers are outside the framework boundary, which the
-capacity budget already says.
+capacity budget already says; and, closest to the resources the campaign does
+cover, the cursor name-column encoding and the interactive confirmation read are
+both real bounds this campaign cannot exercise — the first is checked inside a
+private method on a `#[non_exhaustive]` enum variant nothing outside its own
+crate can construct, and the second is a raw byte cutoff on an interactive
+`io::stdin()` read no automated harness reaches — recorded as F16 below.
 
 ### Four overload policies, not one
 
@@ -1535,11 +1540,20 @@ resources, `36` observed.
 | [`resource-bounds-campaign-postgres-15.json`](../engineering/campaigns/m5/resource-bounds-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
 | [`resource-bounds-campaign-postgres-18.json`](../engineering/campaigns/m5/resource-bounds-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
 
-Both were produced by commit `601560ef`, which is the pull-request merge
+Both were produced by commit `a0d2ec05`, which is the pull-request merge
 commit the dedicated `M5 Resource Bounds` workflow checked out rather than a
 branch tip, on `rustc 1.97.1` and Linux `x86_64`, against servers `15.19` and
 `18.6`. The command is `cargo run --package oxide-batch-xtask -- resource-bounds`.
-This producer superseded the two reports the prior `ci.yml`
+This producer superseded run `31884727684` (execution tree `601560ef`), which
+predated a corrective pass to the verifier itself: numeric and construction
+evidence are now checked independently for a resource that has both rather
+than one silently short-circuiting the other, a construction refusal must land
+at exactly ceiling `+1` rather than merely past it, and durable equivalence and
+the bounded-identifier-text subject set both close to exact sets rather than a
+partial list — see F16 below. That producer's own evidence was not
+hand-preserved, because a semantic change that lands after a report is
+produced makes the report answerable to a standard it was never run against.
+It in turn superseded the two reports the prior `ci.yml`
 `resource-bound-campaign` job had retained (produced 2026-08-11): those
 predated the dedicated workflow, the execution contract, the semantic
 closure, and the execution manifest this promotion introduces, and were
@@ -1691,6 +1705,43 @@ held because nothing was ever offered to it. The report drives `600` real
 paginated reads instead. This is not a defect — a record's execution identity
 should come from whatever observed the execution — but it is the reason that one
 report is more expensive than it looks.
+
+**F16. The verifier that checked this campaign's raw evidence was itself
+under-specified in six places, closed in a corrective pass after the
+promotion above.** A review of the raw evidence rather than the runner's
+summary of it found: a construction refusal was accepted at any value past
+the declared ceiling rather than exactly one past it, so a report could
+narrow a ceiling by more than a byte and still reconcile; a resource proved
+by both a numeric entry and construction cells had the numeric side
+short-circuit the construction check, so a report could drop its construction
+proof entirely and still reconcile on the numeric one alone;
+durable-equivalence only required eight of the thirteen fields the producer
+already computes, and neither `must_agree_on` nor `must_not_observe` rejected
+a field the report compared that the scope never declared; the three
+duration resources (`telemetry-drop-report-window`, `shutdown-deadline`,
+`telemetry-flush-deadline`) carried a prose-only `ceiling: null` with no
+machine-readable bound the verifier could check either side of; the
+bounded-identifier-text sweep recorded a `0`/`0` placeholder ceiling and value
+for each subject rather than its own real numbers, so a same-shaped bogus
+substitution could not have been caught, and two of its fourteen symbols
+turned out to be a wrong constant (`MAX_CURSOR_BYTES`, belonging to the
+unrelated `explorer-cursor` resource, tested in place of
+`MAX_CURSOR_NAME_BYTES`) and two more genuinely unreachable from this
+harness (moved to `out_of_scope` as F16's own finding, above); and the
+`metric-series-per-family` shedding relation was checked with the same flat
+`discarded == offered − retained` formula every other shedding resource uses,
+which does not fit `collapse-to-reserved-series`: that policy carves one
+retained slot out of the ceiling for the reserved series itself, so one fewer
+offered unit is genuinely new and one more is attributed to the reserved
+series than the flat relation credits. None of the six was a defect in the
+framework being proved; each was a gap in what the proof required. The
+verifier now declares which proof modality each resource's evidence must
+satisfy and checks exactly that, the exact-set rule extends to both
+directions of the durable-equivalence comparison, the three duration
+resources carry a structured inclusive range in canonical milliseconds, the
+identifier sweep carries twelve subjects with real per-subject ceilings, and
+the shedding accounting reads each resource's own declared rule rather than
+assuming one relation fits all three.
 
 ## Soak campaign
 
