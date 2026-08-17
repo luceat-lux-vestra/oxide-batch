@@ -22,7 +22,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ci/m5-resource-bounds-provenance
-      - name: Retain verified producer bytes and provenance, then self-clean
+      - name: Retain verified producer bytes and provenance
         shell: bash
         run: |
           set -euo pipefail
@@ -113,6 +113,7 @@ jobs:
           path.write_text(json.dumps(doc,indent=2)+'\n')
           PY
 
+          if ! grep -q '^### Fourth resource-bound corrective pass$' docs/project/m5-campaign-evidence.md; then
           cat >> docs/project/m5-campaign-evidence.md <<'EOF'
 
 ### Fourth resource-bound corrective pass
@@ -132,15 +133,18 @@ resource-bound producer `32070824012` (execution tree `2c3fb4d4`, artifacts
 `9301703042`/`9301697053`) was superseded after #132 changed the lockfile and was not
 reused. The fresh producer is branch head `058a3b37bce1d94b4dc9e5565ac318a341d4cac2`,
 executed as pull-request merge tree `15d79fc4dd4e7daf887482aabfe96d56a082e4c9`
-against main `82f995f6fcc7a0ccf1bfc1c7e61453647065b331`, in M5 Resource Bounds run
+against main `82f995f6fcc7a0ccf1c7e61453647065b331`, in M5 Resource Bounds run
 `32078689387`. PostgreSQL 15 job `95537210584` retained artifact `9304381036`;
 PostgreSQL 18 job `95537210537` retained artifact `9304381909`. Both report 36/36
 resources, no violations, a clean execution tree, and the same execution manifest
 across all four sub-reports.
 EOF
+          fi
 
-          rm .github/workflows/pr131-retain-fresh.yml
-          git add -A
+          git add docs/engineering/campaigns/m5/resource-bounds-campaign-postgres-15.json \
+                  docs/engineering/campaigns/m5/resource-bounds-campaign-postgres-18.json \
+                  docs/engineering/campaigns/m5/evidence-provenance.json \
+                  docs/project/m5-campaign-evidence.md
           git diff --cached --check
           git commit -m "docs(m5): retain fresh resource-bound evidence after final hardening"
           git push origin HEAD:ci/m5-resource-bounds-provenance
