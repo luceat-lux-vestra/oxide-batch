@@ -1,0 +1,42 @@
+name: PR131 Trigger Closure Repair
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  trigger:
+    if: github.event.pull_request.number == 131
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: fix/pr131-final-closure
+      - name: Execute staged closure repair and self-clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          src=Path('.github/workflows/pr131-close-gaps.yml').read_text().splitlines()
+          marker='        run: |'
+          i=src.index(marker)+1
+          body=[]
+          for line in src[i:]:
+              body.append(line[10:] if line.startswith('          ') else line)
+          Path('/tmp/pr131-close.sh').write_text('\n'.join(body)+'\n')
+          PY
+          bash /tmp/pr131-close.sh
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          rm -f .github/workflows/pr131-trigger-close.yml .github/workflows/pr131-finalize.yml .pr131-trigger
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "ci: remove temporary PR131 repair workflows"
+            git push origin HEAD:fix/pr131-final-closure
+          fi
