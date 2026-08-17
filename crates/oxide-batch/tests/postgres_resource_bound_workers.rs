@@ -783,13 +783,6 @@ fn partition_construction_cells() -> Vec<Cell> {
         PartitionBudget::new(0, 2).is_ok(),
         false,
     ));
-    cells.push(Cell::new(
-        "repository-connection-capacity",
-        "a declared pool one short of the derivation",
-        u64::from(MAX_PARTITION_WORKERS),
-        PartitionBudget::new(MAX_PARTITION_WORKERS, u32::from(MAX_PARTITION_WORKERS)).is_ok(),
-        false,
-    ));
 
     cells
 }
@@ -1285,9 +1278,25 @@ impl Cell {
 
     /// Renders what the retained evidence records for this cell.
     fn evidence(&self) -> Value {
+        let (declared, unit) = match self.resource {
+            "partitions-per-step" => (Some(u64::from(MAX_PARTITIONS)), Some("partitions")),
+            "concurrent-partition-workers" => (
+                Some(u64::from(MAX_PARTITION_WORKERS)),
+                Some("concurrent workers"),
+            ),
+            "split-branches-per-node" => (Some(MAX_SPLIT_BRANCHES as u64), Some("branches")),
+            "concurrent-split-branches" => {
+                (Some(MAX_SPLIT_BRANCHES as u64), Some("concurrent branches"))
+            }
+            "steps-per-split-branch" => (Some(MAX_BRANCH_STEPS as u64), Some("steps")),
+            "repository-pool-size" => (Some(1024), Some("connections")),
+            _ => (None, None),
+        };
         json!({
             "resource": self.resource,
             "case": self.case,
+            "declared_ceiling": declared,
+            "unit": unit,
             "value": self.value,
             "expected": if self.expected { "accepted" } else { "refused" },
             "observed": if self.accepted { "accepted" } else { "refused" },

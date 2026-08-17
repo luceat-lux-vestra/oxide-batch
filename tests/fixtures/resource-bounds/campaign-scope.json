@@ -289,10 +289,10 @@
       "policy": "fail-closed",
       "report": "worker-assignment",
       "postgres": true,
-      "proofs": ["derived-capacity", "stress-saturation", "fail-closed-residue"],
+      "proofs": ["derived-capacity", "stress-saturation"],
       "budget_row": null,
       "budget_bound": null,
-      "note": "The one bound in the campaign that is derived rather than declared, so it has no symbol to reconcile against. The extra connection belongs to the parent, which owns planning, the per-child compare-and-swap, and the aggregate commit. bound_kind and parent_connections are the machine-readable form of the same derivation the prose states; the runner re-derives concurrent_children + parent_connections from the report's own raw detail and requires it to equal what the report recorded, rather than trusting the report's arithmetic. fail-closed-residue is the separate, construction-level refusal — a pool one short of the derivation refused by the in-memory budget constructor itself, distinct from the stress-saturation requirement's database-level residue check, which is why this resource carries both."
+      "note": "The one bound in the campaign that is derived rather than declared, so it has no symbol to reconcile against. The extra connection belongs to the parent, which owns planning, the per-child compare-and-swap, and the aggregate commit. bound_kind and parent_connections are the machine-readable form of the same derivation the prose states; the runner re-derives concurrent_children + parent_connections from the report's own raw detail and requires it to equal what the report recorded, rather than trusting the report's arithmetic. The stress-saturation rejection is itself the fail-closed proof: the runner re-derives required_connections from concurrent_children + parent_connections, requires short_pool to be exactly one less, requires the adapter capacity to equal that short pool, and requires zero durable residue."
     },
     {
       "resource": "repository-pool-size",

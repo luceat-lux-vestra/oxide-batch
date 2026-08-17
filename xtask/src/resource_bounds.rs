@@ -422,6 +422,7 @@ fn collect_evidence(scope: &Scope, runs: &Runs) -> (Evidence, Vec<String>) {
     let mut claimed_construction: BTreeMap<String, String> = BTreeMap::new();
 
     for (id, observation) in &runs.observations {
+        evidence.reports.insert(id.clone(), observation.clone());
         let numeric = observation
             .get("resources")
             .and_then(Value::as_array)
@@ -452,6 +453,9 @@ fn collect_evidence(scope: &Scope, runs: &Runs) -> (Evidence, Vec<String>) {
         });
         for entry in constructions {
             let Some(resource) = entry.get("resource").and_then(Value::as_str) else {
+                violations.push(format!(
+                    "{id} recorded a construction cell with no resource identity"
+                ));
                 continue;
             };
             cells
@@ -667,6 +671,7 @@ fn reconcile_construction_boundary(resource: &Resource, evidence: &Evidence) -> 
         declared,
         "accepted",
         declared,
+        &resource.unit,
         "accepted exactly at it",
     ));
     violations.extend(reconcile_exact_cell(
@@ -676,6 +681,7 @@ fn reconcile_construction_boundary(resource: &Resource, evidence: &Evidence) -> 
         past,
         "refused",
         declared,
+        &resource.unit,
         &format!("refused at exactly {past}"),
     ));
     for extra in &resource.additional_boundaries {
@@ -686,6 +692,7 @@ fn reconcile_construction_boundary(resource: &Resource, evidence: &Evidence) -> 
             extra.value,
             &extra.expected,
             declared,
+            &resource.unit,
             &extra.label,
         ));
     }
@@ -722,11 +729,23 @@ fn reject_undeclared_cells(
     let mut violations = Vec::new();
     for cell in cells {
         let Some(value) = cell.get("value").and_then(Value::as_i64) else {
+            violations.push(format!("the {report} report recorded a malformed construction cell for {resource} with no numeric value"));
             continue;
         };
         let Some(side) = cell.get("expected").and_then(Value::as_str) else {
+            violations.push(format!("the {report} report recorded a malformed construction cell for {resource} with no expected side"));
             continue;
         };
+        let Some(observed) = cell.get("observed").and_then(Value::as_str) else {
+            violations.push(format!("the {report} report recorded a malformed construction cell for {resource} with no observed side"));
+            continue;
+        };
+        if cell.get("case").and_then(Value::as_str).is_none() {
+            violations.push(format!("the {report} report recorded a construction cell for {resource} with no boundary case identity"));
+        }
+        if observed != side {
+            violations.push(format!("the {report} report recorded a construction cell for {resource} expected {side} but observed {observed}"));
+        }
         if !allowed
             .iter()
             .any(|(allowed_value, allowed_side)| *allowed_value == value && *allowed_side == side)
@@ -758,6 +777,7 @@ fn reconcile_exact_cell(
     value: i64,
     side: &str,
     declared: i64,
+    unit: &str,
     label: &str,
 ) -> Vec<String> {
     let matches = matching_cells(cells, value, side);
@@ -768,13 +788,23 @@ fn reconcile_exact_cell(
              recorded no construction {label}",
         )),
         1 => {
-            if let Some(observed) = matches[0].get("declared_ceiling").and_then(Value::as_i64)
-                && observed != declared
-            {
-                violations.push(format!(
-                    "{resource}'s {label} cell in the {report} report recorded a declared \
-                     ceiling of {observed}, and the denominator declares {declared}",
-                ));
+            match matches[0].get("declared_ceiling").and_then(Value::as_i64) {
+                Some(observed) if observed != declared => violations.push(format!(
+                    "{resource}'s {label} cell in the {report} report recorded a declared bound of {observed}, and the denominator declares {declared}",
+                )),
+                Some(_) => {}
+                None => violations.push(format!(
+                    "{resource}'s {label} cell in the {report} report recorded no declared bound to check against {declared}",
+                )),
+            }
+            match matches[0].get("unit").and_then(Value::as_str) {
+                Some(observed) if observed != unit => violations.push(format!(
+                    "{resource}'s {label} cell in the {report} report recorded a unit of {observed}, and the denominator declares {unit}",
+                )),
+                Some(_) => {}
+                None => violations.push(format!(
+                    "{resource}'s {label} cell in the {report} report recorded no unit to check against {unit}",
+                )),
             }
         }
         n => violations.push(format!(
@@ -1261,10 +1291,82 @@ fn reconcile_search_bounded_construction(resource: &Resource, evidence: &Evidenc
     }
     if accepted.len() + refused.len() != cells.len() {
         violations.push(format!(
-            "the {report} report recorded a construction cell for {} that is neither its \
-             accepted-at-or-under-the-ceiling cell nor its refused cell",
+            "the {report} report recorded a construction cell for {} that is neither its accepted search cell nor its refused search cell",
             resource.name,
         ));
+    }
+    if let (Some(accepted), Some(refused)) = (accepted.first(), refused.first()) {
+        for cell in [*accepted, *refused] {
+            if cell.get("declared_ceiling").and_then(Value::as_i64) != Some(declared) {
+                violations.push(format!(
+                    "{} search evidence does not carry declared_ceiling={declared}",
+                    resource.name
+                ));
+            }
+            if cell.get("case").and_then(Value::as_str).is_none() {
+                violations.push(format!(
+                    "{} search evidence carries no case identity",
+                    resource.name
+                ));
+            }
+        }
+        let accepted_value = accepted.get("value").and_then(Value::as_i64);
+        let refused_value = refused.get("value").and_then(Value::as_i64);
+        let accepted_unit = accepted.get("unit").and_then(Value::as_str);
+        let refused_unit = refused.get("unit").and_then(Value::as_str);
+        match resource.name.as_str() {
+            "retry-cache-bytes" => {
+                if accepted_unit != Some("bytes") || refused_unit != Some("bytes") {
+                    violations.push("retry-cache-bytes search cells must both be bytes".to_owned());
+                }
+                if refused_value != declared.checked_add(1) {
+                    violations.push(format!(
+                        "retry-cache-bytes refusal must be exactly {} bytes",
+                        declared + 1
+                    ));
+                }
+            }
+            "definition-nodes" => {
+                if accepted_unit != Some("nodes") || refused_unit != Some("nodes") {
+                    violations.push("definition-nodes search cells must both be nodes".to_owned());
+                }
+                if refused_value != declared.checked_add(1) {
+                    violations.push(format!(
+                        "definition-nodes refusal must be exactly {} nodes",
+                        declared + 1
+                    ));
+                }
+            }
+            "definition-manifest" => {
+                if accepted_unit != Some("bytes") || refused_unit != Some("nodes") {
+                    violations.push("definition-manifest must record accepted bytes and refused chain nodes explicitly".to_owned());
+                }
+                let raw = evidence.reports.get(report);
+                let largest_chain = raw
+                    .and_then(|v| v.pointer("/definition_bound/largest_accepted_chain"))
+                    .and_then(Value::as_i64);
+                let largest_bytes = raw
+                    .and_then(|v| v.pointer("/definition_bound/largest_accepted_manifest_bytes"))
+                    .and_then(Value::as_i64);
+                if accepted_value != largest_bytes {
+                    violations.push("definition-manifest accepted cell is not the recorded largest accepted manifest byte count".to_owned());
+                }
+                if largest_chain.and_then(|v| v.checked_add(1)) != refused_value {
+                    violations.push("definition-manifest refused chain is not exactly one node past the largest accepted chain".to_owned());
+                }
+                if largest_bytes.is_none_or(|v| v > declared) {
+                    violations.push("definition-manifest largest accepted manifest does not fit its declared byte ceiling".to_owned());
+                }
+                if raw
+                    .and_then(|v| v.pointer("/definition_bound/binding_bound"))
+                    .and_then(Value::as_str)
+                    != Some("definition-manifest")
+                {
+                    violations.push("definition-manifest report does not identify the manifest as the binding bound".to_owned());
+                }
+            }
+            _ => {}
+        }
     }
     violations
 }
@@ -1633,6 +1735,31 @@ fn reconcile_shed_accounting(
 /// launch behind an error, which is the failure this obligation exists for.
 fn reconcile_closed_rejection(resource: &str, entry: &Value) -> Vec<String> {
     let mut violations = Vec::new();
+
+    let children = entry
+        .pointer("/detail/concurrent_children")
+        .and_then(Value::as_i64);
+    let required = entry
+        .pointer("/detail/required_connections")
+        .and_then(Value::as_i64);
+    let short_pool = entry.pointer("/detail/short_pool").and_then(Value::as_i64);
+    match (children, required, short_pool) {
+        (Some(children), Some(required), Some(short_pool)) => {
+            if children.checked_add(1) != Some(required) {
+                violations.push(format!("{resource} recorded {children} concurrent children but required_connections={required}, not children + 1"));
+            }
+            if required.checked_sub(1) != Some(short_pool) {
+                violations.push(format!("{resource} recorded required_connections={required} but short_pool={short_pool}, not exactly one short"));
+            }
+            if entry.get("connection_capacity").and_then(Value::as_i64) != Some(short_pool) {
+                violations.push(format!("{resource} short-pool evidence does not bind connection_capacity to {short_pool}"));
+            }
+            if entry.pointer("/detail/sufficient_pool").and_then(Value::as_i64) != Some(required) {
+                violations.push(format!("{resource} did not prove a pool of exactly {required} is the sufficient side of the boundary"));
+            }
+        }
+        _ => violations.push(format!("{resource} recorded no complete concurrent_children/required_connections/short_pool derivation")),
+    }
 
     if entry
         .get("rejections")
@@ -2029,6 +2156,8 @@ struct Evidence {
     /// The construction cells for a resource proved only that way, and the
     /// report that wrote them.
     construction: BTreeMap<String, (String, Vec<Value>)>,
+    /// Complete raw observations by report, for relations spanning more than one cell.
+    reports: BTreeMap<String, Value>,
 }
 
 /// The committed campaign scope document.
@@ -2171,6 +2300,7 @@ fn read_resource(resource: &Value) -> Result<Resource, String> {
         class: suite::string(resource, "class")?,
         policy: suite::string(resource, "policy")?,
         report: suite::string(resource, "report")?,
+        unit: suite::string(resource, "unit")?,
         ceiling: resource.get("ceiling").and_then(Value::as_i64),
         postgres: resource
             .get("postgres")
@@ -2414,6 +2544,8 @@ struct Resource {
     policy: String,
     /// The report that proves it.
     report: String,
+    /// Canonical unit the denominator states this resource in.
+    unit: String,
     /// The declared ceiling, when it is a number.
     ceiling: Option<i64>,
     /// Whether the proof is required to be on `PostgreSQL`.
@@ -2625,6 +2757,7 @@ mod tests {
             class: class.to_owned(),
             policy: policy.to_owned(),
             report: report.to_owned(),
+            unit: "units".to_owned(),
             ceiling,
             postgres,
             proofs: proofs.iter().map(|proof| (*proof).to_owned()).collect(),
@@ -2669,16 +2802,23 @@ mod tests {
                 {
                     "resource": "resource-d",
                     "declared_ceiling": Value::Null,
+                    "connection_capacity": 8,
                     "rejections": 1,
-                    "detail": { "residue_after_refusal": { "ob_job_instance": 0 } },
+                    "detail": {
+                        "concurrent_children": 8,
+                        "required_connections": 9,
+                        "short_pool": 8,
+                        "sufficient_pool": 9,
+                        "residue_after_refusal": { "ob_job_instance": 0 }
+                    },
                     "passed": true,
                 },
             ],
             "construction": [
-                { "resource": "resource-a", "case": "at the ceiling", "value": 10, "expected": "accepted", "observed": "accepted" },
-                { "resource": "resource-a", "case": "one past", "value": 11, "expected": "refused", "observed": "refused" },
-                { "resource": "resource-b", "case": "at the ceiling", "value": 5, "expected": "accepted", "observed": "accepted" },
-                { "resource": "resource-b", "case": "one past", "value": 6, "expected": "refused", "observed": "refused" },
+                { "resource": "resource-a", "case": "at the ceiling", "declared_ceiling": 10, "unit": "units", "value": 10, "expected": "accepted", "observed": "accepted" },
+                { "resource": "resource-a", "case": "one past", "declared_ceiling": 10, "unit": "units", "value": 11, "expected": "refused", "observed": "refused" },
+                { "resource": "resource-b", "case": "at the ceiling", "declared_ceiling": 5, "unit": "units", "value": 5, "expected": "accepted", "observed": "accepted" },
+                { "resource": "resource-b", "case": "one past", "declared_ceiling": 5, "unit": "units", "value": 6, "expected": "refused", "observed": "refused" },
             ],
             "durable_equivalence": {
                 "fields_compared": [{ "field": "field-x", "agrees": true }],
@@ -3137,6 +3277,7 @@ mod tests {
             class: "queue".to_owned(),
             policy: "fail-closed".to_owned(),
             report: "report-x".to_owned(),
+            unit: "units".to_owned(),
             ceiling: None,
             postgres: false,
             proofs: vec!["range-boundary".to_owned()],
@@ -3318,6 +3459,7 @@ mod tests {
             class: "buffer".to_owned(),
             policy: "fail-closed".to_owned(),
             report: "report-x".to_owned(),
+            unit: "units".to_owned(),
             ceiling: None,
             postgres: false,
             proofs: vec!["subject-boundary".to_owned()],
@@ -3490,6 +3632,7 @@ mod tests {
             class: "worker-assignment".to_owned(),
             policy: "fail-closed".to_owned(),
             report: "report-x".to_owned(),
+            unit: "units".to_owned(),
             ceiling: None,
             postgres: true,
             proofs: vec!["derived-capacity".to_owned()],
@@ -3543,6 +3686,7 @@ mod tests {
             class: "worker-assignment".to_owned(),
             policy: "bounded-concurrency".to_owned(),
             report: "report-x".to_owned(),
+            unit: "units".to_owned(),
             ceiling: Some(8),
             postgres: true,
             proofs: vec!["dual-budget-boundary".to_owned()],
@@ -3584,6 +3728,7 @@ mod tests {
             class: "buffer".to_owned(),
             policy: "fail-closed".to_owned(),
             report: "report-x".to_owned(),
+            unit: "units".to_owned(),
             ceiling: Some(1000),
             postgres: false,
             proofs: vec!["search-bounded-construction".to_owned()],
@@ -3633,6 +3778,7 @@ mod tests {
             class: "buffer".to_owned(),
             policy: "bounded-truncation".to_owned(),
             report: "report-x".to_owned(),
+            unit: "units".to_owned(),
             ceiling: Some(4096),
             postgres: false,
             proofs: vec!["upper-bound-only".to_owned()],
@@ -3673,6 +3819,7 @@ mod tests {
             class: "result-set".to_owned(),
             policy: "bounded-truncation".to_owned(),
             report: "report-x".to_owned(),
+            unit: "units".to_owned(),
             ceiling: Some(262_144),
             postgres: true,
             proofs: vec!["truncation".to_owned()],
@@ -3712,6 +3859,7 @@ mod tests {
             class: "buffer".to_owned(),
             policy: "fail-closed".to_owned(),
             report: "report-x".to_owned(),
+            unit: "units".to_owned(),
             ceiling: Some(1_048_576),
             postgres: true,
             proofs: vec!["refusal-past-ceiling".to_owned()],
@@ -3906,6 +4054,7 @@ mod tests {
             class: "buffer".to_owned(),
             policy: "fail-closed".to_owned(),
             report: "report-x".to_owned(),
+            unit: "units".to_owned(),
             ceiling: Some(10),
             postgres: false,
             proofs: vec!["construction-boundary".to_owned()],
@@ -3927,6 +4076,7 @@ mod tests {
                     "resource": "resource-with-extra",
                     "case": "at the ceiling",
                     "declared_ceiling": 10,
+                    "unit": "units",
                     "value": 10,
                     "expected": "accepted",
                     "observed": "accepted",
@@ -3935,6 +4085,7 @@ mod tests {
                     "resource": "resource-with-extra",
                     "case": "one past the ceiling",
                     "declared_ceiling": 10,
+                    "unit": "units",
                     "value": 11,
                     "expected": "refused",
                     "observed": "refused",
@@ -4126,6 +4277,7 @@ mod tests {
             class: "queue".to_owned(),
             policy: "bounded-shedding".to_owned(),
             report: "report-x".to_owned(),
+            unit: "units".to_owned(),
             ceiling: Some(200),
             postgres: false,
             proofs: vec!["stress-saturation".to_owned()],

@@ -663,9 +663,17 @@ impl Cell {
 
     /// Renders what the retained evidence records for this cell.
     fn evidence(&self) -> Value {
+        let (declared, unit) = match self.resource {
+            "explorer-page-size" => (u64::from(MAX_PAGE_SIZE), "rows"),
+            "explorer-cursor" => (MAX_CURSOR_BYTES as u64, "bytes"),
+            "retention-purge-batch" => (u64::from(MAX_PURGE_BATCH), "candidates"),
+            _ => (0, "unknown"),
+        };
         json!({
             "resource": self.resource,
             "case": self.case,
+            "declared_ceiling": declared,
+            "unit": unit,
             "value": self.value,
             "expected": if self.expected { "accepted" } else { "refused" },
             "observed": if self.accepted { "accepted" } else { "refused" },
