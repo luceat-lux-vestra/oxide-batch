@@ -19,10 +19,20 @@ jobs:
       - name: Check out release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Verify release tag
+      - name: Verify release tag and select publication mode
+        id: release
         run: |
           package_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "oxide-batch") | .version')"
           test "v${package_version}" = "${GITHUB_REF_NAME}"
+          echo "version=${package_version}" >> "${GITHUB_OUTPUT}"
+          if test "${package_version}" = "0.5.0"; then
+            # crates.io Trusted Publishing cannot create a crate. v0.5.0 is
+            # the one-time workspace bootstrap that first publishes core,
+            # repository, plan, and cli alongside the already-owned facade.
+            echo "bootstrap=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "bootstrap=false" >> "${GITHUB_OUTPUT}"
+          fi
 
       - name: Verify packages
         run: >-
@@ -31,7 +41,41 @@ jobs:
           --package oxide-batch --package oxide-batch-cli
           --locked --dry-run
 
+      - name: Verify manually bootstrapped crates.io archives
+        if: steps.release.outputs.bootstrap == 'true'
+        env:
+          PACKAGE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASED_CRATES: oxide-batch-core oxide-batch-repository oxide-batch-plan oxide-batch oxide-batch-cli
+        run: |
+          set -euo pipefail
+
+          published=""
+          for crate in ${RELEASED_CRATES}; do
+            published="${published} --package ${crate}"
+          done
+          # Recreate the exact archives from the immutable release tag. The
+          # bootstrap is accepted only if crates.io serves byte-identical
+          # archives for every package in the release set.
+          # shellcheck disable=SC2086
+          cargo package ${published} --locked
+
+          for crate in ${RELEASED_CRATES}; do
+            local_archive="target/package/${crate}-${PACKAGE_VERSION}.crate"
+            remote_archive="${RUNNER_TEMP}/${crate}-${PACKAGE_VERSION}.crate"
+            test -s "${local_archive}"
+            curl --fail --location --retry 5 --retry-delay 2 \
+              --output "${remote_archive}" \
+              "https://crates.io/api/v1/crates/${crate}/${PACKAGE_VERSION}/download"
+            test -s "${remote_archive}"
+
+            local_sha="$(sha256sum "${local_archive}" | awk '{print $1}')"
+            remote_sha="$(sha256sum "${remote_archive}" | awk '{print $1}')"
+            echo "${crate} ${PACKAGE_VERSION}: local=${local_sha} crates.io=${remote_sha}"
+            test "${local_sha}" = "${remote_sha}"
+          done
+
       - name: Authenticate to crates.io
+        if: steps.release.outputs.bootstrap != 'true'
         id: crates-io-auth
         uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
 
@@ -39,14 +83,14 @@ jobs:
       # requires, plus the operator CLI, in dependency order and at the
       # facade version: core, repository, plan, oxide-batch, oxide-batch-cli.
       # Cargo resolves this order from the dependency graph of the selected
-      # packages regardless of --package argument order (verified on cargo
-      # 1.97.1: packaging/verifying/uploading always proceeds core before its
-      # dependents even when --package lists them out of order).
+      # packages regardless of --package argument order. v0.5.0 is the sole
+      # first-publication bootstrap exception above; later releases use OIDC
+      # Trusted Publishing exclusively.
       - name: Publish to crates.io
+        if: steps.release.outputs.bootstrap != 'true'
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
         run: >-
           cargo publish --package oxide-batch-core
           --package oxide-batch-repository --package oxide-batch-plan
           --package oxide-batch --package oxide-batch-cli --locked
-
