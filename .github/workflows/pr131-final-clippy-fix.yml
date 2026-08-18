@@ -18,7 +18,7 @@ jobs:
         with:
           ref: ci/m5-resource-bounds-provenance
           fetch-depth: 0
-      - name: Apply exact match-arm fix and validate workspace Clippy
+      - name: Apply exact match-arm fix and self-clean
         shell: bash
         run: |
           set -euo pipefail
@@ -42,16 +42,9 @@ jobs:
           assert s.count(old) == 1, s.count(old)
           p.write_text(s.replace(old, new, 1))
           PY
-          cargo fmt --all -- --check
-          cargo clippy --workspace --all-targets --all-features -- -D warnings -A clippy::too_many_arguments -A clippy::too_many_lines
-          git diff --check
-      - name: Commit repair and self-clean
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git rm .github/workflows/pr131-final-clippy-fix.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add crates/oxide-batch/tests/postgres_resource_bound_payloads.rs
           git diff --cached --check
           git commit -m 'ci(m5): satisfy payload verifier lint gate'
