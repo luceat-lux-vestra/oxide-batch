@@ -56,23 +56,39 @@ would keep this PR from closing #102, and none appears below.
 | G | Cancellation evidence (accepted into the M5 campaign set; not separately named in #102's original text) | [Performance plan](../engineering/performance-plan.md#m5-production-preview-campaigns) (P-014); design gate records no separate named scenario for this campaign (recorded rather than repaired, see the campaign's own scope note) | `.github/workflows/m5-cancellation.yml` | `cargo xtask cancellation` (`xtask/src/cancellation.rs`); reconciled by `m5_cancellation_campaign.rs` | postgres-15, postgres-18 | [`cancellation-campaign-postgres-15.json`](../engineering/campaigns/m5/cancellation-campaign-postgres-15.json), [`-18.json`](../engineering/campaigns/m5/cancellation-campaign-postgres-18.json) — durable `STOPPED` terminal, phase-separated latency (async/blocking/transaction), unjoined counts at every declared deadline, restart re-runs no committed partition, both points | `./tests/fixtures/cancellation/run-ci-campaign.sh 18` | **SATISFIED** — cancellation semantics unchanged from the accepted campaign set; no new scenario added |
 | H | Resource-bound campaigns pass against the performance plan's regression gates | [Performance plan](../engineering/performance-plan.md#m5-production-preview-campaigns) (declared ceiling proof); [`tests/fixtures/resource-bounds/campaign-scope.json`](../../tests/fixtures/resource-bounds/campaign-scope.json) | `.github/workflows/m5-resource-bounds.yml` | `cargo xtask resource-bounds` (`xtask/src/resource_bounds.rs`); reconciled by `m5_resource_bounds_campaign.rs`. Four corrective passes (F40-F42 and the fourth pass) closed exact-set gaps: every root/generic construction cell must match its declared bound and canonical unit, malformed or contradictory extra cells fail rather than disappearing, and `Cargo.lock` is bound into the semantic closure | postgres-15, postgres-18 | [`resource-bounds-campaign-postgres-15.json`](../engineering/campaigns/m5/resource-bounds-campaign-postgres-15.json), [`-18.json`](../engineering/campaigns/m5/resource-bounds-campaign-postgres-18.json) — 36/36 declared resources observed, 0 violations, both points | `./tests/fixtures/resource-bounds/run-ci-campaign.sh 18` | **SATISFIED** — no orphan evidence cell, no declared resource without evidence (exact-set checked by the campaign's own reconciliation test) |
 | I | Reference workload runs and its results are recorded against the performance/correctness gates | [Performance plan](../engineering/performance-plan.md#m5-production-preview-campaigns) (P-003 as the reference workload) | `.github/workflows/m5-performance.yml` (same run produces the reference-workload report; one P-003 execution satisfies both rows) | `cargo xtask performance`; reconciled by `m5_performance_campaign.rs` | postgres-15, postgres-18 | Same [`performance-campaign-postgres-{15,18}.json`](../engineering/campaigns/m5/performance-campaign-postgres-15.json) reports — 10,000 rows, seed 102, source digest = written digest, `AtomicSameResource`, both points | `./tests/fixtures/performance/run-ci-campaign.sh 18` | **SATISFIED** — real end-to-end execution against the accepted M5 embedded boundary; P-003's reader/writer are explicitly documented as test-local evidence code, not the `IO-FLAT-001` CSV component (M6 scope); no CSV/JSON production-component parity is claimed |
-| J | No unresolved correctness P0/P1 remains at the M5 triage bar | [M5 kickoff gate](m5-kickoff-gate.md#definition-of-done) | N/A — cross-repository search | `gh issue list --state open --label priority:p0/p1`; `grep -rn "#\[ignore\]\|TODO\|FIXME" crates/ xtask/` | N/A | See [evidence identity](#evidence-identity) above | `gh issue list --state open --label priority:p0` | **SATISFIED** — no open P0; the three open P1s are milestone-tracking issues (#12, #102, #103), not code defects |
+| J | No unresolved correctness P0/P1 remains at the M5 triage bar | [M5 kickoff gate](m5-kickoff-gate.md#definition-of-done) | N/A — cross-repository search | `gh issue list --state open --label priority:p0/p1`; `grep -rn -e "#[ignore]" -e "TODO" -e "FIXME" crates/ xtask/` | N/A | See [evidence identity](#evidence-identity) above | `gh issue list --state open --label priority:p0` | **SATISFIED** — no open P0; the three open P1s are milestone-tracking issues (#12, #102, #103), not code defects |
 
 ## What is machine-checked, and what is not
 
 `cargo xtask reconciliation` (`xtask/src/reconciliation.rs`, wired into
 `cargo xtask check`) verifies, on every run:
 
-- this document exists and its criterion table names exactly the ten
-  criterion IDs above, each with exactly one disposition token;
-- the declared-campaign and retained-report counts stated in
-  [evidence identity](#evidence-identity) match what
-  `evidence-provenance.json` and the retained-report directory actually
-  contain, rather than a number typed once and left to rot;
+- the `## Criterion reconciliation` table, parsed as a markdown table rather
+  than scanned as free text, names the criterion set `{A, ..., J}`
+  *exactly* — every required ID present once, no missing ID, no duplicate,
+  and no unexpected extra ID (an `K` row would itself be a violation);
+- every row's `Result` cell starts, after stripping markdown emphasis, with
+  exactly one of `SATISFIED`, `BLOCKED`, or the two-word literal `NOT
+  APPLICABLE` — a structural prefix-and-boundary check on the parsed column,
+  not a substring search over the row, so a string like `NOT SATISFIED`
+  cannot be mistaken for `SATISFIED`;
+- the `## Evidence identity` table names exactly one `Declared campaigns`
+  row and exactly one `Retained reports` row, each with a value that parses
+  as an integer and matches what `evidence-provenance.json` and the
+  retained-report directory actually contain — a missing row, a duplicated
+  row, or an unparsable value is itself a violation, never a silently
+  skipped comparison;
 - every repository-relative evidence link this document names — every
   `docs/`, `tests/fixtures/`, `.github/workflows/`, and `xtask/src/` path
   cited in the criterion table — resolves to a real file, so this document
   cannot cite evidence that has moved or never existed.
+
+Every one of the checks above has a negative/mutation unit test in
+`xtask/src/reconciliation.rs`'s own test module — deleting a required row,
+duplicating one, corrupting a count, adding an unexpected criterion,
+removing or replacing a disposition, and citing a nonexistent evidence link
+each have a dedicated test proving the checker actually rejects them, using
+synthetic fixture text rather than the real document.
 
 It deliberately does not attempt to parse or judge the prose disposition of
 any row: whether a role-matrix cell count is the *right* count, whether a
