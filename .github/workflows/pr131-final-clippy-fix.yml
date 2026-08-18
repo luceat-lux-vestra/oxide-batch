@@ -49,3 +49,5 @@ jobs:
           git diff --cached --check
           git commit -m 'ci(m5): satisfy payload verifier lint gate'
           git push origin HEAD:ci/m5-resource-bounds-provenance
+
+# trigger: 2026-08-18-final
