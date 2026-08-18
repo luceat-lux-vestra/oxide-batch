@@ -43,7 +43,58 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: >-
+          cargo clippy --workspace --all-targets --all-features --
+          -D warnings
+          -A clippy::too_many_arguments
+          -A clippy::too_many_lines
+
+      - name: Verify narrow audit-shape Clippy exceptions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo clippy -p oxide-batch-xtask --all-targets --all-features --message-format=json -- \
+            -W clippy::too_many_arguments -W clippy::too_many_lines \
+            > /tmp/xtask-clippy.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          expected = {
+              ("clippy::too_many_arguments", "reconcile_exact_cell"),
+              ("clippy::too_many_lines", "reconcile_search_bounded_construction"),
+          }
+          seen = set()
+          source_cache = {}
+          for raw in Path('/tmp/xtask-clippy.json').read_text().splitlines():
+              try:
+                  item = json.loads(raw)
+              except json.JSONDecodeError:
+                  continue
+              if item.get('reason') != 'compiler-message':
+                  continue
+              message = item.get('message') or {}
+              code = (message.get('code') or {}).get('code')
+              if code not in {'clippy::too_many_arguments', 'clippy::too_many_lines'}:
+                  continue
+              primary = next((s for s in message.get('spans', []) if s.get('is_primary')), None)
+              if primary is None:
+                  raise SystemExit(f'{code}: no primary span')
+              path = primary['file_name']
+              lines = source_cache.setdefault(path, Path(path).read_text().splitlines())
+              start = max(0, primary['line_start'] - 2)
+              end = min(len(lines), primary['line_end'] + 3)
+              context = '\n'.join(lines[start:end])
+              names = [
+                  name for lint, name in expected
+                  if lint == code and f'fn {name}(' in context
+              ]
+              if len(names) != 1:
+                  raise SystemExit(f'unapproved {code} at {path}:{primary["line_start"]}: {context}')
+              seen.add((code, names[0]))
+          if seen != expected:
+              raise SystemExit(f'expected only {sorted(expected)}, observed {sorted(seen)}')
+          PY
 
       - name: Run tests
         run: cargo test --workspace --all-features
