@@ -1231,12 +1231,11 @@ impl Cell {
             "case": self.case,
             "declared_ceiling": self.ceiling,
             "unit": self.unit.or_else(|| match self.resource {
-                "partition-key" | "partition-context" | "retry-cache-bytes" | "ca-certificate" => Some("bytes"),
                 "retry-cache-entries" => Some("unresolved retry keys"),
                 "definition-nodes" => Some("nodes"),
                 "definition-transitions" | "outgoing-transitions-per-node" => Some("transitions"),
                 "definition-manifest" if self.case.contains("one node past") => Some("nodes"),
-                "definition-manifest" => Some("bytes"),
+                "partition-key" | "partition-context" | "retry-cache-bytes" | "ca-certificate" | "definition-manifest" => Some("bytes"),
                 "state-upgrade-chain" => Some("upgrade edges"),
                 "item-listeners" => Some("listeners"),
                 _ => None,
