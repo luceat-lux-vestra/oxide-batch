@@ -63,22 +63,23 @@ boundary still does not authorize publication.
 ## Name allocation
 
 crates.io allocates names on a first-come, first-served basis and has no
-separate reservation operation. The facade name `oxide-batch` is the only name
-that should be claimed during foundation work. Predictable subcrate names are
-checked periodically but are not claimed with empty placeholder releases.
+separate reservation operation. The facade name `oxide-batch` was claimed by
+the initial release. Predictable subcrate names are not claimed with empty
+placeholder releases; when a real release first introduces one, that crate is
+bootstrapped from the reviewed release tree under the first-publication rule
+below.
 
 If a future subcrate name becomes unavailable, the implementation may remain
 internal or use another name without changing the public `oxide-batch` facade.
 
-## Initial release
+## Initial release and Trusted Publishing
 
-The initial version is `0.1.0-alpha.1`. It clearly communicates that OxideBatch
-is pre-release while providing real, buildable package metadata and
-documentation. The version was published manually to establish crates.io
-ownership.
+The initial facade version is `0.1.0-alpha.1`. It was published manually to
+establish crates.io ownership while providing real, buildable package metadata
+and documentation.
 
-All subsequent releases use crates.io Trusted Publishing. The trusted publisher
-is bound to:
+Normal releases use crates.io Trusted Publishing. The trusted publisher is
+bound to:
 
 - GitHub owner: `luceat-lux-vestra`
 - Repository: `oxide-batch`
@@ -88,7 +89,33 @@ is bound to:
 The release workflow exchanges GitHub's OIDC identity for a short-lived
 crates.io token. Long-lived crates.io tokens must not be stored in GitHub.
 
+### First-publication exception
+
+crates.io Trusted Publishing cannot create a crate name before that crate has a
+first published version. A newly approved real crate therefore has one narrow
+bootstrap exception:
+
+- the first version is published manually from the exact reviewed, immutable
+  release tag using a short-lived maintainer crates.io API token;
+- the publish follows the accepted workspace dependency order and stops on the
+  first failure;
+- an already published version is never blindly retried after a partial
+  operation;
+- the crate's Trusted Publisher is configured immediately after its first
+  version exists;
+- the local token is removed after bootstrap and is never persisted in the
+  repository or as a long-lived GitHub secret;
+- every later version uses Trusted Publishing through `release.yml`.
+
+The M5 `0.5.0` release is the first use of this exception because
+`oxide-batch-core`, `oxide-batch-repository`, `oxide-batch-plan`, and
+`oxide-batch-cli` are first published alongside the already-owned facade. The
+exact procedure is [`m5-0.5.0-bootstrap.md`](../release/m5-0.5.0-bootstrap.md).
+The `0.5.0` release workflow verifies the manually published registry archives
+against packages rebuilt from the immutable tag instead of attempting to
+publish the same versions twice.
+
 A protected version tag first creates a draft GitHub Release containing the
 exact `.crate`, SHA-256 checksums, a package-scoped CycloneDX SBOM, and GitHub
-artifact attestations. Publishing that reviewed draft triggers
-`release.yml`; tag creation alone never publishes to crates.io.
+artifact attestations. Publishing that reviewed draft triggers `release.yml`;
+tag creation alone never publishes to crates.io.
