@@ -54,24 +54,20 @@ jobs:
             published="${published} --package ${crate}"
           done
           # Recreate the exact archives from the immutable release tag. The
-          # bootstrap is accepted only if crates.io serves byte-identical
-          # archives for every package in the release set.
+          # bootstrap is accepted only if crates.io records the same SHA-256
+          # checksum for every package in the release set.
           # shellcheck disable=SC2086
           cargo package ${published} --locked
 
           for crate in ${RELEASED_CRATES}; do
             local_archive="target/package/${crate}-${PACKAGE_VERSION}.crate"
-            remote_archive="${RUNNER_TEMP}/${crate}-${PACKAGE_VERSION}.crate"
             test -s "${local_archive}"
-            curl --fail --location --retry 5 --retry-delay 2 \
-              --output "${remote_archive}" \
-              "https://crates.io/api/v1/crates/${crate}/${PACKAGE_VERSION}/download"
-            test -s "${remote_archive}"
-
             local_sha="$(sha256sum "${local_archive}" | awk '{print $1}')"
-            remote_sha="$(sha256sum "${remote_archive}" | awk '{print $1}')"
-            echo "${crate} ${PACKAGE_VERSION}: local=${local_sha} crates.io=${remote_sha}"
-            test "${local_sha}" = "${remote_sha}"
+            registry_sha="$(curl --fail --silent --show-error --location --retry 5 --retry-delay 2 \
+              "https://crates.io/api/v1/crates/${crate}/${PACKAGE_VERSION}" \
+              | jq -er '.version.checksum')"
+            echo "${crate} ${PACKAGE_VERSION}: local=${local_sha} crates.io=${registry_sha}"
+            test "${local_sha}" = "${registry_sha}"
           done
 
       - name: Authenticate to crates.io
