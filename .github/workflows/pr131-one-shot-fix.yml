@@ -1,0 +1,45 @@
+name: PR131 One Shot Fix
+
+on:
+  push:
+    branches:
+      - ci/m5-resource-bounds-provenance
+    paths:
+      - .github/workflows/pr131-one-shot-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ci/m5-resource-bounds-provenance
+          fetch-depth: 0
+      - name: Apply exact Clippy fix and self-clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs')
+          s = p.read_text()
+          old1 = 'self.declared.or_else(|| match self.resource {'
+          old2 = 'self.unit.or_else(|| match self.resource {'
+          assert s.count(old1) == 1, s.count(old1)
+          assert s.count(old2) == 1, s.count(old2)
+          s = s.replace(old1, 'self.declared.or(match self.resource {', 1)
+          s = s.replace(old2, 'self.unit.or(match self.resource {', 1)
+          p.write_text(s)
+          PY
+          cargo fmt --all -- --check
+          cargo clippy -p oxide-batch-cli --test m5_resource_bound_shedding --all-features -- -D warnings -A clippy::too_many_arguments -A clippy::too_many_lines
+          git rm .github/workflows/pr131-one-shot-fix.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs
+          git diff --cached --check
+          git commit -m 'ci(m5): satisfy shedding verifier lint gate'
+          git push origin HEAD:ci/m5-resource-bounds-provenance
