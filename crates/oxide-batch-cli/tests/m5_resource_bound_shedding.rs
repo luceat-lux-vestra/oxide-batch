@@ -1335,13 +1335,13 @@ impl Cell {
             "resource": self.resource,
             "subject": self.subject,
             "case": self.case,
-            "declared_ceiling": self.declared.or_else(|| match self.resource {
+            "declared_ceiling": self.declared.or(match self.resource {
                 "retained-incident-events" => Some(MAX_RETAINED_EVENTS_PER_EXECUTION as u64),
                 "metric-name-allowlist" => Some(MAX_METRIC_NAME_ALLOWLIST as u64),
                 "diagnostic-bundle" => Some(BUNDLE_CEILING as u64),
                 _ => None,
             }),
-            "unit": self.unit.or_else(|| match self.resource {
+            "unit": self.unit.or(match self.resource {
                 "retained-incident-events" => Some("events per execution"),
                 "metric-name-allowlist" => Some("names"),
                 "diagnostic-bundle" => Some("bytes"),
