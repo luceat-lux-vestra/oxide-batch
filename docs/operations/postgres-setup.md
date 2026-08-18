@@ -49,7 +49,7 @@ Enable the adapter:
 
 ```toml
 [dependencies]
-oxide-batch = { version = "0.1.0-alpha.1", features = ["postgres"] }
+oxide-batch = { version = "0.5.0", features = ["postgres"] }
 ```
 
 Apply the released migrations with the migrator identity before starting any

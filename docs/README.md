@@ -105,6 +105,14 @@ decisions own the normative detail.
 Historical gates are preserved as records of their date. Later decisions link
 to them and record supersession; they do not rewrite history.
 
+## Guides
+
+- [M5 Production Preview guide](guides/production-preview.md)
+- [M5 production preview limitations](guides/limitations.md)
+- [M5 developer guide](guides/developer-guide.md)
+- [M5 operator guide](guides/operator-guide.md)
+- [M5 upgrade and rollback guide](guides/upgrade-and-rollback.md)
+
 ## Product
 
 - [Vision and scope](product/vision-and-scope.md)

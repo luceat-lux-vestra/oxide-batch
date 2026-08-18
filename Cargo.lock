@@ -708,7 +708,7 @@ checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
 name = "oxide-batch"
-version = "0.1.0-alpha.2"
+version = "0.5.0"
 dependencies = [
  "futures-executor",
  "futures-util",
@@ -725,7 +725,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-batch-cli"
-version = "0.1.0-alpha.2"
+version = "0.5.0"
 dependencies = [
  "futures-executor",
  "futures-util",
@@ -737,7 +737,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-batch-core"
-version = "0.1.0-alpha.2"
+version = "0.5.0"
 dependencies = [
  "serde_json",
  "sha2 0.11.0",
@@ -766,7 +766,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-batch-plan"
-version = "0.1.0-alpha.2"
+version = "0.5.0"
 dependencies = [
  "oxide-batch-core",
  "serde_json",
@@ -774,7 +774,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-batch-repository"
-version = "0.1.0-alpha.2"
+version = "0.5.0"
 dependencies = [
  "oxide-batch-core",
  "sha2 0.11.0",

@@ -3,17 +3,17 @@
 The public facade crate for [OxideBatch](https://github.com/luceat-lux-vestra/oxide-batch),
 a restart-oriented batch processing framework for Rust inspired by Spring Batch.
 
-> This crate contains the completed M1 executable kernel and the first M2
-> PostgreSQL metadata adapter, deterministic M2 chunk orchestration, and atomic
-> enlisted PostgreSQL chunk commits, definition-guarded durable restart, and
-> audited recovery decisions. M2 and M3 process-kill crash/restart and
-> conformance implementation evidence is complete, including typed bounded
-> fault tolerance and the finite durable-flow slice. No production-ready
-> runtime has been released. M4 operator/explorer, CLI, graceful-shutdown,
-> stale-recovery, retention, bounded telemetry, local-scale plan, durable
-> partition-repository/aggregation, and tasklet-only bounded parallel-split
-> and local-partition runtime slices are implemented but unreleased; the M4
-> exit evidence remains open.
+> This is the **M5 Embedded Core Production Preview**: a `0.x` pre-1.0
+> release stabilizing the delivered M0-M4 embedded scope (durable PostgreSQL
+> job/step/chunk execution, typed bounded fault tolerance, finite
+> sequential/conditional flow, a guarded operator CLI, bounded local
+> split/partitioning, and structured telemetry) rather than adding new batch
+> capability. It is not `1.0`, stable, GA, or enterprise-ready, and it does
+> not claim full Spring Batch parity. See the
+> [Production Preview guide](https://github.com/luceat-lux-vestra/oxide-batch/blob/main/docs/guides/production-preview.md)
+> for what is and is not covered, and the
+> [M5 exit record](https://github.com/luceat-lux-vestra/oxide-batch/blob/main/docs/project/m5-exit-evidence.md)
+> for the release's evidence trail.
 
 The facade owns validated job and step names, opaque instance/execution IDs,
 typed and value-redacted job parameters, canonical job-instance keys, lifecycle
@@ -37,15 +37,18 @@ is not durable across restarts.
 
 With the optional `postgres` feature, `PostgresJobRepository` implements the
 same repository contract over the immutable OxideBatch schema. Runtime startup
-verifies schema version 1 but never applies migrations; deployments call
-`PostgresMigrator` separately with a migrator identity. Production defaults
+verifies metadata schema version 3 (direct upgrade from schemas 1 and 2; a
+schema-2 runtime rejects schema 3) but never applies migrations; deployments
+call `PostgresMigrator` separately with a migrator identity. See the
+[upgrade and rollback guide](https://github.com/luceat-lux-vestra/oxide-batch/blob/main/docs/guides/upgrade-and-rollback.md)
+before a schema upgrade. Production defaults
 require certificate and hostname validation, while plaintext transport is an
 explicit local-test choice. Connection strings, certificate paths, parameters,
 contexts, SQL text, and bound values are excluded from facade diagnostics.
 
 ```toml
 [dependencies]
-oxide-batch = { version = "0.1.0-alpha.1", features = ["postgres"] }
+oxide-batch = { version = "0.5.0", features = ["postgres"] }
 ```
 
 ```rust,no_run
