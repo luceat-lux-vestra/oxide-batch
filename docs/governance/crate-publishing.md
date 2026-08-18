@@ -20,7 +20,7 @@ Potential future workspace crates include:
 | `oxide-batch-protocol` | Versioned worker/admin protocol | Undecided |
 | `oxide-batch-observability` | Telemetry integration | Undecided |
 | `oxide-batch-test` | Conformance and test utilities | Likely public |
-| `oxide-batch-cli` | Operational command-line interface | Likely public |
+| `oxide-batch-cli` | Operational command-line interface | Public, released in lockstep with the facade from `0.5.0` ([RFC-0011](../rfcs/0011-publication-of-extracted-implementation-crates.md)) |
 
 This list is a namespace and architecture forecast, not approval to publish
 empty packages.
