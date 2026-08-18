@@ -4,7 +4,7 @@
     "stages": [
       {
         "stage": "actual execution tree",
-        "what": "The tree the campaign really ran against, recorded by the run from inside its own checkout as an object manifest in the report. On a pull request this is the ephemeral merge commit, which no later clone can resolve \u2014 which is exactly why the manifest is recorded rather than the commit name being trusted to stand for it."
+        "what": "The tree the campaign really ran against, recorded by the run from inside its own checkout as an object manifest in the report. On a pull request this is the ephemeral merge commit, which no later clone can resolve — which is exactly why the manifest is recorded rather than the commit name being trusted to stand for it."
       },
       {
         "stage": "workflow run",
@@ -21,7 +21,7 @@
       "Presenting the retention commit as the producer.",
       "Editing a retained artifact so that a recorded hash or commit matches.",
       "Re-running the campaign on each new head to make the execution tree equal the retention commit.",
-      "Treating a summary the report wrote about itself \u2014 a verdict, a total, a pass \u2014 as evidence for the run it describes."
+      "Treating a summary the report wrote about itself — a verdict, a total, a pass — as evidence for the run it describes."
     ]
   },
   "retention_paths": {
@@ -33,7 +33,7 @@
   },
   "binding": {
     "derived_verdicts": "The report's correctness results, growth verdicts and campaign totals are not read as evidence. `cargo xtask soak` recomputes each of them from the raw per-cycle journal and the retained samples, after first requiring the chronology of those arrays to be a contiguous, ordered, correctly phased run of the declared length, and requires the report's own answers to match.",
-    "note": "Two verifications with different reach, and the difference is stated rather than blurred. `cargo xtask evidence` is repository-local: it resolves nothing over the network, so it keeps working long after GitHub has expired the artifacts it describes, and what it establishes is that the retained bytes are the bytes this repository recorded, over a tree whose campaign still means what it meant. It cannot say the retained bytes are the bytes the workflow uploaded. That stronger check needs the GitHub API, which is why it is performed once \u2014 at the moment evidence is promoted \u2014 and its result recorded per entry under remote_verification.",
+    "note": "Two verifications with different reach, and the difference is stated rather than blurred. `cargo xtask evidence` is repository-local: it resolves nothing over the network, so it keeps working long after GitHub has expired the artifacts it describes, and what it establishes is that the retained bytes are the bytes this repository recorded, over a tree whose campaign still means what it meant. It cannot say the retained bytes are the bytes the workflow uploaded. That stronger check needs the GitHub API, which is why it is performed once — at the moment evidence is promoted — and its result recorded per entry under remote_verification.",
     "remote_verification": "Performed once per retention, against the GitHub Actions API: the run, attempt and job exist and succeeded; the artifact's own sha256 digest is recorded; the artifact is downloaded and its extracted report compared byte-for-byte with the retained file. It is deliberately not a permanent CI dependency, because Actions artifacts expire and a verifier that stopped working on a retention boundary would be switched off rather than fixed.",
     "local_verification": "Enforced on every CI run. Artifact git blob identity, the three-way producer/recorded/HEAD binding over campaign-semantics paths, exactly-once matrix coverage, schema completeness, and the report contract.",
     "why_object_ids": "Git object identities for the local binding, because git is already required by this tooling, the values are verifiable by hand with `git rev-parse HEAD:<path>` and `git hash-object <file>`, and no dependency is added to compute them. The GitHub artifact digest is recorded separately and is a different thing: a sha256 over the uploaded archive, which is what the one-time remote check compares against.",
@@ -886,9 +886,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "15d79fc4dd4e7daf887482aabfe96d56a082e4c9",
+        "execution_commit": "2d9ab0ce976535fa3564159f70568c04e346c6a5",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "058a3b37bce1d94b4dc9e5565ac318a341d4cac2",
+        "branch_head_sha": "90fa7d0004f843fee77067c5af49d88200537332",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -898,27 +898,27 @@
       "workflow_run": {
         "workflow": "M5 Resource Bounds",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 32078689387,
+        "id": 32115407707,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-resource-bounds-campaign",
-        "id": 95537210584,
+        "id": 95643695408,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-15",
-        "id": 9304381036,
-        "digest": "sha256:d5735071f8bc6142f36da7caa0b450f41fddaad40320a924e121b59b5c30bca8",
-        "size_bytes": 13097
+        "id": 9316533962,
+        "digest": "sha256:7c75c923129a1454ac753112adc536cab83ef030fb3d5a53227bee2b80623835",
+        "size_bytes": 13096
       },
-      "retained_report_git_blob": "3ca32303058f5f3dccbd8e486566755ea1858a69",
+      "retained_report_git_blob": "54c0973bd1c2101f9a40d4483b03634928c71bc6",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-17T23:46:22Z",
-        "run_id": 32078689387,
+        "verified_at": "2026-08-18T08:18:00Z",
+        "run_id": 32115407707,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -926,7 +926,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention after latest main/Cargo.lock integration and the fourth resource-bound verifier hardening pass. Run, jobs, artifact IDs and API SHA-256 digests were checked; both ZIP archives were downloaded independently, their SHA-256 matched the API digest, their single extracted report bytes matched these retained git blobs exactly, and both reports bind execution tree 15d79fc4 to producer branch head 058a3b37 on main 82f995f6."
+        "note": "Final PR #131 retention after lint-clean semantic closure. Run/job identities, API artifact digests, independently downloaded ZIP SHA-256 values, exact extracted report bytes, git blob identities, and execution merge tree were verified before retention."
       }
     },
     {
@@ -942,9 +942,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "15d79fc4dd4e7daf887482aabfe96d56a082e4c9",
+        "execution_commit": "2d9ab0ce976535fa3564159f70568c04e346c6a5",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "058a3b37bce1d94b4dc9e5565ac318a341d4cac2",
+        "branch_head_sha": "90fa7d0004f843fee77067c5af49d88200537332",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -954,27 +954,27 @@
       "workflow_run": {
         "workflow": "M5 Resource Bounds",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 32078689387,
+        "id": 32115407707,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-resource-bounds-campaign",
-        "id": 95537210537,
+        "id": 95643695406,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-18",
-        "id": 9304381909,
-        "digest": "sha256:c326e22d4839e9390d2f66a77250187ec4d2eb2f0cc424f15c33dd3de9930810",
-        "size_bytes": 13097
+        "id": 9316535433,
+        "digest": "sha256:4b664bd447a5db7784cf718c4850f4fb59c55c1ba12618b9603ff5c3ca6ad6f9",
+        "size_bytes": 13095
       },
-      "retained_report_git_blob": "1335a92ddd10853c2e1e28db8ff41a039e8c27ae",
+      "retained_report_git_blob": "db682daff3f7dc5deb67a3dd0c39d4d24da21781",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-17T23:46:22Z",
-        "run_id": 32078689387,
+        "verified_at": "2026-08-18T08:18:00Z",
+        "run_id": 32115407707,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -982,7 +982,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention after latest main/Cargo.lock integration and the fourth resource-bound verifier hardening pass. Run, jobs, artifact IDs and API SHA-256 digests were checked; both ZIP archives were downloaded independently, their SHA-256 matched the API digest, their single extracted report bytes matched these retained git blobs exactly, and both reports bind execution tree 15d79fc4 to producer branch head 058a3b37 on main 82f995f6."
+        "note": "Final PR #131 retention after lint-clean semantic closure. Run/job identities, API artifact digests, independently downloaded ZIP SHA-256 values, exact extracted report bytes, git blob identities, and execution merge tree were verified before retention."
       }
     }
   ],
