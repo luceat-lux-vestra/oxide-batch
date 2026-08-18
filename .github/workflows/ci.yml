@@ -32,29 +32,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('crates/oxide-batch/tests/postgres_resource_bound_payloads.rs')
-          s = p.read_text()
-          old = '''                "partition-key" | "partition-context" | "retry-cache-bytes" | "ca-certificate" => Some("bytes"),
-                "retry-cache-entries" => Some("unresolved retry keys"),
-                "definition-nodes" => Some("nodes"),
-                "definition-transitions" | "outgoing-transitions-per-node" => Some("transitions"),
-                "definition-manifest" if self.case.contains("one node past") => Some("nodes"),
-                "definition-manifest" => Some("bytes"),
-'''
-          new = '''                "retry-cache-entries" => Some("unresolved retry keys"),
-                "definition-nodes" => Some("nodes"),
-                "definition-transitions" | "outgoing-transitions-per-node" => Some("transitions"),
-                "definition-manifest" if self.case.contains("one node past") => Some("nodes"),
-                "partition-key" | "partition-context" | "retry-cache-bytes" | "ca-certificate" | "definition-manifest" => Some("bytes"),
-'''
-          if old in s:
-              s = s.replace(old, new, 1)
-          elif new not in s:
-              raise SystemExit('payload match-arm shape is neither expected old nor fixed form')
-          p.write_text(s)
-          PY
+          python3 -c 'from pathlib import Path; p=Path("crates/oxide-batch/tests/postgres_resource_bound_payloads.rs"); s=p.read_text(); old="                \"partition-key\" | \"partition-context\" | \"retry-cache-bytes\" | \"ca-certificate\" => Some(\"bytes\"),\n                \"retry-cache-entries\" => Some(\"unresolved retry keys\"),\n                \"definition-nodes\" => Some(\"nodes\"),\n                \"definition-transitions\" | \"outgoing-transitions-per-node\" => Some(\"transitions\"),\n                \"definition-manifest\" if self.case.contains(\"one node past\") => Some(\"nodes\"),\n                \"definition-manifest\" => Some(\"bytes\"),\n"; new="                \"retry-cache-entries\" => Some(\"unresolved retry keys\"),\n                \"definition-nodes\" => Some(\"nodes\"),\n                \"definition-transitions\" | \"outgoing-transitions-per-node\" => Some(\"transitions\"),\n                \"definition-manifest\" if self.case.contains(\"one node past\") => Some(\"nodes\"),\n                \"partition-key\" | \"partition-context\" | \"retry-cache-bytes\" | \"ca-certificate\" | \"definition-manifest\" => Some(\"bytes\"),\n"; assert old in s or new in s; p.write_text(s if new in s else s.replace(old,new,1))'
           git show 201639536c4ff99b013214f7e0444688a2b2b0d0:.github/workflows/ci.yml > .github/workflows/ci.yml
           rm -f .github/workflows/pr131-final-clippy-fix.yml
           cargo fmt --all -- --check
