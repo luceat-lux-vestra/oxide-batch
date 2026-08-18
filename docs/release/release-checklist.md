@@ -38,11 +38,18 @@ apply only after additional public crates are approved.
 - [ ] Create the protected, signed `v<version>` tag from the reviewed commit.
 - [ ] Review the tag-generated draft Release, `.crate`, checksum, SBOM, and
       package attestations.
+- [ ] If this release introduces a crate name that does not yet exist on
+      crates.io, perform its reviewed first-publication bootstrap from the
+      exact release tag and configure its Trusted Publisher before publishing
+      the GitHub Release. For M5 `0.5.0`, follow
+      [`m5-0.5.0-bootstrap.md`](m5-0.5.0-bootstrap.md).
 - [ ] Publish the GitHub Release with notes and migration warnings.
 - [ ] Let Trusted Publishing release crates in dependency order:
       `oxide-batch-core`, `oxide-batch-repository`, `oxide-batch-plan`,
       `oxide-batch`, then `oxide-batch-cli`. Internal crates carry the facade
-      version and are never released on their own.
+      version and are never released on their own. A reviewed first-publication
+      bootstrap is the only exception; the release workflow must verify rather
+      than re-publish an already bootstrapped exact version.
 - [ ] Do not retry a partially successful multi-crate publish blindly; inspect
       registry state and prepare compatible remaining versions.
 
