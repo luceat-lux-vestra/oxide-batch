@@ -24,11 +24,12 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::fs;
+use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
@@ -502,11 +503,34 @@ fn run_crash_restore_contract_check(
 
     mutate(sandbox.path())?;
 
-    let status = Command::new(&checker)
-        .arg(".github/workflows/m5-crash-restore.yml")
-        .current_dir(sandbox.path())
-        .status()?;
-    Ok(status.success())
+    exec_contract_checker(
+        &checker,
+        ".github/workflows/m5-crash-restore.yml",
+        sandbox.path(),
+    )
+}
+
+/// Runs a freshly copied and `chmod`-ed contract-check script, retrying on a
+/// transient `ExecutableFileBusy`.
+///
+/// Immediately exec'ing a file this test process just wrote and `chmod`ed
+/// can race the kernel's release of the write mapping under heavy parallel
+/// `cargo test` fork/exec load, surfacing as `ETXTBSY` even though the file
+/// is complete and correctly permissioned. Each sandbox path is unique per
+/// test, so this is never a real conflict — retry briefly before treating it
+/// as a genuine failure.
+fn exec_contract_checker(checker: &Path, arg: &str, cwd: &Path) -> Result<bool, Box<dyn Error>> {
+    let mut attempt = 0u32;
+    loop {
+        match Command::new(checker).arg(arg).current_dir(cwd).status() {
+            Ok(status) => return Ok(status.success()),
+            Err(err) if err.kind() == io::ErrorKind::ExecutableFileBusy && attempt < 5 => {
+                attempt += 1;
+                std::thread::sleep(Duration::from_millis(20 * u64::from(attempt)));
+            }
+            Err(err) => return Err(Box::new(err)),
+        }
+    }
 }
 
 /// Inserts `insertion` immediately after the first occurrence of `anchor`.

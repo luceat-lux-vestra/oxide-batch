@@ -1,9 +1,9 @@
 # M5 Evidence Campaign Record
 
-**State:** In progress. The conformance, crash-and-restore, upgrade, security,
+**State:** Complete. The conformance, crash-and-restore, upgrade, security,
 resource-bound, soak, cancellation, performance, and reference-workload
-campaigns are delivered. Issue #102 remains open pending completion of its
-full exit criteria.
+campaigns are delivered, and issue #102's full exit criteria are reconciled in
+[the #102 reconciliation](m5-102-reconciliation.md).
 
 **Issue:** [#102](https://github.com/luceat-lux-vestra/oxide-batch/issues/102)
 
@@ -233,13 +233,17 @@ execution-surface narrowing this run reflects.
   rows are untouched and stay visible.
 - **A parity claim.** Passing the accepted scope is not parity with the ledger
   population, and the record's own denominator says so.
-- **Strong provenance for the remaining two M5 campaigns.** Security and
+- ~~**Strong provenance for the remaining two M5 campaigns.** Security and
   resource-bound still run as jobs inside `.github/workflows/ci.yml` and are
   not declared in `evidence-provenance.json`; their retained reports are not
   bound to a specific workflow run, job, or artifact digest the way
   conformance, soak, cancellation, performance, crash-and-restore, and upgrade
   now are (F38). Closing that gap for each of them is left to a follow-up,
-  tracked under #102.
+  tracked under #102.~~ **Closed.** Security's provenance was hardened by F39
+  below and resource-bound's by its fourth corrective pass; both now run
+  dedicated fail-closed workflows (`m5-security.yml`, `m5-resource-bounds.yml`)
+  and are declared in `evidence-provenance.json` alongside the other six. All
+  eight M5 campaigns share the strong provenance model as of this reconciliation.
 
 ### Findings
 
@@ -318,9 +322,10 @@ workflow moved without changing its fixture provisioning, its command, or its
 artifact naming. At the time this finding was recorded, crash/restore,
 upgrade, security, and resource-bound were not part of this closure and
 remained outside the strong provenance model; F38 closes that gap for
-crash-and-restore and upgrade. Security and resource-bound remain outside it;
-closing their gaps is left to a follow-up, as this campaign's own scope note
-explains under "what this campaign does not establish" below.
+crash-and-restore and upgrade. Security and resource-bound remained outside it
+at the time; F39 below and resource-bound's fourth corrective pass have since
+closed both, as this campaign's own scope note now records under "what this
+campaign does not establish" below.
 
 **F37. F36's closure was wider than the other three M5 campaigns' by design,
 and that design was itself a latent gap: the producer ran every workspace
@@ -475,9 +480,14 @@ matrix, bringing `cargo xtask evidence`'s retained-report count from `8` to
 `12` — derived from declared-campaign × required-matrix coverage, not
 hardcoded.
 
-Security and resource-bound remain outside the strong provenance model.
-Closing their gaps, and reconciling #102's full exit criteria, is left to a
-follow-up.
+Security and resource-bound remained outside the strong provenance model at
+the time this finding was recorded. Security's gap was closed by F39 below;
+resource-bound's was closed by its fourth corrective pass. All eight M5
+campaigns now share the strong provenance model, bringing `cargo xtask
+evidence`'s retained-report count to `16` — 8 declared campaigns × the
+required `postgres-15`/`postgres-18` matrix. The full reconciliation of
+#102's exit criteria is recorded in
+[the #102 reconciliation](m5-102-reconciliation.md).
 
 ## Crash and restore campaign
 
