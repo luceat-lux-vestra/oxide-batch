@@ -35,6 +35,7 @@ jobs:
           fi
 
       - name: Verify packages
+        if: steps.release.outputs.bootstrap != 'true'
         run: >-
           cargo publish --package oxide-batch-core
           --package oxide-batch-repository --package oxide-batch-plan
