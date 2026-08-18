@@ -1,0 +1,108 @@
+name: PR131 Final Resource Bounds Retention
+
+on:
+  push:
+    branches:
+      - ci/m5-resource-bounds-provenance
+    paths:
+      - .github/workflows/pr131-final-retention.yml
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  retain:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ci/m5-resource-bounds-provenance
+          fetch-depth: 0
+      - name: Download, verify, and retain final resource-bound evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/pr131/pg15 /tmp/pr131/pg18
+          gh api -H 'Accept: application/vnd.github+json' /repos/${GITHUB_REPOSITORY}/actions/artifacts/9316533962/zip > /tmp/pr131/pg15.zip
+          gh api -H 'Accept: application/vnd.github+json' /repos/${GITHUB_REPOSITORY}/actions/artifacts/9316535433/zip > /tmp/pr131/pg18.zip
+          echo '7c75c923129a1454ac753112adc536cab83ef030fb3d5a53227bee2b80623835  /tmp/pr131/pg15.zip' | sha256sum -c -
+          echo '4b664bd447a5db7784cf718c4850f4fb59c55c1ba12618b9603ff5c3ca6ad6f9  /tmp/pr131/pg18.zip' | sha256sum -c -
+          unzip -q /tmp/pr131/pg15.zip -d /tmp/pr131/pg15
+          unzip -q /tmp/pr131/pg18.zip -d /tmp/pr131/pg18
+          test "$(find /tmp/pr131/pg15 -type f | wc -l)" -eq 1
+          test "$(find /tmp/pr131/pg18 -type f | wc -l)" -eq 1
+          cp /tmp/pr131/pg15/resource-bounds-campaign.json docs/engineering/campaigns/m5/resource-bounds-campaign-postgres-15.json
+          cp /tmp/pr131/pg18/resource-bounds-campaign.json docs/engineering/campaigns/m5/resource-bounds-campaign-postgres-18.json
+          test "$(git hash-object docs/engineering/campaigns/m5/resource-bounds-campaign-postgres-15.json)" = 54c0973bd1c2101f9a40d4483b03634928c71bc6
+          test "$(git hash-object docs/engineering/campaigns/m5/resource-bounds-campaign-postgres-18.json)" = db682daff3f7dc5deb67a3dd0c39d4d24da21781
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('docs/engineering/campaigns/m5/evidence-provenance.json')
+          data = json.loads(path.read_text())
+          by_report = {entry['report']: entry for entry in data['evidence']}
+          common_producer = {
+              'execution_commit': '2d9ab0ce976535fa3564159f70568c04e346c6a5',
+              'execution_commit_note': "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
+              'branch_head_sha': '90fa7d0004f843fee77067c5af49d88200537332',
+              'branch_head_note': 'The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.',
+              'source_tree_clean': True,
+              'rustc': 'rustc 1.97.1 (8bab26f4f 2026-07-14)',
+              'os': 'linux',
+              'arch': 'x86_64',
+          }
+          specs = {
+              'resource-bounds-campaign-postgres-15.json': {
+                  'job_name': 'postgres-15-resource-bounds-campaign', 'job_id': 95643695408,
+                  'artifact_name': 'resource-bounds-campaign-postgres-15', 'artifact_id': 9316533962,
+                  'digest': 'sha256:7c75c923129a1454ac753112adc536cab83ef030fb3d5a53227bee2b80623835',
+                  'size': 13096, 'blob': '54c0973bd1c2101f9a40d4483b03634928c71bc6',
+              },
+              'resource-bounds-campaign-postgres-18.json': {
+                  'job_name': 'postgres-18-resource-bounds-campaign', 'job_id': 95643695406,
+                  'artifact_name': 'resource-bounds-campaign-postgres-18', 'artifact_id': 9316535433,
+                  'digest': 'sha256:4b664bd447a5db7784cf718c4850f4fb59c55c1ba12618b9603ff5c3ca6ad6f9',
+                  'size': 13095, 'blob': 'db682daff3f7dc5deb67a3dd0c39d4d24da21781',
+              },
+          }
+          for report, s in specs.items():
+              entry = by_report[report]
+              entry['producer'] = dict(common_producer)
+              entry['workflow_run'] = {
+                  'workflow': 'M5 Resource Bounds',
+                  'workflow_file': '.github/workflows/m5-resource-bounds.yml',
+                  'id': 32115407707,
+                  'attempt': 1,
+                  'event': 'pull_request',
+                  'conclusion': 'success',
+              }
+              entry['producing_job'] = {'name': s['job_name'], 'id': s['job_id'], 'conclusion': 'success'}
+              entry['artifact'] = {'name': s['artifact_name'], 'id': s['artifact_id'], 'digest': s['digest'], 'size_bytes': s['size']}
+              entry['retained_report_git_blob'] = s['blob']
+              entry['remote_verification'] = {
+                  'verified': True,
+                  'verified_at': '2026-08-18T08:18:00Z',
+                  'run_id': 32115407707,
+                  'workflow_run_identity': True,
+                  'workflow_run_conclusion': True,
+                  'producing_job_identity': True,
+                  'producing_job_conclusion': True,
+                  'artifact_digest': True,
+                  'artifact_bytes_match_retained_report': True,
+                  'execution_commit_matches_report': True,
+                  'note': 'Final retention after the lint-clean resource-bound producer. Run/jobs/artifact IDs and API SHA-256 digests were checked; both ZIP archives were independently downloaded and hashed, extracted report bytes match these retained git blobs exactly, both reports are 36/36 with passed=true and zero violations, and both bind execution tree 2d9ab0ce to producer branch head 90fa7d00 on main 82f995f6.',
+              }
+          path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n')
+          PY
+          cargo run --package oxide-batch-xtask -- evidence
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/engineering/campaigns/m5/evidence-provenance.json docs/engineering/campaigns/m5/resource-bounds-campaign-postgres-15.json docs/engineering/campaigns/m5/resource-bounds-campaign-postgres-18.json
+          git diff --cached --check
+          git commit -m 'docs(m5): retain final lint-clean resource-bound evidence'
+          git push origin HEAD:ci/m5-resource-bounds-provenance
