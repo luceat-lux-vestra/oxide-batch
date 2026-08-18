@@ -30,12 +30,14 @@ below.
 | Field | Value |
 | --- | --- |
 | Audited baseline (`origin/main` at assignment) | `13ae527c0d945dca945d92281556fca79ebf6a6e` |
+| PR #133 merge commit (evidence execution tree) | `58213c0fd14099d7d77930d9ea751659ac2bcc43` — the tree all 16 retained reports below record from their own checkout, per `evidence-provenance.json` |
 | Declared campaigns | `8` (conformance, crash-and-restore, upgrade, security, resource-bounds, soak, cancellation, performance/reference-workload) |
 | Required PostgreSQL matrix per campaign | `postgres-15`, `postgres-18` (release-blocking; majors 16-17 receive connection/migration/smoke coverage per the [support matrix](../release/support-matrix.md)) |
 | Retained reports | `16` — independently recomputed as 8 declared campaigns × the 2-point required matrix, matching `docs/engineering/campaigns/m5/*.json` (excluding `evidence-provenance.json` itself) and `cargo xtask evidence`'s own count |
 | Conformance denominator | `42` ledger rows (`29` `Implemented` + `13` `Partial`, independently recounted from `docs/compatibility/conformance-matrix.md`), proved by `133` scenario assignments (independently recounted from `tests/fixtures/conformance/accepted-scope.json`) |
 | Unresolved M5-scope correctness P0/P1 | None. `gh issue list --state open --label priority:p0` returns no results; the only open `priority:p1` issues are the milestone-tracking issues #12, #102 (this issue), and #103 (docs/exit record, blocked on #102), none of which is a code defect. No `#[ignore]`d test and no `TODO`/`FIXME` marker exists under `crates/` or `xtask/`. |
-| Repository checks | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace --all-features`, `cargo xtask check`, `cargo xtask evidence` all pass at the PR's final HEAD (see the PR description for the exact commands and CI run links) |
+| Repository checks | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace --all-features`, `cargo xtask check`, `cargo xtask evidence`, `cargo xtask reconciliation` all pass at the PR's final HEAD (see the PR description for the exact commands and CI run links) |
+| Retention note | This PR's own `xtask/src/main.rs` change (new `reconciliation` subcommand, clippy-arg fix) is part of every M5 campaign's declared semantic closure, which invalidated the 16 reports retained before this PR under `cargo xtask evidence`. All 16 were re-run fresh against PR #133's merge commit (workflow run IDs and job IDs are recorded per-campaign in `evidence-provenance.json` and in each campaign's Results section of [the evidence record](m5-campaign-evidence.md)) and independently re-verified — digest, byte-for-byte extracted-report match, and git-blob identity — before retention. |
 
 ## Criterion reconciliation
 

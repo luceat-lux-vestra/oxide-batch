@@ -114,16 +114,13 @@
     {
       "report": "soak-campaign-postgres-15.json",
       "campaign": "M5 PostgreSQL soak",
-      "scenarios": [
-        "soak_reports_no_task_connection_handle_or_memory_growth"
-      ],
       "matrix_point": "postgres-15",
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "977528e1a85332ddc807843c22ffc4592886a049",
+        "execution_commit": "58213c0fd14099d7d77930d9ea751659ac2bcc43",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9fc6a3006ef95fc2d50e76799e4060fb8a0f5e87",
+        "branch_head_sha": "ed370072b63c0a5459e18b5b77071ff297524fb9",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -133,27 +130,27 @@
       "workflow_run": {
         "workflow": "M5 Soak",
         "workflow_file": ".github/workflows/m5-soak.yml",
-        "id": 31981456640,
+        "id": 32128988421,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-soak-campaign",
-        "id": 95248844977,
+        "id": 95685722719,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-15",
-        "id": 9272534835,
-        "digest": "sha256:acffc7700242dd330b95f85e0198594cc2b361f19f43b5a0510aff55a3366f2b",
-        "size_bytes": 88193
+        "id": 9321596164,
+        "digest": "sha256:75d83aec1f688e82c9838dab58e6efca2e7f21e5c24c13f4867afeefe0c8ed43",
+        "size_bytes": 88525
       },
-      "retained_report_git_blob": "2b1220eeb5753964b76e98a84f1e3788f363b107",
+      "retained_report_git_blob": "093777516a0d84e6dd5576a0fd5e27a3d121646d",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-17T21:43:00Z",
-        "run_id": 31981456640,
+        "verified_at": "2026-08-18T11:01:26Z",
+        "run_id": 32128988421,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -161,22 +158,19 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention after Cargo.lock changed a declared campaign-semantics object. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #133: xtask/src/main.rs is part of every M5 campaign's declared semantic closure (listed as \"independent verifier\"), and this PR changes it (new `reconciliation` subcommand, clippy-arg fix), which invalidated all 16 previously retained reports under `cargo xtask evidence`. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
       }
     },
     {
       "report": "soak-campaign-postgres-18.json",
       "campaign": "M5 PostgreSQL soak",
-      "scenarios": [
-        "soak_reports_no_task_connection_handle_or_memory_growth"
-      ],
       "matrix_point": "postgres-18",
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "977528e1a85332ddc807843c22ffc4592886a049",
+        "execution_commit": "58213c0fd14099d7d77930d9ea751659ac2bcc43",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9fc6a3006ef95fc2d50e76799e4060fb8a0f5e87",
+        "branch_head_sha": "ed370072b63c0a5459e18b5b77071ff297524fb9",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -186,27 +180,27 @@
       "workflow_run": {
         "workflow": "M5 Soak",
         "workflow_file": ".github/workflows/m5-soak.yml",
-        "id": 31981456640,
+        "id": 32128988421,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-soak-campaign",
-        "id": 95248845086,
+        "id": 95685722821,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-18",
-        "id": 9272533614,
-        "digest": "sha256:4637d2862e05ae5681ad550bb32bd33659f744bd419f3693e2bfe3cfdd8dd531",
-        "size_bytes": 88351
+        "id": 9321583192,
+        "digest": "sha256:89f1b0b40882095c8491513e27a5b0b5e9f3b8ce528be085c1afa678de568a02",
+        "size_bytes": 87315
       },
-      "retained_report_git_blob": "8d7624a595f6f1d1e2aa9414a74cf6ce8dcd0e56",
+      "retained_report_git_blob": "c22881ee54646920e488cc606abb1fa22adfc977",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-17T21:43:00Z",
-        "run_id": 31981456640,
+        "verified_at": "2026-08-18T11:01:26Z",
+        "run_id": 32128988421,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -214,25 +208,19 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention after Cargo.lock changed a declared campaign-semantics object. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #133: xtask/src/main.rs is part of every M5 campaign's declared semantic closure (listed as \"independent verifier\"), and this PR changes it (new `reconciliation` subcommand, clippy-arg fix), which invalidated all 16 previously retained reports under `cargo xtask evidence`. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
       }
     },
     {
       "report": "cancellation-campaign-postgres-15.json",
       "campaign": "M5 PostgreSQL cancellation",
-      "scenarios": [
-        "operator_stop_reaches_a_durable_terminal_status",
-        "cancellation_latency_is_measured_separately_per_phase",
-        "drain_reports_unjoined_tasks_at_every_declared_deadline",
-        "restart_after_cancellation_resumes_without_rerunning_committed_work"
-      ],
       "matrix_point": "postgres-15",
       "postgres_major_version": "15",
-      "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
+      "server_version": null,
       "producer": {
-        "execution_commit": "977528e1a85332ddc807843c22ffc4592886a049",
+        "execution_commit": "58213c0fd14099d7d77930d9ea751659ac2bcc43",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9fc6a3006ef95fc2d50e76799e4060fb8a0f5e87",
+        "branch_head_sha": "ed370072b63c0a5459e18b5b77071ff297524fb9",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -242,27 +230,27 @@
       "workflow_run": {
         "workflow": "M5 Cancellation",
         "workflow_file": ".github/workflows/m5-cancellation.yml",
-        "id": 31981456476,
+        "id": 32128988542,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-cancellation-campaign",
-        "id": 95248843969,
+        "id": 95685722795,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-15",
-        "id": 9272484017,
-        "digest": "sha256:0253c3c7230c76cec05c6e8ebc8ae24b8124263f9570d09664f3ca4491fb49ba",
-        "size_bytes": 5754
+        "id": 9321498148,
+        "digest": "sha256:f6bec0e5c8274912fd6331cdb1a2dedbfffe5e6405af953e620e9d8691bf9f41",
+        "size_bytes": 5749
       },
-      "retained_report_git_blob": "67952d157006a6f5bf2f63942502d7f471877aa2",
+      "retained_report_git_blob": "c656bc49e7b55ed6482831c22e4065399f3d7e24",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-17T21:43:00Z",
-        "run_id": 31981456476,
+        "verified_at": "2026-08-18T11:01:26Z",
+        "run_id": 32128988542,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -270,25 +258,19 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention after Cargo.lock changed a declared campaign-semantics object. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #133: xtask/src/main.rs is part of every M5 campaign's declared semantic closure (listed as \"independent verifier\"), and this PR changes it (new `reconciliation` subcommand, clippy-arg fix), which invalidated all 16 previously retained reports under `cargo xtask evidence`. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
       }
     },
     {
       "report": "cancellation-campaign-postgres-18.json",
       "campaign": "M5 PostgreSQL cancellation",
-      "scenarios": [
-        "operator_stop_reaches_a_durable_terminal_status",
-        "cancellation_latency_is_measured_separately_per_phase",
-        "drain_reports_unjoined_tasks_at_every_declared_deadline",
-        "restart_after_cancellation_resumes_without_rerunning_committed_work"
-      ],
       "matrix_point": "postgres-18",
       "postgres_major_version": "18",
-      "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+      "server_version": null,
       "producer": {
-        "execution_commit": "977528e1a85332ddc807843c22ffc4592886a049",
+        "execution_commit": "58213c0fd14099d7d77930d9ea751659ac2bcc43",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9fc6a3006ef95fc2d50e76799e4060fb8a0f5e87",
+        "branch_head_sha": "ed370072b63c0a5459e18b5b77071ff297524fb9",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -298,27 +280,27 @@
       "workflow_run": {
         "workflow": "M5 Cancellation",
         "workflow_file": ".github/workflows/m5-cancellation.yml",
-        "id": 31981456476,
+        "id": 32128988542,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-cancellation-campaign",
-        "id": 95248844049,
+        "id": 95685722646,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-18",
-        "id": 9272484122,
-        "digest": "sha256:a0ab11920f6a461418f62ff9a57817c5ada68be70ff9a3aa5ab7fadef3852b15",
-        "size_bytes": 5758
+        "id": 9321497024,
+        "digest": "sha256:934a9b5921c279b6076fa21480f1c15afd13f534ffa13c7fc923a822e8f895dc",
+        "size_bytes": 5741
       },
-      "retained_report_git_blob": "b5f46cc28eeb021a29d31183561f7c87e2c190bf",
+      "retained_report_git_blob": "5973fc0f068071863e8ec8f5578b76bb0276de4e",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-17T21:43:00Z",
-        "run_id": 31981456476,
+        "verified_at": "2026-08-18T11:01:26Z",
+        "run_id": 32128988542,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -326,24 +308,19 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention after Cargo.lock changed a declared campaign-semantics object. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #133: xtask/src/main.rs is part of every M5 campaign's declared semantic closure (listed as \"independent verifier\"), and this PR changes it (new `reconciliation` subcommand, clippy-arg fix), which invalidated all 16 previously retained reports under `cargo xtask evidence`. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
       }
     },
     {
       "report": "performance-campaign-postgres-15.json",
       "campaign": "M5 PostgreSQL performance",
-      "scenarios": [
-        "p001_fixed_tasklet_lifecycle_overhead",
-        "p003_csv_to_postgres_reference_workload",
-        "p010_postgres_local_partition_scaling"
-      ],
       "matrix_point": "postgres-15",
       "postgres_major_version": "15",
-      "server_version": "15.18 (Debian 15.18-1.pgdg13+1)",
+      "server_version": null,
       "producer": {
-        "execution_commit": "977528e1a85332ddc807843c22ffc4592886a049",
+        "execution_commit": "58213c0fd14099d7d77930d9ea751659ac2bcc43",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9fc6a3006ef95fc2d50e76799e4060fb8a0f5e87",
+        "branch_head_sha": "ed370072b63c0a5459e18b5b77071ff297524fb9",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -353,27 +330,27 @@
       "workflow_run": {
         "workflow": "M5 Performance",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 31981456588,
+        "id": 32128988419,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-performance-campaign",
-        "id": 95248844607,
+        "id": 95685722475,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-15",
-        "id": 9272507072,
-        "digest": "sha256:6ee0c1abe450493e1c6e1ef1fbc9a030ff71502eb61a31667ffe091bcccc31ee",
-        "size_bytes": 6462
+        "id": 9321533300,
+        "digest": "sha256:4d9555c73161f3b0a9e904436eb2f5423aec1432c605d78b99959d660932d0c7",
+        "size_bytes": 6478
       },
-      "retained_report_git_blob": "8952793552dcd1d0fdc1ef6ec1323ed476e90e3e",
+      "retained_report_git_blob": "8d11113c1e77747a5ff8fcdd41c1c7a3c2771d34",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-17T21:43:00Z",
-        "run_id": 31981456588,
+        "verified_at": "2026-08-18T11:01:26Z",
+        "run_id": 32128988419,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -381,24 +358,19 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention after Cargo.lock changed a declared campaign-semantics object. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #133: xtask/src/main.rs is part of every M5 campaign's declared semantic closure (listed as \"independent verifier\"), and this PR changes it (new `reconciliation` subcommand, clippy-arg fix), which invalidated all 16 previously retained reports under `cargo xtask evidence`. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
       }
     },
     {
       "report": "performance-campaign-postgres-18.json",
       "campaign": "M5 PostgreSQL performance",
-      "scenarios": [
-        "p001_fixed_tasklet_lifecycle_overhead",
-        "p003_csv_to_postgres_reference_workload",
-        "p010_postgres_local_partition_scaling"
-      ],
       "matrix_point": "postgres-18",
       "postgres_major_version": "18",
-      "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+      "server_version": null,
       "producer": {
-        "execution_commit": "977528e1a85332ddc807843c22ffc4592886a049",
+        "execution_commit": "58213c0fd14099d7d77930d9ea751659ac2bcc43",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9fc6a3006ef95fc2d50e76799e4060fb8a0f5e87",
+        "branch_head_sha": "ed370072b63c0a5459e18b5b77071ff297524fb9",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -408,27 +380,27 @@
       "workflow_run": {
         "workflow": "M5 Performance",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 31981456588,
+        "id": 32128988419,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-performance-campaign",
-        "id": 95248844587,
+        "id": 95685722495,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-18",
-        "id": 9272508826,
-        "digest": "sha256:ad9420409db6bda80be583ee84f6edae7c18518d0e8525b9bb22bc6b0516a055",
-        "size_bytes": 6467
+        "id": 9321544185,
+        "digest": "sha256:1de021f12c337c59acaa0868a4e539b08e068abee52ca19bcff7fa89b568dd83",
+        "size_bytes": 6476
       },
-      "retained_report_git_blob": "d6bf7f2711ed18626a556ee86d18f492f2352f2c",
+      "retained_report_git_blob": "1e2471cc39a2fb930d3da9561c4b64e119a402cd",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-17T21:43:00Z",
-        "run_id": 31981456588,
+        "verified_at": "2026-08-18T11:01:26Z",
+        "run_id": 32128988419,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -436,21 +408,19 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention after Cargo.lock changed a declared campaign-semantics object. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #133: xtask/src/main.rs is part of every M5 campaign's declared semantic closure (listed as \"independent verifier\"), and this PR changes it (new `reconciliation` subcommand, clippy-arg fix), which invalidated all 16 previously retained reports under `cargo xtask evidence`. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
       }
     },
     {
       "report": "conformance-campaign-postgres-15.json",
       "campaign": "M5 PostgreSQL conformance",
-      "scenarios": [
-        "full_embedded_conformance_suite_passes_on_the_accepted_scope"
-      ],
       "matrix_point": "postgres-15",
       "postgres_major_version": "15",
+      "server_version": null,
       "producer": {
-        "execution_commit": "977528e1a85332ddc807843c22ffc4592886a049",
+        "execution_commit": "58213c0fd14099d7d77930d9ea751659ac2bcc43",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9fc6a3006ef95fc2d50e76799e4060fb8a0f5e87",
+        "branch_head_sha": "ed370072b63c0a5459e18b5b77071ff297524fb9",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -460,27 +430,27 @@
       "workflow_run": {
         "workflow": "M5 Conformance",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 31981456650,
+        "id": 32128988607,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-conformance-campaign",
-        "id": 95248844685,
+        "id": 95685723119,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-15",
-        "id": 9272499396,
-        "digest": "sha256:86d5e1e5577f0bf2de80120356c0bc04aa62ee49f643496ad04ae3d4283f0a76",
-        "size_bytes": 7135
+        "id": 9321517635,
+        "digest": "sha256:6af638c6d409dbb62acb55d8495fa3d4285a5d200803fef96d2458d55c8fe1a3",
+        "size_bytes": 7134
       },
-      "retained_report_git_blob": "a212a8fc237d3e9c5aec438eaac84a7299a7106e",
+      "retained_report_git_blob": "fccfa61ac137222e0b5597622210bf4994f8e49a",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-17T21:43:00Z",
-        "run_id": 31981456650,
+        "verified_at": "2026-08-18T11:01:26Z",
+        "run_id": 32128988607,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -488,21 +458,19 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention after Cargo.lock changed a declared campaign-semantics object. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #133: xtask/src/main.rs is part of every M5 campaign's declared semantic closure (listed as \"independent verifier\"), and this PR changes it (new `reconciliation` subcommand, clippy-arg fix), which invalidated all 16 previously retained reports under `cargo xtask evidence`. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
       }
     },
     {
       "report": "conformance-campaign-postgres-18.json",
       "campaign": "M5 PostgreSQL conformance",
-      "scenarios": [
-        "full_embedded_conformance_suite_passes_on_the_accepted_scope"
-      ],
       "matrix_point": "postgres-18",
       "postgres_major_version": "18",
+      "server_version": null,
       "producer": {
-        "execution_commit": "977528e1a85332ddc807843c22ffc4592886a049",
+        "execution_commit": "58213c0fd14099d7d77930d9ea751659ac2bcc43",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9fc6a3006ef95fc2d50e76799e4060fb8a0f5e87",
+        "branch_head_sha": "ed370072b63c0a5459e18b5b77071ff297524fb9",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -512,27 +480,27 @@
       "workflow_run": {
         "workflow": "M5 Conformance",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 31981456650,
+        "id": 32128988607,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-conformance-campaign",
-        "id": 95248844762,
+        "id": 95685723202,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-18",
-        "id": 9272502643,
-        "digest": "sha256:33c35d64da8f3a7a674374245ac743932446a03720798fc635daa4b22b0c0592",
-        "size_bytes": 7135
+        "id": 9321527712,
+        "digest": "sha256:34aeafa67ee8959b1562f2aa9c2aea5581797b0e5359095f5f3abf04aa109059",
+        "size_bytes": 7134
       },
-      "retained_report_git_blob": "1aad3351956be115a6c61aca1f0d4df05208e8d4",
+      "retained_report_git_blob": "61e289b26f1ca05e509c7506ce1d823963d64993",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-17T21:43:00Z",
-        "run_id": 31981456650,
+        "verified_at": "2026-08-18T11:01:26Z",
+        "run_id": 32128988607,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -540,24 +508,19 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention after Cargo.lock changed a declared campaign-semantics object. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #133: xtask/src/main.rs is part of every M5 campaign's declared semantic closure (listed as \"independent verifier\"), and this PR changes it (new `reconciliation` subcommand, clippy-arg fix), which invalidated all 16 previously retained reports under `cargo xtask evidence`. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
       }
     },
     {
       "report": "crash-restore-campaign-postgres-15.json",
       "campaign": "M5 crash and restore",
-      "scenarios": [
-        "process_kill_at_each_commit_phase_recovers_without_a_forged_status",
-        "restart_after_many_chunks_matches_an_uninterrupted_run",
-        "logical_backup_restores_the_durable_state_and_the_job_restarts_on_it"
-      ],
       "matrix_point": "postgres-15",
       "postgres_major_version": "15",
-      "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
+      "server_version": null,
       "producer": {
-        "execution_commit": "977528e1a85332ddc807843c22ffc4592886a049",
+        "execution_commit": "58213c0fd14099d7d77930d9ea751659ac2bcc43",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9fc6a3006ef95fc2d50e76799e4060fb8a0f5e87",
+        "branch_head_sha": "ed370072b63c0a5459e18b5b77071ff297524fb9",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -567,27 +530,27 @@
       "workflow_run": {
         "workflow": "M5 Crash and Restore",
         "workflow_file": ".github/workflows/m5-crash-restore.yml",
-        "id": 31981456522,
+        "id": 32128988464,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-crash-restore-campaign",
-        "id": 95248844445,
+        "id": 95685722281,
         "conclusion": "success"
       },
       "artifact": {
         "name": "crash-restore-campaign-postgres-15",
-        "id": 9272481597,
-        "digest": "sha256:074272ffd98595084d5e4b6c36f1de7fb76dd1cc88f410647394d816327c27b0",
-        "size_bytes": 6691
+        "id": 9321494095,
+        "digest": "sha256:4bd98543c4fcde728e883860869f3ba50cfc5ea130fb0234d66edae3ca0c5cd1",
+        "size_bytes": 6686
       },
-      "retained_report_git_blob": "a3646fd5ed1eb1fe14a64a9bb08857b7bfca1ae0",
+      "retained_report_git_blob": "a54d0e0802acd9e71964f01d3a9f521171233db2",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-17T21:43:00Z",
-        "run_id": 31981456522,
+        "verified_at": "2026-08-18T11:01:26Z",
+        "run_id": 32128988464,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -595,24 +558,19 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention after Cargo.lock changed a declared campaign-semantics object. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #133: xtask/src/main.rs is part of every M5 campaign's declared semantic closure (listed as \"independent verifier\"), and this PR changes it (new `reconciliation` subcommand, clippy-arg fix), which invalidated all 16 previously retained reports under `cargo xtask evidence`. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
       }
     },
     {
       "report": "crash-restore-campaign-postgres-18.json",
       "campaign": "M5 crash and restore",
-      "scenarios": [
-        "process_kill_at_each_commit_phase_recovers_without_a_forged_status",
-        "restart_after_many_chunks_matches_an_uninterrupted_run",
-        "logical_backup_restores_the_durable_state_and_the_job_restarts_on_it"
-      ],
       "matrix_point": "postgres-18",
       "postgres_major_version": "18",
-      "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
+      "server_version": null,
       "producer": {
-        "execution_commit": "977528e1a85332ddc807843c22ffc4592886a049",
+        "execution_commit": "58213c0fd14099d7d77930d9ea751659ac2bcc43",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9fc6a3006ef95fc2d50e76799e4060fb8a0f5e87",
+        "branch_head_sha": "ed370072b63c0a5459e18b5b77071ff297524fb9",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -622,27 +580,27 @@
       "workflow_run": {
         "workflow": "M5 Crash and Restore",
         "workflow_file": ".github/workflows/m5-crash-restore.yml",
-        "id": 31981456522,
+        "id": 32128988464,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-crash-restore-campaign",
-        "id": 95248844387,
+        "id": 95685722219,
         "conclusion": "success"
       },
       "artifact": {
         "name": "crash-restore-campaign-postgres-18",
-        "id": 9272481817,
-        "digest": "sha256:3f77513b46b36eecb3072c4bdabe571d835ae2d38dc1355e23c4a9ef7bc8e5d8",
-        "size_bytes": 6698
+        "id": 9321499151,
+        "digest": "sha256:442ce0f848fd504167f007b8df6ccc9f1e514add1e029817e1da6e32b395e10f",
+        "size_bytes": 6682
       },
-      "retained_report_git_blob": "3f787743fbeafb1d4b3af4604b14b901a2773f25",
+      "retained_report_git_blob": "343d41917ddd814eb414b43f18bb334dc883d400",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-17T21:43:00Z",
-        "run_id": 31981456522,
+        "verified_at": "2026-08-18T11:01:26Z",
+        "run_id": 32128988464,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -650,24 +608,19 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention after Cargo.lock changed a declared campaign-semantics object. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #133: xtask/src/main.rs is part of every M5 campaign's declared semantic closure (listed as \"independent verifier\"), and this PR changes it (new `reconciliation` subcommand, clippy-arg fix), which invalidated all 16 previously retained reports under `cargo xtask evidence`. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
       }
     },
     {
       "report": "upgrade-campaign-postgres-15.json",
       "campaign": "M5 PostgreSQL upgrade",
-      "scenarios": [
-        "schema1_and_schema2_upgrade_directly_to_schema3",
-        "schema2_runtime_rejects_schema3",
-        "schema3_backup_restores_the_prior_schema"
-      ],
       "matrix_point": "postgres-15",
       "postgres_major_version": "15",
-      "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
+      "server_version": null,
       "producer": {
-        "execution_commit": "977528e1a85332ddc807843c22ffc4592886a049",
+        "execution_commit": "58213c0fd14099d7d77930d9ea751659ac2bcc43",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9fc6a3006ef95fc2d50e76799e4060fb8a0f5e87",
+        "branch_head_sha": "ed370072b63c0a5459e18b5b77071ff297524fb9",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -677,27 +630,27 @@
       "workflow_run": {
         "workflow": "M5 Upgrade",
         "workflow_file": ".github/workflows/m5-upgrade.yml",
-        "id": 31981456510,
+        "id": 32128988403,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-upgrade-campaign",
-        "id": 95248844228,
+        "id": 95685722392,
         "conclusion": "success"
       },
       "artifact": {
         "name": "upgrade-campaign-postgres-15",
-        "id": 9272486260,
-        "digest": "sha256:087caa2934295fd3420f4dfd9346fa4279c4849cafb2bc97a56961192dd33917",
-        "size_bytes": 5170
+        "id": 9321507317,
+        "digest": "sha256:c6550a0ea8ee977d2ad18513861b1085b354b484129f751d5c4cdbb060ac0cc8",
+        "size_bytes": 5171
       },
-      "retained_report_git_blob": "200ab096db842f7b46fda9509dd4ab6fd667e268",
+      "retained_report_git_blob": "01eb3e465708fca2b40097191b7d77e7cad64caf",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-17T21:43:00Z",
-        "run_id": 31981456510,
+        "verified_at": "2026-08-18T11:01:26Z",
+        "run_id": 32128988403,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -705,24 +658,19 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention after Cargo.lock changed a declared campaign-semantics object. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #133: xtask/src/main.rs is part of every M5 campaign's declared semantic closure (listed as \"independent verifier\"), and this PR changes it (new `reconciliation` subcommand, clippy-arg fix), which invalidated all 16 previously retained reports under `cargo xtask evidence`. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
       }
     },
     {
       "report": "upgrade-campaign-postgres-18.json",
       "campaign": "M5 PostgreSQL upgrade",
-      "scenarios": [
-        "schema1_and_schema2_upgrade_directly_to_schema3",
-        "schema2_runtime_rejects_schema3",
-        "schema3_backup_restores_the_prior_schema"
-      ],
       "matrix_point": "postgres-18",
       "postgres_major_version": "18",
-      "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
+      "server_version": null,
       "producer": {
-        "execution_commit": "977528e1a85332ddc807843c22ffc4592886a049",
+        "execution_commit": "58213c0fd14099d7d77930d9ea751659ac2bcc43",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9fc6a3006ef95fc2d50e76799e4060fb8a0f5e87",
+        "branch_head_sha": "ed370072b63c0a5459e18b5b77071ff297524fb9",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -732,27 +680,27 @@
       "workflow_run": {
         "workflow": "M5 Upgrade",
         "workflow_file": ".github/workflows/m5-upgrade.yml",
-        "id": 31981456510,
+        "id": 32128988403,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-upgrade-campaign",
-        "id": 95248844299,
+        "id": 95685722412,
         "conclusion": "success"
       },
       "artifact": {
         "name": "upgrade-campaign-postgres-18",
-        "id": 9272485512,
-        "digest": "sha256:7ac77c44d59b5a5c923761eb26e4218e1b87e99917fc009843c6f4024fec6efc",
-        "size_bytes": 5168
+        "id": 9321505592,
+        "digest": "sha256:5da713fcbb98d58785a2edf372f813aa4b4429f62df05ec2f71491544034d0d0",
+        "size_bytes": 5169
       },
-      "retained_report_git_blob": "6556e46f66f2257b26d7ba60675f7ff8cdcd2a5f",
+      "retained_report_git_blob": "95a13f13e5a50eee026f6b2dcd0772cbd45e594b",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-17T21:43:00Z",
-        "run_id": 31981456510,
+        "verified_at": "2026-08-18T11:01:26Z",
+        "run_id": 32128988403,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -760,24 +708,19 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention after Cargo.lock changed a declared campaign-semantics object. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #133: xtask/src/main.rs is part of every M5 campaign's declared semantic closure (listed as \"independent verifier\"), and this PR changes it (new `reconciliation` subcommand, clippy-arg fix), which invalidated all 16 previously retained reports under `cargo xtask evidence`. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
       }
     },
     {
       "report": "security-campaign-postgres-15.json",
       "campaign": "M5 PostgreSQL security",
-      "scenarios": [
-        "verify_full_tls_is_required_in_the_supported_mode",
-        "least_privilege_role_cannot_exceed_its_class",
-        "redaction_sweep_finds_no_prohibited_value_class"
-      ],
       "matrix_point": "postgres-15",
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "977528e1a85332ddc807843c22ffc4592886a049",
+        "execution_commit": "58213c0fd14099d7d77930d9ea751659ac2bcc43",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9fc6a3006ef95fc2d50e76799e4060fb8a0f5e87",
+        "branch_head_sha": "ed370072b63c0a5459e18b5b77071ff297524fb9",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -787,27 +730,27 @@
       "workflow_run": {
         "workflow": "M5 Security",
         "workflow_file": ".github/workflows/m5-security.yml",
-        "id": 31981456639,
+        "id": 32128988420,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-security-campaign",
-        "id": 95248844787,
+        "id": 95685722544,
         "conclusion": "success"
       },
       "artifact": {
         "name": "security-campaign-postgres-15",
-        "id": 9272478665,
-        "digest": "sha256:e750400ccf994440112351c2498ec901617c4cd789835f1a596ec91efa9a5381",
-        "size_bytes": 6949
+        "id": 9321489869,
+        "digest": "sha256:95cb906a853d10167a3667033180a244b4f7c6fa6bf36a01128457b67cbb0c27",
+        "size_bytes": 6947
       },
-      "retained_report_git_blob": "ff521cab68c02d03a5b3f83a1cd8c96f8ce71cc2",
+      "retained_report_git_blob": "cb3769f85bf1a4d3966ffec04a7f7cd8386635ab",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-17T21:43:00Z",
-        "run_id": 31981456639,
+        "verified_at": "2026-08-18T11:01:26Z",
+        "run_id": 32128988420,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -815,24 +758,19 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention after Cargo.lock changed a declared campaign-semantics object. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #133: xtask/src/main.rs is part of every M5 campaign's declared semantic closure (listed as \"independent verifier\"), and this PR changes it (new `reconciliation` subcommand, clippy-arg fix), which invalidated all 16 previously retained reports under `cargo xtask evidence`. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
       }
     },
     {
       "report": "security-campaign-postgres-18.json",
       "campaign": "M5 PostgreSQL security",
-      "scenarios": [
-        "verify_full_tls_is_required_in_the_supported_mode",
-        "least_privilege_role_cannot_exceed_its_class",
-        "redaction_sweep_finds_no_prohibited_value_class"
-      ],
       "matrix_point": "postgres-18",
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "977528e1a85332ddc807843c22ffc4592886a049",
+        "execution_commit": "58213c0fd14099d7d77930d9ea751659ac2bcc43",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9fc6a3006ef95fc2d50e76799e4060fb8a0f5e87",
+        "branch_head_sha": "ed370072b63c0a5459e18b5b77071ff297524fb9",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -842,27 +780,27 @@
       "workflow_run": {
         "workflow": "M5 Security",
         "workflow_file": ".github/workflows/m5-security.yml",
-        "id": 31981456639,
+        "id": 32128988420,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-security-campaign",
-        "id": 95248844775,
+        "id": 95685722820,
         "conclusion": "success"
       },
       "artifact": {
         "name": "security-campaign-postgres-18",
-        "id": 9272480308,
-        "digest": "sha256:b620de94f443a514794530f26b0f050897834d035ed4ce103be4f2dd7029e0ab",
-        "size_bytes": 6949
+        "id": 9321479921,
+        "digest": "sha256:a6fe965981eafaf48e939c89258ef24e1075af33116bee20cea0a37da0ad92e2",
+        "size_bytes": 6946
       },
-      "retained_report_git_blob": "72a1cfea800c166988f9d4022dc3b779be01ab66",
+      "retained_report_git_blob": "455a615bb3aa4f9836f93726f4beeca22b11d059",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-17T21:43:00Z",
-        "run_id": 31981456639,
+        "verified_at": "2026-08-18T11:01:26Z",
+        "run_id": 32128988420,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -870,25 +808,19 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention after Cargo.lock changed a declared campaign-semantics object. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #133: xtask/src/main.rs is part of every M5 campaign's declared semantic closure (listed as \"independent verifier\"), and this PR changes it (new `reconciliation` subcommand, clippy-arg fix), which invalidated all 16 previously retained reports under `cargo xtask evidence`. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
       }
     },
     {
       "report": "resource-bounds-campaign-postgres-15.json",
       "campaign": "M5 PostgreSQL resource bounds",
-      "scenarios": [
-        "declared_ceilings_hold_under_stress_with_backpressure",
-        "bounded_query_paths_stay_bounded_as_history_grows",
-        "bounded_payloads_are_refused_one_byte_over_the_ceiling",
-        "bounded_queues_shed_under_overload_without_blocking_batch_work"
-      ],
       "matrix_point": "postgres-15",
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "2d9ab0ce976535fa3564159f70568c04e346c6a5",
+        "execution_commit": "58213c0fd14099d7d77930d9ea751659ac2bcc43",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "90fa7d0004f843fee77067c5af49d88200537332",
+        "branch_head_sha": "ed370072b63c0a5459e18b5b77071ff297524fb9",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -898,27 +830,27 @@
       "workflow_run": {
         "workflow": "M5 Resource Bounds",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 32115407707,
+        "id": 32128988386,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-resource-bounds-campaign",
-        "id": 95643695408,
+        "id": 95685722555,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-15",
-        "id": 9316533962,
-        "digest": "sha256:7c75c923129a1454ac753112adc536cab83ef030fb3d5a53227bee2b80623835",
-        "size_bytes": 13096
+        "id": 9321493079,
+        "digest": "sha256:b39948d3fbb6cd19abf2abeeff245246bbbdf26e39a8504112288436ba99285b",
+        "size_bytes": 13092
       },
-      "retained_report_git_blob": "54c0973bd1c2101f9a40d4483b03634928c71bc6",
+      "retained_report_git_blob": "968d11250f211d17aa635728dffdc493c9a2f671",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-18T08:17:13Z",
-        "run_id": 32115407707,
+        "verified_at": "2026-08-18T11:01:26Z",
+        "run_id": 32128988386,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -926,25 +858,19 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Final lint-clean resource-bounds retention. Run 32115407707 executed ephemeral PR merge tree 2d9ab0ce976535fa3564159f70568c04e346c6a5 from producer branch head 90fa7d0004f843fee77067c5af49d88200537332 on main 82f995f6fcc7a0ccf1bfc1c7e61453647065b331. Both jobs succeeded; both artifact ZIP SHA-256 digests were independently verified; extracted report bytes match the retained git blobs exactly; both reports passed with 36/36 resources and zero violations."
+        "note": "Fresh retention for PR #133: xtask/src/main.rs is part of every M5 campaign's declared semantic closure (listed as \"independent verifier\"), and this PR changes it (new `reconciliation` subcommand, clippy-arg fix), which invalidated all 16 previously retained reports under `cargo xtask evidence`. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
       }
     },
     {
       "report": "resource-bounds-campaign-postgres-18.json",
       "campaign": "M5 PostgreSQL resource bounds",
-      "scenarios": [
-        "declared_ceilings_hold_under_stress_with_backpressure",
-        "bounded_query_paths_stay_bounded_as_history_grows",
-        "bounded_payloads_are_refused_one_byte_over_the_ceiling",
-        "bounded_queues_shed_under_overload_without_blocking_batch_work"
-      ],
       "matrix_point": "postgres-18",
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "2d9ab0ce976535fa3564159f70568c04e346c6a5",
+        "execution_commit": "58213c0fd14099d7d77930d9ea751659ac2bcc43",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "90fa7d0004f843fee77067c5af49d88200537332",
+        "branch_head_sha": "ed370072b63c0a5459e18b5b77071ff297524fb9",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -954,27 +880,27 @@
       "workflow_run": {
         "workflow": "M5 Resource Bounds",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 32115407707,
+        "id": 32128988386,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-resource-bounds-campaign",
-        "id": 95643695406,
+        "id": 95685722638,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-18",
-        "id": 9316535433,
-        "digest": "sha256:4b664bd447a5db7784cf718c4850f4fb59c55c1ba12618b9603ff5c3ca6ad6f9",
-        "size_bytes": 13095
+        "id": 9321495998,
+        "digest": "sha256:716f47eb7877f17863b5779c05dd19889a92efe757b8f0e3aa758c66d0327f6c",
+        "size_bytes": 13091
       },
-      "retained_report_git_blob": "db682daff3f7dc5deb67a3dd0c39d4d24da21781",
+      "retained_report_git_blob": "14ca45496f550b7305750b215542a93b5ff81911",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-18T08:17:13Z",
-        "run_id": 32115407707,
+        "verified_at": "2026-08-18T11:01:26Z",
+        "run_id": 32128988386,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -982,7 +908,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Final lint-clean resource-bounds retention. Run 32115407707 executed ephemeral PR merge tree 2d9ab0ce976535fa3564159f70568c04e346c6a5 from producer branch head 90fa7d0004f843fee77067c5af49d88200537332 on main 82f995f6fcc7a0ccf1bfc1c7e61453647065b331. Both jobs succeeded; both artifact ZIP SHA-256 digests were independently verified; extracted report bytes match the retained git blobs exactly; both reports passed with 36/36 resources and zero violations."
+        "note": "Fresh retention for PR #133: xtask/src/main.rs is part of every M5 campaign's declared semantic closure (listed as \"independent verifier\"), and this PR changes it (new `reconciliation` subcommand, clippy-arg fix), which invalidated all 16 previously retained reports under `cargo xtask evidence`. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
       }
     }
   ],
