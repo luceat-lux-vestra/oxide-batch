@@ -1,0 +1,58 @@
+name: PR131 Final Clippy Fix
+
+on:
+  push:
+    branches:
+      - ci/m5-resource-bounds-provenance
+    paths:
+      - .github/workflows/pr131-final-clippy-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ci/m5-resource-bounds-provenance
+          fetch-depth: 0
+      - name: Apply exact match-arm fix and validate workspace Clippy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('crates/oxide-batch/tests/postgres_resource_bound_payloads.rs')
+          s = p.read_text()
+          old = '''                "partition-key" | "partition-context" | "retry-cache-bytes" | "ca-certificate" => Some("bytes"),
+                "retry-cache-entries" => Some("unresolved retry keys"),
+                "definition-nodes" => Some("nodes"),
+                "definition-transitions" | "outgoing-transitions-per-node" => Some("transitions"),
+                "definition-manifest" if self.case.contains("one node past") => Some("nodes"),
+                "definition-manifest" => Some("bytes"),
+'''
+          new = '''                "retry-cache-entries" => Some("unresolved retry keys"),
+                "definition-nodes" => Some("nodes"),
+                "definition-transitions" | "outgoing-transitions-per-node" => Some("transitions"),
+                "definition-manifest" if self.case.contains("one node past") => Some("nodes"),
+                "partition-key" | "partition-context" | "retry-cache-bytes" | "ca-certificate" | "definition-manifest" => Some("bytes"),
+'''
+          assert s.count(old) == 1, s.count(old)
+          p.write_text(s.replace(old, new, 1))
+          PY
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --all-features -- -D warnings -A clippy::too_many_arguments -A clippy::too_many_lines
+          git diff --check
+      - name: Commit repair and self-clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/pr131-final-clippy-fix.yml
+          git add crates/oxide-batch/tests/postgres_resource_bound_payloads.rs
+          git diff --cached --check
+          git commit -m 'ci(m5): satisfy payload verifier lint gate'
+          git push origin HEAD:ci/m5-resource-bounds-provenance
