@@ -1,9 +1,9 @@
 # M5 Evidence Campaign Record
 
-**State:** In progress. The conformance, crash-and-restore, upgrade, security,
+**State:** Complete. The conformance, crash-and-restore, upgrade, security,
 resource-bound, soak, cancellation, performance, and reference-workload
-campaigns are delivered. Issue #102 remains open pending completion of its
-full exit criteria.
+campaigns are delivered, and issue #102's full exit criteria are reconciled in
+[the #102 reconciliation](m5-102-reconciliation.md).
 
 **Issue:** [#102](https://github.com/luceat-lux-vestra/oxide-batch/issues/102)
 
@@ -174,10 +174,10 @@ campaign this one no longer is.
 | [`conformance-campaign-postgres-18.json`](../engineering/campaigns/m5/conformance-campaign-postgres-18.json) | PostgreSQL 18 | 30 | 291 | 291 `ok` | Passed |
 
 Both were produced by dedicated workflow run
-[31781696338](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/31781696338),
-which executed tree `afee38e86b8ba79fdb5edd17e22b3d058fc087ca` — the
+[32128988607](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/32128988607),
+which executed tree `58213c0fd14099d7d77930d9ea751659ac2bcc43` — the
 pull-request merge commit the workflow checked out — from branch head
-`828e84a9980cfc805c47112970e06fa81cd8b849`. The execution tree is the
+`ed370072b63c0a5459e18b5b77071ff297524fb9`. The execution tree is the
 provenance root and the branch head is recorded beside it as metadata; they
 are different commits and are never used interchangeably. The reports record
 `rustc 1.97.1` and Linux `x86_64`, and a clean source tree. The command is
@@ -187,15 +187,25 @@ recomputation is what the producing job itself executed. Each artifact's own
 sha256 digest was computed directly over the downloaded ZIP bytes at
 promotion, matched the GitHub API's recorded digest, and the extracted report
 matched the retained bytes exactly before retention:
-PostgreSQL 15's job `94708653693` produced artifact `9212009570`
-(`sha256:b8a61b1089d1f6ac7223180b973d57c720a7a43ce4521c065cf6e686162d12e9`,
-`7137` bytes, retained blob `5c6aba12eb78ff28fb076e9f3fff8f178627e2b8`);
-PostgreSQL 18's job `94708653713` produced artifact `9212010377`
-(`sha256:bb31e5550ae796d087177ee958432423e91d817c82fbb0d6fc9203992352ae97`,
-`7137` bytes, retained blob `558e9e7127fddf7d64a0e599b6771dccb59f8762`).
+PostgreSQL 15's job `95685723119` produced artifact `9321517635`
+(`sha256:6af638c6d409dbb62acb55d8495fa3d4285a5d200803fef96d2458d55c8fe1a3`,
+`7134` bytes, retained blob `fccfa61ac137222e0b5597622210bf4994f8e49a`);
+PostgreSQL 18's job `95685723202` produced artifact `9321527712`
+(`sha256:34aeafa67ee8959b1562f2aa9c2aea5581797b0e5359095f5f3abf04aa109059`,
+`7134` bytes, retained blob `61e289b26f1ca05e509c7506ce1d823963d64993`).
 Both matrix points again select the same `30`-target envelope and observe
 `291` tests, confirming the envelope itself did not change — only the
 canonical description of what running it means was corrected.
+
+**Fifth retention: PR #133.** `xtask/src/main.rs` is part of every M5
+campaign's declared semantic closure (listed under "independent verifier" in
+each campaign's `campaign-semantics.json`, since it is the CLI dispatcher
+every campaign and `cargo xtask evidence` itself runs through). PR #133 added
+the `reconciliation` subcommand and a clippy-argument fix to that file, which
+invalidated all sixteen previously retained M5 reports under `cargo xtask
+evidence`. This is that PR's fresh, independently-verified retention; the
+selected envelope, target count, and test count are unchanged from the prior
+retention above.
 
 This supersedes three earlier retentions on this same branch, all recorded in
 full in `evidence-provenance.json`'s `remote_verification.note` for each
@@ -233,13 +243,17 @@ execution-surface narrowing this run reflects.
   rows are untouched and stay visible.
 - **A parity claim.** Passing the accepted scope is not parity with the ledger
   population, and the record's own denominator says so.
-- **Strong provenance for the remaining two M5 campaigns.** Security and
+- ~~**Strong provenance for the remaining two M5 campaigns.** Security and
   resource-bound still run as jobs inside `.github/workflows/ci.yml` and are
   not declared in `evidence-provenance.json`; their retained reports are not
   bound to a specific workflow run, job, or artifact digest the way
   conformance, soak, cancellation, performance, crash-and-restore, and upgrade
   now are (F38). Closing that gap for each of them is left to a follow-up,
-  tracked under #102.
+  tracked under #102.~~ **Closed.** Security's provenance was hardened by F39
+  below and resource-bound's by its fourth corrective pass; both now run
+  dedicated fail-closed workflows (`m5-security.yml`, `m5-resource-bounds.yml`)
+  and are declared in `evidence-provenance.json` alongside the other six. All
+  eight M5 campaigns share the strong provenance model as of this reconciliation.
 
 ### Findings
 
@@ -318,9 +332,10 @@ workflow moved without changing its fixture provisioning, its command, or its
 artifact naming. At the time this finding was recorded, crash/restore,
 upgrade, security, and resource-bound were not part of this closure and
 remained outside the strong provenance model; F38 closes that gap for
-crash-and-restore and upgrade. Security and resource-bound remain outside it;
-closing their gaps is left to a follow-up, as this campaign's own scope note
-explains under "what this campaign does not establish" below.
+crash-and-restore and upgrade. Security and resource-bound remained outside it
+at the time; F39 below and resource-bound's fourth corrective pass have since
+closed both, as this campaign's own scope note now records under "what this
+campaign does not establish" below.
 
 **F37. F36's closure was wider than the other three M5 campaigns' by design,
 and that design was itself a latent gap: the producer ran every workspace
@@ -475,9 +490,14 @@ matrix, bringing `cargo xtask evidence`'s retained-report count from `8` to
 `12` — derived from declared-campaign × required-matrix coverage, not
 hardcoded.
 
-Security and resource-bound remain outside the strong provenance model.
-Closing their gaps, and reconciling #102's full exit criteria, is left to a
-follow-up.
+Security and resource-bound remained outside the strong provenance model at
+the time this finding was recorded. Security's gap was closed by F39 below;
+resource-bound's was closed by its fourth corrective pass. All eight M5
+campaigns now share the strong provenance model, bringing `cargo xtask
+evidence`'s retained-report count to `16` — 8 declared campaigns × the
+required `postgres-15`/`postgres-18` matrix. The full reconciliation of
+#102's exit criteria is recorded in
+[the #102 reconciliation](m5-102-reconciliation.md).
 
 ## Crash and restore campaign
 
@@ -602,13 +622,16 @@ scenarios ran and reported `ok`.
 | [`crash-restore-campaign-postgres-15.json`](../engineering/campaigns/m5/crash-restore-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
 | [`crash-restore-campaign-postgres-18.json`](../engineering/campaigns/m5/crash-restore-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
 
-Both were produced by commit `f0a2cdb`, which is the merge commit the
+Both were produced by commit `58213c0f`, which is the merge commit the
 dedicated workflow checked out rather than a branch tip, on `rustc 1.97.1` and
-Linux `x86_64`. Provenance for both — workflow run `31858308476`, jobs
-`94947011719` (PostgreSQL 15) and `94947011779` (PostgreSQL 18), and their
+Linux `x86_64`. Provenance for both — workflow run `32128988464`, jobs
+`95685722281` (PostgreSQL 15) and `95685722219` (PostgreSQL 18), and their
 artifact digests — is recorded in
 [`evidence-provenance.json`](../engineering/campaigns/m5/evidence-provenance.json)
-and independently verified offline by `cargo xtask evidence`.
+and independently verified offline by `cargo xtask evidence`. This is a fresh
+retention for PR #133, which changed `xtask/src/main.rs` — part of every M5
+campaign's declared closure — and so invalidated the prior retention under
+`cargo xtask evidence`; every observation below is that fresh run's.
 
 **Commit phases.** All five phases behaved as the accepted contract requires,
 identically on both matrix points. The three phases before the commit record
@@ -640,8 +663,8 @@ first `650`.
 
 | Matrix | Uninterrupted run | Chunks before the kill | Discovery | Resume |
 | --- | --- | --- | --- | --- |
-| PostgreSQL 15 | `1083 ms` | `634 ms` | `68 ms` | `291 ms` |
-| PostgreSQL 18 | `759 ms` | `443 ms` | `38 ms` | `266 ms` |
+| PostgreSQL 15 | `997 ms` | `569 ms` | `70 ms` | `244 ms` |
+| PostgreSQL 18 | `1977 ms` | `529 ms` | `53 ms` | `247 ms` |
 
 The two matrix points ran on different runners, so the gap between them is a
 host difference rather than a database one and no comparison between the rows
@@ -654,7 +677,7 @@ observations from one CI runner, not budgets.
 **Logical backup and restore.** The backup was taken with the client matching
 each matrix point — `pg_dump` and `pg_restore` `15.18` against server `15.18`,
 and `18.4` against server `18.4` — as a custom-format archive of the metadata
-and business schemas, `78160` and `78716` bytes respectively. It was restored
+and business schemas, `78165` and `78681` bytes respectively. It was restored
 into a database created for the run, and everything afterwards ran against the
 restored copy.
 
@@ -666,8 +689,8 @@ definition revisions and manifest fingerprints, optimistic versions, step
 attempts, durable checkpoints and execution contexts, counters, recovery
 decisions, flow decisions, partition metadata, and enlisted business rows —
 compared as equality over one reading, not row by row. The job then restarted
-on the restored database, resumed its remaining `2` chunks in `114 ms` and
-`77 ms`, and reached the same terminal observation as the uninterrupted run.
+on the restored database, resumed its remaining `2` chunks in `121 ms` and
+`91 ms`, and reached the same terminal observation as the uninterrupted run.
 
 No correctness P0 or P1 is open against this campaign. The two findings below
 are recorded; the first is a defect and it is closed.
@@ -941,14 +964,17 @@ cover two source schemas covered both, and no report skipped.
 | [`upgrade-campaign-postgres-15.json`](../engineering/campaigns/m5/upgrade-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
 | [`upgrade-campaign-postgres-18.json`](../engineering/campaigns/m5/upgrade-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
 
-Both were produced by commit `f0a2cdb`, which is the merge commit the
+Both were produced by commit `58213c0f`, which is the merge commit the
 dedicated workflow checked out rather than a branch tip, on `rustc 1.97.1` and
 Linux `x86_64`, against servers `15.19` and `18.6`. The command is
 `cargo run --package oxide-batch-xtask -- upgrade`. Provenance for both —
-workflow run `31858308484`, jobs `94947011678` (PostgreSQL 15) and
-`94947011623` (PostgreSQL 18), and their artifact digests — is recorded in
+workflow run `32128988403`, jobs `95685722392` (PostgreSQL 15) and
+`95685722412` (PostgreSQL 18), and their artifact digests — is recorded in
 [`evidence-provenance.json`](../engineering/campaigns/m5/evidence-provenance.json)
-and independently verified offline by `cargo xtask evidence`.
+and independently verified offline by `cargo xtask evidence`. This is a fresh
+retention for PR #133, which changed `xtask/src/main.rs` — part of every M5
+campaign's declared closure — and so invalidated the prior retention under
+`cargo xtask evidence`.
 
 **Schema 1 and schema 2 to schema 3.** Both upgrades succeeded in one migrator
 invocation and left the recorded version at `3`, identically on both matrix
@@ -979,8 +1005,8 @@ opened and projected the database afterwards.
 
 **Restore-based rollback.** Both rollbacks used the client matching their matrix
 point — `pg_dump` and `pg_restore` `15.18` against server `15.18`, and `18.4`
-against server `18.4`. The pre-upgrade archives were `35889` and `46171` bytes on
-PostgreSQL 15, and `36176` and `46518` on PostgreSQL 18, for the schema-1 and
+against server `18.4`. The pre-upgrade archives were `35890` and `46173` bytes on
+PostgreSQL 15, and `36177` and `46518` on PostgreSQL 18, for the schema-1 and
 schema-2 sources respectively.
 
 Each restored database came up at its source schema, declared no structure schema
@@ -1200,12 +1226,20 @@ Both matrix points pass. All three scenarios ran and none skipped.
 | [`security-campaign-postgres-15.json`](../engineering/campaigns/m5/security-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
 | [`security-campaign-postgres-18.json`](../engineering/campaigns/m5/security-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
 
-Both were produced by commit `44423c6a`, which is the merge commit the
+Both were produced by commit `58213c0f`, which is the merge commit the
 dedicated `M5 Security` workflow checked out rather than a branch tip, on
 `rustc 1.97.1` and Linux `x86_64`, against servers `15.19` and `18.6`. The
 command is `./tests/fixtures/security/provision.sh <major>`, which provisions
-the fixture and runs `cargo run --package oxide-batch-xtask -- security`. This
-producer superseded an earlier one (commit `b506affb`, run `31862711341`):
+the fixture and runs `cargo run --package oxide-batch-xtask -- security`.
+Provenance for both — workflow run `32128988420`, jobs `95685722544`
+(PostgreSQL 15) and `95685722820` (PostgreSQL 18) — is recorded in
+[`evidence-provenance.json`](../engineering/campaigns/m5/evidence-provenance.json)
+and independently verified offline by `cargo xtask evidence`. This is a fresh
+retention for PR #133, which changed `xtask/src/main.rs` — part of every M5
+campaign's declared closure — and so invalidated the prior retention; every
+figure below is unchanged since the campaign's own behavior is deterministic
+and independent of that file's dispatch logic. This producer superseded an
+earlier one (commit `b506affb`, run `31862711341`):
 that run predated the exact-set role-matrix reconciliation added afterward, so
 the campaign's semantic closure changed (`role-matrix.json` joined it) and
 fresh evidence was mandatory. The earlier run was, in turn, the first
@@ -1540,11 +1574,19 @@ resources, `36` observed.
 | [`resource-bounds-campaign-postgres-15.json`](../engineering/campaigns/m5/resource-bounds-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
 | [`resource-bounds-campaign-postgres-18.json`](../engineering/campaigns/m5/resource-bounds-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
 
-Both were produced by commit `2c3fb4d4`, which is the pull-request merge
+Both were produced by commit `58213c0f`, which is the pull-request merge
 commit the dedicated `M5 Resource Bounds` workflow checked out rather than a
 branch tip, on `rustc 1.97.1` and Linux `x86_64`, against servers `15.19` and
 `18.6`. The command is `cargo run --package oxide-batch-xtask -- resource-bounds`.
-This producer superseded run `32055594305` (execution tree `11490a1c`), which
+Provenance is workflow run `32128988386`, jobs `95685722555` (PostgreSQL 15)
+and `95685722638` (PostgreSQL 18), recorded in
+[`evidence-provenance.json`](../engineering/campaigns/m5/evidence-provenance.json)
+and independently verified offline by `cargo xtask evidence`. This is a fresh
+retention for PR #133, which changed `xtask/src/main.rs` — part of every M5
+campaign's declared closure — and so invalidated the prior retention below;
+every structural figure is unchanged, since this campaign asserts occupancy,
+counts, and refusals rather than durations. This producer superseded run
+`32055594305` (execution tree `11490a1c`), which
 predated a third corrective pass closing the root proof-cell exact-set — a
 resource's raw evidence could carry an undeclared or bogus extra
 construction cell alongside the required ones, or record construction cells
@@ -2145,14 +2187,14 @@ The retained reports are immutable CI artifacts produced from the recorded
 producer commit. The later evidence-retention commit only records those
 artifacts and their provenance.
 
-Both were produced by run `31680126429` of the dedicated `M5 Soak` workflow —
+Both were produced by run `32128988421` of the dedicated `M5 Soak` workflow —
 which concluded successfully as a whole — from execution tree
-`3197143442ac6eb0e2ccbab4b448371a3b41456d`, the pull-request merge commit the
+`58213c0fd14099d7d77930d9ea751659ac2bcc43`, the pull-request merge commit the
 workflow actually checked out, off branch head
-`a17a6c769422e881e9c04b6594a12c824bcceebd`. The execution tree is the
+`ed370072b63c0a5459e18b5b77071ff297524fb9`. The execution tree is the
 provenance root and the branch head is recorded beside it as metadata; they are
 different commits and are never used interchangeably. The reports record
-`rustc 1.97.1`, Linux `x86_64` on kernel `6.17.0-1020-azure`, `4` Tokio worker
+`rustc 1.97.1`, Linux `x86_64` on kernel `6.17.0-1022-azure`, `4` Tokio worker
 threads, and servers `15.18` and `18.4`. The command is
 `./tests/fixtures/soak/run-ci-campaign.sh <major>`, which the workflow calls and
 which runs `cargo xtask soak` — so the independent recomputation is what the
@@ -2160,13 +2202,13 @@ producing job itself executed. Each artifact's own sha256 digest was read from
 the GitHub API at promotion, matched the downloaded archive, and the extracted
 report matched the retained bytes exactly before retention.
 
-This replaces evidence originally retained from run `31666926265`: the current
-PR changed shared `xtask` execution objects (`xtask/src/main.rs`,
-`xtask/src/suite.rs`) that are part of this campaign's semantic closure, which
-invalidated that run's evidence under `cargo xtask evidence`. Run `31680126429`
-is a later run on this branch, from a tree at least as new as every closure
-path this campaign shares with the Performance fix that follows it, so its
-evidence is valid again without rerunning the soak workload itself.
+This replaces evidence originally retained from run `31680126429`: PR #133
+changed `xtask/src/main.rs`, which is part of this campaign's declared
+semantic closure (listed under "independent verifier"), invalidating that
+run's evidence under `cargo xtask evidence`. Run `32128988421` is this PR's
+fresh, independently-verified run; every correctness obligation below held
+identically, and only the runner-local timing and memory observations differ,
+as they do between any two runs of this campaign.
 
 This is the second producer run after the dedicated-workflow extraction. The
 first run's reports were invalidated rather than reinterpreted because
@@ -2186,7 +2228,7 @@ matrix points. Elapsed time, pool-reading count, and resident-memory series are
 runner observations and differ between points.
 
 **The window.** `32` warmup and `600` measured cycles, `632` completed, one
-sample per cycle, and `37440` and `37885` pool readings taken while the
+sample per cycle, and `41663` and `36894` pool readings taken while the
 cycles ran, none of which failed to read the gauge.
 
 **Correctness.** All fifteen obligations held in all `600` measured cycles, on
@@ -2214,8 +2256,8 @@ and `0` after the close, which the server reached within a millisecond.
 boundaries, on both majors.
 
 **Memory.** The retained reports record warmup/measured resident-memory rates of
-`15.096774`/`0.467445` KiB per cycle on PostgreSQL 15 and
-`13.419354`/`0.520868` on PostgreSQL 18. Both satisfy the existing
+`14.580645`/`0.434056` KiB per cycle on PostgreSQL 15 and
+`13.161290`/`0.467445` on PostgreSQL 18. Both satisfy the existing
 warmup-relative decay rule of `0.25`. These are observational run results; no
 numeric performance or memory budget is promoted by this campaign.
 
@@ -2230,7 +2272,7 @@ kept unchanged for that reason rather than because it is exact.
 
 The rates decay rather than hold, which is the shape the rule asks for, and two
 further readings say why that is settling rather than a leak. The rate falls
-about fourteenfold from warmup to measurement on both majors. And a `1032`-cycle
+about thirtyfold from warmup to measurement on both majors. And a `1032`-cycle
 diagnostic run on the development host — a different allocator — is flat for its
 last `800` samples at an overall slope of `0.014` KiB per cycle: a leak of even
 a tenth of a kilobyte a cycle would have moved five pages across those `800`
@@ -2744,23 +2786,24 @@ reconciles perfectly inside a run of another.
 
 Both matrix points passed with no violations. Every figure below is an
 observation from dedicated workflow run
-[31680126734](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/31680126734),
+[32128988542](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/32128988542),
 debug profile, on shared GitHub-hosted runners. The run executed tree
-`3197143442ac6eb0e2ccbab4b448371a3b41456d` from branch head
-`a17a6c769422e881e9c04b6594a12c824bcceebd`; **nothing is asserted against any
+`58213c0fd14099d7d77930d9ea751659ac2bcc43` from branch head
+`ed370072b63c0a5459e18b5b77071ff297524fb9`; **nothing is asserted against any
 of these measurements**, and the spread discussed under F25 and F26 below is
 the reason that matters rather than a caveat on it. This replaces evidence
-originally retained from run `31666926214`, invalidated by the same
-`xtask/src/main.rs` / `xtask/src/suite.rs` closure change described under F32
-in the performance and reference-workload campaign below; run `31680126734` is
-a later run on this branch whose tree is unaffected by that change, so its
-evidence is valid without rerunning the cancellation workload itself.
+originally retained from run `31680126734`: PR #133 changed
+`xtask/src/main.rs`, part of this campaign's declared semantic closure,
+invalidating that run's evidence under `cargo xtask evidence`. Run
+`32128988542` is this PR's fresh, independently-verified run; every
+correctness assertion below held identically, and only the timing
+observations differ, as they do between any two runs of this campaign.
 
 | Observation | PostgreSQL 15 | PostgreSQL 18 |
 | --- | --- | --- |
-| Server | `15.18 (Debian 15.18-1.pgdg13+1)` | `18.4 (Debian 18.4-1.pgdg13+1)` |
-| Request to intake stop | `10 481 µs` | `111 731 µs` |
-| Request to durable terminal | `465 856 µs` | `457 383 µs` |
+| Server | `15.19 (Debian 15.19-1.pgdg13+2)` | `18.6 (Debian 18.6-1.pgdg13+2)` |
+| Request to intake stop | `9 794 µs` | `116 144 µs` |
+| Request to durable terminal | `466 112 µs` | `545 835 µs` |
 | Ordering holds | yes | yes |
 | Durable terminal | `STOPPED` / exit `STOPPED` | `STOPPED` / exit `STOPPED` |
 | Committed partitions, before → after | `1` → `2` | `1` → `4` |
@@ -2771,10 +2814,10 @@ beside it:
 
 | Phase | Mechanism | Intake stop, 15 | Terminal, 15 | Intake stop, 18 | Terminal, 18 |
 | --- | --- | --- | --- | --- | --- |
-| async | tasklet awaiting the cooperative token | `91 943 µs` | `586 746 µs` | `81 658 µs` | `422 260 µs` |
-| blocking | `BlockingTaskletAdapter` | `96 002 µs` | `1 522 499 µs` | `13 177 µs` | `604 109 µs` |
-| transaction | tasklet holding an open repository unit | `100 247 µs` | `560 518 µs` | `14 116 µs` | `367 253 µs` |
-| process intake | `request_shutdown` then `ensure_accepting` | `2 µs` | — | `2 µs` | — |
+| async | tasklet awaiting the cooperative token | `100 253 µs` | `555 327 µs` | `97 067 µs` | `550 871 µs` |
+| blocking | `BlockingTaskletAdapter` | `91 379 µs` | `1 170 558 µs` | `73 418 µs` | `888 054 µs` |
+| transaction | tasklet holding an open repository unit | `93 337 µs` | `560 849 µs` | `90 777 µs` | `571 153 µs` |
+| process intake | `request_shutdown` then `ensure_accepting` | `1 µs` | — | `1 µs` | — |
 
 Unjoined counts. Every declared deadline was run both ways; the completing
 column is the drain's join cost when its tasks finish, and the expiring column
@@ -2782,10 +2825,10 @@ is what the coordinator still owned when the deadline won.
 
 | Deadline | Held | Completing (unjoined / cost, 15) | Expiring (15) | Completing (18) | Expiring (18) |
 | --- | --- | --- | --- | --- | --- |
-| `minimum`, `1 000 ms` | `3` | `0` / `85 364 µs` | `3` | `0` / `60 558 µs` | `3` |
-| `intermediate`, `5 000 ms` | `5` | `0` / `79 342 µs` | `5` | `0` / `65 714 µs` | `5` |
-| `default`, `30 000 ms` | `7` | `0` / `5 922 µs` | `7` | `0` / `4 981 µs` | `7` |
-| escalation | `4` | — | `4`, in `56 µs` | — | `4`, in `47 µs` |
+| `minimum`, `1 000 ms` | `3` | `0` / `76 173 µs` | `3` | `0` / `79 292 µs` | `3` |
+| `intermediate`, `5 000 ms` | `5` | `0` / `59 519 µs` | `5` | `0` / `59 839 µs` | `5` |
+| `default`, `30 000 ms` | `7` | `0` / `5 890 µs` | `7` | `0` / `5 437 µs` | `7` |
+| escalation | `4` | — | `4`, in `54 µs` | — | `4`, in `50 µs` |
 
 Every expiring count is attributed across the three observed phases and sums to
 the total: `Tasklet`/`ChunkReadProcess`/`Transaction` of `1`/`1`/`1`, `2`/`2`/`1`,
@@ -2793,7 +2836,7 @@ and `3`/`2`/`2` respectively, identically on both majors. Every completing drain
 joined every owned task and reported nothing unjoined.
 
 Restart after cancellation: the restart was a new execution of the same
-instance on both majors, re-ran `62` partitions on PostgreSQL 15 and `60` on
+instance on both majors, re-ran `62` partitions on both PostgreSQL 15 and
 PostgreSQL 18, re-ran **none** of the partitions the cancelled attempt had
 committed on either major, and reached `COMPLETED` on both.
 
@@ -3084,46 +3127,48 @@ no duration below is compared across runs as if the hardware were held fixed.
 
 Both matrix points passed with no violations. Every figure below is an
 observation from dedicated workflow run
-[31706269943](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/31706269943),
+[32128988419](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/32128988419),
 release profile, on shared GitHub-hosted runners. The run executed tree
-`513d235d12d2a58dc1955eb4cbe49662d34df69b` from branch head
-`9616432f343977dd86dd26f610edc2afb16275ac`; **nothing is asserted against any
+`58213c0fd14099d7d77930d9ea751659ac2bcc43` from branch head
+`ed370072b63c0a5459e18b5b77071ff297524fb9`; **nothing is asserted against any
 of these measurements.** This replaces evidence originally retained from run
-`31677650719`, and then from run `31692527295`: the P-010 denominator
-correction (F34) and the pool-ceiling/business-row/canonical-measurement
-hardening (F35), together with the earlier worker-occupancy and
-resource-instrumentation fix (F31/F33), changed both the wording being
-measured against and the meaning of several figures, so earlier runs'
-evidence became stale by design and is not carried forward.
+`31706269943`: PR #133 changed `xtask/src/main.rs`, part of this campaign's
+declared semantic closure, invalidating that run's evidence under `cargo
+xtask evidence`. Run `32128988419` is this PR's fresh, independently-verified
+run, on different (faster) runner hardware — `AMD EPYC 9V74 80-Core
+Processor` in place of the prior retention's `AMD EPYC 7763 64-Core
+Processor` — which is exactly why every duration below is an observation and
+none is compared across runs as if the hardware were held fixed; every
+correctness assertion held identically.
 
 P-001, in-memory, independent of the PostgreSQL major:
 
 | Observation | PostgreSQL 15 | PostgreSQL 18 |
 | --- | --- | --- |
 | Warmup / measured attempts | `16` / `256` | `16` / `256` |
-| End-to-end duration (mean) | `989 µs` | `1 015 µs` |
-| Job overhead (mean) | `500 µs` | `512 µs` |
-| Step overhead (mean) | `488 µs` | `503 µs` |
+| End-to-end duration (mean) | `775 µs` | `998 µs` |
+| Job overhead (mean) | `392 µs` | `502 µs` |
+| Step overhead (mean) | `383 µs` | `495 µs` |
 | Repository round trips / attempt | `6` | `6` |
 | Distinct execution identifiers | `272` / `272` attempts | `272` / `272` attempts |
-| Observed peak resident memory | `7 548 KiB` | `7 688 KiB` |
+| Observed peak resident memory | `7 680 KiB` | `7 552 KiB` |
 
 P-003, the shared reference workload, 10 000 rows, seed `102`, chunk size
 `100`:
 
 | Observation | PostgreSQL 15 | PostgreSQL 18 |
 | --- | --- | --- |
-| Server | `15.18 (Debian 15.18-1.pgdg13+1)` | `18.4 (Debian 18.4-1.pgdg13+1)` |
-| Items / second | `6 294` | `5 094` |
-| Chunks / second | `62.94` | `50.94` |
-| End-to-end duration | `1 588 729 µs` | `1 963 248 µs` |
-| Per-item overhead | `158.9 µs` | `196.3 µs` |
-| Per-chunk overhead | `15 887 µs` | `19 632 µs` |
+| Server | `15.19 (Debian 15.19-1.pgdg13+2)` | `18.6 (Debian 18.6-1.pgdg13+2)` |
+| Items / second | `7 541` | `6 349` |
+| Chunks / second | `75.41` | `63.49` |
+| End-to-end duration | `1 326 148 µs` | `1 575 007 µs` |
+| Per-item overhead | `132.6 µs` | `157.5 µs` |
+| Per-chunk overhead | `13 261 µs` | `15 750 µs` |
 | Source digest = written digest | yes | yes |
 | Written row count | `10 000` | `10 000` |
 | Delivery mode | `AtomicSameResource` | `AtomicSameResource` |
 | Configured connection ceiling / observed peak | `2` / `2` | `2` / `2` |
-| Observed peak resident memory | `9 684 KiB` | `9 724 KiB` |
+| Observed peak resident memory | `9 936 KiB` | `9 604 KiB` |
 
 P-010, 100 partitions per point, three worker points, each worker awaiting a
 fixed `750 ms` deterministic dwell before its `PostgreSQL` business write
@@ -3131,24 +3176,24 @@ fixed `750 ms` deterministic dwell before its `PostgreSQL` business write
 
 | Workers | Pool budget | Wall time, 15 | Partitions/s, 15 | Efficiency, 15 | Wall time, 18 | Partitions/s, 18 | Efficiency, 18 | Peak active workers (15 / 18) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `1` | `2` | `76 277 493 µs` | `1.31` | baseline | `76 442 734 µs` | `1.31` | baseline | `1` / `1` |
-| `10` | `11` | `7 812 011 µs` | `12.80` | `0.976` | `7 871 009 µs` | `12.70` | `0.971` | `10` / `10` |
-| `64` | `65` | `2 026 986 µs` | `49.33` | `0.588` | `2 062 263 µs` | `48.49` | `0.579` | `64` / `64` |
+| `1` | `2` | `77 886 316 µs` | `1.28` | baseline | `76 296 834 µs` | `1.31` | baseline | `1` / `1` |
+| `10` | `11` | `8 648 828 µs` | `11.56` | `0.901` | `7 844 231 µs` | `12.75` | `0.973` | `10` / `10` |
+| `64` | `65` | `2 054 675 µs` | `48.67` | `0.592` | `2 019 418 µs` | `49.52` | `0.590` | `64` / `64` |
 
 Observed peak active workers exactly matched the configured worker point at
 every point on both majors — `1`, `10`, and `64` — which is the fail-closed
 concurrency proof F31/F35 requires as a committed obligation, not merely a
-producer-local check. Observed peak connections reached `66` on both majors,
-against a configured ceiling of `73` (framework pool at the largest worker
-point plus the constant 8-connection business pool, itself well inside the
-image default of `100`) — this is now its own obligation, distinct from the
-pool-ceiling admission proof (F35), which separately confirmed a pool one
-connection short of the derived budget (`4` configured against a derived
-budget of `5`) was refused before any worker started, with zero workers
-observed during that refused attempt, on both majors. Observed peak owned
-tasks reached `64`, matching the configured budget exactly, on both majors —
-read from the same occupancy gauge that proves the concurrency claim above,
-not copied from the configured constant.
+producer-local check. Observed peak connections reached `71` on PostgreSQL 15
+and `65` on PostgreSQL 18, against a configured ceiling of `73` (framework
+pool at the largest worker point plus the constant 8-connection business
+pool, itself well inside the image default of `100`) — this is now its own
+obligation, distinct from the pool-ceiling admission proof (F35), which
+separately confirmed a pool one connection short of the derived budget (`4`
+configured against a derived budget of `5`) was refused before any worker
+started, with zero workers observed during that refused attempt, on both
+majors. Observed peak owned tasks reached `64`, matching the configured
+budget exactly, on both majors — read from the same occupancy gauge that
+proves the concurrency claim above, not copied from the configured constant.
 
 The business row set F35 requires now confirms the business half of P-010's
 declared work per partition, not only the framework's durable metadata: every

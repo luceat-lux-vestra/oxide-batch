@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "977528e1a85332ddc807843c22ffc4592886a049",
+    "source_commit": "58213c0fd14099d7d77930d9ea751659ac2bcc43",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -20,7 +20,7 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "977528e1a85332ddc807843c22ffc4592886a049",
+      "execution_commit": "58213c0fd14099d7d77930d9ea751659ac2bcc43",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -56,7 +56,7 @@
         "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
         "xtask/src/crash_restore.rs": "38edf0099c6354ab09afed54b7499ad425f53335",
         "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
-        "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
+        "xtask/src/main.rs": "8c3b3e15e9c8240fca84f2446a5f816f0e4112ba",
         "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
       },
       "tree_clean": true
@@ -129,7 +129,7 @@
           "step_status": "COMPLETED"
         },
         "execution_manifest": {
-          "execution_commit": "977528e1a85332ddc807843c22ffc4592886a049",
+          "execution_commit": "58213c0fd14099d7d77930d9ea751659ac2bcc43",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -165,7 +165,7 @@
             "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
             "xtask/src/crash_restore.rs": "38edf0099c6354ab09afed54b7499ad425f53335",
             "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
-            "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
+            "xtask/src/main.rs": "8c3b3e15e9c8240fca84f2446a5f816f0e4112ba",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
           },
           "tree_clean": true
@@ -173,7 +173,7 @@
         "passed": true,
         "phases": [
           {
-            "child_pid": 8075,
+            "child_pid": 8101,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -188,9 +188,9 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 3,
-              "reach_phase": 20,
-              "resume": 19
+              "discovery": 4,
+              "reach_phase": 21,
+              "resume": 22
             },
             "expected": "the enlisted rows were never committed, so the chunk replays whole",
             "fixture": "postgres",
@@ -297,7 +297,7 @@
             "violations": []
           },
           {
-            "child_pid": 8111,
+            "child_pid": 8118,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -314,7 +314,7 @@
             "durations_ms": {
               "discovery": 3,
               "reach_phase": 21,
-              "resume": 20
+              "resume": 21
             },
             "expected": "durable state was produced inside the commit and never bound, so the chunk replays whole",
             "fixture": "postgres",
@@ -421,7 +421,7 @@
             "violations": []
           },
           {
-            "child_pid": 8127,
+            "child_pid": 8155,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -437,8 +437,8 @@
             },
             "durations_ms": {
               "discovery": 3,
-              "reach_phase": 36,
-              "resume": 20
+              "reach_phase": 56,
+              "resume": 25
             },
             "expected": "the progress write was issued and blocked, so neither it nor the enlisted rows are durable and the chunk replays whole",
             "fixture": "postgres",
@@ -545,7 +545,7 @@
             "violations": []
           },
           {
-            "child_pid": 8145,
+            "child_pid": 8173,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -560,9 +560,9 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 4,
-              "reach_phase": 36,
-              "resume": 15
+              "discovery": 3,
+              "reach_phase": 57,
+              "resume": 19
             },
             "expected": "the server completed the commit the killed process never saw acknowledged, so the chunk is durable and must not replay",
             "fixture": "postgres",
@@ -671,7 +671,7 @@
             "violations": []
           },
           {
-            "child_pid": 8163,
+            "child_pid": 8211,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -687,8 +687,8 @@
             },
             "durations_ms": {
               "discovery": 3,
-              "reach_phase": 21,
-              "resume": 17
+              "reach_phase": 42,
+              "resume": 19
             },
             "expected": "the commit was acknowledged before the kill, so the chunk is durable and must not replay",
             "fixture": "postgres",
@@ -830,7 +830,7 @@
           "job_status": "COMPLETED",
           "step_status": "COMPLETED"
         },
-        "child_pid": 8516,
+        "child_pid": 8545,
         "decision": {
           "class": "APPLIED",
           "path": "operator recover",
@@ -846,13 +846,13 @@
           "unknown_commit": false
         },
         "durations_ms": {
-          "commit_chunks_before_kill": 506,
-          "discovery": 50,
-          "resume": 226,
-          "uninterrupted_run": 1353
+          "commit_chunks_before_kill": 569,
+          "discovery": 70,
+          "resume": 244,
+          "uninterrupted_run": 997
         },
         "execution_manifest": {
-          "execution_commit": "977528e1a85332ddc807843c22ffc4592886a049",
+          "execution_commit": "58213c0fd14099d7d77930d9ea751659ac2bcc43",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -888,7 +888,7 @@
             "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
             "xtask/src/crash_restore.rs": "38edf0099c6354ab09afed54b7499ad425f53335",
             "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
-            "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
+            "xtask/src/main.rs": "8c3b3e15e9c8240fca84f2446a5f816f0e4112ba",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
           },
           "tree_clean": true
@@ -1043,7 +1043,7 @@
           "restored_into": "oxide_batch_m5_restore"
         },
         "execution_manifest": {
-          "execution_commit": "977528e1a85332ddc807843c22ffc4592886a049",
+          "execution_commit": "58213c0fd14099d7d77930d9ea751659ac2bcc43",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -1079,7 +1079,7 @@
             "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
             "xtask/src/crash_restore.rs": "38edf0099c6354ab09afed54b7499ad425f53335",
             "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
-            "xtask/src/main.rs": "42e7dc33f7b97fdf30370577d5bfd354b9b6bb5a",
+            "xtask/src/main.rs": "8c3b3e15e9c8240fca84f2446a5f816f0e4112ba",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
           },
           "tree_clean": true
@@ -1088,7 +1088,7 @@
         "passed": true,
         "report": "logical backup and restore",
         "restart_on_restored": {
-          "duration_ms": 84,
+          "duration_ms": 121,
           "resumed_chunks": 2,
           "terminal": {
             "business_rows": 25,
@@ -1364,7 +1364,7 @@
           ]
         },
         "tooling": {
-          "archive_bytes": 78162,
+          "archive_bytes": 78165,
           "format": "custom",
           "pg_dump": "pg_dump (PostgreSQL) 15.19 (Ubuntu 15.19-1.pgdg24.04+2)",
           "pg_restore": "pg_restore (PostgreSQL) 15.19 (Ubuntu 15.19-1.pgdg24.04+2)",

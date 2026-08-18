@@ -6,6 +6,7 @@ mod crash_restore;
 mod deps;
 mod evidence;
 mod performance;
+mod reconciliation;
 mod resource_bounds;
 mod security;
 mod soak;
@@ -44,6 +45,15 @@ const QUALITY: &[Task<'static>] = &[
             "--",
             "-D",
             "warnings",
+            // Mirrors the required `Rust / quality` CI job exactly
+            // (`.github/workflows/ci.yml`), including the two narrow,
+            // audit-shape exceptions that job's own follow-up step verifies
+            // stay confined to `reconcile_exact_cell` and
+            // `reconcile_search_bounded_construction`.
+            "-A",
+            "clippy::too_many_arguments",
+            "-A",
+            "clippy::too_many_lines",
         ],
         rustdoc_warnings: false,
     },
@@ -109,7 +119,13 @@ fn main() -> ExitCode {
 
     let succeeded = match args.next().as_deref() {
         Some("cancellation") => run_cancellation_campaign(),
-        Some("check") => run_all(QUALITY) && run_dependency_check() && run_surface_check(),
+        Some("check") => {
+            run_all(QUALITY)
+                && run_dependency_check()
+                && run_surface_check()
+                && run_evidence_check()
+                && run_reconciliation_check()
+        }
         Some("conformance") => run_conformance_campaign(),
         Some("crash-restore") => run_crash_restore_campaign(),
         Some("deps") => run_dependency_check(),
@@ -117,6 +133,7 @@ fn main() -> ExitCode {
         Some("evidence") => run_evidence_check(),
         Some("package") => run_all(PACKAGE),
         Some("performance") => run_performance_campaign(),
+        Some("reconciliation") => run_reconciliation_check(),
         Some("resource-bounds") => run_resource_bound_campaign(),
         Some("security") => run_security_campaign(),
         Some("soak") => run_soak_campaign(),
@@ -353,6 +370,35 @@ fn run_evidence_check() -> bool {
     }
 }
 
+/// Reports whether the #102 reconciliation document still agrees with the
+/// repository it describes.
+fn run_reconciliation_check() -> bool {
+    eprintln!("==> #102 reconciliation drift");
+
+    match reconciliation::run() {
+        Ok(verification) => {
+            if verification.violations.is_empty() {
+                eprintln!(
+                    "docs/project/m5-102-reconciliation.md names every required criterion \
+                     exactly once with one disposition, its declared campaign and retained \
+                     report counts match evidence-provenance.json and the retained-report \
+                     directory, and every evidence link it cites resolves on disk"
+                );
+                return true;
+            }
+            for violation in &verification.violations {
+                eprintln!("reconciliation drift: {violation}");
+            }
+            eprintln!("see docs/project/m5-102-reconciliation.md");
+            false
+        }
+        Err(error) => {
+            eprintln!("could not verify the #102 reconciliation document: {error}");
+            false
+        }
+    }
+}
+
 /// Reports whether P-001, P-003, and P-010 each proved what they owe.
 fn run_performance_campaign() -> bool {
     eprintln!("==> M5 performance and reference-workload campaign");
@@ -523,6 +569,7 @@ fn usage() {
            evidence         verify retained campaign evidence against its provenance\n\
            package          inspect and dry-run every publishable crate\n\
            performance      run P-001, P-003, and P-010 in release profile against PostgreSQL\n\
+           reconciliation   verify the #102 reconciliation document against the repository\n\
            resource-bounds  prove every declared ceiling holds and is reached under stress\n\
            security         run the TLS, least-privilege, and redaction campaign\n\
            soak             run the declared P-015 soak window and judge its growth\n\
