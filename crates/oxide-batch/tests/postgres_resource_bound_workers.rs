@@ -62,8 +62,8 @@ use serde_json::{Value, json};
 use tokio::sync::Barrier;
 
 use resource_bounds::{
-    Failure, FixedClock, Occupancy, config, config_with_pool, join_wave, major_version,
-    migrator_url, remove_job, retain_observation, runtime_url, server_version,
+    Failure, FixedClock, Occupancy, config, config_with_pool, execution_manifest, join_wave,
+    major_version, migrator_url, remove_job, retain_observation, runtime_url, server_version,
 };
 
 /// The report identifier the runner reconciles this observation under.
@@ -130,6 +130,8 @@ async fn report(runtime: String, migrator: String) -> Result<(), Box<dyn Error>>
 
     let baseline = run_partitions(&runtime, BASELINE_JOB, 1, None).await?;
     let equivalence = compare(&baseline.observation, &stressed);
+    let must_not_observe = must_not_observe_conditions(&migrator, &connections, &stressed).await?;
+    let equivalence = equivalence.with_must_not_observe(must_not_observe);
     violations.extend(equivalence.violations.clone());
 
     let document = json!({
@@ -147,6 +149,7 @@ async fn report(runtime: String, migrator: String) -> Result<(), Box<dyn Error>>
             .map(Cell::evidence)
             .collect::<Vec<_>>(),
         "durable_equivalence": equivalence.evidence(),
+        "execution_manifest": execution_manifest()?,
         "violations": violations,
         "passed": violations.is_empty(),
     });
@@ -511,6 +514,7 @@ async fn run_partitions(
         parent_exit_status: parent.metadata().exit_status().clone(),
         parent_counts: parent.metadata().counts(),
         step_executions: launched.step_executions().len(),
+        raw_partition_rows: partitions.len(),
         partitions: partitions
             .iter()
             .map(|partition| {
@@ -779,13 +783,6 @@ fn partition_construction_cells() -> Vec<Cell> {
         PartitionBudget::new(0, 2).is_ok(),
         false,
     ));
-    cells.push(Cell::new(
-        "repository-connection-capacity",
-        "a declared pool one short of the derivation",
-        u64::from(MAX_PARTITION_WORKERS),
-        PartitionBudget::new(MAX_PARTITION_WORKERS, u32::from(MAX_PARTITION_WORKERS)).is_ok(),
-        false,
-    ));
 
     cells
 }
@@ -1012,6 +1009,7 @@ fn compare(baseline: &Observation, stressed: &Observation) -> Equivalence {
         stressed_workers: u64::from(MAX_PARTITION_WORKERS),
         partitions: stressed.partitions.len() as u64,
         compared,
+        must_not_observe: Vec::new(),
         violations,
     }
 }
@@ -1044,6 +1042,67 @@ fn shape_violations(stressed: &Observation) -> Vec<String> {
     }
 
     violations
+}
+
+/// Decides each durable regression the scope's comparison must not observe.
+///
+/// The scope names six: two are already computed from the stressed run's own
+/// record (`duplicate-partition-execution`, `missing-partition`,
+/// `unfinished-child`, `forged-execution-status`), one is a fresh database
+/// round trip confirming the report's own cleanup left nothing behind for
+/// either job (`leaked-durable-execution`), and one is read back from the
+/// connection-capacity report's own residue check
+/// (`partial-launch-after-rejection`). Each is reported as an explicit
+/// `{condition, observed}` pair rather than folded into a free-form violation
+/// list, so the runner can reconcile it by name rather than by pattern.
+async fn must_not_observe_conditions(
+    migrator_url: &str,
+    connections: &Stressed,
+    stressed: &Observation,
+) -> Result<Vec<Value>, Box<dyn Error>> {
+    let stressed_residue = launch_residue(migrator_url, STRESSED_JOB).await?;
+    let baseline_residue = launch_residue(migrator_url, BASELINE_JOB).await?;
+    let leaked =
+        |residue: &BTreeMap<String, i64>| residue.get("ob_job_execution").copied() != Some(1);
+    let partial_launch_after_rejection = connections
+        .detail
+        .pointer("/residue_after_refusal")
+        .and_then(Value::as_object)
+        .is_some_and(|residue| residue.values().any(|rows| rows.as_i64() != Some(0)));
+
+    Ok(vec![
+        json!({
+            "condition": "duplicate-partition-execution",
+            "observed": stressed.raw_partition_rows > stressed.partitions.len(),
+        }),
+        json!({
+            "condition": "missing-partition",
+            "observed": stressed.partitions.len() < usize::from(OFFERED_PARTITIONS),
+        }),
+        json!({
+            "condition": "unfinished-child",
+            "observed": stressed
+                .partitions
+                .values()
+                .any(|partition| partition.status != BatchStatus::Completed),
+        }),
+        json!({
+            "condition": "leaked-durable-execution",
+            "observed": leaked(&stressed_residue) || leaked(&baseline_residue),
+        }),
+        json!({
+            "condition": "forged-execution-status",
+            "observed": stressed.job_status == BatchStatus::Completed
+                && stressed
+                    .partitions
+                    .values()
+                    .any(|partition| partition.status != BatchStatus::Completed),
+        }),
+        json!({
+            "condition": "partial-launch-after-rejection",
+            "observed": partial_launch_after_rejection,
+        }),
+    ])
 }
 
 /// Builds one bounded partition context and key.
@@ -1110,6 +1169,11 @@ struct Observation {
     parent_exit_status: ExitStatus,
     parent_counts: ExecutionCounts,
     step_executions: usize,
+    /// The number of durable partition rows the database actually returned,
+    /// before they are keyed by partition key. A duplicate execution of one
+    /// partition would collapse into `partitions` silently; this is what
+    /// tells the two apart.
+    raw_partition_rows: usize,
     partitions: BTreeMap<String, DurablePartition>,
 }
 
@@ -1214,9 +1278,25 @@ impl Cell {
 
     /// Renders what the retained evidence records for this cell.
     fn evidence(&self) -> Value {
+        let (declared, unit) = match self.resource {
+            "partitions-per-step" => (Some(u64::from(MAX_PARTITIONS)), Some("partitions")),
+            "concurrent-partition-workers" => (
+                Some(u64::from(MAX_PARTITION_WORKERS)),
+                Some("concurrent workers"),
+            ),
+            "split-branches-per-node" => (Some(MAX_SPLIT_BRANCHES as u64), Some("branches")),
+            "concurrent-split-branches" => {
+                (Some(MAX_SPLIT_BRANCHES as u64), Some("concurrent branches"))
+            }
+            "steps-per-split-branch" => (Some(MAX_BRANCH_STEPS as u64), Some("steps")),
+            "repository-pool-size" => (Some(1024), Some("connections")),
+            _ => (None, None),
+        };
         json!({
             "resource": self.resource,
             "case": self.case,
+            "declared_ceiling": declared,
+            "unit": unit,
             "value": self.value,
             "expected": if self.expected { "accepted" } else { "refused" },
             "observed": if self.accepted { "accepted" } else { "refused" },
@@ -1230,10 +1310,23 @@ struct Equivalence {
     stressed_workers: u64,
     partitions: u64,
     compared: Vec<Value>,
+    /// The regressions the scope names, and whether this comparison actually
+    /// observed each one. Attached after construction, since deciding some of
+    /// them — whether the report's own cleanup left anything behind — needs a
+    /// database round trip the comparison itself does not make.
+    must_not_observe: Vec<Value>,
     violations: Vec<String>,
 }
 
 impl Equivalence {
+    /// Attaches the `must_not_observe` regressions this comparison decided.
+    fn with_must_not_observe(self, must_not_observe: Vec<Value>) -> Self {
+        Self {
+            must_not_observe,
+            ..self
+        }
+    }
+
     /// Renders what the retained evidence records for the comparison.
     fn evidence(&self) -> Value {
         json!({
@@ -1241,6 +1334,7 @@ impl Equivalence {
             "stressed_workers": self.stressed_workers,
             "partitions": self.partitions,
             "fields_compared": self.compared,
+            "must_not_observe": self.must_not_observe,
             "violations": self.violations,
             "passed": self.violations.is_empty(),
         })

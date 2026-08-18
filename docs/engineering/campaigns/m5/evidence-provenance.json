@@ -1,13 +1,10 @@
 {
-  "document": "Retained evidence provenance for the M5 campaigns",
-  "issue": "https://github.com/luceat-lux-vestra/oxide-batch/issues/102",
   "note": "This document says where each retained report came from and what binds it to the tree it sits beside. It is data rather than prose because `cargo xtask evidence` reads it: the fields below are checked rather than described.",
   "model": {
-    "note": "A retained report cannot have been produced by the commit that contains it: the artifact records the tree it ran on, and the commit that stores the artifact comes after it. A rule requiring the two to be equal is not strict, it is unsatisfiable, and chasing it reruns the campaign on every push without converging. The pipeline has three distinct positions and this document keeps them apart. The root of trust is the first of them, and it is recorded by the run itself rather than reconstructed afterwards.",
     "stages": [
       {
         "stage": "actual execution tree",
-        "what": "The tree the campaign really ran against, recorded by the run from inside its own checkout as an object manifest in the report. On a pull request this is the ephemeral merge commit, which no later clone can resolve — which is exactly why the manifest is recorded rather than the commit name being trusted to stand for it."
+        "what": "The tree the campaign really ran against, recorded by the run from inside its own checkout as an object manifest in the report. On a pull request this is the ephemeral merge commit, which no later clone can resolve \u2014 which is exactly why the manifest is recorded rather than the commit name being trusted to stand for it."
       },
       {
         "stage": "workflow run",
@@ -18,26 +15,32 @@
         "what": "A later, evidence-only commit that stores the artifact byte-for-byte and records this provenance. It differs from the execution tree, and that is the normal state rather than a defect."
       }
     ],
+    "note": "A retained report cannot have been produced by the commit that contains it: the artifact records the tree it ran on, and the commit that stores the artifact comes after it. A rule requiring the two to be equal is not strict, it is unsatisfiable, and chasing it reruns the campaign on every push without converging. The pipeline has three distinct positions and this document keeps them apart. The root of trust is the first of them, and it is recorded by the run itself rather than reconstructed afterwards.",
     "prohibited": [
       "Using the branch head as a stand-in for the tree the campaign executed against; they are different commits.",
       "Presenting the retention commit as the producer.",
       "Editing a retained artifact so that a recorded hash or commit matches.",
       "Re-running the campaign on each new head to make the execution tree equal the retention commit.",
-      "Treating a summary the report wrote about itself — a verdict, a total, a pass — as evidence for the run it describes."
+      "Treating a summary the report wrote about itself \u2014 a verdict, a total, a pass \u2014 as evidence for the run it describes."
+    ]
+  },
+  "retention_paths": {
+    "note": "The paths an evidence-retention change is expected to touch. A review convention rather than an automated check: identifying \"the retention commit\" from inside the tree is the same self-reference that made the original requirement unsatisfiable. What is enforced is the semantic binding above.",
+    "allowed": [
+      "docs/engineering/campaigns/m5/",
+      "docs/project/m5-campaign-evidence.md"
     ]
   },
   "binding": {
-    "note": "Two verifications with different reach, and the difference is stated rather than blurred. `cargo xtask evidence` is repository-local: it resolves nothing over the network, so it keeps working long after GitHub has expired the artifacts it describes, and what it establishes is that the retained bytes are the bytes this repository recorded, over a tree whose campaign still means what it meant. It cannot say the retained bytes are the bytes the workflow uploaded. That stronger check needs the GitHub API, which is why it is performed once — at the moment evidence is promoted — and its result recorded per entry under remote_verification.",
-    "artifact_identity": "Each report's git blob identity, taken over the working-tree file. It changes if a single byte of a retained artifact is edited after retention.",
-    "campaign_semantics": "The object identity of every path in the declared closure, as the run recorded them from its own checkout. The verifier requires each to still be the tree's identity today. It resolves no commit and fetches nothing: the inputs are the retained report, the closure document, and the working tree.",
-    "why_object_ids": "Git object identities for the local binding, because git is already required by this tooling, the values are verifiable by hand with `git rev-parse HEAD:<path>` and `git hash-object <file>`, and no dependency is added to compute them. The GitHub artifact digest is recorded separately and is a different thing: a sha256 over the uploaded archive, which is what the one-time remote check compares against.",
-    "local_verification": "Enforced on every CI run. Artifact git blob identity, the three-way producer/recorded/HEAD binding over campaign-semantics paths, exactly-once matrix coverage, schema completeness, and the report contract.",
+    "derived_verdicts": "The report's correctness results, growth verdicts and campaign totals are not read as evidence. `cargo xtask soak` recomputes each of them from the raw per-cycle journal and the retained samples, after first requiring the chronology of those arrays to be a contiguous, ordered, correctly phased run of the declared length, and requires the report's own answers to match.",
+    "note": "Two verifications with different reach, and the difference is stated rather than blurred. `cargo xtask evidence` is repository-local: it resolves nothing over the network, so it keeps working long after GitHub has expired the artifacts it describes, and what it establishes is that the retained bytes are the bytes this repository recorded, over a tree whose campaign still means what it meant. It cannot say the retained bytes are the bytes the workflow uploaded. That stronger check needs the GitHub API, which is why it is performed once \u2014 at the moment evidence is promoted \u2014 and its result recorded per entry under remote_verification.",
     "remote_verification": "Performed once per retention, against the GitHub Actions API: the run, attempt and job exist and succeeded; the artifact's own sha256 digest is recorded; the artifact is downloaded and its extracted report compared byte-for-byte with the retained file. It is deliberately not a permanent CI dependency, because Actions artifacts expire and a verifier that stopped working on a retention boundary would be switched off rather than fixed.",
-    "derived_verdicts": "The report's correctness results, growth verdicts and campaign totals are not read as evidence. `cargo xtask soak` recomputes each of them from the raw per-cycle journal and the retained samples, after first requiring the chronology of those arrays to be a contiguous, ordered, correctly phased run of the declared length, and requires the report's own answers to match."
+    "local_verification": "Enforced on every CI run. Artifact git blob identity, the three-way producer/recorded/HEAD binding over campaign-semantics paths, exactly-once matrix coverage, schema completeness, and the report contract.",
+    "why_object_ids": "Git object identities for the local binding, because git is already required by this tooling, the values are verifiable by hand with `git rev-parse HEAD:<path>` and `git hash-object <file>`, and no dependency is added to compute them. The GitHub artifact digest is recorded separately and is a different thing: a sha256 over the uploaded archive, which is what the one-time remote check compares against.",
+    "artifact_identity": "Each report's git blob identity, taken over the working-tree file. It changes if a single byte of a retained artifact is edited after retention.",
+    "campaign_semantics": "The object identity of every path in the declared closure, as the run recorded them from its own checkout. The verifier requires each to still be the tree's identity today. It resolves no commit and fetches nothing: the inputs are the retained report, the closure document, and the working tree."
   },
   "campaigns": {
-    "note": "Retained evidence is per campaign, and everything that used to be stated once for the only campaign is stated per campaign here: which closure decides what its evidence is evidence of, and which matrix points it owes. The earlier version of this document had one `campaign_semantics` pointer and one `required_matrix`, which was correct while the soak was the only retained campaign and silently wrong the moment a second one arrived: the two campaigns' reports would have been checked against the soak's closure, and postgres-15 would have been reported as covered twice rather than once by each.",
-    "rule": "A campaign's reports are bound to that campaign's closure and to no other. Two campaigns retained from the same workflow run share an execution tree, and that is checked; two retained from different runs do not, and that is allowed. What is never allowed is a report whose campaign declares no closure, or a closure no retained report belongs to.",
     "declared": [
       {
         "campaign": "M5 PostgreSQL soak",
@@ -94,15 +97,18 @@
           "postgres-15",
           "postgres-18"
         ]
+      },
+      {
+        "campaign": "M5 PostgreSQL resource bounds",
+        "semantics": "tests/fixtures/resource-bounds/campaign-semantics.json",
+        "required_matrix": [
+          "postgres-15",
+          "postgres-18"
+        ]
       }
-    ]
-  },
-  "retention_paths": {
-    "note": "The paths an evidence-retention change is expected to touch. A review convention rather than an automated check: identifying \"the retention commit\" from inside the tree is the same self-reference that made the original requirement unsatisfiable. What is enforced is the semantic binding above.",
-    "allowed": [
-      "docs/engineering/campaigns/m5/",
-      "docs/project/m5-campaign-evidence.md"
-    ]
+    ],
+    "note": "Retained evidence is per campaign, and everything that used to be stated once for the only campaign is stated per campaign here: which closure decides what its evidence is evidence of, and which matrix points it owes. The earlier version of this document had one `campaign_semantics` pointer and one `required_matrix`, which was correct while the soak was the only retained campaign and silently wrong the moment a second one arrived: the two campaigns' reports would have been checked against the soak's closure, and postgres-15 would have been reported as covered twice rather than once by each.",
+    "rule": "A campaign's reports are bound to that campaign's closure and to no other. Two campaigns retained from the same workflow run share an execution tree, and that is checked; two retained from different runs do not, and that is allowed. What is never allowed is a report whose campaign declares no closure, or a closure no retained report belongs to."
   },
   "evidence": [
     {
@@ -866,6 +872,120 @@
         "execution_commit_matches_report": true,
         "note": "Fresh retention after Cargo.lock changed a declared campaign-semantics object. The workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, extracted report bytes, and execution tree were independently verified before this retention."
       }
+    },
+    {
+      "report": "resource-bounds-campaign-postgres-15.json",
+      "campaign": "M5 PostgreSQL resource bounds",
+      "scenarios": [
+        "declared_ceilings_hold_under_stress_with_backpressure",
+        "bounded_query_paths_stay_bounded_as_history_grows",
+        "bounded_payloads_are_refused_one_byte_over_the_ceiling",
+        "bounded_queues_shed_under_overload_without_blocking_batch_work"
+      ],
+      "matrix_point": "postgres-15",
+      "postgres_major_version": "15",
+      "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
+      "producer": {
+        "execution_commit": "2d9ab0ce976535fa3564159f70568c04e346c6a5",
+        "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
+        "branch_head_sha": "90fa7d0004f843fee77067c5af49d88200537332",
+        "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "M5 Resource Bounds",
+        "workflow_file": ".github/workflows/m5-resource-bounds.yml",
+        "id": 32115407707,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "postgres-15-resource-bounds-campaign",
+        "id": 95643695408,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "resource-bounds-campaign-postgres-15",
+        "id": 9316533962,
+        "digest": "sha256:7c75c923129a1454ac753112adc536cab83ef030fb3d5a53227bee2b80623835",
+        "size_bytes": 13096
+      },
+      "retained_report_git_blob": "54c0973bd1c2101f9a40d4483b03634928c71bc6",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-18T08:17:13Z",
+        "run_id": 32115407707,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Final lint-clean resource-bounds retention. Run 32115407707 executed ephemeral PR merge tree 2d9ab0ce976535fa3564159f70568c04e346c6a5 from producer branch head 90fa7d0004f843fee77067c5af49d88200537332 on main 82f995f6fcc7a0ccf1bfc1c7e61453647065b331. Both jobs succeeded; both artifact ZIP SHA-256 digests were independently verified; extracted report bytes match the retained git blobs exactly; both reports passed with 36/36 resources and zero violations."
+      }
+    },
+    {
+      "report": "resource-bounds-campaign-postgres-18.json",
+      "campaign": "M5 PostgreSQL resource bounds",
+      "scenarios": [
+        "declared_ceilings_hold_under_stress_with_backpressure",
+        "bounded_query_paths_stay_bounded_as_history_grows",
+        "bounded_payloads_are_refused_one_byte_over_the_ceiling",
+        "bounded_queues_shed_under_overload_without_blocking_batch_work"
+      ],
+      "matrix_point": "postgres-18",
+      "postgres_major_version": "18",
+      "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
+      "producer": {
+        "execution_commit": "2d9ab0ce976535fa3564159f70568c04e346c6a5",
+        "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
+        "branch_head_sha": "90fa7d0004f843fee77067c5af49d88200537332",
+        "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "M5 Resource Bounds",
+        "workflow_file": ".github/workflows/m5-resource-bounds.yml",
+        "id": 32115407707,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "postgres-18-resource-bounds-campaign",
+        "id": 95643695406,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "resource-bounds-campaign-postgres-18",
+        "id": 9316535433,
+        "digest": "sha256:4b664bd447a5db7784cf718c4850f4fb59c55c1ba12618b9603ff5c3ca6ad6f9",
+        "size_bytes": 13095
+      },
+      "retained_report_git_blob": "db682daff3f7dc5deb67a3dd0c39d4d24da21781",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-18T08:17:13Z",
+        "run_id": 32115407707,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Final lint-clean resource-bounds retention. Run 32115407707 executed ephemeral PR merge tree 2d9ab0ce976535fa3564159f70568c04e346c6a5 from producer branch head 90fa7d0004f843fee77067c5af49d88200537332 on main 82f995f6fcc7a0ccf1bfc1c7e61453647065b331. Both jobs succeeded; both artifact ZIP SHA-256 digests were independently verified; extracted report bytes match the retained git blobs exactly; both reports passed with 36/36 resources and zero violations."
+      }
     }
-  ]
+  ],
+  "issue": "https://github.com/luceat-lux-vestra/oxide-batch/issues/102",
+  "document": "Retained evidence provenance for the M5 campaigns"
 }

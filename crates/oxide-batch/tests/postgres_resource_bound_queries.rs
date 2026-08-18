@@ -60,8 +60,8 @@ use oxide_batch_repository::ExplorerRow;
 use serde_json::{Value, json};
 
 use resource_bounds::{
-    FixedClock, config, major_version, migrator_url, remove_job, remove_retention_action,
-    retain_observation, runtime_url, server_version,
+    FixedClock, config, execution_manifest, major_version, migrator_url, remove_job,
+    remove_retention_action, retain_observation, runtime_url, server_version,
 };
 
 /// The report identifier the runner reconciles this observation under.
@@ -155,6 +155,7 @@ async fn report(runtime: String, migrator: String) -> Result<(), Box<dyn Error>>
             .iter()
             .map(Cell::evidence)
             .collect::<Vec<_>>(),
+        "execution_manifest": execution_manifest()?,
         "violations": violations,
         "passed": violations.is_empty(),
     });
@@ -575,6 +576,12 @@ impl Traversal {
             "drops": 0,
             "violations": Vec::<String>::new(),
             "passed": true,
+            // Not independent evidence: explorer-cursor's ceiling is already
+            // proved by its own construction-boundary cells. This is the
+            // largest cursor a real traversal happened to produce, recorded
+            // as supplementary context rather than a second claim that would
+            // need its own proof kind.
+            "summarizes_construction": true,
         })
     }
 }
@@ -656,9 +663,17 @@ impl Cell {
 
     /// Renders what the retained evidence records for this cell.
     fn evidence(&self) -> Value {
+        let (declared, unit) = match self.resource {
+            "explorer-page-size" => (u64::from(MAX_PAGE_SIZE), "rows"),
+            "explorer-cursor" => (MAX_CURSOR_BYTES as u64, "bytes"),
+            "retention-purge-batch" => (u64::from(MAX_PURGE_BATCH), "candidates"),
+            _ => (0, "unknown"),
+        };
         json!({
             "resource": self.resource,
             "case": self.case,
+            "declared_ceiling": declared,
+            "unit": unit,
             "value": self.value,
             "expected": if self.expected { "accepted" } else { "refused" },
             "observed": if self.accepted { "accepted" } else { "refused" },

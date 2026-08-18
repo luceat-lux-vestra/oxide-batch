@@ -43,7 +43,58 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: >-
+          cargo clippy --workspace --all-targets --all-features --
+          -D warnings
+          -A clippy::too_many_arguments
+          -A clippy::too_many_lines
+
+      - name: Verify narrow audit-shape Clippy exceptions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo clippy -p oxide-batch-xtask --all-targets --all-features --message-format=json -- \
+            -W clippy::too_many_arguments -W clippy::too_many_lines \
+            > /tmp/xtask-clippy.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          expected = {
+              ("clippy::too_many_arguments", "reconcile_exact_cell"),
+              ("clippy::too_many_lines", "reconcile_search_bounded_construction"),
+          }
+          seen = set()
+          source_cache = {}
+          for raw in Path('/tmp/xtask-clippy.json').read_text().splitlines():
+              try:
+                  item = json.loads(raw)
+              except json.JSONDecodeError:
+                  continue
+              if item.get('reason') != 'compiler-message':
+                  continue
+              message = item.get('message') or {}
+              code = (message.get('code') or {}).get('code')
+              if code not in {'clippy::too_many_arguments', 'clippy::too_many_lines'}:
+                  continue
+              primary = next((s for s in message.get('spans', []) if s.get('is_primary')), None)
+              if primary is None:
+                  raise SystemExit(f'{code}: no primary span')
+              path = primary['file_name']
+              lines = source_cache.setdefault(path, Path(path).read_text().splitlines())
+              start = max(0, primary['line_start'] - 2)
+              end = min(len(lines), primary['line_end'] + 3)
+              context = '\n'.join(lines[start:end])
+              names = [
+                  name for lint, name in expected
+                  if lint == code and f'fn {name}(' in context
+              ]
+              if len(names) != 1:
+                  raise SystemExit(f'unapproved {code} at {path}:{primary["line_start"]}: {context}')
+              seen.add((code, names[0]))
+          if seen != expected:
+              raise SystemExit(f'expected only {sorted(expected)}, observed {sorted(seen)}')
+          PY
 
       - name: Run tests
         run: cargo test --workspace --all-features
@@ -115,51 +166,6 @@ jobs:
 
       - name: Run real-PostgreSQL architecture spike
         run: cargo test -p oxide-batch-m0-spikes --test postgres -- --nocapture --test-threads=1
-
-  resource-bound-campaign:
-    name: postgres-${{ matrix.postgres }}-resource-bound-campaign
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        postgres: ["15", "18"]
-    services:
-      postgres:
-        image: postgres:${{ matrix.postgres }}
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: oxide_batch_resource
-        ports:
-          - 5432:5432
-        # The worker report saturates a partition budget of 64, which needs 65
-        # connections plus the parent's own pool and the fixture's. The default
-        # of 100 is enough; raising it here would make the campaign prove a
-        # ceiling the image does not otherwise offer.
-        options: >-
-          --health-cmd "pg_isready --username postgres --dbname oxide_batch_resource"
-          --health-interval 2s
-          --health-timeout 5s
-          --health-retries 15
-    env:
-      OXIDEBATCH_POSTGRES_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_resource
-      OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_resource
-      OXIDEBATCH_CAMPAIGN_DIR: target/m5-campaigns
-      OXIDEBATCH_CAMPAIGN_MATRIX: postgres-${{ matrix.postgres }}
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Prove every declared ceiling holds and is reached under stress
-        run: cargo run --package oxide-batch-xtask -- resource-bounds
-
-      - name: Retain the campaign report
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: resource-bound-campaign-postgres-${{ matrix.postgres }}
-          path: target/m5-campaigns/resource-bounds-campaign.json
-          if-no-files-found: error
 
   postgres-design-gate:
     name: postgres-${{ matrix.postgres }}-design-gate

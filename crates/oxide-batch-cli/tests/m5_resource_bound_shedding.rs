@@ -49,12 +49,13 @@ use std::num::NonZeroU64;
 use oxide_batch::{
     Clock, DropReportWindow, EnqueueResult, ExportQueueBound, InMemoryExplorer,
     InMemoryJobRepository, IncidentEventBuffer, JobExecutionId, JobExplorer, JobName, JobOperator,
-    MAX_EXPORT_QUEUE_RECORDS, MAX_METRIC_NAME_ALLOWLIST, MAX_RETAINED_EVENTS_PER_EXECUTION,
-    MAX_SHUTDOWN_DEADLINE, MAX_TELEMETRY_FLUSH_DEADLINE, METRIC_CARDINALITY_BUDGET,
-    MIN_EXPORT_QUEUE_RECORDS, MIN_SHUTDOWN_DEADLINE, MIN_TELEMETRY_FLUSH_DEADLINE,
-    MetricCardinalityGuard, MetricDimensions, MetricFamily, RetentionService,
-    SequentialIdGenerator, ShutdownDeadline, StepName, TelemetryEventKind, TelemetryEventSink,
-    TelemetryFlushDeadline, TelemetryQueue, TelemetryRecord,
+    MAX_DROP_REPORT_WINDOW, MAX_EXPORT_QUEUE_RECORDS, MAX_METRIC_NAME_ALLOWLIST,
+    MAX_RETAINED_EVENTS_PER_EXECUTION, MAX_SHUTDOWN_DEADLINE, MAX_TELEMETRY_FLUSH_DEADLINE,
+    METRIC_CARDINALITY_BUDGET, MIN_DROP_REPORT_WINDOW, MIN_EXPORT_QUEUE_RECORDS,
+    MIN_SHUTDOWN_DEADLINE, MIN_TELEMETRY_FLUSH_DEADLINE, MetricCardinalityGuard, MetricDimensions,
+    MetricFamily, RetentionService, SequentialIdGenerator, ShutdownDeadline, StepName,
+    TelemetryEventKind, TelemetryEventSink, TelemetryFlushDeadline, TelemetryQueue,
+    TelemetryRecord,
 };
 use oxide_batch_cli::{
     Command, ExitCategory, MAX_OUTPUT_BYTES, NoSchema, OutputForm, Response, Services, Writer,
@@ -130,6 +131,7 @@ fn bounded_queues_shed_under_overload_without_blocking_batch_work() -> Result<()
         "resources": resources,
         "construction": cells.iter().map(Cell::evidence).collect::<Vec<_>>(),
         "durable_equivalence": equivalence.evidence(),
+        "execution_manifest": execution_manifest()?,
         "violations": violations,
         "passed": violations.is_empty(),
     });
@@ -646,33 +648,45 @@ fn construction_cells() -> Vec<Cell> {
 /// Reports the queue and cardinality constructions.
 fn queue_construction_cells() -> Vec<Cell> {
     vec![
-        Cell::new(
+        Cell::dimensioned(
             "telemetry-exporter-queue",
+            None,
             "at the ceiling",
+            MAX_EXPORT_QUEUE_RECORDS as u64,
             MAX_EXPORT_QUEUE_RECORDS as u64,
             ExportQueueBound::new(MAX_EXPORT_QUEUE_RECORDS).is_ok(),
             true,
+            "records",
         ),
-        Cell::new(
+        Cell::dimensioned(
             "telemetry-exporter-queue",
+            None,
             "one past the ceiling",
+            MAX_EXPORT_QUEUE_RECORDS as u64,
             MAX_EXPORT_QUEUE_RECORDS as u64 + 1,
             ExportQueueBound::new(MAX_EXPORT_QUEUE_RECORDS + 1).is_ok(),
             false,
+            "records",
         ),
-        Cell::new(
+        Cell::dimensioned(
             "telemetry-exporter-queue",
+            None,
             "at the floor",
+            MIN_EXPORT_QUEUE_RECORDS as u64,
             MIN_EXPORT_QUEUE_RECORDS as u64,
             ExportQueueBound::new(MIN_EXPORT_QUEUE_RECORDS).is_ok(),
             true,
+            "records",
         ),
-        Cell::new(
+        Cell::dimensioned(
             "telemetry-exporter-queue",
+            None,
             "one below the floor",
+            MIN_EXPORT_QUEUE_RECORDS as u64,
             MIN_EXPORT_QUEUE_RECORDS as u64 - 1,
             ExportQueueBound::new(MIN_EXPORT_QUEUE_RECORDS - 1).is_ok(),
             false,
+            "records",
         ),
         Cell::new(
             "retained-incident-events",
@@ -706,94 +720,228 @@ fn queue_construction_cells() -> Vec<Cell> {
 }
 
 /// Reports the bounded-duration constructions the budget table declares.
+///
+/// All three resources are ranges, not single ceilings, and every value here
+/// is canonical milliseconds — the unit `campaign-scope.json` declares and
+/// the unit `DropReportWindow`'s own bound check already compares in
+/// natively. A value expressed in seconds for one resource and milliseconds
+/// for another, as an earlier version of this table did, is exactly the
+/// ambiguity a range bound cannot afford: "one second past the ceiling" and
+/// "one millisecond past the ceiling" are different claims, and only one of
+/// them is the boundary the campaign owes.
+///
+/// Each range gets all four sides: accepted at the minimum, refused one
+/// millisecond below it, accepted at the maximum, refused one millisecond
+/// past it. A range proved only by its refusals — the shape this table had
+/// before — cannot tell a bound enforced correctly from one enforced
+/// anywhere else two-sided, because nothing here shows the accepted side is
+/// reachable at all.
 fn deadline_construction_cells() -> Vec<Cell> {
+    let mut cells = Vec::new();
+    cells.extend(range_cells(
+        "telemetry-drop-report-window",
+        MIN_DROP_REPORT_WINDOW,
+        MAX_DROP_REPORT_WINDOW,
+        DropReportWindow::new,
+    ));
+    cells.extend(range_cells(
+        "shutdown-deadline",
+        MIN_SHUTDOWN_DEADLINE,
+        MAX_SHUTDOWN_DEADLINE,
+        ShutdownDeadline::new,
+    ));
+    cells.extend(range_cells(
+        "telemetry-flush-deadline",
+        MIN_TELEMETRY_FLUSH_DEADLINE,
+        MAX_TELEMETRY_FLUSH_DEADLINE,
+        TelemetryFlushDeadline::new,
+    ));
+    cells
+}
+
+/// Reports the four boundary sides of one inclusive duration range, in
+/// canonical milliseconds: accepted at the minimum, refused one millisecond
+/// below it, accepted at the maximum, refused one millisecond past it.
+fn range_cells<T, E>(
+    resource: &'static str,
+    minimum: Duration,
+    maximum: Duration,
+    construct: impl Fn(Duration) -> Result<T, E>,
+) -> Vec<Cell> {
+    let minimum_ms = u64::try_from(minimum.as_millis()).unwrap_or(u64::MAX);
+    let maximum_ms = u64::try_from(maximum.as_millis()).unwrap_or(u64::MAX);
     vec![
-        Cell::new(
-            "telemetry-drop-report-window",
-            "at the ceiling",
-            MAX_DROP_REPORT_WINDOW_SECONDS,
-            DropReportWindow::new(Duration::from_secs(MAX_DROP_REPORT_WINDOW_SECONDS)).is_ok(),
+        Cell::dimensioned(
+            resource,
+            None,
+            "at the minimum",
+            minimum_ms,
+            minimum_ms,
+            construct(minimum).is_ok(),
             true,
+            "milliseconds",
         ),
-        Cell::new(
-            "telemetry-drop-report-window",
-            "one second past the ceiling",
-            MAX_DROP_REPORT_WINDOW_SECONDS + 1,
-            DropReportWindow::new(Duration::from_secs(MAX_DROP_REPORT_WINDOW_SECONDS + 1)).is_ok(),
-            false,
-        ),
-        Cell::new(
-            "shutdown-deadline",
-            "at the ceiling",
-            MAX_SHUTDOWN_DEADLINE.as_secs(),
-            ShutdownDeadline::new(MAX_SHUTDOWN_DEADLINE).is_ok(),
-            true,
-        ),
-        Cell::new(
-            "shutdown-deadline",
-            "one second past the ceiling",
-            MAX_SHUTDOWN_DEADLINE.as_secs() + 1,
-            ShutdownDeadline::new(MAX_SHUTDOWN_DEADLINE + Duration::from_secs(1)).is_ok(),
-            false,
-        ),
-        Cell::new(
-            "shutdown-deadline",
-            "one second below the floor",
-            MIN_SHUTDOWN_DEADLINE.as_secs() - 1,
-            MIN_SHUTDOWN_DEADLINE
-                .checked_sub(Duration::from_secs(1))
-                .is_some_and(|below| ShutdownDeadline::new(below).is_ok()),
-            false,
-        ),
-        Cell::new(
-            "telemetry-flush-deadline",
-            "at the ceiling",
-            MAX_TELEMETRY_FLUSH_DEADLINE.as_secs(),
-            TelemetryFlushDeadline::new(MAX_TELEMETRY_FLUSH_DEADLINE).is_ok(),
-            true,
-        ),
-        Cell::new(
-            "telemetry-flush-deadline",
-            "one millisecond below the floor",
-            u64::try_from(MIN_TELEMETRY_FLUSH_DEADLINE.as_millis()).unwrap_or(u64::MAX) - 1,
-            MIN_TELEMETRY_FLUSH_DEADLINE
+        Cell::dimensioned(
+            resource,
+            None,
+            "one millisecond below the minimum",
+            minimum_ms,
+            minimum_ms.saturating_sub(1),
+            minimum
                 .checked_sub(Duration::from_millis(1))
-                .is_some_and(|below| TelemetryFlushDeadline::new(below).is_ok()),
+                .is_some_and(|below| construct(below).is_ok()),
             false,
+            "milliseconds",
         ),
-        Cell::new(
-            "telemetry-flush-deadline",
-            "one second past the ceiling",
-            MAX_TELEMETRY_FLUSH_DEADLINE.as_secs() + 1,
-            TelemetryFlushDeadline::new(MAX_TELEMETRY_FLUSH_DEADLINE + Duration::from_secs(1))
-                .is_ok(),
+        Cell::dimensioned(
+            resource,
+            None,
+            "at the maximum",
+            maximum_ms,
+            maximum_ms,
+            construct(maximum).is_ok(),
+            true,
+            "milliseconds",
+        ),
+        Cell::dimensioned(
+            resource,
+            None,
+            "one millisecond past the maximum",
+            maximum_ms,
+            maximum_ms.saturating_add(1),
+            construct(maximum + Duration::from_millis(1)).is_ok(),
             false,
+            "milliseconds",
         ),
     ]
 }
 
-/// Reports the CLI configuration-document constructions.
+/// Reports the CLI configuration-document constructions: three independent
+/// dimensions of the same document, not one. `bytes` bounds the whole file,
+/// `secret-bytes` bounds one file-indirection secret value inside it, and
+/// `depth` bounds how deep the JSON object tree may nest.
 fn configuration_construction_cells() -> Vec<Cell> {
+    const SECRET_CEILING: usize = 64 * 1024;
+    const DEPTH_CEILING: usize = 4;
     vec![
-        Cell::new(
+        Cell::dimensioned(
             "cli-configuration-document",
+            Some("bytes"),
+            "at the ceiling",
+            CONFIG_CEILING as u64,
+            CONFIG_CEILING as u64,
+            configuration_accepted(CONFIG_CEILING),
+            true,
+            "bytes",
+        ),
+        Cell::dimensioned(
+            "cli-configuration-document",
+            Some("bytes"),
             "one byte past the ceiling",
+            CONFIG_CEILING as u64,
             CONFIG_CEILING as u64 + 1,
             configuration_accepted(CONFIG_CEILING + 1),
             false,
+            "bytes",
         ),
-        Cell::new(
+        Cell::dimensioned(
             "cli-configuration-document",
-            "a document inside the ceiling",
-            1_024,
-            configuration_accepted(0),
+            Some("secret-bytes"),
+            "at the ceiling",
+            SECRET_CEILING as u64,
+            SECRET_CEILING as u64,
+            secret_file_accepted(SECRET_CEILING),
             true,
+            "bytes",
+        ),
+        Cell::dimensioned(
+            "cli-configuration-document",
+            Some("secret-bytes"),
+            "one byte past the ceiling",
+            SECRET_CEILING as u64,
+            SECRET_CEILING as u64 + 1,
+            secret_file_accepted(SECRET_CEILING + 1),
+            false,
+            "bytes",
+        ),
+        Cell::dimensioned(
+            "cli-configuration-document",
+            Some("depth"),
+            "at the depth ceiling",
+            DEPTH_CEILING as u64,
+            DEPTH_CEILING as u64,
+            nesting_avoids_the_depth_ceiling(DEPTH_CEILING),
+            true,
+            "levels",
+        ),
+        Cell::dimensioned(
+            "cli-configuration-document",
+            Some("depth"),
+            "one level past the depth ceiling",
+            DEPTH_CEILING as u64,
+            DEPTH_CEILING as u64 + 1,
+            nesting_avoids_the_depth_ceiling(DEPTH_CEILING + 1),
+            false,
+            "levels",
         ),
     ]
 }
 
-/// The declared ceiling on the drop-report throttle, in seconds.
-const MAX_DROP_REPORT_WINDOW_SECONDS: u64 = 60 * 60;
+/// Reports whether the CLI accepts a `bytes`-sized file-indirection secret.
+///
+/// `repository.ca_certificate__FILE` is the file-indirection pointer this
+/// campaign already reaches from an ordinary config document without
+/// needing a live repository: the config resolves through
+/// `read_secret_file` and its byte ceiling regardless of whether anything
+/// later connects with the certificate.
+fn secret_file_accepted(bytes: usize) -> bool {
+    let contents =
+        r#"{"config_version":1,"repository":{"ca_certificate__FILE":"ca.pem"}}"#.to_owned();
+    let secret = "x".repeat(bytes);
+
+    let (services, _repository) = services();
+    let catalog = test_catalog(JOB);
+    let mut host = TestHost::new()
+        .with_file("secret-config.json", &contents)
+        .with_file("ca.pem", &secret);
+    let category = run_with_catalog(
+        &mut host,
+        &services,
+        &catalog,
+        "config show --config secret-config.json --output json",
+    );
+    category == ExitCategory::Success
+}
+
+/// Reports whether nesting a leaf value `depth` levels deep specifically
+/// avoided the configuration depth ceiling, independent of whatever else the
+/// document contains at that depth.
+///
+/// No key this schema recognizes nests to `MAX_CONFIG_DEPTH`'s own depth, so
+/// a document that reaches it also necessarily names an unrecognized key at
+/// its deepest point: `resolve()` still fails overall, on that separate,
+/// expected issue, never on the depth boundary this isolates. "Accepted"
+/// here means `collect()` never raised its own depth diagnostic for this
+/// document — not that the whole document validated, which nothing at this
+/// depth could, since no real key reaches it.
+fn nesting_avoids_the_depth_ceiling(depth: usize) -> bool {
+    let mut value = "\"leaf\"".to_owned();
+    for _ in 1..depth {
+        value = format!(r#"{{"w":{value}}}"#);
+    }
+    let contents = format!(r#"{{"config_version":1,"probe":{value}}}"#);
+
+    let (services, _repository) = services();
+    let catalog = test_catalog(JOB);
+    let mut host = TestHost::new().with_file("depth-config.json", &contents);
+    let _ = run_with_catalog(
+        &mut host,
+        &services,
+        &catalog,
+        "config show --config depth-config.json --output json",
+    );
+    !host.stderr_text().contains("nests deeper than")
+}
 
 /// Reports whether a metric allowlist of `names` step names is accepted.
 fn allowlist_of(names: usize) -> bool {
@@ -815,9 +963,12 @@ fn configuration_accepted(bytes: usize) -> bool {
     let contents = if bytes == 0 {
         r#"{"config_version":1,"output":{"page_size":10}}"#.to_owned()
     } else {
-        let prefix = r#"{"config_version":1,"output":{"page_size":10},"note":""#;
-        let filler = bytes.saturating_sub(prefix.len() + 2);
-        format!("{prefix}{}\"}}", "f".repeat(filler))
+        // Padded through a declared key (`repository.url`) rather than an
+        // arbitrary field name: an unrecognized key is refused regardless of
+        // size, which would make this padding prove the wrong ceiling.
+        let prefix = "{\"config_version\":1,\"output\":{\"page_size\":10},\"repository\":{\"url\":\"postgres://user:pass@host/db?note=";
+        let filler = bytes.saturating_sub(prefix.len() + 3);
+        format!("{prefix}{}\"}}}}", "f".repeat(filler))
     };
 
     let (services, _repository) = services();
@@ -853,6 +1004,107 @@ fn retain(document: &Value) -> Result<(), Box<dyn Error>> {
     )?;
     Ok(())
 }
+
+/// Returns the workspace root that contains this package.
+fn workspace_root() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+/// Reads the declared semantic closure of the resource-bounds campaign.
+///
+/// Read from `tests/fixtures/resource-bounds/campaign-semantics.json` rather
+/// than listed here, because the xtask verifier reads the same document: a
+/// closure kept in two places is one that will disagree. This is a separate
+/// copy of `crates/oxide-batch/tests/resource_bounds/mod.rs`'s function of the
+/// same name, because this report runs in a different workspace crate and
+/// test binaries do not share code across crates; both read the one committed
+/// closure document, so they cannot disagree about what it declares.
+fn semantics_paths() -> Result<Vec<String>, Box<dyn Error>> {
+    let path = workspace_root()
+        .join("tests")
+        .join("fixtures")
+        .join("resource-bounds")
+        .join("campaign-semantics.json");
+    let document: Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+    let categories = document
+        .get("categories")
+        .and_then(Value::as_object)
+        .ok_or_else(|| ReportFailure("the semantics document declares no categories".to_owned()))?;
+    let mut paths = categories
+        .values()
+        .filter_map(|category| category.get("paths").and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    if paths.is_empty() {
+        return Err(Box::new(ReportFailure(
+            "the semantics document declares no paths".to_owned(),
+        )));
+    }
+    Ok(paths)
+}
+
+/// Records the object identity of the campaign's closure, as executed.
+///
+/// See `crates/oxide-batch/tests/resource_bounds/mod.rs`'s function of the
+/// same name: this process is the campaign, so the tree it can see is by
+/// definition the tree that ran, and recording that here makes the binding
+/// permanent and offline rather than dependent on a commit name a later clone
+/// might not be able to resolve. This report needs no database, and records
+/// no `PostgreSQL` major for that reason: the campaign-level matrix identity is
+/// recorded once, at the environment level, not manufactured for a report
+/// that used no database.
+fn execution_manifest() -> Result<Value, Box<dyn Error>> {
+    let root = workspace_root();
+    let commit = git(&root, &["rev-parse", "HEAD"])
+        .ok_or_else(|| ReportFailure("the campaign is not running inside a git tree".to_owned()))?;
+    let mut objects = serde_json::Map::new();
+    for path in semantics_paths()? {
+        let object = git(&root, &["rev-parse", &format!("HEAD:{path}")]).ok_or_else(|| {
+            ReportFailure(format!(
+                "{path} is declared as campaign semantics and is not present"
+            ))
+        })?;
+        objects.insert(path, Value::String(object));
+    }
+    Ok(json!({
+        "execution_commit": commit,
+        "execution_commit_note": "The tree this run actually executed against, read from the \
+                                  checkout the campaign is running in. In CI this is the \
+                                  pull-request merge commit rather than the branch head, and it \
+                                  is the authority: the objects below are its objects.",
+        "tree_clean": git(&root, &["status", "--porcelain"]).map(|status| status.is_empty()),
+        "objects": Value::Object(objects),
+    }))
+}
+
+/// Runs one git command against the workspace, tolerating failure.
+fn git(root: &std::path::Path, arguments: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .current_dir(root)
+        .args(arguments)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+/// A report failure that is not otherwise typed.
+#[derive(Debug)]
+struct ReportFailure(String);
+
+impl std::fmt::Display for ReportFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl Error for ReportFailure {}
 
 /// A sink that offers every record to a bounded queue and counts the drops.
 struct SheddingSink {
@@ -975,13 +1227,23 @@ struct Equivalence {
 
 impl Equivalence {
     /// Renders what the retained evidence records for the comparison.
+    ///
+    /// `fields_compared` is the shape the runner's independent reconciliation
+    /// reads — the same `[{field, agrees}]` shape the worker-assignment
+    /// report's comparison uses — so a wholesale durable-record comparison is
+    /// re-derived by the runner rather than trusted from this report's own
+    /// `passed` summary, the same as every other durable-equivalence
+    /// obligation in the campaign.
     fn evidence(&self) -> Value {
+        let agrees = self.baseline_durable == self.saturated_durable;
         json!({
             "baseline_dropped_records": self.baseline_shed,
             "saturated_dropped_records": self.saturated_shed,
             "baseline_durable": self.baseline_durable,
             "saturated_durable": self.saturated_durable,
-            "agrees": self.baseline_durable == self.saturated_durable,
+            "fields_compared": [{ "field": "durable-record", "agrees": agrees }],
+            "must_not_observe": [],
+            "agrees": agrees,
             "violations": self.violations,
             "passed": self.violations.is_empty(),
         })
@@ -991,7 +1253,10 @@ impl Equivalence {
 /// One construction the framework must accept or refuse.
 struct Cell {
     resource: &'static str,
+    subject: Option<&'static str>,
     case: &'static str,
+    declared: Option<u64>,
+    unit: Option<&'static str>,
     value: u64,
     accepted: bool,
     expected: bool,
@@ -1008,7 +1273,38 @@ impl Cell {
     ) -> Self {
         Self {
             resource,
+            subject: None,
             case,
+            declared: None,
+            unit: None,
+            value,
+            accepted,
+            expected,
+        }
+    }
+
+    /// Records one construction result carrying its own declared bound and
+    /// unit, for a range-boundary or subject-boundary resource whose
+    /// verifier cross-checks both against the denominator. `subject` names
+    /// which of a resource's several independent dimensions this cell
+    /// proves, or is `None` for a range-boundary resource with only one.
+    #[allow(clippy::too_many_arguments)]
+    const fn dimensioned(
+        resource: &'static str,
+        subject: Option<&'static str>,
+        case: &'static str,
+        declared: u64,
+        value: u64,
+        accepted: bool,
+        expected: bool,
+        unit: &'static str,
+    ) -> Self {
+        Self {
+            resource,
+            subject,
+            case,
+            declared: Some(declared),
+            unit: Some(unit),
             value,
             accepted,
             expected,
@@ -1018,15 +1314,16 @@ impl Cell {
     /// Returns the violation this cell is, when it is one.
     fn violation(&self) -> Option<String> {
         (self.accepted != self.expected).then(|| {
+            let subject = self.subject.unwrap_or(self.resource);
             if self.expected {
                 format!(
-                    "{} refused {} {}, which is inside its declared bound",
-                    self.resource, self.case, self.value,
+                    "{subject} refused {} {}, which is inside its declared bound",
+                    self.case, self.value,
                 )
             } else {
                 format!(
-                    "{} accepted {} {}, which is outside its declared bound",
-                    self.resource, self.case, self.value,
+                    "{subject} accepted {} {}, which is outside its declared bound",
+                    self.case, self.value,
                 )
             }
         })
@@ -1036,7 +1333,20 @@ impl Cell {
     fn evidence(&self) -> Value {
         json!({
             "resource": self.resource,
+            "subject": self.subject,
             "case": self.case,
+            "declared_ceiling": self.declared.or(match self.resource {
+                "retained-incident-events" => Some(MAX_RETAINED_EVENTS_PER_EXECUTION as u64),
+                "metric-name-allowlist" => Some(MAX_METRIC_NAME_ALLOWLIST as u64),
+                "diagnostic-bundle" => Some(BUNDLE_CEILING as u64),
+                _ => None,
+            }),
+            "unit": self.unit.or(match self.resource {
+                "retained-incident-events" => Some("events per execution"),
+                "metric-name-allowlist" => Some("names"),
+                "diagnostic-bundle" => Some("bytes"),
+                _ => None,
+            }),
             "value": self.value,
             "expected": if self.expected { "accepted" } else { "refused" },
             "observed": if self.accepted { "accepted" } else { "refused" },

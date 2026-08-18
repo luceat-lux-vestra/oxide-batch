@@ -63,7 +63,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
@@ -295,6 +299,60 @@ fn every_declared_bound_is_classified() -> Result<(), Box<dyn Error>> {
         );
     }
 
+    // A resource with more than one bound symbol proves more than its
+    // top-level ceiling: durable-state-envelope's depth beside its bytes, a
+    // range's own minimum beside its maximum, a subject-boundary resource's
+    // per-subject ceiling. The single-ceiling loop above only ever compares a
+    // resource's first symbol, so every other declared symbol is checked
+    // here against its own real source value independently — that gap is
+    // exactly what let three dimensions across four resources sit
+    // unclassified against their own numbers before this closed it.
+    for resource in &scope.resources {
+        for dimension in &resource.dimensions {
+            let values = declared
+                .get(&dimension.symbol)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            if values.iter().all(Option::is_none) {
+                // A duration constant, a call, or a cross-reference: the same
+                // limitation this module's own `declared_bounds` doc comment
+                // states for every bound the scan cannot evaluate. The symbol
+                // is still required above to be declared and classified;
+                // only its number is not mechanically checkable here.
+                continue;
+            }
+            assert!(
+                values.contains(&Some(dimension.value)),
+                "{}'s {} dimension declares {} and {} is {values:?} in the source",
+                resource.name,
+                dimension.symbol,
+                dimension.value,
+                dimension.symbol,
+            );
+        }
+
+        // Every symbol a resource claims must be wired to something: its own
+        // ceiling, one of its dimensions, or an explicit informational
+        // classification — never left declared and silently unchecked by
+        // either loop above.
+        for symbol in &resource.symbols {
+            let is_the_ceiling_symbol =
+                resource.ceiling.is_some() && resource.symbols.first() == Some(symbol);
+            let is_a_dimension = resource
+                .dimensions
+                .iter()
+                .any(|dimension| &dimension.symbol == symbol);
+            let is_informational = resource.informational.contains(symbol);
+            assert!(
+                is_the_ceiling_symbol || is_a_dimension || is_informational,
+                "{} declares {symbol} among its symbols and neither its ceiling, its dimensions, \
+                 nor informational_symbols accounts for it, so nothing checks it against the \
+                 source or explains why nothing does",
+                resource.name,
+            );
+        }
+    }
+
     Ok(())
 }
 
@@ -508,42 +566,76 @@ fn the_stressed_run_is_compared_against_a_sequential_baseline() -> Result<(), Bo
             "a durable comparison names the {} report, which the campaign does not deliver",
             comparison.report,
         );
-        for required in [
-            "job-execution-status",
-            "step-execution-status",
-            "partition-key-set",
-            "partition-status-per-key",
-            "aggregate-execution-counts",
-            "read-write-commit-rollback-counters",
-            "partition-execution-count",
-            "partition-context-per-key",
-        ] {
-            assert!(
-                comparison.must_agree_on.iter().any(|item| item == required),
-                "the {} comparison no longer requires {required} to agree between the sequential \
-                 baseline and the stressed run",
-                comparison.report,
-            );
-        }
-        for required in [
-            "duplicate-partition-execution",
-            "missing-partition",
-            "unfinished-child",
-            "leaked-durable-execution",
-            "forged-execution-status",
-            "partial-launch-after-rejection",
-        ] {
-            assert!(
-                comparison
-                    .must_not_observe
-                    .iter()
-                    .any(|item| item == required),
-                "the {} comparison no longer rules out {required}, which is one of the \
-                 regressions resource pressure produces",
-                comparison.report,
-            );
-        }
     }
+
+    let worker_assignment = scope
+        .equivalence
+        .iter()
+        .find(|comparison| comparison.report == "worker-assignment")
+        .ok_or_else(|| {
+            Failure(
+                "the worker-assignment report compares no stressed run against a baseline"
+                    .to_owned(),
+            )
+        })?;
+    for required in [
+        "outcome",
+        "job-execution-status",
+        "job-exit-status",
+        "step-execution-status",
+        "step-exit-status",
+        "aggregate-execution-counts",
+        "read-write-commit-rollback-counters",
+        "partition-execution-count",
+        "step-execution-count",
+        "partition-key-set",
+        "partition-status-per-key",
+        "partition-counts-per-key",
+        "partition-context-per-key",
+    ] {
+        assert!(
+            worker_assignment
+                .must_agree_on
+                .iter()
+                .any(|item| item == required),
+            "the worker-assignment comparison no longer requires {required} to agree between the \
+             sequential baseline and the stressed run",
+        );
+    }
+    for required in [
+        "duplicate-partition-execution",
+        "missing-partition",
+        "unfinished-child",
+        "leaked-durable-execution",
+        "forged-execution-status",
+        "partial-launch-after-rejection",
+    ] {
+        assert!(
+            worker_assignment
+                .must_not_observe
+                .iter()
+                .any(|item| item == required),
+            "the worker-assignment comparison no longer rules out {required}, which is one of \
+             the regressions resource pressure produces",
+        );
+    }
+
+    let bounded_shedding = scope
+        .equivalence
+        .iter()
+        .find(|comparison| comparison.report == "bounded-shedding")
+        .ok_or_else(|| {
+            Failure(
+                "the bounded-shedding report compares no saturated launch against a baseline, \
+                 and shedding is only acceptable because batch work is unaffected by it"
+                    .to_owned(),
+            )
+        })?;
+    assert!(
+        !bounded_shedding.must_agree_on.is_empty(),
+        "the bounded-shedding comparison requires no field to agree, so a shed telemetry record \
+         changing a durable observation would pass silently",
+    );
 
     Ok(())
 }
@@ -820,6 +912,256 @@ fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+// ---------------------------------------------------------------------
+// Contract-check exactness. `verify-ci-contract.sh` binds the dedicated
+// workflow and `run-ci-campaign.sh` by exact git blob identity, not by the
+// literal presence checks alone. These tests drive the real script against
+// an isolated sandbox copy of those files, so a mutation proves the
+// checker's actual behaviour rather than one helper's return value, and
+// never touches the repository working tree.
+// ---------------------------------------------------------------------
+
+#[test]
+fn contract_check_passes_on_the_canonical_workflow_and_script() -> Result<(), Box<dyn Error>> {
+    assert!(run_resource_bounds_contract_check(|_sandbox| Ok(()))?);
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_an_added_trigger() -> Result<(), Box<dyn Error>> {
+    let passed = run_resource_bounds_contract_check(|sandbox| {
+        insert_after(
+            &sandbox.join(".github/workflows/m5-resource-bounds.yml"),
+            "  workflow_dispatch:\n",
+            "  schedule:\n    - cron: '0 0 * * *'\n",
+        )
+    })?;
+    assert!(
+        !passed,
+        "an added trigger must fail the contract check even though every expected trigger is \
+         still present",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_a_widened_matrix() -> Result<(), Box<dyn Error>> {
+    let passed = run_resource_bounds_contract_check(|sandbox| {
+        insert_after(
+            &sandbox.join(".github/workflows/m5-resource-bounds.yml"),
+            "postgres: [\"15\", \"18\"]\n",
+            "        include:\n          - postgres: \"16\"\n",
+        )
+    })?;
+    assert!(
+        !passed,
+        "an additional matrix execution point must fail even though the literal \
+         postgres: [\"15\", \"18\"] declaration is still present",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_a_changed_timeout() -> Result<(), Box<dyn Error>> {
+    let passed = run_resource_bounds_contract_check(|sandbox| {
+        let workflow = sandbox.join(".github/workflows/m5-resource-bounds.yml");
+        let source = fs::read_to_string(&workflow)?;
+        let mutated = source.replace("timeout-minutes: 45", "timeout-minutes: 5");
+        assert_ne!(
+            source, mutated,
+            "the timeout literal was not found to mutate"
+        );
+        fs::write(&workflow, mutated)?;
+        Ok(())
+    })?;
+    assert!(
+        !passed,
+        "a changed timeout must fail the contract check even though every other literal is \
+         unchanged",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_a_changed_report_or_artifact_path() -> Result<(), Box<dyn Error>> {
+    let passed = run_resource_bounds_contract_check(|sandbox| {
+        let workflow = sandbox.join(".github/workflows/m5-resource-bounds.yml");
+        let source = fs::read_to_string(&workflow)?;
+        let mutated = source.replace(
+            "path: target/m5-campaigns/resource-bounds-campaign.json",
+            "path: target/m5-campaigns/resource-bounds-campaign-renamed.json",
+        );
+        assert_ne!(
+            source, mutated,
+            "the report path literal was not found to mutate"
+        );
+        fs::write(&workflow, mutated)?;
+        Ok(())
+    })?;
+    assert!(
+        !passed,
+        "a changed retained-report path must fail even though the producer command is unchanged",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_an_appended_script_command() -> Result<(), Box<dyn Error>> {
+    let passed = run_resource_bounds_contract_check(|sandbox| {
+        append_line(
+            &sandbox.join("tests/fixtures/resource-bounds/run-ci-campaign.sh"),
+            "echo \"extra command\"",
+        )
+    })?;
+    assert!(
+        !passed,
+        "an appended command must fail even though the expected cargo command is still present",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_a_harmless_comment_byte() -> Result<(), Box<dyn Error>> {
+    let passed = run_resource_bounds_contract_check(|sandbox| {
+        append_line(
+            &sandbox.join(".github/workflows/m5-resource-bounds.yml"),
+            "# harmless comment",
+        )
+    })?;
+    assert!(
+        !passed,
+        "exact git blob identity, not heuristic literal parsing, is the retained-evidence \
+         boundary: even a harmless trailing comment must fail",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_a_max_connections_override() -> Result<(), Box<dyn Error>> {
+    let passed = run_resource_bounds_contract_check(|sandbox| {
+        let workflow = sandbox.join(".github/workflows/m5-resource-bounds.yml");
+        let source = fs::read_to_string(&workflow)?;
+        let mutated = source.replace(
+            "--health-cmd \"pg_isready --username postgres --dbname oxide_batch_resource\"",
+            "-c max_connections=200\n          --health-cmd \"pg_isready --username postgres \
+             --dbname oxide_batch_resource\"",
+        );
+        assert_ne!(
+            source, mutated,
+            "the health-cmd literal was not found to mutate"
+        );
+        fs::write(&workflow, mutated)?;
+        Ok(())
+    })?;
+    assert!(
+        !passed,
+        "a max_connections override must fail even though it does not remove any literal the \
+         checker requires to be present: the service configuration is itself execution \
+         semantics",
+    );
+    Ok(())
+}
+
+/// Copies the real workflow, script, and contract into an isolated sandbox,
+/// applies `mutate` to that sandbox, then runs the real `verify-ci-contract.sh`
+/// against the (possibly mutated) copy and reports whether it exited zero.
+fn run_resource_bounds_contract_check(
+    mutate: impl FnOnce(&Path) -> Result<(), Box<dyn Error>>,
+) -> Result<bool, Box<dyn Error>> {
+    let root = workspace_root();
+    let sandbox = Sandbox::new("resource-bounds-contract-check")?;
+
+    let workflow_dir = sandbox.path().join(".github/workflows");
+    fs::create_dir_all(&workflow_dir)?;
+    fs::copy(
+        root.join(".github/workflows/m5-resource-bounds.yml"),
+        workflow_dir.join("m5-resource-bounds.yml"),
+    )?;
+
+    let fixture_dir = sandbox.path().join("tests/fixtures/resource-bounds");
+    fs::create_dir_all(&fixture_dir)?;
+    for name in [
+        "execution-contract.json",
+        "run-ci-campaign.sh",
+        "verify-ci-contract.sh",
+    ] {
+        fs::copy(
+            root.join("tests/fixtures/resource-bounds").join(name),
+            fixture_dir.join(name),
+        )?;
+    }
+    let checker = fixture_dir.join("verify-ci-contract.sh");
+    let mut permissions = fs::metadata(&checker)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&checker, permissions)?;
+
+    mutate(sandbox.path())?;
+
+    let status = Command::new(&checker)
+        .arg(".github/workflows/m5-resource-bounds.yml")
+        .current_dir(sandbox.path())
+        .status()?;
+    Ok(status.success())
+}
+
+/// Inserts `insertion` immediately after the first occurrence of `anchor`.
+fn insert_after(path: &Path, anchor: &str, insertion: &str) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(path)?;
+    let position = contents.find(anchor).ok_or_else(|| {
+        Box::new(Failure(format!(
+            "no {anchor:?} anchor found in {}",
+            path.display()
+        ))) as Box<dyn Error>
+    })?;
+    let insert_at = position + anchor.len();
+    let mut mutated = String::with_capacity(contents.len() + insertion.len());
+    mutated.push_str(&contents[..insert_at]);
+    mutated.push_str(insertion);
+    mutated.push_str(&contents[insert_at..]);
+    fs::write(path, mutated)?;
+    Ok(())
+}
+
+/// Appends one line to a file.
+fn append_line(path: &Path, line: &str) -> Result<(), Box<dyn Error>> {
+    let mut contents = fs::read_to_string(path)?;
+    contents.push('\n');
+    contents.push_str(line);
+    contents.push('\n');
+    fs::write(path, contents)?;
+    Ok(())
+}
+
+/// A uniquely named temporary directory, removed when it goes out of scope
+/// regardless of how the test exits.
+struct Sandbox(PathBuf);
+
+impl Sandbox {
+    fn new(label: &str) -> Result<Self, Box<dyn Error>> {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos());
+        let dir = std::env::temp_dir().join(format!(
+            "oxide-batch-{label}-{}-{unique}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir)?;
+        Ok(Self(dir))
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Sandbox {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
 /// The parts of the committed scope document this reconciliation reads.
 struct Scope {
     reports: Vec<Report>,
@@ -896,6 +1238,60 @@ impl Scope {
     fn read_resources(document: &Value) -> Result<Vec<Resource>, Box<dyn Error>> {
         let mut resources = Vec::new();
         for resource in array(document, "resources")? {
+            let mut dimensions = Vec::new();
+            for subject in resource
+                .get("subjects")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                dimensions.push(Dimension {
+                    symbol: text(subject, "symbol")?,
+                    value: subject
+                        .get("ceiling")
+                        .and_then(Value::as_i64)
+                        .map(i128::from)
+                        .ok_or_else(|| {
+                            Failure(format!(
+                                "{} declares a subject with no numeric ceiling",
+                                text(resource, "resource").unwrap_or_default(),
+                            ))
+                        })?,
+                });
+            }
+            if let Some(bounds) = resource.get("bounds") {
+                for side in ["minimum", "maximum"] {
+                    let Some(side_value) = bounds.get(side) else {
+                        continue;
+                    };
+                    let Some(symbol) = side_value.get("symbol").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let value = side_value
+                        .get("value")
+                        .and_then(Value::as_i64)
+                        .map(i128::from)
+                        .ok_or_else(|| {
+                            Failure(format!(
+                                "{} declares a {side} bound with no value",
+                                text(resource, "resource").unwrap_or_default(),
+                            ))
+                        })?;
+                    dimensions.push(Dimension {
+                        symbol: symbol.to_owned(),
+                        value,
+                    });
+                }
+            }
+            let informational = resource
+                .get("informational_symbols")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| entry.get("symbol").and_then(Value::as_str))
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+
             resources.push(Resource {
                 name: text(resource, "resource")?,
                 class: text(resource, "class")?,
@@ -904,6 +1300,8 @@ impl Scope {
                     .get("ceiling")
                     .and_then(Value::as_i64)
                     .map(i128::from),
+                dimensions,
+                informational,
                 policy: text(resource, "policy")?,
                 report: text(resource, "report")?,
                 budget_row: resource
@@ -993,11 +1391,28 @@ struct Resource {
     class: String,
     symbols: Vec<String>,
     ceiling: Option<i128>,
+    /// Every named dimension this resource declares beyond its single
+    /// `ceiling`: one per subject-boundary subject, and one per range-boundary
+    /// side that names its own symbol. Each is checked against the real
+    /// source value that same symbol evaluates to, independently of every
+    /// other dimension this resource has.
+    dimensions: Vec<Dimension>,
+    /// Symbols classified as a default or capacity hint rather than a
+    /// ceiling: still required to be declared in source, but with no
+    /// dimension value to cross-check.
+    informational: Vec<String>,
     policy: String,
     report: String,
     budget_row: Option<String>,
     budget_bound: Option<String>,
     shedding_rule: String,
+}
+
+/// One symbol a resource's evidence independently proves, and the numeric
+/// value the campaign declares for it.
+struct Dimension {
+    symbol: String,
+    value: i128,
 }
 
 /// One bound the campaign argues is not a framework-owned resource.

@@ -6,6 +6,23 @@
   "budgets": "docs/operations/capacity-and-resource-budgets.md",
   "note": "This document is the campaign's denominator, and a resource campaign needs one more than most: the thing being counted is what the framework owns, and a resource that is not listed is not proved absent, it is unexamined. The runner reads this to decide what must run and what each report must have observed. The in-process reconciliation in crates/oxide-batch/tests/m5_resource_bounds_campaign.rs reads it from the other side: it parses every library crate and fails an ordinary cargo test when a constant declared under the repository's bound declaration convention is not classified here.",
   "completeness": "What the reconciliation guarantees is bounded by that convention, and the campaign states the limit rather than implying more. Every constant matching the convention in docs/engineering/coding-conventions.md is discovered and must be classified, regardless of its visibility, its module, whether it is an associated const, and how the source is formatted, because the scan parses Rust rather than reading lines. A ceiling written as a bare literal at the point it is enforced, or named outside the convention, or existing only after macro expansion, is invisible to it. Those are ruled out by the convention being a documented rule that review applies, not by the scan, and the campaign does not claim to discover every bounded resource automatically.",
+  "proof_model": {
+    "note": "Every resource declares the proof kinds its own evidence must contain, in its 'proofs' array. The runner enforces this in both directions: a declared kind with no matching evidence fails, in each kind's own dispatch below, and a raw evidence category (construction cells, or a numeric entry that is not itself a derived summary of construction cells) recorded for a resource whose declared proofs consume neither also fails, in one coarse construction/numeric check every resource goes through regardless of which specific kind it declares — because a raw cell does not self-identify as range-boundary versus construction-boundary versus subject-boundary, only the coarser construction/numeric shape is evidence-observable at all. Within construction-boundary, range-boundary, and subject-boundary specifically, the root cells themselves are closed further still: each resource's raw evidence must be the exact declared set of root cells — no fewer (missing), no more of the same one (duplicated), and no cell at a value or side outside the declared set (undeclared or bogus) — not merely contain the required ones. A resource whose evidence legitimately records more than the bare boundary pair (an interior edge case such as 'zero workers' or 'an empty page') declares each such cell explicitly in additional_boundaries, so the exact set stays exact rather than becoming an unstated allowance for anything extra.",
+    "kinds": {
+      "construction-boundary": "A pair of construction cells: the declared ceiling accepted exactly, and the ceiling plus one refused exactly. Neither side alone is proof — an all-accept or all-refuse report says nothing about where the ceiling actually falls. Exactly these two root cells, plus any additional_boundaries this resource declares, and no others.",
+      "range-boundary": "Four construction cells for an inclusive minimum/maximum range, in the resource's declared unit: the minimum accepted, one unit below it refused, the maximum accepted, one unit past it refused. Exactly these four root cells and no others.",
+      "subject-boundary": "One accept/refuse pair per declared subject, each carrying its own real ceiling and unit, reconciled as an exact set against the resource's declared subjects: every cell must be attributed to a declared subject (a cell with no subject is itself a violation, not silently ignored), every declared subject must have exactly its own pair and no more, and no subject may carry a cell outside that pair. Reused beyond bounded-identifier-text for any resource whose evidence independently proves more than one dimension of itself — durable-state-envelope's bytes and depth, cli-configuration-document's bytes, secret-bytes, and depth.",
+      "stress-saturation": "A numeric entry reconciled against a declared stress.requirements entry — peak-equals-ceiling, offered-exceeds-ceiling (which also requires the discarded count to equal offered minus retained under the resource's own declared shedding rule), history-exceeds-page, candidates-exceed-batch, or rejected-before-any-durable-write.",
+      "dual-budget-boundary": "concurrent-split-branches only: the numeric entry's own budgeted_run and ceiling_run detail, each independently required to show its own peak-equals-budget relation, since the declared ceiling and the concurrency budget are not reachable in the same run.",
+      "derived-capacity": "repository-connection-capacity only: the required connection count is re-derived from the raw concurrent_children field as concurrent_children + 1 and required to equal what the report recorded, rather than trusting the report's own arithmetic.",
+      "fail-closed-residue": "repository-connection-capacity only: at least one construction cell refused, independently of stress-saturation's own database-level rejected-before-any-durable-write check — the in-memory budget constructor refusing a pool one short of the derivation, before any database round trip, is a distinct fact from the full end-to-end residue check.",
+      "durable-round-trip": "A boundary-sized payload written through the real adapter and read back byte-identical, checked by the producer's own assertion before it would ever retain a passing observation. No resource declares it today; it is named because a future PostgreSQL-backed resource proved this way should declare it rather than reuse construction-boundary for a claim construction-boundary does not make.",
+      "search-bounded-construction": "retry-cache-bytes, definition-nodes, and definition-manifest: the accepted side is the largest value a search found that still fits the ceiling rather than the ceiling exactly, because the resource's own encoding does not admit constructing a value at the exact boundary, and the refused side is one step past what the search found.",
+      "upper-bound-only": "A ceiling no accepted M5 input reaches, because a different bound always binds first (definition-transitions, where the manifest ceiling binds first) or because the resource composes from other bounded parts that never sum close to it (diagnostic-bundle). The observed value is still recorded beside the ceiling; there is no refusal to prove.",
+      "truncation": "explorer-response only: a truncation marker (the count of pages the traversal actually truncated) required to be positive, and the observed peak required at or under the byte ceiling. offered_load is a row count here, not bytes, so it is not reconciled against the byte ceiling the way stress-saturation's offered/ceiling pair is.",
+      "refusal-past-ceiling": "instance-key-input only: a fail-closed resource proved by refusal alone, with no construction accept cell at the ceiling — requires the recorded offer to have actually exceeded the ceiling and the report's own refused flag to be true."
+    }
+  },
   "support_contract": {
     "postgres_versions": ["15", "16", "17", "18"],
     "matrix_endpoints": ["15", "18"],
@@ -77,7 +94,7 @@
     }
   ],
   "stress": {
-    "note": "A ceiling is only proved by a run that reached it. A worker budget of 64 whose observed peak was 3 is evidence about a workload, not about a bound, so each report records the load it offered and the peak it observed and the runner requires the two to be in the relation the resource's policy implies.",
+    "note": "A ceiling is only proved by a run that reached it. A worker budget of 64 whose observed peak was 3 is evidence about a workload, not about a bound, so each report records the load it offered and the peak it observed and the runner requires the two to be in the relation the resource's policy implies. For offered-exceeds-ceiling specifically, the runner also requires the discarded count to equal offered minus retained under the resource's own declared shedding_rule: an accounting that leaves a gap unattributed is not shedding, it is loss the report failed to count.",
     "requirements": [
       {
         "report": "worker-assignment",
@@ -89,7 +106,7 @@
         "report": "worker-assignment",
         "resource": "concurrent-split-branches",
         "requires": "peak-equals-ceiling",
-        "detail": "The split declares more branches than the branch budget admits, so the ceiling is reachable and the observed peak must equal it."
+        "detail": "The split declares more branches than the branch budget admits, so the ceiling is reachable and the observed peak must equal it. This is the budgeted run's own proof; the declared ceiling's own reachability is proved separately by the dual-budget-boundary check against this resource's ceiling_run detail."
       },
       {
         "report": "worker-assignment",
@@ -126,11 +143,17 @@
         "resource": "retained-incident-events",
         "requires": "offered-exceeds-ceiling",
         "detail": "More events are emitted for one execution than the buffer retains, so the eviction rule is exercised."
+      },
+      {
+        "report": "bounded-shedding",
+        "resource": "operator-response",
+        "requires": "offered-exceeds-ceiling",
+        "detail": "The rendered response is offered at several times the operator output bound, in the same bytes the bound is stated in, so the truncation path is entered and the discarded count is the excess exactly, the same accounting every other offered-exceeds-ceiling resource owes."
       }
     ]
   },
   "durable_equivalence": {
-    "note": "The performance plan holds that a concurrency result that changes a durable observation is invalid regardless of its throughput. Each report that runs work concurrently therefore runs the same work sequentially and compares the durable record, and the runner requires the comparison rather than trusting the concurrent run alone.",
+    "note": "The performance plan holds that a concurrency result that changes a durable observation is invalid regardless of its throughput. Each report that runs work concurrently therefore runs the same work sequentially and compares the durable record, and the runner requires the comparison rather than trusting the concurrent run alone. must_agree_on and must_not_observe are both exact sets: a required field missing, duplicated, or recorded as disagreeing all fail the campaign, and a compared field or reported condition not named here also fails it, so an undeclared extra cannot mask a missing required one in either direction. The producer's own passed summary is not root evidence — the runner re-derives pass or fail from the raw fields_compared and must_not_observe entries every time.",
     "counter_note": "The counters compared are the six an execution carries: read, processed, written, filtered, committed, and rolled back. Skip and retry counters are not among them, and saying so is deliberate: they live in the durable fault state, and this campaign's workers are tasklets that produce none, so a field comparing them would agree between two runs that both produced nothing. Retry and skip divergence under concurrency belongs to the fault-tolerance scenarios that inject faults.",
     "checkpoint_note": "The per-partition durable state compared is the partition context, which is what a restart resumes a child from. A chunk checkpoint proper is not compared, and saying so is deliberate: this campaign's workers are tasklets, which write no checkpoint, so a field comparing them would agree between two runs that both produced nothing. That is the shape of assertion this repository keeps finding stale, and the chunk checkpoint under concurrency belongs to the crash-and-restore campaign, where a killed process leaves one worth comparing.",
     "comparisons": [
@@ -139,14 +162,19 @@
         "baseline": "one worker, one branch at a time",
         "stressed": "the largest configured worker and branch budgets",
         "must_agree_on": [
+          "outcome",
           "job-execution-status",
+          "job-exit-status",
           "step-execution-status",
-          "partition-key-set",
-          "partition-status-per-key",
+          "step-exit-status",
           "aggregate-execution-counts",
           "read-write-commit-rollback-counters",
-          "partition-context-per-key",
-          "partition-execution-count"
+          "partition-execution-count",
+          "step-execution-count",
+          "partition-key-set",
+          "partition-status-per-key",
+          "partition-counts-per-key",
+          "partition-context-per-key"
         ],
         "must_not_observe": [
           "duplicate-partition-execution",
@@ -156,6 +184,14 @@
           "forged-execution-status",
           "partial-launch-after-rejection"
         ]
+      },
+      {
+        "report": "bounded-shedding",
+        "baseline": "one execution read back before the exporter queue saturates",
+        "stressed": "the same execution read back while the exporter queue is saturated",
+        "must_agree_on": ["durable-record"],
+        "must_not_observe": [],
+        "note": "A single wholesale comparison of the durable record rather than a per-field breakdown: the shedding report's obligation is that telemetry overload never changes what batch work durably records, not that any one field of it does not, so one field standing for the whole record is the right granularity here rather than a partial list borrowed from the worker-assignment comparison's own fields."
       }
     ]
   },
@@ -170,6 +206,7 @@
       "policy": "fail-closed",
       "report": "worker-assignment",
       "postgres": false,
+      "proofs": ["construction-boundary"],
       "budget_row": "Partitions per partitioned step",
       "budget_bound": "`1..=1024`"
     },
@@ -183,6 +220,10 @@
       "policy": "bounded-concurrency",
       "report": "worker-assignment",
       "postgres": true,
+      "proofs": ["construction-boundary", "stress-saturation"],
+      "additional_boundaries": [
+        { "value": 0, "expected": "refused", "label": "zero workers" }
+      ],
       "budget_row": "Concurrent partition workers",
       "budget_bound": "`1..=64`"
     },
@@ -196,6 +237,14 @@
       "policy": "fail-closed",
       "report": "worker-assignment",
       "postgres": false,
+      "proofs": ["construction-boundary"],
+      "additional_boundaries": [
+        {
+          "value": 1,
+          "expected": "refused",
+          "label": "one branch, below the two a split means"
+        }
+      ],
       "budget_row": "Split branches per node",
       "budget_bound": "`2..=8`"
     },
@@ -209,6 +258,7 @@
       "policy": "bounded-concurrency",
       "report": "worker-assignment",
       "postgres": true,
+      "proofs": ["construction-boundary", "stress-saturation", "dual-budget-boundary"],
       "budget_row": "Concurrent split branches",
       "budget_bound": "`1..=8`"
     },
@@ -222,6 +272,7 @@
       "policy": "fail-closed",
       "report": "worker-assignment",
       "postgres": false,
+      "proofs": ["construction-boundary"],
       "budget_row": "Steps per split branch",
       "budget_bound": "`1..=8`"
     },
@@ -232,13 +283,16 @@
       "symbols": [],
       "ceiling": null,
       "derivation": "concurrent_children + 1",
+      "bound_kind": "derived",
+      "parent_connections": 1,
       "unit": "connections",
       "policy": "fail-closed",
       "report": "worker-assignment",
       "postgres": true,
+      "proofs": ["derived-capacity", "stress-saturation"],
       "budget_row": null,
       "budget_bound": null,
-      "note": "The one bound in the campaign that is derived rather than declared, so it has no symbol to reconcile against. The extra connection belongs to the parent, which owns planning, the per-child compare-and-swap, and the aggregate commit."
+      "note": "The one bound in the campaign that is derived rather than declared, so it has no symbol to reconcile against. The extra connection belongs to the parent, which owns planning, the per-child compare-and-swap, and the aggregate commit. bound_kind and parent_connections are the machine-readable form of the same derivation the prose states; the runner re-derives concurrent_children + parent_connections from the report's own raw detail and requires it to equal what the report recorded, rather than trusting the report's arithmetic. The stress-saturation rejection is itself the fail-closed proof: the runner re-derives required_connections from concurrent_children + parent_connections, requires short_pool to be exactly one less, requires the adapter capacity to equal that short pool, and requires zero durable residue."
     },
     {
       "resource": "repository-pool-size",
@@ -250,6 +304,7 @@
       "policy": "fail-closed",
       "report": "worker-assignment",
       "postgres": true,
+      "proofs": ["construction-boundary"],
       "budget_row": null,
       "budget_bound": null
     },
@@ -263,6 +318,10 @@
       "policy": "fail-closed",
       "report": "bounded-query-paths",
       "postgres": true,
+      "proofs": ["construction-boundary", "stress-saturation"],
+      "additional_boundaries": [
+        { "value": 0, "expected": "refused", "label": "an empty page" }
+      ],
       "budget_row": "Explorer page size",
       "budget_bound": "`1..=500` rows"
     },
@@ -276,6 +335,7 @@
       "policy": "bounded-truncation",
       "report": "bounded-query-paths",
       "postgres": true,
+      "proofs": ["truncation"],
       "budget_row": "Explorer response",
       "budget_bound": "`256 KiB`"
     },
@@ -289,6 +349,10 @@
       "policy": "fail-closed",
       "report": "bounded-query-paths",
       "postgres": true,
+      "proofs": ["construction-boundary"],
+      "additional_boundaries": [
+        { "value": 0, "expected": "refused", "label": "an empty token" }
+      ],
       "budget_row": "Explorer cursor",
       "budget_bound": "`256` bytes"
     },
@@ -302,6 +366,10 @@
       "policy": "fail-closed",
       "report": "bounded-query-paths",
       "postgres": true,
+      "proofs": ["construction-boundary", "stress-saturation"],
+      "additional_boundaries": [
+        { "value": 0, "expected": "refused", "label": "an empty batch" }
+      ],
       "budget_row": "Purge batch",
       "budget_bound": "`1..=1000` candidates"
     },
@@ -315,6 +383,7 @@
       "policy": "bounded-truncation",
       "report": "bounded-shedding",
       "postgres": false,
+      "proofs": ["stress-saturation"],
       "budget_row": null,
       "budget_bound": null
     },
@@ -328,6 +397,10 @@
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": true,
+      "proofs": ["construction-boundary"],
+      "additional_boundaries": [
+        { "value": 0, "expected": "refused", "label": "an empty key" }
+      ],
       "budget_row": "Partition key",
       "budget_bound": "`128` bytes"
     },
@@ -341,6 +414,7 @@
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": true,
+      "proofs": ["construction-boundary"],
       "budget_row": "Partition context",
       "budget_bound": "`4 KiB`"
     },
@@ -354,6 +428,7 @@
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": true,
+      "proofs": ["construction-boundary"],
       "budget_row": "Unresolved retry entries per step",
       "budget_bound": "`256`"
     },
@@ -367,6 +442,7 @@
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": true,
+      "proofs": ["search-bounded-construction"],
       "budget_row": "Encoded fault state per step",
       "budget_bound": "`64 KiB`"
     },
@@ -375,14 +451,19 @@
       "class": "retry-cache",
       "owner": "RetryStateLimit",
       "symbols": ["MAX_RETRY_STATE", "MIN_RETRY_STATE"],
-      "ceiling": 256,
+      "ceiling": null,
+      "bounds": {
+        "minimum": { "value": 1, "unit": "unresolved retry keys", "symbol": "MIN_RETRY_STATE" },
+        "maximum": { "value": 256, "unit": "unresolved retry keys", "symbol": "MAX_RETRY_STATE" }
+      },
       "unit": "unresolved retry keys",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": false,
+      "proofs": ["range-boundary"],
       "budget_row": null,
       "budget_bound": null,
-      "note": "The per-definition declaration of how much retry state a step may hold. It cannot exceed the durable format's own entry ceiling, and the report checks that relation rather than the two numbers separately."
+      "note": "The per-definition declaration of how much retry state a step may hold. It cannot exceed the durable format's own entry ceiling, and the report checks that relation rather than the two numbers separately. MIN_RETRY_STATE is a genuine floor of 1, not a degenerate 0 — RetryStateLimit::new checks an inclusive 1..=256 range — so this is a range-boundary resource with both sides independently reachable, not a single ceiling."
     },
     {
       "resource": "definition-nodes",
@@ -394,6 +475,7 @@
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": false,
+      "proofs": ["search-bounded-construction"],
       "budget_row": null,
       "budget_bound": null
     },
@@ -407,6 +489,7 @@
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": false,
+      "proofs": ["upper-bound-only"],
       "budget_row": null,
       "budget_bound": null
     },
@@ -420,6 +503,7 @@
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": false,
+      "proofs": ["construction-boundary"],
       "budget_row": null,
       "budget_bound": null
     },
@@ -433,6 +517,7 @@
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": true,
+      "proofs": ["search-bounded-construction"],
       "budget_row": null,
       "budget_bound": null
     },
@@ -446,6 +531,7 @@
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": false,
+      "proofs": ["construction-boundary"],
       "budget_row": null,
       "budget_bound": null
     },
@@ -459,14 +545,29 @@
         "DEFAULT_MAXIMUM_BYTES",
         "DEFAULT_MAXIMUM_DEPTH"
       ],
-      "ceiling": 1048576,
+      "ceiling": null,
       "unit": "bytes",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": true,
+      "proofs": ["subject-boundary"],
       "budget_row": null,
       "budget_bound": null,
-      "note": "The ceiling on any durable checkpoint or execution context, above which no configured limit may go. A definition chooses its own limits inside it, so this is the bound on the bound: the partition context's 4 KiB is a framework ceiling on one use of the envelope, and this is the ceiling the envelope itself cannot be configured past."
+      "subjects": [
+        { "subject": "bytes", "symbol": "MAXIMUM_BYTES", "ceiling": 1048576, "unit": "bytes" },
+        { "subject": "depth", "symbol": "MAXIMUM_DEPTH", "ceiling": 64, "unit": "levels" }
+      ],
+      "informational_symbols": [
+        {
+          "symbol": "DEFAULT_MAXIMUM_BYTES",
+          "reason": "StateLimits::default()'s byte limit (65536), a genuinely different number from MAXIMUM_BYTES (1048576), not an alias of it. It is the config value a definition gets when it chooses none of its own, not itself a ceiling: nothing refuses a value one byte past it, since a definition remains free to configure any limit up to MAXIMUM_BYTES. There is no boundary to construct."
+        },
+        {
+          "symbol": "DEFAULT_MAXIMUM_DEPTH",
+          "reason": "StateLimits::default()'s depth limit (16), independently different from MAXIMUM_DEPTH (64) for the same reason DEFAULT_MAXIMUM_BYTES is: a default config value inside the allowed range, not an enforced ceiling with a refusal past it."
+        }
+      ],
+      "note": "The ceiling on any durable checkpoint or execution context, above which no configured limit may go. A definition chooses its own limits inside it, so this is the bound on the bound: the partition context's 4 KiB is a framework ceiling on one use of the envelope, and this is the ceiling the envelope itself cannot be configured past. Two independent dimensions of the same envelope, not one: a payload can be refused for being too many bytes or too many levels deep, and a report proving only bytes says nothing about depth. subject-boundary is reused here for that reason — 'subject' names one of the several things this resource's evidence independently proves, not only a caller-supplied identifier type the way bounded-identifier-text uses it."
     },
     {
       "resource": "instance-key-input",
@@ -478,6 +579,7 @@
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": true,
+      "proofs": ["refusal-past-ceiling"],
       "budget_row": null,
       "budget_bound": null
     },
@@ -491,6 +593,7 @@
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": false,
+      "proofs": ["construction-boundary"],
       "budget_row": null,
       "budget_bound": null
     },
@@ -510,18 +613,31 @@
         "MAX_PARAMETER_NAME_BYTES",
         "MAX_PARAMETER_STRING_BYTES",
         "MAX_SCHEMA_ID_BYTES",
-        "MAX_CURSOR_NAME_BYTES",
-        "MAX_DOMAIN_NAME_BYTES",
-        "MAX_CONFIRMATION_BYTES"
+        "MAX_DOMAIN_NAME_BYTES"
       ],
       "ceiling": null,
       "unit": "bytes",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": false,
+      "proofs": ["subject-boundary"],
       "budget_row": null,
       "budget_bound": null,
-      "note": "One resource rather than fourteen. Each is a caller-supplied string that becomes part of a durable record or an operator request, each is refused at construction one byte past its own ceiling, and there is nothing to say about any of them that is not true of all of them. The report sweeps them as a table so that adding a fifteenth is a line in the sweep rather than a new scenario, and the reconciliation still requires every symbol to be named here."
+      "subjects": [
+        { "subject": "operation-id", "symbol": "MAX_OPERATION_ID_BYTES", "ceiling": 64, "unit": "bytes" },
+        { "subject": "reason-code", "symbol": "MAX_REASON_CODE_BYTES", "ceiling": 64, "unit": "bytes" },
+        { "subject": "actor-ref", "symbol": "MAX_ACTOR_REF_BYTES", "ceiling": 128, "unit": "bytes" },
+        { "subject": "exit-pattern", "symbol": "MAX_PATTERN_BYTES", "ceiling": 64, "unit": "bytes" },
+        { "subject": "exit-code", "symbol": "MAX_EXIT_CODE_BYTES", "ceiling": 64, "unit": "bytes" },
+        { "subject": "parameter-name", "symbol": "MAX_PARAMETER_NAME_BYTES", "ceiling": 128, "unit": "bytes" },
+        { "subject": "parameter-string", "symbol": "MAX_PARAMETER_STRING_BYTES", "ceiling": 65536, "unit": "bytes" },
+        { "subject": "schema-id", "symbol": "MAX_SCHEMA_ID_BYTES", "ceiling": 128, "unit": "bytes" },
+        { "subject": "domain-name", "symbol": "MAX_DOMAIN_NAME_BYTES", "ceiling": 128, "unit": "bytes" },
+        { "subject": "definition-token", "symbol": "MAX_TOKEN_BYTES", "ceiling": 128, "unit": "bytes" },
+        { "subject": "recovery-reason", "symbol": "MAX_RECOVERY_REASON_BYTES", "ceiling": 64, "unit": "bytes" },
+        { "subject": "operator-reference", "symbol": "MAX_OPERATOR_REFERENCE_BYTES", "ceiling": 128, "unit": "bytes" }
+      ],
+      "note": "Twelve subjects, one report covers all of them. Every one is a caller-supplied string that becomes part of a durable record or an operator request, each is refused at construction one byte past its own ceiling, and there is nothing to say about any one of them that is not true of all. The reconciliation requires every symbol to be named here, and every subject's own evidence to carry a real ceiling and value rather than a placeholder, reconciled as an exact set against the subjects declared below. Two symbols this class of resource could plausibly have owned are argued out of scope instead, by name, in out_of_scope below."
     },
     {
       "resource": "ca-certificate",
@@ -533,6 +649,7 @@
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": false,
+      "proofs": ["construction-boundary"],
       "budget_row": null,
       "budget_bound": null
     },
@@ -541,13 +658,20 @@
       "class": "buffer",
       "owner": "oxide_batch_cli::Configuration",
       "symbols": ["MAX_CONFIG_BYTES", "MAX_SECRET_BYTES", "MAX_CONFIG_DEPTH"],
-      "ceiling": 262144,
+      "ceiling": null,
       "unit": "bytes",
       "policy": "fail-closed",
       "report": "bounded-shedding",
       "postgres": false,
+      "proofs": ["subject-boundary"],
       "budget_row": null,
-      "budget_bound": null
+      "budget_bound": null,
+      "subjects": [
+        { "subject": "bytes", "symbol": "MAX_CONFIG_BYTES", "ceiling": 262144, "unit": "bytes" },
+        { "subject": "secret-bytes", "symbol": "MAX_SECRET_BYTES", "ceiling": 65536, "unit": "bytes" },
+        { "subject": "depth", "symbol": "MAX_CONFIG_DEPTH", "ceiling": 4, "unit": "levels" }
+      ],
+      "note": "Three independent dimensions of the same document, not one: MAX_CONFIG_BYTES bounds the whole file, MAX_SECRET_BYTES bounds one file-indirection secret value inside it (config.rs's read_secret_file, reached through a `<key>__FILE` pointer such as `repository.ca_certificate__FILE`), and MAX_CONFIG_DEPTH bounds how deep the JSON object tree may nest before collect() refuses it. No key this schema recognizes nests as deep as MAX_CONFIG_DEPTH itself, so a document that reaches the depth ceiling necessarily also names an unrecognized key at its deepest point — the report isolates the depth boundary from that separate, expected failure by checking which specific diagnostic collect() raised, not whether the whole document resolved."
     },
     {
       "resource": "telemetry-exporter-queue",
@@ -555,14 +679,19 @@
       "owner": "ExportQueueBound",
       "symbols": ["MAX_EXPORT_QUEUE_RECORDS", "MIN_EXPORT_QUEUE_RECORDS"],
       "ceiling": 65536,
+      "bounds": {
+        "minimum": { "value": 64, "unit": "records", "symbol": "MIN_EXPORT_QUEUE_RECORDS" },
+        "maximum": { "value": 65536, "unit": "records", "symbol": "MAX_EXPORT_QUEUE_RECORDS" }
+      },
       "unit": "records",
       "policy": "bounded-shedding",
       "shedding_rule": "drop-newest",
       "report": "bounded-shedding",
       "postgres": false,
+      "proofs": ["range-boundary", "stress-saturation"],
       "budget_row": "Telemetry exporter queue",
       "budget_bound": "`64..=65536` records",
-      "note": "The one resource in the campaign whose contract forbids backpressure. Telemetry may not block batch work, so a full queue drops the newest record and counts the drop. Introducing a wait here to make the campaign uniform would break the accepted contract rather than strengthen it."
+      "note": "The one resource in the campaign whose contract forbids backpressure. Telemetry may not block batch work, so a full queue drops the newest record and counts the drop. Introducing a wait here to make the campaign uniform would break the accepted contract rather than strengthen it. `ceiling` stays populated alongside `bounds`, not replaced by it: `ceiling` is what the stress-saturation numeric entry is cross-checked against, and `bounds` is what the four construction cells (accepted at the floor and the ceiling, refused one unit past each) are — the same 65536 both ways, checked by two different mechanisms against two different kinds of evidence."
     },
     {
       "resource": "telemetry-drop-report-window",
@@ -570,13 +699,18 @@
       "owner": "DropReportWindow",
       "symbols": ["MAX_DROP_REPORT_WINDOW", "MIN_DROP_REPORT_WINDOW"],
       "ceiling": null,
+      "bounds": {
+        "minimum": { "value": 1000, "unit": "milliseconds", "symbol": "MIN_DROP_REPORT_WINDOW" },
+        "maximum": { "value": 3600000, "unit": "milliseconds", "symbol": "MAX_DROP_REPORT_WINDOW" }
+      },
       "unit": "duration",
       "policy": "fail-closed",
       "report": "bounded-shedding",
       "postgres": false,
+      "proofs": ["range-boundary"],
       "budget_row": null,
       "budget_bound": null,
-      "note": "The throttle on the drop observation itself, so that a saturated queue reports its drops at a bounded rate rather than emitting one record per drop, which would be an unbounded queue in a different place."
+      "note": "The throttle on the drop observation itself, so that a saturated queue reports its drops at a bounded rate rather than emitting one record per drop, which would be an unbounded queue in a different place. bounds is the machine-readable inclusive range the range-boundary proof reconciles against, in canonical milliseconds; ceiling stays null because this resource is a range, not a single ceiling."
     },
     {
       "resource": "retained-incident-events",
@@ -592,8 +726,15 @@
       "shedding_rule": "evict-oldest",
       "report": "bounded-shedding",
       "postgres": false,
+      "proofs": ["construction-boundary", "stress-saturation"],
       "budget_row": "Retained incident events",
       "budget_bound": "`200` per execution",
+      "informational_symbols": [
+        {
+          "symbol": "DEFAULT_RETAINED_EVENT_CAPACITY",
+          "reason": "An internal VecDeque::with_capacity hint and the total-events default, not an independent ceiling: IncidentEventBuffer::new validates total >= per_execution, never an absolute maximum on total, so there is no value one past which construction is refused. MAX_RETAINED_EVENTS_PER_EXECUTION is the real, independently enforced ceiling and is already proven both sides."
+        }
+      ],
       "note": "The eviction rule is the opposite of the exporter queue's, and deliberately: an incident buffer exists to be read after a failure, so the newest records are the ones worth keeping. The campaign records which rule each queue contracts for rather than requiring one of them."
     },
     {
@@ -607,6 +748,7 @@
       "shedding_rule": "collapse-to-reserved-series",
       "report": "bounded-shedding",
       "postgres": false,
+      "proofs": ["stress-saturation"],
       "budget_row": "Metric series per family",
       "budget_bound": "`200`"
     },
@@ -620,6 +762,7 @@
       "policy": "fail-closed",
       "report": "bounded-shedding",
       "postgres": false,
+      "proofs": ["construction-boundary"],
       "budget_row": null,
       "budget_bound": null
     },
@@ -633,6 +776,7 @@
       "policy": "bounded-truncation",
       "report": "bounded-shedding",
       "postgres": false,
+      "proofs": ["upper-bound-only"],
       "budget_row": "Diagnostic bundle",
       "budget_bound": "`4 MiB`",
       "note": "The one resource in the campaign whose ceiling no M5 input reaches. A bundle is built from a bounded configuration, a bounded execution projection, and a bounded incident buffer, and all three together come to a few kilobytes, so the report proves the bound as an upper limit that held rather than as a truncation that happened. The campaign records the observed size beside the ceiling instead of claiming a saturation it did not produce."
@@ -643,10 +787,15 @@
       "owner": "ShutdownDeadline",
       "symbols": ["MAX_SHUTDOWN_DEADLINE", "MIN_SHUTDOWN_DEADLINE"],
       "ceiling": null,
+      "bounds": {
+        "minimum": { "value": 1000, "unit": "milliseconds", "symbol": "MIN_SHUTDOWN_DEADLINE" },
+        "maximum": { "value": 3600000, "unit": "milliseconds", "symbol": "MAX_SHUTDOWN_DEADLINE" }
+      },
       "unit": "duration",
       "policy": "fail-closed",
       "report": "bounded-shedding",
       "postgres": false,
+      "proofs": ["range-boundary"],
       "budget_row": "Shutdown deadline",
       "budget_bound": "`1 s..=1 h`",
       "note": "A deadline is in the campaign because the capacity budget declares it, and it bounds a resource rather than an operation: it is the ceiling on how long owned tasks may stay unjoined. The coordinator never cancels an in-flight persistence future to meet it, so the deadline is reported as missed rather than enforced by abandoning durable work."
@@ -657,10 +806,15 @@
       "owner": "TelemetryFlushDeadline",
       "symbols": ["MAX_TELEMETRY_FLUSH_DEADLINE", "MIN_TELEMETRY_FLUSH_DEADLINE"],
       "ceiling": null,
+      "bounds": {
+        "minimum": { "value": 100, "unit": "milliseconds", "symbol": "MIN_TELEMETRY_FLUSH_DEADLINE" },
+        "maximum": { "value": 60000, "unit": "milliseconds", "symbol": "MAX_TELEMETRY_FLUSH_DEADLINE" }
+      },
       "unit": "duration",
       "policy": "fail-closed",
       "report": "bounded-shedding",
       "postgres": false,
+      "proofs": ["range-boundary"],
       "budget_row": "Telemetry flush deadline",
       "budget_bound": "`100 ms..=1 min`"
     }
@@ -698,6 +852,18 @@
       ],
       "reason": "These bound when a decision may be taken, not how much may be held. A stale-execution threshold that is wrong produces a premature or delayed recovery decision, which is a lifecycle result rather than a resource result.",
       "covered_by": "crates/oxide-batch/tests/services.rs"
+    },
+    {
+      "resource": "the cursor name-column encoding",
+      "symbols": ["MAX_CURSOR_NAME_BYTES"],
+      "reason": "The bound exists, but the campaign cannot construct past it: it is checked inside CursorKey::encode, a private method on a #[non_exhaustive] enum whose Name variant cannot be constructed outside crates/oxide-batch-repository itself. bounded-identifier-text's other twelve subjects are all reachable through a public constructor this campaign calls directly; this one is not, and the campaign records that honestly rather than adding a thirteenth subject no evidence would ever exercise.",
+      "covered_by": null
+    },
+    {
+      "resource": "the interactive confirmation read",
+      "symbols": ["MAX_CONFIRMATION_BYTES"],
+      "reason": "The bound is a raw byte cutoff on an interactive io::stdin() read inside a private, non-exported read_confirmation function, not a validated identifier or reference type constructed from a caller-supplied string like bounded-identifier-text's other subjects. It is unreachable from this campaign's non-interactive harness, and no existing test in this repository exercises its limit either.",
+      "covered_by": null
     },
     {
       "resource": "application readers, writers, and item buffers",

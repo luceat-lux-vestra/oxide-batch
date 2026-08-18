@@ -1,0 +1,79 @@
+{
+  "document": "How CI executes the M5 PostgreSQL resource-bounds campaign",
+  "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow is a thin provisioning and call layer, and its contract-check step fails closed when the workflow drifts from these values. Only the dedicated resource-bounds workflow is in this campaign's semantic closure, so unrelated quality or build changes in ci.yml do not invalidate retained resource-bounds evidence.",
+  "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script — an added trigger, a job-level permission override, a widened matrix, a changed command, an appended line, a max_connections override — moves the identity and fails the contract check, whether or not every literal field below still happens to read true. The literal fields exist for a readable diagnostic, not as the boundary. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
+  "workflow_path": ".github/workflows/m5-resource-bounds.yml",
+  "workflow_git_blob": "c9a953191ba47f4af05c39404aee3821082e0f2d",
+  "workflow_name": "M5 Resource Bounds",
+  "triggers": {
+    "pull_request": ["main"],
+    "push": ["main"],
+    "workflow_dispatch": true
+  },
+  "permissions": {
+    "contents": "read"
+  },
+  "runner": "ubuntu-24.04",
+  "script": "./tests/fixtures/resource-bounds/run-ci-campaign.sh ${{ matrix.postgres }}",
+  "script_path": "tests/fixtures/resource-bounds/run-ci-campaign.sh",
+  "script_git_blob": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
+  "supported_matrix": ["15", "18"],
+  "matrix_note": "The two ends of the supported PostgreSQL 15-18 range. Evidence is required from both, exactly once each.",
+  "database": {
+    "image": "postgres:{major}",
+    "database_name": "oxide_batch_resource",
+    "user": "postgres",
+    "password": "postgres",
+    "port": 5432,
+    "health_check": "pg_isready --username postgres --dbname oxide_batch_resource"
+  },
+  "no_max_connections_override": true,
+  "no_max_connections_override_note": "The worker report saturates a partition budget of 64, which needs 65 connections plus the parent's own pool and the fixture's. The server image's default max_connections is enough; a -c max_connections=... override, or any equivalent server-capacity override, would make the campaign prove a ceiling the image does not otherwise offer, so the service configuration is itself part of what this evidence proves and the contract check rejects any such override appearing in the workflow.",
+  "command": ["cargo", "run", "--package", "oxide-batch-xtask", "--", "resource-bounds"],
+  "cargo_profile": "debug",
+  "profile_note": "Debug, like every M5 campaign except performance, whose denominator requires release for figures comparable to release planning. The resource-bounds campaign gates correctness — every declared ceiling holds and every live ceiling is reached under stress — not a duration, so nothing here depends on the profile.",
+  "target_selection": {
+    "source": "the (package, target) pairs the committed scope document's reports name",
+    "selected_targets_run_with_an_exact_filter": true,
+    "selected_targets_run_with_an_exact_filter_note": "Each report is run with an exact libtest filter for its own scenario name, one target invocation per declared report."
+  },
+  "pass_condition": {
+    "every_declared_report_must_report_ok": true,
+    "every_declared_report_must_report_ok_note": "Every report the scope document names must resolve to a test that ran and reported ok. A target that exited unsuccessfully is recorded as a failed target and also fails the campaign.",
+    "every_declared_report_must_retain_a_passing_observation": true,
+    "every_declared_report_must_retain_a_passing_observation_note": "A report that ran and reported ok is not sufficient: it must also have retained a machine-readable observation that itself says passed and carries no recorded violation.",
+    "every_declared_resource_must_be_observed_by_exactly_its_declared_report": true,
+    "every_declared_resource_must_be_observed_by_exactly_its_declared_report_note": "Raw evidence identity is checked as the (resource, expected report) tuple the scope document declares, not by resource name alone: an undeclared resource appearing in any observation fails the campaign, a required resource missing from its declared report fails the campaign, a resource claimed by two observations fails the campaign, and a resource whose evidence was recorded by a report other than the one the scope names for it fails the campaign, even if some other report's evidence happens to carry the same resource name.",
+    "every_stress_requirement_must_bind_to_its_declared_report": true,
+    "every_stress_requirement_must_bind_to_its_declared_report_note": "Each of the scope document's stress requirements names both a resource and the report that must prove it; the raw observation satisfying that requirement must come from that exact report. An unrecognized requires value fails closed rather than passing through unchecked.",
+    "every_live_ceiling_reached_under_stress_must_equal_the_declared_ceiling_exactly": true,
+    "every_live_ceiling_reached_under_stress_must_equal_the_declared_ceiling_exactly_note": "Non-vacuous proof: an offered load at or below the declared ceiling, an observed peak below a ceiling a stress requirement declares reachable, an observed peak above the declared ceiling, a shedding-policy resource offered its overload with zero drops recorded, or a fail-closed resource whose rejection left a durable partial write, each fails the campaign. A run that only shows the ceiling was never approached is not accepted as proof the ceiling holds.",
+    "durable_equivalence_is_re_derived_from_raw_comparison_data_not_trusted_from_the_producer": true,
+    "durable_equivalence_is_re_derived_from_raw_comparison_data_not_trusted_from_the_producer_note": "The verifier reconciles the exact set of required must_agree_on fields (missing or duplicated is a failure, and an undeclared extra field cannot mask a missing required one), requires every required field's own agrees value to be literally true rather than trusting the producer's summary passed flag, and requires every declared must_not_observe condition to be present and observed false.",
+    "declared_reports_must_agree_on_one_execution_manifest": true,
+    "declared_reports_must_agree_on_one_execution_manifest_note": "Each of the four reports, including the database-free shedding report, records the object identity of the campaign's semantic closure from inside its own test process. All four must agree, or the campaign ran against a tree that changed underneath it.",
+    "database_reports_must_self_identify_their_postgresql_major": true,
+    "database_reports_must_self_identify_their_postgresql_major_note": "Each of the three database reports records the PostgreSQL major it actually ran against, and it must match the workflow's own matrix point. The database-free shedding report records no PostgreSQL major at all; the campaign-level matrix identity is recorded once, at the environment level, not manufactured for a report that used no database."
+  },
+  "environment": {
+    "OXIDEBATCH_POSTGRES_TEST_URL": "postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_resource",
+    "OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL": "postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_resource",
+    "OXIDEBATCH_CAMPAIGN_DIR": "target/m5-campaigns",
+    "OXIDEBATCH_CAMPAIGN_MATRIX": "postgres-{major}"
+  },
+  "report_path": "target/m5-campaigns/resource-bounds-campaign.json",
+  "artifact_name": "resource-bounds-campaign-postgres-{major}",
+  "artifact_retention": "on success and on failure alike, because what a failed resource-bounds campaign is mostly worth reading for is which resource, which report, or which stress requirement it lost",
+  "timeout_minutes": 45,
+  "timeout_note": "The campaign's execution envelope is four reports proving 36 declared resources, a bounded workload rather than a whole-workspace suite. Still a ceiling: a campaign that stopped making progress must fail rather than occupy a runner.",
+  "required_reports": ["worker-assignment", "bounded-query-paths", "bounded-payloads", "bounded-shedding"],
+  "required_scenarios": [
+    "declared_ceilings_hold_under_stress_with_backpressure",
+    "bounded_query_paths_stay_bounded_as_history_grows",
+    "bounded_payloads_are_refused_one_byte_over_the_ceiling",
+    "bounded_queues_shed_under_overload_without_blocking_batch_work"
+  ],
+  "database_reports_must_self_identify_postgresql_major": true,
+  "database_reports": ["worker-assignment", "bounded-query-paths", "bounded-payloads"],
+  "database_free_reports": ["bounded-shedding"]
+}
