@@ -1,6 +1,6 @@
 [package]
 name = "oxide-batch"
-description = "Early-alpha restartable batch processing for Rust, inspired by Spring Batch"
+description = "Embedded Core Production Preview of restartable batch processing for Rust, inspired by Spring Batch"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -23,9 +23,9 @@ postgres = ["dep:sqlx"]
 
 [dependencies]
 futures-util = "0.3.31"
-oxide-batch-core = { path = "../oxide-batch-core", version = "=0.1.0-alpha.2" }
-oxide-batch-plan = { path = "../oxide-batch-plan", version = "=0.1.0-alpha.2" }
-oxide-batch-repository = { path = "../oxide-batch-repository", version = "=0.1.0-alpha.2" }
+oxide-batch-core = { path = "../oxide-batch-core", version = "=0.5.0" }
+oxide-batch-plan = { path = "../oxide-batch-plan", version = "=0.5.0" }
+oxide-batch-repository = { path = "../oxide-batch-repository", version = "=0.5.0" }
 serde_json = "1.0.151"
 sha2 = "0.11.0"
 sqlx = { version = "0.9.0", default-features = false, optional = true, features = [

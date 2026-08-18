@@ -7,6 +7,7 @@ mod deps;
 mod evidence;
 mod performance;
 mod reconciliation;
+mod release_crates;
 mod resource_bounds;
 mod security;
 mod soak;
@@ -123,6 +124,7 @@ fn main() -> ExitCode {
             run_all(QUALITY)
                 && run_dependency_check()
                 && run_surface_check()
+                && run_release_crates_check()
                 && run_evidence_check()
                 && run_reconciliation_check()
         }
@@ -134,6 +136,7 @@ fn main() -> ExitCode {
         Some("package") => run_all(PACKAGE),
         Some("performance") => run_performance_campaign(),
         Some("reconciliation") => run_reconciliation_check(),
+        Some("release-crates") => run_release_crates_check(),
         Some("resource-bounds") => run_resource_bound_campaign(),
         Some("security") => run_security_campaign(),
         Some("soak") => run_soak_campaign(),
@@ -211,6 +214,35 @@ fn run_dependency_check() -> bool {
         }
         Err(error) => {
             eprintln!("could not check workspace boundaries: {error}");
+            false
+        }
+    }
+}
+
+/// Reports whether the published manifests and both release workflows agree
+/// on the accepted five-crate release set and its dependency order.
+fn run_release_crates_check() -> bool {
+    eprintln!("==> release crate set");
+
+    match release_crates::check() {
+        Ok(violations) if violations.is_empty() => {
+            eprintln!(
+                "published manifests, release-draft.yml, and release.yml all name the same \
+                 five crates in the accepted dependency order"
+            );
+            true
+        }
+        Ok(violations) => {
+            for violation in &violations {
+                eprintln!("release crate set violation: {violation}");
+            }
+            eprintln!(
+                "see RFC-0011 and docs/release/release-checklist.md for the accepted release set"
+            );
+            false
+        }
+        Err(error) => {
+            eprintln!("could not check the release crate set: {error}");
             false
         }
     }
@@ -570,6 +602,7 @@ fn usage() {
            package          inspect and dry-run every publishable crate\n\
            performance      run P-001, P-003, and P-010 in release profile against PostgreSQL\n\
            reconciliation   verify the #102 reconciliation document against the repository\n\
+           release-crates   verify manifests and release workflows agree on the release set\n\
            resource-bounds  prove every declared ceiling holds and is reached under stress\n\
            security         run the TLS, least-privilege, and redaction campaign\n\
            soak             run the declared P-015 soak window and judge its growth\n\

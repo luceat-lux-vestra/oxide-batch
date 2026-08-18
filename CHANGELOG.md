@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-18
+
+**M5 Embedded Core Production Preview.** This is OxideBatch's first
+Production Preview release: a `0.x` pre-1.0 release under
+[RFC-0001](rfcs/0001-m5-preview-and-project-wide-1-0.md), stabilizing the
+delivered M0-M4 embedded scope rather than adding new batch capability. It is
+not `1.0`, stable, GA, or enterprise-ready, and it does not claim full Spring
+Batch parity; see the
+[M5 exit record](docs/project/m5-exit-evidence.md) and the
+[support matrix](docs/release/support-matrix.md#m5-production-preview-support-bounds)
+for the exact supported configuration and published limitations.
+
+**Breaking changes since `0.1.0-alpha.1`:** every change listed below under
+this heading is new since the only prior release. Notably: the canonical
+manifest seam between `oxide-batch-core` and `oxide-batch-plan` no longer
+exchanges `serde_json::Value`; `VersionedStateCodec::decode` no longer takes a
+`StateSchemaVersion` argument and codecs declare upgrades explicitly;
+`StartLimit::new` and `FlowDecisionSequence::new` return different error
+types; and the PostgreSQL runtime now requires metadata schema version `3`
+(direct upgrade from schemas 1 and 2; a schema-2 runtime rejects schema 3).
+See the dated entries below for the complete list and rationale.
+
+**Migration notes:** deployments on schema 1 or 2 upgrade directly to schema
+3 with the immutable `0003_operations_and_local_scale.sql` migration, applied
+quiesced; take a backup first, since rollback is restore-based rather than a
+reverse migration. No definition compiled by a pre-release build carries a
+fingerprint compatibility promise; recompile before restarting a pre-release
+definition against this release. See the
+[upgrade and rollback guide](docs/operations/persistence-and-migrations.md)
+and [support matrix](docs/release/support-matrix.md) for details.
+
+**Operational constraints and known limitations:** single-host, embedded
+deployment only (no remote or distributed execution); Linux x86_64 GNU is the
+only supported release-blocking platform; PostgreSQL 15 and 18 are
+release-blocking, 16-17 receive smoke coverage; `verify-full` TLS is the only
+supported production transport. Thirteen ledger rows
+(`LIFE-STOP-001`, `LIFE-RECOVER-001`, `STEP-STARTLIMIT-001`, `FT-RETRY-001`,
+`FT-SKIP-001`, `FT-ROLLBACK-001`, `LISTENER-ITEM-001`, `FLOW-SEQUENCE-001`,
+`FLOW-DECIDER-001`, `REPO-COMMAND-001`, `REPO-RETENTION-001`,
+`SCALE-PARSTEP-001`, `SCALE-LOCALPART-001`) remain `Partial` and are
+published as limitations rather than advertised capability; see the
+[conformance matrix](docs/compatibility/conformance-matrix.md#m5-disposition-and-promotion-set).
+
 ### Added
 
 - A trust model for the M5 soak evidence in which raw observations, not the
@@ -824,5 +867,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Initial project governance, repository policy, and CI foundation.
 - Public `oxide-batch` facade crate metadata and pre-alpha documentation.
 
-[Unreleased]: https://github.com/luceat-lux-vestra/oxide-batch/compare/v0.1.0-alpha.1...HEAD
+[Unreleased]: https://github.com/luceat-lux-vestra/oxide-batch/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/luceat-lux-vestra/oxide-batch/compare/v0.1.0-alpha.1...v0.5.0
 [0.1.0-alpha.1]: https://github.com/luceat-lux-vestra/oxide-batch/releases/tag/v0.1.0-alpha.1
