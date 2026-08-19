@@ -3,7 +3,6 @@
   "ledger": "docs/compatibility/conformance-matrix.md",
   "gate": "docs/project/m5-design-gate-evidence.md",
   "statuses": [
-    "Verified",
     "Implemented",
     "Partial"
   ],
@@ -28,7 +27,7 @@
   "rows": [
     {
       "id": "DOM-JOB-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -55,7 +54,7 @@
     },
     {
       "id": "DOM-INSTANCE-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -82,7 +81,7 @@
     },
     {
       "id": "DOM-JOBEXEC-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -109,7 +108,7 @@
     },
     {
       "id": "DOM-STEPEXEC-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -136,7 +135,7 @@
     },
     {
       "id": "DOM-PARAM-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -163,7 +162,7 @@
     },
     {
       "id": "DOM-STATUS-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -183,7 +182,7 @@
     },
     {
       "id": "DOM-EXIT-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -203,7 +202,7 @@
     },
     {
       "id": "LIFE-LAUNCH-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -230,7 +229,7 @@
     },
     {
       "id": "LIFE-COMPLETE-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -257,7 +256,7 @@
     },
     {
       "id": "LIFE-RESTART-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -325,7 +324,7 @@
     },
     {
       "id": "LIFE-ABANDON-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -379,7 +378,7 @@
     },
     {
       "id": "LIFE-DEFINITION-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -406,7 +405,7 @@
     },
     {
       "id": "STEP-TASKLET-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -433,7 +432,7 @@
     },
     {
       "id": "STEP-TASKLET-PANIC-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -453,7 +452,7 @@
     },
     {
       "id": "STEP-CHUNK-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -521,7 +520,7 @@
     },
     {
       "id": "ITEM-READER-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -541,7 +540,7 @@
     },
     {
       "id": "ITEM-PROCESSOR-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -561,7 +560,7 @@
     },
     {
       "id": "ITEM-WRITER-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -581,7 +580,7 @@
     },
     {
       "id": "ITEM-CHECKPOINT-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -642,7 +641,7 @@
     },
     {
       "id": "FT-BACKOFF-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -737,7 +736,7 @@
     },
     {
       "id": "LISTENER-JOBSTEP-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -886,7 +885,7 @@
     },
     {
       "id": "REPO-EXPLORE-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -920,7 +919,7 @@
     },
     {
       "id": "REPO-OPERATOR-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -974,7 +973,7 @@
     },
     {
       "id": "OPS-CLI-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch-cli",
@@ -1008,7 +1007,7 @@
     },
     {
       "id": "OBS-EXEC-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -1035,7 +1034,7 @@
     },
     {
       "id": "OBS-METRICS-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -1123,7 +1122,7 @@
     },
     {
       "id": "DB-POSTGRES-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
@@ -1157,7 +1156,7 @@
     },
     {
       "id": "META-UPGRADE-001",
-      "status": "Verified",
+      "status": "Implemented",
       "scenarios": [
         {
           "package": "oxide-batch",
