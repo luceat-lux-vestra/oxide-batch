@@ -4,10 +4,19 @@ on:
   release:
     types:
       - published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing published release tag to verify
+        required: true
+        type: string
 
 permissions:
   contents: read
   id-token: write
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.event.release.tag_name }}
 
 jobs:
   publish:
@@ -18,12 +27,26 @@ jobs:
     steps:
       - name: Check out release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Verify manual recovery targets a published release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          view="$(gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --json tagName,isDraft)"
+          test "$(jq -r '.tagName' <<<"${view}")" = "${RELEASE_TAG}"
+          test "$(jq -r '.isDraft' <<<"${view}")" = "false"
 
       - name: Verify release tag and select publication mode
         id: release
         run: |
+          set -euo pipefail
+          git rev-parse "${RELEASE_TAG}^{commit}" >/dev/null
           package_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "oxide-batch") | .version')"
-          test "v${package_version}" = "${GITHUB_REF_NAME}"
+          test "v${package_version}" = "${RELEASE_TAG}"
           echo "version=${package_version}" >> "${GITHUB_OUTPUT}"
           if test "${package_version}" = "0.5.0"; then
             # crates.io Trusted Publishing cannot create a crate. v0.5.0 is
@@ -35,7 +58,7 @@ jobs:
           fi
 
       - name: Verify packages
-        if: steps.release.outputs.bootstrap != 'true'
+        if: github.event_name == 'release' && steps.release.outputs.bootstrap != 'true'
         run: >-
           cargo publish --package oxide-batch-core
           --package oxide-batch-repository --package oxide-batch-plan
@@ -43,7 +66,7 @@ jobs:
           --locked --dry-run
 
       - name: Verify manually bootstrapped crates.io archives
-        if: steps.release.outputs.bootstrap == 'true'
+        if: steps.release.outputs.bootstrap == 'true' || github.event_name == 'workflow_dispatch'
         env:
           PACKAGE_VERSION: ${{ steps.release.outputs.version }}
           RELEASED_CRATES: oxide-batch-core oxide-batch-repository oxide-batch-plan oxide-batch oxide-batch-cli
@@ -73,7 +96,7 @@ jobs:
           done
 
       - name: Authenticate to crates.io
-        if: steps.release.outputs.bootstrap != 'true'
+        if: github.event_name == 'release' && steps.release.outputs.bootstrap != 'true'
         id: crates-io-auth
         uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
 
@@ -83,9 +106,11 @@ jobs:
       # Cargo resolves this order from the dependency graph of the selected
       # packages regardless of --package argument order. v0.5.0 is the sole
       # first-publication bootstrap exception above; later releases use OIDC
-      # Trusted Publishing exclusively.
+      # Trusted Publishing exclusively. Gated to the release.published event
+      # only: workflow_dispatch manual recovery never authenticates to or
+      # publishes on crates.io, verification only.
       - name: Publish to crates.io
-        if: steps.release.outputs.bootstrap != 'true'
+        if: github.event_name == 'release' && steps.release.outputs.bootstrap != 'true'
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
         run: >-
