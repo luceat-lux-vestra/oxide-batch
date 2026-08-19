@@ -212,28 +212,22 @@ Unchanged by this closure, and explicitly not resolved by it:
   deeper crash/restart dogfooding across component kinds is recommended as
   part of M6's separate reference-consumer project.
 
-## Release operations hygiene — maintainer action still required
+## Release operations hygiene — complete
 
 Independent of the M5 technical gate above, the `0.5.0` bootstrap publication
 (the first-ever publish of `oxide-batch-core`, `oxide-batch-repository`,
 `oxide-batch-plan`, and `oxide-batch-cli`) used a temporary crates.io API
 token, since Trusted Publishing cannot create a crate that does not exist
-yet. As of this record:
+yet. The maintainer subsequently confirmed completion of all bootstrap cleanup:
 
-- **Not independently verifiable by this closure:** whether crates.io
-  Trusted Publisher is configured identically for all four new crates
-  (owner `luceat-lux-vestra`, repository `oxide-batch`, workflow
-  `release.yml`, environment `release`) — this requires crates.io web UI
-  access. **Maintainer action required.**
-- **Not performed by this closure:** `cargo logout` on the bootstrap
-  machine, and confirmation that no bootstrap token remains in local Cargo
-  credentials. **Maintainer action required.**
-- **Not verifiable/performed by this closure:** revocation of the temporary
-  crates.io bootstrap API token. Confirmed clean: no GitHub repository or
-  `release`-environment secret stores this or any other crates.io token, so
-  there is no in-repository exposure while this is outstanding. **Maintainer
-  action required.**
+- crates.io Trusted Publisher is configured for all four newly created crates
+  with owner `luceat-lux-vestra`, repository `oxide-batch`, workflow
+  `release.yml`, and environment `release`;
+- `cargo logout` was run on the bootstrap machine and the temporary registry
+  credential was removed from local Cargo credentials;
+- the temporary crates.io bootstrap API token was revoked.
 
-Every future (non-bootstrap) release uses OIDC Trusted Publishing exclusively
-(`rust-lang/crates-io-auth-action`, gated to `github.event_name == 'release'`);
-this closure did not introduce, and does not require, any long-lived token.
+Repository-side verification also confirmed that no GitHub repository or
+`release`-environment secret stores a crates.io token. Every future
+(non-bootstrap) release therefore uses OIDC Trusted Publishing exclusively
+(`rust-lang/crates-io-auth-action`, gated to `github.event_name == 'release'`).
