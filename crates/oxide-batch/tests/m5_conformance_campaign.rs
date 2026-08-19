@@ -42,16 +42,27 @@ use serde_json::Value;
 /// The gate reviewed `83` rows and fixed how many sit in each status. A ledger
 /// edit that moves a row without revisiting the gate fails here, which is the
 /// point: the campaign's denominator cannot drift silently.
+///
+/// `v0.5.0`'s release promoted `28` of the `29` advertised embedded-kernel
+/// rows from `Implemented` to `Verified` per the
+/// [conformance matrix's promotion set](../../../docs/compatibility/conformance-matrix.md#m5-disposition-and-promotion-set)
+/// and [M5 exit evidence](../../../docs/project/m5-exit-evidence.md);
+/// `META-CONTEXT-001` is the one advertised row that stays `Implemented`.
 const CLOSED_DISPOSITION: &[(&str, usize)] = &[
-    ("Verified", 0),
-    ("Implemented", 29),
+    ("Verified", 28),
+    ("Implemented", 1),
     ("Partial", 13),
     ("Planned", 39),
     ("Unknown", 2),
 ];
 
 /// The statuses that make a row part of the accepted M0-M4 scope.
-const ACCEPTED_STATUSES: &[&str] = &["Implemented", "Partial"];
+///
+/// `Verified` rows stay in scope: a regression of a `Verified` row is a
+/// compatibility defect per the ledger's row and claim rules, so the
+/// campaign keeps exercising them exactly as it did while they were
+/// `Implemented`.
+const ACCEPTED_STATUSES: &[&str] = &["Verified", "Implemented", "Partial"];
 
 #[test]
 fn accepted_scope_matches_the_ledger_disposition() -> Result<(), Box<dyn Error>> {
@@ -79,10 +90,15 @@ fn accepted_scope_matches_the_ledger_disposition() -> Result<(), Box<dyn Error>>
     );
 
     assert_eq!(
-        ledger.with_status("Implemented"),
+        ledger
+            .with_status("Verified")
+            .into_iter()
+            .chain(ledger.with_status("Implemented"))
+            .collect::<BTreeSet<_>>(),
         ledger.advertised()?,
-        "the advertised embedded-kernel set and the `Implemented` rows are two \
-         statements of one fact, and the ledger must not disagree with itself",
+        "the advertised embedded-kernel set is exactly the rows the ledger \
+         carries as `Verified` or `Implemented`, and the ledger must not \
+         disagree with itself",
     );
     assert_eq!(
         ledger.with_status("Partial"),

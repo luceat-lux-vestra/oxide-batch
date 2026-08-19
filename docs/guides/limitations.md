@@ -18,14 +18,14 @@ all listed or counted below.
 
 `29` ledger rows form the advertised embedded-kernel set this release
 delivers, each with its evidence campaign already complete (see the
-[#102 reconciliation](../project/m5-102-reconciliation.md)). They become
-`Verified` only once `0.5.0` is published and its release artifacts are
-independently verified; see the
+[#102 reconciliation](../project/m5-102-reconciliation.md)). With `0.5.0`
+published and its release artifacts independently verified, `28` of the `29`
+are `Verified`; `META-CONTEXT-001` remains `Implemented` pending codec
+migration tests. See the
 [ledger's M5 disposition set](../compatibility/conformance-matrix.md#m5-disposition-and-promotion-set)
 for the exact list and the
-[M5 exit record](../project/m5-exit-evidence.md) for the final promoted
-disposition and evidence trail. Everything below this line is **not** part
-of that set.
+[M5 exit record](../project/m5-exit-evidence.md) for the promoted disposition
+and evidence trail. Everything below this line is **not** part of that set.
 
 ## Partial: implemented at a bounded M0-M4 boundary, expands in M6-M11
 

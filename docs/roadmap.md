@@ -8,8 +8,9 @@ its specific architecture.
 
 **Last reviewed:** 2026-08-03
 
-Milestones are capability and evidence gates, not calendar promises. M0-M4
-record accepted history; M5 is the active gate. The continuous M5-M14 program is
+Milestones are capability and evidence gates, not calendar promises. M0-M5
+record accepted history, closed by the release of `oxide-batch` `0.5.0`; M6 is
+next. The continuous M5-M14 program is
 accepted by [RFC-0001](rfcs/0001-m5-preview-and-project-wide-1-0.md) and the
 topic decisions linked below. Historical M0 decisions remain preserved with
 their supersession record.
@@ -186,15 +187,16 @@ and the ledger is updated.
 
 ## M5 — Embedded Core Production Preview
 
-**Status:** Active (2026-08-03)
+**Status:** Complete — released as `oxide-batch` `0.5.0` (2026-08-19)
 
 The decision gates, dependency-ordered workstreams, architecture constraints,
 and definition of done are recorded in the
 [M5 kickoff gate](project/m5-kickoff-gate.md), and the nine gates are closed
 by the [M5 design-gate evidence](project/m5-design-gate-evidence.md). M5
-stabilizes the delivered M0-M4 embedded scope; it is the first milestone that
-may promote advertised embedded-kernel ledger rows to `Verified`, and only
-against a named released version.
+stabilized the delivered M0-M4 embedded scope; it was the first milestone that
+could promote advertised embedded-kernel ledger rows to `Verified`, against a
+named released version, and the `0.5.0` release promoted `28` of the `29`
+advertised rows — see the [M5 exit evidence](project/m5-exit-evidence.md).
 
 **Objective:** stabilize a correct, supportable, single-host PostgreSQL batch
 kernel without freezing APIs that M6-M12 must extend.

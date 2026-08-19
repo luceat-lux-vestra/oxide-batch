@@ -100,6 +100,8 @@ decisions own the normative detail.
 - [M5 context-codec and transaction-capability evidence](project/m5-codec-and-capability-evidence.md)
 - [M5 public facade and preview API review evidence](project/m5-facade-api-review-evidence.md)
 - [M5 evidence campaign record](project/m5-campaign-evidence.md)
+- [M5 issue #102 evidence campaign reconciliation](project/m5-102-reconciliation.md)
+- [M5 exit evidence](project/m5-exit-evidence.md)
 - [Historical M0 decision register](product/open-decisions.md)
 
 Historical gates are preserved as records of their date. Later decisions link

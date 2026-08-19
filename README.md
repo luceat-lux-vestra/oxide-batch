@@ -7,10 +7,11 @@ OxideBatch is an early-stage Rust-native framework for reliable, restartable
 batch processing, inspired by Spring Batch.
 
 > [!IMPORTANT]
-> OxideBatch has completed the M1 executable kernel, M2 durable PostgreSQL
-> chunk/restart gate, and M3 fault-tolerance and finite-flow implementation
-> gate. Compatibility rows remain unreleased `Implemented` or `Partial`
-> evidence, and no production-ready runtime has been released.
+> OxideBatch `0.5.0` is the M5 Embedded Core Production Preview: a stabilized,
+> released embedded PostgreSQL batch kernel, not a GA, enterprise-ready, or
+> full Spring Batch-parity runtime. `28` compatibility-ledger rows are
+> `Verified` against this release; the rest remain `Partial`, `Planned`, or
+> `Unknown` and are visible in the [conformance matrix](docs/compatibility/conformance-matrix.md).
 
 ## Project goals
 
@@ -65,12 +66,13 @@ cancellation-latency, telemetry-overhead, and soak evidence recorded in the
 [capacity guidance](docs/operations/capacity-and-resource-budgets.md). Every M4
 row remains implemented or partial rather than released and verified.
 
-**M5 — Embedded Core Production Preview** is the active milestone. It
-stabilizes the delivered M0-M4 embedded scope rather than adding batch
-capability, and its decision gates, workstreams, and exit criteria are recorded
-in the [M5 kickoff gate](docs/project/m5-kickoff-gate.md). M5 is the first
-milestone that may promote advertised embedded-kernel ledger rows to verified,
-and only against a named released version.
+**M5 — Embedded Core Production Preview** is complete and released as
+`oxide-batch` `0.5.0`. It stabilizes the delivered M0-M4 embedded scope rather
+than adding batch capability, and its decision gates, workstreams, and exit
+criteria are recorded in the [M5 kickoff gate](docs/project/m5-kickoff-gate.md)
+and [M5 exit evidence](docs/project/m5-exit-evidence.md). M5 is the first
+milestone that may promote advertised embedded-kernel ledger rows to
+`Verified`, and `0.5.0`'s release promoted `28` of the `29` advertised rows.
 
 The shipped `oxide-batch` command is a guarded repository operator, not a
 standalone Rust job-definition loader. It can inspect and recover durable
