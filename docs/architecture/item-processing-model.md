@@ -4,11 +4,15 @@
 
 **Governing decision:** [ADR-0008](decisions/0008-item-component-contract.md)
 (Accepted 2026-08-03) fixes the item reader/processor/writer public contract
-shape recorded below. The remaining sections of this document — chunk
-lifecycle, state and checkpointing, composition taxonomy,
-completion/retry/skip/rollback, standard-component requirements, and evidence
-— stay open pending the M6 design-gate closure tracked by the
-[M6 kickoff gate](../project/m6-kickoff-gate.md).
+shape recorded below. The remaining sections of this document — state and
+checkpointing, composition taxonomy, and standard-component requirements —
+are closed as design by the
+[M6 design-gate evidence](../project/m6-design-gate-evidence.md) (Gates C, D,
+E, and F). Design closure fixes the contract those sections state; it does
+not itself implement state persistence, the component catalog, or the
+listener decision — see each closed section below for its implementation
+owner. The chunk-lifecycle and completion/retry/skip/rollback sections below
+describe accepted M2/M3 behavior and are not part of the M6 gate closure.
 
 This document is the canonical specification for item components, chunk
 lifecycle, stream state, composition, and the accepted native/erased
@@ -42,16 +46,21 @@ The `ItemReader<I>`, `ItemProcessor<I, O>`, and `ItemWriter<O>` shape above is
 fixed by ADR-0008: one public trait per role, an explicit call lifetime, and
 an opaque `impl Future` return, with erasure provided by a concrete
 `BoxedReader`/`BoxedProcessor`/`BoxedWriter` handle rather than a second
-public trait. `ItemStream` and `Checkpoint` state/version mechanics remain
-open — closed by M6 Gate C (item-stream and component state), not by
-ADR-0008.
+public trait. `ItemStream` and `Checkpoint` state/version mechanics are
+closed by [M6 Gate C](../project/m6-design-gate-evidence.md#gate-c--itemstream--component-state)
+(see [State and checkpointing](#state-and-checkpointing) below); Gate C
+closes the contract, not its implementation, which remains
+[#144](https://github.com/luceat-lux-vestra/oxide-batch/issues/144)'s to
+build.
 
 **Item listeners are out of scope for ADR-0008** and keep the ADR-0002 boxed
 `Pin<Box<dyn Future<Output = T> + Send + 'a>>` form: a listener set is a
 heterogeneous, registration-ordered collection, and each registered listener
-still costs one boxed future per item per phase. Reducing that allocation is
-a separate, evidence-gated decision (M6 Gate F), not assumed by this
-document.
+still costs one boxed future per item per phase. [M6 Gate F](../project/m6-design-gate-evidence.md#gate-f--item-listener-allocation)
+closes this as an explicit KEEP decision for M6: no allocation-reducing
+listener type system is introduced, and listener allocation cost is measured
+and reported separately from the listener-free typed-path guarantee rather
+than folded into it.
 
 ## Accepted contract shape and erasure boundary
 
@@ -96,18 +105,46 @@ conformance contract. Close errors do not erase earlier committed chunks.
 
 ## State and checkpointing
 
-Component state uses a namespace, schema ID and version, codec ID and version,
-bounded encoded size and depth, checksum, and sensitivity class. Migration is
-explicit and deterministic. Unknown newer versions fail closed. Large state
-uses a bounded external blob capability with content identity; it is not
-silently inlined into metadata.
+Closed by [M6 Gate C](../project/m6-design-gate-evidence.md#gate-c--itemstream--component-state).
+Component state identity is a stable namespace, scoped under the owning
+component's logical identity — never a display name, runtime object
+identity, or process-local pointer/object address — plus a schema ID and
+version and a codec ID and version. Delegate/composite state namespaces MUST
+NOT collide (see [Composition taxonomy](#composition-taxonomy)).
+
+Bounds reuse the M5 context envelope unchanged: default encoded size
+`64 KiB` and default depth `16`, hard ceilings of `1 MiB` and depth `64`, and
+a `128`-byte schema-identifier bound. No new bound is introduced for
+component state.
+
+A checksum is verified before any decode or migration step runs. A checksum
+mismatch is a typed corruption failure: corrupt state is never replaced with
+empty or default state, never advances a checkpoint, and is never exposed as
+a raw value in diagnostics. If the durable checksum encoding is implemented
+before an algorithm change is anticipated, the format carries an algorithm
+identity and version so a future change is a versioned migration rather than
+a silent reinterpretation.
+
+Migration is explicit and deterministic: an equal version decodes directly,
+an older version applies one bounded deterministic directed migration chain,
+and a newer version, an unknown schema, or an unknown codec all fail closed.
+A migration failure is a known, not-committed outcome, and migration never
+changes component or definition identity.
 
 Stateful components that disable persistence MUST declare the resulting
 restart limitation. A plan cannot mark the step restartable unless every
-required state transition can be reconstructed.
+required state transition can be reconstructed. Large state uses only a
+bounded external blob capability addressed by content identity; it is never
+silently inlined into metadata.
+
+This contract is the named evidence owner for `META-CONTEXT-001`'s remaining
+gap (an architecture spike rather than codec migration tests); the row
+promotes only when [#144](https://github.com/luceat-lux-vestra/oxide-batch/issues/144)
+lands state-migration and rejection-fixture evidence against a named release.
 
 ## Composition taxonomy
 
+Closed by [M6 Gate E](../project/m6-design-gate-evidence.md#gate-e--composition-semantics).
 Standard composition includes:
 
 - composite and delegating readers, processors, and writers;
@@ -118,9 +155,40 @@ Standard composition includes:
 - synchronization/thread-safety wrappers;
 - line, resource, database, messaging, object-store, and HTTP adapters.
 
-Composition preserves ordering, transaction participation, checkpoint
-ownership, error classification, and close behavior. A wrapper MUST NOT claim a
-stronger capability than its least-capable delegate.
+A wrapper's advertised capability is the intersection (meet) of its
+delegates' capabilities, never their union and never a capability none of
+them has:
+
+- **ordering** — if any required delegate is order-sensitive, the composite
+  stays order-sensitive;
+- **transaction participation** — a composite must not claim a stronger
+  transaction/delivery mode than every required delegate supports;
+  `WriteContext`'s enlisted transaction reborrows sequentially into each
+  delegate, and two delegates never hold the same `&mut BusinessTransaction`
+  simultaneously;
+- **restartability** — if any required delegate cannot reconstruct its
+  state, the composite cannot claim restartability;
+- **checkpoint/state** — a wrapper documents its own checkpoint ownership
+  and its delegates' component-state namespaces, and must not hide a
+  delegate's state or let two delegates' namespaces collide;
+- **thread safety** — a wrapper must not advertise a capability every
+  required delegate does not itself satisfy, unless the wrapper's own
+  synchronization genuinely provides the narrower capability it separately
+  advertises;
+- **error classification** — a wrapper must not arbitrarily strengthen,
+  weaken, or hide a delegate failure's classification; a filter/validator
+  may convert an outcome only as its explicit, documented semantic purpose;
+- **close ordering** — the default rule is close in the reverse of
+  successful open order; a close failure on one delegate does not skip the
+  close attempt on any other already-opened delegate, and never erases an
+  earlier primary runtime failure;
+- **classifier-selected delegates** — a wrapper that selects among several
+  delegates at runtime must not infer a stronger static capability from the
+  one delegate a given run selected; the static declaration holds for every
+  delegate it could select.
+
+A wrapper MUST NOT claim a stronger capability than its least-capable
+delegate for any property above.
 
 ## Completion, retry, skip, and rollback
 
@@ -132,16 +200,28 @@ state can remain visible.
 
 ## Standard-component requirements
 
-Every first-party component documents:
+Closed by [M6 Gate D](../project/m6-design-gate-evidence.md#gate-d--standard-component-semantics).
+Every first-party component documents, at minimum:
 
-- input/output types and format/version;
+- input type and output type;
+- format and format version;
 - state schema and checkpoint ownership;
-- ordering, restart, and thread-safety properties;
-- transaction and delivery capabilities;
-- resource bounds, backpressure, cancellation, and close behavior;
-- sensitive data and diagnostic fields;
-- contract, crash, conformance, and performance evidence;
-- support tier and maintained versions.
+- ordering semantics, restartability, and thread-safety;
+- reentrancy, where relevant;
+- transaction capability and delivery capability;
+- maximum/bounded resource behavior, buffering behavior, and backpressure
+  behavior;
+- cancellation behavior and close behavior;
+- sensitive-data classification and diagnostic/redaction behavior;
+- malformed-input behavior and failure classification;
+- support tier;
+- required contract evidence, crash/restart evidence where stateful, and
+  performance/resource evidence where applicable.
+
+A prose claim of "supported" is not completion. A component pull request
+ships its declared contract and its executable evidence together; a
+contract without evidence, or evidence without a declared contract, is
+incomplete.
 
 ## Evidence
 

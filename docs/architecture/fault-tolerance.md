@@ -7,8 +7,12 @@ ADR-0002 boxed component boundary.
 
 This document is the canonical owner for M3 retry, backoff, skip,
 rollback/no-rollback, stable failure classification, and item/retry/skip
-listener behavior. The complete component model remains gated by
-[RFC-0005](../rfcs/0005-static-and-erased-components.md) and M6.
+listener behavior. The complete component model is decided
+([RFC-0005](../rfcs/0005-static-and-erased-components.md), accepted
+2026-08-03 and recorded as
+[ADR-0008](decisions/0008-item-component-contract.md)) but not yet
+implemented in production; that migration is M6 scope, starting with
+[#143](https://github.com/luceat-lux-vestra/oxide-batch/issues/143).
 
 ## Compatibility baseline and deliberate differences
 

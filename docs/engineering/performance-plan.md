@@ -148,11 +148,58 @@ P-002 static-versus-erased measurement is **not** an M5 campaign. The RFC-0005
 spike ([0004](../architecture/spikes/0004-static-and-erased-item-path.md))
 measured dispatch on a synthetic workload and closed the approval gate; P-002
 proper — the reference workload with real components, where the code-size
-crossover and the realistic throughput benefit get located — remains M6.
+crossover and the realistic throughput benefit get located — is the M6
+campaign frozen below.
 
 A campaign result that changes a durable observation is invalid regardless of
 its throughput. No campaign result promotes a ledger row on its own; promotion
 additionally requires a named released version.
+
+## M6 P-002 real-component campaign
+
+The [M6 design-gate evidence](../project/m6-design-gate-evidence.md#gate-h--p-002-real-component-performance-protocol)
+(Gate H) freezes this campaign's protocol and acceptance criteria. The
+protocol is fixed here; it has not been executed. Gate H stays **OPEN** until
+[#153](https://github.com/luceat-lux-vestra/oxide-batch/issues/153) runs it
+and records the result — this section is not itself a completed campaign
+report.
+
+**Required comparison.** The same logical pipeline runs as a fully typed
+component pipeline and as the same components wrapped in
+`BoxedReader`/`BoxedProcessor`/`BoxedWriter`, with identical dataset,
+component logic, chunk size, transaction semantics, delivery semantics,
+state/checkpoint behavior, feature set, and compiler profile between the two
+runs.
+
+**Primary listener-free campaign.** The hard acceptance criterion is checked
+as an architecture invariant, not an average or a threshold:
+framework-controlled per-item future allocation on the typed path is exactly
+`0`.
+
+**Listener-enabled companion measurement.** [Gate F](../project/m6-design-gate-evidence.md#gate-f--item-listener-allocation)
+keeps the boxed per-item-per-phase item-listener allocation for M6, so a
+listener-enabled variant is measured separately. Listener allocation is never
+folded into the typed component allocation figure, the listener-free hard
+guarantee is never weakened by this measurement, and the listener-enabled
+cost is reported as its own distinct result.
+
+**Required metrics:** allocations per item, allocations per chunk, bytes
+allocated/copied where measurable, throughput, item latency/relevant latency
+distribution, binary-size delta, and compile-time delta, plus the
+environment metadata this plan's [measurement principles](#measurement-principles)
+already require.
+
+**No invented performance threshold.** This protocol sets no numeric release
+gate — no "N% faster," no invented latency or throughput target. The only
+hard pass/fail criteria are: (1) correctness/restart/durable observations are
+identical between the typed and erased paths, proved separately by
+[Gate B](../project/m6-design-gate-evidence.md#gate-b--transactionrestart-equivalence-protocol);
+and (2) the typed path's framework-controlled per-item future allocation is
+`0`. Throughput, latency, code-size delta, and compile-time delta are M6
+measurement and disclosure evidence, not binding budgets invented by this
+section.
+
+**Execution and closure owner:** [#153](https://github.com/luceat-lux-vestra/oxide-batch/issues/153).
 
 ## Regression gates
 

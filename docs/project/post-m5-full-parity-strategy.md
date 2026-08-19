@@ -227,7 +227,7 @@ Using `BoxFuture` and `dyn Trait` at a heterogeneous composition boundary can
 be ergonomic, but using them for every item operation would force allocation
 and dynamic dispatch into the hottest path.
 
-RFC-0005 proposes this dual path:
+RFC-0005, accepted and recorded as ADR-0008, specifies this dual path:
 
 1. a generic, associated-type/native-async path in which reader, processor, and
    writer calls can be monomorphized and do not allocate a future per item;

@@ -2,12 +2,16 @@
 
 **State:** Accepted
 
-**Open proposals:** The static/erased hot-path decision and distributed worker
-protocol remain gated by RFC-0005 and RFC-0009.
+**Open proposals:** The distributed worker protocol remains gated by
+RFC-0009. The static/erased hot-path decision was accepted as RFC-0005 and is
+recorded as [ADR-0008](decisions/0008-item-component-contract.md); its
+production migration boundary is frozen by the
+[M6 design-gate evidence](../project/m6-design-gate-evidence.md) and lands in
+[#143](https://github.com/luceat-lux-vestra/oxide-batch/issues/143).
 
 This document shows current and accepted target structure. Focused documents
-own detailed contracts. Elements governed by RFC-0005 or RFC-0009 remain
-proposed and are not implementation authority.
+own detailed contracts. Elements governed by RFC-0009 remain proposed and are
+not implementation authority.
 
 ## Dependency rule
 
@@ -71,14 +75,24 @@ No target below silently supersedes them.
 
 ## Static hot path and erased boundary
 
-The proposed native item path is generic and monomorphizable, with no
-item-per-item boxed future or trait-object lookup. Erased adapters are used for
-heterogeneous plans, dynamic registration, ergonomic facade boundaries, and
-out-of-process protocols. Allocation is limited to step or chunk boundaries.
+The accepted native item path is generic and monomorphizable, with no
+item-per-item boxed future or trait-object lookup. Erased adapters
+(`BoxedReader`/`BoxedProcessor`/`BoxedWriter`) are used for heterogeneous
+plans, dynamic registration, ergonomic facade boundaries, and out-of-process
+protocols. Allocation is limited to step, chunk, or registry boundaries where
+a handle is explicitly constructed.
 
-This changes the consequences of accepted ADR-0002 and therefore requires
-[RFC-0005](../rfcs/0005-static-and-erased-components.md). The current boxed
-public contracts remain valid while the RFC is pending.
+This changes the consequences of accepted ADR-0002 and is decided by
+[RFC-0005](../rfcs/0005-static-and-erased-components.md), accepted
+2026-08-03 and recorded as
+[ADR-0008](decisions/0008-item-component-contract.md), which supersedes
+ADR-0002 in part — the item component representation only. Production code
+still carries the ADR-0002 boxed item traits until
+[#143](https://github.com/luceat-lux-vestra/oxide-batch/issues/143) migrates
+them under the boundary the
+[M6 design-gate evidence](../project/m6-design-gate-evidence.md) freezes;
+item listeners keep the ADR-0002 boxed form for M6 regardless of that
+migration.
 
 ## Runtime boundary
 
