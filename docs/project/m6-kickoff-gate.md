@@ -73,13 +73,13 @@ level, the repository capability model, or the definition-fingerprint input
 set — those stay owned by their existing accepted decisions (ADR-0004,
 ADR-0005, ADR-0006, ADR-0009) and are not reopened here.
 
-What is closed by this gate: the architecture decision (RFC-0005/ADR-0008)
-and the delivery-issue decomposition below. What remains open, and is
-therefore gated rather than assumed, is named by Gates A-H: the exact
-production migration boundary, transaction/restart equivalence evidence, the
-`ItemStream`/component-state contract, standard-component and composition
-semantics, the item-listener allocation decision, the `oxide-batch-test`
-boundary, and the P-002 performance-evidence obligation.
+What is closed by this kickoff record: the architecture decision
+(RFC-0005/ADR-0008) and the delivery-issue decomposition below. What remains
+open, and is therefore gated rather than assumed, is named by Gates A-H. Gates
+A/C/D/E/F/G are design decisions that must close before their dependent
+implementation lands. Gates B/H are evidence gates: #142 freezes their
+scenarios, protocol, and acceptance criteria, but they close only after #153
+executes the transaction/restart-equivalence and P-002 campaigns successfully.
 
 ## Accepted architecture
 
@@ -116,27 +116,31 @@ scope ADR-0008 explicitly left outside its own decision (item listeners,
 | Gate | Owner | Required decision and evidence | Blocks |
 | --- | --- | --- | --- |
 | A — Item contract migration | Core/runtime owners | Exact production migration boundary: publish the ADR-0008 contract, sealed mirror, and `Boxed*` handles; make `chunk_runtime::ChunkStep` generic over the contract; port existing components/tests; remove the ADR-0002 item traits in the same change that removes their last use — with logical component identity, definition fingerprint, checkpoint, transaction, lifecycle, and restart selection held invariant | Any standard-component catalog work |
-| B — Transaction/restart equivalence | Repository/runtime owners | Named PostgreSQL-fixture scenarios proving the typed and `Boxed*` paths are semantically identical for enlisted transaction behavior, statement participation, checkpoint, state, counters, rollback, unknown commit outcome, process kill, and restart | M6 exit |
+| B — Transaction/restart equivalence | Repository/runtime owners | Freeze named PostgreSQL-fixture scenarios and acceptance criteria in #142; #153 must then prove the typed and `Boxed*` paths semantically identical for enlisted transaction behavior, statement participation, checkpoint, state, counters, rollback, unknown commit outcome, process kill, and restart | M6 exit; closes only in #153 |
 | C — `ItemStream`/component state | Core/repository owners | Namespace, schema ID/version, codec ID/version, bounded size/depth, checksum/corruption handling, sensitivity, migration, unknown-newer-version rejection, and restartability-declaration contract; explicit link to `META-CONTEXT-001`'s remaining evidence gap, with a named owner rather than an assumed promotion | Any component that persists state beyond a checkpoint position |
 | D — Standard component semantics | Core owners | The documentation/evidence contract every first-party component must satisfy: input/output type, format/version, state schema, checkpoint ownership, ordering, restart, thread safety, transaction/delivery capability, resource bounds, cancellation, close behavior, sensitive-diagnostic handling, malformed-input behavior, and support tier | Every format-specific component issue (CSV, JSON, PostgreSQL, multi-resource) |
 | E — Composition semantics | Core owners | Common rules for composite/delegate/classifier/validator/filter/peek/aggregate/multi-resource/thread-safety wrappers: a wrapper MUST NOT claim a stronger capability than its least-capable delegate, for ordering, checkpoint ownership, transaction participation, error classification, thread safety, restartability, and close ordering | Standard processors/composites, multi-resource issues |
 | F — Item listener allocation | API/performance owners | A measured decision — keep the current boxed per-item-per-phase allocation, adopt an allocation-reducing structure, or explicitly defer to a later milestone — with evidence, not assumed by measuring nothing | Fault/listener ergonomics issue |
 | G — `oxide-batch-test` boundary | Core/testing owners | The public test-kit surface: full-job, single-step, scoped-component, restart, deterministic-clock/ID, and failure/panic/stop-injection utilities; the crate's independent dependency/support boundary decided before it is created; no production internal exposed for test convenience alone; no placeholder crate | Test-kit foundation issue |
-| H — Performance evidence | Performance owners | P-002 (static-versus-erased) run against the M6 reference workload with real components: allocations/item, allocations/chunk, throughput, latency, binary-size delta, compile-time delta, with the item-listener caveat from Gate F stated rather than hidden | M6 exit |
+| H — Performance evidence | Performance owners | Freeze the P-002 real-component workload, measurement protocol, and acceptance criteria in #142; #153 must then measure allocations/item, allocations/chunk, throughput, latency, binary-size delta, compile-time delta, with the item-listener caveat from Gate F stated rather than hidden | M6 exit; closes only in #153 |
 
 Issue
 [#141](https://github.com/luceat-lux-vestra/oxide-batch/issues/141) records
 this table and the delivery order. Issue
-[#142](https://github.com/luceat-lux-vestra/oxide-batch/issues/142) closes
-every gate above in canonical documents before any dependent implementation
-issue may land. Any change to an accepted contract still requires a
-superseding RFC or ADR before dependent implementation.
+[#142](https://github.com/luceat-lux-vestra/oxide-batch/issues/142) closes the
+design decisions in Gates A/C/D/E/F/G and freezes the executable protocols and
+acceptance criteria for evidence Gates B/H before dependent implementation
+lands. Gates B/H remain open until issue
+[#153](https://github.com/luceat-lux-vestra/oxide-batch/issues/153) executes
+those campaigns successfully. Any change to an accepted contract still
+requires a superseding RFC or ADR before dependent implementation.
 
 ## Delivery workstreams and order
 
-1. [#142](https://github.com/luceat-lux-vestra/oxide-batch/issues/142) — a
-   design/evidence-gate closure issue closes Gates A-H in canonical
-   documents, mirroring the M5 precedent (#97).
+1. [#142](https://github.com/luceat-lux-vestra/oxide-batch/issues/142) — close
+   design Gates A/C/D/E/F/G and freeze the Gate B/H evidence scenarios,
+   protocols, and acceptance criteria, mirroring the M5 design-before-delivery
+   discipline without pretending post-implementation evidence already exists.
 2. [#143](https://github.com/luceat-lux-vestra/oxide-batch/issues/143) —
    item contract and chunk hot-path migration. This is the **first M6
    implementation issue**: it lands before any standard-component catalog
@@ -173,16 +177,16 @@ superseding RFC or ADR before dependent implementation.
     item pipeline configuration ergonomics usable over both the typed and
     `Boxed*` dynamic pipeline.
 12. [#153](https://github.com/luceat-lux-vestra/oxide-batch/issues/153) —
-    conformance, performance evidence, documentation, ledger reconciliation,
-    and the M6 exit gate. The final M6 issue, following every implementation
-    stream.
+    execute Gates B/H, complete conformance/performance evidence,
+    documentation, ledger reconciliation, and the M6 exit gate. The final M6
+    issue, following every implementation stream.
 
 The approximate dependency graph:
 
 ```text
 Kickoff (#141)
   ↓
-Design/evidence gates (#142)
+Design closure + evidence protocol freeze (#142)
   ↓
 Item contract + chunk hot-path migration (#143)
   ├── ItemStream/state (#144)
@@ -197,7 +201,7 @@ Core components/composites (#146)
       fault/listener ergonomics (#151)
       configuration ergonomics (#152)
                 ↓
-     conformance/performance/docs/exit (#153)
+  execute B/H + conformance/docs/exit (#153)
 ```
 
 Independent workstreams may parallelize, but no component-catalog issue
@@ -258,8 +262,9 @@ M6 kickoff closes only when:
   still `Proposed`;
 - the roadmap, root status, and documentation index name M6 as active
   without claiming any M6 capability is implemented or released `Verified`;
-- Gates A-H each have a named owner, a required decision, and a named
-  dependent issue;
+- Gates A/C/D/E/F/G each have a named owner, required decision, and named
+  dependent issue; Gates B/H each have a named owner, frozen executable
+  protocol and acceptance criteria, and explicit closure owner #153;
 - every M6-scoped conformance-matrix row has exactly one owning delivery
   issue, recorded in the table above;
 - the first implementation issue is the item-contract/chunk-runtime
