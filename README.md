@@ -81,10 +81,16 @@ application that embeds `oxide-batch-cli` and supplies its own compiled
 `DefinitionCatalog`. Run `oxide-batch --help` for that boundary and the command
 grammar entry point.
 
+**M6 — Complete Item Processing and User Test Kit** is authorized and active
+as a kickoff/tracking workstream; no M6 capability is implemented yet. Its
+decision gates, dependency-ordered delivery issues, and exit criteria are
+recorded in the [M6 kickoff gate](docs/project/m6-kickoff-gate.md).
+
 Start with the [documentation index](docs/README.md) and
 [continuous delivery roadmap](docs/roadmap.md). The M5-M14 full-parity program
-is accepted; the static/erased component architecture and distributed worker
-protocol remain gated by RFC-0005 and RFC-0009.
+is accepted; the static/erased component architecture is accepted
+(RFC-0005/ADR-0008) and its implementation is M6 scope, while the distributed
+worker protocol remains gated by RFC-0009.
 
 ## Contributing
 
