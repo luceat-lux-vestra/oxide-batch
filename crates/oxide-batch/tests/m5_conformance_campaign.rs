@@ -127,7 +127,9 @@ fn accepted_scope_matches_the_ledger_disposition() -> Result<(), Box<dyn Error>>
         // to `Verified` is therefore an accepted refinement here: the same
         // scope row, the same scenarios, a stronger released disposition.
         let compatible = match ledger_status {
-            Some(status) => status == row.status || (row.status == "Implemented" && status == "Verified"),
+            Some(status) => {
+                status == row.status || (row.status == "Implemented" && status == "Verified")
+            }
             None => false,
         };
         assert!(
