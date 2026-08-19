@@ -6,11 +6,11 @@
 2026-08-03 and is recorded as ADR-0008. RFC-0009 remains an evidence gate for
 its specific architecture.
 
-**Last reviewed:** 2026-08-03
+**Last reviewed:** 2026-08-19
 
 Milestones are capability and evidence gates, not calendar promises. M0-M5
 record accepted history, closed by the release of `oxide-batch` `0.5.0`; M6 is
-next. The continuous M5-M14 program is
+active. The continuous M5-M14 program is
 accepted by [RFC-0001](rfcs/0001-m5-preview-and-project-wide-1-0.md) and the
 topic decisions linked below. Historical M0 decisions remain preserved with
 their supersession record.
@@ -247,6 +247,15 @@ exact version selected during release planning. Public APIs and metadata remain
 governed by pre-1.0 policy.
 
 ## M6 — Complete Item Processing and User Test Kit
+
+**Status:** Active (kickoff, 2026-08-19)
+
+The decision gates, dependency-ordered delivery issues, architecture
+constraints, and kickoff exit criteria are recorded in the
+[M6 kickoff gate](project/m6-kickoff-gate.md). Kickoff authorizes tracked
+delivery work; it does not itself implement any M6 capability, and the
+compatibility-ledger rows below stay at their current disposition until
+delivery evidence lands.
 
 **Objective:** complete the Rust-native item/chunk/stream component model,
 standard local components, and application-facing test utilities.

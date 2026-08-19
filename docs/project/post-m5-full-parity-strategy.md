@@ -148,8 +148,9 @@ the number of features.
 
 RFC-0001, RFC-0002, RFC-0003, RFC-0004, RFC-0006, RFC-0007, RFC-0008, and
 RFC-0010 were accepted on 2026-07-30. Their implementation evidence gates still
-apply. The static/erased component architecture (RFC-0005) and distributed
-worker protocol (RFC-0009) remain proposed.
+apply. RFC-0005, the static/erased component architecture, was accepted on
+2026-08-03 and is recorded as ADR-0008; its implementation is M6 scope. The
+distributed worker protocol (RFC-0009) remains proposed.
 
 ### Reinterpret M5 and project-wide 1.0
 

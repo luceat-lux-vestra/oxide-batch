@@ -102,6 +102,7 @@ decisions own the normative detail.
 - [M5 evidence campaign record](project/m5-campaign-evidence.md)
 - [M5 issue #102 evidence campaign reconciliation](project/m5-102-reconciliation.md)
 - [M5 exit evidence](project/m5-exit-evidence.md)
+- [M6 complete item processing and user test kit kickoff gate](project/m6-kickoff-gate.md)
 - [Historical M0 decision register](product/open-decisions.md)
 
 Historical gates are preserved as records of their date. Later decisions link

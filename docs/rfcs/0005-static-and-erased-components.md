@@ -182,13 +182,14 @@ trait carries `#[diagnostic::on_unimplemented]`, and the implementer-facing
 error wording is pinned by compiler fixtures. No change to the declaration was
 required.
 
-The state remains `Proposed` pending acceptance only.
-[ADR-0008](../architecture/decisions/0008-item-component-contract.md) records
-the contract and, on acceptance, supersedes ADR-0002 **in part** — the three
-item component traits only, with the execution model and the other twenty-one
-boxed extension points staying under ADR-0002. Governance requires that
-acceptance before dependent M6 implementation. Transaction and restart equivalence and the
-P-002 measurement against real components remain M6 obligations.
+This RFC was accepted on this same spike evidence on 2026-08-03 (see the
+header above). [ADR-0008](../architecture/decisions/0008-item-component-contract.md)
+records the contract and supersedes ADR-0002 **in part** — the three item
+component traits only, with the execution model and the other twenty-one
+boxed extension points staying under ADR-0002. Transaction and restart
+equivalence and the P-002 measurement against real components remain M6
+obligations, tracked by the
+[M6 kickoff gate](../project/m6-kickoff-gate.md).
 
 ## Current implementation constraint
 
