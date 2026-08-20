@@ -45,8 +45,10 @@ Never infer that a proposed document, merged experiment, roadmap entry, or
 passing test is accepted.
 
 The post-M5 strategy is an umbrella rationale and map, not the sole normative
-owner of detailed behavior. In particular, do not implement RFC-0005 or
-RFC-0009 as accepted architecture while they remain proposed.
+owner of detailed behavior. RFC-0005 is accepted and recorded as ADR-0008;
+follow its accepted item-component boundary and the M6 migration handoff that
+implements it. RFC-0009 remains proposed and is not implementation authority
+until accepted.
 
 ## Change gates
 
