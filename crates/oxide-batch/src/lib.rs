@@ -56,6 +56,33 @@
 //! writer borrows [`BusinessTransaction`] for only its call; no database-driver
 //! type crosses the facade.
 //!
+//! [`ItemReader`], [`ItemProcessor`], and [`ItemWriter`] are plain `async fn`
+//! contracts ([ADR-0008](https://github.com/luceat-lux-vestra/oxide-batch/blob/main/docs/architecture/decisions/0008-item-component-contract.md)):
+//! an implementor writes a natural `async fn`, with no `BoxFuture`, `Pin`,
+//! `Box::pin`, or named future type in sight, and [`ChunkStep`] drives it
+//! monomorphized with no per-item allocation. [`BoxedReader`],
+//! [`BoxedProcessor`], and [`BoxedWriter`] are the explicit, opt-in erasure
+//! boundary for dynamic composition.
+//!
+//! ```
+//! use oxide_batch::{ItemReader, ReadContext, ReadOutcome, ReaderError, StopSource};
+//!
+//! struct Counter(u64);
+//!
+//! impl ItemReader<u64> for Counter {
+//!     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<u64>, ReaderError> {
+//!         self.0 += 1;
+//!         Ok(ReadOutcome::Item(self.0))
+//!     }
+//! }
+//!
+//! let mut counter = Counter(0);
+//! let (_source, stop) = StopSource::new();
+//! let outcome = futures_executor::block_on(counter.read(ReadContext::new(&stop)))?;
+//! assert_eq!(outcome, ReadOutcome::Item(1));
+//! # Ok::<(), ReaderError>(())
+//! ```
+//!
 //! M3 adds runtime-neutral fault-tolerance values. [`FaultPolicy`] combines a
 //! [`FaultClassifier`] over stable [`FaultPhase`] and [`FailureCategory`]
 //! inputs with a bounded [`RetryLimit`], [`RetryStateLimit`], [`SkipLimit`],
