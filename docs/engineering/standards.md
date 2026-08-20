@@ -21,9 +21,9 @@ Design choices favor ownership, borrowing, traits, generics, enums, validated
 types/newtypes, explicit lifetimes where meaningful, deterministic
 construction, typed errors, and structured concurrency over a service
 locator, reflection-style lookup, hidden container state, exception-driven
-policy, or an inheritance-heavy API. The standing question for any design
-choice is: is this the most idiomatic Rust design available? This preference
-does not weaken the accepted
+policy, or an inheritance-heavy API. For each design, prefer idiomatic Rust
+mechanisms over mechanical translation of Java/OOP structure while preserving
+the accepted observable semantics. This preference does not weaken the accepted
 [Spring Batch compatibility contract](../compatibility/spring-batch.md)'s
 semantic-equivalence obligations — an idiomatic Rust design must still map or
 document every pinned Spring capability, per
@@ -46,7 +46,7 @@ client, CLI/web framework, and telemetry-SDK types, with adapters depending
 inward (see
 [AGENTS.md](../../AGENTS.md#rust-and-architecture-bar)).
 
-### Zero-cost by default, explicit cost at boundaries (guideline)
+### Zero-cost hot paths, explicit cost at boundaries (guideline)
 
 Native hot paths SHOULD prefer static dispatch, monomorphization, borrowing,
 reusable buffers, and zero-copy or reduced-copy processing where practical,
@@ -89,42 +89,41 @@ diagnostics, compile times, evolution, or maintainability, a simpler
 validated runtime boundary is chosen instead; typestate/generic complexity is
 never pursued as an end in itself.
 
-### Evidence over architectural fashion
+### Evidence over architectural fashion (guideline)
 
-Functional style, reactive style, async, zero-copy, lock-free design, static
-dispatch, generics, macros, and the newest Rust features are never adopted
-because they are fashionable. Adoption requires at least one of: improved
-correctness, clearer semantics, improved ergonomics, improved maintainability,
-or measurable efficiency improvement, consistent with the justification
-[AGENTS.md](../../AGENTS.md#rust-and-architecture-bar) already requires of
-new dependencies, macros, and code generation, and the measurement discipline
-the [performance plan](performance-plan.md#measurement-principles) already
-requires of efficiency claims. A new Rust language or library feature is
-judged by the same bar.
+Architecture and implementation choices SHOULD be justified by one or more of:
+improved correctness, clearer semantics, improved ergonomics, improved
+maintainability, or measurable efficiency, rather than novelty or fashion.
+This applies equally when considering functional or reactive style, async,
+zero-copy, lock-free design, static dispatch, generics, macros, or new Rust
+language/library features. The binding requirements remain with the documents
+that own them: [AGENTS.md](../../AGENTS.md#rust-and-architecture-bar) requires
+cost justification for new dependencies, macros, and code generation, and the
+[performance plan](performance-plan.md#measurement-principles) owns the
+measurement discipline for efficiency claims.
 
-### Reference-quality engineering
+### Engineering quality bar (guideline)
 
-OxideBatch's architecture and implementation aim to be a long-term reference
-other Rust projects can learn from: understandable, explicit, testable,
+Architecture and implementation SHOULD be understandable, explicit, testable,
 measurable, reproducible, maintainable, failure-aware, and operationally
-explainable. Working code is not sufficient on its own. This is the same
+explainable. Working code alone is not sufficient. This extends the same
 evidence-claim discipline
 [AGENTS.md](../../AGENTS.md#mission-and-non-negotiable-direction) already
 requires of "production-ready," "compatible," "high performance," and
-"beyond Spring": reference quality is an engineering bar this project holds
-itself to, not a product claim OxideBatch makes about itself. Design and
-implementation are expected to answer, at minimum:
+"beyond Spring" without creating a new product claim. Design and
+implementation should be reviewable against concrete questions:
 
-1. Is this an idiomatic Rust design?
-2. Is the abstraction cost zero-cost or explicitly visible?
-3. Are effects and mutation explicit?
+1. Does the design use idiomatic Rust mechanisms while preserving accepted semantics?
+2. Is hot-path abstraction cost zero-cost or explicitly visible and justified?
+3. Are effects and mutation explicit enough to reason about and test?
 4. Are cancellation, backpressure, failure, and resource ownership explicit?
-5. Are invalid states prevented where practical?
-6. Can behavior be proven by executable evidence?
-7. Would this code be suitable as a serious engineering reference?
+5. Are invalid states prevented where practical without disproportionate complexity?
+6. Can behavior and material claims be supported by executable evidence?
+7. Could an experienced maintainer understand and defend the design from repository evidence without access to the originating conversation?
 
-Marketing adjectives such as "GOAT," "best-in-class," or "state-of-the-art"
-do not appear in normative documentation.
+Normative documentation avoids unverifiable superlatives and self-promotional
+claims. Capability and quality claims require evidence appropriate to the
+claim.
 
 ## Rust and API design
 
