@@ -462,14 +462,23 @@ fn reconcile_p010_points(
                  committed {expected_partitions}"
             ));
         }
+        // Measurement aggregation and acceptance judgment are independent:
+        // every valid raw peak updates the observed maximum, even one that
+        // separately fails the exact-worker-point assertion below. Folding
+        // the update into the success arm would silently drop a rejected
+        // point's peak from the raw maximum instead of just failing its own
+        // assertion.
         match point.get("peak_active_workers").and_then(Value::as_u64) {
-            Some(peak) if peak == workers => {
+            Some(peak) => {
                 max_observed_owned_tasks = max_observed_owned_tasks.max(peak);
+                if peak != workers {
+                    violations.push(format!(
+                        "{ID} worker point {workers} observed peak_active_workers {peak}, not \
+                         exactly {workers}: multi-worker occupancy was not demonstrated at this \
+                         point"
+                    ));
+                }
             }
-            Some(peak) => violations.push(format!(
-                "{ID} worker point {workers} observed peak_active_workers {peak}, not exactly \
-                 {workers}: multi-worker occupancy was not demonstrated at this point"
-            )),
             None => violations.push(format!(
                 "{ID} worker point {workers} retained no peak_active_workers"
             )),
@@ -1220,6 +1229,35 @@ mod tests {
         assert!(
             violations.iter().any(|v| v.contains("worker point 64")),
             "{violations:?}"
+        );
+    }
+
+    /// The regression this reconciliation exists to catch: a rejected
+    /// point's raw peak must still count toward the observed maximum.
+    /// Mirrors the real failure — raw peaks `1, 10, 49`, where the buggy
+    /// verifier re-derived the maximum as `10` by only folding a point's
+    /// peak into the maximum inside the `peak == workers` success arm,
+    /// dropping the 64-worker point's rejected `49` and manufacturing a
+    /// second, spurious `does not equal the raw maximum` violation on top
+    /// of the genuine exact-occupancy failure.
+    #[test]
+    fn mismatched_point_raw_peak_still_counts_toward_observed_maximum() {
+        let mut observation = canonical_observation();
+        observation["observation"]["points"][2]["peak_active_workers"] = json!(49);
+        observation["observation"]["observed_peak_owned_tasks"] = json!(49);
+        observation["measurements"]["peak-owned-tasks"] = json!(49);
+        let violations = reconcile_p010(&observation, 100, EXPECTED_WORKERS);
+        assert!(
+            violations.iter().any(|v| v.contains("worker point 64")),
+            "the exact-occupancy mismatch must still be rejected: {violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .all(|v| !v.contains("does not equal the raw maximum")),
+            "the raw maximum must be re-derived from every point's raw peak, including a \
+             rejected one, so a correctly updated observed_peak_owned_tasks of 49 must not \
+             itself be flagged: {violations:?}"
         );
     }
 
