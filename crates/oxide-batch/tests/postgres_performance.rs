@@ -903,21 +903,12 @@ const P010_JOB_PREFIX: &str = "p010-local-partition-scaling";
 /// point, where the framework's own derived pool alone needs 65.
 const BUSINESS_POOL_CONNECTIONS: u32 = 8;
 
-/// A fixed, deterministic, bounded async dwell every worker awaits before its
-/// business write, identical at every worker point.
-///
-/// Precedent: M4's own P-010 (`docs/engineering/measurements/m4/p-010.json`)
-/// used the same mechanism — `worker_await_millis: 4` — and observed
-/// `peak_active_workers` equal to the configured worker count at both its 10-
-/// and 64-worker points. Without a deterministic overlap window, 100
-/// partitions completing a single fast INSERT can finish sequentially fast
-/// enough that the launcher never has more than one worker in flight at once,
-/// which is exactly what this report observed before this dwell was added:
-/// `peak_active_workers == 1` at every worker point, including 10 and 64.
-/// This is a bounded `tokio::time::sleep`, not a CPU busy-loop and not an
-/// unbounded barrier wait, so it creates an admission window without
-/// contaminating the workload with unbounded coordination.
-const WORKER_DWELL: std::time::Duration = std::time::Duration::from_millis(750);
+/// The bounded wait ceiling for [`AdmissionGate::admit`]. Generous relative
+/// to any real scheduling delay: a timeout here means the runtime could not
+/// admit the configured worker population concurrently at all, not that it
+/// was merely slow, so a large bound does not mask a real defect — it only
+/// avoids failing the proof on scheduler noise.
+const ADMISSION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The declared worker points: the sequential fallback, ten workers, and the
 /// largest accepted worker budget. Read from the framework's own constant
@@ -978,6 +969,86 @@ impl PartitionOccupancy {
 
     fn last_finished(&self) -> Option<Instant> {
         self.finished_at.lock().ok().and_then(|slot| *slot)
+    }
+}
+
+/// A bounded, one-shot admission rendezvous, test-local to this report.
+///
+/// The first `target` callers to call [`admit`](Self::admit) are held
+/// together until every one of them has arrived, then released together in
+/// one generation; every later caller returns immediately without waiting.
+/// Because the barrier only ever admits exactly `target` parties, it cannot
+/// cycle into a second generation — a caller beyond `target` never touches
+/// it at all, so the remaining partitions in a 100-partition run cannot
+/// deadlock waiting for a second wave of `target` arrivals.
+///
+/// This makes the launcher's admitted worker population observable without
+/// depending on scheduler timing: forward progress for any of the first
+/// `target` callers is gated on every one of them having already reached the
+/// gate, so if the runtime ever holds `target` workers concurrently, peak
+/// occupancy is guaranteed to record it — regardless of how slowly or
+/// unevenly a loaded runner schedules the individual tasks. If the runtime
+/// structurally cannot admit `target` workers concurrently, the wait times
+/// out with a diagnostic instead of the test silently observing a lower
+/// peak.
+struct AdmissionGate {
+    target: usize,
+    next_slot: AtomicUsize,
+    arrived: AtomicUsize,
+    barrier: tokio::sync::Barrier,
+}
+
+/// [`AdmissionGate::admit`] did not observe `target` concurrent arrivals
+/// within [`ADMISSION_TIMEOUT`].
+#[derive(Debug)]
+struct AdmissionTimeout {
+    target: usize,
+    arrived: usize,
+}
+
+impl std::fmt::Display for AdmissionTimeout {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "admission gate timed out after {:?} waiting for {} concurrent workers; only {} \
+             had arrived — the runtime may not be able to admit the configured worker \
+             population concurrently",
+            ADMISSION_TIMEOUT, self.target, self.arrived,
+        )
+    }
+}
+
+impl std::error::Error for AdmissionTimeout {}
+
+impl AdmissionGate {
+    /// Creates a gate that releases once `target` participants have arrived.
+    fn new(target: usize) -> Self {
+        Self {
+            target,
+            next_slot: AtomicUsize::new(0),
+            arrived: AtomicUsize::new(0),
+            barrier: tokio::sync::Barrier::new(target.max(1)),
+        }
+    }
+
+    /// Admits one caller. Returns once this caller may proceed: immediately,
+    /// if this caller arrived after the first `target` slots were claimed;
+    /// otherwise once all `target` participants have arrived, or with
+    /// [`AdmissionTimeout`] if that bound is never reached within
+    /// [`ADMISSION_TIMEOUT`].
+    async fn admit(&self) -> Result<(), AdmissionTimeout> {
+        let slot = self.next_slot.fetch_add(1, Ordering::SeqCst);
+        if slot >= self.target {
+            return Ok(());
+        }
+        self.arrived.fetch_add(1, Ordering::SeqCst);
+        tokio::time::timeout(ADMISSION_TIMEOUT, self.barrier.wait())
+            .await
+            .map(|_| ())
+            .map_err(|_elapsed| AdmissionTimeout {
+                target: self.target,
+                arrived: self.arrived.load(Ordering::SeqCst),
+            })
     }
 }
 
@@ -1053,6 +1124,7 @@ fn p010_plan(
 /// evidence that every scale point produced the same business result.
 struct PartitionWorker {
     occupancy: Arc<PartitionOccupancy>,
+    gate: Arc<AdmissionGate>,
     business: sqlx::PgPool,
     job_name: &'static str,
     key: String,
@@ -1066,12 +1138,15 @@ impl Tasklet for PartitionWorker {
         Box::pin(async move {
             self.occupancy.enter();
             let started = Instant::now();
-            // A fixed, deterministic, bounded dwell — identical at every
-            // worker point — so a launcher admitting up to the configured
-            // worker budget actually has that many workers overlapping in
-            // time to observe, rather than depending on the INSERT alone
-            // being slow enough to catch in a sample. See WORKER_DWELL.
-            tokio::time::sleep(WORKER_DWELL).await;
+            // The first `target` workers to reach the gate — where `target`
+            // is this worker point's configured concurrency — wait together
+            // until all `target` have arrived, so the launcher's admitted
+            // worker population is observed deterministically rather than
+            // hoped for within a fixed sleep window. See AdmissionGate.
+            if let Err(timeout) = self.gate.admit().await {
+                self.occupancy.leave(started.elapsed());
+                return Err(TaskletError::from_error(timeout));
+            }
             let write = sqlx::query(
                 "INSERT INTO oxide_batch_business.performance_partitions \
                  (job_name, partition_key) VALUES ($1, $2)",
@@ -1091,6 +1166,7 @@ impl Tasklet for PartitionWorker {
 
 fn p010_worker_factory(
     occupancy: Arc<PartitionOccupancy>,
+    gate: Arc<AdmissionGate>,
     business: sqlx::PgPool,
     job_name: &'static str,
 ) -> Result<PartitionTaskletFactory, Box<dyn Error>> {
@@ -1101,6 +1177,7 @@ fn p010_worker_factory(
             factory_name.clone(),
             Arc::new(PartitionWorker {
                 occupancy: Arc::clone(&occupancy),
+                gate: Arc::clone(&gate),
                 business: business.clone(),
                 job_name,
                 key: input.key().as_str().to_owned(),
@@ -1253,6 +1330,10 @@ async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
         .await?;
         let counting = CountingPostgresRepository::new(&repository);
         let occupancy = Arc::new(PartitionOccupancy::default());
+        // One-shot for this worker point: the first `workers` partitions to
+        // reach the tasklet participate, the remaining `P010_PARTITIONS -
+        // workers` bypass it immediately once that wave has been claimed.
+        let gate = Arc::new(AdmissionGate::new(usize::from(workers)));
         // Held constant across worker points rather than scaled with `workers`:
         // the framework's own pool is already sized to `pool_budget(workers)`
         // (up to 65 at MAX_PARTITION_WORKERS), and a business pool that also
@@ -1279,7 +1360,12 @@ async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
             .with_partitioned_tasklet(
                 NodeId::new("partitioned")?,
                 partitioner,
-                p010_worker_factory(Arc::clone(&occupancy), business.clone(), job_name)?,
+                p010_worker_factory(
+                    Arc::clone(&occupancy),
+                    Arc::clone(&gate),
+                    business.clone(),
+                    job_name,
+                )?,
             )?;
         let ids = SequentialIdGenerator::new(NonZeroU64::MIN);
         let (_source, stop) = StopSource::new();
@@ -1294,11 +1380,12 @@ async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
         ceilings_hold &= occupancy.peak() <= usize::from(workers);
         no_worker_outlives_parent &= occupancy.active() == 0;
         equivalence_holds &= *launched.outcome() == oxide_batch::FlowExecutionOutcome::Completed;
-        // The deterministic WORKER_DWELL every worker awaits makes the
-        // admitted worker population observable rather than hoped-for: with
-        // 100 partitions and a bounded overlap window identical at every
-        // point, the launcher is expected to reach exactly the configured
-        // worker count, not merely stay under it.
+        // The AdmissionGate every worker passes through before its business
+        // write makes the admitted worker population observable
+        // deterministically rather than hoped-for: with 100 partitions and a
+        // one-shot rendezvous sized to this point's configured concurrency,
+        // the launcher is required to reach exactly the configured worker
+        // count, not merely stay under it.
         concurrency_matches_worker_point &= occupancy.peak() == usize::from(workers);
         observed_peak_owned_tasks = observed_peak_owned_tasks.max(occupancy.peak());
 
@@ -1379,6 +1466,10 @@ async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
     )
     .await?;
     let occupancy = Arc::new(PartitionOccupancy::default());
+    // This job is expected to be rejected before any worker starts (see
+    // `pool_below_derived_budget_is_rejected` below), so no worker ever
+    // calls `admit`; the target only needs to be a valid gate size.
+    let gate = Arc::new(AdmissionGate::new(usize::from(starved_workers)));
     let business = PgPoolOptions::new()
         .max_connections(1)
         .connect(&url)
@@ -1396,7 +1487,12 @@ async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
         .with_partitioned_tasklet(
             NodeId::new("partitioned")?,
             partitioner,
-            p010_worker_factory(Arc::clone(&occupancy), business.clone(), ceiling_job)?,
+            p010_worker_factory(
+                Arc::clone(&occupancy),
+                Arc::clone(&gate),
+                business.clone(),
+                ceiling_job,
+            )?,
         )?;
     let ids = SequentialIdGenerator::new(NonZeroU64::MIN);
     let (_source, stop) = StopSource::new();
@@ -1458,14 +1554,18 @@ async fn p010_postgres_local_partition_scaling() -> Result<(), Box<dyn Error>> {
                  window by a dedicated observer connection excluded from its own count.",
                 SAMPLE_INTERVAL.as_millis(),
             ),
-            "worker_dwell_millis": WORKER_DWELL.as_millis(),
-            "worker_dwell_note": "A fixed, deterministic, bounded async sleep every worker awaits \
-                                  before its business write, identical at every worker point \
-                                  (precedent: M4 P-010's worker_await_millis). It creates a \
-                                  bounded overlap window so the configured worker budget is \
-                                  actually observable as concurrent occupancy, rather than \
-                                  depending on the INSERT alone being slow enough to catch in a \
-                                  sample; it does not alter durable business semantics.",
+            "admission_gate_timeout_millis": ADMISSION_TIMEOUT.as_millis(),
+            "admission_gate_note": "A test-local, bounded, one-shot rendezvous: the first \
+                                    `workers` partitions to reach the tasklet at each worker \
+                                    point wait together until all `workers` have arrived, then \
+                                    proceed together; every later partition bypasses the gate \
+                                    immediately. Peak occupancy therefore reaches the configured \
+                                    worker count deterministically, independent of async \
+                                    scheduler timing, rather than depending on a fixed sleep to \
+                                    make full overlap merely likely; it does not alter durable \
+                                    business semantics. A genuine failure to admit the configured \
+                                    population within admission_gate_timeout_millis fails the \
+                                    launch with a diagnostic instead of silently under-counting.",
             "delivery_boundary_note": "The PostgreSQL business write and the framework's durable \
                                       partition-result commit are two distinct durable \
                                       boundaries, each on its own connection; P-010 makes no \
