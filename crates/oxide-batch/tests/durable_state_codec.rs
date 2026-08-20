@@ -507,37 +507,35 @@ fn prior_generation(limits: StateLimits) -> Checkpoint {
 struct Items(VecDeque<i32>);
 
 impl ItemReader<i32> for Items {
-    fn read<'a>(
-        &'a mut self,
-        _context: ReadContext<'a>,
-    ) -> BoxFuture<'a, Result<ReadOutcome<i32>, ReaderError>> {
-        let item = self.0.pop_front();
-        Box::pin(async move { Ok(item.map_or(ReadOutcome::EndOfInput, ReadOutcome::Item)) })
+    async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i32>, ReaderError> {
+        Ok(self
+            .0
+            .pop_front()
+            .map_or(ReadOutcome::EndOfInput, ReadOutcome::Item))
     }
 }
 
 struct Identity;
 
 impl ItemProcessor<i32, i32> for Identity {
-    fn process<'a>(
-        &'a self,
-        item: &'a i32,
-        _context: ProcessContext<'a>,
-    ) -> BoxFuture<'a, Result<ProcessOutcome<i32>, ProcessorError>> {
-        let item = *item;
-        Box::pin(async move { Ok(ProcessOutcome::Item(item)) })
+    async fn process(
+        &self,
+        item: &i32,
+        _context: ProcessContext<'_>,
+    ) -> Result<ProcessOutcome<i32>, ProcessorError> {
+        Ok(ProcessOutcome::Item(*item))
     }
 }
 
 struct Sink;
 
 impl ItemWriter<i32> for Sink {
-    fn write<'a>(
-        &'a self,
-        _items: &'a [i32],
-        _context: WriteContext<'a>,
-    ) -> BoxFuture<'a, Result<WriteOutcome, WriterError>> {
-        Box::pin(async { Ok(WriteOutcome::Written) })
+    async fn write(
+        &self,
+        _items: &[i32],
+        _context: WriteContext<'_>,
+    ) -> Result<WriteOutcome, WriterError> {
+        Ok(WriteOutcome::Written)
     }
 }
 
@@ -578,9 +576,9 @@ async fn run_failing_preparation(
     let mut step = ChunkStep::new(
         StepName::new("codec_step").expect("static step name is valid"),
         ChunkSize::new(2).expect("static chunk size is nonzero"),
-        Box::new(Items(VecDeque::from(vec![1, 2, 3]))),
-        Arc::new(Identity),
-        Arc::new(Sink),
+        Items(VecDeque::from(vec![1, 2, 3])),
+        Identity,
+        Sink,
         Arc::new(PreparingTransactions {
             durable: Arc::clone(&durable),
             preparation,

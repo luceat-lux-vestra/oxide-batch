@@ -27,12 +27,12 @@ use crate::{
 };
 
 /// A validated one-step chunk definition.
-pub struct ChunkStep<I, O> {
+pub struct ChunkStep<I, O, R, P, W> {
     name: StepName,
     size: ChunkSize,
-    reader: Box<dyn ItemReader<I>>,
-    processor: Arc<dyn ItemProcessor<I, O>>,
-    writer: Arc<dyn ItemWriter<O>>,
+    reader: R,
+    processor: P,
+    writer: W,
     transactions: Arc<dyn ChunkTransactionManager>,
     completion: Arc<dyn ChunkCompletion>,
     listeners: Vec<Arc<dyn ChunkListener>>,
@@ -43,7 +43,12 @@ pub struct ChunkStep<I, O> {
     definition_digest: [u8; 32],
 }
 
-impl<I, O> ChunkStep<I, O> {
+impl<I, O, R, P, W> ChunkStep<I, O, R, P, W>
+where
+    R: ItemReader<I>,
+    P: ItemProcessor<I, O>,
+    W: ItemWriter<O>,
+{
     /// Constructs a chunk step from facade-owned component and transaction
     /// ports.
     #[must_use]
@@ -51,9 +56,9 @@ impl<I, O> ChunkStep<I, O> {
     pub fn new(
         name: StepName,
         size: ChunkSize,
-        reader: Box<dyn ItemReader<I>>,
-        processor: Arc<dyn ItemProcessor<I, O>>,
-        writer: Arc<dyn ItemWriter<O>>,
+        reader: R,
+        processor: P,
+        writer: W,
         transactions: Arc<dyn ChunkTransactionManager>,
         completion: Arc<dyn ChunkCompletion>,
     ) -> Self {
@@ -132,7 +137,7 @@ impl<I, O> ChunkStep<I, O> {
     }
 }
 
-impl<I, O> fmt::Debug for ChunkStep<I, O> {
+impl<I, O, R, P, W> fmt::Debug for ChunkStep<I, O, R, P, W> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ChunkStep")
@@ -145,16 +150,16 @@ impl<I, O> fmt::Debug for ChunkStep<I, O> {
 }
 
 /// A validated single-step chunk job definition.
-pub struct ChunkJob<I, O> {
+pub struct ChunkJob<I, O, R, P, W> {
     name: JobName,
     step_name: StepName,
     plan: CompiledExecutionPlan,
-    tasklet: Arc<ChunkTasklet<I, O>>,
+    tasklet: Arc<ChunkTasklet<I, O, R, P, W>>,
     step_listeners: Vec<Arc<dyn StepExecutionListener>>,
     listeners: Vec<Arc<dyn JobExecutionListener>>,
 }
 
-impl<I, O> ChunkJob<I, O> {
+impl<I, O, R, P, W> ChunkJob<I, O, R, P, W> {
     /// Constructs a chunk job with explicit restart-relevant revisions.
     ///
     /// # Errors
@@ -165,10 +170,15 @@ impl<I, O> ChunkJob<I, O> {
     /// runtime declares a different delivery mode than the restart contract.
     pub fn new(
         name: JobName,
-        mut step: ChunkStep<I, O>,
+        mut step: ChunkStep<I, O, R, P, W>,
         revision: DefinitionRevision,
         components: &ChunkComponentRevisions,
-    ) -> Result<Self, DefinitionError> {
+    ) -> Result<Self, DefinitionError>
+    where
+        R: ItemReader<I> + Send + 'static,
+        P: ItemProcessor<I, O> + Send + 'static,
+        W: ItemWriter<O> + Send + 'static,
+    {
         if let Some(fault) = step.fault.as_ref()
             && fault.delivery_mode() != components.delivery_mode()
         {
@@ -236,7 +246,7 @@ impl<I, O> ChunkJob<I, O> {
     }
 }
 
-impl<I, O> fmt::Debug for ChunkJob<I, O> {
+impl<I, O, R, P, W> fmt::Debug for ChunkJob<I, O, R, P, W> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ChunkJob")
@@ -254,23 +264,29 @@ impl crate::FlowJob {
     ///
     /// The chunk's size, component revisions, delivery mode, and fault policy
     /// must exactly match the immutable plan. The component is erased only at
-    /// the existing tasklet composition boundary; item calls keep the accepted
-    /// M3 boxed component contract.
+    /// the existing tasklet composition boundary; the reader, processor, and
+    /// writer keep their concrete types (ADR-0008) all the way through, with
+    /// [`BoxedReader`](crate::BoxedReader), [`BoxedProcessor`](crate::BoxedProcessor),
+    /// and [`BoxedWriter`](crate::BoxedWriter) available if a caller wants
+    /// item-level erasure too.
     ///
     /// # Errors
     ///
     /// Returns [`crate::FlowJobError::ComponentMismatch`] when executable and
     /// manifest declarations differ, or the ordinary binding errors for an
     /// unknown, wrong-kind, duplicate, or differently named node.
-    pub fn with_chunk_step<I, O>(
+    pub fn with_chunk_step<I, O, R, P, W>(
         mut self,
         node_id: crate::NodeId,
-        mut step: ChunkStep<I, O>,
+        mut step: ChunkStep<I, O, R, P, W>,
         revisions: &ChunkComponentRevisions,
     ) -> Result<Self, crate::FlowJobError>
     where
         I: Send + Sync + 'static,
         O: Send + Sync + 'static,
+        R: ItemReader<I> + Send + 'static,
+        P: ItemProcessor<I, O> + Send + 'static,
+        W: ItemWriter<O> + Send + 'static,
     {
         let Some(crate::FlowNode::Step(compiled)) = self.compiled_plan().node(&node_id) else {
             return Err(crate::FlowJobError::WrongNodeKind { node: node_id });
@@ -298,13 +314,18 @@ impl crate::FlowJob {
     }
 }
 
-struct ChunkTasklet<I, O> {
-    step: AsyncMutex<ChunkStep<I, O>>,
+struct ChunkTasklet<I, O, R, P, W> {
+    step: AsyncMutex<ChunkStep<I, O, R, P, W>>,
     last_report: Mutex<Option<ChunkExecutionReport>>,
 }
 
-impl<I, O> ChunkTasklet<I, O> {
-    fn new(step: ChunkStep<I, O>) -> Self {
+impl<I, O, R, P, W> ChunkTasklet<I, O, R, P, W>
+where
+    R: ItemReader<I>,
+    P: ItemProcessor<I, O>,
+    W: ItemWriter<O>,
+{
+    fn new(step: ChunkStep<I, O, R, P, W>) -> Self {
         Self {
             step: AsyncMutex::new(step),
             last_report: Mutex::new(None),
@@ -326,10 +347,13 @@ impl<I, O> ChunkTasklet<I, O> {
     }
 }
 
-impl<I, O> Tasklet for ChunkTasklet<I, O>
+impl<I, O, R, P, W> Tasklet for ChunkTasklet<I, O, R, P, W>
 where
     I: Send + Sync + 'static,
     O: Send + Sync + 'static,
+    R: ItemReader<I> + Send + 'static,
+    P: ItemProcessor<I, O> + Send + 'static,
+    W: ItemWriter<O> + Send + 'static,
 {
     fn execute<'a>(
         &'a self,
@@ -415,15 +439,18 @@ impl JobLauncher<'_> {
     ///
     /// Returns [`LaunchError`] when repository metadata cannot reach a final
     /// state. Component failures are persisted and returned in the reports.
-    pub async fn launch_chunk<I, O>(
+    pub async fn launch_chunk<I, O, R, P, W>(
         &self,
-        job: &mut ChunkJob<I, O>,
+        job: &mut ChunkJob<I, O, R, P, W>,
         parameters: &JobParameters,
         stop: &StopToken,
     ) -> Result<ChunkLaunchReport, LaunchError>
     where
         I: Send + Sync + 'static,
         O: Send + Sync + 'static,
+        R: ItemReader<I> + Send + 'static,
+        P: ItemProcessor<I, O> + Send + 'static,
+        W: ItemWriter<O> + Send + 'static,
     {
         job.tasklet.clear_last_report();
         let tasklet: Arc<dyn Tasklet> = job.tasklet.clone();
@@ -975,9 +1002,9 @@ enum AttemptResult {
 }
 
 /// Borrowed components and policy for one chunk step.
-struct Components<'a, I, O> {
-    processor: &'a dyn ItemProcessor<I, O>,
-    writer: &'a dyn ItemWriter<O>,
+struct Components<'a, I, O, P, W> {
+    processor: &'a P,
+    writer: &'a W,
     item_listeners: &'a ItemListenerSet<I, O>,
     fault: Option<&'a FaultRuntime>,
     step_name: &'a StepName,
@@ -1034,8 +1061,8 @@ enum Invoked<T, E> {
     clippy::too_many_lines,
     reason = "the chunk loop keeps the canonical attempt, commit, and stop order visible"
 )]
-pub(crate) async fn execute_chunk_step<I, O>(
-    step: &mut ChunkStep<I, O>,
+pub(crate) async fn execute_chunk_step<I, O, R, P, W>(
+    step: &mut ChunkStep<I, O, R, P, W>,
     correlation: &ExecutionCorrelation,
     stop: &StopToken,
     transaction_context: Option<ChunkTransactionContext>,
@@ -1044,6 +1071,9 @@ pub(crate) async fn execute_chunk_step<I, O>(
 where
     I: Send + Sync,
     O: Send + Sync,
+    R: ItemReader<I>,
+    P: ItemProcessor<I, O>,
+    W: ItemWriter<O>,
 {
     let ChunkStep {
         name,
@@ -1061,8 +1091,8 @@ where
         ..
     } = step;
     let components = Components {
-        processor: processor.as_ref(),
-        writer: writer.as_ref(),
+        processor,
+        writer,
         item_listeners,
         fault: fault.as_ref(),
         step_name: name,
@@ -1159,7 +1189,7 @@ where
 
         let result = run_attempt(
             &components,
-            reader.as_mut(),
+            reader,
             scope,
             &mut buffer,
             &mut state,
@@ -1378,9 +1408,9 @@ where
     Ok(())
 }
 
-async fn run_attempt<I, O, E>(
-    components: &Components<'_, I, O>,
-    reader: &mut dyn ItemReader<I>,
+async fn run_attempt<I, O, E, P, W, R>(
+    components: &Components<'_, I, O, P, W>,
+    reader: &mut R,
     scope: AttemptScope<'_>,
     buffer: &mut ChunkBuffer<I, O>,
     state: &mut ExecutionState,
@@ -1391,6 +1421,9 @@ where
     I: Send + Sync,
     O: Send + Sync,
     E: FnMut(ChunkRuntimeEvent),
+    P: ItemProcessor<I, O>,
+    W: ItemWriter<O>,
+    R: ItemReader<I>,
 {
     let mut outputs = AttemptOutputs::new();
 
@@ -1458,9 +1491,9 @@ where
     clippy::too_many_lines,
     reason = "one phase keeps its listener, classification, and skip order visible"
 )]
-async fn read_phase<I, O, E>(
-    components: &Components<'_, I, O>,
-    reader: &mut dyn ItemReader<I>,
+async fn read_phase<I, O, E, P, W, R>(
+    components: &Components<'_, I, O, P, W>,
+    reader: &mut R,
     scope: AttemptScope<'_>,
     buffer: &mut ChunkBuffer<I, O>,
     state: &mut ExecutionState,
@@ -1468,6 +1501,9 @@ async fn read_phase<I, O, E>(
 ) -> Verdict
 where
     I: Send + Sync,
+    P: ItemProcessor<I, O>,
+    W: ItemWriter<O>,
+    R: ItemReader<I>,
     O: Send + Sync,
     E: FnMut(ChunkRuntimeEvent),
 {
@@ -1625,8 +1661,8 @@ where
     clippy::too_many_lines,
     reason = "one phase keeps its listener, classification, and skip order visible"
 )]
-async fn process_phase<I, O, E>(
-    components: &Components<'_, I, O>,
+async fn process_phase<I, O, E, P, W>(
+    components: &Components<'_, I, O, P, W>,
     scope: AttemptScope<'_>,
     buffer: &mut ChunkBuffer<I, O>,
     state: &mut ExecutionState,
@@ -1637,6 +1673,8 @@ where
     I: Send + Sync,
     O: Send + Sync,
     E: FnMut(ChunkRuntimeEvent),
+    P: ItemProcessor<I, O>,
+    W: ItemWriter<O>,
 {
     let listener_context = scope.listener_context();
     outputs.reset();
@@ -1841,8 +1879,8 @@ where
     clippy::too_many_arguments,
     reason = "the write boundary needs components, scope, buffer, state, outputs, and the transaction"
 )]
-async fn write_phase<I, O, E>(
-    components: &Components<'_, I, O>,
+async fn write_phase<I, O, E, P, W>(
+    components: &Components<'_, I, O, P, W>,
     scope: AttemptScope<'_>,
     buffer: &mut ChunkBuffer<I, O>,
     state: &mut ExecutionState,
@@ -1854,6 +1892,8 @@ where
     I: Send + Sync,
     O: Send + Sync,
     E: FnMut(ChunkRuntimeEvent),
+    P: ItemProcessor<I, O>,
+    W: ItemWriter<O>,
 {
     if outputs.values.is_empty() {
         return Verdict::Commit;
@@ -2002,8 +2042,8 @@ where
 }
 
 /// Runs skip callbacks, clears resolved keys, and commits the chunk.
-async fn commit_attempt<I, O>(
-    components: &Components<'_, I, O>,
+async fn commit_attempt<I, O, P, W>(
+    components: &Components<'_, I, O, P, W>,
     scope: AttemptScope<'_>,
     buffer: &mut ChunkBuffer<I, O>,
     state: &mut ExecutionState,
@@ -2013,6 +2053,8 @@ async fn commit_attempt<I, O>(
 where
     I: Send + Sync,
     O: Send + Sync,
+    P: ItemProcessor<I, O>,
+    W: ItemWriter<O>,
 {
     let listener_context = scope.listener_context();
     for skip in &buffer.skips {
@@ -2104,8 +2146,8 @@ where
     clippy::too_many_arguments,
     reason = "the retry scope needs components, scope, buffer, state, transaction, request, and events"
 )]
-async fn schedule_retry<I, O, E>(
-    components: &Components<'_, I, O>,
+async fn schedule_retry<I, O, E, P, W>(
+    components: &Components<'_, I, O, P, W>,
     scope: AttemptScope<'_>,
     buffer: &mut ChunkBuffer<I, O>,
     state: &mut ExecutionState,
@@ -2117,6 +2159,8 @@ where
     I: Send + Sync,
     O: Send + Sync,
     E: FnMut(ChunkRuntimeEvent),
+    P: ItemProcessor<I, O>,
+    W: ItemWriter<O>,
 {
     let Some(fault_runtime) = components.fault else {
         return AttemptResult::RolledBack(ChunkExecutionOutcome::Failed(
@@ -2220,8 +2264,8 @@ where
 }
 
 /// Runs the retry-completion callback when `key` had a reserved retry.
-async fn complete_retry<I, O>(
-    components: &Components<'_, I, O>,
+async fn complete_retry<I, O, P, W>(
+    components: &Components<'_, I, O, P, W>,
     listener_context: ItemListenerContext<'_>,
     retry: &mut Option<PendingRetry>,
     state: &mut ExecutionState,
@@ -2231,6 +2275,8 @@ async fn complete_retry<I, O>(
 where
     I: Send + Sync,
     O: Send + Sync,
+    P: ItemProcessor<I, O>,
+    W: ItemWriter<O>,
 {
     let pending = retry.take_if(|pending| pending.key == key)?;
     let failures = components
@@ -2247,8 +2293,8 @@ where
     clippy::too_many_arguments,
     reason = "classification needs components, listeners, retry state, and the fault inputs"
 )]
-async fn classify<I, O, E>(
-    components: &Components<'_, I, O>,
+async fn classify<I, O, E, P, W>(
+    components: &Components<'_, I, O, P, W>,
     listener_context: ItemListenerContext<'_>,
     retry: &mut Option<PendingRetry>,
     state: &mut ExecutionState,
@@ -2262,6 +2308,8 @@ where
     I: Send + Sync,
     O: Send + Sync,
     E: FnMut(ChunkRuntimeEvent),
+    P: ItemProcessor<I, O>,
+    W: ItemWriter<O>,
 {
     let entered = retry
         .as_ref()
@@ -2307,13 +2355,17 @@ where
 }
 
 /// Builds the framework-owned classification input for one fault.
-fn descriptor<I, O>(
-    components: &Components<'_, I, O>,
+fn descriptor<I, O, P, W>(
+    components: &Components<'_, I, O, P, W>,
     state: &mut ExecutionState,
     skips: &[PendingSkip<O>],
     phase: FaultPhase,
     category: FailureCategory,
-) -> Option<FaultDescriptor> {
+) -> Option<FaultDescriptor>
+where
+    P: ItemProcessor<I, O>,
+    W: ItemWriter<O>,
+{
     let delivery_mode = components.fault.map_or(
         crate::ChunkDeliveryMode::AtLeastOnce,
         FaultRuntime::delivery_mode,
@@ -2332,11 +2384,15 @@ fn descriptor<I, O>(
 }
 
 /// Replaces the descriptor ordinal with the durably reserved one.
-async fn with_reserved_ordinal<I, O>(
-    components: &Components<'_, I, O>,
+async fn with_reserved_ordinal<I, O, P, W>(
+    components: &Components<'_, I, O, P, W>,
     key: RetryKey,
     fault: FaultDescriptor,
-) -> FaultDescriptor {
+) -> FaultDescriptor
+where
+    P: ItemProcessor<I, O>,
+    W: ItemWriter<O>,
+{
     let Some(fault_runtime) = components.fault else {
         return fault;
     };
@@ -2358,18 +2414,26 @@ async fn with_reserved_ordinal<I, O>(
 }
 
 /// Marks one retry key resolved because its unit of work finished.
-async fn resolve_key<I, O>(components: &Components<'_, I, O>, key: RetryKey) {
+async fn resolve_key<I, O, P, W>(components: &Components<'_, I, O, P, W>, key: RetryKey)
+where
+    P: ItemProcessor<I, O>,
+    W: ItemWriter<O>,
+{
     if let Some(fault_runtime) = components.fault {
         let _ = fault_runtime.state().resolve(key).await;
     }
 }
 
-fn retry_key<I, O>(
-    components: &Components<'_, I, O>,
+fn retry_key<I, O, P, W>(
+    components: &Components<'_, I, O, P, W>,
     checkpoint_digest: [u8; 32],
     phase: FaultPhase,
     ordinal: u64,
-) -> RetryKey {
+) -> RetryKey
+where
+    P: ItemProcessor<I, O>,
+    W: ItemWriter<O>,
+{
     RetryKey::derive(
         &components.definition_digest,
         components.step_name,
@@ -2504,25 +2568,30 @@ async fn invoke_after_listener(
     }
 }
 
-struct ReaderInvocation<'a, I>(&'a mut dyn ItemReader<I>);
-
-impl<'a, I> ReaderInvocation<'a, I> {
-    fn invoke(
-        self,
-        context: ReadContext<'a>,
-    ) -> BoxFuture<'a, Result<ReadOutcome<I>, ReaderError>> {
-        self.0.read(context)
-    }
-}
-
-async fn invoke_reader<'a, I>(
-    reader: &'a mut dyn ItemReader<I>,
+/// Guards construction of the reader's call future against a synchronous
+/// panic, without allocating.
+///
+/// Each `invoke_*` helper below drives its component call inside one `async`
+/// block wrapped by [`FutureExt::catch_unwind`], rather than constructing the
+/// call future in a plain closure passed to [`catch_unwind`]. An `async`
+/// block is not desugared through the `Fn` family of traits, so it does not
+/// hit the borrow-checker limitation where a closure that captures a `&mut`
+/// receiver by move and returns its borrowed, opaque call future is rejected
+/// as escaping a `FnMut` body — even though the closure is only ever called
+/// once (rust-lang/rust#89976 and similar). Because the component call sits
+/// before the block's only `await` point, a synchronous panic during call
+/// construction happens during the block's first poll, which
+/// `FutureExt::catch_unwind` already guards; polling panics are guarded the
+/// same way. Neither step allocates: the block compiles to a plain state
+/// machine borrowing the receiver for the call's lifetime, not a boxed future.
+async fn invoke_reader<'a, I, R>(
+    reader: &'a mut R,
     context: ReadContext<'a>,
-) -> Invoked<ReadOutcome<I>, ReaderError> {
-    let invocation = ReaderInvocation(reader);
-    let Ok(future) = catch_unwind(AssertUnwindSafe(move || invocation.invoke(context))) else {
-        return Invoked::Panicked;
-    };
+) -> Invoked<ReadOutcome<I>, ReaderError>
+where
+    R: ItemReader<I>,
+{
+    let future = async move { reader.read(context).await };
     match AssertUnwindSafe(future).catch_unwind().await {
         Ok(Ok(outcome)) => Invoked::Completed(outcome),
         Ok(Err(error)) => Invoked::Failed(error),
@@ -2530,14 +2599,15 @@ async fn invoke_reader<'a, I>(
     }
 }
 
-async fn invoke_processor<I, O>(
-    processor: &dyn ItemProcessor<I, O>,
+async fn invoke_processor<I, O, P>(
+    processor: &P,
     item: &I,
     context: ProcessContext<'_>,
-) -> Invoked<ProcessOutcome<O>, ProcessorError> {
-    let Ok(future) = catch_unwind(AssertUnwindSafe(|| processor.process(item, context))) else {
-        return Invoked::Panicked;
-    };
+) -> Invoked<ProcessOutcome<O>, ProcessorError>
+where
+    P: ItemProcessor<I, O>,
+{
+    let future = async move { processor.process(item, context).await };
     match AssertUnwindSafe(future).catch_unwind().await {
         Ok(Ok(outcome)) => Invoked::Completed(outcome),
         Ok(Err(error)) => Invoked::Failed(error),
@@ -2545,14 +2615,15 @@ async fn invoke_processor<I, O>(
     }
 }
 
-async fn invoke_writer<'a, O>(
-    writer: &'a dyn ItemWriter<O>,
+async fn invoke_writer<'a, O, W>(
+    writer: &'a W,
     items: &'a [O],
     context: WriteContext<'a>,
-) -> Invoked<WriteOutcome, WriterError> {
-    let Ok(future) = catch_unwind(AssertUnwindSafe(|| writer.write(items, context))) else {
-        return Invoked::Panicked;
-    };
+) -> Invoked<WriteOutcome, WriterError>
+where
+    W: ItemWriter<O>,
+{
+    let future = async move { writer.write(items, context).await };
     match AssertUnwindSafe(future).catch_unwind().await {
         Ok(Ok(outcome)) => Invoked::Completed(outcome),
         Ok(Err(error)) => Invoked::Failed(error),

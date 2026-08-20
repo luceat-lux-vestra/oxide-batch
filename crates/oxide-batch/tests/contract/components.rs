@@ -38,23 +38,18 @@ struct ContractReader {
 }
 
 impl ItemReader<u64> for ContractReader {
-    fn read<'a>(
-        &'a mut self,
-        context: ReadContext<'a>,
-    ) -> BoxFuture<'a, Result<ReadOutcome<u64>, ReaderError>> {
-        Box::pin(async move {
-            if context.stop_token().is_stop_requested() {
-                return Ok(ReadOutcome::Stopped);
-            }
-            if self.fail_next {
-                self.fail_next = false;
-                return Err(ReaderError::new());
-            }
-            Ok(self
-                .items
-                .pop_front()
-                .map_or(ReadOutcome::EndOfInput, ReadOutcome::Item))
-        })
+    async fn read(&mut self, context: ReadContext<'_>) -> Result<ReadOutcome<u64>, ReaderError> {
+        if context.stop_token().is_stop_requested() {
+            return Ok(ReadOutcome::Stopped);
+        }
+        if self.fail_next {
+            self.fail_next = false;
+            return Err(ReaderError::new());
+        }
+        Ok(self
+            .items
+            .pop_front()
+            .map_or(ReadOutcome::EndOfInput, ReadOutcome::Item))
     }
 }
 
@@ -95,27 +90,25 @@ fn reader_distinguishes_item_end_failure_and_stop() -> Result<(), ComponentContr
 struct ContractProcessor;
 
 impl ItemProcessor<u64, String> for ContractProcessor {
-    fn process<'a>(
-        &'a self,
-        item: &'a u64,
-        context: ProcessContext<'a>,
-    ) -> BoxFuture<'a, Result<ProcessOutcome<String>, ProcessorError>> {
-        Box::pin(async move {
-            if context.stop_token().is_stop_requested() {
-                return Ok(ProcessOutcome::Stopped);
-            }
-            match *item {
-                13 => Err(ProcessorError::new()),
-                value if value % 2 == 0 => Ok(ProcessOutcome::Filtered),
-                value => Ok(ProcessOutcome::Item(format!("item-{value}"))),
-            }
-        })
+    async fn process(
+        &self,
+        item: &u64,
+        context: ProcessContext<'_>,
+    ) -> Result<ProcessOutcome<String>, ProcessorError> {
+        if context.stop_token().is_stop_requested() {
+            return Ok(ProcessOutcome::Stopped);
+        }
+        match *item {
+            13 => Err(ProcessorError::new()),
+            value if value % 2 == 0 => Ok(ProcessOutcome::Filtered),
+            value => Ok(ProcessOutcome::Item(format!("item-{value}"))),
+        }
     }
 }
 
 fn processor_distinguishes_item_filter_failure_and_stop() -> Result<(), ComponentContractFailure> {
     const CASE: &str = "processor_typed_outcomes";
-    let processor: Box<dyn ItemProcessor<u64, String>> = Box::new(ContractProcessor);
+    let processor = ContractProcessor;
     let (_source, stop) = StopSource::new();
     ensure(
         block_on(processor.process(&7, ProcessContext::new(&stop)))
@@ -179,31 +172,29 @@ impl BusinessTransaction for ContractTransaction {
 struct ContractWriter;
 
 impl ItemWriter<String> for ContractWriter {
-    fn write<'a>(
-        &'a self,
-        items: &'a [String],
-        mut context: WriteContext<'a>,
-    ) -> BoxFuture<'a, Result<WriteOutcome, WriterError>> {
-        Box::pin(async move {
-            if context.stop_token().is_stop_requested() {
-                return Ok(WriteOutcome::Stopped);
-            }
-            let Some(transaction) = context.transaction() else {
-                return Err(WriterError::new());
-            };
-            for item in items {
-                let values = [BusinessValue::text(item)];
-                let statement = BusinessStatement::new(
-                    "INSERT INTO inventory_output (payload) VALUES ($1)",
-                    &values,
-                );
-                transaction
-                    .execute(statement)
-                    .await
-                    .map_err(WriterError::from_error)?;
-            }
-            Ok(WriteOutcome::Written)
-        })
+    async fn write(
+        &self,
+        items: &[String],
+        mut context: WriteContext<'_>,
+    ) -> Result<WriteOutcome, WriterError> {
+        if context.stop_token().is_stop_requested() {
+            return Ok(WriteOutcome::Stopped);
+        }
+        let Some(transaction) = context.transaction() else {
+            return Err(WriterError::new());
+        };
+        for item in items {
+            let values = [BusinessValue::text(item)];
+            let statement = BusinessStatement::new(
+                "INSERT INTO inventory_output (payload) VALUES ($1)",
+                &values,
+            );
+            transaction
+                .execute(statement)
+                .await
+                .map_err(WriterError::from_error)?;
+        }
+        Ok(WriteOutcome::Written)
     }
 }
 
@@ -214,7 +205,7 @@ fn writer_borrows_enlisted_transaction_and_redacts_values() -> Result<(), Compon
     let mut transaction = ContractTransaction {
         observations: Arc::clone(&observations),
     };
-    let writer: Box<dyn ItemWriter<String>> = Box::new(ContractWriter);
+    let writer = ContractWriter;
     let (_source, stop) = StopSource::new();
     let sentinel = String::from("sentinel-business-value");
     ensure(

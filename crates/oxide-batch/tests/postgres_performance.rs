@@ -474,24 +474,26 @@ struct CsvRowReader {
 }
 
 impl ItemReader<ReferenceRow> for CsvRowReader {
-    fn read<'a>(
-        &'a mut self,
-        _context: ReadContext<'a>,
-    ) -> BoxFuture<'a, Result<ReadOutcome<ReferenceRow>, ReaderError>> {
-        let item = self.rows.pop_front();
-        Box::pin(async move { Ok(item.map_or(ReadOutcome::EndOfInput, ReadOutcome::Item)) })
+    async fn read(
+        &mut self,
+        _context: ReadContext<'_>,
+    ) -> Result<ReadOutcome<ReferenceRow>, ReaderError> {
+        Ok(self
+            .rows
+            .pop_front()
+            .map_or(ReadOutcome::EndOfInput, ReadOutcome::Item))
     }
 }
 
 struct ReferenceIdentityProcessor;
 
 impl ItemProcessor<ReferenceRow, ReferenceRow> for ReferenceIdentityProcessor {
-    fn process<'a>(
-        &'a self,
-        item: &'a ReferenceRow,
-        _context: ProcessContext<'a>,
-    ) -> BoxFuture<'a, Result<ProcessOutcome<ReferenceRow>, ProcessorError>> {
-        Box::pin(async move { Ok(ProcessOutcome::Item(*item)) })
+    async fn process(
+        &self,
+        item: &ReferenceRow,
+        _context: ProcessContext<'_>,
+    ) -> Result<ProcessOutcome<ReferenceRow>, ProcessorError> {
+        Ok(ProcessOutcome::Item(*item))
     }
 }
 
@@ -503,31 +505,29 @@ struct ReferenceWriter {
 }
 
 impl ItemWriter<ReferenceRow> for ReferenceWriter {
-    fn write<'a>(
-        &'a self,
-        items: &'a [ReferenceRow],
-        mut context: WriteContext<'a>,
-    ) -> BoxFuture<'a, Result<WriteOutcome, WriterError>> {
-        Box::pin(async move {
-            let transaction = context.transaction().ok_or_else(WriterError::new)?;
-            for row in items {
-                let values = [
-                    BusinessValue::text(self.job_name),
-                    BusinessValue::i64(i64::try_from(row.id).unwrap_or(i64::MAX)),
-                    BusinessValue::i64(row.quantity),
-                    BusinessValue::i64(row.amount_cents),
-                ];
-                transaction
-                    .execute(BusinessStatement::new(
-                        "INSERT INTO oxide_batch_business.performance_reference_rows \
-                         (job_name, id, quantity, amount_cents) VALUES ($1, $2, $3, $4)",
-                        &values,
-                    ))
-                    .await
-                    .map_err(WriterError::from_error)?;
-            }
-            Ok(WriteOutcome::Written)
-        })
+    async fn write(
+        &self,
+        items: &[ReferenceRow],
+        mut context: WriteContext<'_>,
+    ) -> Result<WriteOutcome, WriterError> {
+        let transaction = context.transaction().ok_or_else(WriterError::new)?;
+        for row in items {
+            let values = [
+                BusinessValue::text(self.job_name),
+                BusinessValue::i64(i64::try_from(row.id).unwrap_or(i64::MAX)),
+                BusinessValue::i64(row.quantity),
+                BusinessValue::i64(row.amount_cents),
+            ];
+            transaction
+                .execute(BusinessStatement::new(
+                    "INSERT INTO oxide_batch_business.performance_reference_rows \
+                     (job_name, id, quantity, amount_cents) VALUES ($1, $2, $3, $4)",
+                    &values,
+                ))
+                .await
+                .map_err(WriterError::from_error)?;
+        }
+        Ok(WriteOutcome::Written)
     }
 }
 
@@ -673,11 +673,11 @@ async fn p003_csv_to_postgres_reference_workload() -> Result<(), Box<dyn Error>>
     let chunk_step = oxide_batch::ChunkStep::new(
         StepName::new("import")?,
         ChunkSize::new(P003_CHUNK_SIZE.try_into()?)?,
-        Box::new(CsvRowReader {
+        CsvRowReader {
             rows: parse_csv(&csv)?.into(),
-        }),
-        Arc::new(ReferenceIdentityProcessor),
-        Arc::new(ReferenceWriter { job_name: P003_JOB }),
+        },
+        ReferenceIdentityProcessor,
+        ReferenceWriter { job_name: P003_JOB },
         Arc::new(transactions.clone()),
         Arc::new(AcknowledgingCompletion),
     );

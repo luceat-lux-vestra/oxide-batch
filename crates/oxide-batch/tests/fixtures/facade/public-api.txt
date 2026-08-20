@@ -10,6 +10,9 @@ oxide_batch::BlockingTasklet
 oxide_batch::BlockingTaskletAdapter
 oxide_batch::BlockingTaskletContext
 oxide_batch::BoxFuture
+oxide_batch::BoxedProcessor
+oxide_batch::BoxedReader
+oxide_batch::BoxedWriter
 oxide_batch::BusinessStatement
 oxide_batch::BusinessTransaction
 oxide_batch::BusinessTransactionError

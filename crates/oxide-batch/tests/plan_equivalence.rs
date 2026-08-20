@@ -312,40 +312,37 @@ struct ScriptedReader {
 }
 
 impl ItemReader<i32> for ScriptedReader {
-    fn read<'a>(
-        &'a mut self,
-        _context: ReadContext<'a>,
-    ) -> BoxFuture<'a, Result<ReadOutcome<i32>, ReaderError>> {
+    async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i32>, ReaderError> {
         if self.fail {
-            return Box::pin(async { Err(ReaderError::new()) });
+            return Err(ReaderError::new());
         }
         let item = self.items.pop_front();
-        Box::pin(async move { Ok(item.map_or(ReadOutcome::EndOfInput, ReadOutcome::Item)) })
+        Ok(item.map_or(ReadOutcome::EndOfInput, ReadOutcome::Item))
     }
 }
 
 struct DoublingProcessor;
 
 impl ItemProcessor<i32, i32> for DoublingProcessor {
-    fn process<'a>(
-        &'a self,
-        item: &'a i32,
-        _context: ProcessContext<'a>,
-    ) -> BoxFuture<'a, Result<ProcessOutcome<i32>, ProcessorError>> {
+    async fn process(
+        &self,
+        item: &i32,
+        _context: ProcessContext<'_>,
+    ) -> Result<ProcessOutcome<i32>, ProcessorError> {
         let output = item * 2;
-        Box::pin(async move { Ok(ProcessOutcome::Item(output)) })
+        Ok(ProcessOutcome::Item(output))
     }
 }
 
 struct DiscardingWriter;
 
 impl ItemWriter<i32> for DiscardingWriter {
-    fn write<'a>(
-        &'a self,
-        _items: &'a [i32],
-        _context: WriteContext<'a>,
-    ) -> BoxFuture<'a, Result<WriteOutcome, WriterError>> {
-        Box::pin(async { Ok(WriteOutcome::Written) })
+    async fn write(
+        &self,
+        _items: &[i32],
+        _context: WriteContext<'_>,
+    ) -> Result<WriteOutcome, WriterError> {
+        Ok(WriteOutcome::Written)
     }
 }
 
@@ -431,19 +428,21 @@ fn chunk_revisions() -> Result<ChunkComponentRevisions, Box<dyn Error>> {
     ))
 }
 
+type ScriptedChunkJob = ChunkJob<i32, i32, ScriptedReader, DoublingProcessor, DiscardingWriter>;
+
 fn chunk_job(
     fail_read: bool,
     commit_error: Option<ChunkTransactionError>,
-) -> Result<ChunkJob<i32, i32>, Box<dyn Error>> {
+) -> Result<ScriptedChunkJob, Box<dyn Error>> {
     let step = ChunkStep::new(
         StepName::new("import")?,
         ChunkSize::new(2)?,
-        Box::new(ScriptedReader {
+        ScriptedReader {
             items: [1, 2, 3].into_iter().collect(),
             fail: fail_read,
-        }),
-        Arc::new(DoublingProcessor),
-        Arc::new(DiscardingWriter),
+        },
+        DoublingProcessor,
+        DiscardingWriter,
         Arc::new(ScriptedTransactions { commit_error }),
         Arc::new(AcknowledgingCompletion),
     );
@@ -457,7 +456,7 @@ fn chunk_job(
 
 async fn launch_chunk_scenario(
     harness: &Harness,
-    job: &mut ChunkJob<i32, i32>,
+    job: &mut ScriptedChunkJob,
     stop: &StopToken,
 ) -> Result<(), Box<dyn Error>> {
     harness

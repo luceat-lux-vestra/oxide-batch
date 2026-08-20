@@ -9,8 +9,11 @@
 //! dynamically dispatched one are the same function with different type
 //! arguments, so what the measurements compare is dispatch and nothing else.
 //!
-//! [`erased`] keeps adapters onto the accepted ADR-0002 boxed traits, retained
-//! as migration evidence for retiring them.
+//! `oxide_batch::{ItemReader, ItemProcessor, ItemWriter}` are the ADR-0008
+//! contract in production now, so the adapters onto the retired ADR-0002
+//! boxed traits this crate carried as migration evidence for step 3 of the
+//! ADR's migration plan no longer have a target to adapt onto, and per that
+//! plan do not survive step 4.
 //!
 //! This crate is private and disposable. The retained decision evidence is the
 //! report under `docs/architecture/spikes`.
@@ -19,7 +22,6 @@ pub mod allocation;
 pub mod composite;
 pub mod contract;
 pub mod driver;
-pub mod erased;
 pub mod executor;
 pub mod scenario;
 pub mod sizes;

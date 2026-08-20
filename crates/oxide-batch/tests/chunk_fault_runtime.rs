@@ -135,20 +135,19 @@ impl Reader {
 }
 
 impl ItemReader<i32> for Reader {
-    fn read<'a>(
-        &'a mut self,
-        _context: ReadContext<'a>,
-    ) -> BoxFuture<'a, Result<ReadOutcome<i32>, ReaderError>> {
+    async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i32>, ReaderError> {
         self.trace.record("reader");
         let remaining = self.failures.get_mut().expect("failure lock poisoned");
         if *remaining > 0
             && let Some(error) = self.error
         {
             *remaining -= 1;
-            return Box::pin(async move { Err(error) });
+            return Err(error);
         }
-        let item = self.items.pop_front();
-        Box::pin(async move { Ok(item.map_or(ReadOutcome::EndOfInput, ReadOutcome::Item)) })
+        Ok(self
+            .items
+            .pop_front()
+            .map_or(ReadOutcome::EndOfInput, ReadOutcome::Item))
     }
 }
 
@@ -181,25 +180,23 @@ impl Processor {
 }
 
 impl ItemProcessor<i32, i32> for Processor {
-    fn process<'a>(
-        &'a self,
-        item: &'a i32,
-        _context: ProcessContext<'a>,
-    ) -> BoxFuture<'a, Result<ProcessOutcome<i32>, ProcessorError>> {
+    async fn process(
+        &self,
+        item: &i32,
+        _context: ProcessContext<'_>,
+    ) -> Result<ProcessOutcome<i32>, ProcessorError> {
         self.trace.record(format!("processor:{item}"));
         if self.failing_item == Some(*item) {
             let mut remaining = self.remaining.lock().expect("failure lock poisoned");
             if *remaining > 0 {
                 *remaining -= 1;
-                let error = self.error;
-                return Box::pin(async move { Err(error) });
+                return Err(self.error);
             }
         }
         if self.filter == Some(*item) {
-            return Box::pin(async { Ok(ProcessOutcome::Filtered) });
+            return Ok(ProcessOutcome::Filtered);
         }
-        let output = item * 10;
-        Box::pin(async move { Ok(ProcessOutcome::Item(output)) })
+        Ok(ProcessOutcome::Item(item * 10))
     }
 }
 
@@ -234,23 +231,22 @@ impl Writer {
 }
 
 impl ItemWriter<i32> for Writer {
-    fn write<'a>(
-        &'a self,
-        items: &'a [i32],
-        _context: WriteContext<'a>,
-    ) -> BoxFuture<'a, Result<WriteOutcome, WriterError>> {
+    async fn write(
+        &self,
+        items: &[i32],
+        _context: WriteContext<'_>,
+    ) -> Result<WriteOutcome, WriterError> {
         self.trace.record("writer");
         let mut remaining = self.remaining.lock().expect("failure lock poisoned");
         if *remaining > 0 {
             *remaining -= 1;
-            let error = self.error;
-            return Box::pin(async move { Err(error) });
+            return Err(self.error);
         }
         self.batches
             .lock()
             .expect("batch lock poisoned")
             .push(items.to_vec());
-        Box::pin(async { Ok(WriteOutcome::Written) })
+        Ok(WriteOutcome::Written)
     }
 }
 
@@ -486,9 +482,9 @@ fn retryable_failure_succeeds_within_limit() {
     let mut step = ChunkStep::new(
         step_name(),
         chunk_size(2),
-        Box::new(Reader::new([1, 2], trace.clone())),
-        Arc::new(Processor::new(trace.clone())),
-        Arc::new(writer),
+        Reader::new([1, 2], trace.clone()),
+        Processor::new(trace.clone()),
+        writer,
         Arc::new(Transactions::new(trace.clone())),
         Arc::new(Completion),
     )
@@ -529,9 +525,9 @@ fn retry_exhaustion_uses_initial_plus_reserved_retries() {
     let mut step = ChunkStep::new(
         step_name(),
         chunk_size(1),
-        Box::new(Reader::new([1], trace.clone())),
-        Arc::new(Processor::new(trace.clone())),
-        Arc::new(writer),
+        Reader::new([1], trace.clone()),
+        Processor::new(trace.clone()),
+        writer,
         Arc::new(Transactions::new(trace.clone())),
         Arc::new(Completion),
     )
@@ -571,9 +567,9 @@ fn retry_rolls_back_before_reinvoke() {
     let mut step = ChunkStep::new(
         step_name(),
         chunk_size(1),
-        Box::new(Reader::new([1], trace.clone())),
-        Arc::new(Processor::new(trace.clone())),
-        Arc::new(writer),
+        Reader::new([1], trace.clone()),
+        Processor::new(trace.clone()),
+        writer,
         Arc::new(Transactions::new(trace.clone())),
         Arc::new(Completion),
     )
@@ -631,9 +627,9 @@ fn backoff_uses_injected_monotonic_time() {
     let mut step = ChunkStep::new(
         step_name(),
         chunk_size(1),
-        Box::new(Reader::new([1], trace.clone())),
-        Arc::new(Processor::new(trace.clone())),
-        Arc::new(writer),
+        Reader::new([1], trace.clone()),
+        Processor::new(trace.clone()),
+        writer,
         Arc::new(Transactions::new(trace.clone())),
         Arc::new(Completion),
     )
@@ -672,9 +668,9 @@ fn stop_during_backoff_consumes_reservation_without_reinvoke() {
     let mut step = ChunkStep::new(
         step_name(),
         chunk_size(1),
-        Box::new(Reader::new([1], trace.clone())),
-        Arc::new(Processor::new(trace.clone())),
-        Arc::new(writer),
+        Reader::new([1], trace.clone()),
+        Processor::new(trace.clone()),
+        writer,
         Arc::new(Transactions::new(trace.clone())),
         Arc::new(Completion),
     )
@@ -717,13 +713,13 @@ fn skip_limit_is_shared_across_phases() {
     let mut step = ChunkStep::new(
         step_name(),
         chunk_size(3),
-        Box::new(Reader::new([1, 2, 3], trace.clone())),
-        Arc::new(Processor::new(trace.clone()).failing(
+        Reader::new([1, 2, 3], trace.clone()),
+        Processor::new(trace.clone()).failing(
             2,
             9,
             ProcessorError::with_category(FailureCategory::UserComponent),
-        )),
-        Arc::new(writer),
+        ),
+        writer,
         Arc::new(Transactions::new(trace.clone())),
         Arc::new(Completion),
     )
@@ -776,13 +772,13 @@ fn next_skip_after_limit_fails() {
     let mut step = ChunkStep::new(
         step_name(),
         chunk_size(3),
-        Box::new(Reader::new([1, 2, 3], trace.clone())),
-        Arc::new(Processor::new(trace.clone()).failing(
+        Reader::new([1, 2, 3], trace.clone()),
+        Processor::new(trace.clone()).failing(
             1,
             9,
             ProcessorError::with_category(FailureCategory::UserComponent),
-        )),
-        Arc::new(writer),
+        ),
+        writer,
         Arc::new(Transactions::new(trace.clone())),
         Arc::new(Completion),
     )
@@ -819,13 +815,13 @@ fn skip_count_commits_with_chunk() {
     let mut step = ChunkStep::new(
         step_name(),
         chunk_size(2),
-        Box::new(Reader::new([1, 2], trace.clone())),
-        Arc::new(Processor::new(trace.clone()).failing(
+        Reader::new([1, 2], trace.clone()),
+        Processor::new(trace.clone()).failing(
             1,
             9,
             ProcessorError::with_category(FailureCategory::UserComponent),
-        )),
-        Arc::new(writer),
+        ),
+        writer,
         Arc::new(
             Transactions::new(trace.clone()).failing_commit(ChunkTransactionError::NotCommitted),
         ),
@@ -877,9 +873,9 @@ fn write_skip_requires_located_known_rollback() {
         let mut step = ChunkStep::new(
             step_name(),
             chunk_size(1),
-            Box::new(Reader::new([1], trace.clone())),
-            Arc::new(Processor::new(trace.clone())),
-            Arc::new(writer),
+            Reader::new([1], trace.clone()),
+            Processor::new(trace.clone()),
+            writer,
             Arc::new(Transactions::new(trace.clone())),
             Arc::new(Completion),
         )
@@ -917,15 +913,13 @@ fn read_skip_requires_forward_checkpoint_proof() {
         let mut step = ChunkStep::new(
             step_name(),
             chunk_size(2),
-            Box::new(
-                Reader::new([1], trace.clone()).failing(
-                    1,
-                    ReaderError::with_category(FailureCategory::UserComponent)
-                        .with_checkpoint_advanced(advanced),
-                ),
+            Reader::new([1], trace.clone()).failing(
+                1,
+                ReaderError::with_category(FailureCategory::UserComponent)
+                    .with_checkpoint_advanced(advanced),
             ),
-            Arc::new(Processor::new(trace.clone())),
-            Arc::new(writer),
+            Processor::new(trace.clone()),
+            writer,
             Arc::new(Transactions::new(trace.clone())),
             Arc::new(Completion),
         )
@@ -988,9 +982,9 @@ fn commit_safe_skip_requires_capability() {
     let mut step = ChunkStep::new(
         step_name(),
         chunk_size(1),
-        Box::new(Reader::new([1], trace.clone())),
-        Arc::new(Processor::new(trace.clone())),
-        Arc::new(writer),
+        Reader::new([1], trace.clone()),
+        Processor::new(trace.clone()),
+        writer,
         Arc::new(Transactions::new(trace.clone())),
         Arc::new(Completion),
     )
@@ -1018,13 +1012,13 @@ fn commit_safe_skip_counts_a_skip_without_rolling_back() {
     let mut step = ChunkStep::new(
         step_name(),
         chunk_size(2),
-        Box::new(Reader::new([1, 2], trace.clone())),
-        Arc::new(Processor::new(trace.clone()).failing(
+        Reader::new([1, 2], trace.clone()),
+        Processor::new(trace.clone()).failing(
             1,
             9,
             ProcessorError::with_category(FailureCategory::UserComponent),
-        )),
-        Arc::new(writer),
+        ),
+        writer,
         Arc::new(Transactions::new(trace.clone()).enlisted()),
         Arc::new(Completion),
     )
@@ -1063,9 +1057,9 @@ fn unknown_commit_is_never_retried() {
     let mut step = ChunkStep::new(
         step_name(),
         chunk_size(1),
-        Box::new(Reader::new([1], trace.clone())),
-        Arc::new(Processor::new(trace.clone())),
-        Arc::new(writer),
+        Reader::new([1], trace.clone()),
+        Processor::new(trace.clone()),
+        writer,
         Arc::new(
             Transactions::new(trace.clone())
                 .failing_commit(ChunkTransactionError::CommitOutcomeUnknown),
@@ -1111,9 +1105,9 @@ fn unknown_commit_category_is_never_retried_or_skipped() {
     let mut step = ChunkStep::new(
         step_name(),
         chunk_size(1),
-        Box::new(Reader::new([1], trace.clone())),
-        Arc::new(Processor::new(trace.clone())),
-        Arc::new(writer),
+        Reader::new([1], trace.clone()),
+        Processor::new(trace.clone()),
+        writer,
         Arc::new(Transactions::new(trace.clone())),
         Arc::new(Completion),
     )
@@ -1312,9 +1306,9 @@ fn item_listeners_nest_and_reverse_after_order() {
     let mut step = ChunkStep::new(
         step_name(),
         chunk_size(1),
-        Box::new(Reader::new([1], trace.clone())),
-        Arc::new(Processor::new(trace.clone())),
-        Arc::new(writer),
+        Reader::new([1], trace.clone()),
+        Processor::new(trace.clone()),
+        writer,
         Arc::new(Transactions::new(trace.clone())),
         Arc::new(Completion),
     )
@@ -1364,9 +1358,9 @@ fn item_error_precedes_policy_decision() {
     let mut step = ChunkStep::new(
         step_name(),
         chunk_size(1),
-        Box::new(Reader::new([1], trace.clone())),
-        Arc::new(Processor::new(trace.clone())),
-        Arc::new(writer),
+        Reader::new([1], trace.clone()),
+        Processor::new(trace.clone()),
+        writer,
         Arc::new(Transactions::new(trace.clone())),
         Arc::new(Completion),
     )
@@ -1414,9 +1408,9 @@ fn retry_exhaustion_runs_its_callback_once() {
     let mut step = ChunkStep::new(
         step_name(),
         chunk_size(1),
-        Box::new(Reader::new([1], trace.clone())),
-        Arc::new(Processor::new(trace.clone())),
-        Arc::new(writer),
+        Reader::new([1], trace.clone()),
+        Processor::new(trace.clone()),
+        writer,
         Arc::new(Transactions::new(trace.clone())),
         Arc::new(Completion),
     )
@@ -1458,13 +1452,13 @@ fn skip_listener_effect_commits_once_with_skip() {
     let mut step = ChunkStep::new(
         step_name(),
         chunk_size(2),
-        Box::new(Reader::new([1, 2], trace.clone())),
-        Arc::new(Processor::new(trace.clone()).failing(
+        Reader::new([1, 2], trace.clone()),
+        Processor::new(trace.clone()).failing(
             1,
             9,
             ProcessorError::with_category(FailureCategory::UserComponent),
-        )),
-        Arc::new(writer),
+        ),
+        writer,
         Arc::new(Transactions::new(trace.clone()).enlisted()),
         Arc::new(Completion),
     )
@@ -1509,9 +1503,9 @@ fn listener_failure_rolls_back_and_redacts() {
     let mut step = ChunkStep::new(
         step_name(),
         chunk_size(1),
-        Box::new(Reader::new([1], trace.clone())),
-        Arc::new(Processor::new(trace.clone())),
-        Arc::new(writer),
+        Reader::new([1], trace.clone()),
+        Processor::new(trace.clone()),
+        writer,
         Arc::new(Transactions::new(trace.clone())),
         Arc::new(Completion),
     )
@@ -1661,19 +1655,22 @@ fn chunk_revisions(delivery_mode: ChunkDeliveryMode) -> ChunkComponentRevisions 
 }
 
 /// Builds a one-step chunk job whose process phase skips item 2.
-fn skipping_job(transactions: Arc<Transactions>, skip_limit: u64) -> ChunkJob<i32, i32> {
+fn skipping_job(
+    transactions: Arc<Transactions>,
+    skip_limit: u64,
+) -> ChunkJob<i32, i32, Reader, Processor, Writer> {
     let trace = Trace::default();
     let (writer, _batches) = Writer::new(trace.clone());
     let step = ChunkStep::new(
         step_name(),
         chunk_size(3),
-        Box::new(Reader::new([1, 2, 3], trace.clone())),
-        Arc::new(Processor::new(trace.clone()).failing(
+        Reader::new([1, 2, 3], trace.clone()),
+        Processor::new(trace.clone()).failing(
             2,
             9,
             ProcessorError::with_category(FailureCategory::UserComponent),
-        )),
-        Arc::new(writer),
+        ),
+        writer,
         transactions,
         Arc::new(Completion),
     )
@@ -1700,7 +1697,7 @@ fn skipping_job(transactions: Arc<Transactions>, skip_limit: u64) -> ChunkJob<i3
     .expect("static chunk definition is valid")
 }
 
-async fn launch(job: &mut ChunkJob<i32, i32>) -> ChunkExecutionReport {
+async fn launch(job: &mut ChunkJob<i32, i32, Reader, Processor, Writer>) -> ChunkExecutionReport {
     let clock = ManualClock::new(UNIX_EPOCH + Duration::from_secs(100));
     let generator = DeterministicIds::new(NonZeroU64::MIN);
     let repository =
@@ -1793,9 +1790,9 @@ async fn fault_events_are_non_authoritative_and_bounded() {
     let step = ChunkStep::new(
         step_name(),
         chunk_size(1),
-        Box::new(Reader::new([1], trace.clone())),
-        Arc::new(Processor::new(trace.clone())),
-        Arc::new(writer),
+        Reader::new([1], trace.clone()),
+        Processor::new(trace.clone()),
+        writer,
         Arc::new(Transactions::new(trace.clone())),
         Arc::new(Completion),
     )

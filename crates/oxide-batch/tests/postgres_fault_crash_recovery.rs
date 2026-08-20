@@ -10,20 +10,21 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use oxide_batch::{
-    BackoffOutcome, BackoffPolicy, BackoffSleeper, BoxFuture, Checkpoint, ChunkCommitReceipt,
-    ChunkCompletion, ChunkCompletionContext, ChunkCompletionError, ChunkCompletionOutcome,
-    ChunkComponentRevisions, ChunkCounts, ChunkDeliveryMode, ChunkExecutionOutcome, ChunkJob,
-    ChunkRestartContract, ChunkSize, ChunkStep, ChunkTransactionContext, Clock, ComponentRevision,
-    DefinitionRevision, ExecutionContext, FailureCategory, FailureId, FaultAction, FaultClassifier,
-    FaultDescriptor, FaultPhase, FaultPolicy, FaultRule, FaultRuntime, FaultStateError,
-    FaultStateStore, ItemListenerContext, ItemListenerSet, ItemProcessor, ItemReader, ItemWriter,
-    JobInstanceKey, JobName, JobParameters, JobRepository, ListenerError, PostgresChunkStateError,
-    PostgresChunkStateProvider, PostgresChunkTransactionManager, PostgresConfig,
-    PostgresFaultState, PostgresJobRepository, PostgresMigrator, ProcessContext, ProcessOutcome,
-    ProcessorError, ReadContext, ReadOutcome, ReaderError, RecoveryRequest, RetryLimit,
-    RetryOrdinal, RetryReservation, RetryStateLimit, RollbackDisposition, SequentialIdGenerator,
-    SkipLimit, SkipListener, StateLimits, StateSchemaId, StateSchemaVersion, StepName, StopSource,
-    StopToken, TlsMode, WriteContext, WriteOutcome, WriterError,
+    BackoffOutcome, BackoffPolicy, BackoffSleeper, BoxFuture, BoxedProcessor, BoxedWriter,
+    Checkpoint, ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext, ChunkCompletionError,
+    ChunkCompletionOutcome, ChunkComponentRevisions, ChunkCounts, ChunkDeliveryMode,
+    ChunkExecutionOutcome, ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep,
+    ChunkTransactionContext, Clock, ComponentRevision, DefinitionRevision, ExecutionContext,
+    FailureCategory, FailureId, FaultAction, FaultClassifier, FaultDescriptor, FaultPhase,
+    FaultPolicy, FaultRule, FaultRuntime, FaultStateError, FaultStateStore, ItemListenerContext,
+    ItemListenerSet, ItemProcessor, ItemReader, ItemWriter, JobInstanceKey, JobName, JobParameters,
+    JobRepository, ListenerError, PostgresChunkStateError, PostgresChunkStateProvider,
+    PostgresChunkTransactionManager, PostgresConfig, PostgresFaultState, PostgresJobRepository,
+    PostgresMigrator, ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome,
+    ReaderError, RecoveryRequest, RetryLimit, RetryOrdinal, RetryReservation, RetryStateLimit,
+    RollbackDisposition, SequentialIdGenerator, SkipLimit, SkipListener, StateLimits,
+    StateSchemaId, StateSchemaVersion, StepName, StopSource, StopToken, TlsMode, WriteContext,
+    WriteOutcome, WriterError,
 };
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
@@ -85,52 +86,49 @@ impl Clock for FixedClock {
 struct OneItemReader(VecDeque<i64>);
 
 impl ItemReader<i64> for OneItemReader {
-    fn read<'a>(
-        &'a mut self,
-        _context: ReadContext<'a>,
-    ) -> BoxFuture<'a, Result<ReadOutcome<i64>, ReaderError>> {
-        let item = self.0.pop_front();
-        Box::pin(async move { Ok(item.map_or(ReadOutcome::EndOfInput, ReadOutcome::Item)) })
+    async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i64>, ReaderError> {
+        Ok(self
+            .0
+            .pop_front()
+            .map_or(ReadOutcome::EndOfInput, ReadOutcome::Item))
     }
 }
 
 struct IdentityProcessor;
 
 impl ItemProcessor<i64, i64> for IdentityProcessor {
-    fn process<'a>(
-        &'a self,
-        item: &'a i64,
-        _context: ProcessContext<'a>,
-    ) -> BoxFuture<'a, Result<ProcessOutcome<i64>, ProcessorError>> {
-        Box::pin(async move { Ok(ProcessOutcome::Item(*item)) })
+    async fn process(
+        &self,
+        item: &i64,
+        _context: ProcessContext<'_>,
+    ) -> Result<ProcessOutcome<i64>, ProcessorError> {
+        Ok(ProcessOutcome::Item(*item))
     }
 }
 
 struct FailingProcessor;
 
 impl ItemProcessor<i64, i64> for FailingProcessor {
-    fn process<'a>(
-        &'a self,
-        _item: &'a i64,
-        _context: ProcessContext<'a>,
-    ) -> BoxFuture<'a, Result<ProcessOutcome<i64>, ProcessorError>> {
-        Box::pin(async {
-            Err(ProcessorError::with_category(
-                FailureCategory::UserComponent,
-            ))
-        })
+    async fn process(
+        &self,
+        _item: &i64,
+        _context: ProcessContext<'_>,
+    ) -> Result<ProcessOutcome<i64>, ProcessorError> {
+        Err(ProcessorError::with_category(
+            FailureCategory::UserComponent,
+        ))
     }
 }
 
 struct NoopWriter;
 
 impl ItemWriter<i64> for NoopWriter {
-    fn write<'a>(
-        &'a self,
-        _items: &'a [i64],
-        _context: WriteContext<'a>,
-    ) -> BoxFuture<'a, Result<WriteOutcome, WriterError>> {
-        Box::pin(async { Ok(WriteOutcome::Written) })
+    async fn write(
+        &self,
+        _items: &[i64],
+        _context: WriteContext<'_>,
+    ) -> Result<WriteOutcome, WriterError> {
+        Ok(WriteOutcome::Written)
     }
 }
 
@@ -141,25 +139,21 @@ struct WitnessWriter {
 }
 
 impl ItemWriter<i64> for WitnessWriter {
-    fn write<'a>(
-        &'a self,
-        _items: &'a [i64],
-        _context: WriteContext<'a>,
-    ) -> BoxFuture<'a, Result<WriteOutcome, WriterError>> {
-        Box::pin(async move {
-            sqlx::query(
-                "INSERT INTO oxide_batch_business.m3_fault_crash_call (job_name) VALUES ($1)",
-            )
+    async fn write(
+        &self,
+        _items: &[i64],
+        _context: WriteContext<'_>,
+    ) -> Result<WriteOutcome, WriterError> {
+        sqlx::query("INSERT INTO oxide_batch_business.m3_fault_crash_call (job_name) VALUES ($1)")
             .bind(self.job_name)
             .execute(&self.pool)
             .await
             .map_err(|_| WriterError::with_category(FailureCategory::PermanentInfrastructure))?;
-            if self.fail {
-                Err(WriterError::with_category(FailureCategory::Timeout))
-            } else {
-                Ok(WriteOutcome::Written)
-            }
-        })
+        if self.fail {
+            Err(WriterError::with_category(FailureCategory::Timeout))
+        } else {
+            Ok(WriteOutcome::Written)
+        }
     }
 }
 
@@ -350,28 +344,33 @@ fn transaction_manager(repository: &PostgresJobRepository) -> PostgresChunkTrans
     PostgresChunkTransactionManager::new(repository.clone(), provider)
 }
 
+type CrashChunkJob = ChunkJob<i64, i64, OneItemReader, BoxedProcessor<i64, i64>, BoxedWriter<i64>>;
+
 fn chunk_job(
     point: CrashPoint,
     pool: PgPool,
     transactions: PostgresChunkTransactionManager,
     state: Arc<dyn FaultStateStore>,
     fail: bool,
-) -> Result<ChunkJob<i64, i64>, Box<dyn Error>> {
+) -> Result<CrashChunkJob, Box<dyn Error>> {
     let runtime = FaultRuntime::new(
         policy(point)?,
         Arc::new(ImmediateSleeper),
         state,
         ChunkDeliveryMode::AtomicSameResource,
     )?;
-    let processor: Arc<dyn ItemProcessor<i64, i64>> = if point == CrashPoint::DuringSkipCallback {
-        Arc::new(FailingProcessor)
+    // The crash point decides which concrete processor and writer run, so the
+    // choice is only known at runtime: `BoxedProcessor`/`BoxedWriter` are the
+    // explicit ADR-0008 erasure boundary for exactly this case.
+    let processor = if point == CrashPoint::DuringSkipCallback {
+        BoxedProcessor::new(FailingProcessor)
     } else {
-        Arc::new(IdentityProcessor)
+        BoxedProcessor::new(IdentityProcessor)
     };
-    let writer: Arc<dyn ItemWriter<i64>> = if point == CrashPoint::DuringSkipCallback {
-        Arc::new(NoopWriter)
+    let writer = if point == CrashPoint::DuringSkipCallback {
+        BoxedWriter::new(NoopWriter)
     } else {
-        Arc::new(WitnessWriter {
+        BoxedWriter::new(WitnessWriter {
             pool: pool.clone(),
             job_name: point.job_name(),
             fail,
@@ -380,7 +379,7 @@ fn chunk_job(
     let mut step = ChunkStep::new(
         StepName::new(STEP)?,
         ChunkSize::new(1)?,
-        Box::new(OneItemReader(VecDeque::from([1]))),
+        OneItemReader(VecDeque::from([1])),
         processor,
         writer,
         Arc::new(transactions),

@@ -1,0 +1,12 @@
+error[E0038]: the trait `ItemReader` is not dyn compatible
+ --> tests/ui/item_reader_dyn_incompatible.rs:4:26
+  |
+4 | fn erase<I>(reader: &mut dyn oxide_batch::ItemReader<I>) -> &mut dyn oxide_batch::ItemReader<I> {
+  |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ItemReader` is not dyn compatible
+  |
+note: for a trait to be dyn compatible it needs to allow building a vtable
+      for more information, visit <https://doc.rust-lang.org/reference/items/traits.html#dyn-compatibility>
+ --> src/chunk.rs
+  |
+  |     ) -> impl Future<Output = Result<ReadOutcome<I>, ReaderError>> + Send + 'a;
+  |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait is not dyn compatible because method `read` references an `impl Trait` type in its return type

@@ -492,24 +492,21 @@ struct ChunkReader {
 }
 
 impl ItemReader<i64> for ChunkReader {
-    fn read<'a>(
-        &'a mut self,
-        _context: ReadContext<'a>,
-    ) -> BoxFuture<'a, Result<ReadOutcome<i64>, ReaderError>> {
+    async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i64>, ReaderError> {
         let item = self.items.pop_front();
-        Box::pin(async move { Ok(item.map_or(ReadOutcome::EndOfInput, ReadOutcome::Item)) })
+        Ok(item.map_or(ReadOutcome::EndOfInput, ReadOutcome::Item))
     }
 }
 
 struct IdentityProcessor;
 
 impl ItemProcessor<i64, i64> for IdentityProcessor {
-    fn process<'a>(
-        &'a self,
-        item: &'a i64,
-        _context: ProcessContext<'a>,
-    ) -> BoxFuture<'a, Result<ProcessOutcome<i64>, ProcessorError>> {
-        Box::pin(async move { Ok(ProcessOutcome::Item(*item)) })
+    async fn process(
+        &self,
+        item: &i64,
+        _context: ProcessContext<'_>,
+    ) -> Result<ProcessOutcome<i64>, ProcessorError> {
+        Ok(ProcessOutcome::Item(*item))
     }
 }
 
@@ -519,32 +516,30 @@ struct EnlistedWriter {
 }
 
 impl ItemWriter<i64> for EnlistedWriter {
-    fn write<'a>(
+    async fn write<'a>(
         &'a self,
         items: &'a [i64],
         mut context: WriteContext<'a>,
-    ) -> BoxFuture<'a, Result<WriteOutcome, WriterError>> {
-        Box::pin(async move {
-            let transaction = context.transaction().ok_or_else(WriterError::new)?;
-            for item in items {
-                let values = [
-                    BusinessValue::text(self.job_name),
-                    BusinessValue::i64(*item),
-                ];
-                transaction
-                    .execute(BusinessStatement::new(
-                        "INSERT INTO oxide_batch_business.chunk_output \
-                         (job_name, item) VALUES ($1, $2)",
-                        &values,
-                    ))
-                    .await
-                    .map_err(WriterError::from_error)?;
-            }
-            if self.fail_after_write {
-                return Err(WriterError::new());
-            }
-            Ok(WriteOutcome::Written)
-        })
+    ) -> Result<WriteOutcome, WriterError> {
+        let transaction = context.transaction().ok_or_else(WriterError::new)?;
+        for item in items {
+            let values = [
+                BusinessValue::text(self.job_name),
+                BusinessValue::i64(*item),
+            ];
+            transaction
+                .execute(BusinessStatement::new(
+                    "INSERT INTO oxide_batch_business.chunk_output \
+                     (job_name, item) VALUES ($1, $2)",
+                    &values,
+                ))
+                .await
+                .map_err(WriterError::from_error)?;
+        }
+        if self.fail_after_write {
+            return Err(WriterError::new());
+        }
+        Ok(WriteOutcome::Written)
     }
 }
 
@@ -630,14 +625,14 @@ async fn launch_postgres_chunk(
     let step = ChunkStep::new(
         StepName::new("import")?,
         ChunkSize::new(2)?,
-        Box::new(ChunkReader {
+        ChunkReader {
             items: VecDeque::from([10, 20, 30]),
-        }),
-        Arc::new(IdentityProcessor),
-        Arc::new(EnlistedWriter {
+        },
+        IdentityProcessor,
+        EnlistedWriter {
             job_name,
             fail_after_write,
-        }),
+        },
         Arc::new(transactions.clone()),
         Arc::new(TestCompletion {
             fail: fail_completion,

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** `ItemReader`, `ItemProcessor`, and `ItemWriter` are now
+  generic traits returning `impl Future + Send + 'a` instead of the
+  `oxide_batch::BoxFuture` alias, per
+  [ADR-0008](docs/architecture/decisions/0008-item-component-contract.md).
+  Implementors write a natural `async fn` with no lifetime, future type, or
+  `Box::pin` in sight. `ChunkStep<I, O, R, P, W>` and `ChunkJob<I, O, R, P,
+  W>` are now generic over the concrete reader, processor, and writer types,
+  so the typed chunk hot path is monomorphized and allocates no per-item
+  boxed future. `BoxedReader<I>`, `BoxedProcessor<I, O>`, and `BoxedWriter<I>`
+  are the new explicit erasure boundary for dynamic composition — construct
+  one with `Boxed*::new(component)` where a concrete type isn't known until
+  runtime; this is the only place item-component erasure allocates. The
+  ADR-0002 boxed-trait-object form of these three traits is retired; every
+  other extension point ADR-0002 governs (listeners, tasklets, repository
+  ports, and so on) is unchanged.
+
 ## [0.5.0] - 2026-08-18
 
 **M5 Embedded Core Production Preview.** This is OxideBatch's first
