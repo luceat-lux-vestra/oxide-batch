@@ -644,7 +644,10 @@ pub trait ItemWriter<I>: Send + Sync {
 ///
 /// Nothing here is exported. Its only implementors are the blanket impls
 /// below, so no external crate can observe or depend on this shape, and the
-/// single `Box::pin` per call is the only boxing in the system.
+/// single `Box::pin` per call is the only boxing this item-component erasure
+/// boundary introduces. Other ADR-0002 extension points — tasklets,
+/// transactions, listeners, and the rest — remain boxed by design and are
+/// unaffected by and unrelated to this module.
 mod sealed {
     use super::{ItemProcessor, ItemReader, ItemWriter};
     use crate::{
