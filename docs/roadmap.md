@@ -248,14 +248,21 @@ governed by pre-1.0 policy.
 
 ## M6 — Complete Item Processing and User Test Kit
 
-**Status:** Active (kickoff, 2026-08-19)
+**Status:** Active (design gates closed, 2026-08-20)
 
 The decision gates, dependency-ordered delivery issues, architecture
 constraints, and kickoff exit criteria are recorded in the
-[M6 kickoff gate](project/m6-kickoff-gate.md). Kickoff authorizes tracked
-delivery work; it does not itself implement any M6 capability, and the
-compatibility-ledger rows below stay at their current disposition until
-delivery evidence lands.
+[M6 kickoff gate](project/m6-kickoff-gate.md). Gates A, C, D, E, F, and G are
+closed in canonical documentation by the
+[M6 design-gate evidence](project/m6-design-gate-evidence.md); Gates B and H
+have their executable protocol and acceptance criteria frozen by the same
+record but remain open until
+[#153](https://github.com/luceat-lux-vestra/oxide-batch/issues/153) executes
+their campaigns. Design closure authorizes tracked delivery work starting at
+[#143](https://github.com/luceat-lux-vestra/oxide-batch/issues/143); it does
+not itself implement any M6 capability, and the compatibility-ledger rows
+below stay at their current disposition until delivery evidence lands. M6
+itself is not complete and is not exited by this closure.
 
 **Objective:** complete the Rust-native item/chunk/stream component model,
 standard local components, and application-facing test utilities.

@@ -11,7 +11,7 @@ security, release, and governance changes. `Proposed` is not `Accepted`.
 | [0002](0002-full-spring-batch-feature-ledger-parity.md) | Full Spring Batch feature-ledger parity | Accepted |
 | [0003](0003-target-workspace-boundaries.md) | Target workspace boundaries and staged extraction | Accepted |
 | [0004](0004-compiled-execution-plan.md) | Compiled execution plan and definition fingerprinting | Accepted |
-| [0005](0005-static-and-erased-components.md) | Dual static and erased component architecture | Proposed |
+| [0005](0005-static-and-erased-components.md) | Dual static and erased component architecture | Accepted |
 | [0006](0006-runtime-neutral-core-tokio-engine.md) | Runtime-neutral core and explicit Tokio engine | Accepted |
 | [0007](0007-repository-services-and-capabilities.md) | Repository services, capabilities, and delivery modes | Accepted |
 | [0008](0008-core-and-control-plane-boundary.md) | Core and external control-plane boundary | Accepted |

@@ -72,6 +72,44 @@ terminates through `process::exit`, so Rust transaction and pool destructors do
 not supply the rollback behavior under test. A new process inspects PostgreSQL,
 records the recovery decision, and resumes from the durable checkpoint.
 
+## M6 user-facing test-kit boundary
+
+Closed by [M6 Gate G](../project/m6-design-gate-evidence.md#gate-g--oxide-batch-test-boundary).
+`oxide-batch-test` is a dedicated public crate, not a module re-exported from
+the `oxide-batch` facade, because the test kit needs an application-facing
+test API, deterministic clock/ID sources, failure/panic/cooperative-stop
+injection, repository fixtures, and a restart harness — a dependency and
+resource boundary independent of the production runtime, on the same "real
+dependency boundary" rule the
+[staged crate-extraction contract](../architecture/crate-extraction.md)
+already applies to `oxide-batch-core`, `oxide-batch-repository`, and
+`oxide-batch-plan`.
+
+The `tests/support/` harness described above is internal test support: it is
+not published, and it may depend on anything convenient for the framework's
+own suite. `oxide-batch-test` is a different thing — a published package
+consumed by application test code — and the two must not be conflated:
+
+- the production `oxide-batch` facade does not re-export `oxide-batch-test`;
+- the production path does not depend on it;
+- it consumes `oxide-batch`'s public contracts, never a private
+  implementation type, even where that would be more convenient;
+- it does not leak SQLx/Tokio/database-driver concrete types in its public
+  API;
+- its MSRV matches the project line; in M6 it shares `oxide-batch`'s release
+  line/version cadence with no independent stability promise;
+- the no-placeholder-crate rule applies: `crates/oxide-batch-test/` is
+  created only when it ships a first usable utility with tests, in
+  [#145](https://github.com/luceat-lux-vestra/oxide-batch/issues/145), not
+  reserved ahead of that.
+
+The public test-kit target boundary carries over the same determinism,
+failure-injection, and process-restart principles the internal harness
+already uses: full-job harness, single-step harness, scoped-component
+harness, deterministic clock, deterministic ID source, failure injection,
+panic injection, cooperative-stop injection, restart harness, and repository
+fixture/cleanup support.
+
 ## Quality gates by milestone
 
 - M1: unit, property, compile-fail, in-memory contract, documentation.
