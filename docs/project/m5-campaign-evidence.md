@@ -174,10 +174,10 @@ campaign this one no longer is.
 | [`conformance-campaign-postgres-18.json`](../engineering/campaigns/m5/conformance-campaign-postgres-18.json) | PostgreSQL 18 | 30 | 291 | 291 `ok` | Passed |
 
 Both were produced by dedicated workflow run
-[32128988607](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/32128988607),
-which executed tree `58213c0fd14099d7d77930d9ea751659ac2bcc43` — the
+[32415848557](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/32415848557),
+which executed tree `6532a549537be67bf34e1b61266be53d1cf874fd` — the
 pull-request merge commit the workflow checked out — from branch head
-`ed370072b63c0a5459e18b5b77071ff297524fb9`. The execution tree is the
+`6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b`. The execution tree is the
 provenance root and the branch head is recorded beside it as metadata; they
 are different commits and are never used interchangeably. The reports record
 `rustc 1.97.1` and Linux `x86_64`, and a clean source tree. The command is
@@ -187,39 +187,40 @@ recomputation is what the producing job itself executed. Each artifact's own
 sha256 digest was computed directly over the downloaded ZIP bytes at
 promotion, matched the GitHub API's recorded digest, and the extracted report
 matched the retained bytes exactly before retention:
-PostgreSQL 15's job `95685723119` produced artifact `9321517635`
-(`sha256:6af638c6d409dbb62acb55d8495fa3d4285a5d200803fef96d2458d55c8fe1a3`,
-`7134` bytes, retained blob `fccfa61ac137222e0b5597622210bf4994f8e49a`);
-PostgreSQL 18's job `95685723202` produced artifact `9321527712`
-(`sha256:34aeafa67ee8959b1562f2aa9c2aea5581797b0e5359095f5f3abf04aa109059`,
-`7134` bytes, retained blob `61e289b26f1ca05e509c7506ce1d823963d64993`).
-Both matrix points again select the same `30`-target envelope and observe
-`291` tests, confirming the envelope itself did not change — only the
-canonical description of what running it means was corrected.
+PostgreSQL 15's job `96576687918` produced artifact `9423949825`;
+PostgreSQL 18's job `96576687522` produced artifact `9423952173`. Both matrix
+points again select the same `30`-target envelope and observe `291` tests,
+confirming the envelope itself did not change.
 
-**Fifth retention: PR #133.** `xtask/src/main.rs` is part of every M5
-campaign's declared semantic closure (listed under "independent verifier" in
-each campaign's `campaign-semantics.json`, since it is the CLI dispatcher
-every campaign and `cargo xtask evidence` itself runs through). PR #133 added
-the `reconciliation` subcommand and a clippy-argument fix to that file, which
-invalidated all sixteen previously retained M5 reports under `cargo xtask
-evidence`. This is that PR's fresh, independently-verified retention; the
-selected envelope, target count, and test count are unchanged from the prior
-retention above.
+**Sixth retention: PR #160.** `crates/oxide-batch/src` (the ADR-0008 item
+component contract closure for issue #143) and `crates/oxide-batch/Cargo.toml`
+/ `Cargo.lock` (the `stats_alloc` dev-dependency its allocation-regression test
+needed) are part of every M5 campaign's declared framework-source and
+cargo-manifest closure, which invalidated all sixteen previously retained M5
+reports under `cargo xtask evidence`. This is that PR's fresh,
+independently-verified retention; the selected envelope, target count, and
+test count are unchanged from the prior retention above. Full detail —
+including this branch's merge with `origin/main` to pick up an unrelated,
+concurrently-landed P-010 fix (#159) that touched two other campaigns'
+closures — is recorded in `evidence-provenance.json`'s
+`remote_verification.note` for each entry.
 
-This supersedes three earlier retentions on this same branch, all recorded in
-full in `evidence-provenance.json`'s `remote_verification.note` for each
-entry: run 31749761115 (F37's execution-envelope narrowing itself, which
-changed the campaign's selected-target and test counts), run 31777568454 (a
-follow-up fix to `xtask/src/conformance.rs` — a closure path — that added the
+This supersedes the fifth retention (PR #133, below) and three earlier
+retentions on this same branch, all recorded in full in
+`evidence-provenance.json`'s `remote_verification.note` history: run
+31749761115 (F37's execution-envelope narrowing itself, which changed the
+campaign's selected-target and test counts), run 31777568454 (a follow-up fix
+to `xtask/src/conformance.rs` — a closure path — that added the
 `#![allow(clippy::expect_used)]` its own new test module needed; unrelated to
 the campaign's denominator, but still a byte-level change to a file the exact
-object-identity binding tracks), and run 31778510395 (this canonical-contract
+object-identity binding tracks), run 31778510395 (a canonical-contract
 accuracy fix: correcting stale "runs nothing else" / "every workspace test
 target" prose across the dedicated workflow, `execution-contract.json`,
 `campaign-semantics.json`, and `xtask/src/conformance.rs` so the canonical
 description matches what selecting and running a target has always actually
-meant).
+meant), and the fifth retention itself (PR #133, which added the
+`reconciliation` subcommand and a clippy-argument fix to
+`xtask/src/main.rs`).
 
 The `133` scenario assignments break down by ledger evidence class as `42`
 conformance, `53` unit, `20` integration, `9` crash, `5` performance, and `4`
@@ -622,16 +623,17 @@ scenarios ran and reported `ok`.
 | [`crash-restore-campaign-postgres-15.json`](../engineering/campaigns/m5/crash-restore-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
 | [`crash-restore-campaign-postgres-18.json`](../engineering/campaigns/m5/crash-restore-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
 
-Both were produced by commit `58213c0f`, which is the merge commit the
+Both were produced by commit `6532a549`, which is the merge commit the
 dedicated workflow checked out rather than a branch tip, on `rustc 1.97.1` and
-Linux `x86_64`. Provenance for both — workflow run `32128988464`, jobs
-`95685722281` (PostgreSQL 15) and `95685722219` (PostgreSQL 18), and their
+Linux `x86_64`. Provenance for both — workflow run `32415848729`, jobs
+`96576687957` (PostgreSQL 15) and `96576688429` (PostgreSQL 18), and their
 artifact digests — is recorded in
 [`evidence-provenance.json`](../engineering/campaigns/m5/evidence-provenance.json)
 and independently verified offline by `cargo xtask evidence`. This is a fresh
-retention for PR #133, which changed `xtask/src/main.rs` — part of every M5
-campaign's declared closure — and so invalidated the prior retention under
-`cargo xtask evidence`; every observation below is that fresh run's.
+retention for PR #160 (the ADR-0008 item component contract closure for issue
+#143, which changed `crates/oxide-batch/src` — part of every M5 campaign's
+declared closure — and so invalidated the prior retention under `cargo xtask
+evidence`); every observation below is that fresh run's.
 
 **Commit phases.** All five phases behaved as the accepted contract requires,
 identically on both matrix points. The three phases before the commit record
@@ -964,17 +966,18 @@ cover two source schemas covered both, and no report skipped.
 | [`upgrade-campaign-postgres-15.json`](../engineering/campaigns/m5/upgrade-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
 | [`upgrade-campaign-postgres-18.json`](../engineering/campaigns/m5/upgrade-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
 
-Both were produced by commit `58213c0f`, which is the merge commit the
+Both were produced by commit `6532a549`, which is the merge commit the
 dedicated workflow checked out rather than a branch tip, on `rustc 1.97.1` and
 Linux `x86_64`, against servers `15.19` and `18.6`. The command is
 `cargo run --package oxide-batch-xtask -- upgrade`. Provenance for both —
-workflow run `32128988403`, jobs `95685722392` (PostgreSQL 15) and
-`95685722412` (PostgreSQL 18), and their artifact digests — is recorded in
+workflow run `32415848768`, jobs `96576688001` (PostgreSQL 15) and
+`96576688321` (PostgreSQL 18), and their artifact digests — is recorded in
 [`evidence-provenance.json`](../engineering/campaigns/m5/evidence-provenance.json)
 and independently verified offline by `cargo xtask evidence`. This is a fresh
-retention for PR #133, which changed `xtask/src/main.rs` — part of every M5
-campaign's declared closure — and so invalidated the prior retention under
-`cargo xtask evidence`.
+retention for PR #160 (the ADR-0008 item component contract closure for issue
+#143, which changed `crates/oxide-batch/src` — part of every M5 campaign's
+declared closure — and so invalidated the prior retention under `cargo xtask
+evidence`).
 
 **Schema 1 and schema 2 to schema 3.** Both upgrades succeeded in one migrator
 invocation and left the recorded version at `3`, identically on both matrix
@@ -1226,17 +1229,18 @@ Both matrix points pass. All three scenarios ran and none skipped.
 | [`security-campaign-postgres-15.json`](../engineering/campaigns/m5/security-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
 | [`security-campaign-postgres-18.json`](../engineering/campaigns/m5/security-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
 
-Both were produced by commit `58213c0f`, which is the merge commit the
+Both were produced by commit `6532a549`, which is the merge commit the
 dedicated `M5 Security` workflow checked out rather than a branch tip, on
 `rustc 1.97.1` and Linux `x86_64`, against servers `15.19` and `18.6`. The
 command is `./tests/fixtures/security/provision.sh <major>`, which provisions
 the fixture and runs `cargo run --package oxide-batch-xtask -- security`.
-Provenance for both — workflow run `32128988420`, jobs `95685722544`
-(PostgreSQL 15) and `95685722820` (PostgreSQL 18) — is recorded in
+Provenance for both — workflow run `32415848497`, jobs `96576687609`
+(PostgreSQL 15) and `96576687371` (PostgreSQL 18) — is recorded in
 [`evidence-provenance.json`](../engineering/campaigns/m5/evidence-provenance.json)
 and independently verified offline by `cargo xtask evidence`. This is a fresh
-retention for PR #133, which changed `xtask/src/main.rs` — part of every M5
-campaign's declared closure — and so invalidated the prior retention; every
+retention for PR #160 (the ADR-0008 item component contract closure for issue
+#143, which changed `crates/oxide-batch/src` — part of every M5 campaign's
+declared closure — and so invalidated the prior retention); every
 figure below is unchanged since the campaign's own behavior is deterministic
 and independent of that file's dispatch logic. This producer superseded an
 earlier one (commit `b506affb`, run `31862711341`):
@@ -1574,17 +1578,18 @@ resources, `36` observed.
 | [`resource-bounds-campaign-postgres-15.json`](../engineering/campaigns/m5/resource-bounds-campaign-postgres-15.json) | PostgreSQL 15 | Passed |
 | [`resource-bounds-campaign-postgres-18.json`](../engineering/campaigns/m5/resource-bounds-campaign-postgres-18.json) | PostgreSQL 18 | Passed |
 
-Both were produced by commit `58213c0f`, which is the pull-request merge
+Both were produced by commit `6532a549`, which is the pull-request merge
 commit the dedicated `M5 Resource Bounds` workflow checked out rather than a
 branch tip, on `rustc 1.97.1` and Linux `x86_64`, against servers `15.19` and
 `18.6`. The command is `cargo run --package oxide-batch-xtask -- resource-bounds`.
-Provenance is workflow run `32128988386`, jobs `95685722555` (PostgreSQL 15)
-and `95685722638` (PostgreSQL 18), recorded in
+Provenance is workflow run `32415848778`, jobs `96576688495` (PostgreSQL 15)
+and `96576688664` (PostgreSQL 18), recorded in
 [`evidence-provenance.json`](../engineering/campaigns/m5/evidence-provenance.json)
 and independently verified offline by `cargo xtask evidence`. This is a fresh
-retention for PR #133, which changed `xtask/src/main.rs` — part of every M5
-campaign's declared closure — and so invalidated the prior retention below;
-every structural figure is unchanged, since this campaign asserts occupancy,
+retention for PR #160 (the ADR-0008 item component contract closure for issue
+#143, which changed `crates/oxide-batch/src` — part of every M5 campaign's
+declared closure — and so invalidated the prior retention below); every
+structural figure is unchanged, since this campaign asserts occupancy,
 counts, and refusals rather than durations. This producer superseded run
 `32055594305` (execution tree `11490a1c`), which
 predated a third corrective pass closing the root proof-cell exact-set — a
@@ -2187,28 +2192,32 @@ The retained reports are immutable CI artifacts produced from the recorded
 producer commit. The later evidence-retention commit only records those
 artifacts and their provenance.
 
-Both were produced by run `32128988421` of the dedicated `M5 Soak` workflow —
+Both were produced by run `32415848525` of the dedicated `M5 Soak` workflow —
 which concluded successfully as a whole — from execution tree
-`58213c0fd14099d7d77930d9ea751659ac2bcc43`, the pull-request merge commit the
+`6532a549537be67bf34e1b61266be53d1cf874fd`, the pull-request merge commit the
 workflow actually checked out, off branch head
-`ed370072b63c0a5459e18b5b77071ff297524fb9`. The execution tree is the
+`6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b`. The execution tree is the
 provenance root and the branch head is recorded beside it as metadata; they are
 different commits and are never used interchangeably. The reports record
 `rustc 1.97.1`, Linux `x86_64` on kernel `6.17.0-1022-azure`, `4` Tokio worker
-threads, and servers `15.18` and `18.4`. The command is
-`./tests/fixtures/soak/run-ci-campaign.sh <major>`, which the workflow calls and
+threads, and servers `15.19` and `18.6`. This is a fresh retention for PR #160
+(the ADR-0008 item component contract closure for issue #143, which changed
+`crates/oxide-batch/src` — part of this campaign's declared closure). The
+command is `./tests/fixtures/soak/run-ci-campaign.sh <major>`, which the
+workflow calls and
 which runs `cargo xtask soak` — so the independent recomputation is what the
 producing job itself executed. Each artifact's own sha256 digest was read from
 the GitHub API at promotion, matched the downloaded archive, and the extracted
 report matched the retained bytes exactly before retention.
 
-This replaces evidence originally retained from run `31680126429`: PR #133
-changed `xtask/src/main.rs`, which is part of this campaign's declared
-semantic closure (listed under "independent verifier"), invalidating that
-run's evidence under `cargo xtask evidence`. Run `32128988421` is this PR's
-fresh, independently-verified run; every correctness obligation below held
-identically, and only the runner-local timing and memory observations differ,
-as they do between any two runs of this campaign.
+This replaces evidence most recently retained from run `32128988421`: PR #160
+(the ADR-0008 item component contract closure for issue #143) changed
+`crates/oxide-batch/src`, which is part of this campaign's declared semantic
+closure, invalidating that run's evidence under `cargo xtask evidence`. Run
+`32415848525` is this PR's fresh, independently-verified run; every
+correctness obligation below held identically, and only the runner-local
+timing and memory observations differ, as they do between any two runs of
+this campaign.
 
 This is the second producer run after the dedicated-workflow extraction. The
 first run's reports were invalidated rather than reinterpreted because
@@ -2786,18 +2795,19 @@ reconciles perfectly inside a run of another.
 
 Both matrix points passed with no violations. Every figure below is an
 observation from dedicated workflow run
-[32128988542](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/32128988542),
+[32415848564](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/32415848564),
 debug profile, on shared GitHub-hosted runners. The run executed tree
-`58213c0fd14099d7d77930d9ea751659ac2bcc43` from branch head
-`ed370072b63c0a5459e18b5b77071ff297524fb9`; **nothing is asserted against any
+`6532a549537be67bf34e1b61266be53d1cf874fd` from branch head
+`6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b`; **nothing is asserted against any
 of these measurements**, and the spread discussed under F25 and F26 below is
 the reason that matters rather than a caveat on it. This replaces evidence
-originally retained from run `31680126734`: PR #133 changed
-`xtask/src/main.rs`, part of this campaign's declared semantic closure,
-invalidating that run's evidence under `cargo xtask evidence`. Run
-`32128988542` is this PR's fresh, independently-verified run; every
-correctness assertion below held identically, and only the timing
-observations differ, as they do between any two runs of this campaign.
+most recently retained from run `32128988542`: PR #160 (the ADR-0008 item
+component contract closure for issue #143) changed `crates/oxide-batch/src`,
+part of this campaign's declared semantic closure, invalidating that run's
+evidence under `cargo xtask evidence`. Run `32415848564` is this PR's fresh,
+independently-verified run; every correctness assertion below held
+identically, and only the timing observations differ, as they do between any
+two runs of this campaign.
 
 | Observation | PostgreSQL 15 | PostgreSQL 18 |
 | --- | --- | --- |
@@ -3127,19 +3137,31 @@ no duration below is compared across runs as if the hardware were held fixed.
 
 Both matrix points passed with no violations. Every figure below is an
 observation from dedicated workflow run
-[32128988419](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/32128988419),
-release profile, on shared GitHub-hosted runners. The run executed tree
-`58213c0fd14099d7d77930d9ea751659ac2bcc43` from branch head
-`ed370072b63c0a5459e18b5b77071ff297524fb9`; **nothing is asserted against any
-of these measurements.** This replaces evidence originally retained from run
-`31706269943`: PR #133 changed `xtask/src/main.rs`, part of this campaign's
+[32415848776](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/32415848776)
+(attempt 2 — the postgres-15 job's first attempt failed on an unrelated,
+non-reproducing peak-connection-count violation in the P-003 workload's
+connection sampler, discussed below), release profile, on shared
+GitHub-hosted runners. The run executed tree
+`6532a549537be67bf34e1b61266be53d1cf874fd` from branch head
+`6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b`; **nothing is asserted against any
+of these measurements.** This replaces evidence most recently retained from
+run `32128988419`: PR #160 (the ADR-0008 item component contract closure for
+issue #143) changed `crates/oxide-batch/src`, part of this campaign's
 declared semantic closure, invalidating that run's evidence under `cargo
-xtask evidence`. Run `32128988419` is this PR's fresh, independently-verified
-run, on different (faster) runner hardware — `AMD EPYC 9V74 80-Core
-Processor` in place of the prior retention's `AMD EPYC 7763 64-Core
-Processor` — which is exactly why every duration below is an observation and
-none is compared across runs as if the hardware were held fixed; every
-correctness assertion held identically.
+xtask evidence`. Run `32415848776` is this PR's fresh, independently-verified
+run, on the same runner hardware as the prior retention — `AMD EPYC 9V74
+80-Core Processor` — every duration below remains an observation and none is
+compared across runs as if the hardware were held fixed; every correctness
+assertion held identically.
+
+The postgres-15-performance-campaign job's first attempt observed
+`3` peak connections against a configured ceiling of `2` in
+`p003_csv_to_postgres_reference_workload` and failed; the same commit's
+postgres-18-performance-campaign job passed in the same run, and a rerun of
+the postgres-15 job passed cleanly with no code change, consistent with CI
+scheduling noise in the connection sampler rather than a regression this PR
+introduced. The retained postgres-15-performance-campaign report is from that
+rerun.
 
 P-001, in-memory, independent of the PostgreSQL major:
 

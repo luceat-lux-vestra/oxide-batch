@@ -118,9 +118,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "4462d74361b3c2bc899b30ade40c54ec3398ab01",
+        "execution_commit": "6532a549537be67bf34e1b61266be53d1cf874fd",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "4a2dbae9c904b3a72cd63e314f15f7e9ce62ace8",
+        "branch_head_sha": "6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -130,27 +130,27 @@
       "workflow_run": {
         "workflow": "M5 Soak",
         "workflow_file": ".github/workflows/m5-soak.yml",
-        "id": 32150471839,
+        "id": 32415848525,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-soak-campaign",
-        "id": 95754786326,
+        "id": 96576687942,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-15",
-        "id": 9329722811,
-        "digest": "sha256:9dde4587f84b20b595801634329b40284024501212221660ec8cffd1d87be1c1",
-        "size_bytes": 89163
+        "id": 9424015632,
+        "digest": "sha256:56d12cd44ac9c7032e223df03c22224303d65d1b610e2e9217eb704a27b957a9",
+        "size_bytes": 87972
       },
-      "retained_report_git_blob": "e8f13ff676062350a61efd8fe44fa5372ebcfe80",
+      "retained_report_git_blob": "84d8d391a400cae035a2539fa9d9f204b5d2450e",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-18T14:53:19Z",
-        "run_id": 32150471839,
+        "verified_at": "2026-08-20T20:57:36Z",
+        "run_id": 32415848525,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -158,7 +158,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #134 (0.5.0 release preparation), second round: adding `cargo xtask release-crates` (the RFC-0011 five-crate release-set regression check) required editing xtask/src/main.rs to wire in the new subcommand and quality-gate call. xtask/src/main.rs is part of every M5 campaign's declared semantic closure (it is each campaign's shared verifier entry point), which invalidated all 16 reports retained moments earlier for the same PR's prior commit. The two release workflow files this commit actually changed (release.yml, release-draft.yml) are not part of any campaign's closure. The workflow run, producing job, artifact ID/digest, downloaded ZIP contents, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #160 (ADR-0008 item component contract closure for issue #143). crates/oxide-batch/src changed (the invoke_reader Box::pin fix, the BoxedReader/BoxedProcessor/BoxedWriter re-export, the facade doctest, and a doc-comment correction) and crates/oxide-batch/Cargo.toml and Cargo.lock changed (stats_alloc added as a dev-dependency for the allocation-regression test), all part of every M5 campaign's declared framework-source and cargo-manifest closure, which invalidated every previously retained M5 report under `cargo xtask evidence`. This retention replaces all sixteen reports from one independently-verified push to this PR's branch (head 6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b): the workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, and extracted report bytes were each verified before this retention. The postgres-15-performance-campaign job initially failed on its first attempt with an unrelated, non-reproducing peak-connection-count violation (3 observed against a ceiling of 2) in the P-003 workload's connection sampler; postgres-18-performance-campaign passed on the same commit in the same run, and a rerun of the postgres-15 job passed cleanly, consistent with CI timing noise rather than a regression introduced by this PR. The retained postgres-15-performance-campaign and postgres-18-performance-campaign reports are both from that rerun (workflow run attempt 2). This retention commit also merges origin/main (25f6a4f, which landed PR #159 between this branch's base and this push) into the branch, since #159 touched crates/oxide-batch/tests/postgres_performance.rs and xtask/src/performance.rs \u2014 both part of the performance and conformance campaigns' closures \u2014 and the PR's own ephemeral merge commit (6532a549537be67bf34e1b61266be53d1cf874fd, which the reports record as environment.source_commit) already reflects that merge. The merge was non-conflicting (different regions of postgres_performance.rs), and the resulting local tree's object identity for every path both PRs touch was confirmed byte-for-byte against what each report's execution_manifest recorded before this file was written."
       }
     },
     {
@@ -168,9 +168,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "4462d74361b3c2bc899b30ade40c54ec3398ab01",
+        "execution_commit": "6532a549537be67bf34e1b61266be53d1cf874fd",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "4a2dbae9c904b3a72cd63e314f15f7e9ce62ace8",
+        "branch_head_sha": "6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -180,27 +180,27 @@
       "workflow_run": {
         "workflow": "M5 Soak",
         "workflow_file": ".github/workflows/m5-soak.yml",
-        "id": 32150471839,
+        "id": 32415848525,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-soak-campaign",
-        "id": 95754786088,
+        "id": 96576687469,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-18",
-        "id": 9329705743,
-        "digest": "sha256:c58b69d970a09dd9534bbcf15ba75d591494dc359e5a1e2645e824360812f9ca",
-        "size_bytes": 87382
+        "id": 9424023575,
+        "digest": "sha256:71c5b0dac6f8391ad6ab795f00a2696f8d67203971994410a854a37ebffb3329",
+        "size_bytes": 88957
       },
-      "retained_report_git_blob": "0f2bd3692f0be5aca942aa19a0d638687ce30c20",
+      "retained_report_git_blob": "cc8b2d952a130befd05e3a2352de199459c5b28c",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-18T14:53:19Z",
-        "run_id": 32150471839,
+        "verified_at": "2026-08-20T20:57:36Z",
+        "run_id": 32415848525,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -208,7 +208,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #134 (0.5.0 release preparation), second round: adding `cargo xtask release-crates` (the RFC-0011 five-crate release-set regression check) required editing xtask/src/main.rs to wire in the new subcommand and quality-gate call. xtask/src/main.rs is part of every M5 campaign's declared semantic closure (it is each campaign's shared verifier entry point), which invalidated all 16 reports retained moments earlier for the same PR's prior commit. The two release workflow files this commit actually changed (release.yml, release-draft.yml) are not part of any campaign's closure. The workflow run, producing job, artifact ID/digest, downloaded ZIP contents, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #160 (ADR-0008 item component contract closure for issue #143). crates/oxide-batch/src changed (the invoke_reader Box::pin fix, the BoxedReader/BoxedProcessor/BoxedWriter re-export, the facade doctest, and a doc-comment correction) and crates/oxide-batch/Cargo.toml and Cargo.lock changed (stats_alloc added as a dev-dependency for the allocation-regression test), all part of every M5 campaign's declared framework-source and cargo-manifest closure, which invalidated every previously retained M5 report under `cargo xtask evidence`. This retention replaces all sixteen reports from one independently-verified push to this PR's branch (head 6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b): the workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, and extracted report bytes were each verified before this retention. The postgres-15-performance-campaign job initially failed on its first attempt with an unrelated, non-reproducing peak-connection-count violation (3 observed against a ceiling of 2) in the P-003 workload's connection sampler; postgres-18-performance-campaign passed on the same commit in the same run, and a rerun of the postgres-15 job passed cleanly, consistent with CI timing noise rather than a regression introduced by this PR. The retained postgres-15-performance-campaign and postgres-18-performance-campaign reports are both from that rerun (workflow run attempt 2). This retention commit also merges origin/main (25f6a4f, which landed PR #159 between this branch's base and this push) into the branch, since #159 touched crates/oxide-batch/tests/postgres_performance.rs and xtask/src/performance.rs \u2014 both part of the performance and conformance campaigns' closures \u2014 and the PR's own ephemeral merge commit (6532a549537be67bf34e1b61266be53d1cf874fd, which the reports record as environment.source_commit) already reflects that merge. The merge was non-conflicting (different regions of postgres_performance.rs), and the resulting local tree's object identity for every path both PRs touch was confirmed byte-for-byte against what each report's execution_manifest recorded before this file was written."
       }
     },
     {
@@ -218,9 +218,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "4462d74361b3c2bc899b30ade40c54ec3398ab01",
+        "execution_commit": "6532a549537be67bf34e1b61266be53d1cf874fd",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "4a2dbae9c904b3a72cd63e314f15f7e9ce62ace8",
+        "branch_head_sha": "6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -230,27 +230,27 @@
       "workflow_run": {
         "workflow": "M5 Cancellation",
         "workflow_file": ".github/workflows/m5-cancellation.yml",
-        "id": 32150471884,
+        "id": 32415848564,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-cancellation-campaign",
-        "id": 95754787309,
+        "id": 96576687826,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-15",
-        "id": 9329593138,
-        "digest": "sha256:a335fa2b83a57ad67841a9c9679dcca061799be6e2bb64c890a8949716b7d9b8",
-        "size_bytes": 5757
+        "id": 9423931987,
+        "digest": "sha256:4e1a400a68fe712098dd88b917ba5fa29d83fb616ccf36022bf4670a9dc3878f",
+        "size_bytes": 5753
       },
-      "retained_report_git_blob": "2d842f8895e2abb993c4fca9c17eb87d73feb527",
+      "retained_report_git_blob": "c2c67b48ff1c5f6a8db021ab4be4c99b1e97f0fd",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-18T14:53:19Z",
-        "run_id": 32150471884,
+        "verified_at": "2026-08-20T20:57:36Z",
+        "run_id": 32415848564,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -258,7 +258,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #134 (0.5.0 release preparation), second round: adding `cargo xtask release-crates` (the RFC-0011 five-crate release-set regression check) required editing xtask/src/main.rs to wire in the new subcommand and quality-gate call. xtask/src/main.rs is part of every M5 campaign's declared semantic closure (it is each campaign's shared verifier entry point), which invalidated all 16 reports retained moments earlier for the same PR's prior commit. The two release workflow files this commit actually changed (release.yml, release-draft.yml) are not part of any campaign's closure. The workflow run, producing job, artifact ID/digest, downloaded ZIP contents, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #160 (ADR-0008 item component contract closure for issue #143). crates/oxide-batch/src changed (the invoke_reader Box::pin fix, the BoxedReader/BoxedProcessor/BoxedWriter re-export, the facade doctest, and a doc-comment correction) and crates/oxide-batch/Cargo.toml and Cargo.lock changed (stats_alloc added as a dev-dependency for the allocation-regression test), all part of every M5 campaign's declared framework-source and cargo-manifest closure, which invalidated every previously retained M5 report under `cargo xtask evidence`. This retention replaces all sixteen reports from one independently-verified push to this PR's branch (head 6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b): the workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, and extracted report bytes were each verified before this retention. The postgres-15-performance-campaign job initially failed on its first attempt with an unrelated, non-reproducing peak-connection-count violation (3 observed against a ceiling of 2) in the P-003 workload's connection sampler; postgres-18-performance-campaign passed on the same commit in the same run, and a rerun of the postgres-15 job passed cleanly, consistent with CI timing noise rather than a regression introduced by this PR. The retained postgres-15-performance-campaign and postgres-18-performance-campaign reports are both from that rerun (workflow run attempt 2). This retention commit also merges origin/main (25f6a4f, which landed PR #159 between this branch's base and this push) into the branch, since #159 touched crates/oxide-batch/tests/postgres_performance.rs and xtask/src/performance.rs \u2014 both part of the performance and conformance campaigns' closures \u2014 and the PR's own ephemeral merge commit (6532a549537be67bf34e1b61266be53d1cf874fd, which the reports record as environment.source_commit) already reflects that merge. The merge was non-conflicting (different regions of postgres_performance.rs), and the resulting local tree's object identity for every path both PRs touch was confirmed byte-for-byte against what each report's execution_manifest recorded before this file was written."
       }
     },
     {
@@ -268,9 +268,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "4462d74361b3c2bc899b30ade40c54ec3398ab01",
+        "execution_commit": "6532a549537be67bf34e1b61266be53d1cf874fd",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "4a2dbae9c904b3a72cd63e314f15f7e9ce62ace8",
+        "branch_head_sha": "6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -280,27 +280,27 @@
       "workflow_run": {
         "workflow": "M5 Cancellation",
         "workflow_file": ".github/workflows/m5-cancellation.yml",
-        "id": 32150471884,
+        "id": 32415848564,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-cancellation-campaign",
-        "id": 95754787216,
+        "id": 96576687517,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-18",
-        "id": 9329596033,
-        "digest": "sha256:ce4ceaf40c7fe83345770f12281a4810ef9ebfbe7fa82569b85e66325391a788",
-        "size_bytes": 5759
+        "id": 9423914971,
+        "digest": "sha256:e2877b244370f990aa1c93b951ae125fe66f3da9a4150dc36da7013e9771caac",
+        "size_bytes": 5747
       },
-      "retained_report_git_blob": "6d984288aecb2b6a36e5103923a4d9c0ffc82bf8",
+      "retained_report_git_blob": "2079ecdd5ae7b0508cdad4576b56ed373def4f71",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-18T14:53:19Z",
-        "run_id": 32150471884,
+        "verified_at": "2026-08-20T20:57:36Z",
+        "run_id": 32415848564,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -308,7 +308,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #134 (0.5.0 release preparation), second round: adding `cargo xtask release-crates` (the RFC-0011 five-crate release-set regression check) required editing xtask/src/main.rs to wire in the new subcommand and quality-gate call. xtask/src/main.rs is part of every M5 campaign's declared semantic closure (it is each campaign's shared verifier entry point), which invalidated all 16 reports retained moments earlier for the same PR's prior commit. The two release workflow files this commit actually changed (release.yml, release-draft.yml) are not part of any campaign's closure. The workflow run, producing job, artifact ID/digest, downloaded ZIP contents, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #160 (ADR-0008 item component contract closure for issue #143). crates/oxide-batch/src changed (the invoke_reader Box::pin fix, the BoxedReader/BoxedProcessor/BoxedWriter re-export, the facade doctest, and a doc-comment correction) and crates/oxide-batch/Cargo.toml and Cargo.lock changed (stats_alloc added as a dev-dependency for the allocation-regression test), all part of every M5 campaign's declared framework-source and cargo-manifest closure, which invalidated every previously retained M5 report under `cargo xtask evidence`. This retention replaces all sixteen reports from one independently-verified push to this PR's branch (head 6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b): the workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, and extracted report bytes were each verified before this retention. The postgres-15-performance-campaign job initially failed on its first attempt with an unrelated, non-reproducing peak-connection-count violation (3 observed against a ceiling of 2) in the P-003 workload's connection sampler; postgres-18-performance-campaign passed on the same commit in the same run, and a rerun of the postgres-15 job passed cleanly, consistent with CI timing noise rather than a regression introduced by this PR. The retained postgres-15-performance-campaign and postgres-18-performance-campaign reports are both from that rerun (workflow run attempt 2). This retention commit also merges origin/main (25f6a4f, which landed PR #159 between this branch's base and this push) into the branch, since #159 touched crates/oxide-batch/tests/postgres_performance.rs and xtask/src/performance.rs \u2014 both part of the performance and conformance campaigns' closures \u2014 and the PR's own ephemeral merge commit (6532a549537be67bf34e1b61266be53d1cf874fd, which the reports record as environment.source_commit) already reflects that merge. The merge was non-conflicting (different regions of postgres_performance.rs), and the resulting local tree's object identity for every path both PRs touch was confirmed byte-for-byte against what each report's execution_manifest recorded before this file was written."
       }
     },
     {
@@ -318,9 +318,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "5f108ae25eda6254b2fdecbd83cfdd8a1b2e2dbb",
+        "execution_commit": "6532a549537be67bf34e1b61266be53d1cf874fd",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "e6639fa48fcde1dc9321f6f404bb6421c57e45b5",
+        "branch_head_sha": "6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -330,27 +330,27 @@
       "workflow_run": {
         "workflow": "M5 Performance",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 32340108006,
-        "attempt": 1,
+        "id": 32415848776,
+        "attempt": 2,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-performance-campaign",
-        "id": 96337323180,
+        "id": 96577588732,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-15",
-        "id": 9396079153,
-        "digest": "sha256:eaf2059925d4da2bfa39f2bc0bc3564661f85645add0fe4aabb7c51cf3ffafad",
-        "size_bytes": 6603
+        "id": 9424025662,
+        "digest": "sha256:8267ae7664929215ba0c1210e6cddc13f68942ebb7e947f064ef41cc71d69a31",
+        "size_bytes": 6619
       },
-      "retained_report_git_blob": "6b6af11923edef0bd5520b74c802aa451b852ac0",
+      "retained_report_git_blob": "1860c329e49e833ccaa21d49daff720b307eba91",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-20T07:10:00Z",
-        "run_id": 32340108006,
+        "verified_at": "2026-08-20T20:57:36Z",
+        "run_id": 32415848776,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -358,7 +358,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #159 (#158: make P-010 concurrency evidence scheduler-independent). crates/oxide-batch/tests/postgres_performance.rs and xtask/src/performance.rs are both inside this campaign's declared semantic closure (the P-010 report producer and the shared verifier entry point), so the previously retained performance-campaign-postgres-15/-18.json reports \u2014 produced under the old fixed-sleep harness and the old reconcile_p010_points verifier \u2014 stopped being evidence of this tree the moment those two files changed; cargo xtask evidence confirmed the resulting gap locally before this retention. The workflow run, producing job, artifact ID/digest (downloaded directly via the Actions API and compared byte-for-byte against both gh run download's extracted copy and the retained file), and execution tree were independently verified before this retention. P-010 reached peak_active_workers == {1, 10, 64} exactly on both matrix points with zero violations."
+        "note": "Fresh retention for PR #160 (ADR-0008 item component contract closure for issue #143). crates/oxide-batch/src changed (the invoke_reader Box::pin fix, the BoxedReader/BoxedProcessor/BoxedWriter re-export, the facade doctest, and a doc-comment correction) and crates/oxide-batch/Cargo.toml and Cargo.lock changed (stats_alloc added as a dev-dependency for the allocation-regression test), all part of every M5 campaign's declared framework-source and cargo-manifest closure, which invalidated every previously retained M5 report under `cargo xtask evidence`. This retention replaces all sixteen reports from one independently-verified push to this PR's branch (head 6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b): the workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, and extracted report bytes were each verified before this retention. The postgres-15-performance-campaign job initially failed on its first attempt with an unrelated, non-reproducing peak-connection-count violation (3 observed against a ceiling of 2) in the P-003 workload's connection sampler; postgres-18-performance-campaign passed on the same commit in the same run, and a rerun of the postgres-15 job passed cleanly, consistent with CI timing noise rather than a regression introduced by this PR. The retained postgres-15-performance-campaign and postgres-18-performance-campaign reports are both from that rerun (workflow run attempt 2). This retention commit also merges origin/main (25f6a4f, which landed PR #159 between this branch's base and this push) into the branch, since #159 touched crates/oxide-batch/tests/postgres_performance.rs and xtask/src/performance.rs \u2014 both part of the performance and conformance campaigns' closures \u2014 and the PR's own ephemeral merge commit (6532a549537be67bf34e1b61266be53d1cf874fd, which the reports record as environment.source_commit) already reflects that merge. The merge was non-conflicting (different regions of postgres_performance.rs), and the resulting local tree's object identity for every path both PRs touch was confirmed byte-for-byte against what each report's execution_manifest recorded before this file was written."
       }
     },
     {
@@ -368,9 +368,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "5f108ae25eda6254b2fdecbd83cfdd8a1b2e2dbb",
+        "execution_commit": "6532a549537be67bf34e1b61266be53d1cf874fd",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "e6639fa48fcde1dc9321f6f404bb6421c57e45b5",
+        "branch_head_sha": "6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -380,27 +380,27 @@
       "workflow_run": {
         "workflow": "M5 Performance",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 32340108006,
-        "attempt": 1,
+        "id": 32415848776,
+        "attempt": 2,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-performance-campaign",
-        "id": 96337323474,
+        "id": 96577589369,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-18",
-        "id": 9396087042,
-        "digest": "sha256:83c0364f238b67b5fe5a43c0a3972ec4c1e120c6345f2f8fb75338f7e083dbad",
-        "size_bytes": 6612
+        "id": 9423921703,
+        "digest": "sha256:2776cb4ac52e9ae983824cc9bff9df8b747c3b444b0e597e5595f8943048961e",
+        "size_bytes": 6610
       },
-      "retained_report_git_blob": "a21ddc0adf6c9089977787b0cc106479149cec60",
+      "retained_report_git_blob": "534a2951dc7a85903a8b7b01e98b5345e94d98bc",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-20T07:10:00Z",
-        "run_id": 32340108006,
+        "verified_at": "2026-08-20T20:57:36Z",
+        "run_id": 32415848776,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -408,7 +408,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #159 (#158: make P-010 concurrency evidence scheduler-independent). crates/oxide-batch/tests/postgres_performance.rs and xtask/src/performance.rs are both inside this campaign's declared semantic closure (the P-010 report producer and the shared verifier entry point), so the previously retained performance-campaign-postgres-15/-18.json reports \u2014 produced under the old fixed-sleep harness and the old reconcile_p010_points verifier \u2014 stopped being evidence of this tree the moment those two files changed; cargo xtask evidence confirmed the resulting gap locally before this retention. The workflow run, producing job, artifact ID/digest (downloaded directly via the Actions API and compared byte-for-byte against both gh run download's extracted copy and the retained file), and execution tree were independently verified before this retention. P-010 reached peak_active_workers == {1, 10, 64} exactly on both matrix points with zero violations."
+        "note": "Fresh retention for PR #160 (ADR-0008 item component contract closure for issue #143). crates/oxide-batch/src changed (the invoke_reader Box::pin fix, the BoxedReader/BoxedProcessor/BoxedWriter re-export, the facade doctest, and a doc-comment correction) and crates/oxide-batch/Cargo.toml and Cargo.lock changed (stats_alloc added as a dev-dependency for the allocation-regression test), all part of every M5 campaign's declared framework-source and cargo-manifest closure, which invalidated every previously retained M5 report under `cargo xtask evidence`. This retention replaces all sixteen reports from one independently-verified push to this PR's branch (head 6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b): the workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, and extracted report bytes were each verified before this retention. The postgres-15-performance-campaign job initially failed on its first attempt with an unrelated, non-reproducing peak-connection-count violation (3 observed against a ceiling of 2) in the P-003 workload's connection sampler; postgres-18-performance-campaign passed on the same commit in the same run, and a rerun of the postgres-15 job passed cleanly, consistent with CI timing noise rather than a regression introduced by this PR. The retained postgres-15-performance-campaign and postgres-18-performance-campaign reports are both from that rerun (workflow run attempt 2). This retention commit also merges origin/main (25f6a4f, which landed PR #159 between this branch's base and this push) into the branch, since #159 touched crates/oxide-batch/tests/postgres_performance.rs and xtask/src/performance.rs \u2014 both part of the performance and conformance campaigns' closures \u2014 and the PR's own ephemeral merge commit (6532a549537be67bf34e1b61266be53d1cf874fd, which the reports record as environment.source_commit) already reflects that merge. The merge was non-conflicting (different regions of postgres_performance.rs), and the resulting local tree's object identity for every path both PRs touch was confirmed byte-for-byte against what each report's execution_manifest recorded before this file was written."
       }
     },
     {
@@ -418,9 +418,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "4462d74361b3c2bc899b30ade40c54ec3398ab01",
+        "execution_commit": "6532a549537be67bf34e1b61266be53d1cf874fd",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "4a2dbae9c904b3a72cd63e314f15f7e9ce62ace8",
+        "branch_head_sha": "6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -430,27 +430,27 @@
       "workflow_run": {
         "workflow": "M5 Conformance",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 32150471838,
+        "id": 32415848557,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-conformance-campaign",
-        "id": 95754786680,
+        "id": 96576687918,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-15",
-        "id": 9329637772,
-        "digest": "sha256:ad4aea914da910be14ab3b80edef557bcc1c6ce0461217fe9a25f120c266fa22",
-        "size_bytes": 7133
+        "id": 9423949825,
+        "digest": "sha256:a4575b2fb98109fa455420a3f0d6583d139625dc6d86276119346832cbc264a1",
+        "size_bytes": 7136
       },
-      "retained_report_git_blob": "455561d62fe352b65d01e8b4bbf2ec734338a551",
+      "retained_report_git_blob": "392558d195682556e6953f4fb59b0fdec93797af",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-18T14:53:19Z",
-        "run_id": 32150471838,
+        "verified_at": "2026-08-20T20:57:36Z",
+        "run_id": 32415848557,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -458,7 +458,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #134 (0.5.0 release preparation), second round: adding `cargo xtask release-crates` (the RFC-0011 five-crate release-set regression check) required editing xtask/src/main.rs to wire in the new subcommand and quality-gate call. xtask/src/main.rs is part of every M5 campaign's declared semantic closure (it is each campaign's shared verifier entry point), which invalidated all 16 reports retained moments earlier for the same PR's prior commit. The two release workflow files this commit actually changed (release.yml, release-draft.yml) are not part of any campaign's closure. The workflow run, producing job, artifact ID/digest, downloaded ZIP contents, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #160 (ADR-0008 item component contract closure for issue #143). crates/oxide-batch/src changed (the invoke_reader Box::pin fix, the BoxedReader/BoxedProcessor/BoxedWriter re-export, the facade doctest, and a doc-comment correction) and crates/oxide-batch/Cargo.toml and Cargo.lock changed (stats_alloc added as a dev-dependency for the allocation-regression test), all part of every M5 campaign's declared framework-source and cargo-manifest closure, which invalidated every previously retained M5 report under `cargo xtask evidence`. This retention replaces all sixteen reports from one independently-verified push to this PR's branch (head 6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b): the workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, and extracted report bytes were each verified before this retention. The postgres-15-performance-campaign job initially failed on its first attempt with an unrelated, non-reproducing peak-connection-count violation (3 observed against a ceiling of 2) in the P-003 workload's connection sampler; postgres-18-performance-campaign passed on the same commit in the same run, and a rerun of the postgres-15 job passed cleanly, consistent with CI timing noise rather than a regression introduced by this PR. The retained postgres-15-performance-campaign and postgres-18-performance-campaign reports are both from that rerun (workflow run attempt 2). This retention commit also merges origin/main (25f6a4f, which landed PR #159 between this branch's base and this push) into the branch, since #159 touched crates/oxide-batch/tests/postgres_performance.rs and xtask/src/performance.rs \u2014 both part of the performance and conformance campaigns' closures \u2014 and the PR's own ephemeral merge commit (6532a549537be67bf34e1b61266be53d1cf874fd, which the reports record as environment.source_commit) already reflects that merge. The merge was non-conflicting (different regions of postgres_performance.rs), and the resulting local tree's object identity for every path both PRs touch was confirmed byte-for-byte against what each report's execution_manifest recorded before this file was written."
       }
     },
     {
@@ -468,9 +468,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "4462d74361b3c2bc899b30ade40c54ec3398ab01",
+        "execution_commit": "6532a549537be67bf34e1b61266be53d1cf874fd",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "4a2dbae9c904b3a72cd63e314f15f7e9ce62ace8",
+        "branch_head_sha": "6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -480,27 +480,27 @@
       "workflow_run": {
         "workflow": "M5 Conformance",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 32150471838,
+        "id": 32415848557,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-conformance-campaign",
-        "id": 95754786539,
+        "id": 96576687522,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-18",
-        "id": 9329632691,
-        "digest": "sha256:4a3bf809dcb18d404a2d4a5cafdb19781bc034f683a8ddaed8259597c0da66b5",
-        "size_bytes": 7133
+        "id": 9423952173,
+        "digest": "sha256:c8ff614cc71c6fc715ec1f847b6c0f14e48b76749f2b7088d65b7735ec38a894",
+        "size_bytes": 7136
       },
-      "retained_report_git_blob": "704b6dda059d8ea1cc012c61b3d5005dfac74cc2",
+      "retained_report_git_blob": "7b4cabd13b60d61fd2f1c502b33cd5b52d5a2d21",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-18T14:53:19Z",
-        "run_id": 32150471838,
+        "verified_at": "2026-08-20T20:57:36Z",
+        "run_id": 32415848557,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -508,7 +508,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #134 (0.5.0 release preparation), second round: adding `cargo xtask release-crates` (the RFC-0011 five-crate release-set regression check) required editing xtask/src/main.rs to wire in the new subcommand and quality-gate call. xtask/src/main.rs is part of every M5 campaign's declared semantic closure (it is each campaign's shared verifier entry point), which invalidated all 16 reports retained moments earlier for the same PR's prior commit. The two release workflow files this commit actually changed (release.yml, release-draft.yml) are not part of any campaign's closure. The workflow run, producing job, artifact ID/digest, downloaded ZIP contents, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #160 (ADR-0008 item component contract closure for issue #143). crates/oxide-batch/src changed (the invoke_reader Box::pin fix, the BoxedReader/BoxedProcessor/BoxedWriter re-export, the facade doctest, and a doc-comment correction) and crates/oxide-batch/Cargo.toml and Cargo.lock changed (stats_alloc added as a dev-dependency for the allocation-regression test), all part of every M5 campaign's declared framework-source and cargo-manifest closure, which invalidated every previously retained M5 report under `cargo xtask evidence`. This retention replaces all sixteen reports from one independently-verified push to this PR's branch (head 6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b): the workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, and extracted report bytes were each verified before this retention. The postgres-15-performance-campaign job initially failed on its first attempt with an unrelated, non-reproducing peak-connection-count violation (3 observed against a ceiling of 2) in the P-003 workload's connection sampler; postgres-18-performance-campaign passed on the same commit in the same run, and a rerun of the postgres-15 job passed cleanly, consistent with CI timing noise rather than a regression introduced by this PR. The retained postgres-15-performance-campaign and postgres-18-performance-campaign reports are both from that rerun (workflow run attempt 2). This retention commit also merges origin/main (25f6a4f, which landed PR #159 between this branch's base and this push) into the branch, since #159 touched crates/oxide-batch/tests/postgres_performance.rs and xtask/src/performance.rs \u2014 both part of the performance and conformance campaigns' closures \u2014 and the PR's own ephemeral merge commit (6532a549537be67bf34e1b61266be53d1cf874fd, which the reports record as environment.source_commit) already reflects that merge. The merge was non-conflicting (different regions of postgres_performance.rs), and the resulting local tree's object identity for every path both PRs touch was confirmed byte-for-byte against what each report's execution_manifest recorded before this file was written."
       }
     },
     {
@@ -518,9 +518,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "4462d74361b3c2bc899b30ade40c54ec3398ab01",
+        "execution_commit": "6532a549537be67bf34e1b61266be53d1cf874fd",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "4a2dbae9c904b3a72cd63e314f15f7e9ce62ace8",
+        "branch_head_sha": "6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -530,27 +530,27 @@
       "workflow_run": {
         "workflow": "M5 Crash and Restore",
         "workflow_file": ".github/workflows/m5-crash-restore.yml",
-        "id": 32150471991,
+        "id": 32415848729,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-crash-restore-campaign",
-        "id": 95754786998,
+        "id": 96576687957,
         "conclusion": "success"
       },
       "artifact": {
         "name": "crash-restore-campaign-postgres-15",
-        "id": 9329586830,
-        "digest": "sha256:be521c8a2084b2c50bd805bb1dff6439ebd2bffe422e5dd083fae34d7ecf6769",
-        "size_bytes": 6694
+        "id": 9423919801,
+        "digest": "sha256:34867b55c5a120fe0d4dfe92eac9a0641bab62db03d19806f26fe7305e40a868",
+        "size_bytes": 6680
       },
-      "retained_report_git_blob": "4fcf0ea7275801d49dd8576d64fbfee222a996ea",
+      "retained_report_git_blob": "313700a97b8a280bc7074d57120f9943f2e2aecd",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-18T14:53:19Z",
-        "run_id": 32150471991,
+        "verified_at": "2026-08-20T20:57:36Z",
+        "run_id": 32415848729,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -558,7 +558,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #134 (0.5.0 release preparation), second round: adding `cargo xtask release-crates` (the RFC-0011 five-crate release-set regression check) required editing xtask/src/main.rs to wire in the new subcommand and quality-gate call. xtask/src/main.rs is part of every M5 campaign's declared semantic closure (it is each campaign's shared verifier entry point), which invalidated all 16 reports retained moments earlier for the same PR's prior commit. The two release workflow files this commit actually changed (release.yml, release-draft.yml) are not part of any campaign's closure. The workflow run, producing job, artifact ID/digest, downloaded ZIP contents, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #160 (ADR-0008 item component contract closure for issue #143). crates/oxide-batch/src changed (the invoke_reader Box::pin fix, the BoxedReader/BoxedProcessor/BoxedWriter re-export, the facade doctest, and a doc-comment correction) and crates/oxide-batch/Cargo.toml and Cargo.lock changed (stats_alloc added as a dev-dependency for the allocation-regression test), all part of every M5 campaign's declared framework-source and cargo-manifest closure, which invalidated every previously retained M5 report under `cargo xtask evidence`. This retention replaces all sixteen reports from one independently-verified push to this PR's branch (head 6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b): the workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, and extracted report bytes were each verified before this retention. The postgres-15-performance-campaign job initially failed on its first attempt with an unrelated, non-reproducing peak-connection-count violation (3 observed against a ceiling of 2) in the P-003 workload's connection sampler; postgres-18-performance-campaign passed on the same commit in the same run, and a rerun of the postgres-15 job passed cleanly, consistent with CI timing noise rather than a regression introduced by this PR. The retained postgres-15-performance-campaign and postgres-18-performance-campaign reports are both from that rerun (workflow run attempt 2). This retention commit also merges origin/main (25f6a4f, which landed PR #159 between this branch's base and this push) into the branch, since #159 touched crates/oxide-batch/tests/postgres_performance.rs and xtask/src/performance.rs \u2014 both part of the performance and conformance campaigns' closures \u2014 and the PR's own ephemeral merge commit (6532a549537be67bf34e1b61266be53d1cf874fd, which the reports record as environment.source_commit) already reflects that merge. The merge was non-conflicting (different regions of postgres_performance.rs), and the resulting local tree's object identity for every path both PRs touch was confirmed byte-for-byte against what each report's execution_manifest recorded before this file was written."
       }
     },
     {
@@ -568,9 +568,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "4462d74361b3c2bc899b30ade40c54ec3398ab01",
+        "execution_commit": "6532a549537be67bf34e1b61266be53d1cf874fd",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "4a2dbae9c904b3a72cd63e314f15f7e9ce62ace8",
+        "branch_head_sha": "6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -580,27 +580,27 @@
       "workflow_run": {
         "workflow": "M5 Crash and Restore",
         "workflow_file": ".github/workflows/m5-crash-restore.yml",
-        "id": 32150471991,
+        "id": 32415848729,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-crash-restore-campaign",
-        "id": 95754787042,
+        "id": 96576688429,
         "conclusion": "success"
       },
       "artifact": {
         "name": "crash-restore-campaign-postgres-18",
-        "id": 9329591335,
-        "digest": "sha256:c56c14f5abd2f513eb9ea7e420c5e3f084df62db0100783408d882e67cbb939e",
-        "size_bytes": 6684
+        "id": 9423924951,
+        "digest": "sha256:031bf41aae91bf02e98a96d322be0f4bdf3b2992c98a11cd9b3caae6aae8af47",
+        "size_bytes": 6683
       },
-      "retained_report_git_blob": "0ceed89ea88fa444ad1e1faebdd8da06f77c0b55",
+      "retained_report_git_blob": "b31b8980995a0c7e3486939ea8428a6ec8bbc85d",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-18T14:53:19Z",
-        "run_id": 32150471991,
+        "verified_at": "2026-08-20T20:57:36Z",
+        "run_id": 32415848729,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -608,7 +608,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #134 (0.5.0 release preparation), second round: adding `cargo xtask release-crates` (the RFC-0011 five-crate release-set regression check) required editing xtask/src/main.rs to wire in the new subcommand and quality-gate call. xtask/src/main.rs is part of every M5 campaign's declared semantic closure (it is each campaign's shared verifier entry point), which invalidated all 16 reports retained moments earlier for the same PR's prior commit. The two release workflow files this commit actually changed (release.yml, release-draft.yml) are not part of any campaign's closure. The workflow run, producing job, artifact ID/digest, downloaded ZIP contents, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #160 (ADR-0008 item component contract closure for issue #143). crates/oxide-batch/src changed (the invoke_reader Box::pin fix, the BoxedReader/BoxedProcessor/BoxedWriter re-export, the facade doctest, and a doc-comment correction) and crates/oxide-batch/Cargo.toml and Cargo.lock changed (stats_alloc added as a dev-dependency for the allocation-regression test), all part of every M5 campaign's declared framework-source and cargo-manifest closure, which invalidated every previously retained M5 report under `cargo xtask evidence`. This retention replaces all sixteen reports from one independently-verified push to this PR's branch (head 6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b): the workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, and extracted report bytes were each verified before this retention. The postgres-15-performance-campaign job initially failed on its first attempt with an unrelated, non-reproducing peak-connection-count violation (3 observed against a ceiling of 2) in the P-003 workload's connection sampler; postgres-18-performance-campaign passed on the same commit in the same run, and a rerun of the postgres-15 job passed cleanly, consistent with CI timing noise rather than a regression introduced by this PR. The retained postgres-15-performance-campaign and postgres-18-performance-campaign reports are both from that rerun (workflow run attempt 2). This retention commit also merges origin/main (25f6a4f, which landed PR #159 between this branch's base and this push) into the branch, since #159 touched crates/oxide-batch/tests/postgres_performance.rs and xtask/src/performance.rs \u2014 both part of the performance and conformance campaigns' closures \u2014 and the PR's own ephemeral merge commit (6532a549537be67bf34e1b61266be53d1cf874fd, which the reports record as environment.source_commit) already reflects that merge. The merge was non-conflicting (different regions of postgres_performance.rs), and the resulting local tree's object identity for every path both PRs touch was confirmed byte-for-byte against what each report's execution_manifest recorded before this file was written."
       }
     },
     {
@@ -618,9 +618,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "4462d74361b3c2bc899b30ade40c54ec3398ab01",
+        "execution_commit": "6532a549537be67bf34e1b61266be53d1cf874fd",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "4a2dbae9c904b3a72cd63e314f15f7e9ce62ace8",
+        "branch_head_sha": "6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -630,27 +630,27 @@
       "workflow_run": {
         "workflow": "M5 Upgrade",
         "workflow_file": ".github/workflows/m5-upgrade.yml",
-        "id": 32150471853,
+        "id": 32415848768,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-upgrade-campaign",
-        "id": 95754785655,
+        "id": 96576688001,
         "conclusion": "success"
       },
       "artifact": {
         "name": "upgrade-campaign-postgres-15",
-        "id": 9329594860,
-        "digest": "sha256:2033541087e486a83e221f7e67688e6c9dbd2ad7d45fcfb4cccf2602bf7f0207",
-        "size_bytes": 5175
+        "id": 9423928277,
+        "digest": "sha256:d5f3f0dc49a7ee72acb5a0df77778c0f60c2067afe7c99bf20b366b2ecc7e973",
+        "size_bytes": 5176
       },
-      "retained_report_git_blob": "d23e3fd6897ac1b2eb8be05fabdc1d372b9e5c3f",
+      "retained_report_git_blob": "d005e34857badbf14086c32b9c252ae5df33403b",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-18T14:53:19Z",
-        "run_id": 32150471853,
+        "verified_at": "2026-08-20T20:57:36Z",
+        "run_id": 32415848768,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -658,7 +658,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #134 (0.5.0 release preparation), second round: adding `cargo xtask release-crates` (the RFC-0011 five-crate release-set regression check) required editing xtask/src/main.rs to wire in the new subcommand and quality-gate call. xtask/src/main.rs is part of every M5 campaign's declared semantic closure (it is each campaign's shared verifier entry point), which invalidated all 16 reports retained moments earlier for the same PR's prior commit. The two release workflow files this commit actually changed (release.yml, release-draft.yml) are not part of any campaign's closure. The workflow run, producing job, artifact ID/digest, downloaded ZIP contents, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #160 (ADR-0008 item component contract closure for issue #143). crates/oxide-batch/src changed (the invoke_reader Box::pin fix, the BoxedReader/BoxedProcessor/BoxedWriter re-export, the facade doctest, and a doc-comment correction) and crates/oxide-batch/Cargo.toml and Cargo.lock changed (stats_alloc added as a dev-dependency for the allocation-regression test), all part of every M5 campaign's declared framework-source and cargo-manifest closure, which invalidated every previously retained M5 report under `cargo xtask evidence`. This retention replaces all sixteen reports from one independently-verified push to this PR's branch (head 6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b): the workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, and extracted report bytes were each verified before this retention. The postgres-15-performance-campaign job initially failed on its first attempt with an unrelated, non-reproducing peak-connection-count violation (3 observed against a ceiling of 2) in the P-003 workload's connection sampler; postgres-18-performance-campaign passed on the same commit in the same run, and a rerun of the postgres-15 job passed cleanly, consistent with CI timing noise rather than a regression introduced by this PR. The retained postgres-15-performance-campaign and postgres-18-performance-campaign reports are both from that rerun (workflow run attempt 2). This retention commit also merges origin/main (25f6a4f, which landed PR #159 between this branch's base and this push) into the branch, since #159 touched crates/oxide-batch/tests/postgres_performance.rs and xtask/src/performance.rs \u2014 both part of the performance and conformance campaigns' closures \u2014 and the PR's own ephemeral merge commit (6532a549537be67bf34e1b61266be53d1cf874fd, which the reports record as environment.source_commit) already reflects that merge. The merge was non-conflicting (different regions of postgres_performance.rs), and the resulting local tree's object identity for every path both PRs touch was confirmed byte-for-byte against what each report's execution_manifest recorded before this file was written."
       }
     },
     {
@@ -668,9 +668,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "4462d74361b3c2bc899b30ade40c54ec3398ab01",
+        "execution_commit": "6532a549537be67bf34e1b61266be53d1cf874fd",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "4a2dbae9c904b3a72cd63e314f15f7e9ce62ace8",
+        "branch_head_sha": "6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -680,27 +680,27 @@
       "workflow_run": {
         "workflow": "M5 Upgrade",
         "workflow_file": ".github/workflows/m5-upgrade.yml",
-        "id": 32150471853,
+        "id": 32415848768,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-upgrade-campaign",
-        "id": 95754785590,
+        "id": 96576688321,
         "conclusion": "success"
       },
       "artifact": {
         "name": "upgrade-campaign-postgres-18",
-        "id": 9329610542,
-        "digest": "sha256:9c5c7521e622122ac400e5292206ccea2b2c401661921b0df014ad50c406360c",
+        "id": 9423920800,
+        "digest": "sha256:ee8351dd242c801385c015ed02cf7da5c3b268e61ad4a7cbf4d1604403736c2f",
         "size_bytes": 5172
       },
-      "retained_report_git_blob": "7501baa151a821eb2b8d3842ef7812d847984655",
+      "retained_report_git_blob": "dd0a7bb77e7f5de0cec18291751a74900e383865",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-18T14:53:19Z",
-        "run_id": 32150471853,
+        "verified_at": "2026-08-20T20:57:36Z",
+        "run_id": 32415848768,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -708,7 +708,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #134 (0.5.0 release preparation), second round: adding `cargo xtask release-crates` (the RFC-0011 five-crate release-set regression check) required editing xtask/src/main.rs to wire in the new subcommand and quality-gate call. xtask/src/main.rs is part of every M5 campaign's declared semantic closure (it is each campaign's shared verifier entry point), which invalidated all 16 reports retained moments earlier for the same PR's prior commit. The two release workflow files this commit actually changed (release.yml, release-draft.yml) are not part of any campaign's closure. The workflow run, producing job, artifact ID/digest, downloaded ZIP contents, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #160 (ADR-0008 item component contract closure for issue #143). crates/oxide-batch/src changed (the invoke_reader Box::pin fix, the BoxedReader/BoxedProcessor/BoxedWriter re-export, the facade doctest, and a doc-comment correction) and crates/oxide-batch/Cargo.toml and Cargo.lock changed (stats_alloc added as a dev-dependency for the allocation-regression test), all part of every M5 campaign's declared framework-source and cargo-manifest closure, which invalidated every previously retained M5 report under `cargo xtask evidence`. This retention replaces all sixteen reports from one independently-verified push to this PR's branch (head 6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b): the workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, and extracted report bytes were each verified before this retention. The postgres-15-performance-campaign job initially failed on its first attempt with an unrelated, non-reproducing peak-connection-count violation (3 observed against a ceiling of 2) in the P-003 workload's connection sampler; postgres-18-performance-campaign passed on the same commit in the same run, and a rerun of the postgres-15 job passed cleanly, consistent with CI timing noise rather than a regression introduced by this PR. The retained postgres-15-performance-campaign and postgres-18-performance-campaign reports are both from that rerun (workflow run attempt 2). This retention commit also merges origin/main (25f6a4f, which landed PR #159 between this branch's base and this push) into the branch, since #159 touched crates/oxide-batch/tests/postgres_performance.rs and xtask/src/performance.rs \u2014 both part of the performance and conformance campaigns' closures \u2014 and the PR's own ephemeral merge commit (6532a549537be67bf34e1b61266be53d1cf874fd, which the reports record as environment.source_commit) already reflects that merge. The merge was non-conflicting (different regions of postgres_performance.rs), and the resulting local tree's object identity for every path both PRs touch was confirmed byte-for-byte against what each report's execution_manifest recorded before this file was written."
       }
     },
     {
@@ -718,9 +718,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "4462d74361b3c2bc899b30ade40c54ec3398ab01",
+        "execution_commit": "6532a549537be67bf34e1b61266be53d1cf874fd",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "4a2dbae9c904b3a72cd63e314f15f7e9ce62ace8",
+        "branch_head_sha": "6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -730,27 +730,27 @@
       "workflow_run": {
         "workflow": "M5 Security",
         "workflow_file": ".github/workflows/m5-security.yml",
-        "id": 32150471821,
+        "id": 32415848497,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-security-campaign",
-        "id": 95754786288,
+        "id": 96576687609,
         "conclusion": "success"
       },
       "artifact": {
         "name": "security-campaign-postgres-15",
-        "id": 9329580038,
-        "digest": "sha256:b203349c7caebf9924a0b52b91263573fe0a851e92ee404a3d330192aadf59ab",
+        "id": 9423913865,
+        "digest": "sha256:9896d07c2be4ff71c884a2e22e5c0317ee280a2b25216b74a2860b9b5aff3f8a",
         "size_bytes": 6949
       },
-      "retained_report_git_blob": "9a65fae1e120d4e4190a32d2431df99574c2b3a7",
+      "retained_report_git_blob": "d0c71375b70cd4e995403f3b253a5cf25385914d",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-18T14:53:19Z",
-        "run_id": 32150471821,
+        "verified_at": "2026-08-20T20:57:36Z",
+        "run_id": 32415848497,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -758,7 +758,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #134 (0.5.0 release preparation), second round: adding `cargo xtask release-crates` (the RFC-0011 five-crate release-set regression check) required editing xtask/src/main.rs to wire in the new subcommand and quality-gate call. xtask/src/main.rs is part of every M5 campaign's declared semantic closure (it is each campaign's shared verifier entry point), which invalidated all 16 reports retained moments earlier for the same PR's prior commit. The two release workflow files this commit actually changed (release.yml, release-draft.yml) are not part of any campaign's closure. The workflow run, producing job, artifact ID/digest, downloaded ZIP contents, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #160 (ADR-0008 item component contract closure for issue #143). crates/oxide-batch/src changed (the invoke_reader Box::pin fix, the BoxedReader/BoxedProcessor/BoxedWriter re-export, the facade doctest, and a doc-comment correction) and crates/oxide-batch/Cargo.toml and Cargo.lock changed (stats_alloc added as a dev-dependency for the allocation-regression test), all part of every M5 campaign's declared framework-source and cargo-manifest closure, which invalidated every previously retained M5 report under `cargo xtask evidence`. This retention replaces all sixteen reports from one independently-verified push to this PR's branch (head 6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b): the workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, and extracted report bytes were each verified before this retention. The postgres-15-performance-campaign job initially failed on its first attempt with an unrelated, non-reproducing peak-connection-count violation (3 observed against a ceiling of 2) in the P-003 workload's connection sampler; postgres-18-performance-campaign passed on the same commit in the same run, and a rerun of the postgres-15 job passed cleanly, consistent with CI timing noise rather than a regression introduced by this PR. The retained postgres-15-performance-campaign and postgres-18-performance-campaign reports are both from that rerun (workflow run attempt 2). This retention commit also merges origin/main (25f6a4f, which landed PR #159 between this branch's base and this push) into the branch, since #159 touched crates/oxide-batch/tests/postgres_performance.rs and xtask/src/performance.rs \u2014 both part of the performance and conformance campaigns' closures \u2014 and the PR's own ephemeral merge commit (6532a549537be67bf34e1b61266be53d1cf874fd, which the reports record as environment.source_commit) already reflects that merge. The merge was non-conflicting (different regions of postgres_performance.rs), and the resulting local tree's object identity for every path both PRs touch was confirmed byte-for-byte against what each report's execution_manifest recorded before this file was written."
       }
     },
     {
@@ -768,9 +768,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "4462d74361b3c2bc899b30ade40c54ec3398ab01",
+        "execution_commit": "6532a549537be67bf34e1b61266be53d1cf874fd",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "4a2dbae9c904b3a72cd63e314f15f7e9ce62ace8",
+        "branch_head_sha": "6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -780,27 +780,27 @@
       "workflow_run": {
         "workflow": "M5 Security",
         "workflow_file": ".github/workflows/m5-security.yml",
-        "id": 32150471821,
+        "id": 32415848497,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-security-campaign",
-        "id": 95754786291,
+        "id": 96576687371,
         "conclusion": "success"
       },
       "artifact": {
         "name": "security-campaign-postgres-18",
-        "id": 9329583017,
-        "digest": "sha256:75e80052f97e71131d822ef86caeb6b007d47c6cc6269972932660c248a884d9",
+        "id": 9423912178,
+        "digest": "sha256:65ddbd56043b6162ef381694c4965b2522d5af7093d5953146910ad30d7250e5",
         "size_bytes": 6948
       },
-      "retained_report_git_blob": "13c4dc3c131c2156f13316f2f26a915d5d7858aa",
+      "retained_report_git_blob": "a7600b30384762a5a4d42e975c3d58cec3c670c1",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-18T14:53:19Z",
-        "run_id": 32150471821,
+        "verified_at": "2026-08-20T20:57:36Z",
+        "run_id": 32415848497,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -808,7 +808,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #134 (0.5.0 release preparation), second round: adding `cargo xtask release-crates` (the RFC-0011 five-crate release-set regression check) required editing xtask/src/main.rs to wire in the new subcommand and quality-gate call. xtask/src/main.rs is part of every M5 campaign's declared semantic closure (it is each campaign's shared verifier entry point), which invalidated all 16 reports retained moments earlier for the same PR's prior commit. The two release workflow files this commit actually changed (release.yml, release-draft.yml) are not part of any campaign's closure. The workflow run, producing job, artifact ID/digest, downloaded ZIP contents, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #160 (ADR-0008 item component contract closure for issue #143). crates/oxide-batch/src changed (the invoke_reader Box::pin fix, the BoxedReader/BoxedProcessor/BoxedWriter re-export, the facade doctest, and a doc-comment correction) and crates/oxide-batch/Cargo.toml and Cargo.lock changed (stats_alloc added as a dev-dependency for the allocation-regression test), all part of every M5 campaign's declared framework-source and cargo-manifest closure, which invalidated every previously retained M5 report under `cargo xtask evidence`. This retention replaces all sixteen reports from one independently-verified push to this PR's branch (head 6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b): the workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, and extracted report bytes were each verified before this retention. The postgres-15-performance-campaign job initially failed on its first attempt with an unrelated, non-reproducing peak-connection-count violation (3 observed against a ceiling of 2) in the P-003 workload's connection sampler; postgres-18-performance-campaign passed on the same commit in the same run, and a rerun of the postgres-15 job passed cleanly, consistent with CI timing noise rather than a regression introduced by this PR. The retained postgres-15-performance-campaign and postgres-18-performance-campaign reports are both from that rerun (workflow run attempt 2). This retention commit also merges origin/main (25f6a4f, which landed PR #159 between this branch's base and this push) into the branch, since #159 touched crates/oxide-batch/tests/postgres_performance.rs and xtask/src/performance.rs \u2014 both part of the performance and conformance campaigns' closures \u2014 and the PR's own ephemeral merge commit (6532a549537be67bf34e1b61266be53d1cf874fd, which the reports record as environment.source_commit) already reflects that merge. The merge was non-conflicting (different regions of postgres_performance.rs), and the resulting local tree's object identity for every path both PRs touch was confirmed byte-for-byte against what each report's execution_manifest recorded before this file was written."
       }
     },
     {
@@ -818,9 +818,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "4462d74361b3c2bc899b30ade40c54ec3398ab01",
+        "execution_commit": "6532a549537be67bf34e1b61266be53d1cf874fd",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "4a2dbae9c904b3a72cd63e314f15f7e9ce62ace8",
+        "branch_head_sha": "6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -830,27 +830,27 @@
       "workflow_run": {
         "workflow": "M5 Resource Bounds",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 32150471935,
+        "id": 32415848778,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-resource-bounds-campaign",
-        "id": 95754786436,
+        "id": 96576688495,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-15",
-        "id": 9329592569,
-        "digest": "sha256:fe6422d926d3ab175e81ae3b07c54d924a5245ae41065e3a1af92ff6478387c5",
-        "size_bytes": 13099
+        "id": 9423915162,
+        "digest": "sha256:3ffb99fa5c06979c104f5ae1f3cd653518c08dcae38b7b21574eaa2d7a2147a7",
+        "size_bytes": 13097
       },
-      "retained_report_git_blob": "eb714e7eba6678368c5c3c73d3ddade24006e07e",
+      "retained_report_git_blob": "1aaafce938a178ba1ca3f1fe6a45bd31fb3fbda7",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-18T14:53:19Z",
-        "run_id": 32150471935,
+        "verified_at": "2026-08-20T20:57:36Z",
+        "run_id": 32415848778,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -858,7 +858,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #134 (0.5.0 release preparation), second round: adding `cargo xtask release-crates` (the RFC-0011 five-crate release-set regression check) required editing xtask/src/main.rs to wire in the new subcommand and quality-gate call. xtask/src/main.rs is part of every M5 campaign's declared semantic closure (it is each campaign's shared verifier entry point), which invalidated all 16 reports retained moments earlier for the same PR's prior commit. The two release workflow files this commit actually changed (release.yml, release-draft.yml) are not part of any campaign's closure. The workflow run, producing job, artifact ID/digest, downloaded ZIP contents, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #160 (ADR-0008 item component contract closure for issue #143). crates/oxide-batch/src changed (the invoke_reader Box::pin fix, the BoxedReader/BoxedProcessor/BoxedWriter re-export, the facade doctest, and a doc-comment correction) and crates/oxide-batch/Cargo.toml and Cargo.lock changed (stats_alloc added as a dev-dependency for the allocation-regression test), all part of every M5 campaign's declared framework-source and cargo-manifest closure, which invalidated every previously retained M5 report under `cargo xtask evidence`. This retention replaces all sixteen reports from one independently-verified push to this PR's branch (head 6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b): the workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, and extracted report bytes were each verified before this retention. The postgres-15-performance-campaign job initially failed on its first attempt with an unrelated, non-reproducing peak-connection-count violation (3 observed against a ceiling of 2) in the P-003 workload's connection sampler; postgres-18-performance-campaign passed on the same commit in the same run, and a rerun of the postgres-15 job passed cleanly, consistent with CI timing noise rather than a regression introduced by this PR. The retained postgres-15-performance-campaign and postgres-18-performance-campaign reports are both from that rerun (workflow run attempt 2). This retention commit also merges origin/main (25f6a4f, which landed PR #159 between this branch's base and this push) into the branch, since #159 touched crates/oxide-batch/tests/postgres_performance.rs and xtask/src/performance.rs \u2014 both part of the performance and conformance campaigns' closures \u2014 and the PR's own ephemeral merge commit (6532a549537be67bf34e1b61266be53d1cf874fd, which the reports record as environment.source_commit) already reflects that merge. The merge was non-conflicting (different regions of postgres_performance.rs), and the resulting local tree's object identity for every path both PRs touch was confirmed byte-for-byte against what each report's execution_manifest recorded before this file was written."
       }
     },
     {
@@ -868,9 +868,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "4462d74361b3c2bc899b30ade40c54ec3398ab01",
+        "execution_commit": "6532a549537be67bf34e1b61266be53d1cf874fd",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "4a2dbae9c904b3a72cd63e314f15f7e9ce62ace8",
+        "branch_head_sha": "6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -880,27 +880,27 @@
       "workflow_run": {
         "workflow": "M5 Resource Bounds",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 32150471935,
+        "id": 32415848778,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-resource-bounds-campaign",
-        "id": 95754786532,
+        "id": 96576688664,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-18",
-        "id": 9329591650,
-        "digest": "sha256:56628982ba79c2a16445b26bac0d3eeccbe9408bc000b48156d2d2ed2273d30f",
-        "size_bytes": 13098
+        "id": 9423915449,
+        "digest": "sha256:efdd32586ee14c7306a018cbc6d33a1b49f264e0547ab85b6abb6805400b1d9e",
+        "size_bytes": 13096
       },
-      "retained_report_git_blob": "e52251221f972cd1283dd4efcf14e0492776c78b",
+      "retained_report_git_blob": "15d75c5c025b4073f09327e45387eb901e7f0187",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-18T14:53:19Z",
-        "run_id": 32150471935,
+        "verified_at": "2026-08-20T20:57:36Z",
+        "run_id": 32415848778,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -908,7 +908,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #134 (0.5.0 release preparation), second round: adding `cargo xtask release-crates` (the RFC-0011 five-crate release-set regression check) required editing xtask/src/main.rs to wire in the new subcommand and quality-gate call. xtask/src/main.rs is part of every M5 campaign's declared semantic closure (it is each campaign's shared verifier entry point), which invalidated all 16 reports retained moments earlier for the same PR's prior commit. The two release workflow files this commit actually changed (release.yml, release-draft.yml) are not part of any campaign's closure. The workflow run, producing job, artifact ID/digest, downloaded ZIP contents, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #160 (ADR-0008 item component contract closure for issue #143). crates/oxide-batch/src changed (the invoke_reader Box::pin fix, the BoxedReader/BoxedProcessor/BoxedWriter re-export, the facade doctest, and a doc-comment correction) and crates/oxide-batch/Cargo.toml and Cargo.lock changed (stats_alloc added as a dev-dependency for the allocation-regression test), all part of every M5 campaign's declared framework-source and cargo-manifest closure, which invalidated every previously retained M5 report under `cargo xtask evidence`. This retention replaces all sixteen reports from one independently-verified push to this PR's branch (head 6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b): the workflow run, producing job, artifact ID/digest, downloaded ZIP bytes, and extracted report bytes were each verified before this retention. The postgres-15-performance-campaign job initially failed on its first attempt with an unrelated, non-reproducing peak-connection-count violation (3 observed against a ceiling of 2) in the P-003 workload's connection sampler; postgres-18-performance-campaign passed on the same commit in the same run, and a rerun of the postgres-15 job passed cleanly, consistent with CI timing noise rather than a regression introduced by this PR. The retained postgres-15-performance-campaign and postgres-18-performance-campaign reports are both from that rerun (workflow run attempt 2). This retention commit also merges origin/main (25f6a4f, which landed PR #159 between this branch's base and this push) into the branch, since #159 touched crates/oxide-batch/tests/postgres_performance.rs and xtask/src/performance.rs \u2014 both part of the performance and conformance campaigns' closures \u2014 and the PR's own ephemeral merge commit (6532a549537be67bf34e1b61266be53d1cf874fd, which the reports record as environment.source_commit) already reflects that merge. The merge was non-conflicting (different regions of postgres_performance.rs), and the resulting local tree's object identity for every path both PRs touch was confirmed byte-for-byte against what each report's execution_manifest recorded before this file was written."
       }
     }
   ],
