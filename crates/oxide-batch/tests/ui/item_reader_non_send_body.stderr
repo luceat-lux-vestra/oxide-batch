@@ -1,0 +1,19 @@
+error: future cannot be sent between threads safely
+  --> tests/ui/item_reader_non_send_body.rs:15:60
+   |
+15 |     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<u32>, ReaderError> {
+   |                                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ future returned by `read` is not `Send`
+   |
+   = help: within `impl Future<Output = Result<ReadOutcome<u32>, ReaderError>>`, the trait `Send` is not implemented for `Rc<u32>`
+note: future is not `Send` as this value is used across an await
+  --> tests/ui/item_reader_non_send_body.rs:17:17
+   |
+16 |         let handle = Rc::new(self.0);
+   |             ------ has type `Rc<u32>` which is not `Send`
+17 |         flush().await;
+   |                 ^^^^^ await occurs here, with `handle` maybe used later
+note: required by a bound in `ItemReader::read::{anon_assoc#0}`
+  --> src/chunk.rs
+   |
+   |     ) -> impl Future<Output = Result<ReadOutcome<I>, ReaderError>> + Send + 'a;
+   |                                                                      ^^^^ required by this bound in `ItemReader::read::{anon_assoc#0}`

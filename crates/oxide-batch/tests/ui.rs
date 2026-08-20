@@ -17,6 +17,8 @@ fn item_component_contract_matches_its_documented_shape() {
     let cases = trybuild::TestCases::new();
     cases.pass("tests/ui/item_reader_natural_async.rs");
     cases.pass("tests/ui/item_reader_boxed_erasure.rs");
+    cases.pass("tests/ui/item_reader_non_static_item.rs");
     cases.compile_fail("tests/ui/item_reader_dyn_incompatible.rs");
     cases.compile_fail("tests/ui/item_processor_missing_impl.rs");
+    cases.compile_fail("tests/ui/item_reader_non_send_body.rs");
 }
