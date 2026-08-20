@@ -312,10 +312,7 @@ struct ScriptedReader {
 }
 
 impl ItemReader<i32> for ScriptedReader {
-    async fn read(
-        &mut self,
-        _context: ReadContext<'_>,
-    ) -> Result<ReadOutcome<i32>, ReaderError> {
+    async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i32>, ReaderError> {
         if self.fail {
             return Err(ReaderError::new());
         }
@@ -431,19 +428,21 @@ fn chunk_revisions() -> Result<ChunkComponentRevisions, Box<dyn Error>> {
     ))
 }
 
+type ScriptedChunkJob = ChunkJob<i32, i32, ScriptedReader, DoublingProcessor, DiscardingWriter>;
+
 fn chunk_job(
     fail_read: bool,
     commit_error: Option<ChunkTransactionError>,
-) -> Result<ChunkJob<i32, i32>, Box<dyn Error>> {
+) -> Result<ScriptedChunkJob, Box<dyn Error>> {
     let step = ChunkStep::new(
         StepName::new("import")?,
         ChunkSize::new(2)?,
-        Box::new(ScriptedReader {
+        ScriptedReader {
             items: [1, 2, 3].into_iter().collect(),
             fail: fail_read,
-        }),
-        Arc::new(DoublingProcessor),
-        Arc::new(DiscardingWriter),
+        },
+        DoublingProcessor,
+        DiscardingWriter,
         Arc::new(ScriptedTransactions { commit_error }),
         Arc::new(AcknowledgingCompletion),
     );
@@ -457,7 +456,7 @@ fn chunk_job(
 
 async fn launch_chunk_scenario(
     harness: &Harness,
-    job: &mut ChunkJob<i32, i32>,
+    job: &mut ScriptedChunkJob,
     stop: &StopToken,
 ) -> Result<(), Box<dyn Error>> {
     harness

@@ -654,10 +654,7 @@ impl ChunkTransaction for SameResourceTransaction {
 struct Items(std::cell::RefCell<Vec<i64>>);
 
 impl ItemReader<i64> for Items {
-    async fn read(
-        &mut self,
-        _context: ReadContext<'_>,
-    ) -> Result<ReadOutcome<i64>, ReaderError> {
+    async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i64>, ReaderError> {
         let item = self.0.borrow_mut().pop();
         Ok(item.map_or(ReadOutcome::EndOfInput, ReadOutcome::Item))
     }

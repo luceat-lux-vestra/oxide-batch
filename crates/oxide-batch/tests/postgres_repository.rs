@@ -492,10 +492,7 @@ struct ChunkReader {
 }
 
 impl ItemReader<i64> for ChunkReader {
-    async fn read(
-        &mut self,
-        _context: ReadContext<'_>,
-    ) -> Result<ReadOutcome<i64>, ReaderError> {
+    async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i64>, ReaderError> {
         let item = self.items.pop_front();
         Ok(item.map_or(ReadOutcome::EndOfInput, ReadOutcome::Item))
     }
@@ -628,14 +625,14 @@ async fn launch_postgres_chunk(
     let step = ChunkStep::new(
         StepName::new("import")?,
         ChunkSize::new(2)?,
-        Box::new(ChunkReader {
+        ChunkReader {
             items: VecDeque::from([10, 20, 30]),
-        }),
-        Arc::new(IdentityProcessor),
-        Arc::new(EnlistedWriter {
+        },
+        IdentityProcessor,
+        EnlistedWriter {
             job_name,
             fail_after_write,
-        }),
+        },
         Arc::new(transactions.clone()),
         Arc::new(TestCompletion {
             fail: fail_completion,

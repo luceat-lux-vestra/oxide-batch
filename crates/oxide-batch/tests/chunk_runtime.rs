@@ -101,18 +101,15 @@ impl Reader {
 }
 
 impl ItemReader<i32> for Reader {
-    fn read<'a>(
-        &'a mut self,
-        _context: ReadContext<'a>,
-    ) -> BoxFuture<'a, Result<ReadOutcome<i32>, ReaderError>> {
+    async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i32>, ReaderError> {
         match self.boundary {
             Boundary::Panic => panic!("reader secret"),
-            Boundary::Error => Box::pin(async { Err(ReaderError::new()) }),
-            Boundary::Stop => Box::pin(async { Ok(ReadOutcome::Stopped) }),
-            Boundary::Normal => {
-                let item = self.items.pop_front();
-                Box::pin(async move { Ok(item.map_or(ReadOutcome::EndOfInput, ReadOutcome::Item)) })
-            }
+            Boundary::Error => Err(ReaderError::new()),
+            Boundary::Stop => Ok(ReadOutcome::Stopped),
+            Boundary::Normal => Ok(self
+                .items
+                .pop_front()
+                .map_or(ReadOutcome::EndOfInput, ReadOutcome::Item)),
         }
     }
 }
@@ -123,15 +120,14 @@ struct ShutdownRequestingReader {
 }
 
 impl ItemReader<i32> for ShutdownRequestingReader {
-    fn read<'a>(
-        &'a mut self,
-        _context: ReadContext<'a>,
-    ) -> BoxFuture<'a, Result<ReadOutcome<i32>, ReaderError>> {
+    async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i32>, ReaderError> {
         if let Some(source) = self.source.take() {
             source.request_stop();
         }
-        let item = self.items.pop_front();
-        Box::pin(async move { Ok(item.map_or(ReadOutcome::EndOfInput, ReadOutcome::Item)) })
+        Ok(self
+            .items
+            .pop_front()
+            .map_or(ReadOutcome::EndOfInput, ReadOutcome::Item))
     }
 }
 
@@ -150,22 +146,17 @@ impl Processor {
 }
 
 impl ItemProcessor<i32, i32> for Processor {
-    fn process<'a>(
-        &'a self,
-        item: &'a i32,
-        _context: ProcessContext<'a>,
-    ) -> BoxFuture<'a, Result<ProcessOutcome<i32>, ProcessorError>> {
+    async fn process(
+        &self,
+        item: &i32,
+        _context: ProcessContext<'_>,
+    ) -> Result<ProcessOutcome<i32>, ProcessorError> {
         match self.boundary {
             Boundary::Panic => panic!("processor secret"),
-            Boundary::Error => Box::pin(async { Err(ProcessorError::new()) }),
-            Boundary::Stop => Box::pin(async { Ok(ProcessOutcome::Stopped) }),
-            Boundary::Normal if self.filter == Some(*item) => {
-                Box::pin(async { Ok(ProcessOutcome::Filtered) })
-            }
-            Boundary::Normal => {
-                let output = item * 10;
-                Box::pin(async move { Ok(ProcessOutcome::Item(output)) })
-            }
+            Boundary::Error => Err(ProcessorError::new()),
+            Boundary::Stop => Ok(ProcessOutcome::Stopped),
+            Boundary::Normal if self.filter == Some(*item) => Ok(ProcessOutcome::Filtered),
+            Boundary::Normal => Ok(ProcessOutcome::Item(item * 10)),
         }
     }
 }
@@ -189,21 +180,21 @@ impl Writer {
 }
 
 impl ItemWriter<i32> for Writer {
-    fn write<'a>(
-        &'a self,
-        items: &'a [i32],
-        _context: WriteContext<'a>,
-    ) -> BoxFuture<'a, Result<WriteOutcome, WriterError>> {
+    async fn write(
+        &self,
+        items: &[i32],
+        _context: WriteContext<'_>,
+    ) -> Result<WriteOutcome, WriterError> {
         match self.boundary {
             Boundary::Panic => panic!("writer secret"),
-            Boundary::Error => Box::pin(async { Err(WriterError::new()) }),
-            Boundary::Stop => Box::pin(async { Ok(WriteOutcome::Stopped) }),
+            Boundary::Error => Err(WriterError::new()),
+            Boundary::Stop => Ok(WriteOutcome::Stopped),
             Boundary::Normal => {
                 self.batches
                     .lock()
                     .expect("writer batches lock poisoned")
                     .push(items.to_vec());
-                Box::pin(async { Ok(WriteOutcome::Written) })
+                Ok(WriteOutcome::Written)
             }
         }
     }
@@ -330,7 +321,7 @@ fn step(
     completion_boundary: Boundary,
     commit_error: Option<ChunkTransactionError>,
 ) -> (
-    ChunkStep<i32, i32>,
+    ChunkStep<i32, i32, Reader, Processor, Writer>,
     Arc<Mutex<Vec<Vec<i32>>>>,
     Arc<Mutex<Vec<ChunkCounts>>>,
     Arc<TransactionEvidence>,
@@ -346,9 +337,9 @@ fn step(
     let step = ChunkStep::new(
         StepName::new("import").expect("valid step name"),
         ChunkSize::new(2).expect("valid chunk size"),
-        Box::new(reader),
-        Arc::new(processor),
-        Arc::new(writer),
+        reader,
+        processor,
+        writer,
         Arc::new(transactions),
         Arc::new(completion),
     );
@@ -637,12 +628,12 @@ async fn declared_in_flight_policy_commits_or_rolls_back_the_open_chunk() {
         let step = ChunkStep::new(
             StepName::new("import").expect("valid step name"),
             ChunkSize::new(2).expect("valid chunk size"),
-            Box::new(ShutdownRequestingReader {
+            ShutdownRequestingReader {
                 items: [1].into_iter().collect(),
                 source: Some(source),
-            }),
-            Arc::new(Processor::normal()),
-            Arc::new(writer),
+            },
+            Processor::normal(),
+            writer,
             Arc::new(transactions),
             Arc::new(completion),
         );
