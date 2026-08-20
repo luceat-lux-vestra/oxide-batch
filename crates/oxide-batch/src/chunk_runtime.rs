@@ -1,7 +1,6 @@
 //! Deterministic single-threaded chunk-step orchestration.
 
 use std::fmt;
-use std::marker::PhantomData;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -265,8 +264,11 @@ impl crate::FlowJob {
     ///
     /// The chunk's size, component revisions, delivery mode, and fault policy
     /// must exactly match the immutable plan. The component is erased only at
-    /// the existing tasklet composition boundary; item calls keep the accepted
-    /// M3 boxed component contract.
+    /// the existing tasklet composition boundary; the reader, processor, and
+    /// writer keep their concrete types (ADR-0008) all the way through, with
+    /// [`BoxedReader`](crate::BoxedReader), [`BoxedProcessor`](crate::BoxedProcessor),
+    /// and [`BoxedWriter`](crate::BoxedWriter) available if a caller wants
+    /// item-level erasure too.
     ///
     /// # Errors
     ///
@@ -1094,7 +1096,7 @@ where
         item_listeners,
         fault: fault.as_ref(),
         step_name: name,
-        definition_digest: definition_digest.clone(),
+        definition_digest: *definition_digest,
         size: *size,
     };
 
@@ -1125,7 +1127,7 @@ where
         };
         let listener_context = ChunkListenerContext::new(sequence, state.committed_counts, stop);
 
-        if let Some(failure) = run_before_listeners(&listeners, listener_context).await {
+        if let Some(failure) = run_before_listeners(listeners, listener_context).await {
             let outcome = listener_failure_outcome(failure.kind());
             state.listener_failures.push(failure);
             return state.report(outcome, None);
@@ -2566,20 +2568,22 @@ async fn invoke_after_listener(
     }
 }
 
-struct ReaderInvocation<'a, I, R>(&'a mut R, PhantomData<I>);
-
-impl<'a, I, R> ReaderInvocation<'a, I, R>
-where
-    R: ItemReader<I>,
-{
-    fn invoke(
-        self,
-        context: ReadContext<'a>,
-    ) -> BoxFuture<'a, Result<ReadOutcome<I>, ReaderError>> {
-        Box::pin(self.0.read(context))
-    }
-}
-
+/// Guards construction of the reader's call future against a synchronous
+/// panic, without allocating.
+///
+/// Each `invoke_*` helper below drives its component call inside one `async`
+/// block wrapped by [`FutureExt::catch_unwind`], rather than constructing the
+/// call future in a plain closure passed to [`catch_unwind`]. An `async`
+/// block is not desugared through the `Fn` family of traits, so it does not
+/// hit the borrow-checker limitation where a closure that captures a `&mut`
+/// receiver by move and returns its borrowed, opaque call future is rejected
+/// as escaping a `FnMut` body — even though the closure is only ever called
+/// once (rust-lang/rust#89976 and similar). Because the component call sits
+/// before the block's only `await` point, a synchronous panic during call
+/// construction happens during the block's first poll, which
+/// `FutureExt::catch_unwind` already guards; polling panics are guarded the
+/// same way. Neither step allocates: the block compiles to a plain state
+/// machine borrowing the receiver for the call's lifetime, not a boxed future.
 async fn invoke_reader<'a, I, R>(
     reader: &'a mut R,
     context: ReadContext<'a>,
@@ -2587,10 +2591,7 @@ async fn invoke_reader<'a, I, R>(
 where
     R: ItemReader<I>,
 {
-    let invocation = ReaderInvocation(reader, PhantomData);
-    let Ok(future) = catch_unwind(AssertUnwindSafe(move || invocation.invoke(context))) else {
-        return Invoked::Panicked;
-    };
+    let future = async move { reader.read(context).await };
     match AssertUnwindSafe(future).catch_unwind().await {
         Ok(Ok(outcome)) => Invoked::Completed(outcome),
         Ok(Err(error)) => Invoked::Failed(error),
@@ -2606,9 +2607,7 @@ async fn invoke_processor<I, O, P>(
 where
     P: ItemProcessor<I, O>,
 {
-    let Ok(future) = catch_unwind(AssertUnwindSafe(|| processor.process(item, context))) else {
-        return Invoked::Panicked;
-    };
+    let future = async move { processor.process(item, context).await };
     match AssertUnwindSafe(future).catch_unwind().await {
         Ok(Ok(outcome)) => Invoked::Completed(outcome),
         Ok(Err(error)) => Invoked::Failed(error),
@@ -2624,9 +2623,7 @@ async fn invoke_writer<'a, O, W>(
 where
     W: ItemWriter<O>,
 {
-    let Ok(future) = catch_unwind(AssertUnwindSafe(|| writer.write(items, context))) else {
-        return Invoked::Panicked;
-    };
+    let future = async move { writer.write(items, context).await };
     match AssertUnwindSafe(future).catch_unwind().await {
         Ok(Ok(outcome)) => Invoked::Completed(outcome),
         Ok(Err(error)) => Invoked::Failed(error),
