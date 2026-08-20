@@ -318,9 +318,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "4462d74361b3c2bc899b30ade40c54ec3398ab01",
+        "execution_commit": "5f108ae25eda6254b2fdecbd83cfdd8a1b2e2dbb",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "4a2dbae9c904b3a72cd63e314f15f7e9ce62ace8",
+        "branch_head_sha": "e6639fa48fcde1dc9321f6f404bb6421c57e45b5",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -330,27 +330,27 @@
       "workflow_run": {
         "workflow": "M5 Performance",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 32150471942,
+        "id": 32340108006,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-performance-campaign",
-        "id": 95754786243,
+        "id": 96337323180,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-15",
-        "id": 9329655091,
-        "digest": "sha256:2430449d7aa3775f90e052c7079f1e8e2b93293eafc49d7fd9cf23ac33b6cca5",
-        "size_bytes": 6464
+        "id": 9396079153,
+        "digest": "sha256:eaf2059925d4da2bfa39f2bc0bc3564661f85645add0fe4aabb7c51cf3ffafad",
+        "size_bytes": 6603
       },
-      "retained_report_git_blob": "76c6379ed34b5a96e92cf693eb04b58911a56c9e",
+      "retained_report_git_blob": "6b6af11923edef0bd5520b74c802aa451b852ac0",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-18T14:53:19Z",
-        "run_id": 32150471942,
+        "verified_at": "2026-08-20T07:10:00Z",
+        "run_id": 32340108006,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -358,7 +358,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #134 (0.5.0 release preparation), second round: adding `cargo xtask release-crates` (the RFC-0011 five-crate release-set regression check) required editing xtask/src/main.rs to wire in the new subcommand and quality-gate call. xtask/src/main.rs is part of every M5 campaign's declared semantic closure (it is each campaign's shared verifier entry point), which invalidated all 16 reports retained moments earlier for the same PR's prior commit. The two release workflow files this commit actually changed (release.yml, release-draft.yml) are not part of any campaign's closure. The workflow run, producing job, artifact ID/digest, downloaded ZIP contents, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #159 (#158: make P-010 concurrency evidence scheduler-independent). crates/oxide-batch/tests/postgres_performance.rs and xtask/src/performance.rs are both inside this campaign's declared semantic closure (the P-010 report producer and the shared verifier entry point), so the previously retained performance-campaign-postgres-15/-18.json reports \u2014 produced under the old fixed-sleep harness and the old reconcile_p010_points verifier \u2014 stopped being evidence of this tree the moment those two files changed; cargo xtask evidence confirmed the resulting gap locally before this retention. The workflow run, producing job, artifact ID/digest (downloaded directly via the Actions API and compared byte-for-byte against both gh run download's extracted copy and the retained file), and execution tree were independently verified before this retention. P-010 reached peak_active_workers == {1, 10, 64} exactly on both matrix points with zero violations."
       }
     },
     {
@@ -368,9 +368,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "4462d74361b3c2bc899b30ade40c54ec3398ab01",
+        "execution_commit": "5f108ae25eda6254b2fdecbd83cfdd8a1b2e2dbb",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "4a2dbae9c904b3a72cd63e314f15f7e9ce62ace8",
+        "branch_head_sha": "e6639fa48fcde1dc9321f6f404bb6421c57e45b5",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -380,27 +380,27 @@
       "workflow_run": {
         "workflow": "M5 Performance",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 32150471942,
+        "id": 32340108006,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-performance-campaign",
-        "id": 95754786274,
+        "id": 96337323474,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-18",
-        "id": 9329656360,
-        "digest": "sha256:a67891f3e6487855c6c2c5dbcac55619932abe3bce8df27c02bdd1289c8f8940",
-        "size_bytes": 6465
+        "id": 9396087042,
+        "digest": "sha256:83c0364f238b67b5fe5a43c0a3972ec4c1e120c6345f2f8fb75338f7e083dbad",
+        "size_bytes": 6612
       },
-      "retained_report_git_blob": "57330d3ce6e926a54681d61ba4e7da179d90e6f5",
+      "retained_report_git_blob": "a21ddc0adf6c9089977787b0cc106479149cec60",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-18T14:53:19Z",
-        "run_id": 32150471942,
+        "verified_at": "2026-08-20T07:10:00Z",
+        "run_id": 32340108006,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -408,7 +408,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #134 (0.5.0 release preparation), second round: adding `cargo xtask release-crates` (the RFC-0011 five-crate release-set regression check) required editing xtask/src/main.rs to wire in the new subcommand and quality-gate call. xtask/src/main.rs is part of every M5 campaign's declared semantic closure (it is each campaign's shared verifier entry point), which invalidated all 16 reports retained moments earlier for the same PR's prior commit. The two release workflow files this commit actually changed (release.yml, release-draft.yml) are not part of any campaign's closure. The workflow run, producing job, artifact ID/digest, downloaded ZIP contents, extracted report bytes, and execution tree were independently verified before this retention."
+        "note": "Fresh retention for PR #159 (#158: make P-010 concurrency evidence scheduler-independent). crates/oxide-batch/tests/postgres_performance.rs and xtask/src/performance.rs are both inside this campaign's declared semantic closure (the P-010 report producer and the shared verifier entry point), so the previously retained performance-campaign-postgres-15/-18.json reports \u2014 produced under the old fixed-sleep harness and the old reconcile_p010_points verifier \u2014 stopped being evidence of this tree the moment those two files changed; cargo xtask evidence confirmed the resulting gap locally before this retention. The workflow run, producing job, artifact ID/digest (downloaded directly via the Actions API and compared byte-for-byte against both gh run download's extracted copy and the retained file), and execution tree were independently verified before this retention. P-010 reached peak_active_workers == {1, 10, 64} exactly on both matrix points with zero violations."
       }
     },
     {
