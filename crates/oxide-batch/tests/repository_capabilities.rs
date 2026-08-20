@@ -654,25 +654,24 @@ impl ChunkTransaction for SameResourceTransaction {
 struct Items(std::cell::RefCell<Vec<i64>>);
 
 impl ItemReader<i64> for Items {
-    fn read<'a>(
-        &'a mut self,
-        _context: ReadContext<'a>,
-    ) -> BoxFuture<'a, Result<ReadOutcome<i64>, ReaderError>> {
+    async fn read(
+        &mut self,
+        _context: ReadContext<'_>,
+    ) -> Result<ReadOutcome<i64>, ReaderError> {
         let item = self.0.borrow_mut().pop();
-        Box::pin(async move { Ok(item.map_or(ReadOutcome::EndOfInput, ReadOutcome::Item)) })
+        Ok(item.map_or(ReadOutcome::EndOfInput, ReadOutcome::Item))
     }
 }
 
 struct Passthrough;
 
 impl ItemProcessor<i64, i64> for Passthrough {
-    fn process<'a>(
-        &'a self,
-        item: &'a i64,
-        _context: ProcessContext<'a>,
-    ) -> BoxFuture<'a, Result<ProcessOutcome<i64>, ProcessorError>> {
-        let item = *item;
-        Box::pin(async move { Ok(ProcessOutcome::Item(item)) })
+    async fn process(
+        &self,
+        item: &i64,
+        _context: ProcessContext<'_>,
+    ) -> Result<ProcessOutcome<i64>, ProcessorError> {
+        Ok(ProcessOutcome::Item(*item))
     }
 }
 
@@ -688,27 +687,25 @@ impl ItemProcessor<i64, i64> for Passthrough {
 struct EnlistedWriter;
 
 impl ItemWriter<i64> for EnlistedWriter {
-    fn write<'a>(
+    async fn write<'a>(
         &'a self,
         items: &'a [i64],
         mut context: WriteContext<'a>,
-    ) -> BoxFuture<'a, Result<WriteOutcome, WriterError>> {
-        Box::pin(async move {
-            let Some(transaction) = context.transaction() else {
-                return Err(WriterError::new());
-            };
-            for item in items {
-                let values = [BusinessValue::i64(*item)];
-                transaction
-                    .execute(BusinessStatement::new(
-                        "INSERT INTO settlement (amount) VALUES ($1)",
-                        &values,
-                    ))
-                    .await
-                    .map_err(|_| WriterError::new())?;
-            }
-            Ok(WriteOutcome::Written)
-        })
+    ) -> Result<WriteOutcome, WriterError> {
+        let Some(transaction) = context.transaction() else {
+            return Err(WriterError::new());
+        };
+        for item in items {
+            let values = [BusinessValue::i64(*item)];
+            transaction
+                .execute(BusinessStatement::new(
+                    "INSERT INTO settlement (amount) VALUES ($1)",
+                    &values,
+                ))
+                .await
+                .map_err(|_| WriterError::new())?;
+        }
+        Ok(WriteOutcome::Written)
     }
 }
 
@@ -747,9 +744,9 @@ async fn run_enlisted_chunk(outcome: CommitOutcome) -> (ChunkExecutionOutcome, A
     let mut step = ChunkStep::new(
         StepName::new("write").expect("static step name is valid"),
         ChunkSize::new(2).expect("static chunk size is nonzero"),
-        Box::new(Items(std::cell::RefCell::new(vec![20, 10]))),
-        Arc::new(Passthrough),
-        Arc::new(EnlistedWriter),
+        Items(std::cell::RefCell::new(vec![20, 10])),
+        Passthrough,
+        EnlistedWriter,
         Arc::new(SameResourceManager {
             resource: Arc::clone(&resource),
             outcome,
