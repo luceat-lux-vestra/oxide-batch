@@ -37,7 +37,6 @@ chat, prompt, issue, pull-request description, or report.
 | Lifecycle hooks, interceptors, and component state | [Item-processing model](../architecture/item-processing-model.md) |
 | Extension modes and adapter support tiers | [Integration model](../architecture/integration-model.md) |
 | Performance/capacity evidence | [Performance plan](../engineering/performance-plan.md) |
-| Engineering design philosophy and general Rust implementation bar | [Engineering standards](../engineering/standards.md) |
 | Release and support behavior | [Release/support policy](../release/support-policy.md) |
 
 The [post-M5 strategy](../project/post-m5-full-parity-strategy.md) is an

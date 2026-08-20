@@ -73,9 +73,6 @@ them.
 
 ## Rust and architecture bar
 
-Engineering choices follow the design philosophy in
-`docs/engineering/standards.md`.
-
 - Preserve correctness, restart, transaction, delivery, and ordering semantics
   before optimizing ergonomics or throughput.
 - Keep core domain, plan, item, and repository contracts independent of Tokio,

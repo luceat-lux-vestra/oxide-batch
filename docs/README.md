@@ -14,9 +14,8 @@ documents require approval before implementation depends on them.
 4. [Spring Batch compatibility contract](compatibility/spring-batch.md)
 5. [Spring Batch feature ledger](compatibility/conformance-matrix.md)
 6. [Architecture overview](architecture/overview.md)
-7. [Engineering standards](engineering/standards.md)
-8. [Documentation and decision precedence](documentation/strategy.md)
-9. the focused subsystem document and relevant accepted RFCs/ADRs/gates
+7. [Documentation and decision precedence](documentation/strategy.md)
+8. the focused subsystem document and relevant accepted RFCs/ADRs/gates
 
 The strategy is an umbrella rationale. Focused canonical documents and accepted
 decisions own the normative detail.

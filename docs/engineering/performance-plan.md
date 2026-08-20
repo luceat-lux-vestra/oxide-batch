@@ -171,10 +171,12 @@ component logic, chunk size, transaction semantics, delivery semantics,
 state/checkpoint behavior, feature set, and compiler profile between the two
 runs.
 
-**Primary listener-free campaign.** The hard acceptance criterion is checked
-as an architecture invariant, not an average or a threshold:
-framework-controlled per-item future allocation on the typed path is exactly
-`0`.
+**Primary listener-free campaign.** The hard acceptance criteria are checked
+as architecture invariants, not an average or a threshold:
+
+1. framework-controlled per-item future allocation on the typed path is
+   exactly `0`;
+2. the typed path requires no framework-controlled dynamic dispatch per item.
 
 **Listener-enabled companion measurement.** [Gate F](../project/m6-design-gate-evidence.md#gate-f--item-listener-allocation)
 keeps the boxed per-item-per-phase item-listener allocation for M6, so a
@@ -184,20 +186,24 @@ guarantee is never weakened by this measurement, and the listener-enabled
 cost is reported as its own distinct result.
 
 **Required metrics:** allocations per item, allocations per chunk, bytes
-allocated/copied where measurable, throughput, item latency/relevant latency
-distribution, binary-size delta, and compile-time delta, plus the
-environment metadata this plan's [measurement principles](#measurement-principles)
-already require.
+allocated/copied where measurable, buffer reuse, dynamic dispatch count,
+future boxing count, throughput, item latency/relevant latency distribution,
+binary-size delta, and compile-time delta, plus the environment metadata this
+plan's [measurement principles](#measurement-principles) already require.
+Future boxing is recorded as its own observation, not folded into the general
+allocation count, because the architecture decision above treats it as a
+distinct hot-path boundary.
 
 **No invented performance threshold.** This protocol sets no numeric release
 gate — no "N% faster," no invented latency or throughput target. The only
 hard pass/fail criteria are: (1) correctness/restart/durable observations are
 identical between the typed and erased paths, proved separately by
 [Gate B](../project/m6-design-gate-evidence.md#gate-b--transactionrestart-equivalence-protocol);
-and (2) the typed path's framework-controlled per-item future allocation is
-`0`. Throughput, latency, code-size delta, and compile-time delta are M6
-measurement and disclosure evidence, not binding budgets invented by this
-section.
+(2) the typed path's framework-controlled per-item future allocation is `0`;
+and (3) the typed path requires no framework-controlled dynamic dispatch per
+item. Throughput, latency, buffer reuse, dynamic dispatch count, future
+boxing count, code-size delta, and compile-time delta are M6 measurement and
+disclosure evidence, not binding budgets invented by this section.
 
 **Execution and closure owner:** [#153](https://github.com/luceat-lux-vestra/oxide-batch/issues/153).
 

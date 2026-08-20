@@ -131,6 +131,28 @@ and a newer version, an unknown schema, or an unknown codec all fail closed.
 A migration failure is a known, not-committed outcome, and migration never
 changes component or definition identity.
 
+Component durable state carries an explicit sensitivity/disclosure
+classification, declared once as part of the owning component's schema/state
+contract under [standard-component requirements](#standard-component-requirements)
+— not as a second, separately maintained envelope field, so identity and
+disclosure policy never diverge into two sources of truth. Absent an explicit
+non-sensitive declaration, durable component state is treated as sensitive by
+default (fail-safe).
+
+A sensitive state's raw payload MUST NOT appear in an error, a `Debug` or
+`Display` implementation, a log, a tracing/telemetry event, an operator
+diagnostic, or a diagnostic/support bundle — including when the state is
+corrupt, fails checksum verification, fails to decode, or fails migration.
+Diagnostics may disclose only safe metadata: the logical state namespace,
+schema identity/version, codec identity/version, a framework-owned failure
+category, size/bound metadata, and the checksum verification result. This
+extends the same disclosure discipline standard-component requirements already
+require of every first-party component's sensitive-data classification to
+durable component state's raw payload specifically, rather than defining a
+second taxonomy. A migration MUST NOT weaken a state's sensitivity/disclosure
+policy; unknown or malformed sensitivity metadata is treated as sensitive
+(fail-safe), never as a signal to relax disclosure.
+
 Stateful components that disable persistence MUST declare the resulting
 restart limitation. A plan cannot mark the step restartable unless every
 required state transition can be reconstructed. Large state uses only a

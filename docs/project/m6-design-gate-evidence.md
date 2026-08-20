@@ -26,7 +26,7 @@ binding decision this record freezes as the M6 production migration boundary
 | Gate | Decision | Canonical evidence |
 | --- | --- | --- |
 | A — Item contract migration | The ADR-0008 migration order (contract and handles, generic `ChunkStep`, component/test port, ADR-0002 trait removal) is the exact M6 production migration boundary, with logical component identity, definition fingerprint, checkpoint, transaction, lifecycle, and restart selection held invariant | [Gate A](#gate-a--item-contract-migration) below and [ADR-0008](../architecture/decisions/0008-item-component-contract.md) |
-| C — `ItemStream`/component state | Namespace, schema ID/version, codec ID/version, bounded size/depth, checksum-before-decode, migration, unknown-newer-version rejection, restartability declaration, and large-state handling are closed as the state contract in the [item-processing model](../architecture/item-processing-model.md) | [Gate C](#gate-c--itemstream--component-state) below |
+| C — `ItemStream`/component state | Namespace, schema ID/version, codec ID/version, bounded size/depth, checksum-before-decode, migration, unknown-newer-version rejection, restartability declaration, sensitivity/disclosure classification, and large-state handling are closed as the state contract in the [item-processing model](../architecture/item-processing-model.md) | [Gate C](#gate-c--itemstream--component-state) below |
 | D — Standard component semantics | Every first-party component must document a fixed set of properties and ship declared contract plus executable evidence together; prose alone is not completion | [Gate D](#gate-d--standard-component-semantics) below |
 | E — Composition semantics | A wrapper's advertised capability is the intersection of its delegates' capabilities, for ordering, transaction participation, restartability, checkpoint/state namespace, thread safety, error classification, and close ordering | [Gate E](#gate-e--composition-semantics) below |
 | F — Item-listener allocation | M6 KEEPS the ADR-0002 boxed item-listener representation; no allocation-reducing listener type system is introduced in M6 | [Gate F](#gate-f--item-listener-allocation) below |
@@ -171,13 +171,42 @@ migration rather than a silent reinterpretation of existing bytes.
 
 - an equal recorded version decodes directly;
 - an older recorded version applies one bounded, deterministic, directed
-  migration;
+  migration chain;
 - a newer recorded version fails closed;
 - an unknown schema fails closed;
 - an unknown codec fails closed;
 - a migration failure is a known, not-committed outcome;
 - migration never changes component identity;
 - migration never changes definition identity.
+
+### Sensitivity and diagnostic disclosure
+
+Component durable state carries an explicit sensitivity/disclosure
+classification, declared once as part of the owning component's schema/state
+contract under [Gate D](#gate-d--standard-component-semantics)'s required
+sensitive-data classification — not as a second, separately maintained
+envelope field. Namespace/schema/codec identity and disclosure policy stay one
+source of truth. Absent an explicit non-sensitive declaration, durable
+component state is treated as sensitive by default (fail-safe).
+
+- a sensitive state's raw payload MUST NOT appear in an error, a `Debug` or
+  `Display` implementation, a log, a tracing/telemetry event, an operator
+  diagnostic, or a diagnostic/support bundle;
+- this holds for normal state and equally when the state is corrupt, fails
+  checksum verification, fails to decode, or fails migration;
+- diagnostics may disclose only safe metadata: the logical state namespace,
+  schema identity/version, codec identity/version, a framework-owned failure
+  category, size/bound metadata, and the checksum verification result;
+- a migration MUST NOT weaken a state's sensitivity/disclosure policy;
+- unknown or malformed sensitivity metadata is treated as sensitive
+  (fail-safe), never as a signal to relax disclosure.
+
+This is not a new sensitivity type system: it reuses the disclosure/redaction
+discipline already accepted in the
+[threat model's testable disclosure rules](../security/threat-model.md#testable-disclosure-rules)
+and the
+[API design guidelines' prohibited disclosure classes](../api/design-guidelines.md#m5-preview-surface-and-disclosure-gate),
+applied specifically to durable component state's raw payload.
 
 ### Restartability
 
@@ -402,10 +431,12 @@ state/checkpoint behavior, feature set, and compiler profile:
 
 ### Primary listener-free campaign
 
-Hard acceptance criterion, checked as an architecture invariant rather than
-an average or a threshold:
+Hard acceptance criteria, checked as architecture invariants rather than an
+average or a threshold:
 
-**Framework-controlled per-item future allocation on the typed path == 0.**
+1. **Framework-controlled per-item future allocation on the typed path == 0.**
+2. **The typed path requires no framework-controlled dynamic dispatch per
+   item.**
 
 ### Listener-enabled companion measurement
 
@@ -420,10 +451,17 @@ listener-enabled cost is reported as its own distinct result.
 - allocations per item;
 - allocations per chunk;
 - bytes allocated/copied where measurable;
+- buffer reuse;
+- dynamic dispatch count;
+- future boxing count;
 - throughput;
 - item latency / relevant latency distribution;
 - binary-size delta;
 - compile-time delta.
+
+Future boxing is recorded as its own observation, not folded into the general
+allocation count: the architecture decision this protocol measures treats
+future boxing as a distinct hot-path boundary, not an incidental allocation.
 
 ### Environment metadata
 
@@ -439,10 +477,12 @@ latency or throughput target. The only hard pass/fail criteria are:
 
 1. correctness/restart/durable observations are identical between paths
    (Gate B's own criterion, run separately);
-2. the typed path's framework-controlled per-item future allocation is `0`.
+2. the typed path's framework-controlled per-item future allocation is `0`;
+3. the typed path requires no framework-controlled dynamic dispatch per item.
 
-Throughput, latency, code-size delta, and compile-time delta are M6
-measurement and disclosure evidence, not invented binding budgets.
+Throughput, latency, buffer reuse, dynamic dispatch count, future boxing
+count, code-size delta, and compile-time delta are M6 measurement and
+disclosure evidence, not invented binding budgets.
 
 **Execution and closure owner:** [#153](https://github.com/luceat-lux-vestra/oxide-batch/issues/153).
 
@@ -458,7 +498,6 @@ measurement and disclosure evidence, not invented binding budgets.
 | Composition | Gate E closes the capability-meet, ordering, transaction-participation, restartability, checkpoint/state, thread-safety, error-classification, and close-ordering rules that #146-#150 implement against. |
 | Performance | Gate H freezes the P-002 protocol and its listener-free hard invariant without running it; Gate F closes the M6 listener-allocation decision as KEEP. No numeric threshold is set. |
 | Ledger claims | No row promotes because of this document. `META-CONTEXT-001` stays `Implemented`, named as [#144](https://github.com/luceat-lux-vestra/oxide-batch/issues/144)'s to close. |
-| Design philosophy | Existing Rust-native, bounded-resource, static-hot-path, explicit-effects, evidence-driven principles already present across accepted documents and `AGENTS.md` are consolidated into `docs/engineering/standards.md` as their canonical owner. No new architecture decision, product scope, or M6 gate is introduced by this consolidation. |
 
 No decision here changes ADR-0008's accepted contract shape, reopens
 RFC-0005, or authorizes any CSV/JSON/PostgreSQL component, `ItemStream`
@@ -470,11 +509,11 @@ runtime, or component-state persistence implementation.
 | --- | --- |
 | Gate A migration (#143) | `contract_and_handles_compile_and_type_check`, `chunk_step_is_generic_over_the_contract`, `ported_components_pass_unchanged_conformance`, `adr0002_traits_removed_with_last_use`, `zero_allocation_per_item_for_listener_free_typed_pipeline`, `trace_state_counter_checkpoint_unchanged_by_migration` |
 | Gate B equivalence (#153) | `normal_enlisted_commit_is_representation_identical`, `writer_failure_before_commit_rolls_back_identically`, `state_checkpoint_counter_share_one_atomic_boundary`, `unknown_commit_outcome_forces_recovery_not_inference`, `process_kill_before_commit_restart_is_identical`, `process_kill_around_commit_acknowledgement_is_identical`, `multi_chunk_restart_selects_identically`, `representation_does_not_change_definition_or_restart_identity` |
-| Gate C state contract (#144) | `checksum_verified_before_decode_or_migration`, `corrupt_state_never_advances_checkpoint`, `unknown_newer_schema_or_codec_fails_closed`, `older_version_applies_one_bounded_directed_migration`, `oversized_or_over_deep_state_is_a_known_not_committed_outcome`, `non_restartable_declaration_required_when_persistence_disabled`, `large_state_uses_bounded_external_blob_capability_only` |
+| Gate C state contract (#144) | `checksum_verified_before_decode_or_migration`, `corrupt_state_never_advances_checkpoint`, `unknown_newer_schema_or_codec_fails_closed`, `older_version_applies_one_bounded_directed_migration`, `oversized_or_over_deep_state_is_a_known_not_committed_outcome`, `non_restartable_declaration_required_when_persistence_disabled`, `large_state_uses_bounded_external_blob_capability_only`, `state_sensitivity_classification_controls_diagnostic_disclosure`, `state_migration_preserves_sensitivity_policy` |
 | Gate D/E component and composition (#146-#150) | `declared_contract_and_evidence_ship_together`, `composite_capability_is_the_meet_of_delegate_capabilities`, `order_sensitive_delegate_keeps_composite_order_sensitive`, `no_two_delegates_hold_the_same_enlisted_transaction_concurrently`, `composite_restartability_requires_every_required_delegate_restartable`, `delegate_state_namespaces_do_not_collide`, `close_runs_in_reverse_open_order_and_does_not_skip_on_failure`, `classifier_static_capability_holds_for_every_selectable_delegate` |
 | Gate F listener decision (#151) | `listener_free_pipeline_measures_zero_allocation`, `registered_listener_cost_is_reported_separately_from_component_cost` |
 | Gate G test kit (#145) | `full_job_harness_launches_with_deterministic_clock_and_id`, `single_step_and_scoped_component_harness_construct_fixture_context`, `failure_panic_and_stop_injection_are_available_to_application_tests`, `restart_harness_resumes_from_the_last_committed_checkpoint`, `repository_fixture_cleans_up_isolated_metadata`, `package_dry_run_succeeds_for_oxide_batch_test` |
-| Gate H performance (#153) | `typed_path_framework_controlled_per_item_allocation_is_zero`, `listener_enabled_allocation_is_reported_separately_from_typed_path`, `binary_size_and_compile_time_delta_recorded_for_both_forms`, `throughput_and_latency_recorded_without_an_invented_threshold` |
+| Gate H performance (#153) | `typed_path_framework_controlled_per_item_allocation_is_zero`, `typed_path_requires_no_framework_controlled_dynamic_dispatch_per_item`, `listener_enabled_allocation_is_reported_separately_from_typed_path`, `buffer_reuse_and_future_boxing_recorded_as_distinct_observations`, `binary_size_and_compile_time_delta_recorded_for_both_forms`, `throughput_and_latency_recorded_without_an_invented_threshold` |
 
 Required evidence classes mirror the M5 precedent: unit/property, PostgreSQL
 integration, named conformance, crash/failure injection, migration, and
