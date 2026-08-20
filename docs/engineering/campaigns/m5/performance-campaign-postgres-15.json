@@ -23,7 +23,7 @@
     "os": "linux",
     "profile": "release",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "4462d74361b3c2bc899b30ade40c54ec3398ab01",
+    "source_commit": "5f108ae25eda6254b2fdecbd83cfdd8a1b2e2dbb",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -35,7 +35,7 @@
   },
   "observation": {
     "execution_manifest": {
-      "execution_commit": "4462d74361b3c2bc899b30ade40c54ec3398ab01",
+      "execution_commit": "5f108ae25eda6254b2fdecbd83cfdd8a1b2e2dbb",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -52,7 +52,7 @@
         "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
         "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
         "crates/oxide-batch/tests/performance": "4935ffae74f093a353c600cf36d6cf0ead674e40",
-        "crates/oxide-batch/tests/postgres_performance.rs": "47908fa7b6cccf8964e67ced1641b04f35251586",
+        "crates/oxide-batch/tests/postgres_performance.rs": "7d0abc321ab850f397160e3d1103cebdca190d44",
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
         "tests/fixtures/performance/campaign-scope.json": "74eb8f356b1b106f3f941277a21f701c959663f5",
         "tests/fixtures/performance/campaign-semantics.json": "7450e7ac898e1eff49db1ab3b36cfc1189b0932d",
@@ -62,7 +62,7 @@
         "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
         "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
         "xtask/src/main.rs": "69952443ee74330948541dd46205b71ff83b5b82",
-        "xtask/src/performance.rs": "a51400575e0abd74124a4088e1a1b69e4fc6374d",
+        "xtask/src/performance.rs": "19eea8583b283f8c465d7859f7fd104f21081551",
         "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
       },
       "tree_clean": true
@@ -114,11 +114,11 @@
           "os": "linux",
           "profile": "release",
           "profile_note": "The M5 performance campaign runs release, unlike the other M5 campaigns, because the accepted denominator requires it: a debug-build figure would not be comparable to anything release planning could use. Nothing here is asserted against a number regardless of profile.",
-          "resident_kib": 7772,
+          "resident_kib": 7980,
           "tokio_worker_threads": 4
         },
         "execution_manifest": {
-          "execution_commit": "4462d74361b3c2bc899b30ade40c54ec3398ab01",
+          "execution_commit": "5f108ae25eda6254b2fdecbd83cfdd8a1b2e2dbb",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -135,7 +135,7 @@
             "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
             "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
             "crates/oxide-batch/tests/performance": "4935ffae74f093a353c600cf36d6cf0ead674e40",
-            "crates/oxide-batch/tests/postgres_performance.rs": "47908fa7b6cccf8964e67ced1641b04f35251586",
+            "crates/oxide-batch/tests/postgres_performance.rs": "7d0abc321ab850f397160e3d1103cebdca190d44",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
             "tests/fixtures/performance/campaign-scope.json": "74eb8f356b1b106f3f941277a21f701c959663f5",
             "tests/fixtures/performance/campaign-semantics.json": "7450e7ac898e1eff49db1ab3b36cfc1189b0932d",
@@ -145,7 +145,7 @@
             "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
             "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
             "xtask/src/main.rs": "69952443ee74330948541dd46205b71ff83b5b82",
-            "xtask/src/performance.rs": "a51400575e0abd74124a4088e1a1b69e4fc6374d",
+            "xtask/src/performance.rs": "19eea8583b283f8c465d7859f7fd104f21081551",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
           },
           "tree_clean": true
@@ -156,45 +156,45 @@
           "warmup_excluded": true
         },
         "measurements": {
-          "end-to-end-duration": 1000.8984375,
-          "job-overhead": 503.62109375,
+          "end-to-end-duration": 759.97265625,
+          "job-overhead": 383.98046875,
           "metadata-writes": 6.0,
           "peak-connections": 0,
-          "peak-resident-memory": 7516,
+          "peak-resident-memory": 7788,
           "repository-round-trips": 6.0,
-          "step-overhead": 496.765625
+          "step-overhead": 375.47265625
         },
         "observation": {
           "end_to_end_duration_micros": {
-            "max": 1968,
-            "mean": 1000.8984375,
-            "median": 1006,
-            "min": 135,
+            "max": 1494,
+            "mean": 759.97265625,
+            "median": 758,
+            "min": 88,
             "samples": 256,
-            "total": 256230
+            "total": 194553
           },
           "job_overhead_micros": {
-            "max": 1006,
-            "mean": 503.62109375,
-            "median": 496,
-            "min": 59,
+            "max": 768,
+            "mean": 383.98046875,
+            "median": 379,
+            "min": 44,
             "samples": 256,
-            "total": 128927
+            "total": 98299
           },
           "metadata_writes_note": "Counted identically to repository round trips: an in-memory repository does not distinguish a metadata write from the unit of work that carried it the way a network round trip to PostgreSQL would.",
           "metadata_writes_per_attempt": 6.0,
           "peak_connections": 0,
           "peak_connections_note": "P-001 opens no PostgreSQL connection at all: this is a structural zero, not a live sample, because there is nothing to sample.",
-          "peak_resident_memory_kib": 7516,
+          "peak_resident_memory_kib": 7788,
           "peak_resident_memory_note": "A process-level RSS value sampled every 2 ms for the duration of the measured attempts, retaining the maximum observed value — not a single end-of-run snapshot.",
           "repository_round_trips_per_attempt": 6.0,
           "step_overhead_micros": {
-            "max": 971,
-            "mean": 496.765625,
-            "median": 502,
-            "min": 54,
+            "max": 751,
+            "mean": 375.47265625,
+            "median": 373,
+            "min": 41,
             "samples": 256,
-            "total": 127172
+            "total": 96121
           }
         },
         "passed": true,
@@ -260,11 +260,11 @@
           "os": "linux",
           "profile": "release",
           "profile_note": "The M5 performance campaign runs release, unlike the other M5 campaigns, because the accepted denominator requires it: a debug-build figure would not be comparable to anything release planning could use. Nothing here is asserted against a number regardless of profile.",
-          "resident_kib": 11276,
+          "resident_kib": 10840,
           "tokio_worker_threads": 4
         },
         "execution_manifest": {
-          "execution_commit": "4462d74361b3c2bc899b30ade40c54ec3398ab01",
+          "execution_commit": "5f108ae25eda6254b2fdecbd83cfdd8a1b2e2dbb",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -281,7 +281,7 @@
             "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
             "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
             "crates/oxide-batch/tests/performance": "4935ffae74f093a353c600cf36d6cf0ead674e40",
-            "crates/oxide-batch/tests/postgres_performance.rs": "47908fa7b6cccf8964e67ced1641b04f35251586",
+            "crates/oxide-batch/tests/postgres_performance.rs": "7d0abc321ab850f397160e3d1103cebdca190d44",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
             "tests/fixtures/performance/campaign-scope.json": "74eb8f356b1b106f3f941277a21f701c959663f5",
             "tests/fixtures/performance/campaign-semantics.json": "7450e7ac898e1eff49db1ab3b36cfc1189b0932d",
@@ -291,37 +291,37 @@
             "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
             "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
             "xtask/src/main.rs": "69952443ee74330948541dd46205b71ff83b5b82",
-            "xtask/src/performance.rs": "a51400575e0abd74124a4088e1a1b69e4fc6374d",
+            "xtask/src/performance.rs": "19eea8583b283f8c465d7859f7fd104f21081551",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
           },
           "tree_clean": true
         },
         "measurements": {
           "business-batch-size": 100,
-          "chunks-per-second": 63.09069455352589,
-          "end-to-end-duration": 1585019,
-          "items-per-second": 6309.069455352589,
+          "chunks-per-second": 68.46938214857751,
+          "end-to-end-duration": 1460506,
+          "items-per-second": 6846.938214857751,
           "metadata-writes": 100,
           "peak-connections": 2,
-          "peak-resident-memory": 9620,
-          "per-chunk-overhead": 15850.19,
-          "per-item-overhead": 158.5019,
+          "peak-resident-memory": 9784,
+          "per-chunk-overhead": 14605.06,
+          "per-item-overhead": 146.0506,
           "repository-round-trips": 6
         },
         "observation": {
           "business_batch_size": 100,
-          "chunks_per_second": 63.09069455352589,
+          "chunks_per_second": 68.46938214857751,
           "configured_connection_ceiling": 2,
-          "end_to_end_duration_micros": 1585019,
-          "items_per_second": 6309.069455352589,
+          "end_to_end_duration_micros": 1460506,
+          "items_per_second": 6846.938214857751,
           "metadata_writes": 100,
           "metadata_writes_note": "One checkpoint commit per chunk: the number of times the durable position advanced.",
           "observed_peak_connections": 2,
           "observed_peak_connections_note": "The maximum PostgreSQL backend count observed against the isolated campaign database, sampled every 2 ms across the measured window by a dedicated observer connection excluded from its own count — not the configured pool capacity.",
-          "peak_resident_memory_kib": 9620,
+          "peak_resident_memory_kib": 9784,
           "peak_resident_memory_note": "A process-level RSS value sampled every 2 ms across the measured window, retaining the maximum observed value.",
-          "per_chunk_overhead_micros": 15850.19,
-          "per_item_overhead_micros": 158.5019,
+          "per_chunk_overhead_micros": 14605.06,
+          "per_item_overhead_micros": 146.0506,
           "repository_round_trips": 6,
           "source_digest": "e1d9ee97a96ab349f6a2acb0aa889ec1fb13572e25b15ba7761e0fbcf1c02023",
           "written_digest": "e1d9ee97a96ab349f6a2acb0aa889ec1fb13572e25b15ba7761e0fbcf1c02023",
@@ -395,11 +395,11 @@
           "os": "linux",
           "profile": "release",
           "profile_note": "The M5 performance campaign runs release, unlike the other M5 campaigns, because the accepted denominator requires it: a debug-build figure would not be comparable to anything release planning could use. Nothing here is asserted against a number regardless of profile.",
-          "resident_kib": 12420,
+          "resident_kib": 13368,
           "tokio_worker_threads": 4
         },
         "execution_manifest": {
-          "execution_commit": "4462d74361b3c2bc899b30ade40c54ec3398ab01",
+          "execution_commit": "5f108ae25eda6254b2fdecbd83cfdd8a1b2e2dbb",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -416,7 +416,7 @@
             "crates/oxide-batch/migrations": "11037fa1018d3d435783cfcb4ebc018f428424d5",
             "crates/oxide-batch/src": "c81d17b5dd1f47059046a25761ecb1e9c3a66297",
             "crates/oxide-batch/tests/performance": "4935ffae74f093a353c600cf36d6cf0ead674e40",
-            "crates/oxide-batch/tests/postgres_performance.rs": "47908fa7b6cccf8964e67ced1641b04f35251586",
+            "crates/oxide-batch/tests/postgres_performance.rs": "7d0abc321ab850f397160e3d1103cebdca190d44",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
             "tests/fixtures/performance/campaign-scope.json": "74eb8f356b1b106f3f941277a21f701c959663f5",
             "tests/fixtures/performance/campaign-semantics.json": "7450e7ac898e1eff49db1ab3b36cfc1189b0932d",
@@ -426,7 +426,7 @@
             "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
             "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
             "xtask/src/main.rs": "69952443ee74330948541dd46205b71ff83b5b82",
-            "xtask/src/performance.rs": "a51400575e0abd74124a4088e1a1b69e4fc6374d",
+            "xtask/src/performance.rs": "19eea8583b283f8c465d7859f7fd104f21081551",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
           },
           "tree_clean": true
@@ -434,19 +434,21 @@
         "measured_at_worker_point": 64,
         "measured_at_worker_point_note": "The flat measurements object above reports the largest (MAX_PARTITION_WORKERS) scale point's figures; the full per-point series is under observation.points.",
         "measurements": {
-          "aggregation-duration": 38089,
-          "end-to-end-duration": 2037302,
+          "aggregation-duration": 27672,
+          "end-to-end-duration": 1113373,
           "metadata-writes": 100,
           "metadata-writes-note": "One durable partition-result commit per partition.",
-          "partitions-per-second": 49.084516485907095,
-          "peak-connections": 66,
+          "partitions-per-second": 89.8171215355539,
+          "peak-connections": 73,
           "peak-owned-tasks": 64,
-          "peak-resident-memory": 12356,
+          "peak-resident-memory": 13364,
           "repository-round-trips": 511,
-          "scaling-efficiency": 0.5851055647277584,
-          "worker-skew": 2103
+          "scaling-efficiency": 0.012195485762932232,
+          "worker-skew": 719097
         },
         "observation": {
+          "admission_gate_note": "A test-local, bounded, one-shot rendezvous: the first `workers` partitions to reach the tasklet at each worker point wait together until all `workers` have arrived, then proceed together; every later partition bypasses the gate immediately. Peak occupancy therefore reaches the configured worker count deterministically, independent of async scheduler timing, rather than depending on a fixed sleep to make full overlap merely likely; it does not alter durable business semantics. A genuine failure to admit the configured population within admission_gate_timeout_millis fails the launch with a diagnostic instead of silently under-counting.",
+          "admission_gate_timeout_millis": 30000,
           "business_row_set": {
             "digest": "4ce4c7da00a706ce7fdd34fe56fa5058e59105aed99b6651a48886f04b56a77b",
             "digest_note": "The sha256 digest of the sorted partition-key set read back from oxide_batch_business.performance_partitions, computed once from the first worker point and required to be identical at every later one.",
@@ -456,62 +458,62 @@
           "configured_connection_ceiling_note": "The framework's derived pool ceiling at the largest worker point, plus the constant business-write pool: the largest configured connection budget this report ever requests.",
           "configured_worker_budget": 64,
           "delivery_boundary_note": "The PostgreSQL business write and the framework's durable partition-result commit are two distinct durable boundaries, each on its own connection; P-010 makes no claim that they commit atomically together. The accepted performance plan assigns enlisted-writer/AtomicSameResource semantics to P-003 alone. P-010 proves local partition scaling reaches identical durable outcomes, an identical business row set at every worker point (see business_row_set below), and stays inside its declared resource ceilings.",
-          "observed_peak_connections": 66,
+          "observed_peak_connections": 73,
           "observed_peak_connections_note": "The maximum PostgreSQL backend count observed against the isolated campaign database, sampled every 2 ms across the three worker points' combined measured window by a dedicated observer connection excluded from its own count.",
           "observed_peak_owned_tasks": 64,
           "observed_peak_owned_tasks_note": "The maximum concurrently-active partition-worker count actually observed by the occupancy gauge across all three worker points, not the configured worker budget copied into the field.",
-          "peak_resident_memory_kib": 12356,
+          "peak_resident_memory_kib": 13364,
           "peak_resident_memory_note": "A process-level RSS value sampled every 2 ms across the three worker points' combined measured window, retaining the maximum observed value.",
           "points": [
             {
               "active_workers_after_join": 0,
-              "aggregation_duration_micros": 36090,
+              "aggregation_duration_micros": 26188,
               "business_digest": "4ce4c7da00a706ce7fdd34fe56fa5058e59105aed99b6651a48886f04b56a77b",
               "business_row_count": 100,
               "configured_pool": 2,
               "partitions": 100,
-              "partitions_per_second": 1.310781534694765,
+              "partitions_per_second": 115.07475399287446,
               "peak_active_workers": 1,
               "repository_round_trips": 511,
               "scaling_efficiency": null,
-              "wall_micros": 76290363,
-              "worker_duration_max_micros": 752916,
-              "worker_duration_min_micros": 750677,
-              "worker_skew_micros": 2239,
+              "wall_micros": 869000,
+              "worker_duration_max_micros": 963,
+              "worker_duration_min_micros": 374,
+              "worker_skew_micros": 589,
               "workers": 1
             },
             {
               "active_workers_after_join": 0,
-              "aggregation_duration_micros": 36807,
+              "aggregation_duration_micros": 27259,
               "business_digest": "4ce4c7da00a706ce7fdd34fe56fa5058e59105aed99b6651a48886f04b56a77b",
               "business_row_count": 100,
               "configured_pool": 11,
               "partitions": 100,
-              "partitions_per_second": 12.806406876930664,
+              "partitions_per_second": 197.14793806204807,
               "peak_active_workers": 10,
               "repository_round_trips": 511,
-              "scaling_efficiency": 0.9770054382031576,
-              "wall_micros": 7808591,
-              "worker_duration_max_micros": 752513,
-              "worker_duration_min_micros": 750592,
-              "worker_skew_micros": 1920,
+              "scaling_efficiency": 0.1713216246147749,
+              "wall_micros": 507233,
+              "worker_duration_max_micros": 71942,
+              "worker_duration_min_micros": 446,
+              "worker_skew_micros": 71495,
               "workers": 10
             },
             {
               "active_workers_after_join": 0,
-              "aggregation_duration_micros": 38089,
+              "aggregation_duration_micros": 27672,
               "business_digest": "4ce4c7da00a706ce7fdd34fe56fa5058e59105aed99b6651a48886f04b56a77b",
               "business_row_count": 100,
               "configured_pool": 65,
               "partitions": 100,
-              "partitions_per_second": 49.084516485907095,
+              "partitions_per_second": 89.8171215355539,
               "peak_active_workers": 64,
               "repository_round_trips": 511,
-              "scaling_efficiency": 0.5851055647277584,
-              "wall_micros": 2037302,
-              "worker_duration_max_micros": 752606,
-              "worker_duration_min_micros": 750503,
-              "worker_skew_micros": 2103,
+              "scaling_efficiency": 0.012195485762932232,
+              "wall_micros": 1113373,
+              "worker_duration_max_micros": 719551,
+              "worker_duration_min_micros": 453,
+              "worker_skew_micros": 719097,
               "workers": 64
             }
           ],
@@ -523,9 +525,7 @@
             "observed_peak_workers_during_attempt": 0,
             "rejected_with_insufficient_pool_capacity": true,
             "starved_workers": 4
-          },
-          "worker_dwell_millis": 750,
-          "worker_dwell_note": "A fixed, deterministic, bounded async sleep every worker awaits before its business write, identical at every worker point (precedent: M4 P-010's worker_await_millis). It creates a bounded overlap window so the configured worker budget is actually observable as concurrent occupancy, rather than depending on the INSERT alone being slow enough to catch in a sample; it does not alter durable business semantics."
+          }
         },
         "passed": true,
         "postgresql_major_version": "15",
