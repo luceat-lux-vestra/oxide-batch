@@ -1,0 +1,23 @@
+error[E0277]: `NotAProcessor` is not an OxideBatch item processor from `u64` to `std::string::String`
+  --> tests/ui/item_processor_missing_impl.rs:10:26
+   |
+10 |     drive::<u64, String, _>(NotAProcessor);
+   |                          ^ this component cannot process `u64` into `std::string::String`
+   |
+help: the trait `ItemProcessor<u64, std::string::String>` is not implemented for `NotAProcessor`
+  --> tests/ui/item_processor_missing_impl.rs:5:1
+   |
+ 5 | struct NotAProcessor;
+   | ^^^^^^^^^^^^^^^^^^^^
+   = note: implement `ItemProcessor<u64, std::string::String>` with `async fn process(&self, item: &u64, context: ProcessContext<'_>)`
+   = note: a processor is shared across the chunk, so it takes `&self` and must be `Sync`
+help: the trait `ItemProcessor<I, O>` is implemented for `BoxedProcessor<I, O>`
+  --> src/chunk.rs
+   |
+   | impl<I, O> ItemProcessor<I, O> for BoxedProcessor<I, O> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `drive`
+  --> tests/ui/item_processor_missing_impl.rs:7:19
+   |
+ 7 | fn drive<I, O, P: oxide_batch::ItemProcessor<I, O>>(_processor: P) {}
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `drive`
