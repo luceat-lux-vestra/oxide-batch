@@ -244,12 +244,13 @@ mod shutdown;
 mod telemetry;
 
 pub use chunk::{
-    BusinessStatement, BusinessTransaction, BusinessTransactionError, BusinessValue,
-    BusinessValueKind, BusinessWriteResult, ChunkCommitReceipt, ChunkCompletion,
-    ChunkCompletionContext, ChunkCompletionError, ChunkCompletionOutcome, ChunkFaultProgress,
-    ChunkTransaction, ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager,
-    InheritedStepProgress, ItemProcessor, ItemReader, ItemWriter, ProcessContext, ProcessOutcome,
-    ProcessorError, ReadContext, ReadOutcome, ReaderError, WriteContext, WriteOutcome, WriterError,
+    BoxedProcessor, BoxedReader, BoxedWriter, BusinessStatement, BusinessTransaction,
+    BusinessTransactionError, BusinessValue, BusinessValueKind, BusinessWriteResult,
+    ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext, ChunkCompletionError,
+    ChunkCompletionOutcome, ChunkFaultProgress, ChunkTransaction, ChunkTransactionContext,
+    ChunkTransactionError, ChunkTransactionManager, InheritedStepProgress, ItemProcessor,
+    ItemReader, ItemWriter, ProcessContext, ProcessOutcome, ProcessorError, ReadContext,
+    ReadOutcome, ReaderError, WriteContext, WriteOutcome, WriterError,
 };
 pub use chunk_runtime::{
     ChunkAttemptOutcome, ChunkExecutionOutcome, ChunkExecutionReport, ChunkFailure, ChunkJob,

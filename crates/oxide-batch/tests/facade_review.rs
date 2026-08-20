@@ -63,7 +63,7 @@ enum Withheld {
 /// contributes. The totals are the review's enumeration: changing the surface
 /// without revisiting the review fails here, which is the point.
 const REVIEWED_SURFACE: &[(&str, usize)] = &[
-    ("chunk", 29),
+    ("chunk", 32),
     ("chunk_runtime", 13),
     ("diagnostics", 9),
     ("fault", 2),
