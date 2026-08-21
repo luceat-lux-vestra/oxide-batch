@@ -416,6 +416,7 @@ oxide_batch::StreamOpenContext
 oxide_batch::StreamOpenError
 oxide_batch::StreamOpenOutcome
 oxide_batch::StreamRuntimeOutcome
+oxide_batch::StreamStateContract
 oxide_batch::StreamUpdateContext
 oxide_batch::StreamUpdateError
 oxide_batch::SystemClock

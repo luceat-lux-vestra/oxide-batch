@@ -35,7 +35,7 @@ pub use component_state::{
     ChecksumAlgorithm, CodecId, CodecVersion, CodecVersionUpgrade, ComponentStateCodec,
     ComponentStateEnvelope, ComponentStateError, ComponentStatePayload, ContentIdentity,
     DefaultComponentCodec, ExternalStateError, ExternalStateReference, ExternalStateStore,
-    RestartabilityDeclaration, StateSensitivity,
+    RestartabilityDeclaration, StateSensitivity, StreamStateContract,
 };
 pub use definition::{
     ChunkComponentRevisions, ChunkDeliveryMode, ChunkRestartContract, ClassifierRevision,

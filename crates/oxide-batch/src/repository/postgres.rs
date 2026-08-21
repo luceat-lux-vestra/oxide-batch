@@ -1351,8 +1351,10 @@ fn decode_component_state_row(row: &PgRow) -> Result<ComponentStateEnvelope, ()>
     let payload_kind: String = row.try_get("payload_kind").map_err(|_| ())?;
     let payload = match payload_kind.as_str() {
         "INLINE" => {
-            let Json(value): Json<Value> = row.try_get("payload").map_err(|_| ())?;
-            let bytes = serde_json::to_vec(&value).map_err(|_| ())?;
+            // `payload` is `bytea`: read the exact codec-produced bytes the
+            // checksum was computed over, never a `jsonb` round-trip that
+            // could reserialize with different whitespace/key order.
+            let bytes: Vec<u8> = row.try_get("payload").map_err(|_| ())?;
             ComponentStatePayload::Inline(bytes)
         }
         "EXTERNAL" => {
@@ -1866,7 +1868,9 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 .is_some();
             let created_at = self.repository.clock.now();
             let created_ms = system_time_millis(created_at)?;
-            let restarted_id = if let Some(source_job_id) = restart_source {
+            let (restarted_id, source_step_execution_id) = if let Some(source_job_id) =
+                restart_source
+            {
                 let source_step_name = if upgraded {
                     sqlx::query_scalar(
                         "SELECT mapping.key \
@@ -1888,47 +1892,58 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 } else {
                     step_name.as_str().to_owned()
                 };
-                sqlx::query_scalar(
-                    "INSERT INTO oxide_batch.ob_step_execution \
-                     (job_execution_id, step_name, step_logical_id, status, exit_code, \
-                      read_count, processed_count, write_count, filter_count, commit_count, \
-                      rollback_count, checkpoint_format, checkpoint_schema, \
-                      checkpoint_schema_version, checkpoint_payload, context_format, \
-                      context_schema, context_schema_version, context_payload, \
-                      read_retry_count, process_retry_count, write_retry_count, \
-                      read_skip_count, process_skip_count, write_skip_count, \
-                      no_rollback_count, fault_state_format, fault_state_schema, \
-                      fault_state_schema_version, fault_state_payload, fault_state_checksum, \
-                      created_at, updated_at, version) \
-                     SELECT $1, $2, $2, 'STARTING', 'UNKNOWN', source.read_count, \
-                      source.processed_count, source.write_count, source.filter_count, \
-                      source.commit_count, source.rollback_count, source.checkpoint_format, \
-                      source.checkpoint_schema, source.checkpoint_schema_version, \
-                      source.checkpoint_payload, source.context_format, source.context_schema, \
-                      source.context_schema_version, source.context_payload, \
-                      source.read_retry_count, source.process_retry_count, \
-                      source.write_retry_count, source.read_skip_count, \
-                      source.process_skip_count, source.write_skip_count, \
-                      source.no_rollback_count, source.fault_state_format, \
-                      source.fault_state_schema, source.fault_state_schema_version, \
-                      source.fault_state_payload, source.fault_state_checksum, \
-                      to_timestamp($3::double precision / 1000.0), \
-                      to_timestamp($3::double precision / 1000.0), 0 \
-                     FROM oxide_batch.ob_step_execution source \
-                     WHERE source.job_execution_id = $4 AND source.step_name = $5 \
-                     ORDER BY source.id DESC LIMIT 1 \
-                     RETURNING id",
+                let source_id: Option<i64> = sqlx::query_scalar(
+                    "SELECT source.id FROM oxide_batch.ob_step_execution source \
+                     WHERE source.job_execution_id = $1 AND source.step_name = $2 \
+                     ORDER BY source.id DESC LIMIT 1",
                 )
-                .bind(job_id)
-                .bind(step_name.as_str())
-                .bind(created_ms)
                 .bind(source_job_id)
-                .bind(source_step_name)
+                .bind(&source_step_name)
                 .fetch_optional(&mut **self.transaction()?)
                 .await
-                .map_err(|_| RepositoryError::Unavailable)?
+                .map_err(|_| RepositoryError::Unavailable)?;
+                let restarted_id = match source_id {
+                    Some(source_id) => sqlx::query_scalar(
+                        "INSERT INTO oxide_batch.ob_step_execution \
+                         (job_execution_id, step_name, step_logical_id, status, exit_code, \
+                          read_count, processed_count, write_count, filter_count, commit_count, \
+                          rollback_count, checkpoint_format, checkpoint_schema, \
+                          checkpoint_schema_version, checkpoint_payload, context_format, \
+                          context_schema, context_schema_version, context_payload, \
+                          read_retry_count, process_retry_count, write_retry_count, \
+                          read_skip_count, process_skip_count, write_skip_count, \
+                          no_rollback_count, fault_state_format, fault_state_schema, \
+                          fault_state_schema_version, fault_state_payload, fault_state_checksum, \
+                          created_at, updated_at, version) \
+                         SELECT $1, $2, $2, 'STARTING', 'UNKNOWN', source.read_count, \
+                          source.processed_count, source.write_count, source.filter_count, \
+                          source.commit_count, source.rollback_count, source.checkpoint_format, \
+                          source.checkpoint_schema, source.checkpoint_schema_version, \
+                          source.checkpoint_payload, source.context_format, source.context_schema, \
+                          source.context_schema_version, source.context_payload, \
+                          source.read_retry_count, source.process_retry_count, \
+                          source.write_retry_count, source.read_skip_count, \
+                          source.process_skip_count, source.write_skip_count, \
+                          source.no_rollback_count, source.fault_state_format, \
+                          source.fault_state_schema, source.fault_state_schema_version, \
+                          source.fault_state_payload, source.fault_state_checksum, \
+                          to_timestamp($3::double precision / 1000.0), \
+                          to_timestamp($3::double precision / 1000.0), 0 \
+                         FROM oxide_batch.ob_step_execution source WHERE source.id = $4 \
+                         RETURNING id",
+                    )
+                    .bind(job_id)
+                    .bind(step_name.as_str())
+                    .bind(created_ms)
+                    .bind(source_id)
+                    .fetch_optional(&mut **self.transaction()?)
+                    .await
+                    .map_err(|_| RepositoryError::Unavailable)?,
+                    None => None,
+                };
+                (restarted_id, source_id)
             } else {
-                None
+                (None, None)
             };
             let id: i64 = match (restart_source, restarted_id) {
                 (Some(_), Some(id)) => id,
@@ -1958,6 +1973,14 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 .await
                 .map_err(|_| RepositoryError::Unavailable)?,
             };
+            if let Some(source_step_execution_id) = source_step_execution_id {
+                copy_forward_component_state(
+                    &mut **self.transaction()?,
+                    source_step_execution_id,
+                    id,
+                )
+                .await?;
+            }
             let id_value =
                 StepExecutionId::new(u64::try_from(id).map_err(|_| RepositoryError::Unavailable)?)?;
             let execution = self
@@ -2091,6 +2114,9 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 .await
                 .map_err(|_| RepositoryError::ConcurrentModification)?
             };
+            if let Some(source_id) = source_id {
+                copy_forward_component_state(&mut **self.transaction()?, source_id, id).await?;
+            }
             let id = StepExecutionId::new(
                 u64::try_from(id).map_err(|_| RepositoryError::FlowStateCorrupt)?,
             )?;
@@ -3925,12 +3951,7 @@ impl Drop for PostgresUnitOfWork<'_> {
 /// the enclosing `ob_step_execution` optimistic-version check already
 /// serializes every commit for this step execution, so a second per-namespace
 /// guard here would be redundant with, not additional to, that protection.
-type ComponentStatePayloadColumns = (
-    &'static str,
-    Option<Json<Value>>,
-    Option<Vec<u8>>,
-    Option<i64>,
-);
+type ComponentStatePayloadColumns = (&'static str, Option<Vec<u8>>, Option<Vec<u8>>, Option<i64>);
 
 const COMPONENT_STATE_UPSERT: &str = "\
     INSERT INTO oxide_batch.ob_component_state (\
@@ -4178,13 +4199,14 @@ impl ChunkTransaction for PostgresChunkTransaction {
                 let payload = envelope
                     .payload()
                     .map_err(|_| ChunkTransactionError::NotCommitted)?;
-                let (payload_kind, payload_json, external_content_id, external_encoded_len): ComponentStatePayloadColumns =
+                // `payload` binds to `bytea`: the exact codec-produced bytes
+                // are stored and later read back verbatim, so the checksum
+                // recomputed in `ComponentStateEnvelope::from_durable` always
+                // matches the checksum computed at encode time -- no `jsonb`
+                // round-trip can reserialize the payload in between.
+                let (payload_kind, payload_bytes, external_content_id, external_encoded_len): ComponentStatePayloadColumns =
                     match payload {
-                    ComponentStatePayload::Inline(bytes) => {
-                        let value: Value = serde_json::from_slice(&bytes)
-                            .map_err(|_| ChunkTransactionError::NotCommitted)?;
-                        ("INLINE", Some(Json(value)), None, None)
-                    }
+                    ComponentStatePayload::Inline(bytes) => ("INLINE", Some(bytes), None, None),
                     ComponentStatePayload::External(reference) => {
                         let encoded_len = i64::try_from(reference.encoded_len())
                             .map_err(|_| ChunkTransactionError::NotCommitted)?;
@@ -4209,7 +4231,7 @@ impl ChunkTransaction for PostgresChunkTransaction {
                     .bind(checksum_algorithm_version)
                     .bind(checksum)
                     .bind(payload_kind)
-                    .bind(payload_json)
+                    .bind(payload_bytes)
                     .bind(external_content_id)
                     .bind(external_encoded_len)
                     .bind(updated_at_millis)
@@ -4575,6 +4597,46 @@ fn decode_identifying_parameters(value: &Value) -> Result<JobParameters, Reposit
         )?;
     }
     Ok(parameters)
+}
+
+/// Copies every committed `ItemStream` component-state row from a
+/// predecessor step execution forward to a newly created restart attempt.
+///
+/// `ob_component_state` is a separate table keyed by `(step_execution_id,
+/// namespace)`, unlike the checkpoint/context/fault-state columns that live
+/// inline on `ob_step_execution` and are already copied forward by the
+/// `INSERT ... SELECT ... FROM ob_step_execution source` restart statements
+/// in [`PostgresUnitOfWork::create_step_execution`] and
+/// [`PostgresUnitOfWork::create_flow_step_execution`]. Without this, a
+/// genuinely new `step_execution_id` would find no committed component
+/// state at all, even though its predecessor committed some: a real restart
+/// must inherit the last committed envelope per namespace exactly as it
+/// inherits the checkpoint. Runs in the same transaction as the
+/// step-execution row it accompanies, so the new step execution and its
+/// inherited component state become visible atomically.
+async fn copy_forward_component_state(
+    transaction: &mut PgConnection,
+    source_step_execution_id: i64,
+    target_step_execution_id: i64,
+) -> Result<(), RepositoryError> {
+    sqlx::query(
+        "INSERT INTO oxide_batch.ob_component_state ( \
+             step_execution_id, namespace, schema_id, schema_version, codec_id, \
+             codec_version, checksum_algorithm, checksum_algorithm_version, checksum, \
+             payload_kind, payload, external_content_id, external_encoded_len, \
+             version, updated_at) \
+         SELECT $1, namespace, schema_id, schema_version, codec_id, codec_version, \
+             checksum_algorithm, checksum_algorithm_version, checksum, payload_kind, \
+             payload, external_content_id, external_encoded_len, 0, updated_at \
+         FROM oxide_batch.ob_component_state \
+         WHERE step_execution_id = $2",
+    )
+    .bind(target_step_execution_id)
+    .bind(source_step_execution_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| RepositoryError::Unavailable)?;
+    Ok(())
 }
 
 async fn ensure_definition(

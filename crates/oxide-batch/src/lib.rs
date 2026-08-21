@@ -447,7 +447,8 @@ pub use oxide_batch_core::{
     RetryLimit, RetryOrdinal, RetryStateLimit, RollbackDisposition, SkipCounts, SkipLimit,
     StartControls, StartLimit, StateCodecError, StateError, StateLimits, StateSchemaId,
     StateSchemaUpgrade, StateSchemaVersion, StateSensitivity, StepDefinitionUpgrade, StepExecution,
-    StepExecutionId, StepName, StepPartitionId, TerminalKind, VersionedStateCodec,
+    StepExecutionId, StepName, StepPartitionId, StreamStateContract, TerminalKind,
+    VersionedStateCodec,
 };
 pub use oxide_batch_plan::{
     CompiledExecutionPlan, DeciderRevision, DecisionInputVersion, DecisionNode, ExitPattern,

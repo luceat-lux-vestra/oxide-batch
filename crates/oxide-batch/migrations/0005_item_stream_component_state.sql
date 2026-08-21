@@ -25,9 +25,19 @@ CREATE TABLE ob_component_state (
     checksum bytea NOT NULL CHECK (octet_length(checksum) = 32),
     payload_kind varchar(16) COLLATE "C" NOT NULL
         CHECK (payload_kind IN ('INLINE', 'EXTERNAL')),
-    payload jsonb
-        CHECK (payload IS NULL OR jsonb_typeof(payload) = 'object')
-        CHECK (payload IS NULL OR pg_column_size(payload) <= 1048576),
+    -- Stored as the exact codec-produced bytes (not `jsonb`): a `jsonb`
+    -- round-trip through Postgres's own decomposed binary representation
+    -- does not guarantee reproducing the source whitespace/key-order bytes
+    -- the envelope checksum was computed over, so `jsonb` here would let a
+    -- validly-committed envelope fail checksum verification after reload.
+    -- The JSON-object-shape check still runs, over a UTF-8/JSON-parse of the
+    -- stored bytes, without altering what is stored or checksummed.
+    payload bytea
+        CHECK (payload IS NULL OR octet_length(payload) BETWEEN 1 AND 1048576)
+        CHECK (
+            payload IS NULL
+            OR jsonb_typeof(convert_from(payload, 'UTF8')::jsonb) = 'object'
+        ),
     external_content_id bytea
         CHECK (external_content_id IS NULL OR octet_length(external_content_id) = 32),
     external_encoded_len bigint

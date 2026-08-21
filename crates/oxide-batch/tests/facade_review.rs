@@ -74,7 +74,7 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     ("item_listener", 12),
     ("item_stream", 11),
     ("listener", 7),
-    ("oxide_batch_core", 105),
+    ("oxide_batch_core", 106),
     ("oxide_batch_plan", 26),
     ("oxide_batch_repository", 110),
     ("repository", 14),

@@ -999,6 +999,32 @@ pub enum DefinitionError {
     /// already validated, so this variant reports a framework invariant rather
     /// than an application mistake.
     CompatibilityLowering,
+    /// A runtime `ItemStream` was registered under a namespace this
+    /// definition's [`ChunkComponentRevisions`] does not declare.
+    RuntimeStreamNotDeclared {
+        /// The undeclared runtime namespace.
+        namespace: ComponentStreamIdentity,
+    },
+    /// A declared stream revision has no matching runtime `ItemStream`
+    /// registration.
+    DeclaredStreamMissingRuntime {
+        /// The declared namespace with no runtime registration.
+        namespace: ComponentStreamIdentity,
+    },
+    /// The same namespace was registered as a runtime `ItemStream` more than
+    /// once.
+    DuplicateRuntimeStream {
+        /// The namespace registered more than once.
+        namespace: ComponentStreamIdentity,
+    },
+    /// A registered `ItemStream` declares
+    /// [`RestartabilityDeclaration::NotRestartable`](crate::RestartabilityDeclaration::NotRestartable),
+    /// which prevents its owning chunk step from claiming restartability
+    /// regardless of reader-checkpoint presence.
+    NonRestartableStream {
+        /// The namespace whose stream cannot honestly claim restartability.
+        namespace: ComponentStreamIdentity,
+    },
 }
 
 impl fmt::Display for DefinitionError {
@@ -1032,6 +1058,26 @@ impl fmt::Display for DefinitionError {
             Self::CompatibilityLowering => {
                 formatter.write_str("one-step compatibility lowering produced an invalid plan")
             }
+            Self::RuntimeStreamNotDeclared { namespace } => write!(
+                formatter,
+                "runtime ItemStream namespace {:?} is not declared in the chunk definition",
+                namespace.as_str()
+            ),
+            Self::DeclaredStreamMissingRuntime { namespace } => write!(
+                formatter,
+                "declared stream namespace {:?} has no registered runtime ItemStream",
+                namespace.as_str()
+            ),
+            Self::DuplicateRuntimeStream { namespace } => write!(
+                formatter,
+                "runtime ItemStream namespace {:?} was registered more than once",
+                namespace.as_str()
+            ),
+            Self::NonRestartableStream { namespace } => write!(
+                formatter,
+                "ItemStream namespace {:?} declares NotRestartable, so this step cannot claim restartability",
+                namespace.as_str()
+            ),
         }
     }
 }

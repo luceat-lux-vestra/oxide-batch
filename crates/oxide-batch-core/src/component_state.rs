@@ -13,7 +13,9 @@
 
 use std::error::Error;
 use std::fmt;
+use std::marker::PhantomData;
 use std::num::NonZeroU32;
+use std::sync::Arc;
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -408,7 +410,17 @@ pub enum ComponentStatePayload {
 
 #[derive(Clone, Eq, PartialEq)]
 enum StoredPayload {
-    Inline(Value),
+    /// The exact codec-produced bytes, never reserialized through
+    /// [`serde_json::Value`].
+    ///
+    /// Holding a parsed `Value` here (the M6 PR's original shape) let two
+    /// byte-identical-in-meaning-but-not-in-bytes encodings (whitespace, key
+    /// order) silently change the bytes a later checksum or decode observed.
+    /// Retaining the raw bytes exactly is what makes the checksum in
+    /// [`ComponentStateEnvelope`] a checksum of what is actually returned by
+    /// [`ComponentStateEnvelope::payload`] and consumed by
+    /// [`ComponentStateEnvelope::decode`], not of a re-encoding of it.
+    Inline(Vec<u8>),
     External(ExternalStateReference),
 }
 
@@ -622,6 +634,7 @@ impl ComponentStateEnvelope {
                 max_depth: limits.maximum_depth(),
             });
         }
+        let encoded_len = payload_bytes.len();
         Ok(Self {
             namespace,
             schema_id,
@@ -630,8 +643,8 @@ impl ComponentStateEnvelope {
             codec_version,
             checksum_algorithm,
             checksum,
-            payload: StoredPayload::Inline(payload_value),
-            encoded_len: payload_bytes.len(),
+            payload: StoredPayload::Inline(payload_bytes),
+            encoded_len,
         })
     }
 
@@ -748,7 +761,8 @@ impl ComponentStateEnvelope {
                         max_depth: limits.maximum_depth(),
                     });
                 }
-                (StoredPayload::Inline(value), bytes.len())
+                let encoded_len = bytes.len();
+                (StoredPayload::Inline(bytes), encoded_len)
             }
             ComponentStatePayload::External(reference) => (StoredPayload::External(reference), 0),
         };
@@ -805,14 +819,13 @@ impl ComponentStateEnvelope {
             });
         }
         let Self {
-            payload: StoredPayload::Inline(value),
+            payload: StoredPayload::Inline(bytes),
             ..
         } = self
         else {
             return Err(ComponentStateError::ExternalReferenceMissing);
         };
-        let payload_bytes =
-            serde_json::to_vec(value).map_err(|_| ComponentStateError::Malformed)?;
+        let payload_bytes = bytes.clone();
         let payload_bytes = upgrade_schema_chain(
             DurableStateKind::ComponentState,
             self.schema_version,
@@ -824,6 +837,87 @@ impl ComponentStateEnvelope {
         codec
             .decode(&payload_bytes)
             .map_err(ComponentStateError::Codec)
+    }
+
+    /// Validates and migrates this envelope to `codec`'s current schema and
+    /// codec versions, without decoding to an application type.
+    ///
+    /// This is the pre-`open` enforcement point (Gate C): the runtime calls
+    /// this through a registered stream's [`StreamStateContract`] before
+    /// [`crate::ItemStream::open`](../oxide_batch/trait.ItemStream.html#tymethod.open)
+    /// ever runs, so an unknown/newer schema or codec, or a migration
+    /// failure, is rejected before any application code sees the envelope.
+    /// An external-reference payload has no inline bytes to migrate and is
+    /// returned unchanged; the caller resolves and decodes it directly.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same redacted identity, compatibility, or migration
+    /// failure [`Self::decode`] would, without invoking the codec's own
+    /// decode step.
+    pub fn validated_for_open<T>(
+        &self,
+        codec: &(impl ComponentStateCodec<T> + ?Sized),
+    ) -> Result<Self, ComponentStateError> {
+        if self.codec_id != *codec.codec_id() {
+            return Err(ComponentStateError::UnknownCodec);
+        }
+        if self.schema_id != *codec.schema_id() {
+            return Err(ComponentStateError::SchemaMismatch);
+        }
+        let current_schema = codec.current_version();
+        if self.schema_version > current_schema {
+            return Err(ComponentStateError::UnsupportedSchemaVersion {
+                found: self.schema_version.get(),
+                current: current_schema.get(),
+            });
+        }
+        let current_codec = codec.codec_version();
+        if self.codec_version > current_codec {
+            return Err(ComponentStateError::UnsupportedCodecVersion {
+                found: self.codec_version.get(),
+                current: current_codec.get(),
+            });
+        }
+        let Self {
+            payload: StoredPayload::Inline(bytes),
+            ..
+        } = self
+        else {
+            return Ok(self.clone());
+        };
+        let migrated = upgrade_schema_chain(
+            DurableStateKind::ComponentState,
+            self.schema_version,
+            codec,
+            bytes.clone(),
+        )
+        .map_err(|error| map_schema_chain_error(&error))?;
+        let migrated = upgrade_codec_chain(self.codec_version, codec, migrated)?;
+        if migrated == *bytes {
+            return Ok(self.clone());
+        }
+        let checksum_algorithm = ChecksumAlgorithm::CURRENT;
+        let checksum = checksum_algorithm.digest(&canonical_checksum_input(
+            &self.namespace,
+            &self.schema_id,
+            current_schema,
+            &self.codec_id,
+            current_codec,
+            &inline_payload_marker(&migrated),
+        ));
+        let encoded_len = migrated.len();
+        Ok(Self {
+            namespace: self.namespace.clone(),
+            schema_id: self.schema_id.clone(),
+            schema_version: current_schema,
+            codec_id: self.codec_id.clone(),
+            codec_version: current_codec,
+            checksum_algorithm,
+            checksum,
+            payload: StoredPayload::Inline(migrated),
+            encoded_len,
+        })
     }
 
     /// Borrows the owner-scoped namespace.
@@ -895,9 +989,7 @@ impl ComponentStateEnvelope {
     /// already validated.
     pub fn payload(&self) -> Result<ComponentStatePayload, ComponentStateError> {
         match &self.payload {
-            StoredPayload::Inline(value) => serde_json::to_vec(value)
-                .map(ComponentStatePayload::Inline)
-                .map_err(|_| ComponentStateError::Malformed),
+            StoredPayload::Inline(bytes) => Ok(ComponentStatePayload::Inline(bytes.clone())),
             StoredPayload::External(reference) => Ok(ComponentStatePayload::External(*reference)),
         }
     }
@@ -1050,6 +1142,132 @@ impl<T, C: VersionedStateCodec<T>> ComponentStateCodec<T> for DefaultComponentCo
 
     fn restartability(&self) -> RestartabilityDeclaration {
         self.restartability
+    }
+}
+
+mod stream_contract_sealed {
+    use super::{
+        CodecId, ComponentStateEnvelope, ComponentStateError, RestartabilityDeclaration,
+        StateSchemaId,
+    };
+
+    /// The dyn-compatible mirror a registered stream's codec/schema contract
+    /// is erased behind. Nothing here is exported: the only implementor is
+    /// the blanket impl in this module, so a runtime never introspects
+    /// opaque application state to enforce Gate C -- the registration
+    /// supplies this contract explicitly instead.
+    pub trait StreamStateContractObject: Send + Sync {
+        fn schema_id(&self) -> &StateSchemaId;
+        fn codec_id(&self) -> &CodecId;
+        fn restartability(&self) -> RestartabilityDeclaration;
+        fn validate_for_open(
+            &self,
+            envelope: &ComponentStateEnvelope,
+        ) -> Result<ComponentStateEnvelope, ComponentStateError>;
+    }
+}
+
+struct CodecContract<T, C> {
+    codec: C,
+    // `fn() -> T` rather than `T` so this struct is `Send + Sync` regardless
+    // of `T`: the codec never actually produces a `T` here, it only proves
+    // one exists on the other side of `ComponentStateCodec<T>`.
+    marker: PhantomData<fn() -> T>,
+}
+
+impl<T, C: ComponentStateCodec<T> + Send + Sync> stream_contract_sealed::StreamStateContractObject
+    for CodecContract<T, C>
+{
+    fn schema_id(&self) -> &StateSchemaId {
+        self.codec.schema_id()
+    }
+
+    fn codec_id(&self) -> &CodecId {
+        self.codec.codec_id()
+    }
+
+    fn restartability(&self) -> RestartabilityDeclaration {
+        self.codec.restartability()
+    }
+
+    fn validate_for_open(
+        &self,
+        envelope: &ComponentStateEnvelope,
+    ) -> Result<ComponentStateEnvelope, ComponentStateError> {
+        envelope.validated_for_open(&self.codec)
+    }
+}
+
+/// The codec/schema/restartability contract a registered `ItemStream`
+/// carries, bound to the runtime at registration time.
+///
+/// Gate C requires the runtime to validate a registered stream's expected
+/// schema and codec identity/version, apply declared migrations, and reject
+/// unknown-newer versions -- all *before* the application's `open` runs --
+/// without introspecting the stream's opaque internal state. This is the
+/// small, explicit descriptor that makes that possible: it preserves the
+/// existing separation between the stream's logical identity
+/// ([`crate::definition::ComponentStreamIdentity`]), its runtime
+/// implementation (`ItemStream`/`BoxedStream`), and its state contract (this
+/// type), which the stream's own [`ComponentStateCodec`] already declares.
+pub struct StreamStateContract(Arc<dyn stream_contract_sealed::StreamStateContractObject>);
+
+impl StreamStateContract {
+    /// Captures `codec`'s schema/codec identity, versions, and
+    /// restartability declaration as a type-erased contract.
+    pub fn new<T, C>(codec: C) -> Self
+    where
+        C: ComponentStateCodec<T> + Send + Sync + 'static,
+        T: 'static,
+    {
+        Self(Arc::new(CodecContract {
+            codec,
+            marker: PhantomData,
+        }))
+    }
+
+    /// Borrows the expected application schema identifier.
+    #[must_use]
+    pub fn schema_id(&self) -> &StateSchemaId {
+        self.0.schema_id()
+    }
+
+    /// Borrows the expected codec identifier.
+    #[must_use]
+    pub fn codec_id(&self) -> &CodecId {
+        self.0.codec_id()
+    }
+
+    /// Returns the declared restartability of the stream this contract
+    /// belongs to.
+    #[must_use]
+    pub fn restartability(&self) -> RestartabilityDeclaration {
+        self.0.restartability()
+    }
+
+    /// Validates and migrates `envelope` to this contract's current schema
+    /// and codec versions before the runtime may call `open` with it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the redacted identity, compatibility, or migration failure
+    /// [`ComponentStateEnvelope::validated_for_open`] would.
+    pub fn validate_for_open(
+        &self,
+        envelope: &ComponentStateEnvelope,
+    ) -> Result<ComponentStateEnvelope, ComponentStateError> {
+        self.0.validate_for_open(envelope)
+    }
+}
+
+impl fmt::Debug for StreamStateContract {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StreamStateContract")
+            .field("schema_id", &self.schema_id())
+            .field("codec_id", &self.codec_id())
+            .field("restartability", &self.restartability())
+            .finish()
     }
 }
 

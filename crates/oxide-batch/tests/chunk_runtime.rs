@@ -16,6 +16,7 @@ mod ids;
 
 use std::collections::VecDeque;
 use std::num::NonZeroU64;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -24,17 +25,23 @@ use ids::DeterministicIds;
 use oxide_batch::{
     BatchStatus, BoxFuture, Checkpoint, ChunkAttemptOutcome, ChunkCommitReceipt, ChunkCompletion,
     ChunkCompletionContext, ChunkCompletionError, ChunkCompletionOutcome, ChunkComponentRevisions,
-    ChunkCount, ChunkCounts, ChunkDeliveryMode, ChunkExecutionOutcome, ChunkFailure, ChunkJob,
-    ChunkListener, ChunkListenerContext, ChunkListenerError, ChunkRestartContract, ChunkSize,
-    ChunkStep, ChunkTransaction, ChunkTransactionError, ChunkTransactionManager, ComponentRevision,
-    DefinitionRevision, ExecutionAttempt, ExecutionContext, ExecutionCorrelation,
+    ChunkCount, ChunkCounts, ChunkDeliveryMode, ChunkExecutionOutcome, ChunkFailure,
+    ChunkFaultProgress, ChunkJob, ChunkListener, ChunkListenerContext, ChunkListenerError,
+    ChunkRestartContract, ChunkSize, ChunkStep, ChunkTransaction, ChunkTransactionContext,
+    ChunkTransactionError, ChunkTransactionManager, CodecId, CodecVersion, CodecVersionUpgrade,
+    ComponentRevision, ComponentStateEnvelope, ComponentStreamIdentity, DefaultComponentCodec,
+    DefinitionError, DefinitionRevision, ExecutionAttempt, ExecutionContext, ExecutionCorrelation,
     FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget, InFlightPolicy,
-    InMemoryJobRepository, ItemProcessor, ItemReader, ItemWriter, JobExecutionId, JobInstanceId,
-    JobLauncher, JobName, JobParameters, LifecycleEvent, LifecycleEventKind, LifecycleEventSink,
-    ListenerContext, ListenerError, NodeId, ProcessContext, ProcessOutcome, ProcessorError,
-    ReadContext, ReadOutcome, ReaderError, StateLimits, StateSchemaId, StateSchemaVersion,
+    InMemoryJobRepository, ItemProcessor, ItemReader, ItemStream, ItemWriter, JobExecutionId,
+    JobInstanceId, JobLauncher, JobName, JobParameters, LifecycleEvent, LifecycleEventKind,
+    LifecycleEventSink, ListenerContext, ListenerError, NodeId, ProcessContext, ProcessOutcome,
+    ProcessorError, ReadContext, ReadOutcome, ReaderError, RestartabilityDeclaration,
+    StateCodecError, StateLimits, StateSchemaId, StateSchemaUpgrade, StateSchemaVersion,
     StepComponents, StepExecutionId, StepExecutionListener, StepName, StepNode, StopSource,
-    TaskletExecutionOutcome, TerminalKind, WriteContext, WriteOutcome, WriterError,
+    StreamCloseContext, StreamCloseError, StreamCloseOutcome, StreamOpenContext, StreamOpenError,
+    StreamOpenOutcome, StreamStateContract, StreamUpdateContext, StreamUpdateError,
+    TaskletExecutionOutcome, TerminalKind, VersionedStateCodec, WriteContext, WriteOutcome,
+    WriterError,
 };
 
 fn correlation() -> ExecutionCorrelation {
@@ -1168,4 +1175,625 @@ async fn launch_without_chunk_body_does_not_reuse_a_prior_chunk_report() {
         TaskletExecutionOutcome::Stopped(oxide_batch::StopTiming::BeforeStart)
     );
     assert!(second.chunk().is_none());
+}
+
+/// Corrective-review evidence for the PR #161 fixes: runtime/manifest stream
+/// identity bijection (fix 3), and pre-`open` schema/codec/restartability
+/// contract enforcement (fix 5).
+mod stream_contract {
+    use super::{
+        Arc, AtomicUsize, Boundary, BoxFuture, ChunkComponentRevisions, ChunkCounts,
+        ChunkExecutionOutcome, ChunkFailure, ChunkFaultProgress, ChunkJob, ChunkSize, ChunkStep,
+        ChunkTransaction, ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager,
+        CodecId, CodecVersion, CodecVersionUpgrade, Completion, ComponentRevision,
+        ComponentStateEnvelope, ComponentStreamIdentity, DefaultComponentCodec, DefinitionError,
+        DefinitionRevision, DeterministicIds, FlowGraph, FlowJob, FlowNode, FlowTarget,
+        InMemoryJobRepository, ItemStream, JobLauncher, JobName, JobParameters, ManualClock, Mutex,
+        NodeId, NonZeroU64, Ordering, Processor, Reader, RestartabilityDeclaration,
+        StateCodecError, StateLimits, StateSchemaId, StateSchemaUpgrade, StateSchemaVersion,
+        StepComponents, StepName, StepNode, StopSource, StreamCloseContext, StreamCloseError,
+        StreamCloseOutcome, StreamOpenContext, StreamOpenError, StreamOpenOutcome,
+        StreamStateContract, StreamUpdateContext, StreamUpdateError, TerminalKind, UNIX_EPOCH,
+        VersionedStateCodec, Writer, chunk_revisions, receipt,
+    };
+    use std::time::Duration;
+
+    const NAMESPACE: &str = "counter";
+
+    fn identity() -> ComponentStreamIdentity {
+        ComponentStreamIdentity::new(NAMESPACE).expect("valid namespace")
+    }
+
+    struct CounterSchema {
+        schema: StateSchemaId,
+        version: u32,
+        upgrades: Vec<StateSchemaUpgrade>,
+    }
+
+    impl CounterSchema {
+        fn new(version: u32) -> Self {
+            Self {
+                schema: StateSchemaId::new("test.stream.counter").expect("valid schema id"),
+                version,
+                upgrades: Vec::new(),
+            }
+        }
+
+        fn with_schema(mut self, schema: &str) -> Self {
+            self.schema = StateSchemaId::new(schema).expect("valid schema id");
+            self
+        }
+
+        fn with_upgrades(mut self, upgrades: Vec<StateSchemaUpgrade>) -> Self {
+            self.upgrades = upgrades;
+            self
+        }
+    }
+
+    impl VersionedStateCodec<u64> for CounterSchema {
+        fn schema_id(&self) -> &StateSchemaId {
+            &self.schema
+        }
+
+        fn current_version(&self) -> StateSchemaVersion {
+            StateSchemaVersion::new(self.version).expect("nonzero")
+        }
+
+        fn upgrades(&self) -> &[StateSchemaUpgrade] {
+            &self.upgrades
+        }
+
+        fn encode(&self, value: &u64) -> Result<Vec<u8>, StateCodecError> {
+            serde_json::to_vec(&serde_json::json!({ "rows": value }))
+                .map_err(|_| StateCodecError::InvalidPayload)
+        }
+
+        fn decode(&self, payload: &[u8]) -> Result<u64, StateCodecError> {
+            let value: serde_json::Value =
+                serde_json::from_slice(payload).map_err(|_| StateCodecError::InvalidPayload)?;
+            value
+                .get("rows")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or(StateCodecError::InvalidPayload)
+        }
+    }
+
+    fn migrate_add_100(payload: &[u8]) -> Result<Vec<u8>, StateCodecError> {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(payload).map_err(|_| StateCodecError::InvalidPayload)?;
+        let rows = value
+            .get("rows")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or(StateCodecError::InvalidPayload)?;
+        value["rows"] = serde_json::json!(rows + 100);
+        serde_json::to_vec(&value).map_err(|_| StateCodecError::InvalidPayload)
+    }
+
+    fn migrate_add_1000(payload: &[u8]) -> Result<Vec<u8>, StateCodecError> {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(payload).map_err(|_| StateCodecError::InvalidPayload)?;
+        let rows = value
+            .get("rows")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or(StateCodecError::InvalidPayload)?;
+        value["rows"] = serde_json::json!(rows + 1000);
+        serde_json::to_vec(&value).map_err(|_| StateCodecError::InvalidPayload)
+    }
+
+    fn codec(schema_version: u32, codec_version: u32) -> DefaultComponentCodec<CounterSchema> {
+        DefaultComponentCodec::new(
+            CounterSchema::new(schema_version),
+            CodecId::new("test.stream.counter-codec").expect("valid codec id"),
+            CodecVersion::new(codec_version).expect("nonzero"),
+            RestartabilityDeclaration::Restartable,
+        )
+    }
+
+    fn contract(codec: DefaultComponentCodec<CounterSchema>) -> StreamStateContract {
+        StreamStateContract::new(codec)
+    }
+
+    fn encode_with(
+        codec: &DefaultComponentCodec<CounterSchema>,
+        rows: u64,
+    ) -> ComponentStateEnvelope {
+        ComponentStateEnvelope::encode(identity(), &rows, codec, StateLimits::default())
+            .expect("envelope encodes")
+    }
+
+    /// Records every `open` call and, when an inherited envelope is present,
+    /// the value it decoded -- so a test can prove `open` was never entered
+    /// (rejection) or observed a migrated value (successful migration).
+    struct CountingStream {
+        open_calls: Arc<AtomicUsize>,
+        observed: Arc<Mutex<Option<u64>>>,
+        // The schema/codec version this application decodes with -- the same
+        // "current" versions its `StreamStateContract` was built from. The
+        // runtime hands `open` an envelope already migrated to those current
+        // versions, so decode must expect them, not the originally-recorded
+        // (pre-migration) versions.
+        schema_version: u32,
+        codec_version: u32,
+    }
+
+    impl CountingStream {
+        fn new() -> (Self, Arc<AtomicUsize>, Arc<Mutex<Option<u64>>>) {
+            Self::with_current_versions(1, 1)
+        }
+
+        fn with_current_versions(
+            schema_version: u32,
+            codec_version: u32,
+        ) -> (Self, Arc<AtomicUsize>, Arc<Mutex<Option<u64>>>) {
+            let open_calls = Arc::new(AtomicUsize::new(0));
+            let observed = Arc::new(Mutex::new(None));
+            (
+                Self {
+                    open_calls: Arc::clone(&open_calls),
+                    observed: Arc::clone(&observed),
+                    schema_version,
+                    codec_version,
+                },
+                open_calls,
+                observed,
+            )
+        }
+    }
+
+    impl ItemStream for CountingStream {
+        async fn open(
+            &self,
+            context: StreamOpenContext<'_>,
+        ) -> Result<StreamOpenOutcome, StreamOpenError> {
+            self.open_calls.fetch_add(1, Ordering::SeqCst);
+            let Some(envelope) = context.inherited_state() else {
+                return Ok(StreamOpenOutcome::Initial);
+            };
+            let rows: u64 = envelope
+                .decode(&codec(self.schema_version, self.codec_version))
+                .map_err(|_| StreamOpenError::new())?;
+            *self.observed.lock().expect("lock poisoned") = Some(rows);
+            Ok(StreamOpenOutcome::Restored)
+        }
+
+        async fn update(
+            &self,
+            _context: StreamUpdateContext<'_>,
+        ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+            Ok(encode_with(&codec(1, 1), 1))
+        }
+
+        async fn close(
+            &self,
+            _context: StreamCloseContext<'_>,
+        ) -> Result<StreamCloseOutcome, StreamCloseError> {
+            Ok(StreamCloseOutcome::Closed)
+        }
+    }
+
+    struct StateTransactions {
+        receipt: oxide_batch::ChunkCommitReceipt,
+        inherited: Vec<ComponentStateEnvelope>,
+    }
+
+    impl ChunkTransactionManager for StateTransactions {
+        fn begin(
+            &self,
+        ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>> {
+            let transaction = StateTestTransaction {
+                receipt: self.receipt.clone(),
+            };
+            Box::pin(async move { Ok(Box::new(transaction) as Box<dyn ChunkTransaction>) })
+        }
+
+        fn inherited_component_state(
+            &self,
+            _context: ChunkTransactionContext,
+        ) -> BoxFuture<'_, Result<Vec<ComponentStateEnvelope>, ChunkTransactionError>> {
+            let inherited = self.inherited.clone();
+            Box::pin(async move { Ok(inherited) })
+        }
+    }
+
+    struct StateTestTransaction {
+        receipt: oxide_batch::ChunkCommitReceipt,
+    }
+
+    impl ChunkTransaction for StateTestTransaction {
+        fn business_transaction(&mut self) -> Option<&mut dyn oxide_batch::BusinessTransaction> {
+            None
+        }
+
+        fn commit(
+            &mut self,
+            _counts: ChunkCounts,
+            _fault: ChunkFaultProgress,
+        ) -> BoxFuture<'_, Result<oxide_batch::ChunkCommitReceipt, ChunkTransactionError>> {
+            let receipt = self.receipt.clone();
+            Box::pin(async move { Ok(receipt) })
+        }
+
+        fn commit_with_component_state<'a>(
+            &'a mut self,
+            counts: ChunkCounts,
+            fault: ChunkFaultProgress,
+            _component_state: &'a [ComponentStateEnvelope],
+        ) -> BoxFuture<'a, Result<oxide_batch::ChunkCommitReceipt, ChunkTransactionError>> {
+            self.commit(counts, fault)
+        }
+
+        fn rollback(&mut self) -> BoxFuture<'_, Result<(), ChunkTransactionError>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    fn stream_components() -> ChunkComponentRevisions {
+        chunk_revisions().with_stream_revision(
+            identity(),
+            ComponentRevision::new("counter-v1").expect("valid revision"),
+        )
+    }
+
+    /// [`run_with_inherited_versions`] for the common case where the
+    /// application's decode versions match the encoded envelope's (1, 1).
+    async fn run_with_inherited(
+        inherited: Vec<ComponentStateEnvelope>,
+        contract: StreamStateContract,
+    ) -> (
+        ChunkExecutionOutcome,
+        Arc<AtomicUsize>,
+        Arc<Mutex<Option<u64>>>,
+    ) {
+        run_with_inherited_versions(inherited, contract, (1, 1)).await
+    }
+
+    /// Launches one chunk step with `inherited` as this attempt's inherited
+    /// component state, registering a [`CountingStream`] under [`identity`]
+    /// with `contract`. `stream_versions` is the (schema, codec) version pair
+    /// the application itself decodes with -- the same current versions
+    /// `contract`'s codec declares.
+    async fn run_with_inherited_versions(
+        inherited: Vec<ComponentStateEnvelope>,
+        contract: StreamStateContract,
+        stream_versions: (u32, u32),
+    ) -> (
+        ChunkExecutionOutcome,
+        Arc<AtomicUsize>,
+        Arc<Mutex<Option<u64>>>,
+    ) {
+        let (writer, _batches) = Writer::new(Boundary::Normal);
+        let (completion, _calls) = Completion::new(Boundary::Normal);
+        let transactions = StateTransactions {
+            receipt: receipt(),
+            inherited,
+        };
+        let (stream, open_calls, observed) =
+            CountingStream::with_current_versions(stream_versions.0, stream_versions.1);
+        let step = ChunkStep::new(
+            StepName::new("import").expect("valid step name"),
+            ChunkSize::new(2).expect("valid chunk size"),
+            Reader::new([1]),
+            Processor::normal(),
+            writer,
+            Arc::new(transactions),
+            Arc::new(completion),
+        )
+        .with_item_stream(identity(), stream, contract);
+        let mut job = ChunkJob::new(
+            JobName::new("stream_contract_test").expect("valid job name"),
+            step,
+            DefinitionRevision::new("test-v1").expect("valid revision"),
+            &stream_components(),
+        )
+        .expect("bijection-valid definition");
+        let clock = ManualClock::new(UNIX_EPOCH + Duration::from_secs(700));
+        let ids = DeterministicIds::new(NonZeroU64::MIN);
+        let repository = InMemoryJobRepository::new(Arc::new(clock.clone()), Arc::new(ids.clone()));
+        let launcher = JobLauncher::new(&repository, &clock, &ids);
+        let (_stop_source, stop) = StopSource::new();
+        let report = launcher
+            .launch_chunk(&mut job, &JobParameters::new(), &stop)
+            .await
+            .expect("launch completes");
+        let chunk = report.chunk().expect("chunk work started");
+        (chunk.outcome(), open_calls, observed)
+    }
+
+    #[tokio::test]
+    async fn open_rejects_unknown_schema_before_user_stream_is_called() {
+        let wrong_schema = DefaultComponentCodec::new(
+            CounterSchema::new(1).with_schema("test.stream.other"),
+            CodecId::new("test.stream.counter-codec").expect("valid codec id"),
+            CodecVersion::new(1).expect("nonzero"),
+            RestartabilityDeclaration::Restartable,
+        );
+        let inherited = encode_with(&wrong_schema, 5);
+
+        let (outcome, open_calls, observed) =
+            run_with_inherited(vec![inherited], contract(codec(1, 1))).await;
+
+        assert_eq!(
+            outcome,
+            ChunkExecutionOutcome::Failed(ChunkFailure::StreamOpen)
+        );
+        assert_eq!(
+            open_calls.load(Ordering::SeqCst),
+            0,
+            "a rejected contract must never enter the application's open()"
+        );
+        assert_eq!(*observed.lock().expect("lock poisoned"), None);
+    }
+
+    #[tokio::test]
+    async fn open_rejects_newer_schema_before_user_stream_is_called() {
+        let inherited = encode_with(&codec(2, 1), 5);
+
+        let (outcome, open_calls, _observed) =
+            run_with_inherited(vec![inherited], contract(codec(1, 1))).await;
+
+        assert_eq!(
+            outcome,
+            ChunkExecutionOutcome::Failed(ChunkFailure::StreamOpen)
+        );
+        assert_eq!(open_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn open_rejects_unknown_codec_before_user_stream_is_called() {
+        let wrong_codec = DefaultComponentCodec::new(
+            CounterSchema::new(1),
+            CodecId::new("test.stream.other-codec").expect("valid codec id"),
+            CodecVersion::new(1).expect("nonzero"),
+            RestartabilityDeclaration::Restartable,
+        );
+        let inherited = encode_with(&wrong_codec, 5);
+
+        let (outcome, open_calls, _observed) =
+            run_with_inherited(vec![inherited], contract(codec(1, 1))).await;
+
+        assert_eq!(
+            outcome,
+            ChunkExecutionOutcome::Failed(ChunkFailure::StreamOpen)
+        );
+        assert_eq!(open_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn open_applies_declared_schema_migration_before_user_stream_is_called() {
+        let inherited = encode_with(&codec(1, 1), 5);
+        let upgrade = StateSchemaUpgrade::new(
+            StateSchemaVersion::new(1).expect("nonzero"),
+            StateSchemaVersion::new(2).expect("nonzero"),
+            migrate_add_100,
+        )
+        .expect("valid upgrade");
+        let current = DefaultComponentCodec::new(
+            CounterSchema::new(2).with_upgrades(vec![upgrade]),
+            CodecId::new("test.stream.counter-codec").expect("valid codec id"),
+            CodecVersion::new(1).expect("nonzero"),
+            RestartabilityDeclaration::Restartable,
+        );
+
+        let (outcome, open_calls, observed) =
+            run_with_inherited_versions(vec![inherited], contract(current), (2, 1)).await;
+
+        assert_eq!(outcome, ChunkExecutionOutcome::Completed);
+        assert_eq!(open_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            *observed.lock().expect("lock poisoned"),
+            Some(105),
+            "open must observe the migrated value, not the recorded one"
+        );
+    }
+
+    #[tokio::test]
+    async fn open_applies_declared_codec_migration_before_user_stream_is_called() {
+        let inherited = encode_with(&codec(1, 1), 5);
+        let upgrade = CodecVersionUpgrade::new(
+            CodecVersion::new(1).expect("nonzero"),
+            CodecVersion::new(2).expect("nonzero"),
+            migrate_add_1000,
+        )
+        .expect("valid upgrade");
+        let current = DefaultComponentCodec::new(
+            CounterSchema::new(1),
+            CodecId::new("test.stream.counter-codec").expect("valid codec id"),
+            CodecVersion::new(2).expect("nonzero"),
+            RestartabilityDeclaration::Restartable,
+        )
+        .with_codec_upgrades(vec![upgrade]);
+
+        let (outcome, open_calls, observed) =
+            run_with_inherited_versions(vec![inherited], contract(current), (1, 2)).await;
+
+        assert_eq!(outcome, ChunkExecutionOutcome::Completed);
+        assert_eq!(open_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            *observed.lock().expect("lock poisoned"),
+            Some(1005),
+            "open must observe the codec-migrated value, not the recorded one"
+        );
+    }
+
+    fn stream_step() -> ChunkStep<i32, i32, Reader, Processor, Writer> {
+        let (writer, _batches) = Writer::new(Boundary::Normal);
+        let (completion, _calls) = Completion::new(Boundary::Normal);
+        let (stream, _open_calls, _observed) = CountingStream::new();
+        ChunkStep::new(
+            StepName::new("import").expect("valid step name"),
+            ChunkSize::new(2).expect("valid chunk size"),
+            Reader::new([1]),
+            Processor::normal(),
+            writer,
+            Arc::new(StateTransactions {
+                receipt: receipt(),
+                inherited: Vec::new(),
+            }),
+            Arc::new(completion),
+        )
+        .with_item_stream(identity(), stream, contract(codec(1, 1)))
+    }
+
+    #[test]
+    fn runtime_stream_missing_from_manifest_is_rejected() {
+        let step = stream_step();
+        let result = ChunkJob::new(
+            JobName::new("bijection_missing_manifest").expect("valid job name"),
+            step,
+            DefinitionRevision::new("test-v1").expect("valid revision"),
+            &chunk_revisions(),
+        );
+        assert!(matches!(
+            result,
+            Err(DefinitionError::RuntimeStreamNotDeclared { .. })
+        ));
+    }
+
+    #[test]
+    fn manifest_stream_missing_from_runtime_is_rejected() {
+        let (writer, _batches) = Writer::new(Boundary::Normal);
+        let (completion, _calls) = Completion::new(Boundary::Normal);
+        let step = ChunkStep::new(
+            StepName::new("import").expect("valid step name"),
+            ChunkSize::new(2).expect("valid chunk size"),
+            Reader::new([1]),
+            Processor::normal(),
+            writer,
+            Arc::new(StateTransactions {
+                receipt: receipt(),
+                inherited: Vec::new(),
+            }),
+            Arc::new(completion),
+        );
+        let result = ChunkJob::new(
+            JobName::new("bijection_missing_runtime").expect("valid job name"),
+            step,
+            DefinitionRevision::new("test-v1").expect("valid revision"),
+            &stream_components(),
+        );
+        assert!(matches!(
+            result,
+            Err(DefinitionError::DeclaredStreamMissingRuntime { .. })
+        ));
+    }
+
+    #[test]
+    fn duplicate_runtime_stream_namespace_is_rejected() {
+        let (writer, _batches) = Writer::new(Boundary::Normal);
+        let (completion, _calls) = Completion::new(Boundary::Normal);
+        let (stream_a, _, _) = CountingStream::new();
+        let (stream_b, _, _) = CountingStream::new();
+        let step = ChunkStep::new(
+            StepName::new("import").expect("valid step name"),
+            ChunkSize::new(2).expect("valid chunk size"),
+            Reader::new([1]),
+            Processor::normal(),
+            writer,
+            Arc::new(StateTransactions {
+                receipt: receipt(),
+                inherited: Vec::new(),
+            }),
+            Arc::new(completion),
+        )
+        .with_item_stream(identity(), stream_a, contract(codec(1, 1)))
+        .with_item_stream(identity(), stream_b, contract(codec(1, 1)));
+        let result = ChunkJob::new(
+            JobName::new("bijection_duplicate").expect("valid job name"),
+            step,
+            DefinitionRevision::new("test-v1").expect("valid revision"),
+            &stream_components(),
+        );
+        assert!(matches!(
+            result,
+            Err(DefinitionError::DuplicateRuntimeStream { .. })
+        ));
+    }
+
+    #[test]
+    fn matching_runtime_and_manifest_streams_are_accepted() {
+        let step = stream_step();
+        let result = ChunkJob::new(
+            JobName::new("bijection_matching").expect("valid job name"),
+            step,
+            DefinitionRevision::new("test-v1").expect("valid revision"),
+            &stream_components(),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn restartable_stream_allows_restartable_plan() {
+        let step = stream_step();
+        let result = ChunkJob::new(
+            JobName::new("restartable_ok").expect("valid job name"),
+            step,
+            DefinitionRevision::new("test-v1").expect("valid revision"),
+            &stream_components(),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn stateful_nonrestartable_stream_prevents_restartable_plan() {
+        let (writer, _batches) = Writer::new(Boundary::Normal);
+        let (completion, _calls) = Completion::new(Boundary::Normal);
+        let (stream, _, _) = CountingStream::new();
+        let not_restartable = DefaultComponentCodec::new(
+            CounterSchema::new(1),
+            CodecId::new("test.stream.counter-codec").expect("valid codec id"),
+            CodecVersion::new(1).expect("nonzero"),
+            RestartabilityDeclaration::NotRestartable,
+        );
+        let step = ChunkStep::new(
+            StepName::new("import").expect("valid step name"),
+            ChunkSize::new(2).expect("valid chunk size"),
+            Reader::new([1]),
+            Processor::normal(),
+            writer,
+            Arc::new(StateTransactions {
+                receipt: receipt(),
+                inherited: Vec::new(),
+            }),
+            Arc::new(completion),
+        )
+        .with_item_stream(identity(), stream, contract(not_restartable));
+        let result = ChunkJob::new(
+            JobName::new("nonrestartable").expect("valid job name"),
+            step,
+            DefinitionRevision::new("test-v1").expect("valid revision"),
+            &stream_components(),
+        );
+        assert!(matches!(
+            result,
+            Err(DefinitionError::NonRestartableStream { .. })
+        ));
+    }
+
+    #[test]
+    fn flow_job_rejects_a_runtime_stream_not_declared_in_the_bound_revisions() {
+        let step = stream_step();
+        let revisions = chunk_revisions();
+        let node = NodeId::new("import").expect("static node ID is valid");
+        let name = JobName::new("flow_stream_bijection").expect("static job name is valid");
+        let plan = FlowGraph::new(node.clone())
+            .with_node(FlowNode::step(StepNode::new(
+                node.clone(),
+                StepName::new("import").expect("static step name is valid"),
+                StepComponents::Chunk {
+                    size: ChunkSize::new(2).expect("static chunk size is nonzero"),
+                    revisions: Box::new(revisions.clone()),
+                },
+            )))
+            .with_sequence(node.clone(), FlowTarget::Terminal(TerminalKind::Complete))
+            .expect("static sequence is valid")
+            .compile(
+                &name,
+                DefinitionRevision::new("flow-v1").expect("static revision is valid"),
+            )
+            .expect("static flow compiles");
+        let result = FlowJob::new(name, plan)
+            .expect("format-2 flow is valid")
+            .with_chunk_step(node, step, &revisions);
+        assert!(result.is_err());
+    }
 }

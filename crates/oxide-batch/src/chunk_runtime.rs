@@ -1,5 +1,6 @@
 //! Deterministic single-threaded chunk-step orchestration.
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex};
@@ -21,10 +22,11 @@ use crate::{
     ItemProcessor, ItemReader, ItemStream, ItemWriter, JobExecutionListener, JobLauncher, JobName,
     JobParameters, LaunchError, LaunchReport, LifecycleEventKind, ListenerFailureKind,
     ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome, ReaderError,
-    RetryCounts, RetryKey, RetryOrdinal, RetryOutcome, RetryReservation, RollbackDisposition,
-    SkipCounts, StepComponents, StepExecutionListener, StepName, StopToken, StreamCloseContext,
-    StreamOpenContext, StreamRuntimeOutcome, StreamUpdateContext, Tasklet, TaskletContext,
-    TaskletError, TaskletJob, TaskletOutcome, TaskletStep, WriteContext, WriteOutcome, WriterError,
+    RestartabilityDeclaration, RetryCounts, RetryKey, RetryOrdinal, RetryOutcome, RetryReservation,
+    RollbackDisposition, SkipCounts, StepComponents, StepExecutionListener, StepName, StopToken,
+    StreamCloseContext, StreamOpenContext, StreamRuntimeOutcome, StreamStateContract,
+    StreamUpdateContext, Tasklet, TaskletContext, TaskletError, TaskletJob, TaskletOutcome,
+    TaskletStep, WriteContext, WriteOutcome, WriterError,
 };
 
 /// A validated one-step chunk definition.
@@ -40,7 +42,11 @@ pub struct ChunkStep<I, O, R, P, W> {
     step_listeners: Vec<Arc<dyn StepExecutionListener>>,
     item_listeners: ItemListenerSet<I, O>,
     fault: Option<FaultRuntime>,
-    streams: Vec<(ComponentStreamIdentity, Arc<BoxedStream>)>,
+    streams: Vec<(
+        ComponentStreamIdentity,
+        Arc<BoxedStream>,
+        StreamStateContract,
+    )>,
     in_flight_policy: InFlightPolicy,
     definition_digest: [u8; 32],
 }
@@ -123,14 +129,24 @@ where
     /// [`ChunkComponentRevisions::with_stream_revision`]): it is both the
     /// restart-relevant fingerprint token and the runtime key used to
     /// associate this stream with its committed durable state.
+    /// [`ChunkJob::new`]/[`FlowJob::with_chunk_step`](crate::FlowJob::with_chunk_step)
+    /// reject a definition where the runtime registrations and declared
+    /// revisions are not the same set.
+    ///
+    /// `contract` binds this stream's expected schema/codec identity,
+    /// version, and restartability declaration so the runtime can validate
+    /// and migrate an inherited envelope -- and enforce restartability at
+    /// binding time -- before `open` ever runs, without introspecting this
+    /// stream's opaque internal state.
     #[must_use]
     pub fn with_item_stream(
         mut self,
         identity: ComponentStreamIdentity,
         stream: impl ItemStream + 'static,
+        contract: StreamStateContract,
     ) -> Self {
         self.streams
-            .push((identity, Arc::new(BoxedStream::new(stream))));
+            .push((identity, Arc::new(BoxedStream::new(stream)), contract));
         self
     }
 
@@ -157,6 +173,63 @@ where
     {
         execute_chunk_step(self, correlation, stop, None, |_| {}).await
     }
+}
+
+/// Validates the bijection between a step's runtime `ItemStream`
+/// registrations and its definition's declared stream revisions, and
+/// enforces that no registered stream's contract blocks the plan from
+/// claiming restartability.
+///
+/// Restart-relevant stream revisions are declared through
+/// [`ChunkComponentRevisions::with_stream_revision`] independently of the
+/// runtime registrations a step assembles through
+/// [`ChunkStep::with_item_stream`]. Nothing else in the framework proves
+/// these two sets describe the same streams, so a mismatch here would
+/// otherwise surface only as an opaque runtime `open`/`update` failure (or,
+/// worse, silent misbinding) instead of failing before execution begins.
+///
+/// A chunk definition always carries a checkpoint/restart contract (Gate C),
+/// so it implicitly claims restartability; a registered stream whose
+/// contract declares [`RestartabilityDeclaration::NotRestartable`] must
+/// therefore prevent binding unconditionally -- independent of whether the
+/// step's own reader checkpoint exists or is itself restartable.
+fn validate_stream_registrations<I, O, R, P, W>(
+    step: &ChunkStep<I, O, R, P, W>,
+    components: &ChunkComponentRevisions,
+) -> Result<(), DefinitionError> {
+    let mut seen: BTreeSet<&ComponentStreamIdentity> = BTreeSet::new();
+    for (identity, _, contract) in &step.streams {
+        if !seen.insert(identity) {
+            return Err(DefinitionError::DuplicateRuntimeStream {
+                namespace: identity.clone(),
+            });
+        }
+        if components
+            .stream_revisions()
+            .all(|(declared, _)| declared != identity)
+        {
+            return Err(DefinitionError::RuntimeStreamNotDeclared {
+                namespace: identity.clone(),
+            });
+        }
+        if contract.restartability() == RestartabilityDeclaration::NotRestartable {
+            return Err(DefinitionError::NonRestartableStream {
+                namespace: identity.clone(),
+            });
+        }
+    }
+    for (declared, _) in components.stream_revisions() {
+        if !step
+            .streams
+            .iter()
+            .any(|(identity, _, _)| identity == declared)
+        {
+            return Err(DefinitionError::DeclaredStreamMissingRuntime {
+                namespace: declared.clone(),
+            });
+        }
+    }
+    Ok(())
 }
 
 impl<I, O, R, P, W> fmt::Debug for ChunkStep<I, O, R, P, W> {
@@ -207,6 +280,7 @@ impl<I, O, R, P, W> ChunkJob<I, O, R, P, W> {
         {
             return Err(DefinitionError::DeliveryModeMismatch);
         }
+        validate_stream_registrations(&step, components)?;
         let step_name = step.name.clone();
         let definition =
             DefinitionIdentity::chunk(&name, &step_name, step.size, revision, components)?;
@@ -322,6 +396,9 @@ impl crate::FlowJob {
             || compiled.components() != &expected
             || compiled.fault_policy() != step.fault.as_ref().map(FaultRuntime::policy)
         {
+            return Err(crate::FlowJobError::ComponentMismatch { node: node_id });
+        }
+        if validate_stream_registrations(&step, revisions).is_err() {
             return Err(crate::FlowJobError::ComponentMismatch { node: node_id });
         }
         step.definition_digest = *self.compiled_plan().fingerprint();
@@ -1065,7 +1142,11 @@ struct Components<'a, I, O, P, W> {
     writer: &'a W,
     item_listeners: &'a ItemListenerSet<I, O>,
     fault: Option<&'a FaultRuntime>,
-    streams: &'a [(ComponentStreamIdentity, Arc<BoxedStream>)],
+    streams: &'a [(
+        ComponentStreamIdentity,
+        Arc<BoxedStream>,
+        StreamStateContract,
+    )],
     step_name: &'a StepName,
     definition_digest: [u8; 32],
     size: ChunkSize,
@@ -1513,7 +1594,11 @@ async fn inherited_progress(
     transactions: &dyn ChunkTransactionManager,
     fault: Option<&FaultRuntime>,
     context: Option<ChunkTransactionContext>,
-    streams: &[(ComponentStreamIdentity, Arc<BoxedStream>)],
+    streams: &[(
+        ComponentStreamIdentity,
+        Arc<BoxedStream>,
+        StreamStateContract,
+    )],
     stop: &StopToken,
 ) -> Result<(InheritedStepProgress, Vec<Arc<BoxedStream>>), ChunkExecutionOutcome> {
     let inherited_state = match context {
@@ -1546,12 +1631,28 @@ async fn inherited_progress(
         }
     };
 
-    let mut opened = Vec::with_capacity(streams.len());
-    for (identity, stream) in streams {
+    let mut opened: Vec<Arc<BoxedStream>> = Vec::with_capacity(streams.len());
+    for (identity, stream, contract) in streams {
         let envelope = inherited_state
             .iter()
             .find(|envelope| envelope.namespace() == identity);
-        let open_context = StreamOpenContext::new(envelope, stop);
+        // Gate C: an inherited envelope is validated against this stream's
+        // declared schema/codec contract and migrated to its current
+        // versions -- rejecting an unknown/newer schema or codec, or a
+        // migration failure -- before `open` ever runs. `open` never
+        // observes an envelope this contract has not already accepted.
+        let validated = match envelope.map(|envelope| contract.validate_for_open(envelope)) {
+            None => None,
+            Some(Ok(migrated)) => Some(migrated),
+            Some(Err(_)) => {
+                let close_context = StreamCloseContext::new(stop, StreamRuntimeOutcome::Failed);
+                for opened_stream in opened.iter().rev() {
+                    let _ = opened_stream.close(close_context).await;
+                }
+                return Err(ChunkExecutionOutcome::Failed(ChunkFailure::StreamOpen));
+            }
+        };
+        let open_context = StreamOpenContext::new(validated.as_ref(), stop);
         if stream.open(open_context).await.is_ok() {
             opened.push(Arc::clone(stream));
         } else {
@@ -2245,7 +2346,11 @@ where
 /// Runs once per committing attempt, after the writer has accepted the
 /// chunk and before the durable commit -- never per item. A failure here
 /// prevents the candidate commit, matching process/write-error handling: no
-/// partial commit.
+/// partial commit. A stream that returns an envelope carrying a namespace
+/// other than its own registered identity is rejected here, before the
+/// candidate ever reaches the durable UPSERT: an unregistered or mismatched
+/// namespace on the persisted side would let one stream silently overwrite
+/// another's committed state.
 async fn update_streams<I, O, P, W>(
     components: &Components<'_, I, O, P, W>,
     scope: AttemptScope<'_>,
@@ -2253,10 +2358,11 @@ async fn update_streams<I, O, P, W>(
 ) -> Verdict {
     component_state.clear();
     let context = StreamUpdateContext::new(scope.stop);
-    for (_, stream) in components.streams {
+    for (identity, stream, _) in components.streams {
         match stream.update(context).await {
-            Ok(envelope) => component_state.push(envelope),
-            Err(_) => {
+            Ok(envelope) if envelope.namespace() == identity => component_state.push(envelope),
+            Ok(_) | Err(_) => {
+                component_state.clear();
                 return Verdict::Terminal(ChunkExecutionOutcome::Failed(
                     ChunkFailure::StreamUpdate,
                 ));

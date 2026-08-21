@@ -31,8 +31,8 @@ use oxide_batch::{
     ProcessorError, ReadContext, ReadOutcome, ReaderError, RestartabilityDeclaration,
     StateCodecError, StateLimits, StateSchemaId, StateSchemaVersion, StepName, StopSource,
     StreamCloseContext, StreamCloseError, StreamCloseOutcome, StreamOpenContext, StreamOpenError,
-    StreamOpenOutcome, StreamUpdateContext, StreamUpdateError, VersionedStateCodec, WriteContext,
-    WriteOutcome, WriterError,
+    StreamOpenOutcome, StreamStateContract, StreamUpdateContext, StreamUpdateError,
+    VersionedStateCodec, WriteContext, WriteOutcome, WriterError,
 };
 
 type Trace = Arc<Mutex<Vec<String>>>;
@@ -87,13 +87,28 @@ fn minimal_envelope(namespace: &str) -> ComponentStateEnvelope {
     .expect("minimal envelope encodes")
 }
 
+/// The [`StreamStateContract`] matching [`minimal_envelope`]'s codec, for
+/// fixtures that register a stream through [`ChunkStep::with_item_stream`].
+fn minimal_contract() -> StreamStateContract {
+    StreamStateContract::new(DefaultComponentCodec::new(
+        UnitSchema {
+            schema: StateSchemaId::new("test.stream").expect("valid schema id"),
+        },
+        CodecId::new("test.stream-codec").expect("valid codec id"),
+        CodecVersion::new(1).expect("nonzero"),
+        RestartabilityDeclaration::Restartable,
+    ))
+}
+
 /// A stream that records every lifecycle call and can be configured to fail
-/// its open or close.
+/// its open or close, or to return a candidate envelope under a namespace
+/// other than its own registered identity.
 struct RecordingStream {
     name: &'static str,
     trace: Trace,
     fail_open: bool,
     fail_close: bool,
+    update_namespace: Option<&'static str>,
 }
 
 impl RecordingStream {
@@ -103,6 +118,7 @@ impl RecordingStream {
             trace: Arc::clone(trace),
             fail_open: false,
             fail_close: false,
+            update_namespace: None,
         }
     }
 
@@ -113,6 +129,14 @@ impl RecordingStream {
 
     fn failing_close(mut self) -> Self {
         self.fail_close = true;
+        self
+    }
+
+    /// Makes `update` return a candidate envelope under `namespace` instead
+    /// of this stream's own registered identity, so a namespace-mismatch
+    /// scenario is reproducible in a fixture without a codec bug.
+    fn returning_namespace(mut self, namespace: &'static str) -> Self {
+        self.update_namespace = Some(namespace);
         self
     }
 }
@@ -135,7 +159,7 @@ impl ItemStream for RecordingStream {
         _context: StreamUpdateContext<'_>,
     ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
         record(&self.trace, format!("{}.update", self.name));
-        Ok(minimal_envelope(self.name))
+        Ok(minimal_envelope(self.update_namespace.unwrap_or(self.name)))
     }
 
     async fn close(
@@ -362,6 +386,7 @@ async fn item_stream_opens_before_item_work() {
     .with_item_stream(
         ComponentStreamIdentity::new("stream").expect("valid namespace"),
         RecordingStream::new("stream", &trace),
+        minimal_contract(),
     );
     let mut step = step;
     let (_source, stop_token) = StopSource::new();
@@ -403,6 +428,7 @@ async fn item_stream_update_prepares_state_before_accepting_commit() {
     .with_item_stream(
         ComponentStreamIdentity::new("stream").expect("valid namespace"),
         RecordingStream::new("stream", &trace),
+        minimal_contract(),
     );
     let (_source, stop_token) = StopSource::new();
 
@@ -451,6 +477,7 @@ async fn item_stream_close_runs_after_runtime_completion() {
     .with_item_stream(
         ComponentStreamIdentity::new("stream").expect("valid namespace"),
         RecordingStream::new("stream", &trace),
+        minimal_contract(),
     );
     let (_source, stop_token) = StopSource::new();
 
@@ -484,10 +511,12 @@ async fn multiple_streams_open_in_registration_order() {
     .with_item_stream(
         ComponentStreamIdentity::new("stream_a").expect("valid namespace"),
         RecordingStream::new("a", &trace),
+        minimal_contract(),
     )
     .with_item_stream(
         ComponentStreamIdentity::new("stream_b").expect("valid namespace"),
         RecordingStream::new("b", &trace),
+        minimal_contract(),
     );
     let (_source, stop_token) = StopSource::new();
 
@@ -524,14 +553,17 @@ async fn multiple_streams_close_in_reverse_successful_open_order() {
     .with_item_stream(
         ComponentStreamIdentity::new("stream_a").expect("valid namespace"),
         RecordingStream::new("a", &trace),
+        minimal_contract(),
     )
     .with_item_stream(
         ComponentStreamIdentity::new("stream_b").expect("valid namespace"),
         RecordingStream::new("b", &trace),
+        minimal_contract(),
     )
     .with_item_stream(
         ComponentStreamIdentity::new("stream_c").expect("valid namespace"),
         RecordingStream::new("c", &trace),
+        minimal_contract(),
     );
     let (_source, stop_token) = StopSource::new();
 
@@ -572,10 +604,12 @@ async fn open_failure_closes_only_previously_opened_streams() {
     .with_item_stream(
         ComponentStreamIdentity::new("stream_a").expect("valid namespace"),
         RecordingStream::new("a", &trace),
+        minimal_contract(),
     )
     .with_item_stream(
         ComponentStreamIdentity::new("stream_b").expect("valid namespace"),
         RecordingStream::new("b", &trace).failing_open(),
+        minimal_contract(),
     );
     let (_source, stop_token) = StopSource::new();
 
@@ -620,14 +654,17 @@ async fn close_failure_does_not_skip_remaining_closes() {
     .with_item_stream(
         ComponentStreamIdentity::new("stream_a").expect("valid namespace"),
         RecordingStream::new("a", &trace),
+        minimal_contract(),
     )
     .with_item_stream(
         ComponentStreamIdentity::new("stream_b").expect("valid namespace"),
         RecordingStream::new("b", &trace).failing_close(),
+        minimal_contract(),
     )
     .with_item_stream(
         ComponentStreamIdentity::new("stream_c").expect("valid namespace"),
         RecordingStream::new("c", &trace),
+        minimal_contract(),
     );
     let (_source, stop_token) = StopSource::new();
 
@@ -668,6 +705,7 @@ async fn close_failure_does_not_erase_primary_failure() {
     .with_item_stream(
         ComponentStreamIdentity::new("stream").expect("valid namespace"),
         RecordingStream::new("stream", &trace).failing_close(),
+        minimal_contract(),
     );
     let (_source, stop_token) = StopSource::new();
 
@@ -704,6 +742,7 @@ async fn close_failure_does_not_erase_committed_chunks() {
     .with_item_stream(
         ComponentStreamIdentity::new("stream").expect("valid namespace"),
         RecordingStream::new("stream", &trace).failing_close(),
+        minimal_contract(),
     );
     let (_source, stop_token) = StopSource::new();
 
@@ -714,6 +753,135 @@ async fn close_failure_does_not_erase_committed_chunks() {
     assert_eq!(
         report.outcome(),
         ChunkExecutionOutcome::Failed(ChunkFailure::StreamClose)
+    );
+}
+
+/// Corrective-review evidence (PR #161, fix 4): a stream that returns a
+/// candidate envelope under a namespace other than its own registered
+/// identity is rejected before the candidate ever reaches the durable
+/// commit.
+#[tokio::test]
+async fn stream_update_namespace_mismatch_is_rejected() {
+    let trace = Trace::default();
+    let mut step = ChunkStep::new(
+        step_name(),
+        ChunkSize::new(10).expect("valid chunk size"),
+        Reader::new([1], &trace),
+        Processor {
+            trace: Arc::clone(&trace),
+        },
+        Writer {
+            boundary: Boundary::Normal,
+            trace: Arc::clone(&trace),
+        },
+        Arc::new(Transactions {
+            receipt: receipt(),
+            trace: Arc::clone(&trace),
+        }),
+        Arc::new(NoopCompletion),
+    )
+    .with_item_stream(
+        ComponentStreamIdentity::new("stream_a").expect("valid namespace"),
+        RecordingStream::new("a", &trace).returning_namespace("stream_b"),
+        minimal_contract(),
+    );
+    let (_source, stop_token) = StopSource::new();
+
+    let report = step.execute(&correlation(), &stop_token).await;
+
+    assert_eq!(
+        report.outcome(),
+        ChunkExecutionOutcome::Failed(ChunkFailure::StreamUpdate)
+    );
+}
+
+#[tokio::test]
+async fn stream_update_namespace_mismatch_does_not_commit_checkpoint() {
+    let trace = Trace::default();
+    let mut step = ChunkStep::new(
+        step_name(),
+        ChunkSize::new(10).expect("valid chunk size"),
+        Reader::new([1], &trace),
+        Processor {
+            trace: Arc::clone(&trace),
+        },
+        Writer {
+            boundary: Boundary::Normal,
+            trace: Arc::clone(&trace),
+        },
+        Arc::new(Transactions {
+            receipt: receipt(),
+            trace: Arc::clone(&trace),
+        }),
+        Arc::new(NoopCompletion),
+    )
+    .with_item_stream(
+        ComponentStreamIdentity::new("stream_a").expect("valid namespace"),
+        RecordingStream::new("a", &trace).returning_namespace("stream_b"),
+        minimal_contract(),
+    );
+    let (_source, stop_token) = StopSource::new();
+
+    let _report = step.execute(&correlation(), &stop_token).await;
+
+    let events = trace_of(&trace);
+    assert!(
+        !events.iter().any(|event| event == "transaction.commit"),
+        "a namespace-mismatched candidate must never reach the durable commit: {events:?}"
+    );
+    assert!(
+        events.iter().any(|event| event == "transaction.rollback"),
+        "a rejected update must roll back the open chunk: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn stream_update_namespace_mismatch_does_not_replace_other_stream_state() {
+    let trace = Trace::default();
+    let mut step = ChunkStep::new(
+        step_name(),
+        ChunkSize::new(10).expect("valid chunk size"),
+        Reader::new([1], &trace),
+        Processor {
+            trace: Arc::clone(&trace),
+        },
+        Writer {
+            boundary: Boundary::Normal,
+            trace: Arc::clone(&trace),
+        },
+        Arc::new(Transactions {
+            receipt: receipt(),
+            trace: Arc::clone(&trace),
+        }),
+        Arc::new(NoopCompletion),
+    )
+    .with_item_stream(
+        ComponentStreamIdentity::new("stream_b").expect("valid namespace"),
+        RecordingStream::new("b", &trace),
+        minimal_contract(),
+    )
+    .with_item_stream(
+        ComponentStreamIdentity::new("stream_a").expect("valid namespace"),
+        RecordingStream::new("a", &trace).returning_namespace("stream_b"),
+        minimal_contract(),
+    );
+    let (_source, stop_token) = StopSource::new();
+
+    let report = step.execute(&correlation(), &stop_token).await;
+
+    assert_eq!(
+        report.outcome(),
+        ChunkExecutionOutcome::Failed(ChunkFailure::StreamUpdate)
+    );
+    let events = trace_of(&trace);
+    assert!(
+        events.iter().any(|event| event == "b.update"),
+        "b's own update must still run before a's mismatch is detected: {events:?}"
+    );
+    assert!(
+        !events.iter().any(|event| event == "transaction.commit"),
+        "a's namespace-mismatched candidate must discard b's legitimate candidate too, \
+         never partially commit or let a overwrite b: {events:?}"
     );
 }
 
