@@ -173,6 +173,17 @@ fn current_codec() -> DefaultComponentCodec<CounterSchema> {
     full_codec(RestartabilityDeclaration::Restartable)
 }
 
+fn external_envelope(schema_version: u32, codec_version: u32) -> ComponentStateEnvelope {
+    ComponentStateEnvelope::external(
+        namespace(),
+        StateSchemaId::new("test.component.counter").expect("valid schema id"),
+        StateSchemaVersion::new(schema_version).expect("nonzero schema version"),
+        CodecId::new("test.codec.counter").expect("valid codec id"),
+        CodecVersion::new(codec_version).expect("nonzero codec version"),
+        ExternalStateReference::new(ContentIdentity::of(b"external-state"), 14),
+    )
+}
+
 /// Round-trips an envelope produced by an older codec version through
 /// [`ComponentStateEnvelope::from_durable`] paired with the current codec,
 /// simulating a durable row a real adapter would have read back unchanged.
@@ -634,6 +645,40 @@ fn external_state_reference_is_content_identified_and_bounded() {
     )
     .expect("external envelope reconstructs");
     assert!(reconstructed.is_external());
+}
+
+#[test]
+fn older_external_versions_fail_closed_before_open() {
+    let current = current_codec();
+    let schema_error = external_envelope(1, 2)
+        .validated_for_open(&current)
+        .expect_err("older external schema cannot migrate without resolution");
+    assert!(matches!(
+        schema_error,
+        ComponentStateError::ExternalSchemaMigrationUnsupported {
+            found: 1,
+            current: 2
+        }
+    ));
+
+    let codec_error = external_envelope(2, 1)
+        .validated_for_open(&current)
+        .expect_err("older external codec cannot migrate without resolution");
+    assert!(matches!(
+        codec_error,
+        ComponentStateError::ExternalCodecMigrationUnsupported {
+            found: 1,
+            current: 2
+        }
+    ));
+
+    let current_external = external_envelope(2, 2);
+    assert_eq!(
+        current_external
+            .validated_for_open(&current)
+            .expect("current external versions are accepted"),
+        current_external
+    );
 }
 
 #[test]
