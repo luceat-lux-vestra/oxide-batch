@@ -45,7 +45,10 @@
 mod clock;
 mod defaults;
 mod ids;
+pub mod inject;
 mod job;
+#[cfg(feature = "postgres")]
+pub mod postgres;
 mod repository;
 mod scope;
 mod step;
