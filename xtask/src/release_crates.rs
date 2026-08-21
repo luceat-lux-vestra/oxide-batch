@@ -37,7 +37,7 @@ const RELEASE_WORKFLOW: &str = ".github/workflows/release.yml";
 /// that recovery path the next time the accepted set grows. This constant
 /// lets the check below confirm the dynamic derivation is still present
 /// rather than having quietly reverted to a hardcoded list.
-const DYNAMIC_RELEASE_SET_FILTER: &str = r#"select((.publish // []) | length > 0)"#;
+const DYNAMIC_RELEASE_SET_FILTER: &str = r"select((.publish // []) | length > 0)";
 
 /// The accepted release order, per RFC-0011's "Version and release coupling".
 const EXPECTED_RELEASED_CRATES: &[&str] = &[
