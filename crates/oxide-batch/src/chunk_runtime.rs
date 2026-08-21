@@ -1251,8 +1251,18 @@ where
     )
     .await
     {
-        Ok(value) => value,
-        Err(outcome) => return ExecutionState::new().report(outcome, None),
+        StreamOpenPhaseResult::Opened { progress, streams } => (progress, streams),
+        StreamOpenPhaseResult::Failed {
+            outcome,
+            close_failed,
+        } => {
+            let report = ExecutionState::new().report(outcome, None);
+            return if close_failed {
+                report.with_stream_close_failure()
+            } else {
+                report
+            };
+        }
     };
     let base_ordinal = inherited.read_ordinal();
     let state = ExecutionState::inheriting(inherited.fault());
@@ -1296,17 +1306,24 @@ async fn close_opened_streams(
         ChunkExecutionOutcome::Failed(_) => StreamRuntimeOutcome::Failed,
     };
     let context = StreamCloseContext::new(stop, runtime_outcome);
-    let mut close_failed = false;
-    for stream in opened.iter().rev() {
-        if stream.close(context).await.is_err() {
-            close_failed = true;
-        }
-    }
+    let close_failed = close_streams(opened, context).await;
     if close_failed {
         report.with_stream_close_failure()
     } else {
         report
     }
+}
+
+/// Closes already-opened streams in reverse successful-open order, continuing
+/// after an individual close failure so every cleanup call is attempted.
+async fn close_streams(streams: &[Arc<BoxedStream>], context: StreamCloseContext<'_>) -> bool {
+    let mut close_failed = false;
+    for stream in streams.iter().rev() {
+        if stream.close(context).await.is_err() {
+            close_failed = true;
+        }
+    }
+    close_failed
 }
 
 /// Drives one step attempt's per-chunk loop to its terminal
@@ -1590,6 +1607,17 @@ where
 /// A standalone chunk step has no repository execution and inherits nothing. A
 /// repository-backed step fails closed rather than restarting a bounded policy
 /// limit from zero or deriving retry keys from the wrong checkpoint.
+enum StreamOpenPhaseResult {
+    Opened {
+        progress: InheritedStepProgress,
+        streams: Vec<Arc<BoxedStream>>,
+    },
+    Failed {
+        outcome: ChunkExecutionOutcome,
+        close_failed: bool,
+    },
+}
+
 async fn inherited_progress(
     transactions: &dyn ChunkTransactionManager,
     fault: Option<&FaultRuntime>,
@@ -1600,13 +1628,18 @@ async fn inherited_progress(
         StreamStateContract,
     )],
     stop: &StopToken,
-) -> Result<(InheritedStepProgress, Vec<Arc<BoxedStream>>), ChunkExecutionOutcome> {
+) -> StreamOpenPhaseResult {
     let inherited_state = match context {
         None => Vec::new(),
         Some(_) if streams.is_empty() => Vec::new(),
         Some(context) => match transactions.inherited_component_state(context).await {
             Ok(state) => state,
-            Err(_) => return Err(ChunkExecutionOutcome::Failed(ChunkFailure::StreamOpen)),
+            Err(_) => {
+                return StreamOpenPhaseResult::Failed {
+                    outcome: ChunkExecutionOutcome::Failed(ChunkFailure::StreamOpen),
+                    close_failed: false,
+                };
+            }
         },
     };
 
@@ -1616,17 +1649,28 @@ async fn inherited_progress(
             if let Some(fault) = fault
                 && fault.state().bind(context).await.is_err()
             {
-                return Err(ChunkExecutionOutcome::Failed(ChunkFailure::FaultState));
+                return StreamOpenPhaseResult::Failed {
+                    outcome: ChunkExecutionOutcome::Failed(ChunkFailure::FaultState),
+                    close_failed: false,
+                };
             }
             match transactions.inherited_progress(context).await {
                 Ok(inherited) => inherited,
                 Err(ChunkTransactionError::CommitOutcomeUnknown) => {
-                    return Err(ChunkExecutionOutcome::Unknown);
+                    return StreamOpenPhaseResult::Failed {
+                        outcome: ChunkExecutionOutcome::Unknown,
+                        close_failed: false,
+                    };
                 }
                 Err(
                     ChunkTransactionError::NotCommitted
                     | ChunkTransactionError::ComponentStateUnsupported,
-                ) => return Err(ChunkExecutionOutcome::Failed(ChunkFailure::FaultState)),
+                ) => {
+                    return StreamOpenPhaseResult::Failed {
+                        outcome: ChunkExecutionOutcome::Failed(ChunkFailure::FaultState),
+                        close_failed: false,
+                    };
+                }
             }
         }
     };
@@ -1646,10 +1690,11 @@ async fn inherited_progress(
             Some(Ok(migrated)) => Some(migrated),
             Some(Err(_)) => {
                 let close_context = StreamCloseContext::new(stop, StreamRuntimeOutcome::Failed);
-                for opened_stream in opened.iter().rev() {
-                    let _ = opened_stream.close(close_context).await;
-                }
-                return Err(ChunkExecutionOutcome::Failed(ChunkFailure::StreamOpen));
+                let close_failed = close_streams(&opened, close_context).await;
+                return StreamOpenPhaseResult::Failed {
+                    outcome: ChunkExecutionOutcome::Failed(ChunkFailure::StreamOpen),
+                    close_failed,
+                };
             }
         };
         let open_context = StreamOpenContext::new(validated.as_ref(), stop);
@@ -1657,13 +1702,17 @@ async fn inherited_progress(
             opened.push(Arc::clone(stream));
         } else {
             let close_context = StreamCloseContext::new(stop, StreamRuntimeOutcome::Failed);
-            for opened_stream in opened.iter().rev() {
-                let _ = opened_stream.close(close_context).await;
-            }
-            return Err(ChunkExecutionOutcome::Failed(ChunkFailure::StreamOpen));
+            let close_failed = close_streams(&opened, close_context).await;
+            return StreamOpenPhaseResult::Failed {
+                outcome: ChunkExecutionOutcome::Failed(ChunkFailure::StreamOpen),
+                close_failed,
+            };
         }
     }
-    Ok((progress, opened))
+    StreamOpenPhaseResult::Opened {
+        progress,
+        streams: opened,
+    }
 }
 
 /// Counts one rolled-back attempt and runs its after-chunk listeners.
