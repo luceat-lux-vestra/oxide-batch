@@ -847,14 +847,16 @@ impl ComponentStateEnvelope {
     /// [`crate::ItemStream::open`](../oxide_batch/trait.ItemStream.html#tymethod.open)
     /// ever runs, so an unknown/newer schema or codec, or a migration
     /// failure, is rejected before any application code sees the envelope.
-    /// An external-reference payload has no inline bytes to migrate and is
-    /// returned unchanged; the caller resolves and decodes it directly.
+    /// An external-reference payload has no inline bytes to migrate. Current
+    /// schema and codec versions are accepted; older external versions fail
+    /// closed until a resolution/migration capability exists.
     ///
     /// # Errors
     ///
-    /// Returns the same redacted identity, compatibility, or migration
-    /// failure [`Self::decode`] would, without invoking the codec's own
-    /// decode step.
+    /// Returns a redacted identity, compatibility, or migration failure
+    /// without invoking the codec's own decode step. Older external schema or
+    /// codec versions report that external migration is unsupported because
+    /// this method cannot resolve their out-of-band bytes.
     pub fn validated_for_open<T>(
         &self,
         codec: &(impl ComponentStateCodec<T> + ?Sized),
@@ -878,6 +880,21 @@ impl ComponentStateEnvelope {
                 found: self.codec_version.get(),
                 current: current_codec.get(),
             });
+        }
+        if matches!(self.payload, StoredPayload::External(_)) {
+            if self.schema_version < current_schema {
+                return Err(ComponentStateError::ExternalSchemaMigrationUnsupported {
+                    found: self.schema_version.get(),
+                    current: current_schema.get(),
+                });
+            }
+            if self.codec_version < current_codec {
+                return Err(ComponentStateError::ExternalCodecMigrationUnsupported {
+                    found: self.codec_version.get(),
+                    current: current_codec.get(),
+                });
+            }
+            return Ok(self.clone());
         }
         let Self {
             payload: StoredPayload::Inline(bytes),
@@ -1346,6 +1363,22 @@ pub enum ComponentStateError {
         /// Current version supported by the selected codec.
         current: u32,
     },
+    /// An older external payload cannot be migrated without resolving its
+    /// out-of-band bytes.
+    ExternalSchemaMigrationUnsupported {
+        /// Version recorded in the external envelope.
+        found: u32,
+        /// Current version supported by the selected codec.
+        current: u32,
+    },
+    /// An older external payload cannot be migrated without resolving its
+    /// out-of-band bytes.
+    ExternalCodecMigrationUnsupported {
+        /// Version recorded in the external envelope.
+        found: u32,
+        /// Current version supported by the selected codec.
+        current: u32,
+    },
     /// The codec declares no directed codec-version upgrade reaching its
     /// current version.
     NoCodecUpgradePath {
@@ -1446,6 +1479,12 @@ impl fmt::Display for ComponentStateError {
             Self::UnknownCodec => formatter.write_str("component state codec is unknown"),
             Self::UnsupportedCodecVersion { .. } => {
                 formatter.write_str("component state codec version is unsupported")
+            }
+            Self::ExternalSchemaMigrationUnsupported { .. } => {
+                formatter.write_str("external component state schema migration is unsupported")
+            }
+            Self::ExternalCodecMigrationUnsupported { .. } => {
+                formatter.write_str("external component state codec migration is unsupported")
             }
             Self::NoCodecUpgradePath { .. } => {
                 formatter.write_str("component state codec version has no upgrade path")
