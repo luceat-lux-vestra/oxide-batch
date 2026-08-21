@@ -782,6 +782,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxide-batch-test"
+version = "0.5.0"
+dependencies = [
+ "futures-executor",
+ "oxide-batch",
+ "tokio",
+]
+
+[[package]]
 name = "oxide-batch-xtask"
 version = "0.0.0"
 dependencies = [
