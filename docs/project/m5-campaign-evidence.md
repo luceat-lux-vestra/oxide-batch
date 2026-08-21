@@ -205,8 +205,20 @@ concurrently-landed P-010 fix (#159) that touched two other campaigns'
 closures — is recorded in `evidence-provenance.json`'s
 `remote_verification.note` for each entry.
 
-This supersedes the fifth retention (PR #133, below) and three earlier
-retentions on this same branch, all recorded in full in
+**Seventh retention: PR #163.** The ItemStream state-contract corrective
+changed `crates/oxide-batch-core/src`, `crates/oxide-batch/src`, and the
+conformance chunk-runtime fixture within declared M5 semantic closures,
+invalidating all sixteen previously retained reports under `cargo xtask
+evidence`. Fresh successful runs were retained byte-for-byte: soak
+`32501513869`, cancellation `32501513886`, performance `32501513902`,
+conformance `32501514196`, crash-and-restore `32501514007`, upgrade
+`32501514162`, security `32501514145`, and resource bounds `32501514076`.
+Those reports executed against tree `a769877f62433953c4b9d0d5c3de37dd0c222448`
+from branch head `c9bc46535117025aadd27ca39668da8e9a5ec848`; the execution
+tree and branch head remain separate provenance values.
+
+This supersedes the sixth retention (PR #160) and all earlier retentions on
+this same branch, all recorded in full in
 `evidence-provenance.json`'s `remote_verification.note` history: run
 31749761115 (F37's execution-envelope narrowing itself, which changed the
 campaign's selected-target and test counts), run 31777568454 (a follow-up fix
