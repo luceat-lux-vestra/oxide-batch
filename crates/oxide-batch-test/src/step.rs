@@ -7,7 +7,7 @@ use oxide_batch::{
     ChunkCompletion, ChunkExecutionReport, ChunkListener, ChunkSize, ChunkStep,
     ChunkTransactionManager, ComponentStreamIdentity, ExecutionAttempt, ExecutionCorrelation,
     ItemListenerSet, ItemProcessor, ItemReader, ItemStream, ItemWriter, JobName,
-    StepExecutionListener, StepName, StopToken, StopSource, StreamStateContract,
+    StepExecutionListener, StepName, StopSource, StopToken, StreamStateContract,
 };
 
 use crate::DeterministicIds;
@@ -140,7 +140,15 @@ where
     ) -> Self {
         let ids = DeterministicIds::new(NonZeroU64::MIN);
         let correlation = default_correlation(&name, &ids);
-        let inner = ChunkStep::new(name, size, reader, processor, writer, transactions, completion);
+        let inner = ChunkStep::new(
+            name,
+            size,
+            reader,
+            processor,
+            writer,
+            transactions,
+            completion,
+        );
         Self {
             inner,
             correlation,

@@ -4,9 +4,8 @@ use std::num::NonZeroU64;
 use std::time::SystemTime;
 
 use oxide_batch::{
-    ComponentStateEnvelope, ProcessContext, ReadContext, StopSource, StopToken,
-    StreamCloseContext, StreamOpenContext, StreamRuntimeOutcome, StreamUpdateContext,
-    WriteContext,
+    ComponentStateEnvelope, ProcessContext, ReadContext, StopSource, StopToken, StreamCloseContext,
+    StreamOpenContext, StreamRuntimeOutcome, StreamUpdateContext, WriteContext,
 };
 
 use crate::{DeterministicIds, ManualClock};
@@ -128,7 +127,10 @@ impl ComponentFixture {
     /// Constructs a stream-close call scope with an explicit terminal
     /// outcome.
     #[must_use]
-    pub const fn stream_close_context(&self, outcome: StreamRuntimeOutcome) -> StreamCloseContext<'_> {
+    pub const fn stream_close_context(
+        &self,
+        outcome: StreamRuntimeOutcome,
+    ) -> StreamCloseContext<'_> {
         StreamCloseContext::new(&self.stop_token, outcome)
     }
 }

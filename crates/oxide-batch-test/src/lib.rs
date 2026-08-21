@@ -43,13 +43,21 @@
 //! database-driver concrete type in its public API.
 
 mod clock;
+mod defaults;
 mod ids;
+mod job;
+mod repository;
 mod scope;
 mod step;
 mod transactions;
 
 pub use clock::{ManualClock, ManualClockError};
+pub use defaults::{
+    chunk_component_revisions_with_delivery_mode, default_chunk_component_revisions,
+};
 pub use ids::{DeterministicIds, IdSequenceError};
+pub use job::TestJob;
+pub use repository::EmbeddedRepository;
 pub use scope::ComponentFixture;
 pub use step::TestStep;
 pub use transactions::{NoCompletion, StandaloneTransaction, StandaloneTransactions};
