@@ -98,17 +98,37 @@ consumed by application test code — and the two must not be conflated:
   API;
 - its MSRV matches the project line; in M6 it shares `oxide-batch`'s release
   line/version cadence with no independent stability promise;
-- the no-placeholder-crate rule applies: `crates/oxide-batch-test/` is
-  created only when it ships a first usable utility with tests, in
-  [#145](https://github.com/luceat-lux-vestra/oxide-batch/issues/145), not
-  reserved ahead of that.
+- the no-placeholder-crate rule applied: `crates/oxide-batch-test/` was
+  created in
+  [#145](https://github.com/luceat-lux-vestra/oxide-batch/issues/145)
+  alongside its first usable utilities and tests, not reserved ahead of
+  that.
 
 The public test-kit target boundary carries over the same determinism,
 failure-injection, and process-restart principles the internal harness
-already uses: full-job harness, single-step harness, scoped-component
-harness, deterministic clock, deterministic ID source, failure injection,
-panic injection, cooperative-stop injection, restart harness, and repository
-fixture/cleanup support.
+already uses: full-job harness ([`TestJob`]), single-step harness
+([`TestStep`]), scoped-component harness ([`ComponentFixture`]),
+deterministic clock/ID source ([`ManualClock`]/[`DeterministicIds`]),
+failure/panic/cooperative-stop injection ([`oxide_batch_test::inject`]), a
+restart harness (a paired resumable `ItemReader`/`ItemStream` in
+[`oxide_batch_test::restart`], reusing the real launch/restart path rather
+than reimplementing it), a bounded worker-process crash fixture
+([`oxide_batch_test::process`]), and repository fixture/cleanup support
+(embedded [`EmbeddedRepository`], and `PostgreSQL`
+[`PostgresFixture`][postgres-fixture] behind the `postgres` feature). Its
+own crate documentation is the canonical usage reference; see the M6 exit
+record for the cross-consumer closure that remains outstanding until a
+later M6 component issue (#146+) adopts the kit as its own test harness.
+
+[`TestJob`]: https://docs.rs/oxide-batch-test/latest/oxide_batch_test/struct.TestJob.html
+[`TestStep`]: https://docs.rs/oxide-batch-test/latest/oxide_batch_test/struct.TestStep.html
+[`ComponentFixture`]: https://docs.rs/oxide-batch-test/latest/oxide_batch_test/struct.ComponentFixture.html
+[`ManualClock`]: https://docs.rs/oxide-batch-test/latest/oxide_batch_test/struct.ManualClock.html
+[`DeterministicIds`]: https://docs.rs/oxide-batch-test/latest/oxide_batch_test/struct.DeterministicIds.html
+[`oxide_batch_test::inject`]: https://docs.rs/oxide-batch-test/latest/oxide_batch_test/inject/index.html
+[`oxide_batch_test::restart`]: https://docs.rs/oxide-batch-test/latest/oxide_batch_test/restart/index.html
+[`oxide_batch_test::process`]: https://docs.rs/oxide-batch-test/latest/oxide_batch_test/process/index.html
+[postgres-fixture]: https://docs.rs/oxide-batch-test/latest/oxide_batch_test/postgres/struct.PostgresFixture.html
 
 ## Quality gates by milestone
 
