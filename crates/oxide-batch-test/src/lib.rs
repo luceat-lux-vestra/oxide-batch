@@ -49,7 +49,9 @@ pub mod inject;
 mod job;
 #[cfg(feature = "postgres")]
 pub mod postgres;
+pub mod process;
 mod repository;
+pub mod restart;
 mod scope;
 mod step;
 mod transactions;

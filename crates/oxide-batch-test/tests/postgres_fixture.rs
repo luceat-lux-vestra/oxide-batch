@@ -73,7 +73,10 @@ async fn repository_fixture_cleans_up_isolated_metadata() -> Result<(), Box<dyn 
     let clock = ManualClock::new(SystemTime::UNIX_EPOCH);
     let fixture = PostgresFixture::connect_with_clock(url, clock.clone()).await?;
 
-    let job_name = JobName::new("oxide_batch_test_fixture_cleanup")?;
+    let nonce = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)?
+        .as_nanos();
+    let job_name = JobName::new(format!("oxide_batch_test_fixture_cleanup_{nonce}"))?;
     let step = ChunkStep::new(
         StepName::new("load")?,
         ChunkSize::new(1)?,
