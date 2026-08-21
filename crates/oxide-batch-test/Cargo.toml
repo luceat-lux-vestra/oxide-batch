@@ -1,0 +1,33 @@
+[package]
+name = "oxide-batch-test"
+description = "Application-facing test kit for OxideBatch: deterministic clocks/IDs, job/step/component harnesses, failure injection, and a restart harness"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["batch", "testing", "harness", "restartable"]
+categories = ["asynchronous", "development-tools::testing"]
+publish = ["crates-io"]
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = []
+postgres = ["oxide-batch/postgres"]
+
+[dependencies]
+oxide-batch = { path = "../oxide-batch", version = "=0.5.0" }
+
+[dev-dependencies]
+futures-executor = "0.3.31"
+tokio = { version = "1.53.1", features = ["macros", "rt"] }
+
+[[example]]
+name = "restart"
+required-features = ["postgres"]

@@ -39,18 +39,27 @@ jobs:
       # checksum, and attestation.
       - name: Verify tag and package
         id: package
-        env:
-          RELEASED_CRATES: oxide-batch-core oxide-batch-repository oxide-batch-plan oxide-batch oxide-batch-cli
         run: |
           set -euo pipefail
           package_version="$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[] | select(.name == "oxide-batch") | .version')"
           test "v${package_version}" = "${RELEASE_TAG}"
+
+          # Derived from the checked-out tag's own manifests rather than a
+          # hardcoded list, so this works unchanged for an older tag that
+          # predates a later-added released crate (e.g. v0.5.0, which
+          # predates oxide-batch-test) as well as the current tag.
+          RELEASED_CRATES="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select((.publish // []) | length > 0) | .name' \
+            | tr '\n' ' ')"
+
           published=""
           for crate in ${RELEASED_CRATES}; do
             published="${published} --package ${crate}"
           done
+          # shellcheck disable=SC2086
           cargo package ${published} --locked
+          # shellcheck disable=SC2086
           cargo publish ${published} --locked --dry-run
           crate_paths=""
           for crate in ${RELEASED_CRATES}; do
@@ -72,9 +81,15 @@ jobs:
         id: evidence
         env:
           PACKAGE_VERSION: ${{ steps.package.outputs.version }}
-          RELEASED_CRATES: oxide-batch-core oxide-batch-repository oxide-batch-plan oxide-batch oxide-batch-cli
         run: |
           set -euo pipefail
+
+          # Derived from the checked-out tag's own manifests; see "Verify
+          # tag and package" above for why this must not be a hardcoded list.
+          RELEASED_CRATES="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select((.publish // []) | length > 0) | .name' \
+            | tr '\n' ' ')"
+
           sbom_paths=""
           artifacts=""
           for crate in ${RELEASED_CRATES}; do

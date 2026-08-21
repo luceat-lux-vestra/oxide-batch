@@ -5,6 +5,7 @@ members = [
     "crates/oxide-batch-repository",
     "crates/oxide-batch-plan",
     "crates/oxide-batch-cli",
+    "crates/oxide-batch-test",
     "spikes/m0-architecture",
     "spikes/m6-item-hot-path",
     "xtask",
