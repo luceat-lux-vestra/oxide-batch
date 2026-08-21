@@ -3848,6 +3848,18 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                     &executions,
                 )
                 .await?;
+            // `ob_component_state` (M6 #144) references `ob_step_execution` with
+            // `ON DELETE RESTRICT`, the same as `ob_step_partition` above: a
+            // purged step execution's committed `ItemStream` state is deleted
+            // with it rather than left as an orphaned reference the schema would
+            // otherwise refuse to create by deleting the step execution first.
+            self.purge_delete(
+                "DELETE FROM oxide_batch.ob_component_state WHERE step_execution_id IN ( \
+                 SELECT id FROM oxide_batch.ob_step_execution \
+                 WHERE job_execution_id = ANY($1))",
+                &executions,
+            )
+            .await?;
             let step_executions = self
                 .purge_delete(
                     "DELETE FROM oxide_batch.ob_step_execution WHERE job_execution_id = ANY($1)",

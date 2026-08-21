@@ -1340,13 +1340,13 @@ mod tests {
             },
             classes: vec![
                 class("migration", 2, 4),
-                class("runtime", 2, 8),
-                class("explorer", 1, 6),
-                class("operator", 2, 6),
-                class("retention", 3, 6),
+                class("runtime", 3, 8),
+                class("explorer", 1, 7),
+                class("operator", 2, 7),
+                class("retention", 3, 7),
             ],
             class_document: Value::Null,
-            role_matrix_total_cells: 40,
+            role_matrix_total_cells: 44,
             role_matrix_cells: role_matrix_cells(),
             redaction: Redaction {
                 report: "redaction-sweep".to_owned(),
@@ -1654,7 +1654,7 @@ mod tests {
             .cloned()
             .expect("an explorer forbidden cell");
         // Drop a different explorer-forbidden cell, then duplicate the first
-        // one, so the total count stays 40 and only the identity is wrong.
+        // one, so the total count is unchanged and only the identity is wrong.
         let index = matrix
             .iter()
             .rposition(|cell| {
@@ -1781,7 +1781,7 @@ mod tests {
             "error_class": "42501",
         }));
 
-        let total_before = 40;
+        let total_before = 44;
         assert_eq!(
             matrix.len(),
             total_before,

@@ -1,29 +1,40 @@
-//! A schema-2 runtime meeting a database that has been upgraded to schema 3.
+//! Historical runtimes meeting a database newer than they support.
 //!
 //! This is the situation the M5 upgrade contract is really about. An operator
-//! upgrades the metadata schema while instances of the previous release are
+//! upgrades the metadata schema while instances of a previous release are
 //! still running, or rolls a deployment back after the migrator has already
 //! moved forward. What must not happen then is an old runtime working on a
 //! database it does not understand: guessing that the extra structure is
-//! compatible, ignoring it, or migrating it downwards to a shape it recognizes.
-//! It must refuse, and refuse without writing.
+//! compatible, ignoring it, or migrating it downward to a shape it
+//! recognizes. It must refuse, and refuse without writing.
 //!
-//! The runtime that does the refusing here is a real one. Its supported schema
-//! version is `2`, which no build of this working tree can report, so the
-//! report checks out the last revision before schema 3 was added, builds it,
-//! and runs the campaign's committed probe program against a database this
-//! crate's own migrator has just upgraded to schema 3. Both of that runtime's
-//! entry points are asked — the repository, which is what a running instance
-//! opens, and the migrator, which is what a rolled-back deployment step runs.
+//! The M5 preview's original claim was about one runtime: the one that
+//! shipped against schema 2, meeting the schema 3 that was current when M5
+//! wrote it. M6 `#144` then added schema 4, so this report now builds *two*
+//! real historical runtimes rather than one — the last revision before schema
+//! 3 was added, and the last revision before schema 4 was added — and points
+//! both at the same database, upgraded by the current migrator to the current
+//! schema. That single database is newer than either historical runtime
+//! supports, so it exercises both edges the M6 addition created at once: a
+//! schema-2 runtime meeting something newer than 2 (the M5 preview's original
+//! claim, still true), and a schema-3 runtime meeting something newer than 3
+//! (the edge M6 added). Neither build is possible from this working tree: the
+//! supported schema version is a constant of the crate, so the report checks
+//! out each historical revision, builds it, and runs the campaign's committed
+//! probe program for that revision against the upgraded database.
+//!
+//! Both of each runtime's entry points are asked — the repository, which is
+//! what a running instance opens, and the migrator, which is what a
+//! rolled-back deployment step runs.
 //!
 //! The workspace already has a lower-level regression test for the same
 //! invariant: `postgres_repository::newer_schema_is_rejected_without_guessing_compatibility`
 //! moves the recorded version one past whatever this runtime supports and
 //! requires the typed rejection. That test is kept and is not this report. It
-//! proves the comparison is wired up; it does not prove that the runtime which
-//! shipped against schema 2 refuses the schema 3 this crate now installs,
-//! because it runs the current runtime against a version number rather than a
-//! previous runtime against a real database.
+//! proves the comparison is wired up; it does not prove that a runtime which
+//! shipped against an older schema refuses the current one this crate
+//! installs, because it runs the current runtime against a version number
+//! rather than a previous runtime against a real database.
 
 #![cfg(feature = "postgres")]
 
@@ -40,20 +51,43 @@ use upgrade::{
     DurableDigest, Failure, FixedClock, ProbeRun, SourceColumns, admin_url, apply_seed,
     assert_historical_shape, config, durable_tables, execution_manifest, fixtures,
     install_historical_schema, major_version, migrator_url, read_through_port, recreate_database,
-    retain_observation, run_schema2_runtime, schema_version, server_version, with_database,
+    retain_observation, run_schema2_runtime, run_schema3_runtime, schema_version, server_version,
+    with_database,
 };
 
-/// The schema the rejected runtime supports.
-const RUNTIME_SCHEMA_VERSION: u64 = 2;
+/// The schema the database is seeded at before it is upgraded.
+const SEED_SCHEMA_VERSION: u32 = 2;
 
-/// The schema the database is upgraded to before the runtime is pointed at it.
-const DATABASE_SCHEMA_VERSION: u32 = 3;
-
-/// The database the report builds, upgrades, and offers to the old runtime.
+/// The database the report builds, upgrades, and offers to both historical
+/// runtimes.
 const DATABASE: &str = "oxide_batch_m5_upgrade_rejection";
 
+/// One historical runtime this report builds and offers the upgraded database.
+struct HistoricalRuntime {
+    /// The schema version that runtime supports.
+    supported_schema_version: u64,
+    /// Runs the pinned worktree's probe program against `target`.
+    run: fn(&str) -> Result<ProbeRun, Box<dyn Error>>,
+    /// The committed probe fixture, named for the retained observation.
+    probe_path: &'static str,
+}
+
+/// The historical runtimes this report builds, oldest first.
+const HISTORICAL_RUNTIMES: &[HistoricalRuntime] = &[
+    HistoricalRuntime {
+        supported_schema_version: 2,
+        run: run_schema2_runtime,
+        probe_path: "tests/fixtures/upgrade/schema-2-runtime/probe.rs",
+    },
+    HistoricalRuntime {
+        supported_schema_version: 3,
+        run: run_schema3_runtime,
+        probe_path: "tests/fixtures/upgrade/schema-3-runtime/probe.rs",
+    },
+];
+
 #[test]
-fn schema2_runtime_rejects_schema3() -> Result<(), Box<dyn Error>> {
+fn historical_runtimes_reject_the_current_schema() -> Result<(), Box<dyn Error>> {
     let Some(migrator) = migrator_url() else {
         eprintln!("skipped: OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL is not set");
         return Ok(());
@@ -69,81 +103,51 @@ fn schema2_runtime_rejects_schema3() -> Result<(), Box<dyn Error>> {
         .block_on(run_report(&migrator, &admin))
 }
 
-/// Upgrades a schema-2 database to schema 3 and offers it to a schema-2 runtime.
+/// Upgrades a schema-2 database to the current schema and offers it to every
+/// historical runtime this report builds.
 #[allow(
     clippy::too_many_lines,
-    reason = "building a schema-2 database, upgrading it, building the runtime that shipped \
-              against schema 2, and requiring it to refuse without writing form one report that \
-              is only meaningful in order"
+    reason = "building a schema-2 database, upgrading it, building each historical runtime, and \
+              requiring every one of them to refuse without writing form one report that is only \
+              meaningful in order"
 )]
 async fn run_report(migrator: &str, admin: &str) -> Result<(), Box<dyn Error>> {
     let url = with_database(migrator, DATABASE)?;
     recreate_database(admin, DATABASE).await?;
 
-    // The database reaches schema 3 the way an operator's does: it starts at
-    // schema 2 with durable state on it and is upgraded. A database created at
-    // schema 3 would be a weaker fixture, because the rejection this report is
-    // about happens to databases that were something else first.
-    install_historical_schema(&url, RUNTIME_SCHEMA_VERSION.try_into()?).await?;
-    assert_historical_shape(&url, RUNTIME_SCHEMA_VERSION.try_into()?).await?;
-    apply_seed(&url, &fixtures().join("schema-2").join("seed.sql")).await?;
+    // The database reaches the current schema the way an operator's does: it
+    // starts at schema 2 with durable state on it and is upgraded. A database
+    // created at the current schema directly would be a weaker fixture,
+    // because the rejection this report is about happens to databases that
+    // were something else first.
+    install_historical_schema(&url, SEED_SCHEMA_VERSION).await?;
+    assert_historical_shape(&url, SEED_SCHEMA_VERSION).await?;
+    apply_seed(
+        &url,
+        &fixtures()
+            .join(format!("schema-{SEED_SCHEMA_VERSION}"))
+            .join("seed.sql"),
+    )
+    .await?;
 
     PostgresMigrator::migrate(&config(url.clone())?).await?;
+    let current = PostgresMigrator::supported_schema_version();
     let installed = schema_version(&url).await?;
     assert_eq!(
         installed,
-        Some(DATABASE_SCHEMA_VERSION),
-        "the report offers a schema-{DATABASE_SCHEMA_VERSION} database and this one is not",
+        Some(current),
+        "the report offers the current schema and this database is not at it",
     );
-    assert_historical_shape(&url, DATABASE_SCHEMA_VERSION).await?;
+    assert_historical_shape(&url, current).await?;
 
-    let tables = durable_tables(DATABASE_SCHEMA_VERSION);
+    let tables = durable_tables(current);
     let columns = SourceColumns::capture(&url, &tables).await?;
     let before = DurableDigest::read(&url, &columns, &tables).await?;
     let applied_before = applied_migrations(&url).await?;
 
-    // The reading that only a real schema-2 runtime can produce.
-    let probe = run_schema2_runtime(&url)?;
-    let observed = probe_report(&probe)?;
-
-    assert!(
-        probe.exit_success,
-        "the schema-2 runtime did not fail closed on a schema-{DATABASE_SCHEMA_VERSION} \
-         database: {}",
-        probe.report,
-    );
-    assert_eq!(
-        observed.supported, RUNTIME_SCHEMA_VERSION,
-        "the report is about a runtime that supports schema {RUNTIME_SCHEMA_VERSION}, and the \
-         one that ran reports {}",
-        observed.supported,
-    );
-    for (entry, attempt) in [
-        (&observed.repository_open, "repository startup"),
-        (&observed.migrator_run, "the migrator"),
-    ] {
-        assert!(
-            !entry.accepted,
-            "{attempt} on the schema-2 runtime accepted a schema-{DATABASE_SCHEMA_VERSION} \
-             database",
-        );
-        assert_eq!(
-            entry.error.as_deref(),
-            Some("NewerSchema"),
-            "{attempt} on the schema-2 runtime must refuse with the typed newer-schema failure \
-             rather than any other error, which would refuse for a reason that is not the \
-             contract",
-        );
-        assert_eq!(
-            entry.observed,
-            Some(u64::from(DATABASE_SCHEMA_VERSION)),
-            "{attempt} must report the schema version it actually found",
-        );
-        assert_eq!(
-            entry.supported,
-            Some(RUNTIME_SCHEMA_VERSION),
-            "{attempt} must report the schema version that runtime supports",
-        );
+    let mut paths = Vec::new();
+    for runtime in HISTORICAL_RUNTIMES {
+        paths.push(offer_to_historical_runtime(runtime, &url, current)?);
     }
 
     // Refusing is only half the contract. A runtime that rejected the database
@@ -154,28 +158,29 @@ async fn run_report(migrator: &str, admin: &str) -> Result<(), Box<dyn Error>> {
     assert_eq!(
         before.differences(&after),
         Vec::<String>::new(),
-        "the schema-2 runtime changed durable state while refusing the database",
+        "a historical runtime changed durable state while refusing the database",
     );
     assert_eq!(
         schema_version(&url).await?,
-        Some(DATABASE_SCHEMA_VERSION),
-        "the schema-2 runtime changed the recorded schema version while refusing the database",
+        Some(current),
+        "a historical runtime changed the recorded schema version while refusing the database",
     );
     assert_eq!(
         applied_migrations(&url).await?,
         applied_before,
-        "the schema-2 runtime applied or removed a migration while refusing the database",
+        "a historical runtime applied or removed a migration while refusing the database",
     );
 
     // The database is still the one the current runtime works with, which is
-    // what makes the refusal non-destructive rather than merely unsuccessful.
+    // what makes every refusal non-destructive rather than merely
+    // unsuccessful.
     let repository =
         PostgresJobRepository::connect(config(url.clone())?, Arc::new(FixedClock(UNIX_EPOCH)))
             .await?;
     let reading = read_through_port(&repository).await?;
     assert!(
         reading.instance.is_some(),
-        "the current runtime must still open and project the database the schema-2 runtime \
+        "the current runtime must still open and project the database every historical runtime \
          refused",
     );
     repository.close().await?;
@@ -184,38 +189,21 @@ async fn run_report(migrator: &str, admin: &str) -> Result<(), Box<dyn Error>> {
     retain_observation(
         "schema-rejection",
         &json!({
-            "report": "a schema-2 runtime refusing a schema-3 database",
-            "scenario": "schema2_runtime_rejects_schema3",
+            "report": "historical runtimes refusing the current schema",
+            "scenario": "historical_runtimes_reject_the_current_schema",
             "fixture": "postgres-upgrade",
             "server_version": server,
             "postgres_major_version": major_version(&server),
-            "paths": [{
-                "source_schema_version": RUNTIME_SCHEMA_VERSION,
-                "target_schema_version": DATABASE_SCHEMA_VERSION,
-                "migration_result": "ok",
-                "repository_open_result": "refused: NewerSchema",
-                "durable_state_verified": true,
-                "backup_restore_result": Value::Null,
-                "observed_schema_version": installed,
-                "database": DATABASE,
-                "reached_schema_3_by":
-                    "upgrading a seeded schema-2 database with this crate's migrator",
-                "runtime": {
-                    "revision": probe.revision,
-                    "supported_schema_version": observed.supported,
-                    "built_from": "a worktree of the last revision before schema 3 was added",
-                    "probe": "tests/fixtures/upgrade/schema-2-runtime/probe.rs",
-                },
-                "runtime_repository_open": observed.repository_open.rendered.clone(),
-                "runtime_migrator_run": observed.migrator_run.rendered.clone(),
-                "failed_closed": true,
-                "durable_state_unchanged": true,
-                "rows_compared": before.counts(),
-                "applied_migrations_unchanged": true,
-                "current_runtime_still_opens_it": true,
-                "violations": Vec::<String>::new(),
-                "passed": true,
-            }],
+            "seed_schema_version": SEED_SCHEMA_VERSION,
+            "current_schema_version": current,
+            "reached_current_schema_by":
+                format!("upgrading a seeded schema-{SEED_SCHEMA_VERSION} database with this \
+                         crate's migrator"),
+            "paths": paths,
+            "durable_state_unchanged": true,
+            "rows_compared": before.counts(),
+            "applied_migrations_unchanged": true,
+            "current_runtime_still_opens_it": true,
             "execution_manifest": execution_manifest()?,
             "violations": Vec::<String>::new(),
             "passed": true,
@@ -223,6 +211,80 @@ async fn run_report(migrator: &str, admin: &str) -> Result<(), Box<dyn Error>> {
     )?;
 
     Ok(())
+}
+
+/// Builds one historical runtime and requires it to refuse `url` closed.
+fn offer_to_historical_runtime(
+    runtime: &HistoricalRuntime,
+    url: &str,
+    current_schema_version: u32,
+) -> Result<Value, Box<dyn Error>> {
+    let probe = (runtime.run)(url)?;
+    let observed = probe_report(&probe)?;
+
+    assert!(
+        probe.exit_success,
+        "the schema-{}-supporting runtime did not fail closed on the current schema: {}",
+        runtime.supported_schema_version, probe.report,
+    );
+    assert_eq!(
+        observed.supported, runtime.supported_schema_version,
+        "the report is about a runtime that supports schema {}, and the one that ran reports {}",
+        runtime.supported_schema_version, observed.supported,
+    );
+    for (entry, attempt) in [
+        (&observed.repository_open, "repository startup"),
+        (&observed.migrator_run, "the migrator"),
+    ] {
+        assert!(
+            !entry.accepted,
+            "{attempt} on the schema-{}-supporting runtime accepted the current schema",
+            runtime.supported_schema_version,
+        );
+        assert_eq!(
+            entry.error.as_deref(),
+            Some("NewerSchema"),
+            "{attempt} on the schema-{}-supporting runtime must refuse with the typed \
+             newer-schema failure rather than any other error, which would refuse for a reason \
+             that is not the contract",
+            runtime.supported_schema_version,
+        );
+        assert_eq!(
+            entry.observed,
+            Some(u64::from(current_schema_version)),
+            "{attempt} must report the schema version it actually found",
+        );
+        assert_eq!(
+            entry.supported,
+            Some(runtime.supported_schema_version),
+            "{attempt} must report the schema version that runtime supports",
+        );
+    }
+
+    Ok(json!({
+        "source_schema_version": runtime.supported_schema_version,
+        "target_schema_version": current_schema_version,
+        "migration_result": "ok",
+        "repository_open_result": "refused: NewerSchema",
+        "durable_state_verified": true,
+        "backup_restore_result": Value::Null,
+        "observed_schema_version": current_schema_version,
+        "database": DATABASE,
+        "runtime": {
+            "revision": probe.revision,
+            "supported_schema_version": observed.supported,
+            "built_from": format!(
+                "a worktree of the last revision before schema {} was added",
+                runtime.supported_schema_version + 1,
+            ),
+            "probe": runtime.probe_path,
+        },
+        "runtime_repository_open": observed.repository_open.rendered.clone(),
+        "runtime_migrator_run": observed.migrator_run.rendered.clone(),
+        "failed_closed": true,
+        "violations": Vec::<String>::new(),
+        "passed": true,
+    }))
 }
 
 /// Reads the applied-migration bookkeeping, so a silent rewrite is visible.
@@ -244,7 +306,7 @@ async fn applied_migrations(url: &str) -> Result<Vec<(i64, String)>, Box<dyn Err
     Ok(applied)
 }
 
-/// What the schema-2 runtime reported, in the shape the report requires.
+/// What one historical runtime reported, in the shape the report requires.
 struct Observed {
     /// The schema version that runtime supports.
     supported: u64,

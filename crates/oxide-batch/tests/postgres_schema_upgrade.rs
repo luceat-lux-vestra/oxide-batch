@@ -1,28 +1,46 @@
-//! Direct upgrade of a schema-1 and a schema-2 database to schema 3.
+//! Direct upgrade of a schema-1, schema-2, and schema-3 database to the
+//! current installed schema.
 //!
-//! The M5 preview says a `PostgreSQL` database at schema 1 or schema 2 upgrades
-//! directly to schema 3. This target is that report, and it performs the
-//! upgrade on real databases at those schemas rather than on a reconstruction
-//! of them: each source database is built by running the immutable migration
-//! set up to the version under test and stopping there, so its tables,
-//! columns, constraints, indexes, and applied-migration bookkeeping are the
-//! ones that version produced when it was the whole schema.
+//! The M5 preview's original claim was narrower than what this report now
+//! proves: it said a `PostgreSQL` database at schema 1 or schema 2 upgrades
+//! directly to schema 3, which was the current schema when M5 wrote it. M6
+//! `#144` then added `0005_item_stream_component_state.sql`, an additive
+//! migration that carries the installed schema to 4 without changing anything
+//! schema 3 declared. The historical M5 claim (1/2 -> 3, direct) is preserved
+//! below as an intermediate structural checkpoint every path still passes
+//! through; the report's actual target is now the current schema, whatever
+//! that is, and a schema-3 source is added so the 3 -> 4 edge M6 introduced
+//! gets the same direct-upgrade evidence the 1 -> 3 and 2 -> 3 edges already
+//! had. This target performs every upgrade on a real database at its source
+//! schema rather than on a reconstruction of one: each source database is
+//! built by running the immutable migration set up to the version under test
+//! and stopping there, so its tables, columns, constraints, indexes, and
+//! applied-migration bookkeeping are the ones that version produced when it
+//! was the whole schema.
 //!
 //! Each source is then seeded with the durable state an operator's database
 //! would have held — registered definitions and the upgrade edge between them,
 //! a job instance, a resolved attempt and a live one, their step executions
 //! with durable checkpoints, contexts, and counters, and a recovery decision —
-//! and the schema-2 source additionally with the logical step identity, retry
-//! and skip counters, and flow decision that schema introduced.
+//! the schema-2 and schema-3 sources additionally with the logical step
+//! identity, retry and skip counters, and flow decision schema 2 introduced,
+//! and the schema-3 source additionally with the stop request, operator
+//! request, retention action, and step partition schema 3 introduced.
 //!
-//! What the report requires of the upgrade is four things. The recorded version
-//! becomes `3` and the schema-3 structures appear. Every value of every column
-//! the source schema declared is byte-identical afterwards, compared through
-//! the source's own column list so a column a later schema added cannot mask a
-//! loss. The upgraded database opens through the current repository and
-//! projects its job through the explorer, so the result is one the runtime can
-//! work with rather than merely one that migrated. And running the migrator
-//! again changes nothing.
+//! What the report requires of the upgrade is five things. The recorded
+//! version becomes the current schema version and every structural checkpoint
+//! from the source's own schema up through the current one appears in order
+//! (so a schema-1 source is still shown passing through schema 3's shape on
+//! its way to schema 4). Every value of every column the source schema
+//! declared is byte-identical afterwards, compared through the source's own
+//! column list so a column a later schema added cannot mask a loss. The new
+//! `ItemStream` component-state table schema 4 adds carries no row for any of
+//! these upgrades — the migration is additive, not a backfill, and a row
+//! appearing there would mean the migration invented state for an execution
+//! that never ran a stream. The upgraded database opens through the current
+//! repository and projects its job through the explorer, so the result is one
+//! the runtime can work with rather than merely one that migrated. And running
+//! the migrator again changes nothing.
 //!
 //! The single transformation the chain does make to an existing column is
 //! asserted rather than tolerated: schema 2 gave every schema-1 step execution
@@ -49,11 +67,14 @@ use upgrade::{
     server_version, with_database,
 };
 
-/// The schema versions the M5 preview promises a direct upgrade from.
-const SOURCE_VERSIONS: [u32; 2] = [1, 2];
+/// The schema versions this report upgrades from directly: the M5 preview's
+/// original 1/2 -> 3 claim, plus the schema-3 source the 3 -> 4 M6 edge needs.
+const SOURCE_VERSIONS: [u32; 3] = [1, 2, 3];
 
-/// The schema version the upgrade must reach.
-const TARGET_VERSION: u32 = 3;
+/// The schema version the upgrade must reach: the current installed schema
+/// (4, since M6 `#144`'s additive `ItemStream` component-state migration),
+/// not the schema-3 target the M5 preview named when it was current.
+const TARGET_VERSION: u32 = 4;
 
 #[test]
 fn schema1_and_schema2_upgrade_directly_to_schema3() -> Result<(), Box<dyn Error>> {
@@ -137,6 +158,17 @@ async fn upgrade_from(migrator: &str, admin: &str, source: u32) -> Result<Value,
         "a schema-{source} database must record schema {TARGET_VERSION} after the upgrade",
     );
     assert_historical_shape(&url, TARGET_VERSION).await?;
+
+    // Schema 4's migration is additive: it adds the `ItemStream`
+    // component-state table and backfills nothing into it. A row appearing
+    // here would mean the migration invented restart state for an execution
+    // that never registered a stream, which is exactly the silent
+    // reinterpretation an additive migration must not perform.
+    let component_state_rows = component_state_row_count(&url).await?;
+    assert_eq!(
+        component_state_rows, 0,
+        "upgrading a schema-{source} database must not invent component-state rows",
+    );
 
     let after = DurableDigest::read(&url, &columns, &tables).await?;
     assert_eq!(
@@ -230,6 +262,7 @@ async fn upgrade_from(migrator: &str, admin: &str, source: u32) -> Result<Value,
             "rows_compared": before.counts(),
         },
         "durable_state_preserved": true,
+        "component_state_rows_invented": component_state_rows,
         "step_logical_identity": logical_after,
         "port_reading": reading.summary(),
         "idempotent_remigration": {
@@ -245,6 +278,20 @@ async fn upgrade_from(migrator: &str, admin: &str, source: u32) -> Result<Value,
     // evidence could not be inspected after a failure, and the next run
     // recreates it before doing anything.
     Ok(observation)
+}
+
+/// Counts the `ItemStream` component-state rows a database holds.
+///
+/// Schema 4's migration adds this table and backfills nothing into it, so any
+/// row here after upgrading a database that never registered a stream would
+/// be state the migration invented rather than state it carried forward.
+async fn component_state_row_count(url: &str) -> Result<i64, Box<dyn Error>> {
+    let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM oxide_batch.ob_component_state")
+        .fetch_one(&pool)
+        .await?;
+    pool.close().await;
+    Ok(count)
 }
 
 /// Reads each step execution's name, by identifier.

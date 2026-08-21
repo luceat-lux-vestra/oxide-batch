@@ -500,9 +500,9 @@ fn run_upgrade_campaign() -> bool {
             eprintln!("campaign report: {}", campaign.report.display());
             if campaign.violations.is_empty() {
                 eprintln!(
-                    "schema 1 and schema 2 upgraded directly to schema 3, a schema-2 runtime \
-                     refused the result without writing, and the backup taken before each \
-                     upgrade restored the prior schema"
+                    "schema 1, 2, and 3 upgraded directly to the current schema, the runtimes \
+                     that shipped against schema 2 and schema 3 each refused the result without \
+                     writing, and the backup taken before each upgrade restored the prior schema"
                 );
                 return true;
             }

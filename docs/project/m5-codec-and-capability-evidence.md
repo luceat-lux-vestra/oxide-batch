@@ -314,8 +314,8 @@ The declared schema-1-to-3 upgrade path for the durable metadata schema, its
 newer-version rejection, and its restore-based rollback are unchanged and are
 exercised by the campaign scenarios
 `schema1_and_schema2_upgrade_directly_to_schema3`,
-`schema2_runtime_rejects_schema3`, and
-`schema3_backup_restores_the_prior_schema`, which the design gate assigns to
+`historical_runtimes_reject_the_current_schema`, and
+`every_source_backup_restores_its_prior_schema`, which the design gate assigns to
 issue [#102](https://github.com/luceat-lux-vestra/oxide-batch/issues/102) rather
 than to this one. This record does not claim them. The two exit criteria that
 depended on them were reassigned to #102 in both issue bodies, and #100 closed

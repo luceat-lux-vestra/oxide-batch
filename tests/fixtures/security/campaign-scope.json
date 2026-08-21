@@ -7,7 +7,7 @@
   "support_contract": {
     "postgres_versions": ["15", "16", "17", "18"],
     "matrix_endpoints": ["15", "18"],
-    "installed_schema_version": 3,
+    "installed_schema_version": 4,
     "tls_mode": "verify-full",
     "privilege_classes": [
       "migration",
@@ -105,41 +105,41 @@
     {
       "class": "runtime",
       "role": "oxide_batch_m5_runtime",
-      "allowed": "the job, step, partition, and flow lifecycle",
+      "allowed": "the job, step, partition, flow, and ItemStream component-state lifecycle",
       "forbidden": "schema lifecycle, migration bookkeeping, operator decisions, retention deletes, and retention holds",
-      "allowed_cells": 2,
+      "allowed_cells": 3,
       "forbidden_cells": 8
     },
     {
       "class": "explorer",
       "role": "oxide_batch_m5_explorer",
       "allowed": "bounded reads",
-      "forbidden": "every mutation, and the migration bookkeeping",
+      "forbidden": "every mutation, the migration bookkeeping, and writing ItemStream component state",
       "allowed_cells": 1,
-      "forbidden_cells": 6
+      "forbidden_cells": 7
     },
     {
       "class": "operator",
       "role": "oxide_batch_m5_operator",
       "allowed": "guarded, audited recovery and stop actions",
-      "forbidden": "schema lifecycle, execution ownership, step creation, retention deletes, and retention records",
+      "forbidden": "schema lifecycle, execution ownership, step creation, retention deletes, retention records, and writing ItemStream component state",
       "allowed_cells": 2,
-      "forbidden_cells": 6
+      "forbidden_cells": 7
     },
     {
       "class": "retention",
       "role": "oxide_batch_m5_retention",
-      "allowed": "plan, apply, hold, release, and delete within its scope",
-      "forbidden": "schema lifecycle, lifecycle mutation, operator records, and instance identity",
+      "allowed": "plan, apply, hold, release, and delete within its scope, including a purged step execution's ItemStream component state",
+      "forbidden": "schema lifecycle, lifecycle mutation, operator records, instance identity, and writing ItemStream component state",
       "allowed_cells": 3,
-      "forbidden_cells": 6
+      "forbidden_cells": 7
     }
   ],
   "role_matrix": {
     "note": "The exact cell count of the least-privilege matrix `postgres_least_privilege_roles.rs` produces, counted from the `PERMITTED` and `BOUNDARIES` tables and the one service-path cell each class contributes. This is a denominator, not a policy: it exists so the independent verifier can require the exact cell count per class rather than merely 'at least one of each', and a change to it must be a change reviewed alongside the test that produces the cells it counts.",
-    "total_cells": 40,
-    "total_allowed_cells": 10,
-    "total_forbidden_cells": 30
+    "total_cells": 44,
+    "total_allowed_cells": 11,
+    "total_forbidden_cells": 33
   },
   "redaction": {
     "report": "redaction-sweep",

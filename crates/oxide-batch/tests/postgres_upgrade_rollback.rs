@@ -2,34 +2,41 @@
 //!
 //! The M5 preview's rollback story is restore-based, and this target is the
 //! report for it. It is deliberately not a downgrade migration: no SQL in this
-//! repository turns a schema-3 database back into a schema-2 one, and none is
-//! written here. What an operator has instead is the logical backup taken
-//! before the upgrade, and what this report proves is that restoring it returns
-//! a database at the prior schema carrying the state it had at that moment.
+//! repository turns a current-schema database back into an older one, and
+//! none is written here. What an operator has instead is the logical backup
+//! taken before the upgrade, and what this report proves is that restoring it
+//! returns a database at the prior schema carrying the state it had at that
+//! moment.
 //!
-//! Both directions of the M5 upgrade contract are covered, so the rollback is
-//! reported for a schema-1 database and a schema-2 one rather than for whichever
-//! is more convenient.
+//! The M5 preview covered two directions (schema 1 and schema 2, both
+//! upgrading to schema 3, which was current then). M6 `#144` added schema 4,
+//! so a schema-3 source is added here too: it proves the 3 -> 4 edge M6
+//! introduced is recoverable exactly the way the two M5 edges already were,
+//! rather than assuming an additive migration is automatically safe to roll
+//! back.
 //!
 //! Each run does the whole operational sequence. A prior-schema database is
 //! built and seeded, `pg_dump` writes a custom-format archive of the metadata
-//! schema, the migrator upgrades the database to schema 3, and the upgraded
-//! database is then used — a hold is placed through the retention service,
-//! which writes to a column and an audit table that exist only in schema 3, so
-//! the upgraded state genuinely diverges from the backed-up state rather than
-//! merely being labelled differently. `pg_restore` then loads the archive into
-//! a separate, freshly created database.
+//! schema, the migrator upgrades the database to the current schema, and the
+//! upgraded database is then used — a hold is placed through the retention
+//! service, which writes to a column and an audit table that exist only from
+//! schema 3 onward, so the upgraded state genuinely diverges from the
+//! backed-up state rather than merely being labelled differently. (A
+//! schema-3 source already carries a schema-3 shape; using the same
+//! post-upgrade hold for every source keeps one divergence proof for all of
+//! them rather than a different one per source.) `pg_restore` then loads the
+//! archive into a separate, freshly created database.
 //!
 //! What the report requires of the restored database is that it be the prior
-//! one: the recorded version is the source version, the structures schema 3
-//! introduced are absent, every durable value equals the reading taken
-//! immediately before the archive was written, and the current schema-3 runtime
-//! refuses to open it — with `MigrationRequired`, naming the version it found.
-//! That last requirement is the one that keeps the report honest. A rollback
-//! that produced something the schema-3 runtime accepted would not be a
-//! rollback, and nothing here claims the schema-3 state was converted: the
-//! upgraded database is checked afterwards and still has everything the restore
-//! did not bring back.
+//! one: the recorded version is the source version, the structures the source
+//! schema did not declare are absent, every durable value equals the reading
+//! taken immediately before the archive was written, and the current
+//! runtime refuses to open it — with `MigrationRequired`, naming the version
+//! it found. That last requirement is the one that keeps the report honest. A
+//! rollback that produced something the current runtime accepted would not be
+//! a rollback, and nothing here claims the newer-schema state was converted:
+//! the upgraded database is checked afterwards and still has everything the
+//! restore did not bring back.
 
 #![cfg(feature = "postgres")]
 
@@ -53,11 +60,15 @@ use upgrade::{
     retain_observation, run_tool, schema_version, server_version, with_database,
 };
 
-/// The schema versions an upgrade is rolled back to.
-const SOURCE_VERSIONS: [u32; 2] = [1, 2];
+/// The schema versions an upgrade is rolled back to: the M5 preview's
+/// original schema 1 and schema 2, plus the schema-3 source the M6 3 -> 4
+/// edge needs.
+const SOURCE_VERSIONS: [u32; 3] = [1, 2, 3];
 
-/// The schema version the upgrade reaches before the rollback.
-const UPGRADED_VERSION: u32 = 3;
+/// The schema version the upgrade reaches before the rollback: the current
+/// installed schema (4, since M6 `#144`), not the schema-3 target the M5
+/// preview named when it was current.
+const UPGRADED_VERSION: u32 = 4;
 
 /// The metadata schema the logical backup covers.
 const DUMPED_SCHEMA: &str = "oxide_batch";
@@ -69,7 +80,7 @@ const HOLD_ACTOR: &str = "operator:m5-upgrade-campaign";
 const HOLD_REASON: &str = "M5_UPGRADE_ROLLBACK";
 
 #[test]
-fn schema3_backup_restores_the_prior_schema() -> Result<(), Box<dyn Error>> {
+fn every_source_backup_restores_its_prior_schema() -> Result<(), Box<dyn Error>> {
     let Some(migrator) = migrator_url() else {
         eprintln!("skipped: OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL is not set");
         return Ok(());
@@ -96,8 +107,8 @@ async fn run_report(migrator: &str, admin: &str) -> Result<(), Box<dyn Error>> {
     retain_observation(
         "upgrade-rollback",
         &json!({
-            "report": "restore-based rollback of an upgrade to schema 3",
-            "scenario": "schema3_backup_restores_the_prior_schema",
+            "report": "restore-based rollback of an upgrade to the current schema",
+            "scenario": "every_source_backup_restores_its_prior_schema",
             "fixture": "postgres-upgrade",
             "server_version": server,
             "postgres_major_version": major_version(&server),
@@ -304,11 +315,12 @@ async fn roll_back_from(migrator: &str, admin: &str, source: u32) -> Result<Valu
         },
         "restored_schema_version": source,
         "restored_state_matches_backup": true,
-        "schema3_structures_absent_after_restore": true,
+        "structures_newer_than_source_absent_after_restore": true,
         "current_runtime_refuses_restored_database": format!("{refusal:?}"),
         "upgraded_database_unchanged_by_rollback": true,
-        "schema3_only_state_on_upgraded_database": {
+        "post_upgrade_divergence_state": {
             "retention_hold": {"actor": HOLD_ACTOR, "reason": HOLD_REASON},
+            "introduced_by_schema": 3,
             "restored_copy_cannot_carry_it": true,
         },
         "violations": Vec::<String>::new(),

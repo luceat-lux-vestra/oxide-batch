@@ -47,8 +47,8 @@ const REQUIRED_REPORTS: &[&str] = &["schema-upgrade", "schema-rejection", "upgra
 /// The scenarios the M5 design gate names for this campaign.
 const NAMED_SCENARIOS: &[&str] = &[
     "schema1_and_schema2_upgrade_directly_to_schema3",
-    "schema2_runtime_rejects_schema3",
-    "schema3_backup_restores_the_prior_schema",
+    "historical_runtimes_reject_the_current_schema",
+    "every_source_backup_restores_its_prior_schema",
 ];
 
 /// The schema paths the M5 support contract promises, as the runner names them.
@@ -59,13 +59,20 @@ const NAMED_SCENARIOS: &[&str] = &[
 const REQUIRED_PATHS: &[&str] = &[
     "upgrade-from-1",
     "upgrade-from-2",
-    "reject-schema-3",
+    "upgrade-from-3",
+    "reject-from-schema-2-runtime",
+    "reject-from-schema-3-runtime",
     "rollback-to-1",
     "rollback-to-2",
+    "rollback-to-3",
 ];
 
 /// The schema version this crate installs, and the only upgrade target.
-const TARGET_SCHEMA_VERSION: u64 = 3;
+///
+/// The M5 preview installed schema 3; M6 `#144` added
+/// `0005_item_stream_component_state.sql`, which carries this crate's
+/// installed schema to 4 without changing anything schema 3 declared.
+const TARGET_SCHEMA_VERSION: u64 = 4;
 
 /// The regression test the campaign keeps and does not stand in for.
 const KEPT_REGRESSION: &str = "newer_schema_is_rejected_without_guessing_compatibility";
@@ -101,7 +108,7 @@ fn campaign_scope_matches_the_accepted_upgrade_obligations() -> Result<(), Box<d
         );
         assert_eq!(
             path.target, TARGET_SCHEMA_VERSION,
-            "{}: the M5 preview installs schema {TARGET_SCHEMA_VERSION} and nothing else is an \
+            "{}: this crate installs schema {TARGET_SCHEMA_VERSION} and nothing else is an \
              upgrade target",
             path.id,
         );
@@ -125,7 +132,7 @@ fn campaign_scope_matches_the_accepted_upgrade_obligations() -> Result<(), Box<d
         .find(|line| line.starts_with("| Upgrade |"))
         .ok_or_else(|| Failure("the performance plan has no upgrade row".to_owned()))?;
     for owed in [
-        "Schema 1 and 2 to schema 3 direct upgrade",
+        "Schema 1, 2, and 3 direct upgrade to the current schema",
         "newer-schema rejection",
         "restore-based rollback",
     ] {
@@ -317,13 +324,16 @@ fn later_columns(version: u64) -> &'static [&'static str] {
             "owner_token",
             "hold_actor",
             "ob_step_partition",
+            "ob_component_state",
         ],
         2 => &[
             "owner_token",
             "hold_actor",
             "ob_step_partition",
             "ob_operator_request",
+            "ob_component_state",
         ],
+        3 => &["ob_component_state"],
         _ => &[],
     }
 }
@@ -478,7 +488,9 @@ fn the_semantic_closure_covers_what_the_campaign_runs() -> Result<(), Box<dyn Er
         "tests/fixtures/upgrade/campaign-scope.json",
         "tests/fixtures/upgrade/schema-1/seed.sql",
         "tests/fixtures/upgrade/schema-2/seed.sql",
+        "tests/fixtures/upgrade/schema-3/seed.sql",
         "tests/fixtures/upgrade/schema-2-runtime/probe.rs",
+        "tests/fixtures/upgrade/schema-3-runtime/probe.rs",
         "xtask/src/upgrade.rs",
         "xtask/src/evidence.rs",
         "Cargo.lock",
