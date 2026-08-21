@@ -70,9 +70,16 @@ jobs:
         if: steps.release.outputs.bootstrap == 'true' || github.event_name == 'workflow_dispatch'
         env:
           PACKAGE_VERSION: ${{ steps.release.outputs.version }}
-          RELEASED_CRATES: oxide-batch-core oxide-batch-repository oxide-batch-plan oxide-batch oxide-batch-cli oxide-batch-test
         run: |
           set -euo pipefail
+
+          # Derived from the checked-out tag's own manifests rather than a
+          # hardcoded list, so recovery verification of an older tag (e.g.
+          # v0.5.0, which predates oxide-batch-test) names exactly the
+          # crates that tag actually released, not the current accepted set.
+          RELEASED_CRATES="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select((.publish // []) | length > 0) | .name' \
+            | tr '\n' ' ')"
 
           published=""
           for crate in ${RELEASED_CRATES}; do
@@ -96,6 +103,36 @@ jobs:
             test "${local_sha}" = "${registry_sha}"
           done
 
+      # OIDC Trusted Publishing can publish a new version of an existing
+      # crate, but it cannot create a crate name (see
+      # docs/release/m5-0.5.0-bootstrap.md). A crate the accepted release set
+      # names but crates.io has never seen needs its own separately reviewed
+      # first-publication bootstrap first (see
+      # docs/release/m6-oxide-batch-test-bootstrap.md for oxide-batch-test
+      # specifically) -- this step fails loudly and by name instead of
+      # letting "Publish to crates.io" discover the same gap as an opaque
+      # OIDC/crates.io error.
+      - name: Verify every released crate already exists on crates.io
+        if: github.event_name == 'release' && steps.release.outputs.bootstrap != 'true'
+        run: |
+          set -euo pipefail
+          missing=""
+          for crate in oxide-batch-core oxide-batch-repository oxide-batch-plan \
+            oxide-batch oxide-batch-cli oxide-batch-test; do
+            status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+              --user-agent "oxide-batch-release-verifier" \
+              "https://crates.io/api/v1/crates/${crate}")"
+            if test "${status}" != "200"; then
+              missing="${missing} ${crate}"
+            fi
+          done
+          if test -n "${missing}"; then
+            echo "::error::the following crates have never been published and need a" \
+              "separately reviewed first-publication bootstrap before this release can" \
+              "use OIDC Trusted Publishing for them (see docs/release/):${missing}"
+            exit 1
+          fi
+
       - name: Authenticate to crates.io
         if: github.event_name == 'release' && steps.release.outputs.bootstrap != 'true'
         id: crates-io-auth
@@ -105,13 +142,17 @@ jobs:
       # requires, plus the operator CLI, in dependency order and at the
       # facade version: core, repository, plan, oxide-batch, oxide-batch-cli.
       # #145 added oxide-batch-test as a sixth crate at the same version and
-      # cadence, per the M6 Gate G decision. Cargo resolves this order from
-      # the dependency graph of the selected packages regardless of
-      # --package argument order. v0.5.0 is the sole first-publication
-      # bootstrap exception above; later releases use OIDC Trusted
-      # Publishing exclusively. Gated to the release.published event only:
-      # workflow_dispatch manual recovery never authenticates to or
-      # publishes on crates.io, verification only.
+      # cadence, per the M6 Gate G decision; the pre-flight existence check
+      # above guarantees it (and every other crate here) is already
+      # registered on crates.io by the time this step runs, so OIDC Trusted
+      # Publishing only ever publishes a new version of an existing crate,
+      # never attempts to create one. Cargo resolves this order from the
+      # dependency graph of the selected packages regardless of --package
+      # argument order. v0.5.0 is the sole first-publication bootstrap
+      # exception (docs/release/m5-0.5.0-bootstrap.md); later releases use
+      # OIDC Trusted Publishing exclusively. Gated to the release.published
+      # event only: workflow_dispatch manual recovery never authenticates to
+      # or publishes on crates.io, verification only.
       - name: Publish to crates.io
         if: github.event_name == 'release' && steps.release.outputs.bootstrap != 'true'
         env:

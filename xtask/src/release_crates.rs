@@ -24,6 +24,21 @@ use crate::suite;
 const RELEASE_DRAFT_WORKFLOW: &str = ".github/workflows/release-draft.yml";
 const RELEASE_WORKFLOW: &str = ".github/workflows/release.yml";
 
+/// The `jq` filter every dynamically-derived `RELEASED_CRATES` computation
+/// uses, matching [`published_crates_from_manifests`]'s own selection rule.
+///
+/// `release-draft.yml`'s two steps and `release.yml`'s "Verify manually
+/// bootstrapped crates.io archives" step derive their crate list from the
+/// checked-out tag's own manifests at run time instead of a hardcoded list,
+/// specifically so a `workflow_dispatch` recovery/audit run against an
+/// *older* tag (one that predates a later-added released crate, as v0.5.0
+/// predates `oxide-batch-test`) names exactly what that tag released, not
+/// the current accepted set. A hardcoded list there would silently break
+/// that recovery path the next time the accepted set grows. This constant
+/// lets the check below confirm the dynamic derivation is still present
+/// rather than having quietly reverted to a hardcoded list.
+const DYNAMIC_RELEASE_SET_FILTER: &str = r#"select((.publish // []) | length > 0)"#;
+
 /// The accepted release order, per RFC-0011's "Version and release coupling".
 const EXPECTED_RELEASED_CRATES: &[&str] = &[
     "oxide-batch-core",
@@ -52,29 +67,32 @@ pub fn check() -> Result<Vec<String>, String> {
         EnforceOrder::No,
     ));
 
+    // release-draft.yml's two steps derive their crate list dynamically
+    // (see DYNAMIC_RELEASE_SET_FILTER) rather than declaring it statically,
+    // so a workflow_dispatch recovery/audit run against an older tag names
+    // exactly what that tag released. Dynamic derivation is self-verifying
+    // by construction (it reads the checked-out tree's real manifests at
+    // run time), so what this checks is that the derivation itself is still
+    // present rather than having quietly reverted to a hardcoded list.
     let draft_path = root.join(RELEASE_DRAFT_WORKFLOW);
     let draft_text = fs::read_to_string(&draft_path)
         .map_err(|error| format!("could not read {RELEASE_DRAFT_WORKFLOW}: {error}"))?;
-    let draft_occurrences = extract_env_list(&draft_text, "RELEASED_CRATES");
-    if draft_occurrences.is_empty() {
+    let draft_dynamic_occurrences = draft_text.matches(DYNAMIC_RELEASE_SET_FILTER).count();
+    if draft_dynamic_occurrences != 2 {
         violations.push(format!(
-            "{RELEASE_DRAFT_WORKFLOW} declares no RELEASED_CRATES environment variable"
+            "{RELEASE_DRAFT_WORKFLOW} has {draft_dynamic_occurrences} dynamic release-set \
+             derivation(s) (expected 2, one per step that packages/publishes the release set); \
+             a hardcoded RELEASED_CRATES list there would break workflow_dispatch recovery \
+             against a tag that predates a later-added released crate"
         ));
     }
-    for (index, crates) in draft_occurrences.iter().enumerate() {
-        violations.extend(compare(
-            &format!(
-                "{RELEASE_DRAFT_WORKFLOW} RELEASED_CRATES (occurrence {})",
-                index + 1
-            ),
-            crates,
-            EnforceOrder::Yes,
-        ));
-    }
-    if draft_occurrences.len() > 1 && draft_occurrences.iter().any(|c| c != &draft_occurrences[0]) {
+    if extract_env_list(&draft_text, "RELEASED_CRATES")
+        .iter()
+        .any(|crates| !crates.is_empty())
+    {
         violations.push(format!(
-            "{RELEASE_DRAFT_WORKFLOW} declares RELEASED_CRATES more than once with \
-             disagreeing values"
+            "{RELEASE_DRAFT_WORKFLOW} declares a static RELEASED_CRATES environment variable; \
+             it must derive the release set dynamically instead (see DYNAMIC_RELEASE_SET_FILTER)"
         ));
     }
 
@@ -93,6 +111,15 @@ pub fn check() -> Result<Vec<String>, String> {
         &publish_crates,
         EnforceOrder::Yes,
     ));
+    let bootstrap_dynamic_occurrences = release_text.matches(DYNAMIC_RELEASE_SET_FILTER).count();
+    if bootstrap_dynamic_occurrences != 1 {
+        violations.push(format!(
+            "{RELEASE_WORKFLOW} has {bootstrap_dynamic_occurrences} dynamic release-set \
+             derivation(s) in its bootstrapped-archive verification step (expected 1); a \
+             hardcoded RELEASED_CRATES list there would break workflow_dispatch recovery \
+             against the v0.5.0 tag, which predates oxide-batch-test"
+        ));
+    }
 
     Ok(violations)
 }
