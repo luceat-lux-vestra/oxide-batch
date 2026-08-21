@@ -128,7 +128,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "a769877f62433953c4b9d0d5c3de37dd0c222448",
+    "source_commit": "5765f23bfd69816103343cc276a0ff3697996ffc",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -143,13 +143,13 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "a769877f62433953c4b9d0d5c3de37dd0c222448",
+      "execution_commit": "5765f23bfd69816103343cc276a0ff3697996ffc",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
         ".github/workflows/m5-resource-bounds.yml": "c9a953191ba47f4af05c39404aee3821082e0f2d",
-        "Cargo.lock": "56be333dceb6029a47525c414f16a84d3081661b",
-        "Cargo.toml": "8a760d7f9bd625eff85dfe736897acd6aa7ab14c",
+        "Cargo.lock": "9fcb3903c32c86db52873aa83043b1640ca15d3e",
+        "Cargo.toml": "37ad0088277e0638aa3cf3b6de4e64f590aed874",
         "crates/oxide-batch-cli/Cargo.toml": "7188ffd250361f0c045a8db59e067da09f9fdb19",
         "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
         "crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs": "2e8ff6cef4946f4e1cc32a472de903fca3f3298a",
@@ -513,13 +513,13 @@
           "violations": []
         },
         "execution_manifest": {
-          "execution_commit": "a769877f62433953c4b9d0d5c3de37dd0c222448",
+          "execution_commit": "5765f23bfd69816103343cc276a0ff3697996ffc",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-resource-bounds.yml": "c9a953191ba47f4af05c39404aee3821082e0f2d",
-            "Cargo.lock": "56be333dceb6029a47525c414f16a84d3081661b",
-            "Cargo.toml": "8a760d7f9bd625eff85dfe736897acd6aa7ab14c",
+            "Cargo.lock": "9fcb3903c32c86db52873aa83043b1640ca15d3e",
+            "Cargo.toml": "37ad0088277e0638aa3cf3b6de4e64f590aed874",
             "crates/oxide-batch-cli/Cargo.toml": "7188ffd250361f0c045a8db59e067da09f9fdb19",
             "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
             "crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs": "2e8ff6cef4946f4e1cc32a472de903fca3f3298a",
@@ -733,13 +733,13 @@
           }
         ],
         "execution_manifest": {
-          "execution_commit": "a769877f62433953c4b9d0d5c3de37dd0c222448",
+          "execution_commit": "5765f23bfd69816103343cc276a0ff3697996ffc",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-resource-bounds.yml": "c9a953191ba47f4af05c39404aee3821082e0f2d",
-            "Cargo.lock": "56be333dceb6029a47525c414f16a84d3081661b",
-            "Cargo.toml": "8a760d7f9bd625eff85dfe736897acd6aa7ab14c",
+            "Cargo.lock": "9fcb3903c32c86db52873aa83043b1640ca15d3e",
+            "Cargo.toml": "37ad0088277e0638aa3cf3b6de4e64f590aed874",
             "crates/oxide-batch-cli/Cargo.toml": "7188ffd250361f0c045a8db59e067da09f9fdb19",
             "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
             "crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs": "2e8ff6cef4946f4e1cc32a472de903fca3f3298a",
@@ -1408,13 +1408,13 @@
           "violations": []
         },
         "execution_manifest": {
-          "execution_commit": "a769877f62433953c4b9d0d5c3de37dd0c222448",
+          "execution_commit": "5765f23bfd69816103343cc276a0ff3697996ffc",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-resource-bounds.yml": "c9a953191ba47f4af05c39404aee3821082e0f2d",
-            "Cargo.lock": "56be333dceb6029a47525c414f16a84d3081661b",
-            "Cargo.toml": "8a760d7f9bd625eff85dfe736897acd6aa7ab14c",
+            "Cargo.lock": "9fcb3903c32c86db52873aa83043b1640ca15d3e",
+            "Cargo.toml": "37ad0088277e0638aa3cf3b6de4e64f590aed874",
             "crates/oxide-batch-cli/Cargo.toml": "7188ffd250361f0c045a8db59e067da09f9fdb19",
             "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
             "crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs": "2e8ff6cef4946f4e1cc32a472de903fca3f3298a",
@@ -1960,13 +1960,13 @@
           "violations": []
         },
         "execution_manifest": {
-          "execution_commit": "a769877f62433953c4b9d0d5c3de37dd0c222448",
+          "execution_commit": "5765f23bfd69816103343cc276a0ff3697996ffc",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-resource-bounds.yml": "c9a953191ba47f4af05c39404aee3821082e0f2d",
-            "Cargo.lock": "56be333dceb6029a47525c414f16a84d3081661b",
-            "Cargo.toml": "8a760d7f9bd625eff85dfe736897acd6aa7ab14c",
+            "Cargo.lock": "9fcb3903c32c86db52873aa83043b1640ca15d3e",
+            "Cargo.toml": "37ad0088277e0638aa3cf3b6de4e64f590aed874",
             "crates/oxide-batch-cli/Cargo.toml": "7188ffd250361f0c045a8db59e067da09f9fdb19",
             "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
             "crates/oxide-batch-cli/tests/m5_resource_bound_shedding.rs": "2e8ff6cef4946f4e1cc32a472de903fca3f3298a",
