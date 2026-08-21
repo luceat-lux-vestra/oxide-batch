@@ -40,7 +40,7 @@ jobs:
       - name: Verify tag and package
         id: package
         env:
-          RELEASED_CRATES: oxide-batch-core oxide-batch-repository oxide-batch-plan oxide-batch oxide-batch-cli
+          RELEASED_CRATES: oxide-batch-core oxide-batch-repository oxide-batch-plan oxide-batch oxide-batch-cli oxide-batch-test
         run: |
           set -euo pipefail
           package_version="$(cargo metadata --no-deps --format-version 1 \
@@ -72,7 +72,7 @@ jobs:
         id: evidence
         env:
           PACKAGE_VERSION: ${{ steps.package.outputs.version }}
-          RELEASED_CRATES: oxide-batch-core oxide-batch-repository oxide-batch-plan oxide-batch oxide-batch-cli
+          RELEASED_CRATES: oxide-batch-core oxide-batch-repository oxide-batch-plan oxide-batch oxide-batch-cli oxide-batch-test
         run: |
           set -euo pipefail
           sbom_paths=""

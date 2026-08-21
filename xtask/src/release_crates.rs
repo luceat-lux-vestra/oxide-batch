@@ -1,14 +1,18 @@
 //! Release crate-set regression check.
 //!
-//! The accepted release set is five crates, published in dependency order:
+//! The accepted release set is six crates, published in dependency order:
 //! `oxide-batch-core`, `oxide-batch-repository`, `oxide-batch-plan`,
-//! `oxide-batch`, `oxide-batch-cli`. [RFC-0011](../../docs/rfcs/0011-publication-of-extracted-implementation-crates.md)
-//! names this order explicitly, and
+//! `oxide-batch`, `oxide-batch-cli`, `oxide-batch-test`. [RFC-0011](../../docs/rfcs/0011-publication-of-extracted-implementation-crates.md)
+//! named the original five explicitly, and
 //! [ADR-0010](../../docs/architecture/decisions/0010-extracted-crate-publication.md)
-//! calls the release "a five-crate ordered operation". A release-relevant
-//! manifest or workflow file can drift from that decision independently of
-//! any of the others, and nothing before this check compared them against
-//! each other: this closes that gap.
+//! called that release "a five-crate ordered operation";
+//! [#145](https://github.com/luceat-lux-vestra/oxide-batch/issues/145) added
+//! `oxide-batch-test` as the sixth, per the M6 Gate G decision that the
+//! application test kit "shares `oxide-batch`'s release line/version
+//! cadence" and the crate-publishing governance doc's own forecast that it
+//! is "Likely public". A release-relevant manifest or workflow file can
+//! drift from that decision independently of any of the others, and nothing
+//! before this check compared them against each other: this closes that gap.
 
 use std::fs;
 use std::process::Command;
@@ -27,12 +31,13 @@ const EXPECTED_RELEASED_CRATES: &[&str] = &[
     "oxide-batch-plan",
     "oxide-batch",
     "oxide-batch-cli",
+    "oxide-batch-test",
 ];
 
 /// Runs the release crate-set regression check.
 ///
 /// Returns every violation as a human-readable line. An empty result means
-/// every source names the same five crates in the same accepted order.
+/// every source names the same six crates in the same accepted order.
 pub fn check() -> Result<Vec<String>, String> {
     let mut violations = Vec::new();
     let root = suite::workspace_root()?;

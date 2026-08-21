@@ -54,12 +54,14 @@ use serde_json::Value;
 /// is simply outside the `29`-row advertised set (see `ACCEPTED_STATUSES`
 /// below), so only the aggregate counts here move, not the M5 gate's own
 /// closed population. `ITEM-STREAM-001` did exactly that in
-/// [#144](https://github.com/luceat-lux-vestra/oxide-batch/issues/144).
+/// [#144](https://github.com/luceat-lux-vestra/oxide-batch/issues/144);
+/// `TEST-JOB-001`, `TEST-STEP-001`, `TEST-SCOPE-001`, and `TEST-REPO-001` did
+/// the same in [#145](https://github.com/luceat-lux-vestra/oxide-batch/issues/145).
 const CLOSED_DISPOSITION: &[(&str, usize)] = &[
     ("Verified", 28),
-    ("Implemented", 2),
+    ("Implemented", 6),
     ("Partial", 13),
-    ("Planned", 38),
+    ("Planned", 34),
     ("Unknown", 2),
 ];
 

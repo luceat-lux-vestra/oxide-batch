@@ -63,13 +63,14 @@ jobs:
           cargo publish --package oxide-batch-core
           --package oxide-batch-repository --package oxide-batch-plan
           --package oxide-batch --package oxide-batch-cli
+          --package oxide-batch-test
           --locked --dry-run
 
       - name: Verify manually bootstrapped crates.io archives
         if: steps.release.outputs.bootstrap == 'true' || github.event_name == 'workflow_dispatch'
         env:
           PACKAGE_VERSION: ${{ steps.release.outputs.version }}
-          RELEASED_CRATES: oxide-batch-core oxide-batch-repository oxide-batch-plan oxide-batch oxide-batch-cli
+          RELEASED_CRATES: oxide-batch-core oxide-batch-repository oxide-batch-plan oxide-batch oxide-batch-cli oxide-batch-test
         run: |
           set -euo pipefail
 
@@ -103,11 +104,13 @@ jobs:
       # RFC-0011 and ADR-0010 publish the internal crates the facade
       # requires, plus the operator CLI, in dependency order and at the
       # facade version: core, repository, plan, oxide-batch, oxide-batch-cli.
-      # Cargo resolves this order from the dependency graph of the selected
-      # packages regardless of --package argument order. v0.5.0 is the sole
-      # first-publication bootstrap exception above; later releases use OIDC
-      # Trusted Publishing exclusively. Gated to the release.published event
-      # only: workflow_dispatch manual recovery never authenticates to or
+      # #145 added oxide-batch-test as a sixth crate at the same version and
+      # cadence, per the M6 Gate G decision. Cargo resolves this order from
+      # the dependency graph of the selected packages regardless of
+      # --package argument order. v0.5.0 is the sole first-publication
+      # bootstrap exception above; later releases use OIDC Trusted
+      # Publishing exclusively. Gated to the release.published event only:
+      # workflow_dispatch manual recovery never authenticates to or
       # publishes on crates.io, verification only.
       - name: Publish to crates.io
         if: github.event_name == 'release' && steps.release.outputs.bootstrap != 'true'
@@ -116,4 +119,5 @@ jobs:
         run: >-
           cargo publish --package oxide-batch-core
           --package oxide-batch-repository --package oxide-batch-plan
-          --package oxide-batch --package oxide-batch-cli --locked
+          --package oxide-batch --package oxide-batch-cli
+          --package oxide-batch-test --locked

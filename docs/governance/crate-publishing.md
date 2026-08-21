@@ -19,7 +19,7 @@ Potential future workspace crates include:
 | `oxide-batch-repository-postgres` | PostgreSQL implementation | Likely public |
 | `oxide-batch-protocol` | Versioned worker/admin protocol | Undecided |
 | `oxide-batch-observability` | Telemetry integration | Undecided |
-| `oxide-batch-test` | Conformance and test utilities | Likely public |
+| `oxide-batch-test` | Application-facing test kit (deterministic clock/ID, job/step/component harnesses, failure injection, restart harness) | Public, released in lockstep with the facade from `0.5.0` ([#145](https://github.com/luceat-lux-vestra/oxide-batch/issues/145), per the M6 [Gate G](../project/m6-design-gate-evidence.md#gate-g--oxide-batch-test-boundary) decision) |
 | `oxide-batch-cli` | Operational command-line interface | Public, released in lockstep with the facade from `0.5.0` ([RFC-0011](../rfcs/0011-publication-of-extracted-implementation-crates.md)) |
 
 This list is a namespace and architecture forecast, not approval to publish
