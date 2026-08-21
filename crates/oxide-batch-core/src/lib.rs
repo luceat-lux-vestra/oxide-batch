@@ -23,6 +23,7 @@
 #![forbid(unsafe_code)]
 
 mod chunk;
+mod component_state;
 mod definition;
 mod domain;
 mod fault;
@@ -30,11 +31,17 @@ mod flow;
 mod state;
 
 pub use chunk::{ChunkCount, ChunkCounts, ChunkError, ChunkProgress, ChunkSize};
+pub use component_state::{
+    ChecksumAlgorithm, CodecId, CodecVersion, CodecVersionUpgrade, ComponentStateCodec,
+    ComponentStateEnvelope, ComponentStateError, ComponentStatePayload, ContentIdentity,
+    DefaultComponentCodec, ExternalStateError, ExternalStateReference, ExternalStateStore,
+    RestartabilityDeclaration, StateSensitivity,
+};
 pub use definition::{
     ChunkComponentRevisions, ChunkDeliveryMode, ChunkRestartContract, ClassifierRevision,
-    ComponentRevision, DefinitionError, DefinitionIdentity, DefinitionManifest, DefinitionRevision,
-    DefinitionTokenKind, DefinitionUpgrade, DefinitionUpgradeKey, InFlightPolicy, ManifestError,
-    StepDefinitionUpgrade,
+    ComponentRevision, ComponentStreamIdentity, DefinitionError, DefinitionIdentity,
+    DefinitionManifest, DefinitionRevision, DefinitionTokenKind, DefinitionUpgrade,
+    DefinitionUpgradeKey, InFlightPolicy, ManifestError, StepDefinitionUpgrade,
 };
 pub use definition::{
     MANIFEST_FORMAT_FLOW, MANIFEST_FORMAT_LOCAL_SCALE, MANIFEST_FORMAT_ONE_STEP, MAX_NODES,

@@ -164,6 +164,39 @@ gap (an architecture spike rather than codec migration tests); the row
 promotes only when [#144](https://github.com/luceat-lux-vestra/oxide-batch/issues/144)
 lands state-migration and rejection-fixture evidence against a named release.
 
+### Implementation status (#144)
+
+This contract is implemented. The `ItemStream` open/update/close trait, its
+sealed erasure boundary, and `BoxedStream` live in
+`crates/oxide-batch/src/item_stream.rs`, in the same ADR-0008 shape as
+`ItemReader`/`ItemProcessor`/`ItemWriter`. The component-state envelope --
+namespace, schema id/version, codec id/version, checksum algorithm id/version
+and value, bounded inline/external payload, and the codec-version migration
+axis alongside the reused M5 schema-version axis -- lives in
+`crates/oxide-batch-core/src/component_state.rs`, reusing `StateLimits`,
+`StateSchemaId`, `StateSchemaVersion`, `StateSchemaUpgrade`, and
+`VersionedStateCodec` unchanged. `ComponentStreamIdentity` is a restart-relevant
+token registered through `ChunkComponentRevisions::with_stream_revision`,
+exactly like the existing reader/processor/writer revisions; a stream-free
+chunk definition's manifest and fingerprint are unaffected. Open runs once per
+step attempt before any component call; update runs once per committing chunk
+attempt, after the writer succeeds and before the durable commit; close runs
+once per step attempt, in reverse successful-open order, for every stream that
+opened. `PostgreSQL` persistence adds a side table
+(`crates/oxide-batch/migrations/0005_item_stream_component_state.sql`) keyed by
+`(step_execution_id, namespace)`, bound into the same transaction and commit
+statement as the existing checkpoint/context update
+(`PostgresChunkTransaction::commit_with_component_state`) -- never a second
+connection or transaction.
+
+Executable evidence: `crates/oxide-batch/tests/item_stream.rs` (lifecycle and
+ordering), `crates/oxide-batch/tests/item_stream_state.rs` (envelope, codec
+and schema migration, checksum, bounds, sensitivity, restartability, external
+reference), and `crates/oxide-batch/tests/postgres_item_stream_crash_recovery.rs`
+(process-kill evidence before and after a proven commit). See
+[the M6 `ItemStream` evidence record](../project/m6-item-stream-evidence.md)
+for the full scenario inventory.
+
 ## Composition taxonomy
 
 Closed by [M6 Gate E](../project/m6-design-gate-evidence.md#gate-e--composition-semantics).

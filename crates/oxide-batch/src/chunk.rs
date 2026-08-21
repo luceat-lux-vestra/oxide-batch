@@ -5,8 +5,8 @@ use std::fmt;
 use std::future::Future;
 
 use crate::{
-    BoxFuture, Checkpoint, ChunkCounts, ExecutionContext, FailureCategory, FaultProgress,
-    JobExecutionId, SkipCounts, StepExecutionId, StopToken,
+    BoxFuture, Checkpoint, ChunkCounts, ComponentStateEnvelope, ExecutionContext, FailureCategory,
+    FaultProgress, JobExecutionId, SkipCounts, StepExecutionId, StopToken,
 };
 
 /// Borrowed call state for a reader.
@@ -336,6 +336,14 @@ pub enum ChunkTransactionError {
     NotCommitted,
     /// The adapter cannot determine whether commit reached durable storage.
     CommitOutcomeUnknown,
+    /// The adapter does not support committing component state.
+    ///
+    /// Returned only when [`ItemStream`](crate::ItemStream)s are registered
+    /// against a [`ChunkTransaction`] whose
+    /// [`commit_with_component_state`](ChunkTransaction::commit_with_component_state)
+    /// override is missing; an adapter that supports no streams at all never
+    /// observes this variant.
+    ComponentStateUnsupported,
 }
 
 impl fmt::Display for ChunkTransactionError {
@@ -343,6 +351,9 @@ impl fmt::Display for ChunkTransactionError {
         formatter.write_str(match self {
             Self::NotCommitted => "chunk transaction did not commit",
             Self::CommitOutcomeUnknown => "chunk transaction commit outcome is unknown",
+            Self::ComponentStateUnsupported => {
+                "chunk transaction does not support committing component state"
+            }
         })
     }
 }
@@ -411,6 +422,35 @@ pub trait ChunkTransaction: Send {
         counts: ChunkCounts,
         fault: ChunkFaultProgress,
     ) -> BoxFuture<'_, Result<ChunkCommitReceipt, ChunkTransactionError>>;
+
+    /// Commits business work, progress, and per-namespace
+    /// [`ItemStream`](crate::ItemStream) candidate state as one atomic
+    /// outcome.
+    ///
+    /// The default delegates to [`commit`](Self::commit) and ignores
+    /// `component_state` when it is empty, so every existing implementor is
+    /// unaffected. An adapter that supports [`ItemStream`](crate::ItemStream)
+    /// registration overrides this method to bind each candidate envelope
+    /// into the same transaction/statement as the existing commit, never a
+    /// second connection or transaction. A caller must not register a stream
+    /// against a transaction manager whose commit does not override this: the
+    /// default rejects a nonempty `component_state` with
+    /// [`ChunkTransactionError::ComponentStateUnsupported`] rather than
+    /// silently dropping it.
+    fn commit_with_component_state<'a>(
+        &'a mut self,
+        counts: ChunkCounts,
+        fault: ChunkFaultProgress,
+        component_state: &'a [ComponentStateEnvelope],
+    ) -> BoxFuture<'a, Result<ChunkCommitReceipt, ChunkTransactionError>> {
+        if component_state.is_empty() {
+            self.commit(counts, fault)
+        } else {
+            Box::pin(std::future::ready(Err(
+                ChunkTransactionError::ComponentStateUnsupported,
+            )))
+        }
+    }
 
     /// Rolls back all provisional work in this chunk attempt.
     fn rollback(&mut self) -> BoxFuture<'_, Result<(), ChunkTransactionError>>;
@@ -518,6 +558,19 @@ pub trait ChunkTransactionManager: Send + Sync {
         _context: ChunkTransactionContext,
     ) -> BoxFuture<'_, Result<InheritedStepProgress, ChunkTransactionError>> {
         Box::pin(std::future::ready(Ok(InheritedStepProgress::NONE)))
+    }
+
+    /// Returns the last committed [`ItemStream`](crate::ItemStream) envelopes
+    /// this step attempt inherits, one per registered namespace.
+    ///
+    /// The default suits managers without durable component state. A durable
+    /// adapter overrides it and fails closed rather than silently reporting
+    /// no committed state for a namespace that has one.
+    fn inherited_component_state(
+        &self,
+        _context: ChunkTransactionContext,
+    ) -> BoxFuture<'_, Result<Vec<ComponentStateEnvelope>, ChunkTransactionError>> {
+        Box::pin(std::future::ready(Ok(Vec::new())))
     }
 
     /// Starts one transaction bound to a durable repository execution.

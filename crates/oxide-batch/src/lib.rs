@@ -124,6 +124,118 @@
 //! current version, fails closed rather than being truncated, defaulted, or
 //! reinterpreted.
 //!
+//! [`ItemStream`] restores a namespaced [`ComponentStateEnvelope`] before
+//! item work begins, prepares a candidate at the commit boundary, and closes
+//! after the step attempt's terminal outcome is known -- the M6
+//! open/update/close contract, in the same ADR-0008 shape as
+//! [`ItemReader`]/[`ItemProcessor`]/[`ItemWriter`]. A
+//! [`ComponentStateCodec`] adds a codec identity/version axis distinct from
+//! the application schema identity/version axis; any existing
+//! [`VersionedStateCodec`] plugs into [`DefaultComponentCodec`] unchanged.
+//!
+//! ```
+//! use std::sync::atomic::{AtomicU64, Ordering};
+//!
+//! use oxide_batch::{
+//!     CodecId, CodecVersion, ComponentStateEnvelope, ComponentStreamIdentity,
+//!     DefaultComponentCodec, ItemStream, RestartabilityDeclaration, StateCodecError, StateLimits,
+//!     StateSchemaId, StateSchemaVersion, StopSource, StreamCloseContext, StreamCloseError,
+//!     StreamCloseOutcome, StreamOpenContext, StreamOpenError, StreamOpenOutcome,
+//!     StreamRuntimeOutcome, StreamUpdateContext, StreamUpdateError, VersionedStateCodec,
+//! };
+//!
+//! struct RowCountSchema {
+//!     schema: StateSchemaId,
+//!     version: StateSchemaVersion,
+//! }
+//!
+//! impl VersionedStateCodec<u64> for RowCountSchema {
+//!     fn schema_id(&self) -> &StateSchemaId {
+//!         &self.schema
+//!     }
+//!     fn current_version(&self) -> StateSchemaVersion {
+//!         self.version
+//!     }
+//!     fn encode(&self, value: &u64) -> Result<Vec<u8>, StateCodecError> {
+//!         serde_json::to_vec(&serde_json::json!({ "rows": value }))
+//!             .map_err(|_| StateCodecError::InvalidPayload)
+//!     }
+//!     fn decode(&self, payload: &[u8]) -> Result<u64, StateCodecError> {
+//!         let value: serde_json::Value =
+//!             serde_json::from_slice(payload).map_err(|_| StateCodecError::InvalidPayload)?;
+//!         value
+//!             .get("rows")
+//!             .and_then(serde_json::Value::as_u64)
+//!             .ok_or(StateCodecError::InvalidPayload)
+//!     }
+//! }
+//!
+//! fn codec() -> Result<DefaultComponentCodec<RowCountSchema>, Box<dyn std::error::Error>> {
+//!     Ok(DefaultComponentCodec::new(
+//!         RowCountSchema {
+//!             schema: StateSchemaId::new("example.row-count")?,
+//!             version: StateSchemaVersion::new(1)?,
+//!         },
+//!         CodecId::new("example.row-count-codec")?,
+//!         CodecVersion::new(1)?,
+//!         RestartabilityDeclaration::Restartable,
+//!     ))
+//! }
+//!
+//! struct RowCount(AtomicU64);
+//!
+//! impl ItemStream for RowCount {
+//!     async fn open(
+//!         &self,
+//!         context: StreamOpenContext<'_>,
+//!     ) -> Result<StreamOpenOutcome, StreamOpenError> {
+//!         let Some(inherited) = context.inherited_state() else {
+//!             return Ok(StreamOpenOutcome::Initial);
+//!         };
+//!         let codec = codec().map_err(|_| StreamOpenError::new())?;
+//!         let restored: u64 = inherited.decode(&codec).map_err(|_| StreamOpenError::new())?;
+//!         self.0.store(restored, Ordering::SeqCst);
+//!         Ok(StreamOpenOutcome::Restored)
+//!     }
+//!
+//!     async fn update(
+//!         &self,
+//!         _context: StreamUpdateContext<'_>,
+//!     ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+//!         let rows = self.0.fetch_add(1, Ordering::SeqCst) + 1;
+//!         let codec = codec().map_err(|_| StreamUpdateError::new())?;
+//!         let namespace = ComponentStreamIdentity::new("reader.row_count")
+//!             .map_err(|_| StreamUpdateError::new())?;
+//!         ComponentStateEnvelope::encode(namespace, &rows, &codec, StateLimits::default())
+//!             .map_err(|_| StreamUpdateError::new())
+//!     }
+//!
+//!     async fn close(
+//!         &self,
+//!         context: StreamCloseContext<'_>,
+//!     ) -> Result<StreamCloseOutcome, StreamCloseError> {
+//!         assert!(matches!(context.outcome(), StreamRuntimeOutcome::Committed));
+//!         Ok(StreamCloseOutcome::Closed)
+//!     }
+//! }
+//!
+//! let stream = RowCount(AtomicU64::new(0));
+//! let (_source, stop) = StopSource::new();
+//!
+//! let opened = futures_executor::block_on(stream.open(StreamOpenContext::new(None, &stop)))?;
+//! assert_eq!(opened, StreamOpenOutcome::Initial);
+//!
+//! let candidate = futures_executor::block_on(stream.update(StreamUpdateContext::new(&stop)))?;
+//! assert_eq!(candidate.decode(&codec()?)?, 1u64);
+//!
+//! let closed = futures_executor::block_on(stream.close(StreamCloseContext::new(
+//!     &stop,
+//!     StreamRuntimeOutcome::Committed,
+//! )))?;
+//! assert_eq!(closed, StreamCloseOutcome::Closed);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
 //! [`DefinitionManifest`] reads canonical definition bytes back without
 //! guessing. A newer format, a non-canonical encoding, a floating-point value,
 //! an out-of-bound graph, or a digest that does not match the supplied bytes
@@ -263,6 +375,7 @@ mod fault;
 mod fault_state;
 mod flow;
 mod item_listener;
+mod item_stream;
 mod listener;
 mod repository;
 mod runtime;
@@ -305,27 +418,36 @@ pub use item_listener::{
     ItemListenerPhase, ItemListenerSet, ProcessListener, ReadListener, RetryListener, RetryOutcome,
     SkipListener, WriteListener,
 };
+pub use item_stream::{
+    BoxedStream, ItemStream, StreamCloseContext, StreamCloseError, StreamCloseOutcome,
+    StreamOpenContext, StreamOpenError, StreamOpenOutcome, StreamRuntimeOutcome,
+    StreamUpdateContext, StreamUpdateError,
+};
 pub use listener::{
     JobExecutionListener, ListenerContext, ListenerError, ListenerFailure, ListenerFailureKind,
     ListenerPhase, StepExecutionListener,
 };
 pub use oxide_batch_core::{
-    BackoffKind, BackoffPolicy, BatchStatus, Checkpoint, ChunkComponentRevisions, ChunkCount,
-    ChunkCounts, ChunkDeliveryMode, ChunkError, ChunkProgress, ChunkRestartContract, ChunkSize,
-    ClassifierRevision, ComponentRevision, DefinitionError, DefinitionIdentity, DefinitionManifest,
+    BackoffKind, BackoffPolicy, BatchStatus, Checkpoint, ChecksumAlgorithm,
+    ChunkComponentRevisions, ChunkCount, ChunkCounts, ChunkDeliveryMode, ChunkError, ChunkProgress,
+    ChunkRestartContract, ChunkSize, ClassifierRevision, CodecId, CodecVersion,
+    CodecVersionUpgrade, ComponentRevision, ComponentStateCodec, ComponentStateEnvelope,
+    ComponentStateError, ComponentStatePayload, ComponentStreamIdentity, ContentIdentity,
+    DefaultComponentCodec, DefinitionError, DefinitionIdentity, DefinitionManifest,
     DefinitionRevision, DefinitionTokenKind, DefinitionUpgrade, DefinitionUpgradeKey, DomainError,
     DurableStateKind, ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps,
-    ExecutionVersion, ExitCode, ExitStatus, FailureCategory, FailureId, FailureSummary,
-    FaultAction, FaultClassifier, FaultDecision, FaultDescriptor, FaultEvidence, FaultPhase,
-    FaultPolicy, FaultPolicyError, FaultRule, FlowTarget, IdentifierKind, InFlightPolicy,
-    JobExecution, JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey, JobName,
-    JobParameter, JobParameters, LifecycleError, LifecycleTransition, MAX_NODES, MAX_PARTITIONS,
-    MAX_TRANSITIONS, ManifestError, NameKind, NodeId, OperatorRequestId, ParameterName,
-    ParameterRole, ParameterValue, ParameterValueKind, RecoveryDecisionId, RetentionActionId,
+    ExecutionVersion, ExitCode, ExitStatus, ExternalStateError, ExternalStateReference,
+    ExternalStateStore, FailureCategory, FailureId, FailureSummary, FaultAction, FaultClassifier,
+    FaultDecision, FaultDescriptor, FaultEvidence, FaultPhase, FaultPolicy, FaultPolicyError,
+    FaultRule, FlowTarget, IdentifierKind, InFlightPolicy, JobExecution, JobExecutionId,
+    JobInstance, JobInstanceId, JobInstanceKey, JobName, JobParameter, JobParameters,
+    LifecycleError, LifecycleTransition, MAX_NODES, MAX_PARTITIONS, MAX_TRANSITIONS, ManifestError,
+    NameKind, NodeId, OperatorRequestId, ParameterName, ParameterRole, ParameterValue,
+    ParameterValueKind, RecoveryDecisionId, RestartabilityDeclaration, RetentionActionId,
     RetryLimit, RetryOrdinal, RetryStateLimit, RollbackDisposition, SkipCounts, SkipLimit,
     StartControls, StartLimit, StateCodecError, StateError, StateLimits, StateSchemaId,
-    StateSchemaUpgrade, StateSchemaVersion, StepDefinitionUpgrade, StepExecution, StepExecutionId,
-    StepName, StepPartitionId, TerminalKind, VersionedStateCodec,
+    StateSchemaUpgrade, StateSchemaVersion, StateSensitivity, StepDefinitionUpgrade, StepExecution,
+    StepExecutionId, StepName, StepPartitionId, TerminalKind, VersionedStateCodec,
 };
 pub use oxide_batch_plan::{
     CompiledExecutionPlan, DeciderRevision, DecisionInputVersion, DecisionNode, ExitPattern,

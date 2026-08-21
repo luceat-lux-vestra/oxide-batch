@@ -10,20 +10,21 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::runtime::{lower_one_step, one_step_node};
 use crate::{
-    BackoffOutcome, BoxFuture, ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext,
-    ChunkCompletionOutcome, ChunkComponentRevisions, ChunkCount, ChunkCounts, ChunkFaultProgress,
-    ChunkSize, ChunkTransaction, ChunkTransactionContext, ChunkTransactionError,
-    ChunkTransactionManager, CompiledExecutionPlan, DefinitionError, DefinitionIdentity,
-    DefinitionRevision, ExecutionCorrelation, FailureCategory, FailureId, FailureSummary,
-    FaultDecision, FaultDescriptor, FaultEvidence, FaultPhase, FaultProgress, FaultRuntime,
-    InFlightPolicy, InheritedStepProgress, ItemListenerContext, ItemListenerFailure,
-    ItemListenerSet, ItemProcessor, ItemReader, ItemWriter, JobExecutionListener, JobLauncher,
-    JobName, JobParameters, LaunchError, LaunchReport, LifecycleEventKind, ListenerFailureKind,
+    BackoffOutcome, BoxFuture, BoxedStream, ChunkCommitReceipt, ChunkCompletion,
+    ChunkCompletionContext, ChunkCompletionOutcome, ChunkComponentRevisions, ChunkCount,
+    ChunkCounts, ChunkFaultProgress, ChunkSize, ChunkTransaction, ChunkTransactionContext,
+    ChunkTransactionError, ChunkTransactionManager, CompiledExecutionPlan, ComponentStateEnvelope,
+    ComponentStreamIdentity, DefinitionError, DefinitionIdentity, DefinitionRevision,
+    ExecutionCorrelation, FailureCategory, FailureId, FailureSummary, FaultDecision,
+    FaultDescriptor, FaultEvidence, FaultPhase, FaultProgress, FaultRuntime, InFlightPolicy,
+    InheritedStepProgress, ItemListenerContext, ItemListenerFailure, ItemListenerSet,
+    ItemProcessor, ItemReader, ItemStream, ItemWriter, JobExecutionListener, JobLauncher, JobName,
+    JobParameters, LaunchError, LaunchReport, LifecycleEventKind, ListenerFailureKind,
     ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome, ReaderError,
     RetryCounts, RetryKey, RetryOrdinal, RetryOutcome, RetryReservation, RollbackDisposition,
-    SkipCounts, StepComponents, StepExecutionListener, StepName, StopToken, Tasklet,
-    TaskletContext, TaskletError, TaskletJob, TaskletOutcome, TaskletStep, WriteContext,
-    WriteOutcome, WriterError,
+    SkipCounts, StepComponents, StepExecutionListener, StepName, StopToken, StreamCloseContext,
+    StreamOpenContext, StreamRuntimeOutcome, StreamUpdateContext, Tasklet, TaskletContext,
+    TaskletError, TaskletJob, TaskletOutcome, TaskletStep, WriteContext, WriteOutcome, WriterError,
 };
 
 /// A validated one-step chunk definition.
@@ -39,6 +40,7 @@ pub struct ChunkStep<I, O, R, P, W> {
     step_listeners: Vec<Arc<dyn StepExecutionListener>>,
     item_listeners: ItemListenerSet<I, O>,
     fault: Option<FaultRuntime>,
+    streams: Vec<(ComponentStreamIdentity, Arc<BoxedStream>)>,
     in_flight_policy: InFlightPolicy,
     definition_digest: [u8; 32],
 }
@@ -74,6 +76,7 @@ where
             step_listeners: Vec::new(),
             item_listeners: ItemListenerSet::new(),
             fault: None,
+            streams: Vec::new(),
             in_flight_policy: InFlightPolicy::FinishChunk,
             definition_digest: [0; 32],
         }
@@ -112,6 +115,25 @@ where
         self
     }
 
+    /// Registers one namespaced `ItemStream` in deterministic registration
+    /// order.
+    ///
+    /// `identity` must match the namespace registered for this stream in the
+    /// [`ChunkComponentRevisions`] this step's definition declares (see
+    /// [`ChunkComponentRevisions::with_stream_revision`]): it is both the
+    /// restart-relevant fingerprint token and the runtime key used to
+    /// associate this stream with its committed durable state.
+    #[must_use]
+    pub fn with_item_stream(
+        mut self,
+        identity: ComponentStreamIdentity,
+        stream: impl ItemStream + 'static,
+    ) -> Self {
+        self.streams
+            .push((identity, Arc::new(BoxedStream::new(stream))));
+        self
+    }
+
     /// Borrows the step name.
     #[must_use]
     pub const fn name(&self) -> &StepName {
@@ -145,6 +167,7 @@ impl<I, O, R, P, W> fmt::Debug for ChunkStep<I, O, R, P, W> {
             .field("size", &self.size)
             .field("chunk_listener_count", &self.listeners.len())
             .field("step_listener_count", &self.step_listeners.len())
+            .field("stream_count", &self.streams.len())
             .finish_non_exhaustive()
     }
 }
@@ -660,6 +683,14 @@ pub enum ChunkFailure {
     RetryStateExhausted,
     /// The selected resource cannot honour the declared policy.
     UnsupportedCapability,
+    /// Restoring a required `ItemStream` failed before any component work
+    /// began.
+    StreamOpen,
+    /// An `ItemStream` could not prepare its candidate state for the
+    /// committing chunk.
+    StreamUpdate,
+    /// An `ItemStream` failed to close.
+    StreamClose,
 }
 
 /// Final result of deterministic chunk orchestration.
@@ -691,6 +722,7 @@ pub struct ChunkExecutionReport {
     rollback_count: u64,
     no_rollback_count: u64,
     terminal_rollback: bool,
+    stream_close_failed: bool,
 }
 
 impl ChunkExecutionReport {
@@ -698,6 +730,31 @@ impl ChunkExecutionReport {
     #[must_use]
     pub const fn outcome(&self) -> ChunkExecutionOutcome {
         self.outcome
+    }
+
+    /// Returns whether closing a registered `ItemStream` failed.
+    ///
+    /// A close failure never erases an earlier primary failure or
+    /// already-committed chunks: when the step would otherwise have
+    /// completed cleanly, [`Self::outcome`] becomes
+    /// `Failed(ChunkFailure::StreamClose)` and [`Self::original_outcome`]
+    /// records the superseded `Completed` result; when the step already had
+    /// a failure, stop, or unknown outcome, that outcome is unchanged and
+    /// this flag is the only signal of the additional close failure.
+    #[must_use]
+    pub const fn stream_close_failed(&self) -> bool {
+        self.stream_close_failed
+    }
+
+    /// Merges a stream-close failure into this report without erasing an
+    /// earlier primary failure or already-committed chunks.
+    fn with_stream_close_failure(mut self) -> Self {
+        if matches!(self.outcome, ChunkExecutionOutcome::Completed) {
+            self.original_outcome = Some(self.outcome);
+            self.outcome = ChunkExecutionOutcome::Failed(ChunkFailure::StreamClose);
+        }
+        self.stream_close_failed = true;
+        self
     }
 
     /// Returns the result superseded by an after-listener failure.
@@ -887,6 +944,7 @@ impl ExecutionState {
             rollback_count: self.rollback_count,
             no_rollback_count: self.no_rollback_count,
             terminal_rollback: self.terminal_rollback,
+            stream_close_failed: false,
         }
     }
 }
@@ -1007,6 +1065,7 @@ struct Components<'a, I, O, P, W> {
     writer: &'a W,
     item_listeners: &'a ItemListenerSet<I, O>,
     fault: Option<&'a FaultRuntime>,
+    streams: &'a [(ComponentStreamIdentity, Arc<BoxedStream>)],
     step_name: &'a StepName,
     definition_digest: [u8; 32],
     size: ChunkSize,
@@ -1066,7 +1125,7 @@ pub(crate) async fn execute_chunk_step<I, O, R, P, W>(
     correlation: &ExecutionCorrelation,
     stop: &StopToken,
     transaction_context: Option<ChunkTransactionContext>,
-    mut emit: impl FnMut(ChunkRuntimeEvent),
+    emit: impl FnMut(ChunkRuntimeEvent),
 ) -> ChunkExecutionReport
 where
     I: Send + Sync,
@@ -1086,6 +1145,7 @@ where
         listeners,
         item_listeners,
         fault,
+        streams,
         in_flight_policy,
         definition_digest,
         ..
@@ -1095,26 +1155,115 @@ where
         writer,
         item_listeners,
         fault: fault.as_ref(),
+        streams,
         step_name: name,
         definition_digest: *definition_digest,
         size: *size,
     };
 
-    let inherited = match inherited_progress(
+    let (inherited, opened) = match inherited_progress(
         transactions.as_ref(),
         fault.as_ref(),
         transaction_context,
+        streams,
+        stop,
     )
     .await
     {
-        Ok(inherited) => inherited,
+        Ok(value) => value,
         Err(outcome) => return ExecutionState::new().report(outcome, None),
     };
     let base_ordinal = inherited.read_ordinal();
-    let mut state = ExecutionState::inheriting(inherited.fault());
-    let mut sequence = ChunkCount::ZERO;
-    let mut buffer = ChunkBuffer::new(base_ordinal, inherited.checkpoint_digest());
+    let state = ExecutionState::inheriting(inherited.fault());
+    let buffer = ChunkBuffer::new(base_ordinal, inherited.checkpoint_digest());
 
+    let report = run_chunk_loop(
+        &components,
+        reader,
+        correlation,
+        stop,
+        listeners,
+        transactions.as_ref(),
+        transaction_context,
+        *in_flight_policy,
+        completion.as_ref(),
+        base_ordinal,
+        buffer,
+        state,
+        emit,
+    )
+    .await;
+
+    close_opened_streams(&opened, stop, report).await
+}
+
+/// Runs [`ItemStream::close`] for every stream that opened successfully, in
+/// reverse registration order, and merges any close failure into `report`
+/// without erasing an earlier primary failure or already-committed chunks.
+async fn close_opened_streams(
+    opened: &[Arc<BoxedStream>],
+    stop: &StopToken,
+    report: ChunkExecutionReport,
+) -> ChunkExecutionReport {
+    if opened.is_empty() {
+        return report;
+    }
+    let runtime_outcome = match report.outcome() {
+        ChunkExecutionOutcome::Completed => StreamRuntimeOutcome::Committed,
+        ChunkExecutionOutcome::Stopped => StreamRuntimeOutcome::Stopped,
+        ChunkExecutionOutcome::Unknown => StreamRuntimeOutcome::Unknown,
+        ChunkExecutionOutcome::Failed(_) => StreamRuntimeOutcome::Failed,
+    };
+    let context = StreamCloseContext::new(stop, runtime_outcome);
+    let mut close_failed = false;
+    for stream in opened.iter().rev() {
+        if stream.close(context).await.is_err() {
+            close_failed = true;
+        }
+    }
+    if close_failed {
+        report.with_stream_close_failure()
+    } else {
+        report
+    }
+}
+
+/// Drives one step attempt's per-chunk loop to its terminal
+/// [`ChunkExecutionReport`].
+///
+/// Extracted from [`execute_chunk_step`] as a pure, behavior-preserving
+/// refactor so a future "always run before returning" funnel (stream close)
+/// can wrap this call without touching the loop's many existing exit points.
+#[allow(
+    clippy::similar_names,
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "the chunk loop keeps the canonical attempt, commit, and stop order visible"
+)]
+async fn run_chunk_loop<I, O, E, P, W, R>(
+    components: &Components<'_, I, O, P, W>,
+    reader: &mut R,
+    correlation: &ExecutionCorrelation,
+    stop: &StopToken,
+    listeners: &[Arc<dyn ChunkListener>],
+    transactions: &dyn ChunkTransactionManager,
+    transaction_context: Option<ChunkTransactionContext>,
+    in_flight_policy: InFlightPolicy,
+    completion: &dyn ChunkCompletion,
+    base_ordinal: u64,
+    mut buffer: ChunkBuffer<I, O>,
+    mut state: ExecutionState,
+    mut emit: E,
+) -> ChunkExecutionReport
+where
+    I: Send + Sync,
+    O: Send + Sync,
+    E: FnMut(ChunkRuntimeEvent),
+    P: ItemProcessor<I, O>,
+    W: ItemWriter<O>,
+    R: ItemReader<I>,
+{
+    let mut sequence = ChunkCount::ZERO;
     loop {
         if stop.is_stop_requested() {
             return state.report(ChunkExecutionOutcome::Stopped, None);
@@ -1142,7 +1291,10 @@ where
         };
         let mut transaction = match begun {
             Ok(transaction) => transaction,
-            Err(ChunkTransactionError::NotCommitted) => {
+            Err(
+                ChunkTransactionError::NotCommitted
+                | ChunkTransactionError::ComponentStateUnsupported,
+            ) => {
                 return finish_failed_attempt(
                     listeners,
                     listener_context,
@@ -1188,7 +1340,7 @@ where
         };
 
         let result = run_attempt(
-            &components,
+            components,
             reader,
             scope,
             &mut buffer,
@@ -1248,22 +1400,22 @@ where
                     counts,
                     stop,
                 );
-                let terminal_outcome =
-                    match invoke_completion(completion.as_ref(), completion_context).await {
-                        Ok(ChunkCompletionOutcome::Acknowledged) => {
-                            if stop.is_stop_requested() {
-                                Some(ChunkExecutionOutcome::Stopped)
-                            } else if end_of_input {
-                                Some(ChunkExecutionOutcome::Completed)
-                            } else {
-                                None
-                            }
-                        }
-                        Ok(ChunkCompletionOutcome::StoppedAfterCommit) => {
+                let terminal_outcome = match invoke_completion(completion, completion_context).await
+                {
+                    Ok(ChunkCompletionOutcome::Acknowledged) => {
+                        if stop.is_stop_requested() {
                             Some(ChunkExecutionOutcome::Stopped)
+                        } else if end_of_input {
+                            Some(ChunkExecutionOutcome::Completed)
+                        } else {
+                            None
                         }
-                        Err(failure) => Some(ChunkExecutionOutcome::Failed(failure)),
-                    };
+                    }
+                    Ok(ChunkCompletionOutcome::StoppedAfterCommit) => {
+                        Some(ChunkExecutionOutcome::Stopped)
+                    }
+                    Err(failure) => Some(ChunkExecutionOutcome::Failed(failure)),
+                };
 
                 let after_context =
                     ChunkListenerContext::new(sequence, state.committed_counts, stop);
@@ -1361,22 +1513,56 @@ async fn inherited_progress(
     transactions: &dyn ChunkTransactionManager,
     fault: Option<&FaultRuntime>,
     context: Option<ChunkTransactionContext>,
-) -> Result<InheritedStepProgress, ChunkExecutionOutcome> {
-    let Some(context) = context else {
-        return Ok(InheritedStepProgress::NONE);
+    streams: &[(ComponentStreamIdentity, Arc<BoxedStream>)],
+    stop: &StopToken,
+) -> Result<(InheritedStepProgress, Vec<Arc<BoxedStream>>), ChunkExecutionOutcome> {
+    let inherited_state = match context {
+        None => Vec::new(),
+        Some(_) if streams.is_empty() => Vec::new(),
+        Some(context) => match transactions.inherited_component_state(context).await {
+            Ok(state) => state,
+            Err(_) => return Err(ChunkExecutionOutcome::Failed(ChunkFailure::StreamOpen)),
+        },
     };
-    if let Some(fault) = fault
-        && fault.state().bind(context).await.is_err()
-    {
-        return Err(ChunkExecutionOutcome::Failed(ChunkFailure::FaultState));
-    }
-    match transactions.inherited_progress(context).await {
-        Ok(inherited) => Ok(inherited),
-        Err(ChunkTransactionError::CommitOutcomeUnknown) => Err(ChunkExecutionOutcome::Unknown),
-        Err(ChunkTransactionError::NotCommitted) => {
-            Err(ChunkExecutionOutcome::Failed(ChunkFailure::FaultState))
+
+    let progress = match context {
+        None => InheritedStepProgress::NONE,
+        Some(context) => {
+            if let Some(fault) = fault
+                && fault.state().bind(context).await.is_err()
+            {
+                return Err(ChunkExecutionOutcome::Failed(ChunkFailure::FaultState));
+            }
+            match transactions.inherited_progress(context).await {
+                Ok(inherited) => inherited,
+                Err(ChunkTransactionError::CommitOutcomeUnknown) => {
+                    return Err(ChunkExecutionOutcome::Unknown);
+                }
+                Err(
+                    ChunkTransactionError::NotCommitted
+                    | ChunkTransactionError::ComponentStateUnsupported,
+                ) => return Err(ChunkExecutionOutcome::Failed(ChunkFailure::FaultState)),
+            }
+        }
+    };
+
+    let mut opened = Vec::with_capacity(streams.len());
+    for (identity, stream) in streams {
+        let envelope = inherited_state
+            .iter()
+            .find(|envelope| envelope.namespace() == identity);
+        let open_context = StreamOpenContext::new(envelope, stop);
+        if stream.open(open_context).await.is_ok() {
+            opened.push(Arc::clone(stream));
+        } else {
+            let close_context = StreamCloseContext::new(stop, StreamRuntimeOutcome::Failed);
+            for opened_stream in opened.iter().rev() {
+                let _ = opened_stream.close(close_context).await;
+            }
+            return Err(ChunkExecutionOutcome::Failed(ChunkFailure::StreamOpen));
         }
     }
+    Ok((progress, opened))
 }
 
 /// Counts one rolled-back attempt and runs its after-chunk listeners.
@@ -1426,6 +1612,7 @@ where
     R: ItemReader<I>,
 {
     let mut outputs = AttemptOutputs::new();
+    let mut component_state = Vec::new();
 
     let verdict = 'body: {
         if let Some(fault) = components.fault
@@ -1458,6 +1645,7 @@ where
             state,
             &mut outputs,
             transaction,
+            &mut component_state,
             emit,
         )
         .await
@@ -1465,7 +1653,16 @@ where
 
     match verdict {
         Verdict::Commit => {
-            commit_attempt(components, scope, buffer, state, transaction, &outputs).await
+            commit_attempt(
+                components,
+                scope,
+                buffer,
+                state,
+                transaction,
+                &outputs,
+                &component_state,
+            )
+            .await
         }
         Verdict::Retry(request) => {
             schedule_retry(components, scope, buffer, state, transaction, request, emit).await
@@ -1886,6 +2083,7 @@ async fn write_phase<I, O, E, P, W>(
     state: &mut ExecutionState,
     outputs: &mut AttemptOutputs<O>,
     transaction: &mut dyn ChunkTransaction,
+    component_state: &mut Vec<ComponentStateEnvelope>,
     emit: &mut E,
 ) -> Verdict
 where
@@ -1896,7 +2094,7 @@ where
     W: ItemWriter<O>,
 {
     if outputs.values.is_empty() {
-        return Verdict::Commit;
+        return update_streams(components, scope, component_state).await;
     }
     if scope.stop.is_stop_requested() {
         return Verdict::Terminal(ChunkExecutionOutcome::Stopped);
@@ -1945,7 +2143,7 @@ where
                 return Verdict::Terminal(outcome);
             }
             resolve_key(components, key).await;
-            Verdict::Commit
+            update_streams(components, scope, component_state).await
         }
         Invoked::Completed(WriteOutcome::Stopped) => {
             Verdict::Terminal(ChunkExecutionOutcome::Stopped)
@@ -2041,6 +2239,33 @@ where
     }
 }
 
+/// Prepares each registered `ItemStream`'s candidate state for the
+/// committing chunk, in registration order.
+///
+/// Runs once per committing attempt, after the writer has accepted the
+/// chunk and before the durable commit -- never per item. A failure here
+/// prevents the candidate commit, matching process/write-error handling: no
+/// partial commit.
+async fn update_streams<I, O, P, W>(
+    components: &Components<'_, I, O, P, W>,
+    scope: AttemptScope<'_>,
+    component_state: &mut Vec<ComponentStateEnvelope>,
+) -> Verdict {
+    component_state.clear();
+    let context = StreamUpdateContext::new(scope.stop);
+    for (_, stream) in components.streams {
+        match stream.update(context).await {
+            Ok(envelope) => component_state.push(envelope),
+            Err(_) => {
+                return Verdict::Terminal(ChunkExecutionOutcome::Failed(
+                    ChunkFailure::StreamUpdate,
+                ));
+            }
+        }
+    }
+    Verdict::Commit
+}
+
 /// Runs skip callbacks, clears resolved keys, and commits the chunk.
 async fn commit_attempt<I, O, P, W>(
     components: &Components<'_, I, O, P, W>,
@@ -2049,6 +2274,7 @@ async fn commit_attempt<I, O, P, W>(
     state: &mut ExecutionState,
     transaction: &mut dyn ChunkTransaction,
     outputs: &AttemptOutputs<O>,
+    component_state: &[ComponentStateEnvelope],
 ) -> AttemptResult
 where
     I: Send + Sync,
@@ -2111,7 +2337,10 @@ where
         return AttemptResult::RolledBack(outcome);
     };
 
-    match transaction.commit(counts, accepted).await {
+    match transaction
+        .commit_with_component_state(counts, accepted, component_state)
+        .await
+    {
         Ok(receipt) => {
             let Ok(next_skips) = state.skip_counts.checked_add(accepted.skips()) else {
                 return AttemptResult::RolledBack(ChunkExecutionOutcome::Failed(
@@ -2130,7 +2359,9 @@ where
             }
             AttemptResult::Committed { counts, receipt }
         }
-        Err(ChunkTransactionError::NotCommitted) => {
+        Err(
+            ChunkTransactionError::NotCommitted | ChunkTransactionError::ComponentStateUnsupported,
+        ) => {
             let outcome = ChunkExecutionOutcome::Failed(ChunkFailure::TransactionCommit);
             if transaction.rollback().await.is_err() {
                 return AttemptResult::RollbackFailed(Some(outcome));

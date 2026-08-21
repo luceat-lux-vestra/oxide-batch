@@ -219,6 +219,11 @@ definition_token!(
     DefinitionTokenKind::Classifier,
     "An application-owned revision token for one bounded fault classifier."
 );
+definition_token!(
+    ComponentStreamIdentity,
+    DefinitionTokenKind::Component,
+    "A stable, owner-scoped `ItemStream` namespace token.\n\nThis is the durable component-state namespace: it is never derived from a\ndisplay name, a memory address, or runtime object identity, and it\nparticipates in the restart-relevant chunk definition fingerprint alongside\nthe other component revisions."
+);
 
 /// Component revisions for a one-step chunk definition.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -228,10 +233,14 @@ pub struct ChunkComponentRevisions {
     writer: ComponentRevision,
     checkpoint: ComponentRevision,
     restart: ChunkRestartContract,
+    streams: BTreeMap<ComponentStreamIdentity, ComponentRevision>,
 }
 
 impl ChunkComponentRevisions {
     /// Constructs the four restart-relevant chunk component revisions.
+    ///
+    /// Registers no `ItemStream` namespaces; use
+    /// [`with_stream_revision`](Self::with_stream_revision) to add them.
     #[must_use]
     pub const fn new(
         reader: ComponentRevision,
@@ -246,7 +255,33 @@ impl ChunkComponentRevisions {
             writer,
             checkpoint,
             restart,
+            streams: BTreeMap::new(),
         }
+    }
+
+    /// Registers one `ItemStream` namespace's restart-relevant revision.
+    ///
+    /// Namespaces are kept in a deterministic (sorted, not insertion) order so
+    /// the manifest and fingerprint never depend on registration order. A
+    /// definition with no registered streams produces a manifest and
+    /// fingerprint byte-for-byte identical to one built before this method
+    /// existed.
+    #[must_use]
+    pub fn with_stream_revision(
+        mut self,
+        identity: ComponentStreamIdentity,
+        revision: ComponentRevision,
+    ) -> Self {
+        self.streams.insert(identity, revision);
+        self
+    }
+
+    /// Iterates registered `ItemStream` namespace revisions in deterministic
+    /// (sorted) order.
+    pub fn stream_revisions(
+        &self,
+    ) -> impl Iterator<Item = (&ComponentStreamIdentity, &ComponentRevision)> {
+        self.streams.iter()
     }
 
     /// Returns the delivery mode declared by the restart contract.
@@ -479,6 +514,21 @@ impl DefinitionIdentity {
                 "in_flight_policy".to_owned(),
                 serde_json::Value::String("rollback_chunk".to_owned()),
             );
+        }
+        if !components.streams.is_empty()
+            && let Some(object) = manifest.as_object_mut()
+        {
+            let streams: Vec<serde_json::Value> = components
+                .streams
+                .iter()
+                .map(|(identity, revision)| {
+                    json!({
+                        "identity": identity.as_str(),
+                        "revision": revision.as_str(),
+                    })
+                })
+                .collect();
+            object.insert("streams".to_owned(), serde_json::Value::Array(streams));
         }
         Self::encode(job_name.clone(), revision, &manifest)
     }

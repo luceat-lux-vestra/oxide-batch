@@ -28,9 +28,11 @@ use std::fs;
 use std::path::PathBuf;
 
 use oxide_batch::{
-    BusinessStatement, BusinessValue, Checkpoint, DomainError, ExecutionContext, JobParameter,
-    JobParameters, ParameterName, ParameterRole, ParameterValue, StateLimits, TaskletError,
-    WriterError,
+    BusinessStatement, BusinessValue, Checkpoint, CodecId, CodecVersion, ComponentStateEnvelope,
+    ComponentStreamIdentity, DefaultComponentCodec, DomainError, ExecutionContext, JobParameter,
+    JobParameters, ParameterName, ParameterRole, ParameterValue, RestartabilityDeclaration,
+    StateCodecError, StateLimits, StateSchemaId, StateSchemaVersion, TaskletError,
+    VersionedStateCodec, WriterError,
 };
 use serde_json::json;
 
@@ -70,8 +72,9 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     ("fault_state", 11),
     ("flow", 20),
     ("item_listener", 12),
+    ("item_stream", 11),
     ("listener", 7),
-    ("oxide_batch_core", 89),
+    ("oxide_batch_core", 105),
     ("oxide_batch_plan", 26),
     ("oxide_batch_repository", 110),
     ("repository", 14),
@@ -114,6 +117,11 @@ fn debug_output_redacts_every_sensitive_payload_class() -> Result<(), Box<dyn Er
             "context payload",
             Withheld::Marked,
             format!("{:?}", sensitive_context()?),
+        ),
+        (
+            "component state payload",
+            Withheld::Marked,
+            format!("{:?}", sensitive_component_state()?),
         ),
         (
             "item value",
@@ -289,6 +297,43 @@ fn sensitive_checkpoint() -> Result<Checkpoint, Box<dyn Error>> {
 fn sensitive_context() -> Result<ExecutionContext, Box<dyn Error>> {
     Ok(ExecutionContext::from_json(
         &envelope("oxide-batch.execution-context"),
+        StateLimits::default(),
+    )?)
+}
+
+/// Retains a sentinel-bearing component-state payload the framework must
+/// withhold.
+fn sensitive_component_state() -> Result<ComponentStateEnvelope, Box<dyn Error>> {
+    struct SentinelCodec {
+        schema: StateSchemaId,
+    }
+    impl VersionedStateCodec<String> for SentinelCodec {
+        fn schema_id(&self) -> &StateSchemaId {
+            &self.schema
+        }
+        fn current_version(&self) -> StateSchemaVersion {
+            StateSchemaVersion::new(1).expect("nonzero")
+        }
+        fn encode(&self, value: &String) -> Result<Vec<u8>, StateCodecError> {
+            serde_json::to_vec(&json!({ "value": value }))
+                .map_err(|_| StateCodecError::InvalidPayload)
+        }
+        fn decode(&self, _payload: &[u8]) -> Result<String, StateCodecError> {
+            Err(StateCodecError::InvalidPayload)
+        }
+    }
+    let codec = DefaultComponentCodec::new(
+        SentinelCodec {
+            schema: StateSchemaId::new("test.sensitive")?,
+        },
+        CodecId::new("test.sensitive-codec")?,
+        CodecVersion::new(1)?,
+        RestartabilityDeclaration::Restartable,
+    );
+    Ok(ComponentStateEnvelope::encode(
+        ComponentStreamIdentity::new("test.sensitive-stream")?,
+        &String::from(SENTINEL),
+        &codec,
         StateLimits::default(),
     )?)
 }
