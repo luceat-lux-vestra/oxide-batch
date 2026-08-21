@@ -138,7 +138,7 @@ evidence.
 | Performance | P-001 fixed overhead and P-003 enlisted-writer throughput against the M4 provisional budgets, plus P-010 at `1`, `10`, and the largest configured worker count |
 | Resource bounds | Declared ceiling proof for every queue, retry cache, page, buffer, worker assignment, and result set, with backpressure propagation under stress |
 | Crash and restore | P-013 restart after many chunks, plus process-kill at each commit phase and logical backup restore on 15 and 18 |
-| Upgrade | Schema 1 and 2 to schema 3 direct upgrade, newer-schema rejection, and restore-based rollback |
+| Upgrade | Schema 1, 2, and 3 direct upgrade to the current schema, newer-schema rejection, and restore-based rollback |
 | Security | `verify-full` TLS connectivity, least-privilege role separation for migration, runtime, explorer, operator, and retention, and a redaction sweep over errors, telemetry, CLI output, and diagnostic bundles |
 | Soak | P-015 across repeated launch, shutdown, restart, and recovery cycles, reporting task, connection, handle, and memory growth over the declared duration |
 | Cancellation | P-014 request-to-intake-stop and request-to-durable-terminal latency with the count of unjoined tasks at each deadline |

@@ -28,6 +28,8 @@ pub enum DurableStateKind {
     Checkpoint,
     /// Application restart state scoped to an execution.
     ExecutionContext,
+    /// Component-owned, namespaced durable state (M6 `ItemStream` contract).
+    ComponentState,
 }
 
 impl DurableStateKind {
@@ -35,6 +37,7 @@ impl DurableStateKind {
         match self {
             Self::Checkpoint => "oxide-batch.checkpoint",
             Self::ExecutionContext => "oxide-batch.execution-context",
+            Self::ComponentState => "oxide-batch.component-state",
         }
     }
 }
@@ -44,6 +47,7 @@ impl fmt::Display for DurableStateKind {
         formatter.write_str(match self {
             Self::Checkpoint => "checkpoint",
             Self::ExecutionContext => "execution context",
+            Self::ComponentState => "component state",
         })
     }
 }
@@ -457,57 +461,8 @@ impl VersionedState {
         }
         let payload =
             serde_json::to_vec(&self.payload).map_err(|_| StateError::Malformed { kind })?;
-        let payload = self.upgrade(kind, codec, payload)?;
+        let payload = upgrade_schema_chain(kind, self.schema_version, codec, payload)?;
         codec.decode(&payload).map_err(StateError::Codec)
-    }
-
-    /// Walks the declared upgrade edges from the recorded version to `current`.
-    ///
-    /// Each step takes the single edge leaving the position reached so far.
-    /// Two edges leaving one version would make the result depend on
-    /// declaration order, so that is rejected rather than resolved.
-    fn upgrade<T>(
-        &self,
-        kind: DurableStateKind,
-        codec: &(impl VersionedStateCodec<T> + ?Sized),
-        mut payload: Vec<u8>,
-    ) -> Result<Vec<u8>, StateError> {
-        let current = codec.current_version();
-        let upgrades = codec.upgrades();
-        let mut version = self.schema_version;
-        let mut applied = 0_usize;
-        while version < current {
-            let mut edges = upgrades.iter().filter(|upgrade| upgrade.from == version);
-            let edge = edges.next().ok_or(StateError::NoUpgradePath {
-                kind,
-                found: version,
-                current,
-            })?;
-            if edges.next().is_some() {
-                return Err(StateError::AmbiguousUpgrade {
-                    kind,
-                    from: version,
-                });
-            }
-            if edge.to > current {
-                return Err(StateError::UpgradeOvershootsCurrent {
-                    kind,
-                    to: edge.to,
-                    current,
-                });
-            }
-            applied += 1;
-            if applied > MAX_UPGRADE_CHAIN {
-                return Err(StateError::UpgradeChainTooLong {
-                    kind,
-                    max_upgrades: MAX_UPGRADE_CHAIN,
-                });
-            }
-            payload = (edge.apply)(&payload).map_err(StateError::Codec)?;
-            check_upgraded(kind, &payload)?;
-            version = edge.to;
-        }
-        Ok(payload)
     }
 
     fn to_json(&self, kind: DurableStateKind) -> Result<Vec<u8>, StateError> {
@@ -523,6 +478,62 @@ impl VersionedState {
     fn payload_json(&self, kind: DurableStateKind) -> Result<Vec<u8>, StateError> {
         serde_json::to_vec(&self.payload).map_err(|_| StateError::Malformed { kind })
     }
+}
+
+/// Walks the declared upgrade edges from `recorded` to the codec's current
+/// version.
+///
+/// Each step takes the single edge leaving the position reached so far. Two
+/// edges leaving one version would make the result depend on declaration
+/// order, so that is rejected rather than resolved.
+///
+/// `pub(crate)` rather than private: this is the one schema-upgrade-chain
+/// algorithm in the crate. The M6 component-state envelope
+/// ([`crate::component_state`]) delegates its application-schema axis to this
+/// exact function rather than re-implementing the walk, so [`Checkpoint`],
+/// [`ExecutionContext`], and component state share one migration algorithm.
+pub(crate) fn upgrade_schema_chain<T>(
+    kind: DurableStateKind,
+    recorded: StateSchemaVersion,
+    codec: &(impl VersionedStateCodec<T> + ?Sized),
+    mut payload: Vec<u8>,
+) -> Result<Vec<u8>, StateError> {
+    let current = codec.current_version();
+    let upgrades = codec.upgrades();
+    let mut version = recorded;
+    let mut applied = 0_usize;
+    while version < current {
+        let mut edges = upgrades.iter().filter(|upgrade| upgrade.from == version);
+        let edge = edges.next().ok_or(StateError::NoUpgradePath {
+            kind,
+            found: version,
+            current,
+        })?;
+        if edges.next().is_some() {
+            return Err(StateError::AmbiguousUpgrade {
+                kind,
+                from: version,
+            });
+        }
+        if edge.to > current {
+            return Err(StateError::UpgradeOvershootsCurrent {
+                kind,
+                to: edge.to,
+                current,
+            });
+        }
+        applied += 1;
+        if applied > MAX_UPGRADE_CHAIN {
+            return Err(StateError::UpgradeChainTooLong {
+                kind,
+                max_upgrades: MAX_UPGRADE_CHAIN,
+            });
+        }
+        payload = (edge.apply)(&payload).map_err(StateError::Codec)?;
+        check_upgraded(kind, &payload)?;
+        version = edge.to;
+    }
+    Ok(payload)
 }
 
 fn envelope(
@@ -582,7 +593,12 @@ fn check_upgraded(kind: DurableStateKind, payload: &[u8]) -> Result<(), StateErr
     Ok(())
 }
 
-fn json_depth(value: &Value) -> usize {
+/// Computes the maximum JSON nesting depth of `value`, including its root.
+///
+/// `pub(crate)` so the M6 component-state envelope ([`crate::component_state`])
+/// can apply the identical depth bound to its own payload without a second
+/// depth-counting implementation.
+pub(crate) fn json_depth(value: &Value) -> usize {
     match value {
         Value::Array(values) => 1 + values.iter().map(json_depth).max().unwrap_or_default(),
         Value::Object(values) => 1 + values.values().map(json_depth).max().unwrap_or_default(),

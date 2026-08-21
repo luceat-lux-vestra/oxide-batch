@@ -70,6 +70,14 @@ pub const METADATA_SCHEMA: &str = "oxide_batch";
 /// a different runtime than the one it names.
 pub const SCHEMA2_RUNTIME_REVISION: &str = "397a38bcada93d961dbb2ca3d9960311a3fb4395";
 
+/// The revision whose runtime supports schema 3 and knows no schema 4.
+///
+/// The same reasoning as [`SCHEMA2_RUNTIME_REVISION`], one schema later: this
+/// is the commit immediately before `0005_item_stream_component_state.sql`
+/// (schema 4, M6 `#144`) was added, so the runtime built from it is the one
+/// that shipped against schema 3 rather than a reconstruction of it.
+pub const SCHEMA3_RUNTIME_REVISION: &str = "1045c29055b42d23a4a2af1b35a84b2161becea8";
+
 /// The tables schema 1 declared, in dependency order.
 pub const SCHEMA1_TABLES: &[&str] = &[
     "ob_schema_version",
@@ -90,6 +98,19 @@ pub const SCHEMA3_TABLES: &[&str] = &[
     "ob_retention_action",
     "ob_step_partition",
 ];
+
+/// The tables schema 4 added to schema 3.
+///
+/// Schema 4 (M6 `#144`) is purely additive: one new side table for `ItemStream`
+/// component state, keyed by `(step_execution_id, namespace)`. It declares no
+/// column on any table an earlier schema already had, so
+/// [`SCHEMA4_COLUMNS`] is empty.
+pub const SCHEMA4_TABLES: &[&str] = &["ob_component_state"];
+
+/// Columns schema 4 added to tables schema 3 already declared.
+///
+/// Empty: see [`SCHEMA4_TABLES`].
+pub const SCHEMA4_COLUMNS: &[(&str, &str)] = &[];
 
 /// Columns schema 2 added to tables schema 1 already declared.
 pub const SCHEMA2_COLUMNS: &[(&str, &str)] = &[
@@ -268,6 +289,7 @@ pub async fn assert_historical_shape(url: &str, version: u32) -> Result<(), Box<
     for (present, tables, columns) in [
         (version >= 2, SCHEMA2_TABLES, SCHEMA2_COLUMNS),
         (version >= 3, SCHEMA3_TABLES, SCHEMA3_COLUMNS),
+        (version >= 4, SCHEMA4_TABLES, SCHEMA4_COLUMNS),
     ] {
         for table in tables {
             if table_exists(url, table).await? != present {
@@ -722,6 +744,9 @@ pub fn durable_tables(version: u32) -> Vec<&'static str> {
     if version >= 3 {
         tables.extend_from_slice(SCHEMA3_TABLES);
     }
+    if version >= 4 {
+        tables.extend_from_slice(SCHEMA4_TABLES);
+    }
     tables
 }
 
@@ -871,11 +896,50 @@ pub struct ProbeRun {
 
 /// Builds the runtime at `SCHEMA2_RUNTIME_REVISION` and points it at `target`.
 ///
+/// See [`run_historical_runtime`] for the mechanism.
+///
+/// # Errors
+///
+/// Returns the failure [`run_historical_runtime`] returns.
+pub fn run_schema2_runtime(target: &str) -> Result<ProbeRun, Box<dyn Error>> {
+    run_historical_runtime(
+        SCHEMA2_RUNTIME_REVISION,
+        "schema2-runtime",
+        "schema2-build",
+        &fixtures().join("schema-2-runtime").join("probe.rs"),
+        "m5_schema2_probe",
+        "M5_SCHEMA2_PROBE",
+        target,
+    )
+}
+
+/// Builds the runtime at `SCHEMA3_RUNTIME_REVISION` and points it at `target`.
+///
+/// See [`run_historical_runtime`] for the mechanism.
+///
+/// # Errors
+///
+/// Returns the failure [`run_historical_runtime`] returns.
+pub fn run_schema3_runtime(target: &str) -> Result<ProbeRun, Box<dyn Error>> {
+    run_historical_runtime(
+        SCHEMA3_RUNTIME_REVISION,
+        "schema3-runtime",
+        "schema3-build",
+        &fixtures().join("schema-3-runtime").join("probe.rs"),
+        "m5_schema3_probe",
+        "M5_SCHEMA3_PROBE",
+        target,
+    )
+}
+
+/// Builds the runtime at `revision` and points it at `target`.
+///
 /// The runtime is checked out into a worktree and built there, because that is
-/// the only way to obtain one whose supported schema version is 2: the version
-/// is a constant of the crate and this working tree's is 3. The probe program
-/// is this campaign's committed fixture rather than something written into the
-/// worktree by hand, so what runs against the database is reviewable here.
+/// the only way to obtain one whose supported schema version is older than
+/// this working tree's: the version is a constant of the crate. The probe
+/// program is this campaign's committed fixture rather than something written
+/// into the worktree by hand, so what runs against the database is reviewable
+/// here.
 ///
 /// The build directory is outside the worktree and is not cleaned between
 /// runs, so a repeated campaign compiles the historical runtime once.
@@ -886,24 +950,34 @@ pub struct ProbeRun {
 /// or run, including the revision being absent from the repository — which is
 /// what a shallow clone produces, and which must fail the campaign rather than
 /// silently skip the only reading that proves the contract.
-pub fn run_schema2_runtime(target: &str) -> Result<ProbeRun, Box<dyn Error>> {
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one call assembles the worktree name, build directory, probe fixture, example \
+              name, output marker, and revision -- splitting them into a struct would not make \
+              any of them less required"
+)]
+fn run_historical_runtime(
+    revision: &str,
+    worktree_name: &str,
+    build_name: &str,
+    probe_source: &Path,
+    example_name: &str,
+    marker: &str,
+    target: &str,
+) -> Result<ProbeRun, Box<dyn Error>> {
     let root = workspace_root();
     let staging = root.join("target").join("m5-upgrade");
-    let worktree = staging.join("schema2-runtime");
-    let build = staging.join("schema2-build");
+    let worktree = staging.join(worktree_name);
+    let build = staging.join(build_name);
 
     let present = Command::new("git")
         .current_dir(&root)
-        .args([
-            "cat-file",
-            "-e",
-            &format!("{SCHEMA2_RUNTIME_REVISION}^{{commit}}"),
-        ])
+        .args(["cat-file", "-e", &format!("{revision}^{{commit}}")])
         .status()?;
     if !present.success() {
         return Err(Box::new(Failure(format!(
-            "the campaign builds the schema-2 runtime from {SCHEMA2_RUNTIME_REVISION} and this \
-             repository does not have that commit; fetch the full history"
+            "the campaign builds a historical runtime from {revision} and this repository does \
+             not have that commit; fetch the full history"
         ))));
     }
 
@@ -917,21 +991,18 @@ pub fn run_schema2_runtime(target: &str) -> Result<ProbeRun, Box<dyn Error>> {
         .current_dir(&root)
         .args(["worktree", "add", "--detach", "--force"])
         .arg(&worktree)
-        .arg(SCHEMA2_RUNTIME_REVISION)
+        .arg(revision)
         .output()?;
     if !added.status.success() {
         return Err(Box::new(Failure(format!(
-            "could not check out {SCHEMA2_RUNTIME_REVISION}: {}",
+            "could not check out {revision}: {}",
             String::from_utf8_lossy(&added.stderr).trim()
         ))));
     }
 
     let examples = worktree.join("crates").join("oxide-batch").join("examples");
     fs::create_dir_all(&examples)?;
-    fs::copy(
-        fixtures().join("schema-2-runtime").join("probe.rs"),
-        examples.join("m5_schema2_probe.rs"),
-    )?;
+    fs::copy(probe_source, examples.join(format!("{example_name}.rs")))?;
 
     let output = Command::new("cargo")
         .current_dir(&worktree)
@@ -943,7 +1014,7 @@ pub fn run_schema2_runtime(target: &str) -> Result<ProbeRun, Box<dyn Error>> {
             "--features",
             "postgres",
             "--example",
-            "m5_schema2_probe",
+            example_name,
         ])
         .env("CARGO_TARGET_DIR", &build)
         .env("OXIDEBATCH_PROBE_URL", target)
@@ -952,10 +1023,10 @@ pub fn run_schema2_runtime(target: &str) -> Result<ProbeRun, Box<dyn Error>> {
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let report = stdout
         .lines()
-        .find_map(|line| line.strip_prefix("M5_SCHEMA2_PROBE "))
+        .find_map(|line| line.strip_prefix(&format!("{marker} ")))
         .ok_or_else(|| {
             Failure(format!(
-                "the schema-2 runtime printed no reading: {}",
+                "the historical runtime at {revision} printed no reading: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
             ))
         })?;
@@ -964,7 +1035,7 @@ pub fn run_schema2_runtime(target: &str) -> Result<ProbeRun, Box<dyn Error>> {
     remove_worktree(&root, &worktree);
 
     Ok(ProbeRun {
-        revision: SCHEMA2_RUNTIME_REVISION.to_owned(),
+        revision: revision.to_owned(),
         exit_success: output.status.success(),
         report,
     })

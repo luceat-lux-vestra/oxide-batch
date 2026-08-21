@@ -219,6 +219,11 @@ definition_token!(
     DefinitionTokenKind::Classifier,
     "An application-owned revision token for one bounded fault classifier."
 );
+definition_token!(
+    ComponentStreamIdentity,
+    DefinitionTokenKind::Component,
+    "A stable, owner-scoped `ItemStream` namespace token.\n\nThis is the durable component-state namespace: it is never derived from a\ndisplay name, a memory address, or runtime object identity, and it\nparticipates in the restart-relevant chunk definition fingerprint alongside\nthe other component revisions."
+);
 
 /// Component revisions for a one-step chunk definition.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -228,10 +233,14 @@ pub struct ChunkComponentRevisions {
     writer: ComponentRevision,
     checkpoint: ComponentRevision,
     restart: ChunkRestartContract,
+    streams: BTreeMap<ComponentStreamIdentity, ComponentRevision>,
 }
 
 impl ChunkComponentRevisions {
     /// Constructs the four restart-relevant chunk component revisions.
+    ///
+    /// Registers no `ItemStream` namespaces; use
+    /// [`with_stream_revision`](Self::with_stream_revision) to add them.
     #[must_use]
     pub const fn new(
         reader: ComponentRevision,
@@ -246,7 +255,33 @@ impl ChunkComponentRevisions {
             writer,
             checkpoint,
             restart,
+            streams: BTreeMap::new(),
         }
+    }
+
+    /// Registers one `ItemStream` namespace's restart-relevant revision.
+    ///
+    /// Namespaces are kept in a deterministic (sorted, not insertion) order so
+    /// the manifest and fingerprint never depend on registration order. A
+    /// definition with no registered streams produces a manifest and
+    /// fingerprint byte-for-byte identical to one built before this method
+    /// existed.
+    #[must_use]
+    pub fn with_stream_revision(
+        mut self,
+        identity: ComponentStreamIdentity,
+        revision: ComponentRevision,
+    ) -> Self {
+        self.streams.insert(identity, revision);
+        self
+    }
+
+    /// Iterates registered `ItemStream` namespace revisions in deterministic
+    /// (sorted) order.
+    pub fn stream_revisions(
+        &self,
+    ) -> impl Iterator<Item = (&ComponentStreamIdentity, &ComponentRevision)> {
+        self.streams.iter()
     }
 
     /// Returns the delivery mode declared by the restart contract.
@@ -479,6 +514,21 @@ impl DefinitionIdentity {
                 "in_flight_policy".to_owned(),
                 serde_json::Value::String("rollback_chunk".to_owned()),
             );
+        }
+        if !components.streams.is_empty()
+            && let Some(object) = manifest.as_object_mut()
+        {
+            let streams: Vec<serde_json::Value> = components
+                .streams
+                .iter()
+                .map(|(identity, revision)| {
+                    json!({
+                        "identity": identity.as_str(),
+                        "revision": revision.as_str(),
+                    })
+                })
+                .collect();
+            object.insert("streams".to_owned(), serde_json::Value::Array(streams));
         }
         Self::encode(job_name.clone(), revision, &manifest)
     }
@@ -949,6 +999,32 @@ pub enum DefinitionError {
     /// already validated, so this variant reports a framework invariant rather
     /// than an application mistake.
     CompatibilityLowering,
+    /// A runtime `ItemStream` was registered under a namespace this
+    /// definition's [`ChunkComponentRevisions`] does not declare.
+    RuntimeStreamNotDeclared {
+        /// The undeclared runtime namespace.
+        namespace: ComponentStreamIdentity,
+    },
+    /// A declared stream revision has no matching runtime `ItemStream`
+    /// registration.
+    DeclaredStreamMissingRuntime {
+        /// The declared namespace with no runtime registration.
+        namespace: ComponentStreamIdentity,
+    },
+    /// The same namespace was registered as a runtime `ItemStream` more than
+    /// once.
+    DuplicateRuntimeStream {
+        /// The namespace registered more than once.
+        namespace: ComponentStreamIdentity,
+    },
+    /// A registered `ItemStream` declares
+    /// [`RestartabilityDeclaration::NotRestartable`](crate::RestartabilityDeclaration::NotRestartable),
+    /// which prevents its owning chunk step from claiming restartability
+    /// regardless of reader-checkpoint presence.
+    NonRestartableStream {
+        /// The namespace whose stream cannot honestly claim restartability.
+        namespace: ComponentStreamIdentity,
+    },
 }
 
 impl fmt::Display for DefinitionError {
@@ -982,6 +1058,26 @@ impl fmt::Display for DefinitionError {
             Self::CompatibilityLowering => {
                 formatter.write_str("one-step compatibility lowering produced an invalid plan")
             }
+            Self::RuntimeStreamNotDeclared { namespace } => write!(
+                formatter,
+                "runtime ItemStream namespace {:?} is not declared in the chunk definition",
+                namespace.as_str()
+            ),
+            Self::DeclaredStreamMissingRuntime { namespace } => write!(
+                formatter,
+                "declared stream namespace {:?} has no registered runtime ItemStream",
+                namespace.as_str()
+            ),
+            Self::DuplicateRuntimeStream { namespace } => write!(
+                formatter,
+                "runtime ItemStream namespace {:?} was registered more than once",
+                namespace.as_str()
+            ),
+            Self::NonRestartableStream { namespace } => write!(
+                formatter,
+                "ItemStream namespace {:?} declares NotRestartable, so this step cannot claim restartability",
+                namespace.as_str()
+            ),
         }
     }
 }

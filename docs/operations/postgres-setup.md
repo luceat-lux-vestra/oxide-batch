@@ -1,6 +1,7 @@
 # PostgreSQL Setup
 
-**State:** Implemented for M2 and the unreleased M4 schema-3 slice
+**State:** Implemented for M2, the unreleased M4 schema-3 slice, and the
+unreleased M6 schema-4 slice (`#144`, additive `ItemStream` component state)
 
 **Supported M2 matrix:** PostgreSQL 15 through 18 on Linux x86_64 GNU
 
@@ -43,7 +44,7 @@ certificate through `CaCertificate`. There is no invalid-certificate mode.
 isolated test environments. Connection strings and certificate contents or
 paths are redacted from facade diagnostics.
 
-## Initialize schema version 3
+## Initialize the current schema (4)
 
 Enable the adapter:
 
@@ -53,10 +54,11 @@ oxide-batch = { version = "0.5.0", features = ["postgres"] }
 ```
 
 Apply the released migrations with the migrator identity before starting any
-runtime. `PostgresMigrator::migrate` installs schema `1`, `2`, and `3` on an
+runtime. `PostgresMigrator::migrate` installs schema `1` through `4` on an
 empty database and applies only the pending migrations on an existing one.
-Schema 3 is not a rolling upgrade: quiesce every schema-2 runtime first, because
-a schema-2 runtime rejects schema 3 on startup.
+No installed schema past 1 is a rolling upgrade: quiesce every runtime that
+supports an older schema first, because it rejects the newer schema on
+startup rather than guessing at compatibility.
 
 ```rust,no_run
 use oxide_batch::{PostgresConfig, PostgresMigrator};
@@ -90,8 +92,8 @@ Runtime startup is fail-closed:
 | --- | --- |
 | Missing schema/version row | `SchemaUninitialized` |
 | Supported older schema | `MigrationRequired` |
-| Exact schema version 3 | connection accepted |
-| Version above 3 | `NewerSchema` |
+| Exact schema version 4 | connection accepted |
+| Version above 4 | `NewerSchema` |
 
 Runtime startup never applies migrations automatically.
 

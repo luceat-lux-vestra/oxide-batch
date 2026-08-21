@@ -413,8 +413,8 @@ fn write_report(
         "postgresql_major_version": expected_matrix_major(),
         "scenarios": [
             "schema1_and_schema2_upgrade_directly_to_schema3",
-            "schema2_runtime_rejects_schema3",
-            "schema3_backup_restores_the_prior_schema",
+            "historical_runtimes_reject_the_current_schema",
+            "every_source_backup_restores_its_prior_schema",
         ],
         "environment": suite::environment(),
         "observation": { "execution_manifest": manifest },

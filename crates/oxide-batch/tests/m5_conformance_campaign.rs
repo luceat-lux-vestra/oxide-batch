@@ -48,11 +48,18 @@ use serde_json::Value;
 /// [conformance matrix's promotion set](../../../docs/compatibility/conformance-matrix.md#m5-disposition-and-promotion-set)
 /// and [M5 exit evidence](../../../docs/project/m5-exit-evidence.md);
 /// `META-CONTEXT-001` is the one advertised row that stays `Implemented`.
+///
+/// A later milestone can still move one of the `39` `Planned` rows to
+/// `Implemented` on its own evidence without reopening the M5 gate — that row
+/// is simply outside the `29`-row advertised set (see `ACCEPTED_STATUSES`
+/// below), so only the aggregate counts here move, not the M5 gate's own
+/// closed population. `ITEM-STREAM-001` did exactly that in
+/// [#144](https://github.com/luceat-lux-vestra/oxide-batch/issues/144).
 const CLOSED_DISPOSITION: &[(&str, usize)] = &[
     ("Verified", 28),
-    ("Implemented", 1),
+    ("Implemented", 2),
     ("Partial", 13),
-    ("Planned", 39),
+    ("Planned", 38),
     ("Unknown", 2),
 ];
 
@@ -89,16 +96,18 @@ fn accepted_scope_matches_the_ledger_disposition() -> Result<(), Box<dyn Error>>
         "the ledger disposition must stay the one the M5 design gate closed",
     );
 
-    assert_eq!(
-        ledger
-            .with_status("Verified")
-            .into_iter()
-            .chain(ledger.with_status("Implemented"))
-            .collect::<BTreeSet<_>>(),
-        ledger.advertised()?,
-        "the advertised embedded-kernel set is exactly the rows the ledger \
-         carries as `Verified` or `Implemented`, and the ledger must not \
-         disagree with itself",
+    let recognized = ledger
+        .with_status("Verified")
+        .into_iter()
+        .chain(ledger.with_status("Implemented"))
+        .collect::<BTreeSet<_>>();
+    assert!(
+        ledger.advertised()?.is_subset(&recognized),
+        "every row in the advertised embedded-kernel set must still carry \
+         `Verified` or `Implemented`; the ledger must not silently regress \
+         an advertised row. (A row outside the advertised set may also \
+         reach `Implemented` on its own milestone's evidence without \
+         joining this set — see `ITEM-STREAM-001`.)",
     );
     assert_eq!(
         ledger.with_status("Partial"),
@@ -112,11 +121,18 @@ fn accepted_scope_matches_the_ledger_disposition() -> Result<(), Box<dyn Error>>
         .iter()
         .flat_map(|status| ledger.with_status(status))
         .collect::<BTreeSet<_>>();
-    assert_eq!(
-        scope.rows.keys().cloned().collect::<BTreeSet<_>>(),
-        accepted,
-        "the campaign runs the accepted M0-M4 scope, so its scope document \
-         covers every `Implemented` and `Partial` row and no other",
+    assert!(
+        scope
+            .rows
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .is_subset(&accepted),
+        "every row the M5 campaign's frozen scope document names must still \
+         carry an accepted ledger status; a row is allowed to reach an \
+         accepted status after the M5 gate closed (via a later milestone's \
+         own evidence, e.g. `ITEM-STREAM-001` in #144) without joining this \
+         frozen scope",
     );
     for (id, row) in &scope.rows {
         let ledger_status = ledger.rows.get(id).map(String::as_str);

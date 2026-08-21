@@ -1,4 +1,4 @@
--- What each M5 privilege class may do to the schema-3 metadata.
+-- What each M5 privilege class may do to the current metadata schema.
 --
 -- The migration role applies this after running the migrator, because it owns
 -- the objects and because the grants can only name tables that exist. Ownership
@@ -56,8 +56,14 @@ GRANT SELECT, INSERT, UPDATE ON
     oxide_batch.ob_job_execution,
     oxide_batch.ob_step_execution,
     oxide_batch.ob_step_partition,
-    oxide_batch.ob_flow_decision
+    oxide_batch.ob_flow_decision,
+    oxide_batch.ob_component_state
     TO oxide_batch_m5_runtime;
+-- ob_component_state (M6 #144, schema 4) is the ItemStream restart-state side
+-- table. The runtime reads it to restore state on open, UPSERTs a candidate
+-- in the same transaction as the checkpoint commit, and copies committed rows
+-- forward to a new step execution on restart -- all SELECT/INSERT/UPDATE, the
+-- same shape as every other table in this class's grant.
 -- Creating an attempt locks the instance row for the duration of the
 -- transaction, so that two launches cannot both decide they are the first.
 -- PostgreSQL requires UPDATE on at least one column to take that lock, and the
@@ -120,10 +126,16 @@ GRANT DELETE ON
     oxide_batch.ob_recovery_decision,
     oxide_batch.ob_operator_request,
     oxide_batch.ob_step_partition,
+    oxide_batch.ob_component_state,
     oxide_batch.ob_step_execution,
     oxide_batch.ob_job_execution,
     oxide_batch.ob_job_instance
     TO oxide_batch_m5_retention;
+-- ob_component_state (M6 #144, schema 4) references ob_step_execution with
+-- ON DELETE RESTRICT, the same as ob_step_partition above: a purge deletes a
+-- step execution's committed component state with it, in the same ordered
+-- deletion, so retention needs the same DELETE this class already holds for
+-- every other table that references a step execution.
 
 -- sequences -----------------------------------------------------------------
 

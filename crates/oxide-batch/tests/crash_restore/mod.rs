@@ -314,6 +314,11 @@ pub async fn prepare_fixture(url: &str, job_name: &str) -> Result<(), Box<dyn Er
 pub async fn remove_job(url: &str, job_name: &str) -> Result<(), Box<dyn Error>> {
     let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
     for statement in [
+        "DELETE FROM oxide_batch.ob_component_state WHERE step_execution_id IN (\
+         SELECT step.id FROM oxide_batch.ob_step_execution step \
+         JOIN oxide_batch.ob_job_execution execution ON execution.id = step.job_execution_id \
+         JOIN oxide_batch.ob_job_instance instance ON instance.id = execution.job_instance_id \
+         WHERE instance.job_name = $1)",
         "DELETE FROM oxide_batch.ob_step_partition WHERE step_execution_id IN (\
          SELECT step.id FROM oxide_batch.ob_step_execution step \
          JOIN oxide_batch.ob_job_execution execution ON execution.id = step.job_execution_id \

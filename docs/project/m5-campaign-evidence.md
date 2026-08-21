@@ -27,7 +27,7 @@ named released version, and that stays with
 | --- | --- | --- |
 | Conformance | `full_embedded_conformance_suite_passes_on_the_accepted_scope` | Delivered |
 | Crash and restore | `process_kill_at_each_commit_phase_recovers_without_a_forged_status`, plus the P-013 and logical-restore reports | Delivered |
-| Upgrade | `schema1_and_schema2_upgrade_directly_to_schema3`, `schema2_runtime_rejects_schema3`, `schema3_backup_restores_the_prior_schema` | Delivered |
+| Upgrade | `schema1_and_schema2_upgrade_directly_to_schema3`, `historical_runtimes_reject_the_current_schema`, `every_source_backup_restores_its_prior_schema` | Delivered |
 | Security | `verify_full_tls_is_required_in_the_supported_mode`, `least_privilege_role_cannot_exceed_its_class`, `redaction_sweep_finds_no_prohibited_value_class` | Delivered |
 | Resource bounds | `declared_ceilings_hold_under_stress_with_backpressure`, plus the bounded query-path, payload, and shedding reports | Delivered |
 | Soak | `soak_reports_no_task_connection_handle_or_memory_growth` | Delivered |
@@ -704,8 +704,8 @@ are recorded; the first is a defect and it is closed.
   It does not upgrade a prior schema or roll one back. That is the
   [upgrade campaign](#upgrade-campaign) below, which delivers
   `schema1_and_schema2_upgrade_directly_to_schema3`,
-  `schema2_runtime_rejects_schema3`, and
-  `schema3_backup_restores_the_prior_schema`.
+  `historical_runtimes_reject_the_current_schema`, and
+  `every_source_backup_restores_its_prior_schema`.
 - **Physical backup, replication, or point-in-time recovery.** The campaign
   covers the logical backup the support bounds name and nothing wider.
 - **Crash behavior of the database itself.** Every kill in this campaign is a
@@ -761,8 +761,8 @@ gives the upgrade row three obligations: a direct upgrade from schema 1 and
 schema 2 to schema 3, newer-schema rejection, and restore-based rollback. The
 [design gate](m5-design-gate-evidence.md#named-campaign-scenarios) names all
 three as scenarios: `schema1_and_schema2_upgrade_directly_to_schema3`,
-`schema2_runtime_rejects_schema3`, and
-`schema3_backup_restores_the_prior_schema`.
+`historical_runtimes_reject_the_current_schema`, and
+`every_source_backup_restores_its_prior_schema`.
 
 The denominator is committed as
 [`tests/fixtures/upgrade/campaign-scope.json`](../../tests/fixtures/upgrade/campaign-scope.json).
@@ -840,7 +840,7 @@ the durable rows, and the port reading not at all.
 
 ### The rejecting runtime is a real schema-2 runtime
 
-`schema2_runtime_rejects_schema3` is about an old release meeting a database a
+`historical_runtimes_reject_the_current_schema` is about an old release meeting a database a
 newer migrator has moved on. That runtime cannot be built from this working
 tree: the supported schema version is a constant of the crate, and this tree's
 is `3`.

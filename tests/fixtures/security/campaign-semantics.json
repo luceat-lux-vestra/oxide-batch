@@ -14,7 +14,7 @@
       ]
     },
     "migrations": {
-      "why": "The durable schema (schema 3) the migration class installs and the least-privilege matrix is checked on.",
+      "why": "The durable schema (currently schema 4) the migration class installs and the least-privilege matrix is checked on.",
       "paths": [
         "crates/oxide-batch/migrations"
       ]
@@ -30,7 +30,7 @@
       ]
     },
     "least-privilege policy": {
-      "why": "What each of the five privilege classes may reach in the schema-3 metadata, committed as SQL rather than assembled by a test, so what each class may do is reviewable on its own and a change to it shows up as a change to the policy rather than as a change to a test.",
+      "why": "What each of the five privilege classes may reach in the current metadata schema, committed as SQL rather than assembled by a test, so what each class may do is reviewable on its own and a change to it shows up as a change to the policy rather than as a change to a test.",
       "paths": [
         "tests/fixtures/security/roles.sql",
         "tests/fixtures/security/grants.sql"

@@ -28,7 +28,7 @@ cargo xtask security
 | --- | --- |
 | `campaign-scope.json` | The campaign's denominator: the reports, the fixtures they need, the TLS refusals, the privilege classes, and the surfaces the sweep must cover. |
 | `roles.sql` | The five privilege classes, the cluster-level privileges they are denied, and the withdrawal of everything `PostgreSQL` grants to `PUBLIC` by default. |
-| `grants.sql` | What each class may reach in the schema-3 metadata. |
+| `grants.sql` | What each class may reach in the current metadata schema. |
 | `provision.sh` | The environment the campaign cannot derive from a connection string. |
 
 The policy is committed SQL rather than statements assembled by a test, so what
@@ -64,5 +64,5 @@ It does not replace `tests/fixtures/postgres/run-design-gate.sh`. That fixture
 is M2 design evidence on its own CI axis over `PostgreSQL` 15 through 18: it
 predates the adapter, exercises a draft schema through `psql`, and separates
 four roles rather than the five the M5 preview does. This campaign runs the
-shipped configuration path against schema 3 and is not the same evidence under
+shipped configuration path against the schema it was current for and is not the same evidence under
 a new name.

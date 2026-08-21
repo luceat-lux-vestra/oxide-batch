@@ -4,9 +4,9 @@ use std::error::Error;
 
 use oxide_batch::{
     ChunkComponentRevisions, ChunkDeliveryMode, ChunkRestartContract, ChunkSize, ComponentRevision,
-    DefinitionError, DefinitionIdentity, DefinitionRevision, DefinitionUpgrade,
-    DefinitionUpgradeKey, InFlightPolicy, JobName, StateSchemaId, StateSchemaVersion,
-    StepDefinitionUpgrade, StepName,
+    ComponentStreamIdentity, DefinitionError, DefinitionIdentity, DefinitionRevision,
+    DefinitionUpgrade, DefinitionUpgradeKey, InFlightPolicy, JobName, StateSchemaId,
+    StateSchemaVersion, StepDefinitionUpgrade, StepName,
 };
 
 #[test]
@@ -135,6 +135,64 @@ fn chunk_identity_includes_size_and_all_component_revisions() -> Result<(), Box<
     )?;
     assert_ne!(small.manifest_digest(), large.manifest_digest());
     assert_ne!(small.manifest_digest(), changed_state.manifest_digest());
+    Ok(())
+}
+
+#[test]
+fn registering_a_stream_revision_changes_identity_without_changing_the_stream_free_manifest()
+-> Result<(), Box<dyn Error>> {
+    let job = JobName::new("daily_import")?;
+    let step = StepName::new("load")?;
+    let restart = ChunkRestartContract::new(
+        StateSchemaId::new("checkpoint-v1")?,
+        StateSchemaVersion::new(1)?,
+        StateSchemaId::new("context-v1")?,
+        StateSchemaVersion::new(1)?,
+        ChunkDeliveryMode::AtomicSameResource,
+    );
+    let stream_free = ChunkComponentRevisions::new(
+        ComponentRevision::new("reader-v1")?,
+        ComponentRevision::new("processor-v1")?,
+        ComponentRevision::new("writer-v1")?,
+        ComponentRevision::new("checkpoint-v1")?,
+        restart.clone(),
+    );
+    let with_stream = ChunkComponentRevisions::new(
+        ComponentRevision::new("reader-v1")?,
+        ComponentRevision::new("processor-v1")?,
+        ComponentRevision::new("writer-v1")?,
+        ComponentRevision::new("checkpoint-v1")?,
+        restart,
+    )
+    .with_stream_revision(
+        ComponentStreamIdentity::new("reader.row_count")?,
+        ComponentRevision::new("row-count-v1")?,
+    );
+
+    let without = DefinitionIdentity::chunk(
+        &job,
+        &step,
+        ChunkSize::new(10)?,
+        DefinitionRevision::new("v1")?,
+        &stream_free,
+    )?;
+    let with = DefinitionIdentity::chunk(
+        &job,
+        &step,
+        ChunkSize::new(10)?,
+        DefinitionRevision::new("v1")?,
+        &with_stream,
+    )?;
+
+    // A stream-free chunk definition's manifest is byte-for-byte unchanged by
+    // the existence of the `with_stream_revision` builder: representation
+    // (registering no streams at all) is not itself restart-relevant.
+    assert!(!std::str::from_utf8(without.canonical_manifest())?.contains("streams"));
+    let with_manifest = std::str::from_utf8(with.canonical_manifest())?;
+    assert!(with_manifest.contains("\"streams\""));
+    assert!(with_manifest.contains("reader.row_count"));
+    assert!(with_manifest.contains("row-count-v1"));
+    assert_ne!(without.manifest_digest(), with.manifest_digest());
     Ok(())
 }
 

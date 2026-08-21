@@ -7,8 +7,8 @@
 //!
 //! It builds a database from nothing, provisions the five classes from the
 //! committed policy in `tests/fixtures/security/roles.sql` and
-//! `tests/fixtures/security/grants.sql`, migrates it to schema 3 as the
-//! migration class, and then fills in a matrix. Every cell is one class
+//! `tests/fixtures/security/grants.sql`, migrates it to the current schema as
+//! the migration class, and then fills in a matrix. Every cell is one class
 //! attempting one operation. An allowed cell must succeed; a forbidden cell
 //! must be refused by the server under `42501`, the code it uses for want of
 //! privilege and no other.
@@ -331,6 +331,18 @@ const BOUNDARIES: &[Boundary] = &[
         belongs_to: "migration",
         statement: "SELECT version FROM oxide_batch._sqlx_migrations WHERE false",
     },
+    // M6 #144 (schema 4) added ob_component_state, the ItemStream
+    // restart-state side table. The explorer reads it like every other
+    // table through its blanket SELECT grant; it must not be able to write
+    // to it, which is the runtime's and the migrator's alone to do.
+    Boundary {
+        id: "explorer.write-component-state",
+        class: Class::Explorer,
+        operation: "write ItemStream component state",
+        belongs_to: "runtime",
+        statement: "INSERT INTO oxide_batch.ob_component_state \
+                    SELECT * FROM oxide_batch.ob_component_state WHERE false",
+    },
     // The operator records guarded decisions. It resolves executions; it does
     // not run them, own them, or remove them.
     Boundary {
@@ -376,6 +388,17 @@ const BOUNDARIES: &[Boundary] = &[
         operation: "read the migration bookkeeping",
         belongs_to: "migration",
         statement: "SELECT version FROM oxide_batch._sqlx_migrations WHERE false",
+    },
+    // See explorer.write-component-state: the operator's blanket SELECT
+    // grant reads ob_component_state like every other table; recording a
+    // guarded decision never writes to it.
+    Boundary {
+        id: "operator.write-component-state",
+        class: Class::Operator,
+        operation: "write ItemStream component state",
+        belongs_to: "runtime",
+        statement: "INSERT INTO oxide_batch.ob_component_state \
+                    SELECT * FROM oxide_batch.ob_component_state WHERE false",
     },
     // Retention removes history and holds instances. It does not run jobs and
     // does not decide operator questions.
@@ -423,6 +446,18 @@ const BOUNDARIES: &[Boundary] = &[
         belongs_to: "migration",
         statement: "SELECT version FROM oxide_batch._sqlx_migrations WHERE false",
     },
+    // See explorer.write-component-state: retention deletes committed
+    // component state as part of an ordered purge (it references
+    // ob_step_execution with ON DELETE RESTRICT, the same as
+    // ob_step_partition), but writing new state is the runtime's alone.
+    Boundary {
+        id: "retention.write-component-state",
+        class: Class::Retention,
+        operation: "write ItemStream component state",
+        belongs_to: "runtime",
+        statement: "INSERT INTO oxide_batch.ob_component_state \
+                    SELECT * FROM oxide_batch.ob_component_state WHERE false",
+    },
 ];
 
 /// One statement a class must be able to run, beside its service path.
@@ -469,6 +504,18 @@ const PERMITTED: &[Permitted] = &[
         operation: "ask an execution to stop",
         statement: "UPDATE oxide_batch.ob_job_execution SET stop_requested_by = 'probe' \
                     WHERE false",
+    },
+    // M6 #144 (schema 4): the runtime UPSERTs ItemStream component state in
+    // the same transaction as the checkpoint commit, and copies committed
+    // rows forward on restart, so it needs the same statement-level write
+    // access to ob_component_state its service path does not by itself
+    // exercise (that path creates a lifecycle graph; it commits no chunk).
+    Permitted {
+        id: "runtime.write-component-state",
+        class: Class::Runtime,
+        operation: "write ItemStream component state",
+        statement: "INSERT INTO oxide_batch.ob_component_state \
+                    SELECT * FROM oxide_batch.ob_component_state WHERE false",
     },
 ];
 

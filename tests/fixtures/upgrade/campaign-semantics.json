@@ -1,11 +1,11 @@
 {
   "document": "The executable closure of the M5 PostgreSQL upgrade campaign",
   "note": "The single source of truth for what the upgrade campaign is made of. The producer reads it to record the object identity of every path at the tree it actually ran on; the verifier reads it to require those identities to still hold. Neither restates the list, because a list kept in two places is a list that will disagree.",
-  "rule": "A change to anything here changes what the evidence is evidence of, so retained reports produced before the change may not be promoted after it: the campaign has to be run again. A change to anything not here — documentation, the changelog, or unrelated jobs in `.github/workflows/ci.yml` — leaves retained evidence valid. The dedicated `.github/workflows/m5-upgrade.yml` is bound as one object, so changes to the upgrade provisioning or call layer invalidate upgrade evidence without binding the rest of CI.",
-  "historical_revision_note": "The rejection report builds a real schema-2 runtime from `SCHEMA2_RUNTIME_REVISION` in `crates/oxide-batch/tests/upgrade/mod.rs`, checked out into a worktree at run time — it is a revision identifier, not a path, so it cannot itself be an object this closure hashes. What the closure binds instead is the file that names it: a change to that constant, or to the matching `schema2_runtime.revision` field in campaign-scope.json, changes the object identity of a path already listed under campaign fixtures or campaign implementation below, which invalidates retained evidence the same as any other semantic change. crates/oxide-batch/tests/m5_upgrade_campaign.rs additionally asserts in review that the two values are byte-identical, so the two files cannot drift from each other unnoticed even before a campaign run would catch it.",
+  "rule": "A change to anything here changes what the evidence is evidence of, so retained reports produced before the change may not be promoted after it: the campaign has to be run again. A change to anything not here \u2014 documentation, the changelog, or unrelated jobs in `.github/workflows/ci.yml` \u2014 leaves retained evidence valid. The dedicated `.github/workflows/m5-upgrade.yml` is bound as one object, so changes to the upgrade provisioning or call layer invalidate upgrade evidence without binding the rest of CI.",
+  "historical_revision_note": "The rejection report builds a real schema-2 runtime from `SCHEMA2_RUNTIME_REVISION` in `crates/oxide-batch/tests/upgrade/mod.rs`, checked out into a worktree at run time \u2014 it is a revision identifier, not a path, so it cannot itself be an object this closure hashes. What the closure binds instead is the file that names it: a change to that constant, or to the matching `schema2_runtime.revision` field in campaign-scope.json, changes the object identity of a path already listed under campaign fixtures or campaign implementation below, which invalidates retained evidence the same as any other semantic change. crates/oxide-batch/tests/m5_upgrade_campaign.rs additionally asserts in review that the two values are byte-identical, so the two files cannot drift from each other unnoticed even before a campaign run would catch it.",
   "categories": {
     "workspace framework and adapter source": {
-      "why": "Every report runs the runtime and the PostgreSQL adapter this code declares — the migrator, the repository and explorer ports, and the newer-schema rejection the current runtime enforces on the rollback report's restored databases.",
+      "why": "Every report runs the runtime and the PostgreSQL adapter this code declares \u2014 the migrator, the repository and explorer ports, and the newer-schema rejection the current runtime enforces on the rollback report's restored databases.",
       "paths": [
         "crates/oxide-batch/src",
         "crates/oxide-batch-core/src",
@@ -20,7 +20,7 @@
       ]
     },
     "campaign implementation": {
-      "why": "The exact test targets the committed scope document's reports name, plus the shared support module those targets compile against — which also carries the pinned SCHEMA2_RUNTIME_REVISION the rejection report builds its historical runtime from. A workspace test file not listed here is outside the campaign: it is not selected, so it is neither run nor able to affect the campaign's result.",
+      "why": "The exact test targets the committed scope document's reports name, plus the shared support module those targets compile against \u2014 which also carries the pinned SCHEMA2_RUNTIME_REVISION the rejection report builds its historical runtime from. A workspace test file not listed here is outside the campaign: it is not selected, so it is neither run nor able to affect the campaign's result.",
       "paths": [
         "crates/oxide-batch/tests/postgres_schema_upgrade.rs",
         "crates/oxide-batch/tests/postgres_schema_rejection.rs",
@@ -53,13 +53,15 @@
       ]
     },
     "campaign fixtures": {
-      "why": "The declared denominator — the two prior-schema sources, the three reports, the five schema paths, and the pinned schema-2 runtime revision — and this closure itself. The producer derives what it runs and what each report must observe from this document, and the historical-schema seed scripts are the committed fixtures a source schema is populated with before the upgrade under test runs.",
+      "why": "The declared denominator \u2014 the three prior-schema sources, the three reports, the eight schema paths, and the two pinned historical runtime revisions (schema 2 and schema 3) \u2014 and this closure itself. The producer derives what it runs and what each report must observe from this document, and the historical-schema seed scripts are the committed fixtures a source schema is populated with before the upgrade under test runs.",
       "paths": [
         "tests/fixtures/upgrade/campaign-scope.json",
         "tests/fixtures/upgrade/campaign-semantics.json",
         "tests/fixtures/upgrade/schema-1/seed.sql",
         "tests/fixtures/upgrade/schema-2/seed.sql",
-        "tests/fixtures/upgrade/schema-2-runtime/probe.rs"
+        "tests/fixtures/upgrade/schema-3/seed.sql",
+        "tests/fixtures/upgrade/schema-2-runtime/probe.rs",
+        "tests/fixtures/upgrade/schema-3-runtime/probe.rs"
       ]
     },
     "upgrade execution contract": {
