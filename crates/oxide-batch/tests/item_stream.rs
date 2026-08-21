@@ -19,15 +19,28 @@
     clippy::case_sensitive_file_extension_comparisons
 )]
 
-use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+#[allow(dead_code)]
+#[path = "support/clock.rs"]
+mod clock;
+#[allow(dead_code)]
+#[path = "support/ids.rs"]
+mod ids;
 
+use std::collections::VecDeque;
+use std::num::NonZeroU64;
+use std::sync::{Arc, Mutex};
+use std::time::UNIX_EPOCH;
+
+use clock::ManualClock;
+use ids::DeterministicIds;
 use oxide_batch::{
-    BoxFuture, BusinessTransaction, Checkpoint, ChunkCommitReceipt, ChunkCount, ChunkCounts,
-    ChunkExecutionOutcome, ChunkFailure, ChunkFaultProgress, ChunkSize, ChunkStep,
-    ChunkTransaction, ChunkTransactionError, ChunkTransactionManager, CodecId, CodecVersion,
-    ComponentStateEnvelope, ComponentStreamIdentity, DefaultComponentCodec, ExecutionContext,
-    ItemProcessor, ItemReader, ItemStream, ItemWriter, ProcessContext, ProcessOutcome,
+    BoxFuture, BusinessTransaction, Checkpoint, ChunkCommitReceipt, ChunkComponentRevisions,
+    ChunkCount, ChunkCounts, ChunkDeliveryMode, ChunkExecutionOutcome, ChunkFailure,
+    ChunkFaultProgress, ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep, ChunkTransaction,
+    ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager, CodecId, CodecVersion,
+    ComponentRevision, ComponentStateEnvelope, ComponentStreamIdentity, DefaultComponentCodec,
+    DefinitionRevision, ExecutionContext, InMemoryJobRepository, ItemProcessor, ItemReader,
+    ItemStream, ItemWriter, JobLauncher, JobName, JobParameters, ProcessContext, ProcessOutcome,
     ProcessorError, ReadContext, ReadOutcome, ReaderError, RestartabilityDeclaration,
     StateCodecError, StateLimits, StateSchemaId, StateSchemaVersion, StepName, StopSource,
     StreamCloseContext, StreamCloseError, StreamCloseOutcome, StreamOpenContext, StreamOpenError,
@@ -69,10 +82,10 @@ impl VersionedStateCodec<()> for UnitSchema {
     }
 }
 
-fn minimal_envelope(namespace: &str) -> ComponentStateEnvelope {
+fn envelope_with_schema(namespace: &str, schema: &str) -> ComponentStateEnvelope {
     let codec = DefaultComponentCodec::new(
         UnitSchema {
-            schema: StateSchemaId::new("test.stream").expect("valid schema id"),
+            schema: StateSchemaId::new(schema).expect("valid schema id"),
         },
         CodecId::new("test.stream-codec").expect("valid codec id"),
         CodecVersion::new(1).expect("nonzero"),
@@ -85,6 +98,10 @@ fn minimal_envelope(namespace: &str) -> ComponentStateEnvelope {
         StateLimits::default(),
     )
     .expect("minimal envelope encodes")
+}
+
+fn minimal_envelope(namespace: &str) -> ComponentStateEnvelope {
+    envelope_with_schema(namespace, "test.stream")
 }
 
 /// The [`StreamStateContract`] matching [`minimal_envelope`]'s codec, for
@@ -275,6 +292,32 @@ impl ChunkTransactionManager for Transactions {
     }
 }
 
+struct InheritedTransactions {
+    receipt: ChunkCommitReceipt,
+    trace: Trace,
+    inherited: Vec<ComponentStateEnvelope>,
+}
+
+impl ChunkTransactionManager for InheritedTransactions {
+    fn begin(
+        &self,
+    ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>> {
+        let transaction = TestTransaction {
+            receipt: self.receipt.clone(),
+            trace: Arc::clone(&self.trace),
+        };
+        Box::pin(async move { Ok(Box::new(transaction) as Box<dyn ChunkTransaction + '_>) })
+    }
+
+    fn inherited_component_state(
+        &self,
+        _context: ChunkTransactionContext,
+    ) -> BoxFuture<'_, Result<Vec<ComponentStateEnvelope>, ChunkTransactionError>> {
+        let inherited = self.inherited.clone();
+        Box::pin(async move { Ok(inherited) })
+    }
+}
+
 struct TestTransaction {
     receipt: ChunkCommitReceipt,
     trace: Trace,
@@ -361,6 +404,30 @@ impl ChunkTransaction for FailingWriteTransaction {
 
 fn step_name() -> StepName {
     StepName::new("item_stream_step").expect("valid step name")
+}
+
+fn stream_components() -> ChunkComponentRevisions {
+    ChunkComponentRevisions::new(
+        ComponentRevision::new("reader-v1").expect("valid revision"),
+        ComponentRevision::new("processor-v1").expect("valid revision"),
+        ComponentRevision::new("writer-v1").expect("valid revision"),
+        ComponentRevision::new("checkpoint-v1").expect("valid revision"),
+        ChunkRestartContract::new(
+            StateSchemaId::new("test.position").expect("valid schema id"),
+            StateSchemaVersion::new(1).expect("nonzero schema version"),
+            StateSchemaId::new("test.context").expect("valid schema id"),
+            StateSchemaVersion::new(1).expect("nonzero schema version"),
+            ChunkDeliveryMode::AtLeastOnce,
+        ),
+    )
+    .with_stream_revision(
+        ComponentStreamIdentity::new("stream_a").expect("valid namespace"),
+        ComponentRevision::new("stream-a-v1").expect("valid revision"),
+    )
+    .with_stream_revision(
+        ComponentStreamIdentity::new("stream_b").expect("valid namespace"),
+        ComponentRevision::new("stream-b-v1").expect("valid revision"),
+    )
 }
 
 #[tokio::test]
@@ -629,6 +696,156 @@ async fn open_failure_closes_only_previously_opened_streams() {
         !events.iter().any(|event| event == "reader.read"),
         "no component invocation may start when required stream restoration fails: {events:?}"
     );
+}
+
+#[tokio::test]
+async fn open_failure_preserves_cleanup_close_failure() {
+    let trace = Trace::default();
+    let mut step = ChunkStep::new(
+        step_name(),
+        ChunkSize::new(10).expect("valid chunk size"),
+        Reader::new([1], &trace),
+        Processor {
+            trace: Arc::clone(&trace),
+        },
+        Writer {
+            boundary: Boundary::Normal,
+            trace: Arc::clone(&trace),
+        },
+        Arc::new(Transactions {
+            receipt: receipt(),
+            trace: Arc::clone(&trace),
+        }),
+        Arc::new(NoopCompletion),
+    )
+    .with_item_stream(
+        ComponentStreamIdentity::new("stream_a").expect("valid namespace"),
+        RecordingStream::new("a", &trace).failing_close(),
+        minimal_contract(),
+    )
+    .with_item_stream(
+        ComponentStreamIdentity::new("stream_b").expect("valid namespace"),
+        RecordingStream::new("b", &trace).failing_open(),
+        minimal_contract(),
+    );
+    let (_source, stop_token) = StopSource::new();
+
+    let report = step.execute(&correlation(), &stop_token).await;
+
+    assert_eq!(
+        report.outcome(),
+        ChunkExecutionOutcome::Failed(ChunkFailure::StreamOpen)
+    );
+    assert!(report.stream_close_failed());
+    assert_eq!(trace_of(&trace), vec!["a.open", "b.open", "a.close"]);
+}
+
+#[tokio::test]
+async fn open_failure_cleanup_closes_all_previously_opened_streams() {
+    let trace = Trace::default();
+    let mut step = ChunkStep::new(
+        step_name(),
+        ChunkSize::new(10).expect("valid chunk size"),
+        Reader::new([1], &trace),
+        Processor {
+            trace: Arc::clone(&trace),
+        },
+        Writer {
+            boundary: Boundary::Normal,
+            trace: Arc::clone(&trace),
+        },
+        Arc::new(Transactions {
+            receipt: receipt(),
+            trace: Arc::clone(&trace),
+        }),
+        Arc::new(NoopCompletion),
+    )
+    .with_item_stream(
+        ComponentStreamIdentity::new("stream_a").expect("valid namespace"),
+        RecordingStream::new("a", &trace),
+        minimal_contract(),
+    )
+    .with_item_stream(
+        ComponentStreamIdentity::new("stream_b").expect("valid namespace"),
+        RecordingStream::new("b", &trace).failing_close(),
+        minimal_contract(),
+    )
+    .with_item_stream(
+        ComponentStreamIdentity::new("stream_c").expect("valid namespace"),
+        RecordingStream::new("c", &trace).failing_open(),
+        minimal_contract(),
+    );
+    let (_source, stop_token) = StopSource::new();
+
+    let report = step.execute(&correlation(), &stop_token).await;
+
+    assert_eq!(
+        report.outcome(),
+        ChunkExecutionOutcome::Failed(ChunkFailure::StreamOpen)
+    );
+    assert!(report.stream_close_failed());
+    assert_eq!(
+        trace_of(&trace),
+        vec!["a.open", "b.open", "c.open", "b.close", "a.close"]
+    );
+}
+
+#[tokio::test]
+async fn validation_failure_preserves_cleanup_close_failure() {
+    let trace = Trace::default();
+    let step = ChunkStep::new(
+        step_name(),
+        ChunkSize::new(10).expect("valid chunk size"),
+        Reader::new([1], &trace),
+        Processor {
+            trace: Arc::clone(&trace),
+        },
+        Writer {
+            boundary: Boundary::Normal,
+            trace: Arc::clone(&trace),
+        },
+        Arc::new(InheritedTransactions {
+            receipt: receipt(),
+            trace: Arc::clone(&trace),
+            inherited: vec![envelope_with_schema("stream_b", "test.other")],
+        }),
+        Arc::new(NoopCompletion),
+    )
+    .with_item_stream(
+        ComponentStreamIdentity::new("stream_a").expect("valid namespace"),
+        RecordingStream::new("a", &trace).failing_close(),
+        minimal_contract(),
+    )
+    .with_item_stream(
+        ComponentStreamIdentity::new("stream_b").expect("valid namespace"),
+        RecordingStream::new("b", &trace),
+        minimal_contract(),
+    );
+    let mut job = ChunkJob::new(
+        JobName::new("validation_cleanup_test").expect("valid job name"),
+        step,
+        DefinitionRevision::new("test-v1").expect("valid definition revision"),
+        &stream_components(),
+    )
+    .expect("stream registration is valid");
+    let clock = ManualClock::new(UNIX_EPOCH);
+    let ids = DeterministicIds::new(NonZeroU64::MIN);
+    let repository = InMemoryJobRepository::new(Arc::new(clock.clone()), Arc::new(ids.clone()));
+    let launcher = JobLauncher::new(&repository, &clock, &ids);
+    let (_source, stop_token) = StopSource::new();
+
+    let launch = launcher
+        .launch_chunk(&mut job, &JobParameters::new(), &stop_token)
+        .await
+        .expect("launch completes");
+    let report = launch.chunk().expect("chunk work started");
+
+    assert_eq!(
+        report.outcome(),
+        ChunkExecutionOutcome::Failed(ChunkFailure::StreamOpen)
+    );
+    assert!(report.stream_close_failed());
+    assert_eq!(trace_of(&trace), vec!["a.open", "a.close"]);
 }
 
 #[tokio::test]

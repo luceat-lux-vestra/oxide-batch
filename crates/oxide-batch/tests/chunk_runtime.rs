@@ -29,19 +29,19 @@ use oxide_batch::{
     ChunkFaultProgress, ChunkJob, ChunkListener, ChunkListenerContext, ChunkListenerError,
     ChunkRestartContract, ChunkSize, ChunkStep, ChunkTransaction, ChunkTransactionContext,
     ChunkTransactionError, ChunkTransactionManager, CodecId, CodecVersion, CodecVersionUpgrade,
-    ComponentRevision, ComponentStateEnvelope, ComponentStreamIdentity, DefaultComponentCodec,
-    DefinitionError, DefinitionRevision, ExecutionAttempt, ExecutionContext, ExecutionCorrelation,
-    FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget, InFlightPolicy,
-    InMemoryJobRepository, ItemProcessor, ItemReader, ItemStream, ItemWriter, JobExecutionId,
-    JobInstanceId, JobLauncher, JobName, JobParameters, LifecycleEvent, LifecycleEventKind,
-    LifecycleEventSink, ListenerContext, ListenerError, NodeId, ProcessContext, ProcessOutcome,
-    ProcessorError, ReadContext, ReadOutcome, ReaderError, RestartabilityDeclaration,
-    StateCodecError, StateLimits, StateSchemaId, StateSchemaUpgrade, StateSchemaVersion,
-    StepComponents, StepExecutionId, StepExecutionListener, StepName, StepNode, StopSource,
-    StreamCloseContext, StreamCloseError, StreamCloseOutcome, StreamOpenContext, StreamOpenError,
-    StreamOpenOutcome, StreamStateContract, StreamUpdateContext, StreamUpdateError,
-    TaskletExecutionOutcome, TerminalKind, VersionedStateCodec, WriteContext, WriteOutcome,
-    WriterError,
+    ComponentRevision, ComponentStateEnvelope, ComponentStreamIdentity, ContentIdentity,
+    DefaultComponentCodec, DefinitionError, DefinitionRevision, ExecutionAttempt, ExecutionContext,
+    ExecutionCorrelation, ExternalStateReference, FlowExecutionOutcome, FlowGraph, FlowJob,
+    FlowLauncher, FlowNode, FlowTarget, InFlightPolicy, InMemoryJobRepository, ItemProcessor,
+    ItemReader, ItemStream, ItemWriter, JobExecutionId, JobInstanceId, JobLauncher, JobName,
+    JobParameters, LifecycleEvent, LifecycleEventKind, LifecycleEventSink, ListenerContext,
+    ListenerError, NodeId, ProcessContext, ProcessOutcome, ProcessorError, ReadContext,
+    ReadOutcome, ReaderError, RestartabilityDeclaration, StateCodecError, StateLimits,
+    StateSchemaId, StateSchemaUpgrade, StateSchemaVersion, StepComponents, StepExecutionId,
+    StepExecutionListener, StepName, StepNode, StopSource, StreamCloseContext, StreamCloseError,
+    StreamCloseOutcome, StreamOpenContext, StreamOpenError, StreamOpenOutcome, StreamStateContract,
+    StreamUpdateContext, StreamUpdateError, TaskletExecutionOutcome, TerminalKind,
+    VersionedStateCodec, WriteContext, WriteOutcome, WriterError,
 };
 
 fn correlation() -> ExecutionCorrelation {
@@ -1186,15 +1186,15 @@ mod stream_contract {
         ChunkExecutionOutcome, ChunkFailure, ChunkFaultProgress, ChunkJob, ChunkSize, ChunkStep,
         ChunkTransaction, ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager,
         CodecId, CodecVersion, CodecVersionUpgrade, Completion, ComponentRevision,
-        ComponentStateEnvelope, ComponentStreamIdentity, DefaultComponentCodec, DefinitionError,
-        DefinitionRevision, DeterministicIds, FlowGraph, FlowJob, FlowNode, FlowTarget,
-        InMemoryJobRepository, ItemStream, JobLauncher, JobName, JobParameters, ManualClock, Mutex,
-        NodeId, NonZeroU64, Ordering, Processor, Reader, RestartabilityDeclaration,
-        StateCodecError, StateLimits, StateSchemaId, StateSchemaUpgrade, StateSchemaVersion,
-        StepComponents, StepName, StepNode, StopSource, StreamCloseContext, StreamCloseError,
-        StreamCloseOutcome, StreamOpenContext, StreamOpenError, StreamOpenOutcome,
-        StreamStateContract, StreamUpdateContext, StreamUpdateError, TerminalKind, UNIX_EPOCH,
-        VersionedStateCodec, Writer, chunk_revisions, receipt,
+        ComponentStateEnvelope, ComponentStreamIdentity, ContentIdentity, DefaultComponentCodec,
+        DefinitionError, DefinitionRevision, DeterministicIds, ExternalStateReference, FlowGraph,
+        FlowJob, FlowNode, FlowTarget, InMemoryJobRepository, ItemStream, JobLauncher, JobName,
+        JobParameters, ManualClock, Mutex, NodeId, NonZeroU64, Ordering, Processor, Reader,
+        RestartabilityDeclaration, StateCodecError, StateLimits, StateSchemaId, StateSchemaUpgrade,
+        StateSchemaVersion, StepComponents, StepName, StepNode, StopSource, StreamCloseContext,
+        StreamCloseError, StreamCloseOutcome, StreamOpenContext, StreamOpenError,
+        StreamOpenOutcome, StreamStateContract, StreamUpdateContext, StreamUpdateError,
+        TerminalKind, UNIX_EPOCH, VersionedStateCodec, Writer, chunk_revisions, receipt,
     };
     use std::time::Duration;
 
@@ -1301,6 +1301,17 @@ mod stream_contract {
             .expect("envelope encodes")
     }
 
+    fn external_with_versions(schema_version: u32, codec_version: u32) -> ComponentStateEnvelope {
+        ComponentStateEnvelope::external(
+            identity(),
+            StateSchemaId::new("test.stream.counter").expect("valid schema id"),
+            StateSchemaVersion::new(schema_version).expect("nonzero schema version"),
+            CodecId::new("test.stream.counter-codec").expect("valid codec id"),
+            CodecVersion::new(codec_version).expect("nonzero codec version"),
+            ExternalStateReference::new(ContentIdentity::of(b"external-state"), 14),
+        )
+    }
+
     /// Records every `open` call and, when an inherited envelope is present,
     /// the value it decoded -- so a test can prove `open` was never entered
     /// (rejection) or observed a migrated value (successful migration).
@@ -1361,6 +1372,55 @@ mod stream_contract {
             _context: StreamUpdateContext<'_>,
         ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
             Ok(encode_with(&codec(1, 1), 1))
+        }
+
+        async fn close(
+            &self,
+            _context: StreamCloseContext<'_>,
+        ) -> Result<StreamCloseOutcome, StreamCloseError> {
+            Ok(StreamCloseOutcome::Closed)
+        }
+    }
+
+    /// Observes only the envelope shape so current external-state acceptance
+    /// is tested without pretending this fixture can resolve the blob.
+    struct ExternalObservingStream {
+        open_calls: Arc<AtomicUsize>,
+        observed_external: Arc<Mutex<Option<bool>>>,
+    }
+
+    impl ExternalObservingStream {
+        fn new() -> (Self, Arc<AtomicUsize>, Arc<Mutex<Option<bool>>>) {
+            let open_calls = Arc::new(AtomicUsize::new(0));
+            let observed_external = Arc::new(Mutex::new(None));
+            (
+                Self {
+                    open_calls: Arc::clone(&open_calls),
+                    observed_external: Arc::clone(&observed_external),
+                },
+                open_calls,
+                observed_external,
+            )
+        }
+    }
+
+    impl ItemStream for ExternalObservingStream {
+        async fn open(
+            &self,
+            context: StreamOpenContext<'_>,
+        ) -> Result<StreamOpenOutcome, StreamOpenError> {
+            self.open_calls.fetch_add(1, Ordering::SeqCst);
+            *self.observed_external.lock().expect("lock poisoned") = context
+                .inherited_state()
+                .map(oxide_batch::ComponentStateEnvelope::is_external);
+            Ok(StreamOpenOutcome::Restored)
+        }
+
+        async fn update(
+            &self,
+            _context: StreamUpdateContext<'_>,
+        ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+            Ok(external_with_versions(2, 2))
         }
 
         async fn close(
@@ -1499,6 +1559,51 @@ mod stream_contract {
         (chunk.outcome(), open_calls, observed)
     }
 
+    async fn run_with_external_inherited(
+        inherited: Vec<ComponentStateEnvelope>,
+        contract: StreamStateContract,
+    ) -> (
+        ChunkExecutionOutcome,
+        Arc<AtomicUsize>,
+        Arc<Mutex<Option<bool>>>,
+    ) {
+        let (writer, _batches) = Writer::new(Boundary::Normal);
+        let (completion, _calls) = Completion::new(Boundary::Normal);
+        let transactions = StateTransactions {
+            receipt: receipt(),
+            inherited,
+        };
+        let (stream, open_calls, observed_external) = ExternalObservingStream::new();
+        let step = ChunkStep::new(
+            StepName::new("import").expect("valid step name"),
+            ChunkSize::new(2).expect("valid chunk size"),
+            Reader::new([1]),
+            Processor::normal(),
+            writer,
+            Arc::new(transactions),
+            Arc::new(completion),
+        )
+        .with_item_stream(identity(), stream, contract);
+        let mut job = ChunkJob::new(
+            JobName::new("external_stream_contract_test").expect("valid job name"),
+            step,
+            DefinitionRevision::new("test-v1").expect("valid revision"),
+            &stream_components(),
+        )
+        .expect("bijection-valid definition");
+        let clock = ManualClock::new(UNIX_EPOCH + Duration::from_secs(700));
+        let ids = DeterministicIds::new(NonZeroU64::MIN);
+        let repository = InMemoryJobRepository::new(Arc::new(clock.clone()), Arc::new(ids.clone()));
+        let launcher = JobLauncher::new(&repository, &clock, &ids);
+        let (_stop_source, stop) = StopSource::new();
+        let report = launcher
+            .launch_chunk(&mut job, &JobParameters::new(), &stop)
+            .await
+            .expect("launch completes");
+        let chunk = report.chunk().expect("chunk work started");
+        (chunk.outcome(), open_calls, observed_external)
+    }
+
     #[tokio::test]
     async fn open_rejects_unknown_schema_before_user_stream_is_called() {
         let wrong_schema = DefaultComponentCodec::new(
@@ -1556,6 +1661,48 @@ mod stream_contract {
             ChunkExecutionOutcome::Failed(ChunkFailure::StreamOpen)
         );
         assert_eq!(open_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn open_rejects_older_external_schema_before_user_stream_is_called() {
+        let inherited = external_with_versions(1, 2);
+
+        let (outcome, open_calls, _observed) =
+            run_with_external_inherited(vec![inherited], contract(codec(2, 2))).await;
+
+        assert_eq!(
+            outcome,
+            ChunkExecutionOutcome::Failed(ChunkFailure::StreamOpen)
+        );
+        assert_eq!(open_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn open_rejects_older_external_codec_before_user_stream_is_called() {
+        let inherited = external_with_versions(2, 1);
+
+        let (outcome, open_calls, _observed) =
+            run_with_external_inherited(vec![inherited], contract(codec(2, 2))).await;
+
+        assert_eq!(
+            outcome,
+            ChunkExecutionOutcome::Failed(ChunkFailure::StreamOpen)
+        );
+        assert_eq!(open_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn open_accepts_current_external_state() {
+        let (outcome, open_calls, observed_external) =
+            run_with_external_inherited(vec![external_with_versions(2, 2)], contract(codec(2, 2)))
+                .await;
+
+        assert_eq!(outcome, ChunkExecutionOutcome::Completed);
+        assert_eq!(open_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            *observed_external.lock().expect("lock poisoned"),
+            Some(true)
+        );
     }
 
     #[tokio::test]
