@@ -21,15 +21,17 @@
 //! reader/stream a restart test needs; it does not reimplement restart
 //! selection.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use oxide_batch::{
-    CodecId, CodecVersion, ComponentStateEnvelope, ComponentStreamIdentity, DefaultComponentCodec,
-    ItemReader, ItemStream, ReadContext, ReadOutcome, ReaderError, RestartabilityDeclaration,
-    StateCodecError, StateLimits, StateSchemaId, StateSchemaVersion, StreamCloseContext,
-    StreamCloseError, StreamCloseOutcome, StreamOpenContext, StreamOpenError, StreamOpenOutcome,
-    StreamStateContract, StreamUpdateContext, StreamUpdateError, VersionedStateCodec,
+    BoxFuture, ChunkTransaction, ChunkTransactionContext, ChunkTransactionError,
+    ChunkTransactionManager, CodecId, CodecVersion, ComponentStateEnvelope,
+    ComponentStreamIdentity, DefaultComponentCodec, InheritedStepProgress, ItemReader, ItemStream,
+    ReadContext, ReadOutcome, ReaderError, RestartabilityDeclaration, StateCodecError, StateLimits,
+    StateSchemaId, StateSchemaVersion, StreamCloseContext, StreamCloseError, StreamCloseOutcome,
+    StreamOpenContext, StreamOpenError, StreamOpenOutcome, StreamStateContract,
+    StreamUpdateContext, StreamUpdateError, VersionedStateCodec,
 };
 
 const SCHEMA: &str = "oxide-batch-test.range-position";
@@ -168,7 +170,7 @@ impl ItemStream for RangeStream {
 pub fn range_reader(
     identity: ComponentStreamIdentity,
     len: u64,
-) -> (RangeReader, RangeStream, StreamStateContract) {
+) -> (RangeReader, RangeStream, StreamStateContract, RangePosition) {
     let position = Arc::new(AtomicU64::new(0));
     let contract = StreamStateContract::new(position_codec());
     let reader = RangeReader {
@@ -176,9 +178,116 @@ pub fn range_reader(
         len,
     };
     let stream = RangeStream {
-        position,
+        position: Arc::clone(&position),
         codec: position_codec(),
         namespace: identity,
     };
-    (reader, stream, contract)
+    (reader, stream, contract, RangePosition(position))
+}
+
+/// A cheap, shared handle onto a [`RangeReader`]/[`RangeStream`] pair's
+/// in-memory position, for test observation.
+///
+/// This reads the reader's own uncommitted, process-local counter -- it
+/// updates the moment a call to [`ItemReader::read`] returns an item,
+/// regardless of whether the chunk that reads it ever durably commits. A
+/// test that wants to observe a rolled-back candidate's value (as opposed to
+/// what the repository durably inherited) reads this handle, not durable
+/// state.
+#[derive(Clone, Debug)]
+pub struct RangePosition(Arc<AtomicU64>);
+
+impl RangePosition {
+    /// Returns the current in-memory position.
+    #[must_use]
+    pub fn get(&self) -> u64 {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+/// A [`ChunkTransactionManager`] decorator that records every
+/// [`InheritedStepProgress`] and inherited [`ComponentStateEnvelope`] set
+/// the framework actually reads through it, in call order.
+///
+/// A restart test wraps its manager with this to observe exactly what a new
+/// attempt inherited at the moment the framework itself asked for it --
+/// proving what a genuine restart resumed from, rather than re-deriving it
+/// independently after the fact and risking a mismatched observation
+/// window.
+pub struct ObservingTransactions<M> {
+    inner: M,
+    progress: Mutex<Vec<InheritedStepProgress>>,
+    component_state: Mutex<Vec<Vec<ComponentStateEnvelope>>>,
+}
+
+impl<M> ObservingTransactions<M> {
+    /// Wraps `inner`, recording nothing yet.
+    pub const fn new(inner: M) -> Self {
+        Self {
+            inner,
+            progress: Mutex::new(Vec::new()),
+            component_state: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Returns every observed [`InheritedStepProgress`], in call order.
+    #[must_use]
+    pub fn observed_progress(&self) -> Vec<InheritedStepProgress> {
+        self.progress
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Returns every observed inherited component-state set, in call order.
+    #[must_use]
+    pub fn observed_component_state(&self) -> Vec<Vec<ComponentStateEnvelope>> {
+        self.component_state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+}
+
+impl<M: ChunkTransactionManager> ChunkTransactionManager for ObservingTransactions<M> {
+    fn begin(
+        &self,
+    ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>> {
+        self.inner.begin()
+    }
+
+    fn begin_for(
+        &self,
+        context: ChunkTransactionContext,
+    ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>> {
+        self.inner.begin_for(context)
+    }
+
+    fn inherited_progress(
+        &self,
+        context: ChunkTransactionContext,
+    ) -> BoxFuture<'_, Result<InheritedStepProgress, ChunkTransactionError>> {
+        Box::pin(async move {
+            let progress = self.inner.inherited_progress(context).await?;
+            self.progress
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(progress);
+            Ok(progress)
+        })
+    }
+
+    fn inherited_component_state(
+        &self,
+        context: ChunkTransactionContext,
+    ) -> BoxFuture<'_, Result<Vec<ComponentStateEnvelope>, ChunkTransactionError>> {
+        Box::pin(async move {
+            let state = self.inner.inherited_component_state(context).await?;
+            self.component_state
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(state.clone());
+            Ok(state)
+        })
+    }
 }

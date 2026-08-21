@@ -1,19 +1,20 @@
-//! Runs an attempt, injects a pre-commit failure after some chunks commit,
-//! then restarts through the real production launch path and shows the
-//! second attempt resumes from the last committed position. Requires
-//! `OXIDEBATCH_POSTGRES_TEST_URL` and the `postgres` feature.
+//! Runs an attempt, injects a real pre-commit failure after some chunks
+//! commit, then restarts through the real production launch path and shows
+//! the second attempt resumes from the last committed position, not the
+//! rolled-back candidate. Requires `OXIDEBATCH_POSTGRES_TEST_URL` and the
+//! `postgres` feature.
 
 use std::sync::Arc;
 use std::time::SystemTime;
 
 use oxide_batch::{
-    Checkpoint, ChunkCommitReceipt, ChunkCount, ChunkDeliveryMode, ChunkJob, ChunkSize, ChunkStep,
+    Checkpoint, ChunkCommitReceipt, ChunkDeliveryMode, ChunkJob, ChunkSize, ChunkStep,
     ComponentRevision, ComponentStreamIdentity, DefinitionRevision, ExecutionContext,
     ExecutionCounts, ItemProcessor, ItemWriter, JobName, JobParameters, PostgresChunkStateError,
     ProcessContext, ProcessOutcome, ProcessorError, StateLimits, StepName, WriteContext,
     WriteOutcome, WriterError,
 };
-use oxide_batch_test::inject::{InjectedPreCommit, InjectionId, InjectionLog, PreCommitAction};
+use oxide_batch_test::inject::{InjectedTransactions, InjectionId, InjectionLog, PreCommitAction};
 use oxide_batch_test::postgres::PostgresFixture;
 use oxide_batch_test::restart::range_reader;
 use oxide_batch_test::{NoCompletion, TestJob, chunk_component_revisions_with_delivery_mode};
@@ -45,12 +46,17 @@ impl ItemWriter<u64> for Sink {
 
 fn state_provider() -> Arc<dyn oxide_batch::PostgresChunkStateProvider> {
     Arc::new(
-        |_committed: ExecutionCounts, _chunk: oxide_batch::ChunkCounts| {
-            let checkpoint = Checkpoint::from_json(
-                br#"{"format":"oxide-batch.checkpoint","format_version":1,"schema":"oxide-batch-test.restart-example","schema_version":1,"payload":{}}"#,
-                StateLimits::default(),
-            )
-            .map_err(|_| PostgresChunkStateError::new())?;
+        |committed: ExecutionCounts, chunk: oxide_batch::ChunkCounts| {
+            let position = committed
+                .read()
+                .checked_add(chunk.read().get())
+                .ok_or_else(PostgresChunkStateError::new)?;
+            let checkpoint_bytes = format!(
+                r#"{{"format":"oxide-batch.checkpoint","format_version":1,"schema":"oxide-batch-test.restart-example","schema_version":1,"payload":{{"position":{position}}}}}"#
+            );
+            let checkpoint =
+                Checkpoint::from_json(checkpoint_bytes.as_bytes(), StateLimits::default())
+                    .map_err(|_| PostgresChunkStateError::new())?;
             let context = ExecutionContext::from_json(
                 br#"{"format":"oxide-batch.execution-context","format_version":1,"schema":"oxide-batch-test.restart-example","schema_version":1,"payload":{}}"#,
                 StateLimits::default(),
@@ -80,24 +86,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         chunk_component_revisions_with_delivery_mode(ChunkDeliveryMode::AtomicSameResource)
             .with_stream_revision(namespace.clone(), ComponentRevision::new("range-v1")?);
 
+    // Attempt A: chunk size 2 over 6 items is 3 chunks. The 2nd chunk's
+    // reader/processor/writer/ItemStream::update all run for real, but its
+    // *commit* is injected to fail, so it rolls back.
     let log = InjectionLog::new();
-    let (reader_a, stream_a, contract_a) = range_reader(namespace.clone(), 6);
+    let (reader_a, stream_a, contract_a, position_a) = range_reader(namespace.clone(), 6);
     let step_a = ChunkStep::new(
         StepName::new("range")?,
         ChunkSize::new(2)?,
         reader_a,
         Identity,
         Sink,
-        Arc::new(fixture.transaction_manager(state_provider())),
+        Arc::new(InjectedTransactions::new(
+            fixture.transaction_manager(state_provider()),
+            2,
+            PreCommitAction::Fail,
+            InjectionId::new(1),
+            log.clone(),
+        )),
         Arc::new(NoCompletion),
     )
-    .with_item_stream(namespace.clone(), stream_a, contract_a)
-    .with_chunk_listener(Arc::new(InjectedPreCommit::new(
-        ChunkCount::new(2),
-        PreCommitAction::Fail,
-        InjectionId::new(1),
-        log.clone(),
-    )));
+    .with_item_stream(namespace.clone(), stream_a, contract_a);
     let chunk_job_a = ChunkJob::new(
         job_name.clone(),
         step_a,
@@ -112,12 +121,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let report_a = job_a.launch(&JobParameters::new()).await?;
     println!(
-        "attempt A finished as {:?}, injection fired: {}",
+        "attempt A finished as {:?}, injection fired: {}, rolled-back candidate reached position {}",
         report_a.launch().job_execution().metadata().status(),
         log.fired(InjectionId::new(1)),
+        position_a.get(),
     );
 
-    let (reader_b, stream_b, contract_b) = range_reader(namespace.clone(), 6);
+    let (reader_b, stream_b, contract_b, position_b) = range_reader(namespace.clone(), 6);
     let step_b = ChunkStep::new(
         StepName::new("range")?,
         ChunkSize::new(2)?,
@@ -142,10 +152,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let report_b = job_b.launch(&JobParameters::new()).await?;
     println!(
-        "attempt B (new execution {:?}, same instance {:?}) finished as {:?}",
+        "attempt B (new execution {:?}, same instance {:?}) finished as {:?}, resumed to position {}",
         report_b.launch().job_execution().id(),
         report_b.launch().instance().id(),
         report_b.launch().job_execution().metadata().status(),
+        position_b.get(),
     );
     Ok(())
 }

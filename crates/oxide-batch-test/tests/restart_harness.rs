@@ -8,14 +8,14 @@ use std::sync::{Arc, Mutex};
 
 use oxide_batch::{
     BatchStatus, Checkpoint, ChunkCommitReceipt, ChunkCount, ChunkDeliveryMode, ChunkJob,
-    ChunkSize, ChunkStep, ComponentRevision, ComponentStreamIdentity, DefinitionRevision,
-    ExecutionContext, ExecutionCounts, ItemProcessor, ItemWriter, JobName, JobParameters,
-    PostgresChunkStateError, ProcessContext, ProcessOutcome, ProcessorError, StateLimits, StepName,
-    WriteContext, WriteOutcome, WriterError,
+    ChunkSize, ChunkStep, ChunkTransactionManager, ComponentRevision, ComponentStreamIdentity,
+    DefinitionRevision, ExecutionContext, ExecutionCounts, ItemProcessor, ItemWriter, JobName,
+    JobParameters, PostgresChunkStateError, ProcessContext, ProcessOutcome, ProcessorError,
+    StateLimits, StepName, WriteContext, WriteOutcome, WriterError,
 };
-use oxide_batch_test::inject::{InjectedPreCommit, InjectionId, InjectionLog, PreCommitAction};
+use oxide_batch_test::inject::{InjectedTransactions, InjectionId, InjectionLog, PreCommitAction};
 use oxide_batch_test::postgres::PostgresFixture;
-use oxide_batch_test::restart::range_reader;
+use oxide_batch_test::restart::{ObservingTransactions, range_reader};
 use oxide_batch_test::{NoCompletion, TestJob, chunk_component_revisions_with_delivery_mode};
 
 fn runtime_url() -> Option<String> {
@@ -52,14 +52,22 @@ impl ItemWriter<u64> for RecordingWriter {
     }
 }
 
+/// Encodes the real cumulative read position into the legacy checkpoint, so
+/// `InheritedStepProgress::checkpoint_digest` reflects genuine commit-to-commit
+/// progress instead of a constant placeholder.
 fn state_provider() -> Arc<dyn oxide_batch::PostgresChunkStateProvider> {
     Arc::new(
-        |_committed: ExecutionCounts, _chunk: oxide_batch::ChunkCounts| {
-            let checkpoint = Checkpoint::from_json(
-                br#"{"format":"oxide-batch.checkpoint","format_version":1,"schema":"oxide-batch-test.restart-harness","schema_version":1,"payload":{}}"#,
-                StateLimits::default(),
-            )
-            .map_err(|_| PostgresChunkStateError::new())?;
+        |committed: ExecutionCounts, chunk: oxide_batch::ChunkCounts| {
+            let position = committed
+                .read()
+                .checked_add(chunk.read().get())
+                .ok_or_else(PostgresChunkStateError::new)?;
+            let checkpoint_bytes = format!(
+                r#"{{"format":"oxide-batch.checkpoint","format_version":1,"schema":"oxide-batch-test.restart-harness","schema_version":1,"payload":{{"position":{position}}}}}"#
+            );
+            let checkpoint =
+                Checkpoint::from_json(checkpoint_bytes.as_bytes(), StateLimits::default())
+                    .map_err(|_| PostgresChunkStateError::new())?;
             let context = ExecutionContext::from_json(
                 br#"{"format":"oxide-batch.execution-context","format_version":1,"schema":"oxide-batch-test.restart-harness","schema_version":1,"payload":{}}"#,
                 StateLimits::default(),
@@ -73,7 +81,7 @@ fn state_provider() -> Arc<dyn oxide_batch::PostgresChunkStateProvider> {
 #[tokio::test]
 #[allow(
     clippy::too_many_lines,
-    reason = "the two attempts and their equivalence assertions are only meaningful together"
+    reason = "the two attempts and their committed-vs-candidate assertions are only meaningful together"
 )]
 async fn restart_harness_resumes_from_the_last_committed_checkpoint() -> Result<(), Box<dyn Error>>
 {
@@ -94,28 +102,34 @@ async fn restart_harness_resumes_from_the_last_committed_checkpoint() -> Result<
         chunk_component_revisions_with_delivery_mode(ChunkDeliveryMode::AtomicSameResource)
             .with_stream_revision(namespace.clone(), ComponentRevision::new("range-v1")?);
 
-    let written: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
-
-    // Attempt A: injects a pre-commit failure immediately before the 3rd
-    // chunk, so only the first two chunks (positions 0..4) commit durably.
-    let (reader_a, stream_a, contract_a) = range_reader(namespace.clone(), 10);
-    let log_a = InjectionLog::new();
+    // Attempt A: chunk size 2 over 10 items is 5 chunks. Chunks 1 and 2
+    // (items 0..4) commit. Chunk 3's reader, processor, writer, and
+    // ItemStream::update all genuinely run -- producing a real candidate at
+    // position 6 -- but its *commit* is injected to fail, so the runtime
+    // rolls the candidate back. This is the real pre-commit boundary
+    // (`ChunkTransaction::commit`), not `ChunkListener::before_chunk`, which
+    // the production contract documents as running before the transaction
+    // begins -- before this chunk's item work would ever have started.
+    let (reader_a, stream_a, contract_a, position_a) = range_reader(namespace.clone(), 10);
+    let log = InjectionLog::new();
+    let injection_id = InjectionId::new(1);
+    let writer_a: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
     let step_a = ChunkStep::new(
-        StepName::new("range_step")?,
+        StepName::new("range")?,
         ChunkSize::new(2)?,
         reader_a,
         Identity,
-        RecordingWriter(Arc::clone(&written)),
-        Arc::new(fixture.transaction_manager(state_provider())),
+        RecordingWriter(Arc::clone(&writer_a)),
+        Arc::new(InjectedTransactions::new(
+            fixture.transaction_manager(state_provider()),
+            3,
+            PreCommitAction::Fail,
+            injection_id,
+            log.clone(),
+        )),
         Arc::new(NoCompletion),
     )
-    .with_item_stream(namespace.clone(), stream_a, contract_a)
-    .with_chunk_listener(Arc::new(InjectedPreCommit::new(
-        ChunkCount::new(3),
-        PreCommitAction::Fail,
-        InjectionId::new(1),
-        log_a.clone(),
-    )));
+    .with_item_stream(namespace.clone(), stream_a, contract_a);
     let chunk_job_a = ChunkJob::new(
         job_name.clone(),
         step_a,
@@ -131,43 +145,68 @@ async fn restart_harness_resumes_from_the_last_committed_checkpoint() -> Result<
     let report_a = job_a.launch(&JobParameters::new()).await?;
 
     assert!(
-        log_a.fired(InjectionId::new(1)),
-        "the injected pre-commit failure must have fired"
+        log.fired(injection_id),
+        "the injected pre-commit failure on the 3rd chunk must have fired"
     );
     let chunk_report_a = report_a
         .chunk()
         .ok_or("attempt A must have reached the chunk step")?;
-    assert_eq!(chunk_report_a.committed_chunks(), ChunkCount::new(2));
-    assert_eq!(chunk_report_a.committed_counts().read().get(), 4);
+    assert_eq!(
+        chunk_report_a.committed_chunks(),
+        ChunkCount::new(2),
+        "only the first two chunks commit"
+    );
+    assert_eq!(
+        chunk_report_a.committed_counts().read().get(),
+        4,
+        "durable committed count is exactly 4 items"
+    );
     assert_eq!(
         report_a.launch().job_execution().metadata().status(),
         BatchStatus::Failed,
         "the injected failure must leave attempt A failed, not completed",
     );
+
+    // The 3rd chunk's reader/processor/writer/ItemStream::update genuinely
+    // ran before the injected commit failure: the in-memory position
+    // reached 6 (not 4), proving there really was uncommitted candidate
+    // work to discard, not merely a chunk that never started.
     assert_eq!(
-        *written
+        position_a.get(),
+        6,
+        "the rolled-back chunk's reader/update genuinely reached position 6 in memory",
+    );
+    assert_eq!(
+        *writer_a
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner),
-        vec![0, 1, 2, 3],
-        "only the committed prefix reached the writer",
+        vec![0, 1, 2, 3, 4, 5],
+        "writer invocation trace, not durable evidence: items 4 and 5 were passed to the \
+         writer before the commit that would have made them durable was rejected",
     );
 
-    // Attempt B: a fresh reader/stream pair (attempt A's is exhausted and
-    // moved), launched again through the same production API against the
-    // same job instance -- the real restart path, not a manual shortcut.
-    let (reader_b, stream_b, contract_b) = range_reader(namespace.clone(), 10);
+    // Attempt B: a fresh reader/stream pair, launched again through the
+    // same production API against the same job instance -- the real
+    // restart path, not a manual shortcut. An ObservingTransactions wrapper
+    // records exactly what the framework itself inherited, at the moment it
+    // asked for it while opening this new attempt.
+    let (reader_b, stream_b, contract_b, position_b) = range_reader(namespace.clone(), 10);
+    let writer_b: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::new(ObservingTransactions::new(
+        fixture.transaction_manager(state_provider()),
+    ));
     let step_b = ChunkStep::new(
-        StepName::new("range_step")?,
+        StepName::new("range")?,
         ChunkSize::new(2)?,
         reader_b,
         Identity,
-        RecordingWriter(Arc::clone(&written)),
-        Arc::new(fixture.transaction_manager(state_provider())),
+        RecordingWriter(Arc::clone(&writer_b)),
+        Arc::clone(&observed) as Arc<dyn ChunkTransactionManager>,
         Arc::new(NoCompletion),
     )
     .with_item_stream(namespace.clone(), stream_b, contract_b);
     let chunk_job_b = ChunkJob::new(
-        job_name.clone(),
+        job_name,
         step_b,
         DefinitionRevision::new("restart-harness-v1")?,
         &revisions,
@@ -191,18 +230,45 @@ async fn restart_harness_resumes_from_the_last_committed_checkpoint() -> Result<
     assert_eq!(
         chunk_report_b.committed_counts().read().get(),
         6,
-        "the restart must read exactly the uncommitted remainder, not the whole input again",
+        "the restart reads exactly the uncommitted remainder (6 items), never the whole input again",
+    );
+    assert_eq!(
+        *writer_b
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+        vec![4, 5, 6, 7, 8, 9],
+        "the restart resumed from item 4 -- the last COMMITTED position -- not 0 (start over) \
+         and not 6 (the discarded candidate)",
+    );
+    assert_eq!(position_b.get(), 10);
+
+    // Directly verify what the durable adapter reported this new attempt
+    // inherited, captured at the exact moment the framework asked for it.
+    let observed_progress = observed.observed_progress();
+    assert_eq!(
+        observed_progress.len(),
+        1,
+        "inherited_progress is queried exactly once, when the new attempt opens",
+    );
+    assert_eq!(
+        observed_progress[0].read_ordinal(),
+        4,
+        "the framework's own inherited read ordinal is exactly the last COMMITTED count (4), \
+         never the rolled-back candidate (6) and never zero",
+    );
+    assert_ne!(
+        observed_progress[0].checkpoint_digest(),
+        [0u8; 32],
+        "a real committed checkpoint generation was inherited, not the NONE sentinel",
     );
 
-    let mut all_written = written
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
-    all_written.sort_unstable();
-    assert_eq!(
-        all_written,
-        (0..10).collect::<Vec<_>>(),
-        "the two attempts together wrote every item exactly once, with no gap or duplicate",
+    let observed_state = observed.observed_component_state();
+    assert_eq!(observed_state.len(), 1);
+    assert!(
+        observed_state[0]
+            .iter()
+            .any(|envelope| envelope.namespace() == &namespace),
+        "the new attempt inherited a committed component-state envelope for this stream",
     );
 
     assert_ne!(

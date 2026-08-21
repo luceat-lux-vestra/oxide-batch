@@ -13,8 +13,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use oxide_batch::{
-    BoxFuture, ChunkAttemptOutcome, ChunkCount, ChunkListener, ChunkListenerContext,
-    ChunkListenerError, ComponentStateEnvelope, FailureCategory, ItemProcessor, ItemReader,
+    BoxFuture, BusinessTransaction, ChunkCommitReceipt, ChunkCounts, ChunkFaultProgress,
+    ChunkTransaction, ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager,
+    ComponentStateEnvelope, FailureCategory, InheritedStepProgress, ItemProcessor, ItemReader,
     ItemStream, ItemWriter, ProcessContext, ProcessOutcome, ProcessorError, ReadContext,
     ReadOutcome, ReaderError, StopSource, StreamCloseContext, StreamCloseError, StreamCloseOutcome,
     StreamOpenContext, StreamOpenError, StreamOpenOutcome, StreamUpdateContext, StreamUpdateError,
@@ -62,7 +63,7 @@ pub enum InjectionPoint {
     StreamUpdate,
     /// [`oxide_batch::ItemStream::close`].
     StreamClose,
-    /// [`oxide_batch::ChunkListener::before_chunk`], immediately before commit.
+    /// [`oxide_batch::ChunkTransaction::commit`]/[`commit_with_component_state`](oxide_batch::ChunkTransaction::commit_with_component_state).
     PreCommit,
 }
 
@@ -413,8 +414,12 @@ pub enum StreamAction {
 /// An [`ItemStream`] that can fail or panic at `open`, `update`, and/or
 /// `close`, independently, and otherwise delegates to the wrapped stream.
 ///
-/// Each lifecycle point fires at most once (the contract already calls each
-/// method at most once per step attempt).
+/// A configured `open`/`close` injection fires at most once, matching the
+/// production contract's own at-most-once-per-attempt call sites for those
+/// two methods. A configured `update` injection fires on *every* `update`
+/// call: the production contract calls `update` once per *committing chunk
+/// attempt*, not once per step attempt, so a multi-chunk step can call it
+/// several times.
 pub struct InjectedStream<S> {
     inner: S,
     open: Option<(StreamAction, InjectionId)>,
@@ -526,78 +531,170 @@ impl<S: ItemStream> ItemStream for InjectedStream<S> {
     }
 }
 
-/// What an injected [`ChunkListener::before_chunk`] pre-commit call does once
-/// fired.
+/// What an injected pre-commit call does once fired.
+///
+/// There is no `Panic` variant: unlike the reader/processor/writer/stream
+/// boundary, the framework wraps no `catch_unwind` around
+/// [`ChunkTransaction::commit`]/[`commit_with_component_state`](ChunkTransaction::commit_with_component_state) --
+/// a `ChunkTransactionManager` is adapter-owned infrastructure, not a
+/// panic-isolated user component, so a panic injected here would only ever
+/// be a raw unwind, not a production panic-to-typed-failure conversion.
 #[non_exhaustive]
 pub enum PreCommitAction {
-    /// Fails the chunk listener boundary, which forces a rollback before
-    /// commit.
+    /// Returns [`ChunkTransactionError::NotCommitted`] instead of calling
+    /// through to the real commit, so the runtime rolls the attempt back.
     Fail,
-    /// Panics through the real production panic boundary.
-    Panic,
 }
 
-/// A [`ChunkListener`] that fails or panics immediately before the chunk
-/// whose sequence matches `at`, and otherwise observes silently.
+/// A [`ChunkTransactionManager`] decorator that fails the commit of the
+/// chunk attempt whose one-based begin ordinal matches `at`, and otherwise
+/// delegates every call to the wrapped manager.
 ///
-/// This is the pre-commit failure point: `before_chunk` runs before the
-/// adapter's transaction commits, so a fired injection here proves no
-/// business, checkpoint, or component-state write became durable.
-pub struct InjectedPreCommit {
-    at: ChunkCount,
+/// This is the real pre-commit failure point: unlike
+/// [`ChunkListener::before_chunk`](oxide_batch::ChunkListener::before_chunk)
+/// (which the production contract documents as running *before the
+/// transaction begins* -- before the reader, processor, writer, or
+/// `ItemStream::update` for that chunk ever run), this decorator only
+/// intercepts [`ChunkTransaction::commit`]/[`commit_with_component_state`](ChunkTransaction::commit_with_component_state),
+/// after the chunk's item work and candidate component-state envelope
+/// already exist. A fired injection proves that candidate work is rolled
+/// back and never durably committed -- not merely that the chunk never
+/// started.
+pub struct InjectedTransactions<M> {
+    inner: M,
+    at: u64,
     action: PreCommitAction,
     id: InjectionId,
     log: InjectionLog,
+    begins: AtomicU64,
 }
 
-impl InjectedPreCommit {
-    /// Injects `action` immediately before the chunk attempt numbered `at`.
+impl<M> InjectedTransactions<M> {
+    /// Wraps `inner`, failing the commit of the `at`-th chunk attempt this
+    /// manager begins (one-based, in `begin`/`begin_for` call order).
     #[must_use]
     pub const fn new(
-        at: ChunkCount,
+        inner: M,
+        at: u64,
         action: PreCommitAction,
         id: InjectionId,
         log: InjectionLog,
     ) -> Self {
         Self {
+            inner,
             at,
             action,
             id,
             log,
+            begins: AtomicU64::new(0),
         }
+    }
+
+    fn should_fire(&self) -> bool {
+        let ordinal = self.begins.fetch_add(1, Ordering::SeqCst) + 1;
+        ordinal == self.at
     }
 }
 
-impl ChunkListener for InjectedPreCommit {
-    fn before_chunk<'a>(
-        &'a self,
-        context: ChunkListenerContext<'a>,
-    ) -> BoxFuture<'a, Result<(), ChunkListenerError>> {
+impl<M: ChunkTransactionManager> ChunkTransactionManager for InjectedTransactions<M> {
+    fn begin(
+        &self,
+    ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>> {
+        let fire = self.should_fire();
         Box::pin(async move {
-            if context.sequence() == self.at {
-                match self.action {
-                    PreCommitAction::Fail => {
-                        self.log.record(InjectionEvent::new(
-                            self.id,
-                            InjectionPoint::PreCommit,
-                            InjectionEffect::Failed,
-                        ));
-                        return Err(ChunkListenerError::new());
-                    }
-                    PreCommitAction::Panic => {
-                        record_and_panic(&self.log, self.id, InjectionPoint::PreCommit);
-                    }
-                }
-            }
-            Ok(())
+            let inner = self.inner.begin().await?;
+            Ok(Box::new(InjectedTransaction {
+                inner,
+                fire,
+                action: &self.action,
+                id: self.id,
+                log: &self.log,
+            }) as Box<dyn ChunkTransaction>)
         })
     }
 
-    fn after_chunk<'a>(
-        &'a self,
-        _context: ChunkListenerContext<'a>,
-        _outcome: ChunkAttemptOutcome,
-    ) -> BoxFuture<'a, Result<(), ChunkListenerError>> {
-        Box::pin(async { Ok(()) })
+    fn begin_for(
+        &self,
+        context: ChunkTransactionContext,
+    ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>> {
+        let fire = self.should_fire();
+        Box::pin(async move {
+            let inner = self.inner.begin_for(context).await?;
+            Ok(Box::new(InjectedTransaction {
+                inner,
+                fire,
+                action: &self.action,
+                id: self.id,
+                log: &self.log,
+            }) as Box<dyn ChunkTransaction>)
+        })
+    }
+
+    fn inherited_progress(
+        &self,
+        context: ChunkTransactionContext,
+    ) -> BoxFuture<'_, Result<InheritedStepProgress, ChunkTransactionError>> {
+        self.inner.inherited_progress(context)
+    }
+
+    fn inherited_component_state(
+        &self,
+        context: ChunkTransactionContext,
+    ) -> BoxFuture<'_, Result<Vec<ComponentStateEnvelope>, ChunkTransactionError>> {
+        self.inner.inherited_component_state(context)
+    }
+}
+
+struct InjectedTransaction<'a> {
+    inner: Box<dyn ChunkTransaction + 'a>,
+    fire: bool,
+    action: &'a PreCommitAction,
+    id: InjectionId,
+    log: &'a InjectionLog,
+}
+
+impl ChunkTransaction for InjectedTransaction<'_> {
+    fn business_transaction(&mut self) -> Option<&mut dyn BusinessTransaction> {
+        self.inner.business_transaction()
+    }
+
+    fn commit(
+        &mut self,
+        counts: ChunkCounts,
+        fault: ChunkFaultProgress,
+    ) -> BoxFuture<'_, Result<ChunkCommitReceipt, ChunkTransactionError>> {
+        if self.fire {
+            let PreCommitAction::Fail = self.action;
+            self.log.record(InjectionEvent::new(
+                self.id,
+                InjectionPoint::PreCommit,
+                InjectionEffect::Failed,
+            ));
+            return Box::pin(async { Err(ChunkTransactionError::NotCommitted) });
+        }
+        self.inner.commit(counts, fault)
+    }
+
+    fn commit_with_component_state<'a>(
+        &'a mut self,
+        counts: ChunkCounts,
+        fault: ChunkFaultProgress,
+        component_state: &'a [ComponentStateEnvelope],
+    ) -> BoxFuture<'a, Result<ChunkCommitReceipt, ChunkTransactionError>> {
+        if self.fire {
+            let PreCommitAction::Fail = self.action;
+            self.log.record(InjectionEvent::new(
+                self.id,
+                InjectionPoint::PreCommit,
+                InjectionEffect::Failed,
+            ));
+            return Box::pin(async { Err(ChunkTransactionError::NotCommitted) });
+        }
+        self.inner
+            .commit_with_component_state(counts, fault, component_state)
+    }
+
+    fn rollback(&mut self) -> BoxFuture<'_, Result<(), ChunkTransactionError>> {
+        self.inner.rollback()
     }
 }
