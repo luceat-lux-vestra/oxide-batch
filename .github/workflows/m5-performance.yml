@@ -46,8 +46,11 @@ jobs:
         # so the combined ceiling this campaign ever asks for is 73 — safely
         # inside the image's default of 100, which is deliberately not raised
         # so an unexpectedly larger request fails rather than being absorbed.
+        # Probe the default `postgres` database so readiness checks never add
+        # a client backend to the isolated campaign database while connection
+        # peaks are being measured there.
         options: >-
-          --health-cmd "pg_isready --username postgres --dbname oxide_batch_performance"
+          --health-cmd "pg_isready --username postgres --dbname postgres"
           --health-interval 2s
           --health-timeout 5s
           --health-retries 15

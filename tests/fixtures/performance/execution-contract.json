@@ -3,7 +3,7 @@
   "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow is a thin provisioning and call layer, and its contract-check step fails closed when the workflow drifts from these values. Only the dedicated performance workflow is in this campaign's semantic closure, so unrelated quality or build changes in ci.yml do not invalidate retained performance evidence.",
   "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script — an added trigger, a job-level permission override, a widened matrix, a lost --release, an appended command — moves the identity and fails the contract check, whether or not every literal field below still happens to read true. The literal fields exist for a readable diagnostic, not as the boundary. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
   "workflow_path": ".github/workflows/m5-performance.yml",
-  "workflow_git_blob": "d4690058f34e324f0bdb919fb2f1c77a6b40b4df",
+  "workflow_git_blob": "b37567ec7484e7c7d9125929d94d124a6be29763",
   "workflow_name": "M5 Performance",
   "triggers": {
     "pull_request": ["main"],
@@ -27,7 +27,7 @@
     "port": 5432,
     "max_connections": "the image default",
     "max_connections_note": "P-010's largest worker point derives a framework pool of MAX_PARTITION_WORKERS + 1 (65). The report's own business-write pool is held constant at 8 regardless of worker count, so the combined ceiling this campaign ever asks for is 73, safely inside the image's default of 100, which is deliberately not raised.",
-    "health_check": "pg_isready --username postgres --dbname oxide_batch_performance"
+    "health_check": "pg_isready --username postgres --dbname postgres"
   },
   "command": ["cargo", "run", "--package", "oxide-batch-xtask", "--", "performance"],
   "cargo_profile": "release",

@@ -1,4 +1,5 @@
-//! The standard item composition catalog (#146).
+//! The standard item composition catalog (#146), plus restartable flat-file
+//! I/O (#147).
 //!
 //! Every component here is a plain, monomorphized [`crate::ItemReader`],
 //! [`crate::ItemProcessor`], or [`crate::ItemWriter`] implementation under
@@ -33,12 +34,18 @@
 //!   ([`AggregatingReader`]).
 //! - [`sync`]: synchronization/thread-safety wrappers
 //!   ([`SynchronizedProcessor`], [`SynchronizedWriter`]).
+//! - [`delimited`]: restartable delimited/CSV file I/O (#147, `IO-FLAT-001`)
+//!   ([`DelimitedReader`], [`DelimitedWriter`]).
+//! - [`fixed_width`]: restartable fixed-width file I/O (#147, `IO-FLAT-001`)
+//!   ([`FixedWidthReader`], [`FixedWidthWriter`]).
 
 pub mod aggregate;
 pub mod basic;
 pub mod classify;
 pub mod composite;
+pub mod delimited;
 pub mod filter;
+pub mod fixed_width;
 pub mod peek;
 pub mod sync;
 pub mod validate;
@@ -47,7 +54,17 @@ pub use aggregate::AggregatingReader;
 pub use basic::{IdentityProcessor, IterReader, NoopWriter};
 pub use classify::{Classifier, ClassifyingProcessor, ClassifyingWriter};
 pub use composite::{ChainProcessor, CompositeReader, FanOutWriter};
+pub use delimited::{
+    DelimitedDialect, DelimitedReader, DelimitedReaderStream, DelimitedRecord, DelimitedTerminator,
+    DelimitedWriter, DelimitedWriterStream, delimited_file_reader, delimited_reader,
+    delimited_writer,
+};
 pub use filter::{FilterProcessor, ItemFilter};
+pub use fixed_width::{
+    FixedWidthField, FixedWidthLayout, FixedWidthReader, FixedWidthReaderStream, FixedWidthRecord,
+    FixedWidthTerminator, FixedWidthWriter, FixedWidthWriterStream, fixed_width_file_reader,
+    fixed_width_reader, fixed_width_writer,
+};
 pub use peek::{PeekOutcome, PeekReader};
 pub use sync::{SynchronizedProcessor, SynchronizedWriter};
 pub use validate::{ItemValidator, ValidatingProcessor};

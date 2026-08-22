@@ -58,12 +58,14 @@ use serde_json::Value;
 /// `TEST-JOB-001`, `TEST-STEP-001`, `TEST-SCOPE-001`, and `TEST-REPO-001` did
 /// the same in [#145](https://github.com/luceat-lux-vestra/oxide-batch/issues/145);
 /// `ITEM-COMPOSITE-001` and `ITEM-DECORATOR-001` did the same in
-/// [#146](https://github.com/luceat-lux-vestra/oxide-batch/issues/146).
+/// [#146](https://github.com/luceat-lux-vestra/oxide-batch/issues/146);
+/// `IO-FLAT-001` did the same in
+/// [#147](https://github.com/luceat-lux-vestra/oxide-batch/issues/147).
 const CLOSED_DISPOSITION: &[(&str, usize)] = &[
     ("Verified", 28),
-    ("Implemented", 8),
+    ("Implemented", 9),
     ("Partial", 13),
-    ("Planned", 32),
+    ("Planned", 31),
     ("Unknown", 2),
 ];
 
