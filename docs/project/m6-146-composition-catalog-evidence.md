@@ -15,6 +15,25 @@ it does not implement multi-resource components, format-specific adapters
 (CSV/JSON/PostgreSQL), the item-listener taxonomy, the pipeline configuration
 DSL, or M10 multi-threaded local execution.
 
+**Corrective pass:** an independent review of the first version of this PR
+found several evidence claims stronger than their assertions actually proved.
+Every one is fixed in this tree, not merely documented as a known gap:
+`AggregatingReader`'s failure semantics were clarified (a retryable read
+failure preserves the in-flight buffer rather than discarding it, matching
+the framework's "never rewinds" retry contract) and given real retry
+evidence; the typed/erased equivalence suite gained a real-filtering case, a
+failure-classification case, and an explicit end-of-input assertion;
+`ClassifyingWriter` gained its own enlisted-transaction reborrow test (the
+prior evidence pointer named a non-transactional test); `SynchronizedProcessor`
+and `SynchronizedWriter` gained direct concurrent-in-flight-call measurements
+(with unsynchronized positive controls) in place of a same-result-only test,
+and their rustdoc no longer implies they relax `ItemProcessor`/`ItemWriter`'s
+own `Sync` bound; the close-order test now asserts the exact reverse
+sequence, not just non-blocking; `CompositeReader` gained a
+same-delegate-resumes-after-retry test; and `NoopWriter` gained a test
+proving it never touches an enlisted transaction. See each section below for
+the specific test.
+
 ## Component families delivered
 
 All catalog types live under `oxide_batch::item_components` (a dedicated
@@ -45,6 +64,11 @@ its own inner-delegate generic; `ClassifyingProcessor`/`ClassifyingWriter`
 share one `Classifier<I, K>` trait; `SynchronizedProcessor`/
 `SynchronizedWriter` share one mutex-serialization shape.
 
+`NoopWriter`'s rustdoc claims it is "safe to compose under
+`WriteContext::enlisted` because it performs no business effect to roll
+back"; `noop_writer_never_touches_an_enlisted_transaction` proves it with a
+`PanicOnUseTransaction` fixture whose `execute` panics if called at all.
+
 ## Composition semantics (capability meet, Gate E)
 
 No new capability-declaration framework was introduced. Ordering,
@@ -55,11 +79,11 @@ component APIs where they already express the guarantee:
 
 | Rule | Evidence |
 | --- | --- |
-| Ordering preserved / order-sensitivity propagates | `composite_reader_concatenates_delegates_in_order`, `classifying_writer_preserves_original_item_order_across_delegates` |
+| Ordering preserved / order-sensitivity propagates | `composite_reader_concatenates_delegates_in_order`, `classifying_writer_preserves_original_item_order_across_delegates`, `classifying_writer_reborrows_the_same_enlisted_transaction_in_order` |
 | Restartability: wrapper never hides delegate state | `item_components_stream_composition.rs` (see below); wrapper rustdocs document delegate `ItemStream` pairing is registered independently, never proxied |
-| Thread safety: wrapper never claims more than its delegate, except the permitted synchronization refinement | `sync.rs` rustdoc; `synchronized_processor_serializes_concurrent_callers` |
-| Error classification unchanged | `composite_reader_failure_propagates_unchanged_without_touching_next_delegate`, `chain_processor_first_stage_failure_propagates_unchanged`, `chain_processor_second_stage_failure_propagates_unchanged`, `classifying_processor_delegate_failure_propagates_unchanged` |
-| Close ordering (reverse successful-open, non-blocking, primary-preserving) | `a_close_failure_on_one_stream_does_not_block_another_opened_streams_close` |
+| Thread safety: wrapper never claims more than its delegate, except the permitted synchronization refinement | `sync.rs` rustdoc; `synchronized_processor_allows_at_most_one_delegate_call_in_flight` and `synchronized_writer_allows_at_most_one_delegate_call_in_flight` measure actual concurrent in-flight delegate calls (with `unsynchronized_delegate_allows_concurrent_calls_control` / `unsynchronized_writer_allows_concurrent_calls_control` as positive controls proving the harness would catch a regression) |
+| Error classification unchanged | `composite_reader_failure_propagates_unchanged_without_touching_next_delegate`, `chain_processor_first_stage_failure_propagates_unchanged`, `chain_processor_second_stage_failure_propagates_unchanged`, `classifying_processor_delegate_failure_propagates_unchanged`, `classifying_writer_delegate_failure_propagates_unchanged` |
+| Close ordering (exact reverse successful-open, non-blocking, primary-preserving) | `a_close_failure_on_one_stream_does_not_block_another_opened_streams_close` asserts the exact close sequence `["B", "A"]` via a shared ordered log, not just that A's close was attempted |
 | Classifier never infers a stronger capability from the selected delegate | `classifying_processor_heterogeneous_delegates_share_one_erased_type` -- every delegate shares one Rust type `D` (here `BoxedProcessor<I, O>`), so there is no way to construct a classifier whose static declaration is stronger for one key than another |
 
 ## `oxide-batch-test` consumption (closes #145's final condition)
@@ -79,7 +103,13 @@ workspace dev-dependency cycle:
 | `ComponentFixture` | `item_components_basic.rs`, `item_components_composite.rs`, `item_components_classify.rs`, `item_components_decorators.rs` |
 | `TestStep` | `item_components_stream_composition.rs` |
 | `TestJob` + `restart::range_reader` + `restart::ObservingTransactions` | `postgres_item_components_restart.rs` |
-| `inject::{InjectedReader, InjectedProcessor, InjectedStream}` | all of the above except `item_components_basic.rs` |
+| `inject::{InjectedReader, InjectedProcessor}` | `item_components_composite.rs`, `item_components_classify.rs`, `item_components_decorators.rs` |
+
+`item_components_equivalence.rs` and `item_components_allocation.rs` (under
+`crates/oxide-batch/tests/`, not `oxide-batch-test`) cannot depend on the kit
+themselves; where the failure-classification scenario needs deterministic
+injection, it uses a local, single-purpose `FailAfterNReader` rather than the
+kit's `inject` module.
 
 This is #146's own required consumption, and it is also the later M6
 component issue #145 needed to close: #145 remains open only until a
@@ -88,14 +118,31 @@ suite above is that consumer.
 
 ## Typed/erased semantic equivalence
 
-`item_components_equivalence.rs` drives one representative decorated
-pipeline -- `PeekReader` over `CompositeReader` of two `IterReader`s, a
+`item_components_equivalence.rs` drives representative decorated pipelines
+-- `PeekReader` over `CompositeReader` of two `IterReader`s, a
 `ChainProcessor` of `FilterProcessor` and `IdentityProcessor`, and a
 `SynchronizedWriter` over a recording writer -- through the same production
 `ChunkStep` twice: once fully typed/monomorphized, once through
-`BoxedReader`/`BoxedProcessor`/`BoxedWriter`. Both report identical produced
-items, `ChunkExecutionOutcome`, committed counts, and (for the stop case)
-identical empty writer effects.
+`BoxedReader`/`BoxedProcessor`/`BoxedWriter`. Four scenarios, each asserting
+both paths agree:
+
+- `typed_and_erased_decorated_pipelines_produce_identical_items_and_completion`:
+  identical produced items, `ChunkExecutionOutcome::Completed`, committed
+  counts, and an explicit end-of-input assertion (`committed_counts().read()
+  == 37`, not merely the coarse `Completed` outcome).
+- `typed_and_erased_decorated_pipelines_agree_on_real_filtering`: a
+  genuinely filtering predicate (`is_even`, not the shared pipeline's
+  vacuous `keep_all`) drops part of the input on both paths identically --
+  same kept items, same read/written counts.
+- `typed_and_erased_decorated_pipelines_agree_on_failure_classification`: a
+  `FailAfterNReader` injects the same deterministic `ReaderError` with
+  `FailureCategory::Timeout` into both pipelines; a `ReadListener` attached
+  to each captures the `FaultDescriptor` the framework itself produced at
+  the item-listener boundary, and both captured categories are asserted
+  equal to `FailureCategory::Timeout` -- the actual framework-visible
+  classification, not only that both runs "failed".
+- `typed_and_erased_decorated_pipelines_agree_on_stop`: identical
+  `ChunkExecutionOutcome::Stopped` and empty writer effects.
 
 ## Allocation evidence
 
@@ -112,12 +159,15 @@ per-item boxing.
 ## Writer transaction reborrow
 
 `fan_out_writer_reborrows_the_same_transaction_sequentially_in_order` and
-`classifying_writer_preserves_original_item_order_across_delegates` (which
-also enlists a transaction) exercise the real `WriteContext::enlisted`/
-`transaction()` reborrow path with a `BusinessTransaction` fixture that
-records statement order: both prove delegates write sequentially through the
-one reborrowed transaction, in order, never opening a second transaction.
-`fan_out_writer_failure_short_circuits_remaining_delegates` and
+`classifying_writer_reborrows_the_same_enlisted_transaction_in_order` each
+exercise the real `WriteContext::enlisted`/`transaction()` reborrow path with
+their own `BusinessTransaction` fixture that records statement order: both
+prove delegates write sequentially through the one reborrowed transaction,
+in order, never opening a second transaction --
+`classifying_writer_preserves_original_item_order_across_delegates` proves
+ordering only over a *non*-transactional `WriteContext` and is not, by
+itself, transaction evidence for `ClassifyingWriter`; the enlisted test above
+is. `fan_out_writer_failure_short_circuits_remaining_delegates` and
 `fan_out_writer_stop_short_circuits_before_any_delegate` prove a failure or
 stop terminates the fan-out without invoking later delegates.
 
@@ -125,12 +175,12 @@ stop terminates the fan-out without invoking later delegates.
 
 | Component | Stop evidence | Failure evidence |
 | --- | --- | --- |
-| `CompositeReader` | `composite_reader_stop_short_circuits_without_advancing_to_next_delegate` | `composite_reader_failure_propagates_unchanged_without_touching_next_delegate` |
+| `CompositeReader` | `composite_reader_stop_short_circuits_without_advancing_to_next_delegate` | `composite_reader_failure_propagates_unchanged_without_touching_next_delegate`, `composite_reader_retry_after_failure_resumes_the_same_delegate` |
 | `ChainProcessor` | `chain_processor_filtered_first_stage_short_circuits_second` (stop and filter share the short-circuit path) | `chain_processor_first_stage_failure_propagates_unchanged`, `chain_processor_second_stage_failure_propagates_unchanged` |
 | `FanOutWriter` | `fan_out_writer_stop_short_circuits_before_any_delegate` | `fan_out_writer_failure_short_circuits_remaining_delegates` |
-| `ClassifyingProcessor`/`ClassifyingWriter` | `classifying_writer_stop_short_circuits` | `classifying_processor_delegate_failure_propagates_unchanged`, `classifying_processor_missing_key_is_a_typed_failure`, `classifying_writer_missing_key_is_a_typed_failure` |
+| `ClassifyingProcessor`/`ClassifyingWriter` | `classifying_writer_stop_short_circuits` | `classifying_processor_delegate_failure_propagates_unchanged`, `classifying_writer_delegate_failure_propagates_unchanged`, `classifying_processor_missing_key_is_a_typed_failure`, `classifying_writer_missing_key_is_a_typed_failure` |
 | `PeekReader` | `peek_preserves_stop` | `peek_failure_is_not_cached_and_retries_the_delegate` |
-| `AggregatingReader` | `aggregate_stop_discards_the_partial_group` | `aggregate_failure_discards_the_partial_group_rather_than_truncating_it` |
+| `AggregatingReader` | `aggregate_stop_discards_the_partial_group` | `aggregate_failure_does_not_emit_a_truncated_aggregate`, `aggregate_retry_after_failure_resumes_the_preserved_buffer` |
 | Every registered `ItemStream` (close specifically) | -- | `a_close_failure_on_one_stream_does_not_block_another_opened_streams_close` |
 
 A one-shot marker-based injection (`InjectionLog`/`InjectionId`) distinguishes
@@ -156,11 +206,17 @@ this repository's PostgreSQL evidence convention).
 `item_components_decorators.rs`: `aggregate_emits_exactly_at_the_bound`,
 `aggregate_emits_a_partial_final_group_then_stable_end_of_input`,
 `aggregate_empty_input_is_end_of_input_not_an_empty_group`,
-`aggregate_failure_discards_the_partial_group_rather_than_truncating_it`,
+`aggregate_failure_does_not_emit_a_truncated_aggregate`,
 `aggregate_stop_discards_the_partial_group`,
 `aggregate_never_buffers_beyond_its_bound` (an aggregation function that
 asserts its input group never exceeds the configured bound, so the bound is
-proved rather than merely typical).
+proved rather than merely typical). A retryable read failure does *not*
+clear the in-flight buffer -- the framework's fault-retry contract
+re-invokes the same reader instance without rewinding it, so discarding
+already-accumulated delegate items on failure would lose real input;
+`aggregate_retry_after_failure_resumes_the_preserved_buffer` proves a
+retried call resumes accumulating from exactly where the failed call left
+off, with neither loss nor duplication.
 
 ## Close ordering where lifecycle composition exists (5.8)
 

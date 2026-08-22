@@ -9,8 +9,9 @@ use oxide_batch::item_components::{
     FilterProcessor, IdentityProcessor, IterReader, NoopWriter, ValidatingProcessor,
 };
 use oxide_batch::{
-    ItemProcessor, ItemReader, ItemWriter, ProcessOutcome, ProcessorError, ReadOutcome,
-    WriteOutcome,
+    BoxFuture, BusinessStatement, BusinessTransaction, BusinessTransactionError,
+    BusinessWriteResult, ItemProcessor, ItemReader, ItemWriter, ProcessOutcome, ProcessorError,
+    ReadOutcome, WriteContext, WriteOutcome,
 };
 use oxide_batch_test::ComponentFixture;
 
@@ -68,6 +69,32 @@ async fn noop_writer_accepts_and_discards() {
     let writer = NoopWriter;
     assert_eq!(
         writer.write(&[1, 2, 3], fixture.write_context()).await,
+        Ok(WriteOutcome::Written)
+    );
+}
+
+/// A `BusinessTransaction` whose `execute` panics if called at all, so a
+/// test using it can prove a writer genuinely never touches an enlisted
+/// transaction, not merely that its own return value looked right.
+struct PanicOnUseTransaction;
+
+impl BusinessTransaction for PanicOnUseTransaction {
+    fn execute<'a>(
+        &'a mut self,
+        _statement: BusinessStatement<'a>,
+    ) -> BoxFuture<'a, Result<BusinessWriteResult, BusinessTransactionError>> {
+        panic!("NoopWriter must never touch an enlisted transaction");
+    }
+}
+
+#[tokio::test]
+async fn noop_writer_never_touches_an_enlisted_transaction() {
+    let fixture = ComponentFixture::new();
+    let writer = NoopWriter;
+    let mut transaction = PanicOnUseTransaction;
+    let context = WriteContext::enlisted(fixture.stop_token(), &mut transaction);
+    assert_eq!(
+        writer.write(&[1, 2, 3], context).await,
         Ok(WriteOutcome::Written)
     );
 }

@@ -233,7 +233,7 @@ async fn aggregate_empty_input_is_end_of_input_not_an_empty_group() {
 }
 
 #[tokio::test]
-async fn aggregate_failure_discards_the_partial_group_rather_than_truncating_it() {
+async fn aggregate_failure_does_not_emit_a_truncated_aggregate() {
     let fixture = ComponentFixture::new();
     let bound = ChunkSize::new(4).unwrap();
     let log = InjectionLog::new();
@@ -249,6 +249,51 @@ async fn aggregate_failure_discards_the_partial_group_rather_than_truncating_it(
         reader.read(fixture.read_context()).await,
         Err(ReaderError::with_category(FailureCategory::Timeout)),
         "two items were buffered when the third read failed; no truncated aggregate is emitted"
+    );
+}
+
+/// The framework's fault-retry contract re-invokes the *same* reader
+/// instance from the same in-memory position after a retryable read
+/// failure -- it never rewinds or reconstructs the reader (see
+/// `ChunkStep::with_fault_runtime`'s "replays the chunk from inputs it
+/// already read" contract). This proves `AggregatingReader` cooperates with
+/// that contract: the two delegate items it had already buffered before the
+/// failure are neither lost nor duplicated when the same reader is called
+/// again, exactly as a real retry would call it.
+#[tokio::test]
+async fn aggregate_retry_after_failure_resumes_the_preserved_buffer() {
+    let fixture = ComponentFixture::new();
+    let bound = ChunkSize::new(4).unwrap();
+    let log = InjectionLog::new();
+    // A one-shot trigger: it fires exactly once, on the 3rd real call to the
+    // underlying `IterReader`. Because `InjectedReader` intercepts *before*
+    // calling through, the failed call never touches the real delegate's
+    // position -- the delegate is still sitting at item 3 afterward, which
+    // is exactly what a genuine "never rewinds" retry requires and is what
+    // this test would catch a regression in (a rewind would replay item 1
+    // or 2; a skip-ahead would drop item 3).
+    let failing = InjectedReader::new(
+        IterReader::new(vec![1, 2, 3, 4]),
+        Trigger::after(2),
+        ComponentAction::Fail(FailureCategory::Timeout),
+        InjectionId::new(14),
+        log,
+    );
+    let mut reader = AggregatingReader::new(failing, bound, |group: Vec<i64>| group);
+
+    assert_eq!(
+        reader.read(fixture.read_context()).await,
+        Err(ReaderError::with_category(FailureCategory::Timeout)),
+        "items 1 and 2 are buffered when the 3rd read fails"
+    );
+
+    // The retry: the real production retry path calls `read` again on this
+    // exact instance without reconstructing it or rewinding the delegate.
+    assert_eq!(
+        reader.read(fixture.read_context()).await,
+        Ok(ReadOutcome::Item(vec![1, 2, 3, 4])),
+        "the retried call must resume from the preserved buffer [1, 2] and reach the delegate's \
+         real next item (3), not replay 1/2 (a rewind) and not skip to a later item (a lost read)"
     );
 }
 
@@ -313,7 +358,7 @@ impl ItemProcessor<i64, i64> for RecordingProcessor {
 }
 
 #[tokio::test]
-async fn synchronized_processor_serializes_concurrent_callers() {
+async fn synchronized_processor_still_delegates_every_call_correctly() {
     use oxide_batch::item_components::SynchronizedProcessor;
 
     let observed = Arc::new(Mutex::new(Vec::new()));
@@ -335,6 +380,90 @@ async fn synchronized_processor_serializes_concurrent_callers() {
     let mut seen = observed.lock().unwrap().clone();
     seen.sort_unstable();
     assert_eq!(seen, (0..8).collect::<Vec<_>>());
+}
+
+/// A delegate that records how many calls are concurrently *in flight*
+/// (entered but not yet returned), not merely how many completed. Yielding
+/// while "active" is what lets a cooperative single-threaded executor
+/// actually interleave two calls if nothing prevents it -- this is the
+/// property `SynchronizedProcessor` claims to prevent, so it is the property
+/// the test has to measure directly rather than inferring it from each
+/// call's individually-correct result (which a correctly-delegating but
+/// unsynchronized wrapper would also produce).
+struct ConcurrencyTrackingProcessor {
+    active: Arc<AtomicUsize>,
+    max_active: Arc<AtomicUsize>,
+}
+
+impl ItemProcessor<i64, i64> for ConcurrencyTrackingProcessor {
+    async fn process(
+        &self,
+        item: &i64,
+        _context: oxide_batch::ProcessContext<'_>,
+    ) -> Result<ProcessOutcome<i64>, ProcessorError> {
+        let current = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        self.max_active.fetch_max(current, Ordering::SeqCst);
+        tokio::task::yield_now().await;
+        self.active.fetch_sub(1, Ordering::SeqCst);
+        Ok(ProcessOutcome::Item(*item))
+    }
+}
+
+async fn run_concurrently(processor: Arc<impl ItemProcessor<i64, i64> + 'static>) {
+    let mut handles = Vec::new();
+    for item in 0..8_i64 {
+        let processor = Arc::clone(&processor);
+        handles.push(tokio::spawn(async move {
+            let (_source, local_stop) = oxide_batch::StopSource::new();
+            let context = oxide_batch::ProcessContext::new(&local_stop);
+            processor.process(&item, context).await.unwrap();
+        }));
+    }
+    for handle in handles {
+        handle.await.unwrap();
+    }
+}
+
+/// The actual concurrency-serialization proof: at most one delegate call is
+/// ever in flight through a `SynchronizedProcessor`, even under concurrent
+/// shared invocation.
+#[tokio::test]
+async fn synchronized_processor_allows_at_most_one_delegate_call_in_flight() {
+    use oxide_batch::item_components::SynchronizedProcessor;
+
+    let active = Arc::new(AtomicUsize::new(0));
+    let max_active = Arc::new(AtomicUsize::new(0));
+    let processor = Arc::new(SynchronizedProcessor::new(ConcurrencyTrackingProcessor {
+        active: Arc::clone(&active),
+        max_active: Arc::clone(&max_active),
+    }));
+    run_concurrently(processor).await;
+    assert_eq!(active.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        max_active.load(Ordering::SeqCst),
+        1,
+        "SynchronizedProcessor let more than one delegate call run at once"
+    );
+}
+
+/// A positive control: the same concurrent-call harness against the
+/// *unwrapped* delegate must observe more than one call in flight at once,
+/// proving the harness would actually have caught a missing synchronization
+/// guarantee above rather than passing by construction.
+#[tokio::test]
+async fn unsynchronized_delegate_allows_concurrent_calls_control() {
+    let active = Arc::new(AtomicUsize::new(0));
+    let max_active = Arc::new(AtomicUsize::new(0));
+    let processor = Arc::new(ConcurrencyTrackingProcessor {
+        active: Arc::clone(&active),
+        max_active: Arc::clone(&max_active),
+    });
+    run_concurrently(processor).await;
+    assert!(
+        max_active.load(Ordering::SeqCst) > 1,
+        "the unwrapped positive control never observed concurrent delegate calls, so the \
+         SynchronizedProcessor assertion above would not have caught a regression"
+    );
 }
 
 struct RecordingWriter(Arc<Mutex<Vec<i64>>>);
@@ -362,4 +491,83 @@ async fn synchronized_writer_delegates_and_preserves_the_write_context() {
         Ok(WriteOutcome::Written)
     );
     assert_eq!(*observed.lock().unwrap(), vec![1, 2, 3]);
+}
+
+/// The writer-role counterpart of
+/// `synchronized_processor_allows_at_most_one_delegate_call_in_flight`: the
+/// rustdoc for `SynchronizedWriter` claims the same in-flight guarantee as
+/// `SynchronizedProcessor`, so it needs the same direct measurement rather
+/// than inheriting the processor test's result by name only.
+struct ConcurrencyTrackingWriter {
+    active: Arc<AtomicUsize>,
+    max_active: Arc<AtomicUsize>,
+}
+
+impl ItemWriter<i64> for ConcurrencyTrackingWriter {
+    async fn write(
+        &self,
+        _items: &[i64],
+        _context: WriteContext<'_>,
+    ) -> Result<WriteOutcome, WriterError> {
+        let current = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        self.max_active.fetch_max(current, Ordering::SeqCst);
+        tokio::task::yield_now().await;
+        self.active.fetch_sub(1, Ordering::SeqCst);
+        Ok(WriteOutcome::Written)
+    }
+}
+
+async fn write_concurrently(writer: Arc<impl ItemWriter<i64> + 'static>) {
+    let mut handles = Vec::new();
+    for item in 0..8_i64 {
+        let writer = Arc::clone(&writer);
+        handles.push(tokio::spawn(async move {
+            let fixture = ComponentFixture::new();
+            writer
+                .write(&[item], fixture.write_context())
+                .await
+                .unwrap();
+        }));
+    }
+    for handle in handles {
+        handle.await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn synchronized_writer_allows_at_most_one_delegate_call_in_flight() {
+    use oxide_batch::item_components::SynchronizedWriter;
+
+    let active = Arc::new(AtomicUsize::new(0));
+    let max_active = Arc::new(AtomicUsize::new(0));
+    let writer = Arc::new(SynchronizedWriter::new(ConcurrencyTrackingWriter {
+        active: Arc::clone(&active),
+        max_active: Arc::clone(&max_active),
+    }));
+    write_concurrently(writer).await;
+    assert_eq!(active.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        max_active.load(Ordering::SeqCst),
+        1,
+        "SynchronizedWriter let more than one delegate call run at once"
+    );
+}
+
+/// Positive control, mirroring the processor's: the unwrapped delegate must
+/// show real concurrent in-flight calls, or the assertion above would not
+/// have caught a missing synchronization guarantee.
+#[tokio::test]
+async fn unsynchronized_writer_allows_concurrent_calls_control() {
+    let active = Arc::new(AtomicUsize::new(0));
+    let max_active = Arc::new(AtomicUsize::new(0));
+    let writer = Arc::new(ConcurrencyTrackingWriter {
+        active: Arc::clone(&active),
+        max_active: Arc::clone(&max_active),
+    });
+    write_concurrently(writer).await;
+    assert!(
+        max_active.load(Ordering::SeqCst) > 1,
+        "the unwrapped positive control never observed concurrent delegate calls, so the \
+         SynchronizedWriter assertion above would not have caught a regression"
+    );
 }

@@ -15,8 +15,9 @@ use std::collections::HashMap;
 
 use oxide_batch::item_components::{ClassifyingProcessor, ClassifyingWriter};
 use oxide_batch::{
-    BoxedProcessor, FailureCategory, ItemProcessor, ItemWriter, ProcessOutcome, ProcessorError,
-    WriteOutcome, WriterError,
+    BoxFuture, BoxedProcessor, BusinessStatement, BusinessTransaction, BusinessTransactionError,
+    BusinessWriteResult, FailureCategory, ItemProcessor, ItemWriter, ProcessOutcome,
+    ProcessorError, WriteContext, WriteOutcome, WriterError,
 };
 use oxide_batch_test::ComponentFixture;
 
@@ -202,6 +203,123 @@ async fn classifying_writer_preserves_original_item_order_across_delegates() {
             ("slow", 5),
         ],
         "each item must be written to its classified delegate in the batch's original order"
+    );
+}
+
+/// A `BusinessTransaction` that records every executed statement's text, in
+/// call order -- the same pattern `item_components_composite.rs` uses to
+/// prove `FanOutWriter`'s reborrow, applied here to `ClassifyingWriter`
+/// specifically rather than borrowing that other type's test as proof.
+#[derive(Default)]
+struct RecordingTransaction {
+    statements: Arc<Mutex<Vec<String>>>,
+}
+
+impl BusinessTransaction for RecordingTransaction {
+    fn execute<'a>(
+        &'a mut self,
+        statement: BusinessStatement<'a>,
+    ) -> BoxFuture<'a, Result<BusinessWriteResult, BusinessTransactionError>> {
+        let statements = Arc::clone(&self.statements);
+        let text = statement.text().to_owned();
+        Box::pin(async move {
+            statements.lock().unwrap().push(text);
+            Ok(BusinessWriteResult::new(1))
+        })
+    }
+}
+
+struct EnlistedWriter {
+    label: &'static str,
+}
+
+impl ItemWriter<i64> for EnlistedWriter {
+    async fn write(
+        &self,
+        items: &[i64],
+        mut context: WriteContext<'_>,
+    ) -> Result<WriteOutcome, WriterError> {
+        let Some(transaction) = context.transaction() else {
+            return Err(WriterError::new());
+        };
+        for item in items {
+            let text = format!("{}:{item}", self.label);
+            transaction
+                .execute(BusinessStatement::new(&text, &[]))
+                .await
+                .map_err(WriterError::from_error)?;
+        }
+        Ok(WriteOutcome::Written)
+    }
+}
+
+/// Proves the real enlisted-transaction reborrow path for `ClassifyingWriter`
+/// specifically: every classified delegate call reaches the one enlisted
+/// `BusinessTransaction` (never a second, independent one), sequentially,
+/// preserving the batch's original order across alternating classifier
+/// keys. `classifying_writer_preserves_original_item_order_across_delegates`
+/// above proves ordering only through a non-transactional `WriteContext`;
+/// this test is the transaction evidence #146's evidence record cites.
+#[tokio::test]
+async fn classifying_writer_reborrows_the_same_enlisted_transaction_in_order() {
+    let mut delegates: HashMap<Kind, EnlistedWriter> = HashMap::new();
+    delegates.insert(Kind::Fast, EnlistedWriter { label: "fast" });
+    delegates.insert(Kind::Slow, EnlistedWriter { label: "slow" });
+    let writer = ClassifyingWriter::new(delegates, |item: &i64| {
+        if *item % 2 == 0 {
+            Kind::Fast
+        } else {
+            Kind::Slow
+        }
+    });
+
+    let fixture = ComponentFixture::new();
+    let mut transaction = RecordingTransaction::default();
+    let statements = Arc::clone(&transaction.statements);
+    let stop = fixture.stop_token();
+    let context = WriteContext::enlisted(stop, &mut transaction);
+    let batch = [1, 2, 3, 4, 5];
+    assert_eq!(
+        writer.write(&batch, context).await,
+        Ok(WriteOutcome::Written)
+    );
+    assert_eq!(
+        *statements.lock().unwrap(),
+        vec![
+            "slow:1".to_owned(),
+            "fast:2".to_owned(),
+            "slow:3".to_owned(),
+            "fast:4".to_owned(),
+            "slow:5".to_owned(),
+        ],
+        "every classified item must reach the one reborrowed enlisted transaction, in the \
+         batch's original order, never a second independent transaction"
+    );
+}
+
+struct AlwaysFailsWriter;
+
+impl ItemWriter<i64> for AlwaysFailsWriter {
+    async fn write(
+        &self,
+        _items: &[i64],
+        _context: oxide_batch::WriteContext<'_>,
+    ) -> Result<WriteOutcome, WriterError> {
+        Err(WriterError::with_category(FailureCategory::Timeout))
+    }
+}
+
+#[tokio::test]
+async fn classifying_writer_delegate_failure_propagates_unchanged() {
+    let fixture = ComponentFixture::new();
+    let mut delegates: HashMap<Kind, AlwaysFailsWriter> = HashMap::new();
+    delegates.insert(Kind::Fast, AlwaysFailsWriter);
+    let writer = ClassifyingWriter::new(delegates, |_: &i64| Kind::Fast);
+    assert_eq!(
+        writer.write(&[1], fixture.write_context()).await,
+        Err(WriterError::with_category(FailureCategory::Timeout)),
+        "the selected delegate's own failure classification must survive unchanged, not just \
+         'be an error'"
     );
 }
 

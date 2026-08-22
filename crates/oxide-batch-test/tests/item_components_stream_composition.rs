@@ -12,10 +12,9 @@
 //! types never own `ItemStream` state of their own (see their contract
 //! docs), so composing durable lifecycle is a property of registering
 //! several streams against one step, proved here with `oxide-batch-test`'s
-//! `TestStep` and `inject::InjectedStream`.
+//! `TestStep`.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use oxide_batch::item_components::{
     ChainProcessor, CompositeReader, IdentityProcessor, IterReader,
@@ -31,7 +30,6 @@ use oxide_batch::{
     StreamUpdateError, VersionedStateCodec,
 };
 use oxide_batch_test::TestStep;
-use oxide_batch_test::inject::{InjectedStream, InjectionId, InjectionLog, StreamAction};
 
 fn receipt() -> ChunkCommitReceipt {
     let checkpoint = Checkpoint::from_json(
@@ -130,10 +128,15 @@ fn codec(name: &str) -> DefaultComponentCodec<DummyCodec> {
     )
 }
 
-/// An `ItemStream` that records whether `close` was invoked, so a test can
-/// prove a sibling stream's close failure never skipped this one's attempt.
+/// An `ItemStream` that records its own label into a shared, ordered log the
+/// moment `close` is invoked -- before deciding whether to fail -- so a test
+/// can prove both *that* a sibling stream's close failure never skipped this
+/// one's attempt and *exactly where in the sequence* it happened, rather
+/// than only checking presence.
 struct FlagStream {
-    closed: Arc<AtomicBool>,
+    label: &'static str,
+    close_log: Arc<Mutex<Vec<&'static str>>>,
+    fail_close: bool,
     namespace: ComponentStreamIdentity,
     codec: DefaultComponentCodec<DummyCodec>,
 }
@@ -163,8 +166,12 @@ impl ItemStream for FlagStream {
         &self,
         _context: StreamCloseContext<'_>,
     ) -> Result<StreamCloseOutcome, StreamCloseError> {
-        self.closed.store(true, Ordering::SeqCst);
-        Ok(StreamCloseOutcome::Closed)
+        self.close_log.lock().unwrap().push(self.label);
+        if self.fail_close {
+            Err(StreamCloseError::with_category(FailureCategory::Timeout))
+        } else {
+            Ok(StreamCloseOutcome::Closed)
+        }
     }
 }
 
@@ -172,24 +179,24 @@ impl ItemStream for FlagStream {
 async fn a_close_failure_on_one_stream_does_not_block_another_opened_streams_close() {
     let namespace_a = ComponentStreamIdentity::new("catalog.stream-a").unwrap();
     let namespace_b = ComponentStreamIdentity::new("catalog.stream-b").unwrap();
-    let closed_a = Arc::new(AtomicBool::new(false));
-    let closed_b_inner = Arc::new(AtomicBool::new(false));
+    let close_log: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
 
+    // A is registered (and therefore opened) first, B second: reverse
+    // successful-open order requires B to close before A.
     let stream_a = FlagStream {
-        closed: Arc::clone(&closed_a),
+        label: "A",
+        close_log: Arc::clone(&close_log),
+        fail_close: false,
         namespace: namespace_a.clone(),
         codec: codec("catalog.stream-a"),
     };
     let stream_b = FlagStream {
-        closed: Arc::clone(&closed_b_inner),
+        label: "B",
+        close_log: Arc::clone(&close_log),
+        fail_close: true,
         namespace: namespace_b.clone(),
         codec: codec("catalog.stream-b"),
     };
-    let log = InjectionLog::new();
-    let injected_b = InjectedStream::new(stream_b, log.clone()).with_close(
-        StreamAction::Fail(FailureCategory::Timeout),
-        InjectionId::new(1),
-    );
 
     // Reader/processor are catalog components too, proving the composed
     // pipeline (not a bare hand-written one) drives this multi-stream step.
@@ -213,7 +220,7 @@ async fn a_close_failure_on_one_stream_does_not_block_another_opened_streams_clo
     )
     .with_item_stream(
         namespace_b,
-        injected_b,
+        stream_b,
         StreamStateContract::new(codec("catalog.stream-b")),
     );
 
@@ -232,9 +239,10 @@ async fn a_close_failure_on_one_stream_does_not_block_another_opened_streams_clo
         "the superseded primary outcome (a clean completion) must still be visible"
     );
     assert!(report.stream_close_failed());
-    assert!(
-        closed_a.load(Ordering::SeqCst),
-        "stream A's close must still have been attempted after stream B's close failed"
+    assert_eq!(
+        *close_log.lock().unwrap(),
+        vec!["B", "A"],
+        "close must run in exact reverse successful-open order (B opened second, closes first; \
+         A opened first, closes last), and B's close failure must not have skipped A's attempt"
     );
-    assert!(log.fired(InjectionId::new(1)));
 }

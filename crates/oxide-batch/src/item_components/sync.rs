@@ -2,16 +2,22 @@
 //!
 //! These wrappers do not implement or redesign the M10 multi-threaded local
 //! execution model; today's chunk runtime drives one component call at a
-//! time. What they establish is the narrower guarantee ADR-0008's
-//! composition rules permit a wrapper to add on top of its delegate: a real
-//! mutual-exclusion boundary around the delegate's call, enforced by an
-//! async-aware lock held for the delegate's entire call (including any
-//! `.await` inside it), so a delegate that is only safe to invoke one call at
-//! a time can be shared safely by callers that might otherwise invoke it
-//! concurrently (an application-owned executor, or a future M10 caller). This
-//! is the one case Gate E allows a wrapper to *strengthen* rather than only
-//! meet: the wrapper's own synchronization is a capability it genuinely
-//! provides itself, not one falsely inferred from the delegate.
+//! time. They also do not relax or grant any `Send`/`Sync` bound: a delegate
+//! `P: ItemProcessor<I, O>` or `W: ItemWriter<O>` already requires
+//! `Send + Sync` by [`crate::ItemProcessor`]/[`crate::ItemWriter`]'s own
+//! supertraits, with or without this wrapper. What these wrappers establish
+//! is a
+//! *behavioral*, not a type-level, guarantee ADR-0008's composition rules
+//! permit a wrapper to add on top of its delegate: a real mutual-exclusion
+//! boundary around the delegate's call, enforced by an async-aware lock held
+//! for the delegate's entire call (including any `.await` inside it), so a
+//! delegate that is `Sync` at the type level (as the trait already demands)
+//! but whose internal protocol or resource is only correct under strictly
+//! serialized access can be shared safely by callers that might otherwise
+//! invoke it concurrently (an application-owned executor, or a future M10
+//! caller). This is the one case Gate E allows a wrapper to *strengthen*
+//! rather than only meet: the wrapper's own synchronization is a capability
+//! it genuinely provides itself, not one falsely inferred from the delegate.
 
 use tokio::sync::Mutex;
 
@@ -30,11 +36,17 @@ use crate::{
 /// - **Ordering**: does not itself reorder; under contention, calls complete
 ///   in the order they acquire the lock (first-acquired, first-served for a
 ///   `tokio::sync::Mutex`, not a hard FIFO guarantee).
-/// - **Thread safety**: `Send + Sync` whenever `P: Send`; the whole point of
-///   this wrapper is a genuinely stronger guarantee than an unwrapped `P`
-///   provides under concurrent shared calls -- exactly one call to `P` is
-///   in flight at a time, for the delegate's entire call including any
-///   internal `.await`.
+/// - **Thread safety**: `Send + Sync` exactly when `P` is -- `P` already
+///   requires `Send + Sync` as an [`crate::ItemProcessor`], so this wrapper
+///   grants no new type-level bound. What it genuinely adds is a *runtime*
+///   guarantee no `ItemProcessor` bound alone gives a caller: at most one
+///   call to `P` is ever in flight, even under concurrent shared
+///   invocation, for the delegate's entire call including any internal
+///   `.await`. See
+///   `synchronized_processor_allows_at_most_one_delegate_call_in_flight` in
+///   the evidence file below, which measures actual concurrent in-flight
+///   delegate calls rather than only observing each call's individual
+///   result.
 /// - **Reentrancy**: not reentrant; a delegate that calls back into the same
 ///   wrapper instance while already holding the lock deadlocks. This mirrors
 ///   the lock it uses and is not a framework-level limitation.

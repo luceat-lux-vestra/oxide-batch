@@ -48,10 +48,14 @@ use crate::{
 /// [`ReadOutcome::EndOfInput`].
 ///
 /// A [`ReadOutcome::Stopped`] or [`ReaderError`] from any delegate is
-/// returned immediately; later delegates are not consulted for that call, and
-/// the composite's position (which delegate is "current") is left exactly
-/// where the failing/stopping call left it, so a subsequent call resumes at
-/// the same delegate.
+/// returned immediately; later delegates are not consulted for that call.
+/// The composite's position (which delegate is "current") is never advanced
+/// on a failing call, so a retry -- the framework's fault-retry contract
+/// re-invokes the same reader instance without rewinding it, exactly as
+/// [`crate::item_components::aggregate`]'s module docs describe -- resumes
+/// at the same delegate rather than skipping to the next one; see
+/// `composite_reader_retry_after_failure_resumes_the_same_delegate` in the
+/// evidence file below.
 ///
 /// # Contract
 ///

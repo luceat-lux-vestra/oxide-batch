@@ -92,6 +92,38 @@ async fn composite_reader_failure_propagates_unchanged_without_touching_next_del
     );
 }
 
+/// The framework's fault-retry contract re-invokes the same reader instance
+/// after a retryable failure, without rewinding it. This proves
+/// `CompositeReader` cooperates: its "current delegate" position is not
+/// advanced by a failing call, so the very next call -- a real retry -- must
+/// resume at the same delegate rather than skip ahead to the next one.
+#[tokio::test]
+async fn composite_reader_retry_after_failure_resumes_the_same_delegate() {
+    let fixture = ComponentFixture::new();
+    let log = InjectionLog::new();
+    // One-shot: fires on the first call only, so the retry (the composite's
+    // second `read` call) reaches the real delegate underneath it.
+    let first = InjectedReader::new(
+        oxide_batch::item_components::IterReader::new(vec![1]),
+        Trigger::immediately(),
+        ComponentAction::Fail(FailureCategory::Timeout),
+        InjectionId::new(21),
+        log,
+    );
+    let second = panic_on_touch_reader();
+    let mut reader = CompositeReader::new(vec![first, second]);
+    assert_eq!(
+        reader.read(fixture.read_context()).await,
+        Err(ReaderError::with_category(FailureCategory::Timeout))
+    );
+    assert_eq!(
+        reader.read(fixture.read_context()).await,
+        Ok(ReadOutcome::Item(1)),
+        "the retry must resume at the first delegate (reading its real item 1), not skip ahead \
+         to the second (which would panic if touched)"
+    );
+}
+
 /// A reader that panics the moment it is touched, used to prove a composite
 /// or chain never invokes a later delegate after an earlier one stops/fails.
 fn panic_on_touch_reader()

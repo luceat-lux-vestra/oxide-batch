@@ -18,9 +18,11 @@ use crate::{ChunkSize, ItemReader, ReadContext, ReadOutcome, ReaderError};
 ///   like [`crate::item_components::PeekReader`]'s lookahead: it is never
 ///   reported to the framework as read progress until a full or final
 ///   partial group is returned from `read`, so it advances no checkpoint by
-///   itself. An attempt that stops or fails mid-group loses only its
-///   in-memory buffer, not durable state; restart resumes the delegate from
-///   its own last committed position (via a paired [`crate::ItemStream`], if
+///   itself. A read failure preserves the buffer across the call (see
+///   "Malformed input" below); only cooperative stop clears it, because a
+///   stopped step attempt is not retried. A restart (a fresh process,
+///   reconstructing this reader from scratch) resumes the delegate from its
+///   own last committed position (via a paired [`crate::ItemStream`], if
 ///   any) and re-aggregates from there.
 /// - **Restartability**: exactly the delegate's.
 /// - **Ordering**: preserves delegate order within each aggregated group.
@@ -33,8 +35,17 @@ use crate::{ChunkSize, ItemReader, ReadContext, ReadOutcome, ReaderError};
 ///   immediately; any partially buffered group is discarded, not emitted.
 /// - **Close**: nothing to close.
 /// - **Malformed input**: propagates the delegate's [`ReaderError`]
-///   unchanged; a partially buffered group is discarded, not emitted, so a
-///   failure never produces a truncated aggregate.
+///   unchanged without emitting a truncated aggregate. The in-flight buffer
+///   is *not* cleared: the framework's fault-retry contract re-invokes this
+///   same reader instance, from the same in-memory position, rather than
+///   rewinding or reconstructing it ("replays the chunk from inputs it
+///   already read, so a stateful reader never rewinds" -- see the facade's
+///   fault-runtime documentation), so discarding already-accumulated
+///   delegate items on a retryable failure would lose real, already-read
+///   input. A retried call resumes accumulating from exactly where the
+///   failed call left off; see
+///   `aggregate_retry_after_failure_resumes_the_preserved_buffer` in the
+///   evidence file below.
 /// - **End of input**: a nonempty buffer at end of input is emitted once as
 ///   a final, possibly smaller-than-`bound` aggregate; the next call returns
 ///   [`ReadOutcome::EndOfInput`] and continues to do so.
