@@ -1,0 +1,276 @@
+name: Retain PR 165 evidence
+
+on:
+  push:
+    branches:
+      - feat/147-restartable-flat-file-components
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: retain-pr165-evidence
+  cancel-in-progress: false
+
+jobs:
+  retain:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out producer branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Verify and retain the final M5 campaign artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCER_BRANCH_HEAD: 7126ce4d6242f9ffa3e3bd96786dd17fff9fad3f
+          PRODUCER_EXECUTION_COMMIT: 9556f3b8e5ed96e528b4aecfab8cb8992106f40a
+        run: |
+          python3 <<'PY'
+          import datetime
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import urllib.request
+          import zipfile
+
+          REPO = os.environ["GITHUB_REPOSITORY"]
+          TOKEN = os.environ["GH_TOKEN"]
+          BRANCH_HEAD = os.environ["PRODUCER_BRANCH_HEAD"]
+          EXECUTION_COMMIT = os.environ["PRODUCER_EXECUTION_COMMIT"]
+          ROOT = pathlib.Path.cwd()
+          OUT = ROOT / "docs/engineering/campaigns/m5"
+          TMP = ROOT / "target/pr165-evidence-retention"
+          TMP.mkdir(parents=True, exist_ok=True)
+
+          # Every tuple is independently checked against the Actions API below.
+          # (report, inner file, campaign, major, workflow, workflow file,
+          #  run id, job id, job name, artifact id, artifact name, artifact digest, zip size)
+          META = [
+              ("soak-campaign-postgres-15.json", "soak-campaign.json", "M5 PostgreSQL soak", "15", "M5 Soak", ".github/workflows/m5-soak.yml", 32581401378, 97051216484, "postgres-15-soak-campaign", 9477946338, "soak-campaign-postgres-15", "sha256:13322ba4257288357421503725c63389bd4d079d52058b95d0887b6b122da744", 89194),
+              ("soak-campaign-postgres-18.json", "soak-campaign.json", "M5 PostgreSQL soak", "18", "M5 Soak", ".github/workflows/m5-soak.yml", 32581401378, 97051216349, "postgres-18-soak-campaign", 9477988892, "soak-campaign-postgres-18", "sha256:14282aafe29186a08d49b71f60f39d1531adffd5241f0cfbded86a5f9b436730", 91705),
+              ("cancellation-campaign-postgres-15.json", "cancellation-campaign.json", "M5 PostgreSQL cancellation", "15", "M5 Cancellation", ".github/workflows/m5-cancellation.yml", 32581401355, 97051216016, "postgres-15-cancellation-campaign", 9477915785, "cancellation-campaign-postgres-15", "sha256:72353934a0106756655405de53a0021bf35b30f6eb8031006c39f468c0c83d62", 5746),
+              ("cancellation-campaign-postgres-18.json", "cancellation-campaign.json", "M5 PostgreSQL cancellation", "18", "M5 Cancellation", ".github/workflows/m5-cancellation.yml", 32581401355, 97051216074, "postgres-18-cancellation-campaign", 9477915832, "cancellation-campaign-postgres-18", "sha256:0626f3b919dd60e22213588b51ab58a3245e92c61dc686b121b0ec0bc6fd66ad", 5754),
+              ("performance-campaign-postgres-15.json", "performance-campaign.json", "M5 PostgreSQL performance", "15", "M5 Performance", ".github/workflows/m5-performance.yml", 32581401352, 97051216334, "postgres-15-performance-campaign", 9477916161, "performance-campaign-postgres-15", "sha256:b1d2f1376333c812f0a7f6b8d0a4d2db353486f73718ae70a84c27355781fbde", 6602),
+              ("performance-campaign-postgres-18.json", "performance-campaign.json", "M5 PostgreSQL performance", "18", "M5 Performance", ".github/workflows/m5-performance.yml", 32581401352, 97051216293, "postgres-18-performance-campaign", 9477919877, "performance-campaign-postgres-18", "sha256:960ff8aaa2969974998b90712a5d1018b432532e8fe2ac8b64eae92c5dba0307", 6604),
+              ("conformance-campaign-postgres-15.json", "conformance-campaign.json", "M5 PostgreSQL conformance", "15", "M5 Conformance", ".github/workflows/m5-conformance.yml", 32581401303, 97051215929, "postgres-15-conformance-campaign", 9477929966, "conformance-campaign-postgres-15", "sha256:1967eb9df6bae313ace7eddf107a647d2732910ca1da3a34f64d067668e6a54e", 7132),
+              ("conformance-campaign-postgres-18.json", "conformance-campaign.json", "M5 PostgreSQL conformance", "18", "M5 Conformance", ".github/workflows/m5-conformance.yml", 32581401303, 97051215981, "postgres-18-conformance-campaign", 9477930869, "conformance-campaign-postgres-18", "sha256:0bb3afb40185132a3231f79be0ce5352fe421c4e93c64adab9ec59c058893f6a", 7132),
+              ("crash-restore-campaign-postgres-15.json", "crash-restore-campaign.json", "M5 crash and restore", "15", "M5 Crash and Restore", ".github/workflows/m5-crash-restore.yml", 32581401380, 97051216306, "postgres-15-crash-restore-campaign", 9477915436, "crash-restore-campaign-postgres-15", "sha256:7269bbb58f45ea7caf16296c689bb17ba2e1c093740e3c453547ebbf2272e99b", 6686),
+              ("crash-restore-campaign-postgres-18.json", "crash-restore-campaign.json", "M5 crash and restore", "18", "M5 Crash and Restore", ".github/workflows/m5-crash-restore.yml", 32581401380, 97051216157, "postgres-18-crash-restore-campaign", 9477914953, "crash-restore-campaign-postgres-18", "sha256:8822af3c2ed44e309e224984554ca58de85b6d5860125da2aa287a9d4c6ddd62", 6691),
+              ("upgrade-campaign-postgres-15.json", "upgrade-campaign.json", "M5 PostgreSQL upgrade", "15", "M5 Upgrade", ".github/workflows/m5-upgrade.yml", 32581401308, 97051215943, "postgres-15-upgrade-campaign", 9477929039, "upgrade-campaign-postgres-15", "sha256:b7f27c38fe8bece84c0d19666807665e078586d0c9d1ff491983c42eb285b6da", 5763),
+              ("upgrade-campaign-postgres-18.json", "upgrade-campaign.json", "M5 PostgreSQL upgrade", "18", "M5 Upgrade", ".github/workflows/m5-upgrade.yml", 32581401308, 97051216042, "postgres-18-upgrade-campaign", 9477928874, "upgrade-campaign-postgres-18", "sha256:ff5bd348bdeba96968d5bccc4f8a3be895039e40e30d4d42e9187f1b7a992c13", 5760),
+              ("security-campaign-postgres-15.json", "security-campaign.json", "M5 PostgreSQL security", "15", "M5 Security", ".github/workflows/m5-security.yml", 32581401375, 97051216328, "postgres-15-security-campaign", 9477913984, "security-campaign-postgres-15", "sha256:a479de2fc8649bb8698d7ad329bca26900ab5086ce501b12637e54a1c7b35806", 7078),
+              ("security-campaign-postgres-18.json", "security-campaign.json", "M5 PostgreSQL security", "18", "M5 Security", ".github/workflows/m5-security.yml", 32581401375, 97051216459, "postgres-18-security-campaign", 9477911657, "security-campaign-postgres-18", "sha256:369df240ab07a8a37e69908c2f8e58e2ad45483c850066ffafe023b36c2a150c", 7077),
+              ("resource-bounds-campaign-postgres-15.json", "resource-bounds-campaign.json", "M5 PostgreSQL resource bounds", "15", "M5 Resource Bounds", ".github/workflows/m5-resource-bounds.yml", 32581401356, 97051216299, "postgres-15-resource-bounds-campaign", 9477913927, "resource-bounds-campaign-postgres-15", "sha256:2697851e9794814fb1ae9ba4031907416b3bc3fa1f7637de17bf72975f5e5280", 13092),
+              ("resource-bounds-campaign-postgres-18.json", "resource-bounds-campaign.json", "M5 PostgreSQL resource bounds", "18", "M5 Resource Bounds", ".github/workflows/m5-resource-bounds.yml", 32581401356, 97051216168, "postgres-18-resource-bounds-campaign", 9477911840, "resource-bounds-campaign-postgres-18", "sha256:2964eef856983b0e906d722ec05158ab1acc52f193d40ed94ff4d378cc2ccf15", 13092),
+          ]
+
+          def api(path):
+              request = urllib.request.Request(
+                  f"https://api.github.com/repos/{REPO}{path}",
+                  headers={
+                      "Authorization": f"Bearer {TOKEN}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                  },
+              )
+              with urllib.request.urlopen(request) as response:
+                  return json.load(response)
+
+          def download_artifact(artifact_id, destination):
+              subprocess.run(
+                  [
+                      "curl", "-fsSL", "--retry", "3",
+                      "-H", f"Authorization: Bearer {TOKEN}",
+                      "-H", "Accept: application/vnd.github+json",
+                      "-H", "X-GitHub-Api-Version: 2022-11-28",
+                      f"https://api.github.com/repos/{REPO}/actions/artifacts/{artifact_id}/zip",
+                      "-o", str(destination),
+                  ],
+                  check=True,
+              )
+
+          def recursive_find(value, key):
+              if isinstance(value, dict):
+                  if key in value:
+                      return value[key]
+                  for child in value.values():
+                      found = recursive_find(child, key)
+                      if found is not None:
+                          return found
+              elif isinstance(value, list):
+                  for child in value:
+                      found = recursive_find(child, key)
+                      if found is not None:
+                          return found
+              return None
+
+          provenance_path = OUT / "evidence-provenance.json"
+          provenance = json.loads(provenance_path.read_text())
+          existing = {entry["report"]: entry for entry in provenance["evidence"]}
+          verified_at = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+          for (
+              report_name, inner_name, campaign, major, workflow, workflow_file,
+              run_id, job_id, job_name, artifact_id, artifact_name, expected_digest,
+              expected_size,
+          ) in META:
+              run = api(f"/actions/runs/{run_id}")
+              assert run["event"] == "pull_request", (report_name, run["event"])
+              assert run["conclusion"] == "success", (report_name, run["conclusion"])
+              assert run["run_attempt"] == 1, (report_name, run["run_attempt"])
+              assert run["head_sha"] == BRANCH_HEAD, (report_name, run["head_sha"])
+
+              jobs = api(f"/actions/runs/{run_id}/jobs?per_page=100")["jobs"]
+              job = next((item for item in jobs if item["id"] == job_id), None)
+              assert job is not None, (report_name, job_id)
+              assert job["name"] == job_name, (report_name, job["name"], job_name)
+              assert job["conclusion"] == "success", (report_name, job["conclusion"])
+
+              artifact = api(f"/actions/artifacts/{artifact_id}")
+              assert artifact["name"] == artifact_name, (report_name, artifact["name"])
+              assert artifact["digest"] == expected_digest, (report_name, artifact["digest"])
+              assert artifact["size_in_bytes"] == expected_size, (report_name, artifact["size_in_bytes"])
+              assert artifact["workflow_run"]["id"] == run_id, (report_name, artifact["workflow_run"])
+              assert artifact["workflow_run"]["head_sha"] == BRANCH_HEAD, (report_name, artifact["workflow_run"])
+
+              archive = TMP / f"{artifact_name}.zip"
+              download_artifact(artifact_id, archive)
+              archive_digest = "sha256:" + hashlib.sha256(archive.read_bytes()).hexdigest()
+              assert archive_digest == expected_digest, (report_name, archive_digest, expected_digest)
+              assert archive.stat().st_size == expected_size, (report_name, archive.stat().st_size, expected_size)
+
+              with zipfile.ZipFile(archive) as zipped:
+                  assert zipped.namelist() == [inner_name], (report_name, zipped.namelist())
+                  report_bytes = zipped.read(inner_name)
+              report = json.loads(report_bytes)
+              environment = report["environment"]
+              assert report["passed"] is True, report_name
+              assert report["violations"] == [], report_name
+              assert report["postgresql_major_version"] == major, report_name
+              assert environment["matrix"] == f"postgres-{major}", report_name
+              assert environment["source_commit"] == EXECUTION_COMMIT, (report_name, environment["source_commit"])
+              assert environment["source_tree_clean"] is True, report_name
+
+              target = OUT / report_name
+              target.write_bytes(report_bytes)
+              assert target.read_bytes() == report_bytes
+              retained_blob = subprocess.check_output(
+                  ["git", "hash-object", str(target)], text=True
+              ).strip()
+
+              entry = existing[report_name]
+              assert entry["campaign"] == campaign
+              entry["matrix_point"] = f"postgres-{major}"
+              entry["postgres_major_version"] = major
+              server_version = recursive_find(report, "server_version")
+              if server_version is not None:
+                  entry["server_version"] = server_version
+              else:
+                  entry.pop("server_version", None)
+              entry["producer"] = {
+                  "execution_commit": EXECUTION_COMMIT,
+                  "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
+                  "branch_head_sha": BRANCH_HEAD,
+                  "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
+                  "source_tree_clean": True,
+                  "rustc": environment["rustc"],
+                  "os": environment["os"],
+                  "arch": environment["arch"],
+              }
+              entry["workflow_run"] = {
+                  "workflow": workflow,
+                  "workflow_file": workflow_file,
+                  "id": run_id,
+                  "attempt": 1,
+                  "event": "pull_request",
+                  "conclusion": "success",
+              }
+              entry["producing_job"] = {
+                  "name": job_name,
+                  "id": job_id,
+                  "conclusion": "success",
+              }
+              entry["artifact"] = {
+                  "name": artifact_name,
+                  "id": artifact_id,
+                  "digest": expected_digest,
+                  "size_bytes": expected_size,
+              }
+              entry["retained_report_git_blob"] = retained_blob
+              entry["remote_verification"] = {
+                  "verified": True,
+                  "verified_at": verified_at,
+                  "run_id": run_id,
+                  "workflow_run_identity": True,
+                  "workflow_run_conclusion": True,
+                  "producing_job_identity": True,
+                  "producing_job_conclusion": True,
+                  "artifact_digest": True,
+                  "artifact_bytes_match_retained_report": True,
+                  "execution_commit_matches_report": True,
+                  "note": "Fresh retention for PR #165 after the final #147 corrective tree and the M5 performance health-check isolation fix. The workflow run, producing job, artifact ID/digest, byte-identical extracted report, and execution tree were each independently checked before retention.",
+              }
+
+          provenance_path.write_text(json.dumps(provenance, indent=2) + "\n")
+
+          # Tighten the one residual evidence-document claim without touching runtime code.
+          evidence_path = ROOT / "docs/project/m6-147-flat-file-evidence.md"
+          evidence = evidence_path.read_text()
+          old = """- Delimited/CSV: `DelimitedReader` grows its record-content buffer *and* its
+            per-field end-offset buffer one `csv_core::Reader` parser callback at a
+            time, checked against the record's raw byte span (bytes consumed from the
+            source, not decoded content length) every iteration, and never past
+            `DelimitedDialect::with_max_record_bytes` (default 1 MiB,
+            `DEFAULT_MAX_RECORD_BYTES`); the instant the raw span consumed so far
+            would exceed the bound, it stops copying that record's bytes into either
+            buffer at all and drains the rest of the record through small, fixed,
+            stack-allocated discard buffers (`csv_core::Reader` tracks each field's
+            logical position independently of whatever buffer it's told to write
+            into, so this is safe) before reporting the classified, forward-proven
+            `ReaderError`. Bounding the raw span rather than only decoded content is
+            what catches a record built almost entirely of empty fields, which
+            decodes to almost no content bytes regardless of how many fields it has.
+          """
+          new = """- Delimited/CSV: `DelimitedDialect::with_max_record_bytes` caps the raw
+            record span accepted by `DelimitedReader`. The decoded-content buffer is
+            capped directly by that raw-byte bound; per-field end-offset storage is
+            bounded by the number of field boundaries possible within the same raw
+            span. Record-dependent parser storage is therefore O(`max_record_bytes`),
+            not literally limited to `max_record_bytes` bytes. Once the raw span
+            exceeds the bound, the reader stops growing retained record-dependent
+            buffers and drains the rest through small, fixed, stack-allocated discard
+            buffers before reporting the classified, forward-proven `ReaderError`.
+            Bounding the raw span rather than only decoded content is what catches a
+            record built almost entirely of empty fields, which decodes to almost no
+            content bytes regardless of how many fields it has.
+          """
+          assert evidence.count(old) == 1, evidence.count(old)
+          evidence = evidence.replace(old, new)
+
+          old_gap = """**Known gap — `cargo xtask evidence`:** this PR's changes to `crates/oxide-batch/src`/`Cargo.lock`/`crates/oxide-batch/Cargo.toml` invalidate the git-object identity that all 16 retained M5 campaign reports (`docs/engineering/campaigns/m5/`) pin in their provenance — the same situation #146 hit. #146's PR resolved it with a dedicated follow-up commit (\"ci(m5): retain evidence for #146 corrective pass\") that dispatched the M5 campaign workflows and re-recorded provenance. That's a substantial, separate CI undertaking (8 workflows × 2 Postgres versions, up to ~1hr each for soak); per explicit instruction, it's intentionally not attempted in either corrective pass, since re-retaining and then landing further correctness fixes would just make the retained evidence stale again. Happy to do it as a follow-up commit once the correctness changes are considered final. `xtask surface`/`deps`/`reconciliation`/`release-crates` are all clean; only `evidence`'s M5-campaign-provenance check is affected, and only because of the shared `crates/oxide-batch/src`/`Cargo.lock` semantics-closure paths, not anything specific to the flat-file components themselves.
+          """
+          new_gap = """**M5 evidence retention:** after the corrective implementation and claim audit were final, all eight M5 campaigns were run for PostgreSQL 15 and 18 against the final semantic tree. All sixteen successful artifacts were re-retained byte-for-byte with run/job/artifact/digest and execution-tree provenance. The P-003 connection-ceiling rerun also exposed a campaign-isolation defect: the service health check was connecting to the measured database. The workflow now probes the default `postgres` database instead; with the observer/assertion unchanged, PostgreSQL 15 records configured peak 2 / observed peak 2 and the performance campaign passes.
+          """
+          assert evidence.count(old_gap) == 1, evidence.count(old_gap)
+          evidence_path.write_text(evidence.replace(old_gap, new_gap))
+          PY
+
+          rm .github/workflows/retain-pr165-evidence.yml
+
+          cargo run --package oxide-batch-xtask -- evidence
+          git diff --check
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/engineering/campaigns/m5 docs/project/m6-147-flat-file-evidence.md .github/workflows/retain-pr165-evidence.yml
+          git diff --cached --quiet && { echo "nothing to retain"; exit 1; }
+          git commit -m "ci(m5): retain evidence for #147"
+          git push origin HEAD:${GITHUB_REF_NAME}
