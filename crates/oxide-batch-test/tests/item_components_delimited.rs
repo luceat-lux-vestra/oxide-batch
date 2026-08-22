@@ -510,3 +510,24 @@ async fn headers_survive_a_restart_that_resumes_mid_file() {
 
     let _ = std::fs::remove_file(&path);
 }
+
+#[tokio::test]
+async fn header_field_count_establishes_the_expected_width_for_the_first_data_row() {
+    // The header has 3 fields; the first (and only) data row has 2 --
+    // internally consistent with *itself*, so a reader that (wrongly) took
+    // the first data row as its own baseline would accept it. The header's
+    // field count is the correct baseline for `with_flexible(false)` (the
+    // default), so this must be rejected as ragged relative to it.
+    let source = Cursor::new(b"name,age,city\nAlice,30\n".to_vec());
+    let dialect = DelimitedDialect::csv().with_headers(true);
+    let (mut reader, _s, _c) = delimited_reader::<DelimitedRecord, _>(source, dialect, identity());
+    let fixture = ComponentFixture::new();
+
+    let error = read_next(&mut reader, fixture.read_context())
+        .await
+        .expect_err(
+            "the first data row's field count (2) differs from the header's (3), so it must be \
+             a classified malformed-record failure, not silently accepted as its own baseline",
+        );
+    assert_eq!(error.category(), FailureCategory::UserComponent);
+}

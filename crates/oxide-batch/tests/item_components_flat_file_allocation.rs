@@ -134,6 +134,59 @@ fn naive_whole_line_bytes_allocated(path: &std::path::Path) -> (usize, usize) {
     (allocated, line_len)
 }
 
+/// The number of comma-separated empty fields in the pathological
+/// many-empty-fields fixture: chosen so the fixture is itself ~20 MiB (one
+/// byte -- the delimiter -- per field), matching the single-huge-field
+/// fixture's order of magnitude for a fair, directly comparable claim.
+const HUGE_EMPTY_FIELD_COUNT: usize = 20 * 1024 * 1024;
+
+/// Writes one CSV record of [`HUGE_EMPTY_FIELD_COUNT`] consecutive commas
+/// (that many empty fields), terminated by `\n`. Decoded field *content* is
+/// zero bytes throughout -- this fixture exists specifically to exercise
+/// per-field auxiliary storage (`csv_core`'s field-end-offset buffer) in
+/// isolation from decoded-byte-content growth, which a bound checked only
+/// against decoded output could never observe.
+fn write_huge_empty_field_record_csv(path: &std::path::Path) -> u64 {
+    let mut file = File::create(path).expect("create fixture file");
+    file.write_all(&vec![b','; HUGE_EMPTY_FIELD_COUNT])
+        .expect("write empty-field record");
+    file.write_all(b"\n").expect("write terminator");
+    file.sync_all().expect("flush fixture file");
+    file.metadata().expect("fixture metadata").len()
+}
+
+/// Drives `csv_core::Reader` directly with an output buffer that *is*
+/// correctly bounded, but a field-end-offset buffer that is allowed to grow
+/// without any raw-byte cap -- exactly the defect this evidence guards
+/// against, isolated from every other concern. Since every field in the
+/// fixture is empty, decoded output stays at zero bytes throughout, so this
+/// positive control's allocation is attributable to `ends` growth alone.
+fn naive_unbounded_ends_bytes_allocated(path: &std::path::Path) -> usize {
+    let region = Region::new(ALLOCATOR);
+    let file = File::open(path).expect("open fixture file");
+    let mut source = BufReader::new(file);
+    let mut core = csv_core::ReaderBuilder::new().build();
+    let mut output = [0u8; 4096];
+    let mut ends: Vec<usize> = Vec::new();
+    let mut ends_len = 0usize;
+    loop {
+        let input = source.fill_buf().expect("fill_buf");
+        let (result, nin, _nout, nend) =
+            core.read_record(input, &mut output, &mut ends[ends_len..]);
+        source.consume(nin);
+        ends_len += nend;
+        match result {
+            csv_core::ReadRecordResult::InputEmpty | csv_core::ReadRecordResult::OutputFull => {}
+            csv_core::ReadRecordResult::OutputEndsFull => {
+                let grown = ends.len().max(16) * 2;
+                ends.resize(grown, 0);
+            }
+            csv_core::ReadRecordResult::Record | csv_core::ReadRecordResult::End => break,
+        }
+    }
+    region.change().bytes_allocated
+}
+
 async fn read_csv(
     reader: &mut DelimitedReader<File>,
     context: ReadContext<'_>,
@@ -375,5 +428,55 @@ async fn flat_file_readers_do_not_retain_memory_proportional_to_file_size() {
         naive_fw_allocated >= HUGE_FIELD_BYTES,
         "the naive positive control did not show a large allocation for fixed-width \
          (allocated={naive_fw_allocated}, record_bytes={HUGE_FIELD_BYTES})"
+    );
+
+    // -------------------------- one record, millions of empty fields --
+    // Distinct from the single-huge-field scenario above: every field here
+    // is empty, so decoded output stays at zero bytes throughout. A bound
+    // checked only against decoded content would never trip, while
+    // `csv_core`'s field-end-offset buffer (one `usize` per field) still
+    // grows without limit -- this is the raw-byte-span bound's own reason
+    // to exist, and the positive control below isolates exactly that.
+    let huge_empty_path = temp_path("csv-huge-empty-fields");
+    let huge_empty_size = write_huge_empty_field_record_csv(&huge_empty_path);
+    assert!(u64::try_from(HUGE_EMPTY_FIELD_COUNT).is_ok_and(|count| huge_empty_size > count));
+
+    let region = Region::new(ALLOCATOR);
+    let (mut huge_empty_reader, _s, _c) = delimited_file_reader::<DelimitedRecord>(
+        &huge_empty_path,
+        DelimitedDialect::csv().with_max_record_bytes(TIGHT_MAX_RECORD_BYTES),
+        identity("oxide-batch.oversized-empty-fields-csv"),
+    )
+    .expect("open fixture file");
+    let result =
+        ItemReader::<DelimitedRecord>::read(&mut huge_empty_reader, ReadContext::new(&stop)).await;
+    assert!(
+        result.is_err(),
+        "a record of millions of empty fields, far exceeding the configured raw-byte bound, \
+         must be rejected"
+    );
+    drop(huge_empty_reader);
+    let real_empty_allocated = region.change().bytes_allocated;
+
+    let naive_ends_allocated = naive_unbounded_ends_bytes_allocated(&huge_empty_path);
+    let _ = std::fs::remove_file(&huge_empty_path);
+
+    println!(
+        "csv oversized empty-field record: real_allocated={real_empty_allocated} \
+         naive_ends_allocated={naive_ends_allocated} field_count={HUGE_EMPTY_FIELD_COUNT}"
+    );
+    assert!(
+        real_empty_allocated < HUGE_EMPTY_FIELD_COUNT / 10,
+        "the real DelimitedReader allocated {real_empty_allocated} bytes rejecting a record of \
+         {HUGE_EMPTY_FIELD_COUNT} empty fields: consistent with the field-end-offset buffer \
+         growing proportionally to field count rather than being bounded by the configured \
+         raw-byte span"
+    );
+    assert!(
+        naive_ends_allocated >= HUGE_EMPTY_FIELD_COUNT,
+        "the naive positive control (unbounded field-end-offset storage, correctly bounded \
+         output) did not show a large allocation (allocated={naive_ends_allocated}, \
+         field_count={HUGE_EMPTY_FIELD_COUNT}): the harness would not have caught a real \
+         regression back to unbounded `ends` growth"
     );
 }

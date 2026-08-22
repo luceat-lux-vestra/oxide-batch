@@ -3,14 +3,17 @@
 //! [`DelimitedReader`] drives [`csv_core::Reader`] directly (the incremental,
 //! no-I/O parsing engine the `csv` crate itself is built on) rather than
 //! `csv::Reader`'s own convenience API, specifically so this reader can
-//! enforce [`DelimitedDialect::with_max_record_bytes`] *during* parsing: the
-//! output buffer used to accumulate one record's decoded field bytes is
-//! never grown past the configured bound, so a pathological oversized record
-//! is detected and rejected without ever copying more than that many bytes
-//! into memory for it -- not merely rejected after being fully materialized.
-//! [`DelimitedWriter`] uses the higher-level [`csv::Writer`], which has no
-//! equivalent unbounded-growth concern (it serializes already-bounded,
-//! caller-supplied items).
+//! enforce [`DelimitedDialect::with_max_record_bytes`] *during* parsing,
+//! against the record's *raw* byte span -- not merely its decoded
+//! field-content length. Both the decoded-content buffer and the per-field
+//! end-offset buffer this reader accumulates a record into are never grown
+//! past what that bound allows, so a pathological oversized record (whether
+//! it's one enormous field, or millions of empty ones -- a case decoded
+//! content alone could never bound) is detected and rejected without ever
+//! copying more than the configured bound into memory for it, not merely
+//! rejected after being fully materialized. [`DelimitedWriter`] uses the
+//! higher-level [`csv::Writer`], which has no equivalent unbounded-growth
+//! concern (it serializes already-bounded, caller-supplied items).
 //!
 //! Quoted delimiters, doubled/escaped quotes, and multiline quoted fields
 //! remain the parser's job, not this module's. Restart position is the
@@ -47,20 +50,28 @@ use crate::{
 
 /// The largest single record this module accepts by default: 1 MiB.
 ///
-/// A record whose parsed byte span exceeds the configured bound is a typed,
-/// classified [`ReaderError`] (see `DelimitedReader::read`) rather than an
-/// unbounded allocation: the incremental parser is checked against this
-/// bound as each field is decoded, so this component never copies more than
-/// this many bytes into memory for a single record, however large the
-/// record actually is on disk.
+/// A record whose *raw* byte span (the bytes consumed from the source for
+/// it, not merely its decoded field-content length) exceeds the configured
+/// bound is a typed, classified [`ReaderError`] (see `DelimitedReader::read`)
+/// rather than an unbounded allocation: the incremental parser is checked
+/// against this bound as each raw byte is consumed, so this component never
+/// copies more than this many bytes into memory for a single record --
+/// whether that memory would hold decoded field content or per-field
+/// end-offset bookkeeping -- however large the record actually is on disk,
+/// and regardless of whether its size comes from one huge field or from an
+/// unbounded number of small/empty ones.
 pub const DEFAULT_MAX_RECORD_BYTES: usize = 1024 * 1024;
 
 /// The fixed-size scratch buffers used once a record is known to exceed
 /// [`DelimitedDialect::with_max_record_bytes`], so that continuing to drain
 /// its remaining bytes from the input (to preserve forward checkpoint
 /// progress) never itself allocates in proportion to the oversized record.
-const DISCARD_OUTPUT_BYTES: usize = 256;
-const DISCARD_ENDS_LEN: usize = 64;
+/// Both are stack-allocated, fixed at compile time, and never resized:
+/// draining a record with millions of fields still makes progress a few
+/// thousand field-ends at a time rather than one at a time, without ever
+/// costing more than these two constant-size arrays.
+const DISCARD_OUTPUT_BYTES: usize = 4096;
+const DISCARD_ENDS_LEN: usize = 1024;
 
 /// The first output-buffer growth step for a fresh record, before doubling.
 const INITIAL_GROWTH_BYTES: usize = 256;
@@ -144,15 +155,19 @@ impl DelimitedDialect {
     }
 
     /// Sets whether the first record is a header row, excluded from items and
-    /// available through [`DelimitedRecord::field`].
+    /// available through [`DelimitedRecord::field`]. When set, the header
+    /// row's own field count -- not the first *data* row's -- is the
+    /// baseline [`Self::with_flexible`]`(false)` checks later rows against.
     #[must_use]
     pub const fn with_headers(mut self, enabled: bool) -> Self {
         self.has_headers = enabled;
         self
     }
 
-    /// Sets whether records with a field count different from the first are
-    /// accepted rather than classified as malformed.
+    /// Sets whether records with a field count different from the baseline
+    /// (the header row's field count if [`Self::with_headers`] is set,
+    /// otherwise the first data row's) are accepted rather than classified
+    /// as malformed.
     #[must_use]
     pub const fn with_flexible(mut self, enabled: bool) -> Self {
         self.flexible = enabled;
@@ -166,7 +181,9 @@ impl DelimitedDialect {
         self
     }
 
-    /// Sets the largest single record's parsed byte span the reader accepts.
+    /// Sets the largest single record's *raw* byte span (bytes consumed
+    /// from the source, not decoded field-content length) the reader
+    /// accepts.
     #[must_use]
     pub const fn with_max_record_bytes(mut self, max_record_bytes: usize) -> Self {
         self.max_record_bytes = max_record_bytes;
@@ -427,9 +444,9 @@ enum RawRecord {
         /// Bytes consumed from the source for this record (its byte span).
         consumed: u64,
     },
-    /// A complete record whose parsed byte span exceeded
-    /// [`DelimitedDialect::with_max_record_bytes`]. No field content was
-    /// retained for it.
+    /// A complete record whose raw byte span exceeded
+    /// [`DelimitedDialect::with_max_record_bytes`]. No field content or
+    /// per-field end-offset bookkeeping was retained for it.
     Oversized {
         /// Bytes consumed from the source for this record (its byte span).
         consumed: u64,
@@ -455,18 +472,25 @@ enum RawRecord {
 /// - **Thread safety**: `Send`; used exclusively (`&mut self`).
 /// - **Reentrancy**: not reentrant (owns the parser's mutable state).
 /// - **Transaction/delivery**: not applicable (a reader never enlists).
-/// - **Bounded resource**: bounded by [`DelimitedDialect::with_max_record_bytes`].
-///   The record-content buffer this reader accumulates a record's decoded
-///   field bytes into is grown incrementally, one parser callback at a time,
-///   and is never grown past the configured bound: once accumulating a
-///   record's content would exceed it, this reader stops copying that
-///   record's bytes into memory at all (switching to a small fixed discard
-///   buffer just to drain the remaining input for forward checkpoint proof)
-///   and reports it as a classified, forward-proven [`ReaderError`] instead.
-///   The bound is therefore enforced *during* parsing, not applied as an
-///   after-the-fact check against an already-fully-materialized record --
-///   see `crates/oxide-batch/tests/item_components_flat_file_allocation.rs`
-///   for the allocator-level evidence.
+/// - **Bounded resource**: bounded by [`DelimitedDialect::with_max_record_bytes`],
+///   checked against the record's *raw* byte span (the bytes consumed from
+///   the source for it), not merely its decoded field-content length -- a
+///   record built almost entirely of empty fields decodes to almost no
+///   content bytes, so a decoded-only bound could never catch one with an
+///   unbounded field count. Both the decoded-content buffer and the
+///   per-field end-offset buffer this reader accumulates a record into are
+///   grown incrementally, one parser callback at a time, and neither is ever
+///   grown past what the configured raw-byte bound allows: once the raw
+///   span consumed for the current record would exceed it, this reader
+///   stops copying that record's bytes into either buffer at all (switching
+///   to small, fixed discard buffers just to drain the remaining input for
+///   forward checkpoint proof) and reports it as a classified,
+///   forward-proven [`ReaderError`] instead. The bound is therefore enforced
+///   *during* parsing, not applied as an after-the-fact check against an
+///   already-fully-materialized record -- see
+///   `crates/oxide-batch/tests/item_components_flat_file_allocation.rs` for
+///   the allocator-level evidence, including a record of millions of empty
+///   fields that exercises the end-offset buffer specifically.
 /// - **Cancellation**: cooperative stop is observed by the driving
 ///   [`crate::ChunkStep`] between calls; this reader does not itself block on
 ///   I/O across an await point beyond one synchronous record read.
@@ -512,8 +536,24 @@ pub struct DelimitedReader<Src> {
 
 impl<Src: Read> DelimitedReader<Src> {
     /// Parses exactly one record from wherever the parser currently is,
-    /// growing [`Self::output`] one step at a time and never past
-    /// `max_record_bytes`.
+    /// growing [`Self::output`] and [`Self::ends`] one step at a time and
+    /// never past `max_record_bytes` -- bounding the record's *raw* byte
+    /// span, not merely its decoded field-content length.
+    ///
+    /// That distinction matters: a record built almost entirely of empty
+    /// fields (e.g. millions of consecutive delimiters) decodes to almost no
+    /// field-content bytes at all, so a bound checked only against decoded
+    /// output would never trip, while [`Self::ends`] -- one `usize` per
+    /// field boundary -- still grows without limit. Bounding on `consumed`
+    /// (the record's raw input byte count, checked every loop iteration,
+    /// before either buffer is allowed to grow further) catches this: CSV
+    /// unescaping only ever shrinks or preserves byte count field-by-field
+    /// (a doubled quote `""` decodes to one `"`), so the raw span is always
+    /// an upper bound on decoded content, and every field boundary consumes
+    /// at least one raw delimiter byte, so bounding the raw span also bounds
+    /// the number of fields (and therefore `ends`' size) to at most
+    /// `max_record_bytes` entries -- O(the configured bound), never O(the
+    /// actual oversized record's real size).
     ///
     /// Once a record is known to exceed the bound, this switches to writing
     /// into small, fixed, stack-allocated scratch buffers for the remainder
@@ -531,6 +571,7 @@ impl<Src: Read> DelimitedReader<Src> {
         let mut ends_len = 0usize;
         let mut consumed: u64 = 0;
         let mut oversized = false;
+        let max_record_bytes = u64::try_from(self.max_record_bytes).unwrap_or(u64::MAX);
         let mut discard_output = [0u8; DISCARD_OUTPUT_BYTES];
         let mut discard_ends = [0usize; DISCARD_ENDS_LEN];
 
@@ -551,25 +592,29 @@ impl<Src: Read> DelimitedReader<Src> {
             if !oversized {
                 output_len += nout;
                 ends_len += nend;
+                // Checked immediately, before this iteration's `match` is
+                // allowed to grow either buffer any further: this is the
+                // one gate that bounds both `output` and `ends` to the raw
+                // span, regardless of which of the two a given record's
+                // bytes happen to land in.
+                if consumed > max_record_bytes {
+                    oversized = true;
+                }
             }
             match result {
                 ReadRecordResult::InputEmpty => {}
                 ReadRecordResult::OutputFull => {
                     if !oversized {
-                        if output_len >= self.max_record_bytes {
+                        let grown = if self.output.is_empty() {
+                            INITIAL_GROWTH_BYTES
+                        } else {
+                            self.output.len().saturating_mul(2)
+                        }
+                        .min(self.max_record_bytes);
+                        if grown <= self.output.len() {
                             oversized = true;
                         } else {
-                            let grown = if self.output.is_empty() {
-                                INITIAL_GROWTH_BYTES
-                            } else {
-                                self.output.len().saturating_mul(2)
-                            }
-                            .min(self.max_record_bytes);
-                            if grown <= self.output.len() {
-                                oversized = true;
-                            } else {
-                                self.output.resize(grown, 0);
-                            }
+                            self.output.resize(grown, 0);
                         }
                     }
                 }
@@ -635,6 +680,16 @@ impl<Src: Read + Seek> DelimitedReader<Src> {
             })? {
                 RawRecord::Fields { consumed } => {
                     let fields = self.decode_fields()?;
+                    // The header row establishes the expected field count
+                    // for `DelimitedDialect::with_flexible(false)` (the
+                    // default): without this, the *first data row* would
+                    // silently become its own baseline instead, and a data
+                    // row ragged relative to the header -- but internally
+                    // consistent with itself, e.g. a single short first row
+                    // -- would never be caught.
+                    if !self.flexible {
+                        self.first_field_count = Some(fields.len());
+                    }
                     self.headers = Some(fields.into_iter().collect());
                     if target.byte == 0 {
                         // Initial execution: there is nothing to seek past
