@@ -5,15 +5,16 @@
 //! `csv::Reader`'s own convenience API, specifically so this reader can
 //! enforce [`DelimitedDialect::with_max_record_bytes`] *during* parsing,
 //! against the record's *raw* byte span -- not merely its decoded
-//! field-content length. Both the decoded-content buffer and the per-field
-//! end-offset buffer this reader accumulates a record into are never grown
-//! past what that bound allows, so a pathological oversized record (whether
-//! it's one enormous field, or millions of empty ones -- a case decoded
-//! content alone could never bound) is detected and rejected without ever
-//! copying more than the configured bound into memory for it, not merely
-//! rejected after being fully materialized. [`DelimitedWriter`] uses the
-//! higher-level [`csv::Writer`], which has no equivalent unbounded-growth
-//! concern (it serializes already-bounded, caller-supplied items).
+//! field-content length. The decoded-content buffer is capped directly by
+//! that raw-byte bound, while per-field end-offset storage is bounded by the
+//! number of field boundaries that can occur within the same span. Record-
+//! dependent parser storage therefore remains O(`max_record_bytes`) even for
+//! a pathological oversized record (whether it's one enormous field, or
+//! millions of empty ones -- a case decoded content alone could never
+//! bound), instead of growing with the record's actual on-disk size.
+//! [`DelimitedWriter`] uses the higher-level [`csv::Writer`], which has no
+//! equivalent unbounded-growth concern (it serializes already-bounded,
+//! caller-supplied items).
 //!
 //! Quoted delimiters, doubled/escaped quotes, and multiline quoted fields
 //! remain the parser's job, not this module's. Restart position is the
@@ -53,13 +54,11 @@ use crate::{
 /// A record whose *raw* byte span (the bytes consumed from the source for
 /// it, not merely its decoded field-content length) exceeds the configured
 /// bound is a typed, classified [`ReaderError`] (see `DelimitedReader::read`)
-/// rather than an unbounded allocation: the incremental parser is checked
-/// against this bound as each raw byte is consumed, so this component never
-/// copies more than this many bytes into memory for a single record --
-/// whether that memory would hold decoded field content or per-field
-/// end-offset bookkeeping -- however large the record actually is on disk,
-/// and regardless of whether its size comes from one huge field or from an
-/// unbounded number of small/empty ones.
+/// rather than an unbounded allocation. The decoded-content buffer is capped
+/// directly by this bound, and per-field end-offset storage is bounded by the
+/// number of field boundaries possible within the same raw span. Thus the
+/// parser's record-dependent storage remains O(the configured bound), not
+/// O(the actual size of an oversized record on disk).
 pub const DEFAULT_MAX_RECORD_BYTES: usize = 1024 * 1024;
 
 /// The fixed-size scratch buffers used once a record is known to exceed
@@ -477,17 +476,17 @@ enum RawRecord {
 ///   the source for it), not merely its decoded field-content length -- a
 ///   record built almost entirely of empty fields decodes to almost no
 ///   content bytes, so a decoded-only bound could never catch one with an
-///   unbounded field count. Both the decoded-content buffer and the
-///   per-field end-offset buffer this reader accumulates a record into are
-///   grown incrementally, one parser callback at a time, and neither is ever
-///   grown past what the configured raw-byte bound allows: once the raw
-///   span consumed for the current record would exceed it, this reader
-///   stops copying that record's bytes into either buffer at all (switching
-///   to small, fixed discard buffers just to drain the remaining input for
-///   forward checkpoint proof) and reports it as a classified,
-///   forward-proven [`ReaderError`] instead. The bound is therefore enforced
-///   *during* parsing, not applied as an after-the-fact check against an
-///   already-fully-materialized record -- see
+///   unbounded field count. Record-dependent parser storage remains
+///   O(`max_record_bytes`): decoded content is capped directly by the raw-byte
+///   bound, while end-offset storage is bounded by the number of field
+///   boundaries possible within that span. Once the raw span consumed for
+///   the current record would exceed the configured bound, this reader stops
+///   copying that record's content or field-end bookkeeping into the retained
+///   buffers (switching to small, fixed discard buffers just to drain the
+///   remaining input for forward checkpoint proof) and reports it as a
+///   classified, forward-proven [`ReaderError`] instead. The bound is
+///   therefore enforced *during* parsing, not applied as an after-the-fact
+///   check against an already-fully-materialized record -- see
 ///   `crates/oxide-batch/tests/item_components_flat_file_allocation.rs` for
 ///   the allocator-level evidence, including a record of millions of empty
 ///   fields that exercises the end-offset buffer specifically.
@@ -536,9 +535,10 @@ pub struct DelimitedReader<Src> {
 
 impl<Src: Read> DelimitedReader<Src> {
     /// Parses exactly one record from wherever the parser currently is,
-    /// growing [`Self::output`] and [`Self::ends`] one step at a time and
-    /// never past `max_record_bytes` -- bounding the record's *raw* byte
-    /// span, not merely its decoded field-content length.
+    /// growing [`Self::output`] and [`Self::ends`] incrementally while keeping
+    /// all record-dependent parser storage O(`max_record_bytes`) -- bounding
+    /// the record's *raw* byte span, not merely its decoded field-content
+    /// length.
     ///
     /// That distinction matters: a record built almost entirely of empty
     /// fields (e.g. millions of consecutive delimiters) decodes to almost no
