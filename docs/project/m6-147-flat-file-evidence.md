@@ -210,20 +210,16 @@ Streaming is mandatory; neither reader materializes its source file, and
 record before rejecting it either -- regardless of whether that record's
 size comes from decoded field content or from an unbounded field count:
 
-- Delimited/CSV: `DelimitedReader` grows its record-content buffer *and* its
-  per-field end-offset buffer one `csv_core::Reader` parser callback at a
-  time, checked against the record's raw byte span (bytes consumed from the
-  source, not decoded content length) every iteration, and never past
-  `DelimitedDialect::with_max_record_bytes` (default 1 MiB,
-  `DEFAULT_MAX_RECORD_BYTES`); the instant the raw span consumed so far
-  would exceed the bound, it stops copying that record's bytes into either
-  buffer at all and drains the rest of the record through small, fixed,
-  stack-allocated discard buffers (`csv_core::Reader` tracks each field's
-  logical position independently of whatever buffer it's told to write
-  into, so this is safe) before reporting the classified, forward-proven
-  `ReaderError`. Bounding the raw span rather than only decoded content is
-  what catches a record built almost entirely of empty fields, which
-  decodes to almost no content bytes regardless of how many fields it has.
+- Delimited/CSV: `DelimitedDialect::with_max_record_bytes` caps the raw
+  record span accepted by `DelimitedReader`. The decoded-content buffer is
+  capped directly by that raw-byte bound; per-field end-offset storage is
+  bounded by the number of field boundaries possible within the same raw
+  span. Record-dependent parser storage is therefore O(`max_record_bytes`),
+  not literally limited to `max_record_bytes` bytes. Once the raw span
+  exceeds the bound, retained record-dependent buffers stop growing and the
+  remainder is drained through small, fixed discard buffers before the
+  classified, forward-proven `ReaderError` is returned.
+
 - Fixed-width: lines are read through a bounded `fill_buf`/`consume` loop
   capped at `FixedWidthLayout::with_max_record_bytes`; each chunk read from
   the source is copied into the line buffer only up to the remaining budget
@@ -410,6 +406,10 @@ OXIDEBATCH_POSTGRES_TEST_URL=<url> cargo test -p oxide-batch-test --features pos
 
 The `postgres_flat_file_restart` target requires `OXIDEBATCH_POSTGRES_TEST_URL`
 set to an isolated, migrated database and is skipped otherwise.
+
+## Final M5 evidence retention
+
+All eight M5 campaigns were run for PostgreSQL 15 and 18 against the final semantic tree. All sixteen successful artifacts were re-retained byte-for-byte with workflow-run, producing-job, artifact-digest, and execution-tree provenance. During the final pass, P-003 exposed a campaign-isolation defect: the PostgreSQL service health check was connecting to the measured database. The workflow now probes the default `postgres` database instead; with the observer and ceiling assertion unchanged, PostgreSQL 15 records configured peak 2 / observed peak 2 and the performance campaign passes.
 
 ## Ledger disposition
 
