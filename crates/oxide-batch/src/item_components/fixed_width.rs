@@ -334,6 +334,33 @@ enum BoundedLine {
     TooLong { consumed: u64 },
 }
 
+/// Copies at most `max_bytes.saturating_sub(buf.len())` bytes of `segment`
+/// into `buf`, so `buf.len()` can never exceed `max_bytes` -- not even
+/// transiently between this call and the caller's own bound check. Sets
+/// `*too_long` and discards `buf`'s content (never its already-bounded
+/// capacity growth) the moment `segment` would need more room than that.
+///
+/// This is the fix that makes "copies no more than the configured bound
+/// before entering discard mode" literally true: the previous version of
+/// this routine copied a whole `BufRead` fill chunk (which can be many
+/// kilobytes, entirely unrelated to `max_bytes`) into `buf` first and only
+/// checked the length afterwards, so a single oversized line could briefly
+/// occupy far more memory than the configured bound before being rejected.
+fn copy_bounded(buf: &mut Vec<u8>, segment: &[u8], max_bytes: usize, too_long: &mut bool) {
+    if *too_long {
+        return;
+    }
+    let budget = max_bytes.saturating_sub(buf.len());
+    if segment.len() <= budget {
+        buf.extend_from_slice(segment);
+    } else {
+        buf.extend_from_slice(&segment[..budget]);
+        *too_long = true;
+        buf.clear();
+        buf.shrink_to_fit();
+    }
+}
+
 fn read_bounded_line<R: BufRead>(reader: &mut R, max_bytes: usize) -> io::Result<BoundedLine> {
     let mut buf: Vec<u8> = Vec::new();
     let mut consumed_total: u64 = 0;
@@ -356,15 +383,10 @@ fn read_bounded_line<R: BufRead>(reader: &mut R, max_bytes: usize) -> io::Result
             });
         }
         if let Some(newline) = available.iter().position(|&byte| byte == b'\n') {
-            if !too_long {
-                buf.extend_from_slice(&available[..newline]);
-            }
+            copy_bounded(&mut buf, &available[..newline], max_bytes, &mut too_long);
             let take = newline + 1;
             reader.consume(take);
             consumed_total += take as u64;
-            if !too_long && buf.len() > max_bytes {
-                too_long = true;
-            }
             return Ok(if too_long {
                 BoundedLine::TooLong {
                     consumed: consumed_total,
@@ -379,15 +401,8 @@ fn read_bounded_line<R: BufRead>(reader: &mut R, max_bytes: usize) -> io::Result
                 }
             });
         }
+        copy_bounded(&mut buf, available, max_bytes, &mut too_long);
         let chunk_len = available.len();
-        if !too_long {
-            buf.extend_from_slice(available);
-            if buf.len() > max_bytes {
-                too_long = true;
-                buf.clear();
-                buf.shrink_to_fit();
-            }
-        }
         reader.consume(chunk_len);
         consumed_total += chunk_len as u64;
     }
@@ -409,9 +424,14 @@ fn read_bounded_line<R: BufRead>(reader: &mut R, max_bytes: usize) -> io::Result
 /// - **Reentrancy**: not reentrant.
 /// - **Transaction/delivery**: not applicable.
 /// - **Bounded resource**: a line is read through a bounded loop capped at
-///   [`FixedWidthLayout::with_max_record_bytes`]; a line without a
-///   terminator within that many bytes stops retaining further bytes rather
-///   than growing without limit (see `FixedWidthReader::read`).
+///   [`FixedWidthLayout::with_max_record_bytes`]: each chunk read from the
+///   source is copied into the line buffer only up to the remaining budget
+///   under that bound, so the buffer's length never exceeds
+///   `max_record_bytes` even transiently, before the line is known to be
+///   too long and copying stops entirely for its remainder (see
+///   `FixedWidthReader::read`). See
+///   `crates/oxide-batch/tests/item_components_flat_file_allocation.rs` for
+///   the allocator-level evidence.
 /// - **Cancellation**: cooperative stop is observed by the driving
 ///   [`crate::ChunkStep`] between calls.
 /// - **Close**: closed through the paired stream's

@@ -18,7 +18,7 @@
 
 use std::io::Cursor;
 use std::num::NonZeroU64;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use oxide_batch::item_components::basic::{IdentityProcessor, NoopWriter};
@@ -29,12 +29,35 @@ use oxide_batch::item_components::{
 use oxide_batch::{
     BackoffOutcome, BackoffPolicy, BackoffSleeper, BoxFuture, ChunkExecutionOutcome, ChunkFailure,
     ChunkSize, ChunkStep, ClassifierRevision, ExecutionAttempt, ExecutionCorrelation,
-    FailureCategory, FaultAction, FaultClassifier, FaultPhase, FaultPolicy, FaultRule,
-    FaultRuntime, InMemoryFaultState, JobExecutionId, JobInstanceId, JobName, RetryLimit,
+    FailureCategory, FaultAction, FaultClassifier, FaultDescriptor, FaultPhase, FaultPolicy,
+    FaultRule, FaultRuntime, InMemoryFaultState, ItemListenerContext, ItemListenerSet,
+    JobExecutionId, JobInstanceId, JobName, ListenerError, ReadListener, RetryLimit,
     RetryStateLimit, RollbackDisposition, SkipLimit, StepExecutionId, StepName, StopSource,
     StopToken,
 };
 use oxide_batch_test::{NoCompletion, StandaloneTransactions};
+
+/// Captures the [`FailureCategory`] the real M3 fault-tolerance runtime
+/// observed at the item-listener boundary -- the actual framework-visible
+/// classification, not merely the coarse [`ChunkFailure::Reader`] shape,
+/// which other read failures (I/O, a different classifier entirely) would
+/// also produce. Mirrors #146's own
+/// `item_components_equivalence.rs::CapturingReadListener`.
+struct CapturingReadListener(Arc<Mutex<Option<FailureCategory>>>);
+
+impl<I: Send + Sync> ReadListener<I> for CapturingReadListener {
+    fn on_read_error<'a>(
+        &'a self,
+        fault: FaultDescriptor,
+        _context: ItemListenerContext<'a>,
+    ) -> BoxFuture<'a, Result<(), ListenerError>> {
+        let captured = Arc::clone(&self.0);
+        Box::pin(async move {
+            *captured.lock().unwrap_or_else(PoisonError::into_inner) = Some(fault.category());
+            Ok(())
+        })
+    }
+}
 
 fn correlation() -> ExecutionCorrelation {
     let attempt =
@@ -111,6 +134,10 @@ async fn csv_fail_policy_fails_the_step_with_the_expected_classification() {
         DelimitedDialect::csv(),
         oxide_batch::ComponentStreamIdentity::new("oxide-batch-test.fault-csv").unwrap(),
     );
+    let category = Arc::new(Mutex::new(None));
+    let listeners = ItemListenerSet::new()
+        .with_read_listener(Arc::new(CapturingReadListener(Arc::clone(&category))))
+        .unwrap();
     let mut step: ChunkStep<DelimitedRecord, DelimitedRecord, _, _, _> = ChunkStep::new(
         StepName::new("csv_fail").unwrap(),
         ChunkSize::new(1).unwrap(),
@@ -119,7 +146,8 @@ async fn csv_fail_policy_fails_the_step_with_the_expected_classification() {
         NoopWriter,
         Arc::new(StandaloneTransactions),
         Arc::new(NoCompletion),
-    );
+    )
+    .with_item_listeners(listeners);
     let (_source, stop) = StopSource::new();
     let report = step.execute(&correlation(), &stop).await;
 
@@ -131,6 +159,12 @@ async fn csv_fail_policy_fails_the_step_with_the_expected_classification() {
         report.committed_counts().read().get(),
         2,
         "exactly the two well-formed rows before the malformed one committed"
+    );
+    assert_eq!(
+        *category.lock().unwrap_or_else(PoisonError::into_inner),
+        Some(FailureCategory::UserComponent),
+        "the real M3 runtime must have classified the malformed record's failure as \
+         UserComponent, not merely produced a Reader-shaped chunk failure"
     );
 }
 
@@ -180,6 +214,10 @@ async fn fixed_width_fail_policy_fails_the_step_with_the_expected_classification
         fixed_width_layout(),
         oxide_batch::ComponentStreamIdentity::new("oxide-batch-test.fault-fixed-width").unwrap(),
     );
+    let category = Arc::new(Mutex::new(None));
+    let listeners = ItemListenerSet::new()
+        .with_read_listener(Arc::new(CapturingReadListener(Arc::clone(&category))))
+        .unwrap();
     let mut step: ChunkStep<FixedWidthRecord, FixedWidthRecord, _, _, _> = ChunkStep::new(
         StepName::new("fw_fail").unwrap(),
         ChunkSize::new(1).unwrap(),
@@ -188,7 +226,8 @@ async fn fixed_width_fail_policy_fails_the_step_with_the_expected_classification
         NoopWriter,
         Arc::new(StandaloneTransactions),
         Arc::new(NoCompletion),
-    );
+    )
+    .with_item_listeners(listeners);
     let (_source, stop) = StopSource::new();
     let report = step.execute(&correlation(), &stop).await;
 
@@ -197,6 +236,12 @@ async fn fixed_width_fail_policy_fails_the_step_with_the_expected_classification
         ChunkExecutionOutcome::Failed(ChunkFailure::Reader)
     );
     assert_eq!(report.committed_counts().read().get(), 2);
+    assert_eq!(
+        *category.lock().unwrap_or_else(PoisonError::into_inner),
+        Some(FailureCategory::UserComponent),
+        "the real M3 runtime must have classified the malformed record's failure as \
+         UserComponent, not merely produced a Reader-shaped chunk failure"
+    );
 }
 
 #[tokio::test]

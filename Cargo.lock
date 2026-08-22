@@ -732,6 +732,7 @@ name = "oxide-batch"
 version = "0.5.0"
 dependencies = [
  "csv",
+ "csv-core",
  "futures-executor",
  "futures-util",
  "oxide-batch-core",

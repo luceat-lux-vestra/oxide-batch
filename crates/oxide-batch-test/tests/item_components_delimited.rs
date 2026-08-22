@@ -20,8 +20,8 @@ use oxide_batch::item_components::{
 };
 use oxide_batch::{
     BoxedProcessor, BoxedReader, BoxedWriter, ChunkExecutionOutcome, ChunkSize,
-    ComponentStreamIdentity, FailureCategory, ItemReader, ItemWriter, ReadContext, ReadOutcome,
-    ReaderError, WriteOutcome, WriterError,
+    ComponentStreamIdentity, FailureCategory, ItemReader, ItemStream, ItemWriter, ReadContext,
+    ReadOutcome, ReaderError, WriteOutcome, WriterError,
 };
 use oxide_batch_test::{ComponentFixture, TestStep};
 
@@ -440,4 +440,73 @@ async fn typed_and_erased_delimited_pipelines_produce_identical_items() {
             &["5".to_owned(), "e".to_owned()][..],
         ],
     );
+}
+
+// ---------------------------------------------- header restart evidence --
+
+/// Proves headers remain available after a restart that resumes mid-file,
+/// not merely on an initial read: the rustdoc for
+/// `DelimitedReader::ensure_headers_and_seek` claims the header row is
+/// always re-read from byte 0 before seeking, specifically so a restarted
+/// read still resolves field names -- this asserts that claim directly,
+/// through the real `ItemStream::open`/`update` calls a committing chunk
+/// makes (see `postgres_flat_file_restart.rs` for the same restart through
+/// a full `ChunkStep`/`JobLauncher` round trip; this test isolates just the
+/// header-survival claim without needing a durable fixture).
+#[tokio::test]
+async fn headers_survive_a_restart_that_resumes_mid_file() {
+    let path = temp_path("headers-restart");
+    std::fs::write(&path, "name,age\nAlice,30\nBob,40\nCarol,50\n").unwrap();
+    let dialect = DelimitedDialect::csv().with_headers(true);
+    let fixture = ComponentFixture::new();
+
+    // Attempt A: read the first data record, then ask the stream for its
+    // candidate envelope -- exactly what a committing chunk would persist.
+    let (mut reader_a, stream_a, _c) = delimited_reader::<DelimitedRecord, _>(
+        std::fs::File::open(&path).unwrap(),
+        dialect,
+        identity(),
+    );
+    stream_a
+        .open(fixture.stream_open_context(None))
+        .await
+        .unwrap();
+    let ReadOutcome::Item(first) = read_next(&mut reader_a, fixture.read_context())
+        .await
+        .unwrap()
+    else {
+        panic!("expected the first data record");
+    };
+    assert_eq!(first.fields(), ["Alice", "30"]);
+    let envelope = stream_a
+        .update(fixture.stream_update_context())
+        .await
+        .unwrap();
+
+    // Attempt B: a fresh reader/stream pair restored from that envelope --
+    // resuming mid-file must not lose the header row.
+    let (mut reader_b, stream_b, _c) = delimited_reader::<DelimitedRecord, _>(
+        std::fs::File::open(&path).unwrap(),
+        dialect,
+        identity(),
+    );
+    stream_b
+        .open(fixture.stream_open_context(Some(&envelope)))
+        .await
+        .unwrap();
+    let ReadOutcome::Item(second) = read_next(&mut reader_b, fixture.read_context())
+        .await
+        .unwrap()
+    else {
+        panic!("expected the record after Alice");
+    };
+    assert_eq!(second.fields(), ["Bob", "40"]);
+    assert_eq!(
+        second.field("name"),
+        Some("Bob"),
+        "header names must survive a restart that resumes mid-file, not just an initial read"
+    );
+    assert_eq!(second.field("age"), Some("40"));
+
+    let _ = std::fs::remove_file(&path);
 }

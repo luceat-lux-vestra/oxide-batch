@@ -15,6 +15,16 @@
 //! control (`std::fs::read_to_string`, which does materialize the whole
 //! file) proves the harness can actually observe the violation.
 //!
+//! A second, distinct claim -- that a single oversized record cannot itself
+//! allocate proportionally to its own size before rejection, regardless of
+//! how many total records surround it -- needs a different measurement:
+//! `bytes_allocated` (a cumulative total, not a net) taken across reading
+//! *one* pathological record. For a single-record operation, a multi-MiB
+//! one-shot buffer dominates that total, so comparing it between the real
+//! reader and a deliberately naive "materialize whole line, then check
+//! length" positive control (the exact shape of the bug this evidence
+//! guards against) gives a clear, honest signal.
+//!
 //! Allocator totals are process-global (mirroring `chunk_allocation.rs`'s own
 //! reasoning), so this file carries exactly one `#[test]`.
 
@@ -22,7 +32,7 @@
 
 use std::alloc::System;
 use std::fs::File;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 
 use oxide_batch::item_components::{
     DelimitedDialect, DelimitedReader, DelimitedRecord, FixedWidthField, FixedWidthLayout,
@@ -73,6 +83,55 @@ fn write_fixed_width(path: &std::path::Path, rows: u32) -> u64 {
     }
     file.sync_all().expect("flush fixture file");
     file.metadata().expect("fixture metadata").len()
+}
+
+/// One field's byte length in the deliberately huge single-record fixtures:
+/// large enough that "did this allocate the whole record" and "did this stay
+/// bounded" are unmistakably different orders of magnitude.
+const HUGE_FIELD_BYTES: usize = 20 * 1024 * 1024;
+
+/// The bound both real readers are configured with when reading the huge
+/// single-record fixtures: far smaller than [`HUGE_FIELD_BYTES`], so
+/// acceptance would itself be a test bug, and small enough that any
+/// proportional-to-record-size allocation is obvious against it.
+const TIGHT_MAX_RECORD_BYTES: usize = 4096;
+
+/// Writes one CSV record whose second field is [`HUGE_FIELD_BYTES`] long.
+fn write_huge_single_record_csv(path: &std::path::Path) -> u64 {
+    let mut file = File::create(path).expect("create fixture file");
+    write!(file, "a,").expect("write fixture prefix");
+    file.write_all(&vec![b'x'; HUGE_FIELD_BYTES])
+        .expect("write huge field");
+    writeln!(file, ",b").expect("write fixture suffix");
+    file.sync_all().expect("flush fixture file");
+    file.metadata().expect("fixture metadata").len()
+}
+
+/// Writes one fixed-width "line" (no embedded `\n`) that is
+/// [`HUGE_FIELD_BYTES`] long before its terminator.
+fn write_huge_single_line_fixed_width(path: &std::path::Path) -> u64 {
+    let mut file = File::create(path).expect("create fixture file");
+    file.write_all(&vec![b'x'; HUGE_FIELD_BYTES])
+        .expect("write huge line");
+    file.write_all(b"\n").expect("write terminator");
+    file.sync_all().expect("flush fixture file");
+    file.metadata().expect("fixture metadata").len()
+}
+
+/// The naive "materialize the whole line, then check its length" shape --
+/// exactly the bug class this evidence guards against -- used only as a
+/// positive control to prove the harness can observe a large one-shot
+/// allocation when one genuinely happens.
+fn naive_whole_line_bytes_allocated(path: &std::path::Path) -> (usize, usize) {
+    let region = Region::new(ALLOCATOR);
+    let file = File::open(path).expect("open fixture file");
+    let mut reader = BufReader::new(file);
+    let mut buf: Vec<u8> = Vec::new();
+    reader.read_until(b'\n', &mut buf).expect("read line");
+    let line_len = buf.len();
+    drop(buf);
+    let allocated = region.change().bytes_allocated;
+    (allocated, line_len)
 }
 
 async fn read_csv(
@@ -141,6 +200,11 @@ async fn streamed_fixed_width_net_retained(path: &std::path::Path, rows: u32) ->
 }
 
 #[tokio::test(flavor = "current_thread")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the whole-file and single-oversized-record scenarios are only meaningful evidence \
+              together, sharing one process-global allocator (see the module docs)"
+)]
 async fn flat_file_readers_do_not_retain_memory_proportional_to_file_size() {
     const SMALL_ROWS: u32 = 500;
     const LARGE_ROWS: u32 = 300_000;
@@ -216,5 +280,100 @@ async fn flat_file_readers_do_not_retain_memory_proportional_to_file_size() {
         "the positive control did not retain close to the whole file ({control_net} vs \
          {large_size}): the harness would not have caught a real whole-file-materialization \
          regression"
+    );
+
+    // ---------------------------------------- F: one oversized record --
+    // A single pathological record must not itself allocate in proportion
+    // to its own size before rejection -- distinct from (and not implied
+    // by) the whole-file claims above, which use many small, uniform
+    // records and would not catch a reader that materializes one huge
+    // record before checking it.
+    let huge_csv_path = temp_path("csv-huge-record");
+    let huge_csv_size = write_huge_single_record_csv(&huge_csv_path);
+    assert!(u64::try_from(HUGE_FIELD_BYTES).is_ok_and(|bytes| huge_csv_size > bytes));
+
+    let region = Region::new(ALLOCATOR);
+    let (mut huge_reader, _s, _c) = delimited_file_reader::<DelimitedRecord>(
+        &huge_csv_path,
+        DelimitedDialect::csv().with_max_record_bytes(TIGHT_MAX_RECORD_BYTES),
+        identity("oxide-batch.oversized-csv"),
+    )
+    .expect("open fixture file");
+    let (_source, stop) = StopSource::new();
+    let result =
+        ItemReader::<DelimitedRecord>::read(&mut huge_reader, ReadContext::new(&stop)).await;
+    assert!(
+        result.is_err(),
+        "a record far exceeding the configured bound must be rejected, not accepted"
+    );
+    drop(huge_reader);
+    let real_csv_allocated = region.change().bytes_allocated;
+
+    let (naive_csv_allocated, naive_csv_line_len) =
+        naive_whole_line_bytes_allocated(&huge_csv_path);
+    assert!(
+        naive_csv_line_len > HUGE_FIELD_BYTES,
+        "sanity: the naive positive control must have actually read the huge line \
+         (line_len={naive_csv_line_len})"
+    );
+    let _ = std::fs::remove_file(&huge_csv_path);
+
+    println!(
+        "csv oversized record: real_allocated={real_csv_allocated} \
+         naive_allocated={naive_csv_allocated} record_bytes={HUGE_FIELD_BYTES}"
+    );
+    assert!(
+        real_csv_allocated < HUGE_FIELD_BYTES / 10,
+        "the real DelimitedReader allocated {real_csv_allocated} bytes rejecting a \
+         {HUGE_FIELD_BYTES}-byte record: consistent with materializing the record before \
+         checking the bound, rather than bounding growth during parsing"
+    );
+    assert!(
+        naive_csv_allocated >= HUGE_FIELD_BYTES,
+        "the naive positive control did not show a large allocation \
+         (allocated={naive_csv_allocated}, record_bytes={HUGE_FIELD_BYTES}): the harness would \
+         not have caught a real regression back to materialize-then-check"
+    );
+
+    let huge_fw_path = temp_path("fw-huge-record");
+    let huge_fw_size = write_huge_single_line_fixed_width(&huge_fw_path);
+    assert!(u64::try_from(HUGE_FIELD_BYTES).is_ok_and(|bytes| huge_fw_size > bytes));
+
+    let region = Region::new(ALLOCATOR);
+    let layout = FixedWidthLayout::new(vec![FixedWidthField::new(1)])
+        .with_max_record_bytes(TIGHT_MAX_RECORD_BYTES);
+    let (mut huge_fw_reader, _s, _c) = fixed_width_file_reader::<FixedWidthRecord>(
+        &huge_fw_path,
+        layout,
+        identity("oxide-batch.oversized-fixed-width"),
+    )
+    .expect("open fixture file");
+    let result =
+        ItemReader::<FixedWidthRecord>::read(&mut huge_fw_reader, ReadContext::new(&stop)).await;
+    assert!(
+        result.is_err(),
+        "a line far exceeding the configured bound must be rejected, not accepted"
+    );
+    drop(huge_fw_reader);
+    let real_fw_allocated = region.change().bytes_allocated;
+
+    let (naive_fw_allocated, naive_fw_line_len) = naive_whole_line_bytes_allocated(&huge_fw_path);
+    assert!(naive_fw_line_len > HUGE_FIELD_BYTES);
+    let _ = std::fs::remove_file(&huge_fw_path);
+
+    println!(
+        "fixed-width oversized record: real_allocated={real_fw_allocated} \
+         naive_allocated={naive_fw_allocated} record_bytes={HUGE_FIELD_BYTES}"
+    );
+    assert!(
+        real_fw_allocated < HUGE_FIELD_BYTES / 10,
+        "the real FixedWidthReader allocated {real_fw_allocated} bytes rejecting a \
+         {HUGE_FIELD_BYTES}-byte line: consistent with copying past the configured bound \
+         before entering discard mode"
+    );
+    assert!(
+        naive_fw_allocated >= HUGE_FIELD_BYTES,
+        "the naive positive control did not show a large allocation for fixed-width \
+         (allocated={naive_fw_allocated}, record_bytes={HUGE_FIELD_BYTES})"
     );
 }

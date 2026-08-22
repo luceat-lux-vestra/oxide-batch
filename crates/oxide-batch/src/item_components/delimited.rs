@@ -1,16 +1,24 @@
 //! Restartable delimited/CSV file components (#147, `IO-FLAT-001`).
 //!
-//! [`DelimitedReader`]/[`DelimitedWriter`] are plain [`crate::ItemReader`]/
-//! [`crate::ItemWriter`] implementations over any `Read + Seek`/`Write`
-//! source, built on the mature [`csv`] parser rather than a hand-rolled
-//! splitter -- quoted delimiters, doubled/escaped quotes, and multiline
-//! quoted fields are the parser's job, not this module's. Restart position is
-//! the parser's own record-boundary byte/line/record triple
-//! ([`csv::Position`]), never an inferred line count, so a restart can never
-//! land inside a multiline quoted record. Neither type, nor any dialect/state
-//! type here, exposes a `csv` crate type in its public signature: dialect
-//! configuration and record content are OxideBatch-owned
-//! ([`DelimitedDialect`], [`DelimitedRecord`]).
+//! [`DelimitedReader`] drives [`csv_core::Reader`] directly (the incremental,
+//! no-I/O parsing engine the `csv` crate itself is built on) rather than
+//! `csv::Reader`'s own convenience API, specifically so this reader can
+//! enforce [`DelimitedDialect::with_max_record_bytes`] *during* parsing: the
+//! output buffer used to accumulate one record's decoded field bytes is
+//! never grown past the configured bound, so a pathological oversized record
+//! is detected and rejected without ever copying more than that many bytes
+//! into memory for it -- not merely rejected after being fully materialized.
+//! [`DelimitedWriter`] uses the higher-level [`csv::Writer`], which has no
+//! equivalent unbounded-growth concern (it serializes already-bounded,
+//! caller-supplied items).
+//!
+//! Quoted delimiters, doubled/escaped quotes, and multiline quoted fields
+//! remain the parser's job, not this module's. Restart position is the
+//! parser's own record-boundary byte/line/record triple, never an inferred
+//! line count, so a restart can never land inside a multiline quoted record.
+//! Neither type, nor any dialect/state type here, exposes a `csv`/`csv_core`
+//! crate type in its public signature: dialect configuration and record
+//! content are OxideBatch-owned ([`DelimitedDialect`], [`DelimitedRecord`]).
 //!
 //! Restart state is carried by the paired [`DelimitedReaderStream`]/
 //! [`DelimitedWriterStream`] through the existing M6 [`crate::ItemStream`]
@@ -21,11 +29,12 @@
 //! [`crate::ComponentStreamIdentity`] the component was built with.
 
 use std::fs::File;
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use csv::{Reader as CsvReader, ReaderBuilder, Terminator as CsvTerminator};
+use csv::Terminator as CsvTerminator;
+use csv_core::{ReadRecordResult, Reader as CoreReader};
 
 use crate::{
     CodecId, CodecVersion, ComponentStateEnvelope, ComponentStreamIdentity, DefaultComponentCodec,
@@ -40,9 +49,21 @@ use crate::{
 ///
 /// A record whose parsed byte span exceeds the configured bound is a typed,
 /// classified [`ReaderError`] (see `DelimitedReader::read`) rather than an
-/// unbounded allocation, so a pathological single record cannot grow this
-/// component's retained memory without limit.
+/// unbounded allocation: the incremental parser is checked against this
+/// bound as each field is decoded, so this component never copies more than
+/// this many bytes into memory for a single record, however large the
+/// record actually is on disk.
 pub const DEFAULT_MAX_RECORD_BYTES: usize = 1024 * 1024;
+
+/// The fixed-size scratch buffers used once a record is known to exceed
+/// [`DelimitedDialect::with_max_record_bytes`], so that continuing to drain
+/// its remaining bytes from the input (to preserve forward checkpoint
+/// progress) never itself allocates in proportion to the oversized record.
+const DISCARD_OUTPUT_BYTES: usize = 256;
+const DISCARD_ENDS_LEN: usize = 64;
+
+/// The first output-buffer growth step for a fresh record, before doubling.
+const INITIAL_GROWTH_BYTES: usize = 256;
 
 /// The record terminator [`DelimitedWriter`] emits.
 ///
@@ -152,16 +173,18 @@ impl DelimitedDialect {
         self
     }
 
-    fn reader_builder(self) -> ReaderBuilder {
-        let mut builder = ReaderBuilder::new();
+    /// Builds the incremental, no-I/O `csv_core` parser for this dialect.
+    ///
+    /// `has_headers`/`flexible` are not `csv_core` concepts -- they're
+    /// applied by [`DelimitedReader`] itself, above this low-level parser.
+    fn core_reader(self) -> CoreReader {
+        let mut builder = csv_core::ReaderBuilder::new();
         builder
             .delimiter(self.delimiter)
             .quote(self.quote)
             .escape(self.escape)
-            .double_quote(self.double_quote)
-            .has_headers(self.has_headers)
-            .flexible(self.flexible);
-        builder
+            .double_quote(self.double_quote);
+        builder.build()
     }
 
     fn writer_builder(self) -> csv::WriterBuilder {
@@ -266,28 +289,12 @@ struct StoredPosition {
 
 impl StoredPosition {
     /// The position of a fresh, unread parser: byte 0, 1-based line 1, no
-    /// records read yet -- matches `csv::Position::new()` exactly.
+    /// records read yet.
     const START: Self = Self {
         byte: 0,
         line: 1,
         record: 0,
     };
-
-    fn to_csv(self) -> csv::Position {
-        let mut position = csv::Position::new();
-        position.set_byte(self.byte);
-        position.set_line(self.line);
-        position.set_record(self.record);
-        position
-    }
-
-    fn from_csv(position: &csv::Position) -> Self {
-        Self {
-            byte: position.byte(),
-            line: position.line(),
-            record: position.record(),
-        }
-    }
 }
 
 const READER_SCHEMA: &str = "oxide-batch.delimited-reader-position";
@@ -409,8 +416,31 @@ fn writer_position_codec() -> DefaultComponentCodec<WriterPositionSchema> {
     .with_sensitivity(StateSensitivity::NonSensitive)
 }
 
+/// One low-level, mechanical outcome of parsing a single record from
+/// wherever [`csv_core::Reader`] currently is. Carries no knowledge of
+/// headers, flexibility, or UTF-8 -- those are [`DelimitedReader::read`]'s
+/// job, layered on top.
+enum RawRecord {
+    /// A complete, in-bound record. Its decoded field bytes are in
+    /// [`DelimitedReader::output`], sliced by [`DelimitedReader::ends`].
+    Fields {
+        /// Bytes consumed from the source for this record (its byte span).
+        consumed: u64,
+    },
+    /// A complete record whose parsed byte span exceeded
+    /// [`DelimitedDialect::with_max_record_bytes`]. No field content was
+    /// retained for it.
+    Oversized {
+        /// Bytes consumed from the source for this record (its byte span).
+        consumed: u64,
+    },
+    /// The source is exhausted.
+    Eof,
+}
+
 /// A restartable [`crate::ItemReader`] over any `Read + Seek` delimited/CSV
-/// source, built on [`csv::Reader`].
+/// source, built directly on [`csv_core::Reader`] (see the module
+/// documentation for why).
 ///
 /// # Contract
 ///
@@ -425,10 +455,18 @@ fn writer_position_codec() -> DefaultComponentCodec<WriterPositionSchema> {
 /// - **Thread safety**: `Send`; used exclusively (`&mut self`).
 /// - **Reentrancy**: not reentrant (owns the parser's mutable state).
 /// - **Transaction/delivery**: not applicable (a reader never enlists).
-/// - **Bounded resource**: bounded by [`DelimitedDialect::with_max_record_bytes`];
-///   a single record whose parsed byte span exceeds the bound is a
-///   classified, forward-proven [`ReaderError`] rather than an unbounded
-///   allocation. The reader never buffers more than the current record.
+/// - **Bounded resource**: bounded by [`DelimitedDialect::with_max_record_bytes`].
+///   The record-content buffer this reader accumulates a record's decoded
+///   field bytes into is grown incrementally, one parser callback at a time,
+///   and is never grown past the configured bound: once accumulating a
+///   record's content would exceed it, this reader stops copying that
+///   record's bytes into memory at all (switching to a small fixed discard
+///   buffer just to drain the remaining input for forward checkpoint proof)
+///   and reports it as a classified, forward-proven [`ReaderError`] instead.
+///   The bound is therefore enforced *during* parsing, not applied as an
+///   after-the-fact check against an already-fully-materialized record --
+///   see `crates/oxide-batch/tests/item_components_flat_file_allocation.rs`
+///   for the allocator-level evidence.
 /// - **Cancellation**: cooperative stop is observed by the driving
 ///   [`crate::ChunkStep`] between calls; this reader does not itself block on
 ///   I/O across an await point beyond one synchronous record read.
@@ -451,38 +489,187 @@ fn writer_position_codec() -> DefaultComponentCodec<WriterPositionSchema> {
 ///   retry.
 /// - **Support tier**: first-party.
 /// - **Evidence**: `crates/oxide-batch-test/tests/item_components_delimited.rs`,
-///   `crates/oxide-batch-test/tests/postgres_flat_file_restart.rs`.
+///   `crates/oxide-batch-test/tests/postgres_flat_file_restart.rs`,
+///   `crates/oxide-batch/tests/item_components_flat_file_allocation.rs`.
 pub struct DelimitedReader<Src> {
-    inner: CsvReader<Src>,
-    headers: Option<Arc<[String]>>,
+    source: BufReader<Src>,
+    core: CoreReader,
+    /// Reused across records; its capacity naturally settles at the largest
+    /// in-bound record seen so far, and is never grown past
+    /// `max_record_bytes`.
+    output: Vec<u8>,
+    /// Cumulative end offsets of each field within `output`, per
+    /// [`csv_core::Reader::read_record`]'s contract.
+    ends: Vec<usize>,
     max_record_bytes: usize,
+    has_headers: bool,
+    flexible: bool,
+    first_field_count: Option<usize>,
+    headers: Option<Arc<[String]>>,
     position: Arc<Mutex<StoredPosition>>,
     seeked: bool,
 }
 
-impl<Src: Read + Seek> DelimitedReader<Src> {
-    /// Seeks the parser to a restored non-zero position on the attempt's
-    /// first read, and otherwise leaves the parser untouched.
+impl<Src: Read> DelimitedReader<Src> {
+    /// Parses exactly one record from wherever the parser currently is,
+    /// growing [`Self::output`] one step at a time and never past
+    /// `max_record_bytes`.
     ///
-    /// A fresh (non-restarted) attempt never calls [`csv::Reader::seek`] at
-    /// all: `csv`'s own header/first-record bookkeeping already handles that
-    /// case correctly, and calling `seek` unconditionally -- even to
-    /// byte 0 -- disables that bookkeeping (`seek` unconditionally sets its
-    /// own "has this reader ever been seeked" flag, which suppresses the
-    /// crate's normal first-record/header handling for the rest of the
-    /// reader's life), which would silently misplace the first record.
-    fn seek_if_needed(&mut self) -> Result<(), ReaderError> {
+    /// Once a record is known to exceed the bound, this switches to writing
+    /// into small, fixed, stack-allocated scratch buffers for the remainder
+    /// of that record: `csv_core::Reader` tracks each field's logical
+    /// position independently of whatever buffer it's told to write into
+    /// (its own documentation states end positions are "constructed as if
+    /// there was a single contiguous buffer in memory containing the entire
+    /// row"), so reusing a tiny fixed buffer across calls is sufficient to
+    /// keep draining input correctly without retaining the oversized
+    /// content -- this is what makes the bound apply *during* parsing.
+    fn read_raw_record(&mut self) -> io::Result<RawRecord> {
+        self.output.clear();
+        self.ends.clear();
+        let mut output_len = 0usize;
+        let mut ends_len = 0usize;
+        let mut consumed: u64 = 0;
+        let mut oversized = false;
+        let mut discard_output = [0u8; DISCARD_OUTPUT_BYTES];
+        let mut discard_ends = [0usize; DISCARD_ENDS_LEN];
+
+        loop {
+            let input = self.source.fill_buf()?;
+            let (result, nin, nout, nend) = if oversized {
+                self.core
+                    .read_record(input, &mut discard_output, &mut discard_ends)
+            } else {
+                self.core.read_record(
+                    input,
+                    &mut self.output[output_len..],
+                    &mut self.ends[ends_len..],
+                )
+            };
+            self.source.consume(nin);
+            consumed += nin as u64;
+            if !oversized {
+                output_len += nout;
+                ends_len += nend;
+            }
+            match result {
+                ReadRecordResult::InputEmpty => {}
+                ReadRecordResult::OutputFull => {
+                    if !oversized {
+                        if output_len >= self.max_record_bytes {
+                            oversized = true;
+                        } else {
+                            let grown = if self.output.is_empty() {
+                                INITIAL_GROWTH_BYTES
+                            } else {
+                                self.output.len().saturating_mul(2)
+                            }
+                            .min(self.max_record_bytes);
+                            if grown <= self.output.len() {
+                                oversized = true;
+                            } else {
+                                self.output.resize(grown, 0);
+                            }
+                        }
+                    }
+                }
+                ReadRecordResult::OutputEndsFull => {
+                    if !oversized {
+                        let grown = self.ends.len().max(16) * 2;
+                        self.ends.resize(grown, 0);
+                    }
+                }
+                ReadRecordResult::Record => {
+                    return Ok(if oversized {
+                        RawRecord::Oversized { consumed }
+                    } else {
+                        self.output.truncate(output_len);
+                        self.ends.truncate(ends_len);
+                        RawRecord::Fields { consumed }
+                    });
+                }
+                ReadRecordResult::End => return Ok(RawRecord::Eof),
+            }
+        }
+    }
+
+    /// Decodes `self.output`/`self.ends` (populated by a just-completed,
+    /// in-bound [`Self::read_raw_record`] call) into owned UTF-8 fields.
+    fn decode_fields(&self) -> Result<Vec<String>, ReaderError> {
+        let mut fields = Vec::with_capacity(self.ends.len());
+        let mut start = 0usize;
+        for &end in &self.ends {
+            let slice = self
+                .output
+                .get(start..end)
+                .ok_or_else(|| ReaderError::new().with_checkpoint_advanced(true))?;
+            let text = std::str::from_utf8(slice)
+                .map_err(|_| ReaderError::new().with_checkpoint_advanced(true))?;
+            fields.push(text.to_owned());
+            start = end;
+        }
+        Ok(fields)
+    }
+}
+
+impl<Src: Read + Seek> DelimitedReader<Src> {
+    /// On the attempt's first read: consumes and caches the header row (if
+    /// [`DelimitedDialect::with_headers`] is set) from wherever the source
+    /// currently is, then seeks to a restored non-zero position, if any.
+    ///
+    /// The header row is always read *before* seeking (from byte 0, where a
+    /// freshly opened source starts), exactly so header names remain
+    /// available after a restart that resumes mid-file.
+    fn ensure_headers_and_seek(&mut self) -> Result<(), ReaderError> {
         if self.seeked {
             return Ok(());
         }
         self.seeked = true;
+        // Captured *before* the header row is read: this is the position
+        // `ItemStream::open` actually restored (zero for initial execution,
+        // nonzero for a restart), never the header row's own consumption.
         let target = *self.position.lock().unwrap_or_else(PoisonError::into_inner);
-        if target.byte == 0 {
-            return Ok(());
+        if self.has_headers {
+            match self.read_raw_record().map_err(|_| {
+                ReaderError::with_category(crate::FailureCategory::TransientInfrastructure)
+            })? {
+                RawRecord::Fields { consumed } => {
+                    let fields = self.decode_fields()?;
+                    self.headers = Some(fields.into_iter().collect());
+                    if target.byte == 0 {
+                        // Initial execution: there is nothing to seek past
+                        // below, so the header row's own consumption must
+                        // become part of the baseline position here --
+                        // otherwise every later record's tracked position
+                        // would understate the true file offset by exactly
+                        // the header row's byte length, corrupting both the
+                        // durable checkpoint and any later restart's seek
+                        // target.
+                        let mut position =
+                            self.position.lock().unwrap_or_else(PoisonError::into_inner);
+                        position.byte = consumed;
+                        position.line = self.core.line();
+                    }
+                    // A restart (target.byte > 0) leaves `self.position`
+                    // untouched here: it already holds the correct resume
+                    // point, and the header re-read above exists only to
+                    // populate `self.headers` -- the seek below moves past
+                    // it to the real resume point.
+                }
+                RawRecord::Oversized { .. } => {
+                    return Err(ReaderError::new().with_checkpoint_advanced(true));
+                }
+                RawRecord::Eof => {}
+            }
         }
-        self.inner
-            .seek(target.to_csv())
-            .map_err(|_| ReaderError::new())
+        if target.byte > 0 {
+            self.source
+                .seek(SeekFrom::Start(target.byte))
+                .map_err(|_| ReaderError::new())?;
+            self.core.reset();
+            self.core.set_line(target.line);
+        }
+        Ok(())
     }
 }
 
@@ -492,45 +679,52 @@ where
     Src: Read + Seek + Send,
 {
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<I>, ReaderError> {
-        self.seek_if_needed()?;
-        let mut record = csv::StringRecord::new();
-        let before = StoredPosition::from_csv(self.inner.position());
-        match self.inner.read_record(&mut record) {
-            Ok(true) => {
-                let after = StoredPosition::from_csv(self.inner.position());
+        self.ensure_headers_and_seek()?;
+        let before = *self.position.lock().unwrap_or_else(PoisonError::into_inner);
+        let outcome = self.read_raw_record().map_err(|_| {
+            ReaderError::with_category(crate::FailureCategory::TransientInfrastructure)
+        })?;
+        match outcome {
+            RawRecord::Eof => Ok(ReadOutcome::EndOfInput),
+            RawRecord::Oversized { consumed } => {
+                let after = StoredPosition {
+                    byte: before.byte + consumed,
+                    line: self.core.line(),
+                    record: before.record + 1,
+                };
                 *self.position.lock().unwrap_or_else(PoisonError::into_inner) = after;
-                let span = after.byte.saturating_sub(before.byte);
-                let max_record_bytes = u64::try_from(self.max_record_bytes).unwrap_or(u64::MAX);
-                if span > max_record_bytes {
-                    return Err(ReaderError::new().with_checkpoint_advanced(true));
+                Err(ReaderError::new().with_checkpoint_advanced(true))
+            }
+            RawRecord::Fields { consumed } => {
+                let after = StoredPosition {
+                    byte: before.byte + consumed,
+                    line: self.core.line(),
+                    record: before.record + 1,
+                };
+                let field_count = self.ends.len();
+                if !self.flexible {
+                    match self.first_field_count {
+                        None => self.first_field_count = Some(field_count),
+                        Some(expected) if expected != field_count => {
+                            *self.position.lock().unwrap_or_else(PoisonError::into_inner) = after;
+                            return Err(ReaderError::new().with_checkpoint_advanced(true));
+                        }
+                        Some(_) => {}
+                    }
                 }
-                if self.headers.is_none() && self.inner.has_headers() {
-                    self.headers = self
-                        .inner
-                        .headers()
-                        .ok()
-                        .map(|headers| headers.iter().map(str::to_owned).collect());
-                }
-                let fields = record.iter().map(str::to_owned).collect();
+                let fields = match self.decode_fields() {
+                    Ok(fields) => fields,
+                    Err(error) => {
+                        *self.position.lock().unwrap_or_else(PoisonError::into_inner) = after;
+                        return Err(error);
+                    }
+                };
+                *self.position.lock().unwrap_or_else(PoisonError::into_inner) = after;
                 let decoded = DelimitedRecord {
                     fields,
                     headers: self.headers.clone(),
                 };
                 Ok(ReadOutcome::Item(decoded.into()))
-            }
-            Ok(false) => Ok(ReadOutcome::EndOfInput),
-            Err(error) => {
-                let category = if matches!(error.kind(), csv::ErrorKind::Io(_)) {
-                    crate::FailureCategory::TransientInfrastructure
-                } else {
-                    crate::FailureCategory::UserComponent
-                };
-                let after = StoredPosition::from_csv(self.inner.position());
-                let advanced = after.byte > before.byte;
-                if advanced {
-                    *self.position.lock().unwrap_or_else(PoisonError::into_inner) = after;
-                }
-                Err(ReaderError::with_category(category).with_checkpoint_advanced(advanced))
             }
         }
     }
@@ -610,11 +804,16 @@ where
     Src: Read + Seek + Send,
 {
     let position = Arc::new(Mutex::new(StoredPosition::START));
-    let inner = dialect.reader_builder().from_reader(source);
     let reader = DelimitedReader {
-        inner,
-        headers: None,
+        source: BufReader::new(source),
+        core: dialect.core_reader(),
+        output: Vec::new(),
+        ends: Vec::new(),
         max_record_bytes: dialect.max_record_bytes,
+        has_headers: dialect.has_headers,
+        flexible: dialect.flexible,
+        first_field_count: None,
+        headers: None,
         position: Arc::clone(&position),
         seeked: false,
     };
