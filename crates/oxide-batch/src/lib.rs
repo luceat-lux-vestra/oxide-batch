@@ -236,6 +236,29 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
+//! [`item_components`] is the standard composition catalog (#146): basic
+//! iterator/list-backed readers, composite/delegating readers, processors,
+//! and writers, classifier-selected delegates, a validator and a filter
+//! processor, peek and aggregate reader decorators, and synchronization
+//! wrappers. Every component is a plain [`ItemReader`]/[`ItemProcessor`]/
+//! [`ItemWriter`] implementation under the same contract as any
+//! hand-written one; composition never introduces a second execution path
+//! or per-item boxing.
+//!
+//! ```
+//! use oxide_batch::item_components::FilterProcessor;
+//! use oxide_batch::{ItemProcessor, ProcessContext, ProcessOutcome, StopSource};
+//!
+//! let evens = FilterProcessor::new(|item: &u64| item % 2 == 0);
+//! let (_source, stop) = StopSource::new();
+//! let context = ProcessContext::new(&stop);
+//! let kept = futures_executor::block_on(evens.process(&4, context))?;
+//! let dropped = futures_executor::block_on(evens.process(&5, context))?;
+//! assert_eq!(kept, ProcessOutcome::Item(4));
+//! assert_eq!(dropped, ProcessOutcome::Filtered);
+//! # Ok::<(), oxide_batch::ProcessorError>(())
+//! ```
+//!
 //! [`DefinitionManifest`] reads canonical definition bytes back without
 //! guessing. A newer format, a non-canonical encoding, a floating-point value,
 //! an out-of-bound graph, or a digest that does not match the supplied bytes
@@ -374,6 +397,7 @@ mod diagnostics;
 mod fault;
 mod fault_state;
 mod flow;
+pub mod item_components;
 mod item_listener;
 mod item_stream;
 mod listener;

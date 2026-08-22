@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `oxide_batch::item_components`, the standard item composition catalog:
+  basic iterator/list readers and minimal delegates (`IterReader`,
+  `IdentityProcessor`, `NoopWriter`); composite/delegating readers,
+  processors, and writers (`CompositeReader`, `ChainProcessor`,
+  `FanOutWriter`); classifier-selected delegates (`ClassifyingProcessor`,
+  `ClassifyingWriter`); a validator processor (`ValidatingProcessor`) using
+  the typed processor failure model; a filter processor (`FilterProcessor`)
+  using `ProcessOutcome::Filtered`; a peek reader (`PeekReader`); a bounded
+  aggregate reader (`AggregatingReader`); and synchronization/thread-safety
+  wrappers (`SynchronizedProcessor`, `SynchronizedWriter`). Every component
+  is additive, monomorphized under the ADR-0008 contract, and introduces no
+  per-item boxed future.
+
 ### Changed
 
 - **Breaking:** `ItemReader`, `ItemProcessor`, and `ItemWriter` are now

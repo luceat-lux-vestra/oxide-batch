@@ -245,6 +245,37 @@ them has:
 A wrapper MUST NOT claim a stronger capability than its least-capable
 delegate for any property above.
 
+### Implementation status (#146)
+
+The standard composition catalog required above is implemented under
+`oxide_batch::item_components` (a dedicated public module, not flattened
+into the facade root): basic iterator/list readers and minimal delegates
+(`IterReader`, `IdentityProcessor`, `NoopWriter`); composite/delegating
+readers, processors, and writers (`CompositeReader`, `ChainProcessor`,
+`FanOutWriter`); classifier-selected delegates (`ClassifyingProcessor`,
+`ClassifyingWriter`); a validator processor (`ValidatingProcessor`) whose
+failure is a typed `ProcessorError`, never a panic or silent filter; a
+filter processor (`FilterProcessor`) using `ProcessOutcome::Filtered`; a
+peek reader (`PeekReader`); an aggregate reader (`AggregatingReader`) whose
+bound reuses `ChunkSize`; and synchronization/thread-safety wrappers
+(`SynchronizedProcessor`, `SynchronizedWriter`) that establish real mutual
+exclusion via an async-aware lock -- the one case this taxonomy permits a
+wrapper to strengthen rather than only meet. No catalog type owns
+`ItemStream` state itself; a delegate that implements `ItemStream` is
+registered independently at assembly, per the "must not hide a delegate's
+state" rule above. Multi-resource readers/writers, format-specific
+adapters, and item-listener changes remain out of scope, per issue #146.
+
+Executable evidence: `crates/oxide-batch-test/tests/item_components_basic.rs`,
+`item_components_composite.rs`, `item_components_classify.rs`,
+`item_components_decorators.rs`, `item_components_stream_composition.rs`,
+and `postgres_item_components_restart.rs`; and
+`crates/oxide-batch/tests/item_components_equivalence.rs` and
+`item_components_allocation.rs` (no `oxide-batch-test` dependency, so they
+stay in `oxide-batch`'s own suite). See
+[the M6 #146 evidence record](../project/m6-146-composition-catalog-evidence.md)
+for the full scenario inventory.
+
 ## Completion, retry, skip, and rollback
 
 Completion policies may use bounded item count, time, composite conditions, or
