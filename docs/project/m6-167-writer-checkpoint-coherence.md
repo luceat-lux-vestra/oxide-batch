@@ -1,6 +1,6 @@
 # M6 Flat-File Writer Checkpoint Coherence Correction
 
-**Issue:** #167  
+**Issue:** #167
 **PR:** #168
 
 This note is the authoritative correction for the #167 writer-concurrency defect model. It supersedes the **Third corrective pass (#167)** wording in `docs/project/m6-147-flat-file-evidence.md` where that older text describes a smaller committed value being assigned after a larger one and the checkpoint therefore regressing backward.
