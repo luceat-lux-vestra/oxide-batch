@@ -867,12 +867,20 @@ mod tests {
             .expect("writer checkpoint committed_bytes")
     }
 
-    /// Proves the physical write and the committed-count update form one
-    /// coherent, serialized transition, mirroring
-    /// `delimited::tests::concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_commit`.
-    /// Each record here is exactly one field of width 1 plus its `\n`
-    /// terminator, so every committed position this test observes is at a
-    /// `record_width + terminator` boundary, never a partial record.
+    /// A structural smoke test for the shared single-state mutex, mirroring
+    /// `delimited::tests::concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_commit`:
+    /// proves the physical write and the committed-count update happen as
+    /// one coherent, serialized transition, not two independently lockable
+    /// steps. Both writes here are equal-sized single records, so every
+    /// committed position observed lands on a record boundary by
+    /// construction -- this alone does not reproduce the historical
+    /// additive-publish defect, which required *unequal*-size writes to
+    /// expose an intermediate checkpoint that is a record boundary without
+    /// being a complete write-call prefix. That reproduction, and its
+    /// restart proof, live in
+    /// `crates/oxide-batch/tests/writer_checkpoint_coherence.rs`; see
+    /// `docs/project/m6-167-writer-checkpoint-coherence.md` for the full
+    /// account.
     #[test]
     fn concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_commit() {
         let path = temp_path("serialized");

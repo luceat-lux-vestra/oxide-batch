@@ -1142,23 +1142,28 @@ mod tests {
             .expect("writer checkpoint committed_bytes")
     }
 
-    /// Proves the physical write and the committed-count update form one
-    /// coherent, serialized transition -- not independently lockable steps a
-    /// concurrent call could interleave between, which could let a later
-    /// write's smaller (stale) committed length overwrite an earlier
-    /// write's larger, already-published one.
+    /// A structural smoke test for the shared single-state mutex: proves the
+    /// physical write and the committed-count update happen as one
+    /// coherent, serialized transition, not two independently lockable
+    /// steps a concurrent call could observe between.
     ///
     /// This holds the writer's own lock directly -- the exact lock
     /// `write()` uses for its whole write/sync/commit transition -- before
     /// a concurrent `write()` call is even spawned, deterministically
     /// guaranteeing the concurrent call cannot make *any* progress until
     /// this thread releases the lock: no sleep, no retry loop, no
-    /// probabilistic race window. Under the previous split-lock design (a
-    /// separate `committed_bytes: Arc<Mutex<u64>>` published after the file
-    /// lock was released), the two writes' publications were not tied to
-    /// their write order, so the call that wrote *first* could publish
-    /// *after* the call that wrote *second* -- silently regressing the
-    /// checkpoint below data already durably on disk.
+    /// probabilistic race window. Both writes here are the same size, so
+    /// this test does not by itself reproduce the historical defect (the
+    /// pre-#167 implementation published its committed count *additively*,
+    /// so an equal-size interleaving still converges on the correct final
+    /// total); it only establishes that the fixed implementation's write
+    /// and publish cannot be interleaved at all. The actual historical
+    /// defect -- an additive publish exposing an intermediate checkpoint
+    /// that is not a complete physical write-call prefix, using unequal
+    /// write sizes -- and its restart proof are reproduced deterministically
+    /// in `crates/oxide-batch/tests/writer_checkpoint_coherence.rs`; see
+    /// `docs/project/m6-167-writer-checkpoint-coherence.md` for the full
+    /// account.
     #[test]
     fn concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_commit() {
         let path = temp_path("serialized");
