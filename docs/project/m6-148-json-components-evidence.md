@@ -134,6 +134,68 @@ Per this pass's own scope, #147's flat-file components were not touched
 even though an analogous pattern may exist there; that is a separate
 finding for a separate pass, not folded into this one.
 
+**Third corrective pass (PR #166):** a further review found that
+`JsonLinesWriter` had the exact split-lock defect the second item of the
+first pass fixed in `JsonArrayWriter`, and required strengthening that
+first pass's own comma-decision evidence beyond a stress-only proof:
+
+- `JsonLinesWriter::write` computed the post-write byte position
+  (`candidate_bytes`) while holding the file's lock, then released that
+  lock and separately locked `committed_bytes` to publish it. The file
+  lock serialized the physical writes, but nothing tied the *order* of
+  publication to the order of the writes it described: two concurrent
+  `write()` calls' file writes are strictly ordered by the file lock, but
+  their subsequent, independently-locked publications are not, so the
+  call that wrote *first* could publish its (smaller) committed length
+  *after* the call that wrote *second* -- silently regressing the
+  restart checkpoint backward below data that was already durably on
+  disk. `JsonLinesWriterStream::open`/`update` read the same two fields
+  under the same non-atomic pairing. The fix unifies the file handle and
+  the committed byte count into one `JsonLinesWriterState` behind a
+  single `Mutex`, shared by `JsonLinesWriter` and
+  `JsonLinesWriterStream`, mirroring `JsonArrayWriter`'s existing
+  `WriterState`/`Mutex` shape from the first pass -- the physical write,
+  the `sync_data`, and the committed-count update are now one
+  transition, so no publication can land out of the order its own write
+  did.
+- Both writers' concurrency evidence previously relied on a real,
+  many-thread `Barrier` stress run: strong empirical evidence, but
+  probabilistic -- a scheduler could in principle serialize every
+  interleaving, so a passing run is not, by itself, a proof the
+  serialization is *structural*. Each writer now additionally has an
+  inline `#[cfg(test)]` unit test living inside its own module
+  (`jsonl.rs`'s `concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_commit`,
+  `json_array.rs`'s
+  `concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_comma_decision`)
+  that removes scheduling from the picture entirely: the test thread
+  locks the writer's own private state mutex directly, then spawns a
+  real background thread that calls the public `write()` API -- which is
+  thereby *guaranteed*, by `std::sync::Mutex`'s own blocking-acquire
+  semantics rather than by scheduler luck, to make no progress until the
+  test thread finishes replicating a first write under that same lock
+  and releases it. This is possible without any new production hook
+  because the test module is declared inside the same source file (the
+  established pattern already used by `crates/oxide-batch/src/shutdown.rs`),
+  giving it access to the type's private fields; no `#[cfg(test)]` or
+  production API surface was added to reach across crates. Both tests
+  were confirmed, by temporarily reintroducing a split-lock read (a
+  second, independently-lockable count read before the write lock,
+  exactly the pre-fix shape) into a scratch copy of the fixed code, to
+  fail deterministically against that shape -- the `JsonArrayWriter`
+  case reproduces the byte-for-byte `[12]` (missing comma) corruption
+  the original bug produced, on every run, not intermittently. The
+  existing 16-thread `Barrier` test in
+  `crates/oxide-batch-test/tests/item_components_json_array.rs`
+  (`concurrent_writes_to_a_fresh_array_never_lose_or_duplicate_a_comma`)
+  is kept alongside the new unit test, not replaced by it: it remains
+  the only evidence exercising the writer through its real, cross-crate
+  public API under genuine multi-thread scheduling, which the inline
+  unit test's controlled interleaving does not cover.
+
+Per this pass's own scope, #147, #149, #150, `ItemWriter`/`ItemStream`
+lifecycle, the M3 fault architecture, and the JSON item representation
+were not touched; no public API changed and no new dependency was added.
+
 ## Public component surface
 
 All new types live under `oxide_batch::item_components` (`jsonl` and
@@ -293,11 +355,14 @@ commit); shorter-than-committed is an inconsistent resource and fails
 closed (`StreamOpenError` in `FailureCategory::Invariant`). Initial
 (non-restart) execution truncates/creates the target file fresh; for the
 JSON-array writer, initial execution additionally writes the opening `[`
-immediately, as the first byte of committed state. The JSON-array writer's
-file handle and both committed counts share one `Mutex<WriterState>` (see
-the corrective-pass note above): the comma-state decision, the physical
-write, and the count update are one atomic transition, never three
-independently-locked steps.
+immediately, as the first byte of committed state. Both writers' file
+handles and committed counts each share one `Mutex`-guarded state struct
+(`JsonArrayWriter`'s `WriterState`, `JsonLinesWriter`'s
+`JsonLinesWriterState`; see the first and third corrective-pass notes
+above): the comma-state decision (array writer only), the physical write,
+and the committed-count update are one atomic transition per writer,
+never independently-locked steps whose publication order could diverge
+from their write order.
 
 **JSON-array writer close.** [`crate::ItemStream::close`] appends the
 closing `]` *only* when [`crate::StreamRuntimeOutcome::Committed`] is
@@ -420,6 +485,11 @@ dev-dependency-cycle reason #146/#147's allocation files can't.
   `item_components_json_array.rs::concurrent_writes_to_a_fresh_array_never_lose_or_duplicate_a_comma`
   complements this with the writer's *concurrent-call* correctness (see the
   corrective-pass note above): real OS threads, not sequential attempts.
+  `jsonl.rs::tests::concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_commit`
+  and `json_array.rs::tests::concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_comma_decision`
+  (see the third corrective-pass note above) add a deterministic,
+  scheduler-independent complement to both: a held lock, not thread-count
+  luck, proves the write/publish transition cannot be interleaved.
 - **E (malformed skip/fail):** `item_components_json_fault.rs`'s five tests:
   `jsonl_fail_policy_fails_the_step_with_the_expected_classification` and
   `jsonl_skip_policy_skips_the_malformed_line_and_processes_later_valid_lines`
@@ -465,7 +535,8 @@ See section G above.
 | Array restart never duplicates or omits an element | The same test's `combined == [five elements once each]` assertion |
 | Array writer resumes comma state correctly after a restart | `json_array_writer_truncates_uncommitted_tail_and_resumes_exactly_once`'s final `b"[1,2,3]"` byte-exact assertion (a doubled or missing comma, or a re-added opening bracket, would produce different bytes) and its `serde_json::from_slice` reparse |
 | Array writer never claims a complete valid JSON array before the step commits | `json_array_writer_truncates_uncommitted_tail_and_resumes_exactly_once`'s intermediate `b"[1,2"` assertion (no closing bracket) after attempt A |
-| Concurrent writer calls cannot lose or duplicate a comma (the comma decision, write, and count update are one atomic transition) | `concurrent_writes_to_a_fresh_array_never_lose_or_duplicate_a_comma`'s exact comma count, exact element count, and successful re-parse across 16 real, `Barrier`-synchronized OS threads -- reliably failed (zero commas) on every run against the pre-fix split-lock implementation |
+| Concurrent writer calls cannot lose or duplicate a comma (the comma decision, write, and count update are one atomic transition) | `concurrent_writes_to_a_fresh_array_never_lose_or_duplicate_a_comma`'s exact comma count, exact element count, and successful re-parse across 16 real, `Barrier`-synchronized OS threads -- reliably failed (zero commas) on every run against the pre-fix split-lock implementation; `json_array.rs::tests::concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_comma_decision` adds a deterministic complement (a held lock, not thread scheduling, blocks the concurrent call) that reproduces the exact `[12]` byte-for-byte corruption when the split-lock shape is reintroduced |
+| A concurrent JsonLinesWriter call can never publish a stale (regressed) committed byte count | `jsonl.rs::tests::concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_commit` locks the writer's own state mutex, spawns a real background thread through the public `write()` API, and asserts the file and the decoded `ItemStream::update()` checkpoint agree on the full, non-regressed byte length -- the background call is provably blocked, by `Mutex` semantics, until the held-lock write finishes and publishes |
 | Writer fails closed on a shorter-than-committed file | `jsonl_writer_fails_closed_when_the_file_is_shorter_than_committed`/`json_array_writer_fails_closed_when_the_file_is_shorter_than_committed`'s `BatchStatus::Failed` and unchanged-file assertions |
 | Reader raw storage is bounded and oversized input is rejected before source-sized accumulation | `json_readers_do_not_retain_memory_proportional_to_input_size` compares small/large streaming retention and reader allocation against whole-input positive controls for flat and nested oversized fixtures |
 | LF and CRLF have identical payload-bound semantics | `max_record_bytes_excludes_lf_and_crlf_terminators` accepts an exact-bound valid JSON record with both terminators; `max_record_bytes_rejects_one_extra_payload_byte_for_lf_and_crlf` rejects the same one-byte overflow |

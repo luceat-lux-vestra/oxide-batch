@@ -969,3 +969,104 @@ pub fn json_array_writer(
     let contract = StreamStateContract::new(writer_position_codec());
     Ok((writer, stream, contract))
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use std::thread;
+
+    use serde_json::json;
+
+    use super::*;
+    use crate::{ItemStream, ItemWriter, StopSource};
+
+    fn identity() -> ComponentStreamIdentity {
+        ComponentStreamIdentity::new("oxide-batch.json-array-writer-unit-test")
+            .expect("static identity is valid")
+    }
+
+    fn temp_path(name: &str) -> std::path::PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time moves forward")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "oxide-batch-148-json-array-unit-{name}-{nonce}.json"
+        ))
+    }
+
+    /// Proves the writer's comma decision, physical write, and
+    /// committed-count update form one coherent, serialized transition --
+    /// not independently lockable steps a concurrent call could interleave
+    /// between, which could make a comma decision that ignores an
+    /// already-committed prior item.
+    ///
+    /// This holds the writer's own lock directly -- the exact lock
+    /// `write()` uses for its whole comma-decide/write/commit transition --
+    /// before a concurrent `write()` call is even spawned, deterministically
+    /// guaranteeing the concurrent call cannot make *any* progress until
+    /// this thread releases the lock: no sleep, no retry loop, no
+    /// probabilistic race window. This complements
+    /// `item_components_json_array.rs::concurrent_writes_to_a_fresh_array_never_lose_or_duplicate_a_comma`'s
+    /// real-thread stress evidence with a controlled interleaving: under
+    /// the previous split-lock design (a separate `committed_items` read
+    /// before the file lock was acquired), a concurrent call could decide
+    /// "no leading comma" *before* this thread's item was actually
+    /// committed -- this technique's premise (one lock blocks the entire
+    /// decide-write-commit transition) is false for that shape, which is
+    /// exactly the gap that fix closed.
+    #[test]
+    fn concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_comma_decision() {
+        let path = temp_path("serialized");
+        let (writer, stream, _contract) = json_array_writer(&path, identity()).unwrap();
+        let writer = Arc::new(writer);
+        let (_open_stop_source, open_stop_token) = StopSource::new();
+        futures_executor::block_on(stream.open(StreamOpenContext::new(None, &open_stop_token)))
+            .unwrap();
+
+        let mut guard = writer.state.lock().unwrap_or_else(PoisonError::into_inner);
+
+        let writer_for_thread = Arc::clone(&writer);
+        let handle = thread::spawn(move || {
+            let (_stop_source, stop_token) = StopSource::new();
+            futures_executor::block_on(
+                writer_for_thread.write(&[json!(2)], WriteContext::non_transactional(&stop_token)),
+            )
+            .unwrap();
+        });
+
+        // Reproduce exactly what `write()` does for one item, under the
+        // same lock the spawned thread is blocked on (whether it has
+        // already reached that block or not -- the lock, not timing,
+        // guarantees the order below).
+        let has_items = guard.committed_items > 0;
+        if has_items {
+            guard.file.write_all(b",").unwrap();
+        }
+        let value = json!(1);
+        serde_json::to_writer(&mut guard.file, &value).unwrap();
+        guard.file.sync_data().unwrap();
+        guard.committed_bytes = guard.file.stream_position().unwrap();
+        guard.committed_items = guard.committed_items.saturating_add(1);
+        drop(guard);
+
+        handle.join().unwrap();
+
+        futures_executor::block_on(stream.close(StreamCloseContext::new(
+            &open_stop_token,
+            StreamRuntimeOutcome::Committed,
+        )))
+        .unwrap();
+
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(
+            bytes,
+            br"[1,2]".to_vec(),
+            "the concurrent write's comma decision must reflect this thread's already-committed \
+             item -- never a stale \"no items yet\" decision that would produce \"[12]\""
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+}

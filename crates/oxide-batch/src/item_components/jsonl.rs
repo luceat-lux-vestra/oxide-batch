@@ -552,6 +552,15 @@ where
     Ok(jsonl_reader::<I, File>(file, format, identity))
 }
 
+/// The file and committed byte count a [`JsonLinesWriter`]/
+/// [`JsonLinesWriterStream`] pair shares under one lock, so a physical
+/// write and the resulting commit-count update can never be observed
+/// half-applied or out of order.
+struct JsonLinesWriterState {
+    file: File,
+    committed_bytes: u64,
+}
+
 /// A restartable [`crate::ItemWriter`] over a local JSON Lines file.
 ///
 /// # Contract
@@ -565,8 +574,11 @@ where
 ///   uncommitted bytes truncated on restart; a shorter-than-committed file
 ///   fails closed).
 /// - **Ordering**: writes items in the order supplied.
-/// - **Thread safety**: `Send + Sync`; internal `Mutex` serializes the
-///   shared file handle.
+/// - **Thread safety**: `Send + Sync`; a single internal `Mutex` guards the
+///   file handle *and* the committed byte count together, so the physical
+///   write and the commit-count update form one coherent, serialized
+///   transition -- a concurrent call can never publish a stale committed
+///   length after a later call's write has already landed.
 /// - **Reentrancy**: not reentrant against the same path from a second
 ///   concurrent attempt.
 /// - **Transaction/delivery**: does not enlist; file bytes are outside the
@@ -588,9 +600,8 @@ where
 /// - **Evidence**: `crates/oxide-batch-test/tests/item_components_jsonl.rs`,
 ///   `crates/oxide-batch-test/tests/postgres_json_restart.rs`.
 pub struct JsonLinesWriter {
-    file: Arc<Mutex<File>>,
+    state: Arc<Mutex<JsonLinesWriterState>>,
     terminator: JsonLinesTerminator,
-    committed_bytes: Arc<Mutex<u64>>,
 }
 
 impl<I> crate::ItemWriter<I> for JsonLinesWriter
@@ -605,30 +616,32 @@ where
         if context.stop_token().is_stop_requested() {
             return Ok(WriteOutcome::Stopped);
         }
-        let mut guard = self.file.lock().unwrap_or_else(PoisonError::into_inner);
+        // The physical write and the committed-count update both happen
+        // under this one lock: no other call can publish a committed byte
+        // count until this entire transition -- write, sync, and commit --
+        // completes.
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         for item in items {
             let value: Value = item.clone().into();
-            serde_json::to_writer(&mut *guard, &value).map_err(|_| WriterError::new())?;
-            guard
+            serde_json::to_writer(&mut state.file, &value).map_err(|_| WriterError::new())?;
+            state
+                .file
                 .write_all(self.terminator.bytes())
                 .map_err(|_| WriterError::new())?;
         }
-        guard.sync_data().map_err(|_| WriterError::new())?;
-        let candidate_bytes = guard.stream_position().map_err(|_| WriterError::new())?;
-        drop(guard);
-        let mut committed = self
-            .committed_bytes
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        *committed = candidate_bytes;
+        state.file.sync_data().map_err(|_| WriterError::new())?;
+        let candidate_bytes = state
+            .file
+            .stream_position()
+            .map_err(|_| WriterError::new())?;
+        state.committed_bytes = candidate_bytes;
         Ok(WriteOutcome::Written)
     }
 }
 
 /// The [`crate::ItemStream`] half of a [`JsonLinesWriter`].
 pub struct JsonLinesWriterStream {
-    file: Arc<Mutex<File>>,
-    committed_bytes: Arc<Mutex<u64>>,
+    state: Arc<Mutex<JsonLinesWriterState>>,
     namespace: ComponentStreamIdentity,
 }
 
@@ -638,6 +651,7 @@ impl crate::ItemStream for JsonLinesWriterStream {
         context: StreamOpenContext<'_>,
     ) -> Result<StreamOpenOutcome, StreamOpenError> {
         let codec = writer_position_codec();
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let (target, outcome) = if let Some(envelope) = context.inherited_state() {
             let restored = envelope
                 .decode::<u64>(&codec)
@@ -646,21 +660,25 @@ impl crate::ItemStream for JsonLinesWriterStream {
         } else {
             (0, StreamOpenOutcome::Initial)
         };
-        let mut file = self.file.lock().unwrap_or_else(PoisonError::into_inner);
-        let actual_len = file.metadata().map_err(|_| StreamOpenError::new())?.len();
+        let actual_len = state
+            .file
+            .metadata()
+            .map_err(|_| StreamOpenError::new())?
+            .len();
         if actual_len < target {
             return Err(StreamOpenError::with_category(FailureCategory::Invariant));
         }
         if actual_len != target {
-            file.set_len(target).map_err(|_| StreamOpenError::new())?;
+            state
+                .file
+                .set_len(target)
+                .map_err(|_| StreamOpenError::new())?;
         }
-        file.seek(SeekFrom::Start(target))
+        state
+            .file
+            .seek(SeekFrom::Start(target))
             .map_err(|_| StreamOpenError::new())?;
-        drop(file);
-        *self
-            .committed_bytes
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = target;
+        state.committed_bytes = target;
         Ok(outcome)
     }
 
@@ -669,10 +687,9 @@ impl crate::ItemStream for JsonLinesWriterStream {
         _context: StreamUpdateContext<'_>,
     ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
         let codec = writer_position_codec();
-        let current = *self
-            .committed_bytes
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let current = state.committed_bytes;
+        drop(state);
         ComponentStateEnvelope::encode(
             self.namespace.clone(),
             &current,
@@ -707,18 +724,131 @@ pub fn jsonl_writer(
         .read(true)
         .write(true)
         .open(path)?;
-    let file = Arc::new(Mutex::new(file));
-    let committed_bytes = Arc::new(Mutex::new(0));
+    let state = Arc::new(Mutex::new(JsonLinesWriterState {
+        file,
+        committed_bytes: 0,
+    }));
     let writer = JsonLinesWriter {
-        file: Arc::clone(&file),
+        state: Arc::clone(&state),
         terminator: format.terminator,
-        committed_bytes: Arc::clone(&committed_bytes),
     };
     let stream = JsonLinesWriterStream {
-        file,
-        committed_bytes,
+        state,
         namespace: identity,
     };
     let contract = StreamStateContract::new(writer_position_codec());
     Ok((writer, stream, contract))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use std::thread;
+
+    use serde_json::json;
+
+    use super::*;
+    use crate::{ComponentStatePayload, ItemStream, ItemWriter, StopSource};
+
+    fn identity() -> ComponentStreamIdentity {
+        ComponentStreamIdentity::new("oxide-batch.jsonl-writer-unit-test")
+            .expect("static identity is valid")
+    }
+
+    fn temp_path(name: &str) -> std::path::PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time moves forward")
+            .as_nanos();
+        std::env::temp_dir().join(format!("oxide-batch-148-jsonl-unit-{name}-{nonce}.jsonl"))
+    }
+
+    fn committed_byte(envelope: &ComponentStateEnvelope) -> u64 {
+        let ComponentStatePayload::Inline(payload) = envelope.payload().unwrap() else {
+            panic!("writer checkpoints must use an inline payload");
+        };
+        serde_json::from_slice::<Value>(&payload)
+            .unwrap()
+            .get("committed_bytes")
+            .and_then(Value::as_u64)
+            .expect("writer checkpoint committed_bytes")
+    }
+
+    /// Proves the writer's physical write and its committed-byte update
+    /// form one coherent, serialized transition -- not two independently
+    /// lockable steps a concurrent call could interleave between, which
+    /// could publish a stale (regressed) committed length after a later
+    /// call's bytes had already landed in the file.
+    ///
+    /// This holds the writer's own lock directly -- the exact lock
+    /// `write()` uses for its whole write-sync-commit transition -- before
+    /// a concurrent `write()` call is even spawned. That deterministically
+    /// guarantees the concurrent call cannot make *any* progress (not the
+    /// physical write, not the commit) until this thread releases the
+    /// lock, regardless of thread scheduling: no sleep, no retry loop, no
+    /// probabilistic race window. Under the previous split-lock design
+    /// (separate `Arc<Mutex<File>>` and `Arc<Mutex<u64>>` fields), holding
+    /// only the file's lock would *not* have blocked a concurrent call's
+    /// separately-locked committed-bytes update -- this technique's
+    /// premise (one lock blocks the *entire* operation) is false for that
+    /// shape, which is exactly the gap this fix closes.
+    #[test]
+    fn concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_commit() {
+        let path = temp_path("serialized");
+        let (writer, stream, _contract) =
+            jsonl_writer(&path, JsonLinesFormat::new(), identity()).unwrap();
+        let writer = Arc::new(writer);
+        let (_open_stop_source, open_stop_token) = StopSource::new();
+        futures_executor::block_on(stream.open(StreamOpenContext::new(None, &open_stop_token)))
+            .unwrap();
+
+        let mut guard = writer.state.lock().unwrap_or_else(PoisonError::into_inner);
+
+        let writer_for_thread = Arc::clone(&writer);
+        let handle = thread::spawn(move || {
+            let (_stop_source, stop_token) = StopSource::new();
+            futures_executor::block_on(
+                writer_for_thread.write(&[json!(2)], WriteContext::non_transactional(&stop_token)),
+            )
+            .unwrap();
+        });
+
+        // Reproduce exactly what `write()` does for one item, under the
+        // same lock the spawned thread is blocked on (whether it has
+        // already reached that block or not -- the lock, not timing,
+        // guarantees the order below).
+        let value = json!(1);
+        serde_json::to_writer(&mut guard.file, &value).unwrap();
+        guard
+            .file
+            .write_all(JsonLinesTerminator::Lf.bytes())
+            .unwrap();
+        guard.file.sync_data().unwrap();
+        guard.committed_bytes = guard.file.stream_position().unwrap();
+        drop(guard);
+
+        handle.join().unwrap();
+
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(
+            bytes,
+            b"1\n2\n".to_vec(),
+            "the concurrent write must be fully serialized after this thread's own write, never \
+             interleaved or reordered"
+        );
+
+        let envelope = futures_executor::block_on(
+            stream.update(crate::StreamUpdateContext::new(&open_stop_token)),
+        )
+        .unwrap();
+        assert_eq!(
+            committed_byte(&envelope),
+            bytes.len() as u64,
+            "the committed checkpoint must exactly match the real file length -- never a stale \
+             value from whichever call happened to publish its commit last"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
 }
