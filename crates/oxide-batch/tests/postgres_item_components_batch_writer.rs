@@ -1,17 +1,21 @@
 //! #149 evidence: `PostgresBatchWriter` enlistment, bounded batching,
-//! rollback, and disconnect-before-commit behavior against a real
-//! `PostgreSQL` chunk transaction.
+//! rollback, and unknown-commit behavior against a real `PostgreSQL` chunk
+//! transaction.
 //!
 //! Mirrors `postgres_repository.rs`'s `launch_postgres_chunk` pattern (full
 //! `ChunkJob`/`JobLauncher` path) so this writer is exercised the same way
 //! `EnlistedWriter` already is there, substituting [`PostgresBatchWriter`]
-//! for that test-local writer. Genuine commit-response-ambiguity
-//! (`ChunkTransactionError::CommitOutcomeUnknown`) is a property of the
-//! shared `commit_postgres_connection` helper this writer never touches, and
-//! is already proven by
-//! `postgres_repository.rs::disconnect_during_commit_never_guesses_outcome`;
-//! this file proves this writer composes correctly with that machinery, not
-//! that the machinery itself is correct.
+//! for that test-local writer.
+//!
+//! `commit_ambiguity_after_writer_statements_already_executed_is_never_guessed`
+//! proves genuine commit-response ambiguity
+//! (`ChunkTransactionError::CommitOutcomeUnknown`) with this writer's own
+//! statements already durably applied *within* the still-open transaction --
+//! not merely composing with the machinery `postgres_repository.rs::disconnect_during_commit_never_guesses_outcome`
+//! already proves for a connection killed *before* any commit-phase
+//! statement runs. It synchronizes deterministically (a `PostgreSQL`
+//! deferred constraint trigger that sleeps during `COMMIT` itself, not a
+//! sleep/retry race) rather than guessing at timing.
 //!
 //! Requires `OXIDEBATCH_POSTGRES_TEST_URL`; skips (not fails) otherwise.
 
@@ -42,6 +46,7 @@ use oxide_batch::{
     ReadContext, ReadOutcome, ReaderError, SequentialIdGenerator, StateLimits, StateSchemaId,
     StateSchemaVersion, StepName, StopSource, TlsMode, WriteContext, WriteOutcome,
 };
+use sqlx::AssertSqlSafe;
 use sqlx::postgres::PgPoolOptions;
 
 #[derive(Clone, Copy)]
@@ -585,4 +590,180 @@ async fn create_started_chunk_scope(
         .await?;
     start.commit().await?;
     Ok(ChunkTransactionContext::new(job.id(), step.id()))
+}
+
+/// Proves genuine commit-response ambiguity with this writer's own
+/// statements already durably applied *within* the still-open transaction --
+/// the deeper fault window `disconnect_before_commit_leaves_writer_statements_uncommitted`
+/// cannot reach (that test kills the connection before *any* commit-phase
+/// statement runs, which the production code correctly classifies as a
+/// known `NotCommitted`, not an ambiguous outcome).
+///
+/// Synchronization is deterministic, not a sleep/retry race: a `PostgreSQL`
+/// `DEFERRABLE INITIALLY DEFERRED` constraint trigger on this test's own
+/// dedicated output table calls `pg_sleep(0.5)`. Deferred triggers run
+/// during the enclosing transaction's `COMMIT` itself (after the writer's
+/// `INSERT` has already completed), so for a full half second after
+/// `commit()` sends `"COMMIT"`, `pg_stat_activity` reliably shows this
+/// backend `state = 'active'` with `query = 'COMMIT'` -- a wide, dependable
+/// window, not a race against network latency. A concurrently polling
+/// admin connection terminates that exact backend once it observes this
+/// state, and `tokio::join!` (not `tokio::spawn`, since the borrowed
+/// `ChunkTransaction` is not `'static`) drives the commit future and the
+/// polling future concurrently on one task -- both are I/O-bound and yield
+/// at their own `.await` points, so they genuinely interleave.
+#[test]
+fn commit_ambiguity_after_writer_statements_already_executed_is_never_guessed()
+-> Result<(), Box<dyn Error>> {
+    let Some(runtime_url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let Some(admin_url) = admin_url() else {
+        eprintln!("skipped: no admin URL available");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        const JOB: &str = "postgres_149_unknown_commit_after_statements";
+        const OUTPUT_TABLE: &str = "oxide_batch_business.batch_writer_deferred_commit_output";
+
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&runtime_url)
+            .await?;
+        sqlx::query("CREATE SCHEMA IF NOT EXISTS oxide_batch_business")
+            .execute(&pool)
+            .await?;
+        sqlx::query(AssertSqlSafe(format!(
+            "CREATE TABLE IF NOT EXISTS {OUTPUT_TABLE} (\
+             job_name text NOT NULL, item bigint NOT NULL, PRIMARY KEY (job_name, item))"
+        )))
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "CREATE OR REPLACE FUNCTION \
+             oxide_batch_business.postgres_149_delay_commit() RETURNS trigger AS \
+             $body$ BEGIN PERFORM pg_sleep(0.5); RETURN NULL; END; $body$ LANGUAGE plpgsql",
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query(AssertSqlSafe(format!(
+            "DROP TRIGGER IF EXISTS postgres_149_delay_commit_trigger ON {OUTPUT_TABLE}"
+        )))
+        .execute(&pool)
+        .await?;
+        sqlx::query(AssertSqlSafe(format!(
+            "CREATE CONSTRAINT TRIGGER postgres_149_delay_commit_trigger \
+             AFTER INSERT ON {OUTPUT_TABLE} DEFERRABLE INITIALLY DEFERRED \
+             FOR EACH ROW EXECUTE FUNCTION oxide_batch_business.postgres_149_delay_commit()"
+        )))
+        .execute(&pool)
+        .await?;
+        sqlx::query(AssertSqlSafe(format!(
+            "DELETE FROM {OUTPUT_TABLE} WHERE job_name = $1"
+        )))
+        .bind(JOB)
+        .execute(&pool)
+        .await?;
+        pool.close().await;
+        remove_job_rows(&runtime_url, JOB).await?;
+
+        let repository = PostgresJobRepository::connect(
+            plaintext_config(runtime_url.clone())?,
+            Arc::new(FixedClock(UNIX_EPOCH + Duration::from_mins(15))),
+        )
+        .await?;
+        let scope = create_started_chunk_scope(&repository, JOB).await?;
+        let manager = postgres_chunk_transactions(&repository);
+        let mut transaction = manager.begin_for(scope).await?;
+        {
+            let business = transaction
+                .business_transaction()
+                .ok_or("expected an enlisted business transaction")?;
+            let writer = postgres_batch_writer(
+                format!("INSERT INTO {OUTPUT_TABLE} (job_name, item) VALUES"),
+                None::<&str>,
+                2,
+                PostgresBatchMode::PerRowStatements,
+                move |item: &i64| vec![BusinessValue::text(JOB), BusinessValue::i64(*item)],
+            )
+            .unwrap();
+            let (_source, token) = StopSource::new();
+            let context = WriteContext::enlisted(&token, business);
+            let outcome = oxide_batch::ItemWriter::write(&writer, &[1_i64, 2], context).await?;
+            assert_eq!(outcome, WriteOutcome::Written);
+        }
+
+        let counts = ChunkCounts::new(
+            oxide_batch::ChunkCount::new(2),
+            oxide_batch::ChunkCount::new(2),
+            oxide_batch::ChunkCount::new(2),
+            oxide_batch::ChunkCount::ZERO,
+        )?;
+
+        let commit_future = transaction.commit(counts, oxide_batch::ChunkFaultProgress::NONE);
+        let terminate_future = async {
+            let admin = PgPoolOptions::new()
+                .max_connections(1)
+                .connect(&admin_url)
+                .await?;
+            let mut terminated = false;
+            for _ in 0..300 {
+                let pid: Option<i32> = sqlx::query_scalar(
+                    "SELECT pid FROM pg_stat_activity WHERE application_name = 'oxide-batch' \
+                     AND state = 'active' AND query = 'COMMIT' LIMIT 1",
+                )
+                .fetch_optional(&admin)
+                .await?;
+                if let Some(pid) = pid {
+                    sqlx::query("SELECT pg_terminate_backend($1)")
+                        .bind(pid)
+                        .execute(&admin)
+                        .await?;
+                    terminated = true;
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            admin.close().await;
+            Ok::<bool, sqlx::Error>(terminated)
+        };
+
+        let (commit_result, terminate_result) = tokio::join!(commit_future, terminate_future);
+        assert!(
+            terminate_result?,
+            "never observed the backend executing COMMIT within the deferred-trigger window"
+        );
+        assert_eq!(
+            commit_result.err(),
+            Some(ChunkTransactionError::CommitOutcomeUnknown)
+        );
+
+        // No partial/duplicate write survives an outcome the code correctly
+        // refuses to guess at: the deferred trigger's sleep was interrupted
+        // mid-COMMIT, so PostgreSQL rolls the whole transaction back
+        // regardless of how far the trigger itself got.
+        let admin = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&admin_url)
+            .await?;
+        let rows: Vec<i64> = sqlx::query_scalar(AssertSqlSafe(format!(
+            "SELECT item FROM {OUTPUT_TABLE} WHERE job_name = $1 ORDER BY item"
+        )))
+        .bind(JOB)
+        .fetch_all(&admin)
+        .await?;
+        assert!(
+            rows.is_empty(),
+            "an ambiguous commit outcome must never leave a partially-visible write"
+        );
+        admin.close().await;
+
+        repository.close().await?;
+        remove_job_rows(&runtime_url, JOB).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
 }

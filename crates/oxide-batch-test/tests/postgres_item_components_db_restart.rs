@@ -1,16 +1,24 @@
-//! #149 crash/restart evidence for the `PostgreSQL` cursor reader, keyset
-//! paging reader, and same-resource enlisted SQL batch writer, through the
-//! real production restart path (`TestJob`/`JobLauncher`) and real durable
+//! #149 restart evidence for the `PostgreSQL` cursor reader, keyset paging
+//! reader, and same-resource enlisted SQL batch writer, through the real
+//! production restart path (`TestJob`/`JobLauncher`) and real durable
 //! committed state.
 //!
 //! Mirrors `postgres_json_restart.rs`'s pattern exactly: `PostgresFixture`
 //! for durable committed state, `TestJob` for the real launch path, and
 //! `oxide_batch_test::inject` for distinguishable stop/commit-failure
-//! injection. Unlike the file-based #148 components that file evidences,
-//! these components' actual business data lives in `PostgreSQL` too, so this
-//! file also owns a small dedicated business schema/table set up directly
-//! through `sqlx` (kept to this test file only -- `PostgresFixture`'s public
-//! surface stays free of any raw database-driver type).
+//! injection -- an in-process, cooperative stop signaled between the current
+//! chunk and the next, not an OS-level process kill. This file proves
+//! *restart correctness*: a second attempt resumes exactly where the first
+//! one's last committed chunk left off. It does **not** claim to prove
+//! survival of an actual abrupt process termination; that is a distinct,
+//! narrower claim proven separately by
+//! `postgres_item_components_crash_recovery.rs`, which re-execs the real
+//! test binary and kills it with `std::process::exit` mid-chunk. Unlike the
+//! file-based #148 components that file evidences, these components' actual
+//! business data lives in `PostgreSQL` too, so this file also owns a small
+//! dedicated business schema/table set up directly through `sqlx` (kept to
+//! this test file only -- `PostgresFixture`'s public surface stays free of
+//! any raw database-driver type).
 //!
 //! Requires `OXIDEBATCH_POSTGRES_TEST_URL`; skips (not fails) otherwise, per
 //! this repository's `PostgreSQL` evidence convention.

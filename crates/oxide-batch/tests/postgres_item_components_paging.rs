@@ -8,14 +8,15 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 
 use std::error::Error;
+use std::time::Duration;
 
 use oxide_batch::item_components::{
     KeysetColumn, PostgresPagingFormat, PostgresRow, postgres_paging_reader,
 };
 use oxide_batch::{
-    ComponentStreamIdentity, ItemReader, ItemStream, PostgresConfig, PostgresConfigError,
-    ReadContext, ReadOutcome, StopSource, StreamCloseContext, StreamOpenContext,
-    StreamRuntimeOutcome, StreamUpdateContext, TlsMode,
+    ComponentStreamIdentity, FailureCategory, ItemReader, ItemStream, PostgresConfig,
+    PostgresConfigError, ReadContext, ReadOutcome, StopSource, StreamCloseContext,
+    StreamOpenContext, StreamRuntimeOutcome, StreamUpdateContext, TlsMode,
 };
 use sqlx::postgres::PgPoolOptions;
 
@@ -92,6 +93,16 @@ fn base_query(scope: &str) -> String {
     format!(
         "SELECT sort_key, id FROM oxide_batch_business.postgres_component_rows \
          WHERE scope = '{scope}'"
+    )
+}
+
+/// A `base_query` whose row generation stalls, so a short server-side
+/// `statement_timeout` on the reader's own connection has something real to
+/// cancel. `pg_sleep`'s `void` result is never selected by `map_row`.
+fn slow_base_query(scope: &str) -> String {
+    format!(
+        "SELECT pg_sleep(2), sort_key, id \
+         FROM oxide_batch_business.postgres_component_rows WHERE scope = '{scope}'"
     )
 }
 
@@ -391,6 +402,51 @@ fn no_server_side_resource_is_held_between_pages() -> Result<(), Box<dyn Error>>
                 StreamRuntimeOutcome::Committed,
             ))
             .await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
+
+/// `PostgresConfig`'s server-side timeout semantics (#149 item #15) must
+/// reach the paging reader's own business-data connection, not just the
+/// framework's metadata connection -- `connect_pool`'s `after_connect` hook
+/// is what wires this up (`repository/postgres.rs`). A `statement_timeout`
+/// far shorter than a deliberately slow `base_query` proves the setting is
+/// live on this reader's connection specifically: `57014` (`query_canceled`)
+/// classifies as `FailureCategory::Cancelled` via `classify_pg_error`.
+#[test]
+fn statement_timeout_is_enforced_on_the_paging_business_connection() -> Result<(), Box<dyn Error>> {
+    let Some(url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let scope = "paging_statement_timeout";
+        prepare_scope(&url, scope, &[("k", 1)]).await?;
+
+        let config = plaintext_config(url.clone())?
+            .with_lock_timeout(Duration::from_millis(50))?
+            .with_statement_timeout(Duration::from_millis(200))?;
+        let (mut reader, stream, _contract) = postgres_paging_reader(
+            config,
+            slow_base_query(scope),
+            key_columns(),
+            PostgresPagingFormat::new().with_page_size(4),
+            map_row,
+            identity("statement_timeout"),
+        )?;
+        let (_open_source, open_token) = stop_source_and_token();
+        stream
+            .open(StreamOpenContext::new(None, &open_token))
+            .await?;
+        let (_read_source, read_token) = stop_source_and_token();
+        let error = reader.read(ReadContext::new(&read_token)).await.expect_err(
+            "a 200ms statement_timeout must cancel a page fetch that stalls for 2s on this \
+                 reader's own connection",
+        );
+        assert_eq!(error.category(), FailureCategory::Cancelled);
         Ok::<(), Box<dyn Error>>(())
     })
 }

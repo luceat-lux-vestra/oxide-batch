@@ -9,6 +9,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 
 use std::error::Error;
+use std::time::Duration;
 
 use oxide_batch::item_components::{
     KeysetColumn, PostgresComponentConfigError, PostgresCursorFormat, PostgresRow,
@@ -111,6 +112,16 @@ fn base_query(scope: &str) -> String {
     format!(
         "SELECT sort_key, id, payload FROM oxide_batch_business.postgres_component_rows \
          WHERE scope = '{scope}'"
+    )
+}
+
+/// A `base_query` whose row generation stalls, so a short server-side
+/// `statement_timeout` on the reader's own connection has something real to
+/// cancel. `pg_sleep`'s `void` result is never selected by `map_row`.
+fn slow_base_query(scope: &str) -> String {
+    format!(
+        "SELECT pg_sleep(2), sort_key, id, payload \
+         FROM oxide_batch_business.postgres_component_rows WHERE scope = '{scope}'"
     )
 }
 
@@ -493,4 +504,49 @@ fn empty_key_columns_are_rejected_at_construction() -> Result<(), Box<dyn Error>
         Some(PostgresComponentConfigError::EmptyKeyColumns)
     );
     Ok(())
+}
+
+/// `PostgresConfig`'s server-side timeout semantics (#149 item #15) must
+/// reach the cursor reader's own business-data connection, not just the
+/// framework's metadata connection -- `connect_pool`'s `after_connect` hook
+/// is what wires this up (`repository/postgres.rs`). A `statement_timeout`
+/// far shorter than a deliberately slow `base_query` proves the setting is
+/// live on this reader's connection specifically: `57014` (`query_canceled`)
+/// classifies as `FailureCategory::Cancelled` via `classify_pg_error`.
+#[test]
+fn statement_timeout_is_enforced_on_the_cursor_business_connection() -> Result<(), Box<dyn Error>> {
+    let Some(url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let scope = "cursor_statement_timeout";
+        prepare_scope(&url, scope, &[("k", 1, "payload-1")]).await?;
+
+        let config = plaintext_config(url.clone())?
+            .with_lock_timeout(Duration::from_millis(50))?
+            .with_statement_timeout(Duration::from_millis(200))?;
+        let (mut reader, stream, _contract) = postgres_cursor_reader(
+            config,
+            slow_base_query(scope),
+            key_columns(),
+            PostgresCursorFormat::new().with_fetch_size(4),
+            map_row,
+            identity("statement_timeout"),
+        )?;
+        let (_open_source, open_token) = stop_source_and_token();
+        stream
+            .open(StreamOpenContext::new(None, &open_token))
+            .await?;
+        let (_read_source, read_token) = stop_source_and_token();
+        let error = reader.read(ReadContext::new(&read_token)).await.expect_err(
+            "a 200ms statement_timeout must cancel a FETCH that stalls for 2s on this \
+                 reader's own connection",
+        );
+        assert_eq!(error.category(), FailureCategory::Cancelled);
+        Ok::<(), Box<dyn Error>>(())
+    })
 }
