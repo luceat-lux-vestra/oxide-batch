@@ -42,8 +42,7 @@ fn temp_path(name: &str, extension: &str) -> std::path::PathBuf {
 }
 
 fn identity(name: &str) -> ComponentStreamIdentity {
-    ComponentStreamIdentity::new(format!("oxide-batch-167.{name}"))
-        .expect("test identity is valid")
+    ComponentStreamIdentity::new(format!("oxide-batch-167.{name}")).expect("test identity is valid")
 }
 
 fn committed_byte(envelope: &ComponentStateEnvelope) -> u64 {
@@ -195,10 +194,8 @@ fn delimited_update_racing_unequal_writes_observes_only_complete_write_prefixes(
         let (_source, stop) = StopSource::new();
         let items = [DelimitedRecord::new(vec!["AAAA".to_owned()])];
         start_a.wait();
-        futures_executor::block_on(
-            writer_a.write(&items, WriteContext::non_transactional(&stop)),
-        )
-        .unwrap();
+        futures_executor::block_on(writer_a.write(&items, WriteContext::non_transactional(&stop)))
+            .unwrap();
     });
 
     let writer_b = Arc::clone(&writer);
@@ -207,10 +204,8 @@ fn delimited_update_racing_unequal_writes_observes_only_complete_write_prefixes(
         let (_source, stop) = StopSource::new();
         let items = [DelimitedRecord::new(vec!["B".to_owned()])];
         start_b.wait();
-        futures_executor::block_on(
-            writer_b.write(&items, WriteContext::non_transactional(&stop)),
-        )
-        .unwrap();
+        futures_executor::block_on(writer_b.write(&items, WriteContext::non_transactional(&stop)))
+            .unwrap();
     });
 
     let stream_for_update = Arc::clone(&stream);
@@ -233,7 +228,9 @@ fn delimited_update_racing_unequal_writes_observes_only_complete_write_prefixes(
     } else if final_bytes == b"B\nAAAA\n" {
         2_u64
     } else {
-        panic!("both public writes must land exactly once as whole serialized batches: {final_bytes:?}");
+        panic!(
+            "both public writes must land exactly once as whole serialized batches: {final_bytes:?}"
+        );
     };
 
     let observed = committed_byte(&envelope);
@@ -253,10 +250,9 @@ fn delimited_update_racing_unequal_writes_observes_only_complete_write_prefixes(
     let (_restart_writer, restart_stream, _contract) =
         delimited_writer(&path, DelimitedDialect::csv(), namespace).unwrap();
     let (_restart_source, restart_stop) = StopSource::new();
-    futures_executor::block_on(restart_stream.open(StreamOpenContext::new(
-        Some(&envelope),
-        &restart_stop,
-    )))
+    futures_executor::block_on(
+        restart_stream.open(StreamOpenContext::new(Some(&envelope), &restart_stop)),
+    )
     .unwrap();
 
     let restarted = std::fs::read(&path).unwrap();
@@ -300,10 +296,8 @@ fn fixed_width_update_racing_unequal_batches_observes_only_complete_write_prefix
             FixedWidthRecord::new(vec!["3".to_owned()]),
         ];
         start_a.wait();
-        futures_executor::block_on(
-            writer_a.write(&items, WriteContext::non_transactional(&stop)),
-        )
-        .unwrap();
+        futures_executor::block_on(writer_a.write(&items, WriteContext::non_transactional(&stop)))
+            .unwrap();
     });
 
     let writer_b = Arc::clone(&writer);
@@ -312,10 +306,8 @@ fn fixed_width_update_racing_unequal_batches_observes_only_complete_write_prefix
         let (_source, stop) = StopSource::new();
         let items = [FixedWidthRecord::new(vec!["4".to_owned()])];
         start_b.wait();
-        futures_executor::block_on(
-            writer_b.write(&items, WriteContext::non_transactional(&stop)),
-        )
-        .unwrap();
+        futures_executor::block_on(writer_b.write(&items, WriteContext::non_transactional(&stop)))
+            .unwrap();
     });
 
     let stream_for_update = Arc::clone(&stream);
@@ -338,7 +330,9 @@ fn fixed_width_update_racing_unequal_batches_observes_only_complete_write_prefix
     } else if final_bytes == b"4\n1\n2\n3\n" {
         2_u64
     } else {
-        panic!("both public fixed-width writes must land exactly once as whole serialized batches: {final_bytes:?}");
+        panic!(
+            "both public fixed-width writes must land exactly once as whole serialized batches: {final_bytes:?}"
+        );
     };
 
     let observed = committed_byte(&envelope);
@@ -358,10 +352,9 @@ fn fixed_width_update_racing_unequal_batches_observes_only_complete_write_prefix
     let (_restart_writer, restart_stream, _contract) =
         fixed_width_writer(&path, layout, namespace).unwrap();
     let (_restart_source, restart_stop) = StopSource::new();
-    futures_executor::block_on(restart_stream.open(StreamOpenContext::new(
-        Some(&envelope),
-        &restart_stop,
-    )))
+    futures_executor::block_on(
+        restart_stream.open(StreamOpenContext::new(Some(&envelope), &restart_stop)),
+    )
     .unwrap();
 
     let restarted = std::fs::read(&path).unwrap();
