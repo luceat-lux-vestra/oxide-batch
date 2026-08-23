@@ -385,6 +385,20 @@ impl PostgresConfig {
     /// business-data pool (e.g. an `item_components::postgres_cursor`/
     /// `postgres_paging` reader), not a metadata repository connection.
     ///
+    /// Every physical connection this pool ever hands out has this
+    /// configuration's `statement_timeout`, `lock_timeout`, and
+    /// `idle_in_transaction_session_timeout` applied once, session-wide, via
+    /// `PgPoolOptions::after_connect` -- the same three settings
+    /// [`configure_transaction`] applies per-`BEGIN` for the metadata
+    /// repository's own connections, just at session scope instead of
+    /// transaction-local scope (`set_config(..., false)` instead of
+    /// `set_config(..., true)`), since a business-data pool has no single
+    /// `begin_connection` chokepoint to hook per-transaction and reconnects
+    /// are rare relative to per-page/per-fetch statement volume. This is
+    /// what bounds a cursor reader's held transaction and a paging reader's
+    /// individual page statements alike, rather than leaving either as an
+    /// unbounded resource hazard.
+    ///
     /// `pub(crate)` only: never a public constructor, so `sqlx::PgPool`
     /// itself never crosses the public facade boundary (see
     /// `docs/api/design-guidelines.md`'s disclosure gate) -- every public
@@ -393,6 +407,12 @@ impl PostgresConfig {
     pub(crate) async fn connect_pool(&self) -> Result<PgPool, PostgresPoolError> {
         self.validate().map_err(PostgresPoolError::Config)?;
         let options = self.connect_options().map_err(PostgresPoolError::Config)?;
+        let statement_timeout_ms =
+            duration_millis(self.statement_timeout).map_err(|_| PostgresPoolError::Connect)?;
+        let lock_timeout_ms =
+            duration_millis(self.lock_timeout).map_err(|_| PostgresPoolError::Connect)?;
+        let idle_transaction_timeout_ms = duration_millis(self.idle_transaction_timeout)
+            .map_err(|_| PostgresPoolError::Connect)?;
         tokio::time::timeout(
             self.connect_timeout,
             PgPoolOptions::new()
@@ -400,6 +420,32 @@ impl PostgresConfig {
                 .acquire_timeout(self.acquire_timeout)
                 .idle_timeout(Some(self.connection_idle_timeout))
                 .max_lifetime(Some(self.connection_max_lifetime))
+                // Session-level (not transaction-local): a business-data pool
+                // has no equivalent of the metadata repository's per-`BEGIN`
+                // `configure_transaction` call, so every physical connection
+                // this pool ever hands out gets these three protections once,
+                // for its whole pooled lifetime -- covering both a cursor
+                // reader's single held transaction and a paging reader's many
+                // independent statements over the same pool.
+                .after_connect(move |connection, _meta| {
+                    Box::pin(async move {
+                        for (name, value) in [
+                            ("statement_timeout", statement_timeout_ms),
+                            ("lock_timeout", lock_timeout_ms),
+                            (
+                                "idle_in_transaction_session_timeout",
+                                idle_transaction_timeout_ms,
+                            ),
+                        ] {
+                            sqlx::query("SELECT set_config($1, $2, false)")
+                                .bind(name)
+                                .bind(value.to_string())
+                                .execute(&mut *connection)
+                                .await?;
+                        }
+                        Ok(())
+                    })
+                })
                 .connect_with(options),
         )
         .await

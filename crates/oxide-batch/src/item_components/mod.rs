@@ -96,7 +96,9 @@ pub use jsonl::{
 };
 pub use peek::{PeekOutcome, PeekReader};
 #[cfg(feature = "postgres")]
-pub use postgres_batch::{PostgresBatchMode, PostgresBatchWriter, postgres_batch_writer};
+pub use postgres_batch::{
+    POSTGRESQL_MAX_BIND_PARAMETERS, PostgresBatchMode, PostgresBatchWriter, postgres_batch_writer,
+};
 #[cfg(feature = "postgres")]
 pub use postgres_cursor::{
     PostgresCursorFormat, PostgresCursorReader, PostgresCursorReaderStream, postgres_cursor_reader,

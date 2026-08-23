@@ -27,6 +27,12 @@ use crate::{
 /// for wide rows and keeping generated SQL text/plan size reasonable.
 pub const DEFAULT_MAX_PARAMETERS_PER_STATEMENT: usize = 2000;
 
+/// `PostgreSQL`'s hard extended-query-protocol ceiling on bound parameters
+/// per statement: the parameter count is transmitted as an unsigned 16-bit
+/// count in the `Bind` message, so no single statement can ever bind more
+/// than this many values, regardless of configuration.
+pub const POSTGRESQL_MAX_BIND_PARAMETERS: usize = 65_535;
+
 /// How [`PostgresBatchWriter`] shapes one `write()` call's batch into SQL.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -247,9 +253,13 @@ pub fn postgres_batch_writer<I>(
     if let PostgresBatchMode::MultiRowValues {
         max_parameters_per_statement,
     } = mode
-        && max_parameters_per_statement < columns_per_row
     {
-        return Err(PostgresComponentConfigError::InvalidMaxParameters);
+        if max_parameters_per_statement < columns_per_row {
+            return Err(PostgresComponentConfigError::InvalidMaxParameters);
+        }
+        if max_parameters_per_statement > POSTGRESQL_MAX_BIND_PARAMETERS {
+            return Err(PostgresComponentConfigError::MaxParametersExceedsProtocolLimit);
+        }
     }
     Ok(PostgresBatchWriter {
         insert_prefix: insert_prefix.into(),
@@ -333,5 +343,41 @@ mod tests {
             result.err(),
             Some(PostgresComponentConfigError::InvalidMaxParameters)
         );
+    }
+
+    #[test]
+    fn max_parameters_at_the_protocol_ceiling_is_accepted() {
+        let result = postgres_batch_writer(
+            "INSERT INTO t (id) VALUES",
+            None::<&str>,
+            1,
+            PostgresBatchMode::MultiRowValues {
+                max_parameters_per_statement: POSTGRESQL_MAX_BIND_PARAMETERS,
+            },
+            |item: &i64| vec![BusinessValue::i64(*item)],
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn max_parameters_one_over_the_protocol_ceiling_is_rejected() {
+        let result = postgres_batch_writer(
+            "INSERT INTO t (id) VALUES",
+            None::<&str>,
+            1,
+            PostgresBatchMode::MultiRowValues {
+                max_parameters_per_statement: POSTGRESQL_MAX_BIND_PARAMETERS + 1,
+            },
+            |item: &i64| vec![BusinessValue::i64(*item)],
+        );
+        assert_eq!(
+            result.err(),
+            Some(PostgresComponentConfigError::MaxParametersExceedsProtocolLimit)
+        );
+    }
+
+    #[test]
+    fn default_max_parameters_is_well_under_the_protocol_ceiling() {
+        const { assert!(DEFAULT_MAX_PARAMETERS_PER_STATEMENT < POSTGRESQL_MAX_BIND_PARAMETERS) };
     }
 }

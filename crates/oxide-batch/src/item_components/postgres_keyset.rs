@@ -6,10 +6,50 @@
 //! need a strictly-ordered composite keyset checkpoint (`WHERE (cols...) >
 //! (last...) ORDER BY cols...`) and both classify the same `PostgreSQL`
 //! SQLSTATE families the same way. `PostgresKeyValue`/`KeysetPosition` are
-//! `pub(crate)`; only [`KeysetColumn`], [`KeysetColumnKind`], and
-//! [`PostgresComponentConfigError`] are re-exported publicly, because both
-//! readers' constructors need the same column-declaration and
-//! construction-time-validation types.
+//! `pub(crate)`; only [`KeysetColumn`], [`KeysetColumnKind`],
+//! [`PostgresComponentConfigError`], and [`PostgresRow`] are re-exported
+//! publicly, because both readers' constructors need the same
+//! column-declaration and construction-time-validation types, and both hand
+//! `map_row` the same row-accessor type.
+//!
+//! # Consistency under concurrent source mutation
+//!
+//! Both readers' restart correctness rests on one assumption:
+//! `key_columns`' values, for a given row, do not change after that row
+//! first becomes visible to a read. `WHERE (key_columns) > (last_committed)`
+//! means "not yet delivered" only as long as a row's key is stable --
+//! neither reader detects or defends against key columns that mutate in
+//! place.
+//!
+//! - **Late inserts at or before the committed position are structurally
+//!   invisible.** A row inserted with a key less than or equal to the
+//!   current committed position will never be delivered by an in-progress
+//!   or completed read of that stream -- the predicate excludes it by
+//!   construction. This is a property of keyset pagination itself, not a
+//!   defect of this implementation: no keyset-based reader (in this
+//!   framework or any other) can retroactively "notice" a row inserted
+//!   behind its own cursor without falling back to `OFFSET`-style
+//!   positional scanning, which is exactly what these readers are built to
+//!   avoid. A workload that must observe such late-arriving rows needs a
+//!   different delivery mode (e.g. a change-data-capture or queue-based
+//!   source), which is out of this M6 slice's scope.
+//! - **Inserts at a key greater than the current position are unaffected**
+//!   and are picked up by a later page/fetch or after a restart, exactly
+//!   like any other not-yet-delivered row.
+//! - **Updating a row's `key_columns` values after it has entered the read
+//!   window is unsafe** and can produce either a skip (the row's new key
+//!   moves outside every future fetch window) or a duplicate (the row's key
+//!   moves from before the committed position to after it, so a restart
+//!   re-delivers it as if new). Choose key columns a caller's own business
+//!   logic never updates in place -- typically an auto-incrementing
+//!   surrogate key, or an immutable creation timestamp paired with a unique
+//!   tiebreaker -- never a value that changes for existing rows.
+//! - **Deletes are always safe.** Deleting a row at or before the committed
+//!   position has no observable effect (it was already excluded or already
+//!   delivered). Deleting a row between the committed position and either
+//!   reader's current in-memory frontier is equally safe: it is simply
+//!   absent from the next fetch/page, exactly as if it had never existed at
+//!   that key.
 
 use std::error::Error;
 use std::fmt;
@@ -100,6 +140,11 @@ pub enum PostgresComponentConfigError {
     InvalidMaxParameters,
     /// The configured column count per row is zero.
     InvalidColumnsPerRow,
+    /// The configured maximum bind-parameter count per statement exceeds
+    /// `PostgreSQL`'s hard extended-query-protocol ceiling
+    /// (`item_components::postgres_batch::POSTGRESQL_MAX_BIND_PARAMETERS`,
+    /// 65,535).
+    MaxParametersExceedsProtocolLimit,
 }
 
 impl fmt::Display for PostgresComponentConfigError {
@@ -112,6 +157,10 @@ impl fmt::Display for PostgresComponentConfigError {
                 "the configured maximum parameters per statement is too small"
             }
             Self::InvalidColumnsPerRow => "the configured column count per row must be nonzero",
+            Self::MaxParametersExceedsProtocolLimit => {
+                "the configured maximum parameters per statement exceeds PostgreSQL's \
+                 65,535-parameter protocol limit"
+            }
         })
     }
 }
@@ -268,12 +317,22 @@ pub(crate) fn classify_pg_error(error: &sqlx::Error) -> FailureCategory {
 /// A borrowed, `PostgreSQL`-driver-hiding view of one row a
 /// [`super::postgres_cursor::PostgresCursorReader`] or
 /// [`super::postgres_paging::PostgresPagingReader`] fetched, handed to the
-/// caller-supplied `map_row` closure.
+/// caller-supplied `map_row` closure. `sqlx::postgres::PgRow` itself never
+/// crosses this public boundary (see `docs/api/design-guidelines.md`'s
+/// disclosure gate, which names a database driver row type as a prohibited
+/// public disclosure).
 ///
-/// Deliberately narrow, matching [`KeysetColumnKind`]'s supported types:
-/// `sqlx::postgres::PgRow` itself never crosses this public boundary (see
-/// `docs/api/design-guidelines.md`'s disclosure gate, which names a
-/// database driver row type as a prohibited public disclosure).
+/// Covers the common scalar `PostgreSQL` column types: `text`/`varchar`,
+/// the integer family (`i32`/`i64`), `boolean`, and `double precision`/
+/// `real`. It does **not** cover `timestamp[tz]`, `uuid`, `numeric`,
+/// `bytea`, `json[b]`, or array/composite/domain types -- reading one of
+/// those columns requires casting it to a covered type in `base_query`
+/// itself (e.g. `EXTRACT(EPOCH FROM ts)::bigint`, `id::text`), a documented
+/// limitation of this M6 slice, not a silent gap; see the `#149` evidence
+/// document. [`KeysetColumn`]'s own ordering-key vocabulary
+/// (`Text`/`I64` only) is a separate, *narrower* restriction for a
+/// different reason (strict total order, not general value coverage) and
+/// is not widened by this type covering more.
 pub struct PostgresRow<'a>(&'a PgRow);
 
 impl<'a> PostgresRow<'a> {
@@ -293,15 +352,52 @@ impl<'a> PostgresRow<'a> {
             .map_err(|_| ReaderError::with_category(FailureCategory::UserComponent))
     }
 
-    /// Reads a `bigint`/integer-family column by name.
+    /// Reads a `bigint`/`int8`-family column by name.
     ///
     /// # Errors
     ///
     /// Returns a value-redacted [`ReaderError`] when the column is missing
-    /// or is not integer-typed.
+    /// or is not `bigint`-typed.
     pub fn i64(&self, column: &str) -> Result<i64, ReaderError> {
         self.0
             .try_get(column)
+            .map_err(|_| ReaderError::with_category(FailureCategory::UserComponent))
+    }
+
+    /// Reads an `integer`/`int4`-family column by name.
+    ///
+    /// # Errors
+    ///
+    /// Returns a value-redacted [`ReaderError`] when the column is missing
+    /// or is not `integer`-typed.
+    pub fn i32(&self, column: &str) -> Result<i32, ReaderError> {
+        self.0
+            .try_get(column)
+            .map_err(|_| ReaderError::with_category(FailureCategory::UserComponent))
+    }
+
+    /// Reads a `boolean` column by name.
+    ///
+    /// # Errors
+    ///
+    /// Returns a value-redacted [`ReaderError`] when the column is missing
+    /// or is not `boolean`-typed.
+    pub fn bool(&self, column: &str) -> Result<bool, ReaderError> {
+        self.0
+            .try_get(column)
+            .map_err(|_| ReaderError::with_category(FailureCategory::UserComponent))
+    }
+
+    /// Reads a `double precision`/`real` column by name.
+    ///
+    /// # Errors
+    ///
+    /// Returns a value-redacted [`ReaderError`] when the column is missing
+    /// or is not floating-point-typed.
+    pub fn f64(&self, column: &str) -> Result<f64, ReaderError> {
+        self.0
+            .try_get::<f64, _>(column)
+            .or_else(|_| self.0.try_get::<f32, _>(column).map(f64::from))
             .map_err(|_| ReaderError::with_category(FailureCategory::UserComponent))
     }
 }
