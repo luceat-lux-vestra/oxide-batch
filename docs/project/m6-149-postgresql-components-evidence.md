@@ -85,10 +85,10 @@ the existing `postgres` Cargo feature (already pulling in `sqlx` 0.9 with
 
 | Family | Type(s) | Module |
 | --- | --- | --- |
-| Shared keyset plumbing (`pub(crate)`) | `KeysetColumn`, `KeysetColumnKind`, `PostgresComponentConfigError`, `PostgresRow` | `item_components::postgres_keyset` |
+| Keyset construction/row types (re-exported `pub`) | `KeysetColumn`, `KeysetColumnKind`, `PostgresComponentConfigError`, `PostgresRow` | `item_components::postgres_keyset` (module itself is `pub(crate)`; only these four types cross the public boundary) |
 | Cursor reader | `PostgresCursorFormat`, `PostgresCursorReader`, `PostgresCursorReaderStream`, `postgres_cursor_reader` | `item_components::postgres_cursor` |
 | Paging/keyset reader | `PostgresPagingFormat`, `PostgresPagingReader`, `PostgresPagingReaderStream`, `postgres_paging_reader` | `item_components::postgres_paging` |
-| SQL batch / same-resource enlisted writer | `PostgresBatchMode`, `PostgresBatchWriter`, `postgres_batch_writer` | `item_components::postgres_batch` |
+| SQL batch / same-resource enlisted writer | `PostgresBatchMode`, `PostgresBatchWriter`, `POSTGRESQL_MAX_BIND_PARAMETERS`, `postgres_batch_writer` | `item_components::postgres_batch` |
 
 Everything else composes existing `ReaderError`/`WriterError`/
 `FailureCategory`/`BusinessTransactionError`/`Stream*Error` -- no redesign of
@@ -160,9 +160,14 @@ offset. On restart, a fresh instance always re-`DECLARE`s, filtered by the
 restored key (`WHERE (cols...) > (restored...)`).
 `postgres_item_components_cursor.rs::restart_resumes_from_the_last_committed_key_without_gap_or_duplicate`
 proves this directly: a first attempt commits 7 rows, reads 2 more without
-committing, is abandoned without `close()` (simulating a crash), and a fresh
-reader restored from the committed envelope delivers exactly the
-uncommitted remainder once, with no duplicate of the committed prefix.
+committing, and is abandoned in-process without calling `close()` -- a
+same-process stand-in for "the next attempt never sees this reader's state
+again," not a claim about surviving an actual killed process. A fresh reader
+restored from the committed envelope delivers exactly the uncommitted
+remainder once, with no duplicate of the committed prefix. The narrower,
+stronger claim -- that this reader's checkpoint is durable across a real
+OS-level process kill, not merely in-process abandonment -- is proven
+separately in "Real process-kill crash/restart evidence" below.
 
 **Cleanup.** `ItemStream::close` explicitly awaits `transaction.rollback()`
 (never a bare `Drop`) so the connection is never handed back to the pool
@@ -196,6 +201,85 @@ codec, and `PostgreSQL` SQLSTATE-class error classification -- the "minimal
 internal abstraction to remove duplication among these components" the
 issue explicitly allows, not a new public capability surface.
 
+## Server-side timeout semantics on the readers' own connections
+
+`PostgresConfig`'s `statement_timeout`/`lock_timeout`/
+`idle_in_transaction_session_timeout` were already enforced on the
+framework's metadata connection (`configure_transaction`, transaction-scoped
+`SELECT set_config(..., true)` issued after `BEGIN`). The first version of
+this PR's two readers did not extend that to their own, independent
+business-data connections -- a config value a caller set would silently not
+apply to the connection actually running their `base_query`.
+
+The fix is `PostgresConfig::connect_pool` (`pub(crate)`,
+`repository/postgres.rs`), which both readers now use to open their pool:
+`sqlx::PgPoolOptions::after_connect` runs once per new *physical* connection
+(session-scoped, not transaction-scoped, since these readers' connections
+are not wrapped in the framework's own transaction machinery) and issues the
+same three `SELECT set_config($1, $2, false)` calls `configure_transaction`
+uses, with `false` (session-scope) in place of `true` (transaction-scope).
+
+`postgres_item_components_cursor.rs::statement_timeout_is_enforced_on_the_cursor_business_connection`
+and `postgres_item_components_paging.rs::statement_timeout_is_enforced_on_the_paging_business_connection`
+prove this directly, not by inspecting the connection (which the facade
+disclosure gate forbids exposing) but by observing its effect: a
+`base_query` whose row generation stalls for 2 seconds
+(`SELECT pg_sleep(2), ...`), against a reader configured with a 200ms
+`statement_timeout`, is cancelled by `PostgreSQL` itself (SQLSTATE `57014`,
+`query_canceled`) well before the 2-second stall would otherwise complete.
+`classify_pg_error` maps `57014` to `FailureCategory::Cancelled`, which both
+tests assert directly on the returned `ReaderError`.
+
+## Row value coverage and the keyset/general-row-mapping distinction
+
+`PostgresRow` originally exposed only `text()`/`i64()` -- matching
+`KeysetColumnKind`'s own two-variant vocabulary, since that was the only
+vocabulary either reader's own internals needed at the time. That is too
+narrow for `map_row`, a general row-mapping closure a caller supplies for
+arbitrary business columns, not just ordering-key columns. `PostgresRow` now
+also exposes `i32()`, `bool()`, and `f64()` (with an `f32`-to-`f64` fallback
+for `real` columns), covering `PostgreSQL`'s common scalar column types:
+`text`/`varchar`, the integer family, `boolean`, and floating-point.
+
+This is a real, and deliberately incomplete, widening -- it does **not**
+cover `timestamp[tz]`, `uuid`, `numeric`, `bytea`, `json[b]`, or
+array/composite/domain types. Reading one of those columns requires casting
+it to a covered type in `base_query` itself (e.g.
+`EXTRACT(EPOCH FROM ts)::bigint`, `id::text`). This limitation is stated on
+`PostgresRow`'s own public doc comment, not left as a silent gap.
+
+This widening does **not** change `KeysetColumn`'s separate, narrower
+`Text`/`I64`-only restriction (see "Documented limitations" below): that
+restriction exists for a different reason -- strict total ordering, where a
+`bool` key cannot order past two buckets and a `NULL` key breaks tuple
+comparison entirely -- and is unaffected by `PostgresRow` covering more
+value types for general (non-ordering-key) columns.
+
+## Consistency under concurrent source mutation
+
+Keyset pagination's restart correctness rests on one assumption, documented
+on `item_components::postgres_keyset`'s module doc comment (the shared
+module both readers build on): a row's `key_columns` values do not change
+after that row first becomes visible to a read.
+
+- **Late inserts at or before the committed position are structurally
+  invisible** -- inherent to keyset pagination itself (any keyset-based
+  reader, not a defect of this implementation), not something a workload
+  needing to observe late-arriving rows behind its own cursor can rely on
+  this delivery mode for.
+- **Inserts after the current position are unaffected** and are delivered
+  normally by a later page/fetch or after a restart.
+- **Mutating a row's `key_columns` values in place, once it has entered the
+  read window, is unsafe**: it can produce either a skip (the row's new key
+  moves outside every future fetch window) or a duplicate (the row's key
+  moves from before the committed position to after it, so a restart
+  re-delivers it). Key columns should be values a caller's own business
+  logic never updates in place -- an auto-incrementing surrogate key, or an
+  immutable creation timestamp paired with a unique tiebreaker.
+- **Deletes are always safe**, whether before, at, or after the committed
+  position -- a deleted row is simply absent from the next fetch/page, with
+  no distinguishable effect from having never existed at that key.
+
 ## SQL batch writer / same-resource enlisted writer
 
 `PostgresBatchWriter` is deliberately one type for both roles the issue
@@ -214,11 +298,20 @@ writer *is* the enlisted writer.
 - **Two execution modes.** `PostgresBatchMode::MultiRowValues` builds one
   chunked, multi-row `INSERT ... VALUES ($1,$2),($3,$4),...` per `write()`
   call, bounded by a configured `max_parameters_per_statement` (default
-  2,000, deliberately well under `PostgreSQL`'s 65,535-parameter protocol
-  ceiling) -- the `PostgreSQL`-specific fast path the issue allows. Because a
-  multi-row statement's failure is not reliably attributable to one row,
-  this mode never calls `WriterError::with_rolled_back_output`; skip
-  policies cannot target it.
+  2,000) -- the `PostgreSQL`-specific fast path the issue allows.
+  `POSTGRESQL_MAX_BIND_PARAMETERS` (`= 65_535`, `PostgreSQL`'s hard wire-
+  protocol ceiling on bind parameters per statement) is now enforced at
+  construction: `postgres_batch_writer` rejects any
+  `max_parameters_per_statement` above that ceiling with
+  `PostgresComponentConfigError::MaxParametersExceedsProtocolLimit`, rather
+  than accepting a value that would only fail later, opaquely, against a
+  real server. `max_parameters_at_the_protocol_ceiling_is_accepted` and
+  `max_parameters_one_over_the_protocol_ceiling_is_rejected` are exact
+  boundary tests at the ceiling itself; a third unit test
+  (`default_max_parameters_is_well_under_the_protocol_ceiling`) pins the
+  default as a compile-time invariant. Because a multi-row statement's
+  failure is not reliably attributable to one row, this mode never calls
+  `WriterError::with_rolled_back_output`; skip policies cannot target it.
   `postgres_item_components_batch_writer.rs::multi_row_values_writes_every_item_across_chunk_boundaries`
   proves correctness across a batch that spans multiple sub-statements
   within one enlisted transaction. `PostgresBatchMode::PerRowStatements`
@@ -229,26 +322,39 @@ writer *is* the enlisted writer.
   drives a real constraint violation through the full `ChunkJob`/
   `JobLauncher` path and asserts zero business rows survive, with the
   durable checkpoint left unadvanced.
-- **Unknown commit.** Genuine commit-response ambiguity
-  (`ChunkTransactionError::CommitOutcomeUnknown`) is a property of the
-  shared `commit_postgres_connection` helper this writer never touches --
-  already proven by
-  `postgres_repository.rs::disconnect_during_commit_never_guesses_outcome`.
-  This writer adds no new commit/rollback code, so no new proof of that
-  classification is required; `postgres_item_components_batch_writer.rs::disconnect_before_commit_leaves_writer_statements_uncommitted`
-  instead proves the writer's own composition with it: a connection lost
-  before any part of `commit()`'s sequence runs is a *known* not-committed
-  outcome (`ChunkTransactionError::NotCommitted`, a different, earlier fault
-  window than genuine commit-ambiguity), and this writer's statements --
-  though sent successfully to the now-dead connection -- never became
-  durable.
+- **Unknown commit.** Two distinct fault windows are proven, not conflated:
+  - `postgres_item_components_batch_writer.rs::disconnect_before_commit_leaves_writer_statements_uncommitted`
+    kills the connection *before* `commit()`'s sequence starts, so the
+    step-execution `UPDATE` inside `commit_with_component_state` is the
+    statement that fails -- a *known* not-committed outcome
+    (`ChunkTransactionError::NotCommitted`). This writer's statements,
+    though sent successfully to the now-dead connection, never became
+    durable, but the outcome was never in doubt.
+  - `postgres_item_components_batch_writer.rs::commit_ambiguity_after_writer_statements_already_executed_is_never_guessed`
+    proves the genuinely ambiguous case the issue actually asks about: this
+    writer's `INSERT` statements execute and succeed first, then the
+    enclosing `COMMIT` itself is interrupted while the backend is
+    observably executing it (`pg_stat_activity.query = 'COMMIT'`). A
+    `DEFERRABLE INITIALLY DEFERRED` constraint trigger calling `pg_sleep`
+    fires *during* `COMMIT` processing (not immediately after the
+    triggering `INSERT`), giving a wide, non-racy window in which a second,
+    admin connection polls for and terminates that exact backend
+    mid-`COMMIT`. The test asserts `ChunkTransactionError::CommitOutcomeUnknown`
+    (never `NotCommitted`, since real statements did execute) and that zero
+    rows are visible afterward -- `PostgreSQL` rolled the whole, still-open
+    transaction back when the session terminated, exactly the outcome this
+    writer's contract requires it to never guess at. Both tests are
+    genuinely deterministic, not timing-sensitive best-effort races: the
+    first observes a connection failure before any commit-sequence
+    statement runs at all, and the second's timing window is manufactured
+    by the deferred trigger, not raced against real commit latency.
 - **No `ItemStream` pairing.** Unlike the readers, this writer owns no local
   restart-relevant state: the enlisted transaction's atomicity is the
   durability mechanism, and the framework's central `Checkpoint` remains a
   job-supplied concern via `PostgresChunkStateProvider`, unrelated to this
   writer's internals.
 
-## Crash/restart evidence through the real launch path
+## Restart evidence through the real launch path
 
 `crates/oxide-batch-test/tests/postgres_item_components_db_restart.rs`
 mirrors `postgres_json_restart.rs`'s structure exactly: `PostgresFixture`
@@ -256,7 +362,12 @@ for durable committed state, `TestJob` for the real production restart
 path, and `oxide_batch_test::inject` for distinguishable stop/commit-failure
 injection, driving all three new components through `ChunkJob`/
 `JobLauncher` rather than calling their `ItemReader`/`ItemWriter`/
-`ItemStream` methods directly.
+`ItemStream` methods directly. The injection mechanism is an in-process,
+cooperative stop signal between chunks, not an OS-level process kill -- this
+section proves *restart correctness* (a second attempt resumes exactly where
+the first attempt's last committed chunk left off), a distinct and narrower
+claim than "survives an actual killed process," which is proven separately
+below.
 
 - `postgres_cursor_reader_restart_through_the_real_launch_path` /
   `postgres_paging_reader_restart_through_the_real_launch_path`: chunk size
@@ -265,13 +376,23 @@ injection, driving all three new components through `ChunkJob`/
   row 3 and completes; the combined delivery across both attempts is exactly
   rows 1-5, once each.
 - `postgres_batch_writer_restart_after_precommit_failure`: `InjectedTransactions`
-  with `PreCommitAction::Fail` intercepts the first chunk's commit before
-  `PostgresChunkTransaction::commit_with_component_state` ever runs. The
-  writer's statement for item 1 was already sent to that now-abandoned
-  transaction; asserted absent afterward (`PostgresChunkTransaction`'s
-  `Drop` marks the connection `close_on_drop()`, and `PostgreSQL` rolls back
-  an uncommitted transaction on connection loss). A second, uninjected
-  attempt reprocesses all three items and commits them exactly once.
+  with `PreCommitAction::Fail` intercepts the first chunk *before*
+  `PostgresChunkTransaction::commit_with_component_state` is ever called --
+  no `COMMIT` (or anything else in that method) is ever sent, so this is a
+  deterministic not-committed case, not a genuine commit-ambiguity case (the
+  distinct, genuinely ambiguous case -- real statements executed, then a
+  `COMMIT` whose outcome the client cannot observe -- is proven separately;
+  see "Unknown commit" above). The writer's statement for item 1 was already
+  sent to that now-abandoned transaction; asserted absent afterward. No
+  explicit `ROLLBACK` is ever sent by the client here: `PostgresChunkTransaction`'s
+  `Drop` calls `close_on_drop()`, which only marks the pooled connection to
+  be physically closed rather than returned to the pool -- it does not itself
+  issue any SQL. The actual discarding of item 1's statement is `PostgreSQL`'s
+  own server-side behavior: when a backend's session ends (via socket close)
+  while a transaction is open and uncommitted, the server discards that
+  transaction's work, exactly as it would for any client that disconnected
+  mid-transaction without ever calling `COMMIT`. A second, uninjected attempt
+  reprocesses all three items and commits them exactly once.
 
 This is also the first CI job to run any `oxide-batch-test --features
 postgres` test at all: `postgres_json_restart.rs` and
@@ -280,6 +401,38 @@ workflow (confirmed by inspecting every `.github/workflows/*.yml` file
 before writing this PR's own workflow job). Fixing that pre-existing gap for
 the older files is out of scope for #149 and is not folded into this PR's
 diff; it is flagged here as a follow-up candidate.
+
+## Real process-kill crash/restart evidence
+
+The evidence above proves restart correctness under in-process, cooperative
+abandonment. `crates/oxide-batch/tests/postgres_item_components_crash_recovery.rs`
+proves the stronger, distinct claim the issue's "crash" language actually
+requires: survival of a genuine, abrupt OS-level process termination, for
+both the cursor and paging readers.
+
+- **Mechanism.** The test binary re-execs itself (`Command::new(std::env::current_exe())`)
+  with an environment flag selecting a worker mode, mirroring this
+  repository's existing M2 crash-worker pattern. The child process connects
+  to real `PostgreSQL`, builds a real reader through the low-level
+  `PostgresChunkTransactionManager`/`ItemStream` API, reads 7 of 20 seeded
+  rows, commits that chunk (durable, committed envelope written), reads 5
+  more rows *without* committing them, then calls `std::process::exit(87)`
+  directly -- an abrupt, unwind-free termination, not a `Drop`, not a
+  simulated abandonment, and not a panic.
+- **Parent-side assertions.** The parent process asserts the child's exit
+  code is exactly `87` (proving the crash was the genuine cause of process
+  end, not an early, silent success), then inspects durable state: exactly
+  the 7 committed rows are visible, the step is still `Started`, and the 5
+  read-but-uncommitted rows left no trace. A fresh reader restored from the
+  inherited committed envelope then delivers exactly rows 8-20 once each --
+  no gap from the crash, no duplicate of the 7 already-committed rows.
+- **Both readers covered.**
+  `cursor_reader_survives_a_real_process_kill_mid_chunk` and
+  `paging_reader_survives_a_real_process_kill_mid_chunk` run this identical
+  scenario against `PostgresCursorReader` and `PostgresPagingReader`
+  respectively; both pass locally against real `PostgreSQL 18.4` and are
+  wired into the `postgres-item-components` CI job (PG15/PG18) as a
+  dedicated step, separate from the injected-stop restart fixtures above.
 
 ## `PostgreSQL` 15/18 verification
 
@@ -313,13 +466,29 @@ evidence.
   (`KeysetColumnKind`) -- deliberately narrower than `BusinessValue`'s five
   variants: a boolean key cannot give a strict total order past two
   buckets, and a `NULL` key breaks row-value tuple comparison entirely.
-  `Bytes` (e.g. a `uuid`/`bytea` key) is not supported in this M6 slice.
+  `Bytes` (e.g. a `uuid`/`bytea` key) is not supported in this M6 slice. This
+  is narrower than, and independent of, `PostgresRow`'s general
+  value-reading coverage below -- it constrains only which columns may be
+  declared as `KeysetColumn`s, not what `map_row` may read.
+- `PostgresRow` (the row-mapping type `map_row` receives) covers `text`,
+  the integer family (`i32`/`i64`), `boolean`, and floating-point
+  (`f64`/`f32`) columns. It does **not** cover `timestamp[tz]`, `uuid`,
+  `numeric`, `bytea`, `json[b]`, or array/composite/domain types; reading
+  one of those requires casting it to a covered type in `base_query` itself.
+- `PostgresBatchMode::MultiRowValues`'s `max_parameters_per_statement` is
+  capped at `PostgreSQL`'s hard 65,535-parameter wire-protocol ceiling
+  (`POSTGRESQL_MAX_BIND_PARAMETERS`), enforced at construction, not merely
+  documented.
 - `PostgresBatchMode::MultiRowValues` never claims
   `WriterError::with_rolled_back_output`; a write-skip policy cannot target
   a multi-row batch failure, only `PerRowStatements`.
 - `PostgresBatchWriter` requires same-resource enlistment; it has no
   standalone/non-transactional execution mode by design (see "Rollback"
   above).
+- Keyset-based restart correctness assumes `key_columns` values are stable
+  once a row is visible to a read; mutating them in place is unsafe (see
+  "Consistency under concurrent source mutation" above). This is inherent to
+  keyset pagination, not specific to this implementation.
 - Upsert, stored-procedure, ORM/repository forms, other database backends,
   and generic multi-database portability remain M8, exactly as issue #149
   scopes them. No claim stronger than what is implemented is made anywhere
@@ -337,6 +506,7 @@ cargo test -p oxide-batch --features postgres --lib
 cargo test -p oxide-batch --features postgres --test postgres_item_components_cursor -- --nocapture --test-threads=1
 cargo test -p oxide-batch --features postgres --test postgres_item_components_paging -- --nocapture --test-threads=1
 cargo test -p oxide-batch --features postgres --test postgres_item_components_batch_writer -- --nocapture --test-threads=1
+cargo test -p oxide-batch --features postgres --test postgres_item_components_crash_recovery -- --nocapture --test-threads=1
 cargo test -p oxide-batch-test --features postgres --test postgres_item_components_db_restart -- --nocapture --test-threads=1
 cargo run --package oxide-batch-xtask -- surface
 ```
@@ -346,11 +516,11 @@ All of the above were run locally against a real `PostgreSQL 18.4`
 `OXIDEBATCH_POSTGRES_ADMIN_TEST_URL` pointed at it, migrated once via the
 existing `postgres_repository.rs::migration_is_idempotent_when_migrator_fixture_is_available`
 test) before this PR was opened: the full `oxide-batch` lib unit test suite
-(28 tests under the `postgres` feature, 14 of them this PR's new
+(31 tests under the `postgres` feature, 17 of them this PR's own
 `item_components::postgres_{keyset,cursor,paging,batch}` unit tests, the
-rest pre-existing and unaffected), 6 cursor integration tests, 5 paging
-integration tests, 6 batch-writer integration tests, and 3 crash/restart
-fixtures, all passing.
+rest pre-existing and unaffected), 7 cursor integration tests, 6 paging
+integration tests, 7 batch-writer integration tests, 3 real process-kill
+crash/restart tests, and 3 injected-stop restart fixtures, all passing.
 
 ## Ledger disposition
 
