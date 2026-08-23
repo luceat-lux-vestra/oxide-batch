@@ -919,10 +919,12 @@ where
 ///   ([`StreamOpenError`]) rather than fabricating progress. Initial
 ///   (non-restart) execution truncates/creates the target file fresh.
 /// - **Ordering**: writes items in the order supplied.
-/// - **Thread safety**: `Send + Sync`; an internal `Mutex` serializes the
-///   shared file handle exactly as [`crate::item_components::sync`]
-///   documents for a writer whose resource is only correct under serialized
-///   access.
+/// - **Thread safety**: `Send + Sync`; a single internal `Mutex` guards the
+///   file handle *and* the committed byte count together, so the physical
+///   write, the `sync_data`, and the committed-count update form one
+///   coherent, serialized transition -- a concurrent call can never publish
+///   a stale committed length after a later call's write has already
+///   landed.
 /// - **Reentrancy**: not reentrant with itself against the same path from a
 ///   second concurrent attempt; restart reconciliation assumes exclusive
 ///   ownership of the file for the duration of one attempt.
@@ -945,9 +947,16 @@ where
 /// - **Evidence**: `crates/oxide-batch-test/tests/item_components_delimited.rs`,
 ///   `crates/oxide-batch-test/tests/postgres_flat_file_restart.rs`.
 pub struct DelimitedWriter {
-    file: Arc<Mutex<File>>,
+    state: Arc<Mutex<DelimitedWriterState>>,
     dialect: DelimitedDialect,
-    committed_bytes: Arc<Mutex<u64>>,
+}
+
+/// The file and committed byte count a [`DelimitedWriter`]/
+/// [`DelimitedWriterStream`] pair shares under one lock, so the physical
+/// write and the committed-count update are never independently observable.
+struct DelimitedWriterState {
+    file: File,
+    committed_bytes: u64,
 }
 
 impl<I> crate::ItemWriter<I> for DelimitedWriter
@@ -973,16 +982,21 @@ where
             }
             csv_writer.flush().map_err(|_| WriterError::new())?;
         }
-        let file = Arc::clone(&self.file);
-        let committed_bytes = Arc::clone(&self.committed_bytes);
-        let mut guard = file.lock().unwrap_or_else(PoisonError::into_inner);
-        guard.write_all(&buffer).map_err(|_| WriterError::new())?;
-        guard.sync_data().map_err(|_| WriterError::new())?;
-        drop(guard);
-        let mut committed = committed_bytes
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        *committed = committed.saturating_add(buffer.len() as u64);
+        // The physical write and the committed-count update both happen
+        // under this one lock: no other call can publish a committed byte
+        // count until this entire transition -- write, sync, and commit --
+        // completes.
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state
+            .file
+            .write_all(&buffer)
+            .map_err(|_| WriterError::new())?;
+        state.file.sync_data().map_err(|_| WriterError::new())?;
+        let candidate_bytes = state
+            .file
+            .stream_position()
+            .map_err(|_| WriterError::new())?;
+        state.committed_bytes = candidate_bytes;
         Ok(WriteOutcome::Written)
     }
 }
@@ -992,8 +1006,7 @@ where
 /// [`open`](crate::ItemStream::open), and reports the current shared byte
 /// length as the candidate on [`update`](crate::ItemStream::update).
 pub struct DelimitedWriterStream {
-    file: Arc<Mutex<File>>,
-    committed_bytes: Arc<Mutex<u64>>,
+    state: Arc<Mutex<DelimitedWriterState>>,
     namespace: ComponentStreamIdentity,
 }
 
@@ -1011,23 +1024,28 @@ impl crate::ItemStream for DelimitedWriterStream {
         } else {
             (0, StreamOpenOutcome::Initial)
         };
-        let mut file = self.file.lock().unwrap_or_else(PoisonError::into_inner);
-        let actual_len = file.metadata().map_err(|_| StreamOpenError::new())?.len();
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let actual_len = state
+            .file
+            .metadata()
+            .map_err(|_| StreamOpenError::new())?
+            .len();
         if actual_len < target {
             return Err(StreamOpenError::with_category(
                 crate::FailureCategory::Invariant,
             ));
         }
         if actual_len != target {
-            file.set_len(target).map_err(|_| StreamOpenError::new())?;
+            state
+                .file
+                .set_len(target)
+                .map_err(|_| StreamOpenError::new())?;
         }
-        file.seek(SeekFrom::Start(target))
+        state
+            .file
+            .seek(SeekFrom::Start(target))
             .map_err(|_| StreamOpenError::new())?;
-        drop(file);
-        *self
-            .committed_bytes
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = target;
+        state.committed_bytes = target;
         Ok(outcome)
     }
 
@@ -1036,10 +1054,11 @@ impl crate::ItemStream for DelimitedWriterStream {
         _context: StreamUpdateContext<'_>,
     ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
         let codec = writer_position_codec();
-        let current = *self
-            .committed_bytes
+        let current = self
+            .state
             .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+            .unwrap_or_else(PoisonError::into_inner)
+            .committed_bytes;
         ComponentStateEnvelope::encode(
             self.namespace.clone(),
             &current,
@@ -1074,18 +1093,120 @@ pub fn delimited_writer(
         .read(true)
         .write(true)
         .open(path)?;
-    let file = Arc::new(Mutex::new(file));
-    let committed_bytes = Arc::new(Mutex::new(0));
+    let state = Arc::new(Mutex::new(DelimitedWriterState {
+        file,
+        committed_bytes: 0,
+    }));
     let writer = DelimitedWriter {
-        file: Arc::clone(&file),
+        state: Arc::clone(&state),
         dialect,
-        committed_bytes: Arc::clone(&committed_bytes),
     };
     let stream = DelimitedWriterStream {
-        file,
-        committed_bytes,
+        state,
         namespace: identity,
     };
     let contract = StreamStateContract::new(writer_position_codec());
     Ok((writer, stream, contract))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use std::thread;
+
+    use super::*;
+    use crate::{ComponentStatePayload, ItemStream, ItemWriter, StopSource};
+
+    fn identity() -> ComponentStreamIdentity {
+        ComponentStreamIdentity::new("oxide-batch.delimited-writer-unit-test")
+            .expect("static identity is valid")
+    }
+
+    fn temp_path(name: &str) -> std::path::PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time moves forward")
+            .as_nanos();
+        std::env::temp_dir().join(format!("oxide-batch-167-delimited-unit-{name}-{nonce}.csv"))
+    }
+
+    fn committed_byte(envelope: &ComponentStateEnvelope) -> u64 {
+        let ComponentStatePayload::Inline(payload) = envelope.payload().unwrap() else {
+            panic!("writer checkpoints must use an inline payload");
+        };
+        serde_json::from_slice::<serde_json::Value>(&payload)
+            .unwrap()
+            .get("committed_bytes")
+            .and_then(serde_json::Value::as_u64)
+            .expect("writer checkpoint committed_bytes")
+    }
+
+    /// Proves the physical write and the committed-count update form one
+    /// coherent, serialized transition -- not independently lockable steps a
+    /// concurrent call could interleave between, which could let a later
+    /// write's smaller (stale) committed length overwrite an earlier
+    /// write's larger, already-published one.
+    ///
+    /// This holds the writer's own lock directly -- the exact lock
+    /// `write()` uses for its whole write/sync/commit transition -- before
+    /// a concurrent `write()` call is even spawned, deterministically
+    /// guaranteeing the concurrent call cannot make *any* progress until
+    /// this thread releases the lock: no sleep, no retry loop, no
+    /// probabilistic race window. Under the previous split-lock design (a
+    /// separate `committed_bytes: Arc<Mutex<u64>>` published after the file
+    /// lock was released), the two writes' publications were not tied to
+    /// their write order, so the call that wrote *first* could publish
+    /// *after* the call that wrote *second* -- silently regressing the
+    /// checkpoint below data already durably on disk.
+    #[test]
+    fn concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_commit() {
+        let path = temp_path("serialized");
+        let (writer, stream, _contract) =
+            delimited_writer(&path, DelimitedDialect::csv(), identity()).unwrap();
+        let writer = Arc::new(writer);
+        let (_open_stop_source, open_stop_token) = StopSource::new();
+        futures_executor::block_on(stream.open(StreamOpenContext::new(None, &open_stop_token)))
+            .unwrap();
+
+        let mut guard = writer.state.lock().unwrap_or_else(PoisonError::into_inner);
+
+        let writer_for_thread = Arc::clone(&writer);
+        let handle = thread::spawn(move || {
+            let (_stop_source, stop_token) = StopSource::new();
+            futures_executor::block_on(writer_for_thread.write(
+                &[DelimitedRecord::new(vec!["2".to_owned()])],
+                WriteContext::non_transactional(&stop_token),
+            ))
+            .unwrap();
+        });
+
+        guard.file.write_all(b"1\n").unwrap();
+        guard.file.sync_data().unwrap();
+        guard.committed_bytes = guard.file.stream_position().unwrap();
+        drop(guard);
+
+        handle.join().unwrap();
+
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(
+            bytes,
+            b"1\n2\n".to_vec(),
+            "both writes must land on disk exactly once each, in the order the lock serialized \
+             them"
+        );
+
+        let envelope = futures_executor::block_on(
+            stream.update(crate::StreamUpdateContext::new(&open_stop_token)),
+        )
+        .unwrap();
+        assert_eq!(
+            committed_byte(&envelope),
+            bytes.len() as u64,
+            "the published checkpoint must equal the real file length, never a stale, earlier \
+             write's byte count"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
 }

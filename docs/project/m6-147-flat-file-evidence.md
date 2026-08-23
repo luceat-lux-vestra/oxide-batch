@@ -102,6 +102,61 @@ for the bounded-memory audit to be re-run. All are fixed:
   `DEFAULT_MAX_RECORD_BYTES`, `DelimitedDialect::with_max_record_bytes`, the
   module doc, and `DelimitedReader`'s "Bounded resource" contract bullet.
 
+**Third corrective pass (#167):** an independent review of the merged tree
+found that `DelimitedWriter` and `FixedWidthWriter` both had a split-lock
+checkpoint-coherence defect -- the same class #148's `JsonArrayWriter` and
+`JsonLinesWriter` were fixed for during their own corrective passes:
+
+- Both writers computed the post-write byte position under the file's own
+  `Mutex<File>` lock, then released that lock and separately locked a
+  `Mutex<u64>` to publish it as the committed checkpoint. The file lock
+  serialized the physical writes, but nothing tied the *order* of
+  publication to the order of the writes it described: two concurrent
+  `write()` calls' file writes are strictly ordered by the file lock, but
+  their independently-locked publications are not, so the call that wrote
+  *first* could publish its (smaller) committed length *after* the call
+  that wrote *second* -- silently regressing the restart checkpoint
+  backward below data already durably on disk. `DelimitedWriterStream`/
+  `FixedWidthWriterStream`'s `open`/`update` read the same two fields under
+  the same non-atomic pairing. The fix unifies each writer's file handle
+  and committed byte count into one private state struct
+  (`DelimitedWriterState`, `FixedWidthWriterState`) behind a single
+  `Mutex`, shared by the writer and its paired stream -- the physical
+  write, the `sync_data`, and the committed-count update are now one
+  transition, so no publication can land out of the order its own write
+  did. `committed_bytes` is now read from the file's own
+  `stream_position()` after the write and sync succeed, rather than
+  computed independently via `saturating_add(buffer.len())`, so the
+  published value can never diverge from where the file's cursor actually
+  is.
+- Each writer's fix is proven by a deterministic, non-probabilistic
+  regression test living inside its own module
+  (`delimited.rs`'s and `fixed_width.rs`'s
+  `tests::concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_commit`):
+  the test thread locks the writer's own private state mutex directly,
+  then spawns a real background thread that calls the public `write()`
+  API -- which is thereby guaranteed, by `std::sync::Mutex`'s own
+  blocking-acquire semantics rather than by scheduler timing, to make no
+  progress until the test thread finishes replicating a first write under
+  that same lock and releases it. Both tests were empirically confirmed to
+  catch the pre-fix defect: reverting to the actual pre-#167 code and
+  forcing the exact interleaving the bug report describes (thread A writes
+  and releases the file lock, is "descheduled"; thread B fully completes a
+  real `write()` call including its publish; thread A then resumes and
+  publishes its own stale, smaller byte count -- sequenced deterministically
+  with `thread::join` as the happens-before barrier, no `sleep`, no
+  scheduler luck) reproducibly published a checkpoint (2 bytes) below the
+  file's actual length (4 bytes) on every run, for both writers.
+- This class of defect could not have been caught by a reader-side
+  ADR-0008 conformance check or by the existing single-threaded restart
+  tests: both require a second, genuinely concurrent caller to observe,
+  which is exactly what the new tests force deterministically rather than
+  relying on real multi-thread scheduling to sometimes produce.
+
+Per this pass's own scope, #149 (PostgreSQL components) was not started, and
+CSV/fixed-width parsing semantics, restart/truncation/fail-closed behavior,
+and public API surface are unchanged.
+
 ## Public component surface
 
 All new types live under `oxide_batch::item_components` (`delimited` and
@@ -164,7 +219,12 @@ progress. Initial (non-restart) execution truncates/creates the target file
 fresh. Durability across an OS/power failure (as opposed to a process crash)
 is not claimed: each write batch is flushed to the OS (`File::sync_data`),
 but no directory-entry fsync is performed -- this is stated in both writers'
-rustdoc, not left implicit.
+rustdoc, not left implicit. Both writers' file handles and committed byte
+counts each share one `Mutex`-guarded state struct (see the third
+corrective-pass note above): the physical write, the `sync_data`, and the
+committed-count update are one atomic transition per writer, never
+independently-locked steps whose publication order could diverge from
+their write order.
 
 Durable state is namespaced, versioned, bounded, checksummed, and
 restartability-declared through the existing `ComponentStateEnvelope`/
@@ -330,6 +390,12 @@ pattern `crates/oxide-batch/tests/chunk_fault_runtime.rs` established.
   disk with no corresponding commit; restart truncates them and rewrites the
   record exactly once) and
   `delimited_writer_fails_closed_when_the_file_is_shorter_than_committed`.
+  `delimited.rs::tests::concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_commit`
+  and `fixed_width.rs::tests::concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_commit`
+  (see the third corrective-pass note above) add the writer's *concurrent-call*
+  checkpoint-coherence evidence: a deterministic, held-lock proof that the
+  write/publish transition cannot be interleaved, rather than relying on
+  thread-count scheduling luck.
 - **E (malformed skip/fail):** `item_components_flat_file_fault.rs`'s four
   tests: `csv_fail_policy_fails_the_step_with_the_expected_classification`,
   `csv_skip_policy_skips_the_malformed_record_and_processes_later_valid_records`,
@@ -386,6 +452,7 @@ See `typed_and_erased_delimited_pipelines_produce_identical_items` above (G).
 | With headers and non-flexible parsing, the header row -- not the first data row -- establishes the expected field count | `header_field_count_establishes_the_expected_width_for_the_first_data_row`'s `FailureCategory::UserComponent` assertion on a first data row narrower than the header (this test fails against the pre-fix code, which silently accepts the first data row's own width as the baseline) |
 | Typed and erased paths agree | `typed_and_erased_delimited_pipelines_produce_identical_items`'s item-for-item and count equality |
 | Multi-byte UTF-8 char split by a fixed-width field boundary fails, not silently corrupted | `a_field_boundary_splitting_a_multibyte_char_is_a_classified_failure` |
+| A concurrent writer call can never publish a stale (regressed) committed byte count | `delimited.rs::tests::concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_commit` and `fixed_width.rs::tests::concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_commit` lock the writer's own state mutex, spawn a real background thread through the public `write()` API, and assert the file and the decoded `ItemStream::update()` checkpoint agree on the full, non-regressed byte length -- the background call is provably blocked, by `Mutex` semantics, until the held-lock write finishes and publishes; both tests were confirmed to fail deterministically (publishing a stale, smaller checkpoint) against the pre-#167 split-lock code under a forced, `join`-sequenced interleaving |
 
 ## Reproduction
 
