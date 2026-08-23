@@ -83,15 +83,13 @@ is not a second JSON grammar. Every value's own bytes are parsed by
 `serde_json` itself: this reader grows an owned, bounded buffer and retries
 `serde_json::Deserializer::from_slice(&buffer).into_iter::<Value>().next()`
 from the start after each growth step, using the documented public
-`StreamDeserializer::byte_offset()`/`Error::is_eof()` idiom `serde_json`'s
-own documentation recommends for resuming a partial parse over a byte source
-of unknown length. A value's exact byte span is learned only from a
-*complete, successful* parse of it; the framing bytes that follow a value are
-only ever inspected in the byte range `serde_json` has already told us that
-value occupies, which is what makes this reader safe against delimiters
-appearing inside escaped strings -- the parser has already consumed them as
-part of the value before this module's own framing scan ever looks at what
-comes next.
+`StreamDeserializer::byte_offset()`/`Error::is_eof()` idiom. A parser result
+is only a candidate boundary: the bytes after `byte_offset()` must also prove
+JSON whitespace followed by `,` or `]`. This framing check is essential for
+numbers whose valid prefix ends at an arbitrary growth boundary. The framing
+bytes are only inspected after `serde_json` has identified the value bytes,
+so delimiters inside escaped strings and nested values cannot be mistaken for
+top-level separators.
 
 Because `serde_json::Deserializer`'s reader-based lookahead (needed to find
 where a bare number/`true`/`false`/`null` ends) cannot be recovered once a
@@ -147,7 +145,12 @@ insufficient, but this design's every-read protocol (evaluate
 separator-or-close, then parse a value) is fully reconstructible from that
 one number plus whether it is zero (meaning "not yet started, consume the
 opening bracket first"). A restart therefore never rereads from byte zero
-and never infers position from a line or item count.
+and never infers position from a line or item count. The instrumented
+`restart_instrumentation_observes_byte_zero_rescan_control_and_real_reader_avoids_it`
+test records every source seek/read interval after restore and asserts that
+the production reader does not seek or read before the persisted boundary;
+the same harness's positive control explicitly seeks to zero and rereads the
+committed prefix.
 
 **JSONL writer / JSON-array writer.** Committed output progress is the
 output file's byte length as of the last committed chunk (the JSON-array
@@ -175,57 +178,44 @@ flushed with `File::sync_data`, no directory-entry fsync is performed.
 
 ## Bounded-memory behavior
 
-Streaming is mandatory. Neither reader materializes its source, and neither
-lets a single oversized value grow its retained buffer past the configured
-bound:
+Streaming is mandatory. Neither reader materializes its source. The
+configured limits bound raw input accumulation, not every allocation made by
+`serde_json` or by the resulting `Value`:
 
 - **JSONL**: bounded by the same `fill_buf`/`consume`-capped line-reading
-  loop `FixedWidthReader` uses -- the line buffer's length never exceeds
-  `JsonLinesFormat::with_max_record_bytes` even transiently. A line within
-  the bound is then parsed by `serde_json::from_slice`, whose allocation is
-  bounded by the line's own (already-bounded) raw byte span.
+  loop `FixedWidthReader` uses -- raw retained line bytes never exceed
+  `JsonLinesFormat::with_max_record_bytes` (the CRLF terminator is excluded
+  from this count). Parser/value memory is record-dependent but remains
+  `O(max_record_bytes)` for accepted input; oversized records are rejected
+  before source-sized raw accumulation.
 - **JSON array**: an element is parsed into an owned buffer grown in
   doubling steps (mirroring #147's `DelimitedReader::output` growth) and
-  never past `JsonArrayFormat::with_max_value_bytes`; the buffer is
-  (re)parsed with `serde_json::Deserializer::from_slice` after each growth
-  step, so retained memory for a single element never exceeds the
-  configured bound regardless of the element's real size on disk -- a value
-  whose complete parse would need more bytes than the bound is rejected,
-  never fully materialized. This applies uniformly to a giant flat string,
-  a giant nested structure, and heavily escaped content, because the bound
-  gates the *raw source byte span* fed to the parser, before any decoding
-  is attempted -- there is no decoded-content-only bound for a pathological
-  input to slip past (contrast #147's own first-pass defect, which this
-  design avoids structurally rather than by a later fix).
+  never past `JsonArrayFormat::with_max_value_bytes`; a value whose raw source
+  span would exceed the bound is rejected before source-sized raw
+  accumulation. Parser/value memory is record-dependent but remains
+  `O(max_value_bytes)` for accepted input. The raw bound applies uniformly to
+  giant flat strings, giant nested structures, and heavily escaped content.
 
-`crates/oxide-batch/tests/item_components_json_allocation.rs` proves both
-claims are real, mirroring #147's allocator-instrumented (`stats_alloc`)
-methodology exactly. Measured on the development host:
+`crates/oxide-batch/tests/item_components_json_allocation.rs` provides
+allocator evidence with `stats_alloc`, while deliberately keeping the claim
+narrower than a total-process-memory bound:
 
-- **Whole-file, many uniform records:** net retained bytes are *identical*
-  between the small (500-row, ~22 KB) and large (100,000-row, ~4.88 MB) run
-  for both JSONL (8,496 bytes either way) and JSON array (8,762 bytes either
-  way) -- memory does not scale with input size at all. A positive control
-  (`std::fs::read_to_string` on the same large file) shows net retained
-  bytes equal to the file size (4,877,780 of 4,877,780), proving the harness
-  would have caught a real whole-file-materialization regression.
-- **One pathological oversized value (a 20 MiB string) under a 4 KiB
-  bound:** the real `JsonLinesReader`/`JsonArrayReader` allocate
-  12,594/12,740 bytes total rejecting it -- three orders of magnitude less
-  than the value's own size. A positive control -- JSONL: a naive
-  "materialize the whole line via `BufRead::read_until`, then check its
-  length" reader; JSON array: a naive "read the whole remaining file, then
-  fully deserialize it" reader (the exact shape of the bug this evidence
-  guards against) -- allocates 33,562,624 / 41,943,172 bytes reading the
-  same fixtures, confirming the harness observes a large one-shot
-  allocation when one genuinely happens.
-- **One pathological nested/escaped element** (a single array element that
-  is itself a ~24.9 MB nested array of two million small escaped strings,
-  under the same 4 KiB bound): the real `JsonArrayReader` allocates 52,005
-  bytes rejecting it, against the naive whole-file-deserialize control's
-  108,886,791 bytes -- proving the bound is enforced before `Vec<Value>`
-  growth or string-unescaping bookkeeping is allowed to scale with the
-  element's real structure, not only for one contiguous string allocation.
+- **Whole-file, many uniform records:** the small/large net-retained
+  comparison for both families stays independent of file size, while a
+  whole-file positive control retains file-sized storage. This is evidence
+  against whole-input materialization, not a claim that total allocator usage
+  equals the raw input bound.
+- **Oversized flat and nested values:** the real readers reject 20 MiB-scale
+  inputs under a 4 KiB raw bound with allocation far below the source; naive
+  materialize-then-check/deserialize controls allocate in proportion to the
+  source. This proves rejection occurs before source-sized raw accumulation
+  and before proportional nested `Value` growth in the reader path.
+- **Writer batches:** the same test runs
+  `naive_jsonl_batch_bytes_allocated` and
+  `naive_json_array_batch_bytes_allocated` against the production writers.
+  The controls retain one serialized `Vec<u8>` proportional to the complete
+  batch, while direct-to-file writers stay below that allocation threshold;
+  item values themselves are primitive caller-owned values in this comparison.
 
 ## `oxide-batch-test` evidence
 
@@ -256,7 +246,9 @@ dev-dependency-cycle reason #146/#147's allocation files can't.
   `an_empty_line_is_a_classified_malformed_failure`,
   `a_syntactically_invalid_line_is_a_classified_failure_with_forward_progress`,
   `a_line_exceeding_the_configured_bound_fails_closed`,
-  `crlf_writer_emits_crlf_terminators`;
+  `crlf_writer_emits_crlf_terminators`,
+  `max_record_bytes_excludes_lf_and_crlf_terminators`,
+  `max_record_bytes_rejects_one_extra_payload_byte_for_lf_and_crlf`;
   `pretty_printed_input_with_newlines_and_extra_whitespace_parses_correctly`,
   `delimiters_inside_strings_do_not_affect_framing_and_a_naive_scan_would_be_fooled`
   (asserts a naive raw-comma count differs from the true element count on the
@@ -265,6 +257,11 @@ dev-dependency-cycle reason #146/#147's allocation files can't.
   `malformed_element_syntax_is_unrecoverable_and_fails_closed`,
   `missing_separator_between_elements_is_unrecoverable_and_fails_closed`,
   `an_element_exceeding_the_configured_bound_fails_closed`,
+  `long_number_crossing_growth_bound_is_one_element_and_restartable`,
+  `trailing_garbage_after_top_level_array_is_rejected_but_json_whitespace_is_allowed`,
+  `malformed_element_syntax_is_unrecoverable_and_fails_closed` (including
+  same-instance retry at the restored boundary),
+  `restart_instrumentation_observes_byte_zero_rescan_control_and_real_reader_avoids_it`,
   `restart_resumes_at_the_next_element_boundary_not_byte_zero` (an in-memory,
   non-durable complement to the durable restart evidence below, isolating
   the element-boundary-checkpoint claim through direct `ItemStream::open`/
@@ -317,14 +314,17 @@ See section G above.
 | A malformed JSONL line is safely skippable; its checkpoint always advances | `an_empty_line_is_a_classified_malformed_failure`/`a_syntactically_invalid_line_is_a_classified_failure_with_forward_progress`'s `has_checkpoint_advanced()` assertions, plus `jsonl_skip_policy_skips_the_malformed_line_and_processes_later_valid_lines`'s exact committed/skip counts |
 | A JSON array's malformed structure is never safely skippable | `missing_closing_bracket_is_unrecoverable_and_fails_closed`/`malformed_element_syntax_is_unrecoverable_and_fails_closed`/`missing_separator_between_elements_is_unrecoverable_and_fails_closed`'s `!has_checkpoint_advanced()` assertions, and `json_array_skip_policy_still_fails_the_step_because_no_boundary_is_proven`'s `skip_counts() == 0` assertion under a real skip-configured `FaultRuntime` |
 | Delimiters inside strings do not affect array framing | `delimiters_inside_strings_do_not_affect_framing_and_a_naive_scan_would_be_fooled`'s exact three-element result, contrasted with the naive comma count's differing (wrong) result on the identical bytes |
-| Array restart resumes at a proven element boundary, never mid-element, never byte zero | `postgres_json_restart.rs`'s `json_array_reader_restarts_after_the_last_committed_element_never_mid_element`: exact committed elements each attempt, the naive 2-line resume-point sanity check, and the combined once-each assertion |
+| Array elements are parser/framing-proven boundaries, including long tokens across growth boundaries | `long_number_crossing_growth_bound_is_one_element_and_restartable` asserts the complete number value, exact persisted byte boundary, and restart at the second element |
+| A top-level array rejects trailing non-whitespace after `]` | `trailing_garbage_after_top_level_array_is_rejected_but_json_whitespace_is_allowed` accepts JSON whitespace cases and asserts `UserComponent` failure for garbage cases |
+| Array retry restores the last proven framing state | `malformed_element_syntax_is_unrecoverable_and_fails_closed` retries the same malformed element and asserts the same failure category without checkpoint advancement |
+| Array restart resumes at a proven element boundary, never mid-element, never byte zero | `restart_instrumentation_observes_byte_zero_rescan_control_and_real_reader_avoids_it` asserts seek/read intervals after restore and a positive control observes the forbidden zero seek/prefix read; `postgres_json_restart.rs` supplies durable restart evidence |
 | Array restart never duplicates or omits an element | The same test's `combined == [five elements once each]` assertion |
 | Array writer resumes comma state correctly after a restart | `json_array_writer_truncates_uncommitted_tail_and_resumes_exactly_once`'s final `b"[1,2,3]"` byte-exact assertion (a doubled or missing comma, or a re-added opening bracket, would produce different bytes) and its `serde_json::from_slice` reparse |
 | Array writer never claims a complete valid JSON array before the step commits | `json_array_writer_truncates_uncommitted_tail_and_resumes_exactly_once`'s intermediate `b"[1,2"` assertion (no closing bracket) after attempt A |
 | Writer fails closed on a shorter-than-committed file | `jsonl_writer_fails_closed_when_the_file_is_shorter_than_committed`/`json_array_writer_fails_closed_when_the_file_is_shorter_than_committed`'s `BatchStatus::Failed` and unchanged-file assertions |
-| Bounded memory, not whole-input materialization | `json_readers_do_not_retain_memory_proportional_to_input_size`'s identical small/large net-retained bytes for both families, contrasted with the whole-file positive control's file-sized net |
-| A single oversized value does not allocate proportionally to its own size before rejection | The same test's oversized-value scenarios: real-reader `bytes_allocated` (~12.6-12.7 KB) against a 20 MiB value, contrasted with each family's naive positive control (~33.6/~41.9 MB) |
-| The bound is enforced on the raw source byte span, not only a flat string, so a nested/escaped pathological element is also caught before proportional allocation | The same test's nested-element scenario: real-reader allocation (52,005 bytes) against a ~24.9 MB, two-million-entry nested element, contrasted with the naive whole-file-deserialize control (108,886,791 bytes) |
+| Reader raw storage is bounded and oversized input is rejected before source-sized accumulation | `json_readers_do_not_retain_memory_proportional_to_input_size` compares small/large streaming retention and reader allocation against whole-input positive controls for flat and nested oversized fixtures |
+| LF and CRLF have identical payload-bound semantics | `max_record_bytes_excludes_lf_and_crlf_terminators` accepts an exact-bound valid JSON record with both terminators; `max_record_bytes_rejects_one_extra_payload_byte_for_lf_and_crlf` rejects the same one-byte overflow |
+| Writers do not materialize a whole serialized batch | `json_readers_do_not_retain_memory_proportional_to_input_size` compares both production writers with `naive_jsonl_batch_bytes_allocated` and `naive_json_array_batch_bytes_allocated` positive controls |
 | Typed and erased paths agree | `typed_and_erased_jsonl_pipelines_produce_identical_items`/`typed_and_erased_json_array_pipelines_produce_identical_items`'s item-for-item and count equality |
 
 ## Reproduction

@@ -21,9 +21,12 @@ use std::io::{BufRead, BufReader, Write};
 
 use oxide_batch::item_components::{
     JsonArrayFormat, JsonArrayReader, JsonLinesFormat, JsonLinesReader, json_array_file_reader,
-    jsonl_file_reader,
+    json_array_writer, jsonl_file_reader, jsonl_writer,
 };
-use oxide_batch::{ComponentStreamIdentity, ItemReader, ReadContext, ReadOutcome, StopSource};
+use oxide_batch::{
+    ComponentStreamIdentity, ItemReader, ItemWriter, ReadContext, ReadOutcome, StopSource,
+    WriteContext, WriteOutcome,
+};
 use serde_json::Value;
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 
@@ -142,6 +145,10 @@ const HUGE_FIELD_BYTES: usize = 20 * 1024 * 1024;
 /// single-value fixtures.
 const TIGHT_MAX_VALUE_BYTES: usize = 4096;
 
+/// The primitive batch used to contrast direct-to-file writers with a
+/// whole-serialized-batch `Vec<u8>` control.
+const WRITE_BATCH_ITEMS: usize = 100_000;
+
 /// Writes one JSONL line whose sole value is a [`HUGE_FIELD_BYTES`]-long
 /// JSON string.
 fn write_huge_single_line_jsonl(path: &std::path::Path) -> u64 {
@@ -219,6 +226,83 @@ fn naive_whole_array_bytes_allocated(path: &std::path::Path) -> (usize, usize) {
     let allocated = region.change().bytes_allocated;
     drop(value);
     (allocated, file_len)
+}
+
+fn naive_jsonl_batch_bytes_allocated(items: &[Value]) -> (usize, usize) {
+    let region = Region::new(ALLOCATOR);
+    let mut buffer = Vec::new();
+    for item in items {
+        serde_json::to_writer(&mut buffer, item).expect("serialize JSONL control item");
+        buffer.push(b'\n');
+    }
+    let serialized_bytes = buffer.len();
+    let allocated = region.change().bytes_allocated;
+    (allocated, serialized_bytes)
+}
+
+fn naive_json_array_batch_bytes_allocated(items: &[Value]) -> (usize, usize) {
+    let region = Region::new(ALLOCATOR);
+    let mut buffer = Vec::new();
+    buffer.push(b'[');
+    for (index, item) in items.iter().enumerate() {
+        if index > 0 {
+            buffer.push(b',');
+        }
+        serde_json::to_writer(&mut buffer, item).expect("serialize JSON-array control item");
+    }
+    buffer.push(b']');
+    let serialized_bytes = buffer.len();
+    let allocated = region.change().bytes_allocated;
+    (allocated, serialized_bytes)
+}
+
+async fn real_jsonl_writer_bytes_allocated(
+    path: &std::path::Path,
+    items: &[Value],
+) -> (usize, u64) {
+    let (writer, _stream, _contract) = jsonl_writer(
+        path,
+        JsonLinesFormat::new(),
+        identity("oxide-batch.writer-jsonl"),
+    )
+    .expect("open JSONL writer");
+    let (_source, stop) = StopSource::new();
+    let region = Region::new(ALLOCATOR);
+    assert_eq!(
+        writer
+            .write(items, WriteContext::non_transactional(&stop))
+            .await
+            .expect("write JSONL batch"),
+        WriteOutcome::Written
+    );
+    let allocated = region.change().bytes_allocated;
+    let size = std::fs::metadata(path)
+        .expect("JSONL output metadata")
+        .len();
+    (allocated, size)
+}
+
+async fn real_json_array_writer_bytes_allocated(
+    path: &std::path::Path,
+    items: &[Value],
+) -> (usize, u64) {
+    let (writer, _stream, _contract) =
+        json_array_writer(path, identity("oxide-batch.writer-json-array"))
+            .expect("open JSON-array writer");
+    let (_source, stop) = StopSource::new();
+    let region = Region::new(ALLOCATOR);
+    assert_eq!(
+        writer
+            .write(items, WriteContext::non_transactional(&stop))
+            .await
+            .expect("write JSON-array batch"),
+        WriteOutcome::Written
+    );
+    let allocated = region.change().bytes_allocated;
+    let size = std::fs::metadata(path)
+        .expect("JSON-array output metadata")
+        .len();
+    (allocated, size)
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -438,5 +522,47 @@ async fn json_readers_do_not_retain_memory_proportional_to_input_size() {
         naive_nested_allocated >= huge_nested_size_usize / 2,
         "the naive positive control did not show a large allocation \
          (allocated={naive_nested_allocated}, source_bytes={huge_nested_size})"
+    );
+
+    // ------------------------------------------ writer batch allocation --
+    // Primitive values keep caller-owned item cloning allocation-free. This
+    // isolates the writer's additional serialization storage: the naive
+    // control grows one Vec for the complete batch, while production writers
+    // serialize directly into the file one item at a time.
+    let write_items: Vec<Value> = (0..WRITE_BATCH_ITEMS as u64).map(Value::from).collect();
+
+    let (naive_jsonl_allocated, naive_jsonl_size) = naive_jsonl_batch_bytes_allocated(&write_items);
+    let jsonl_writer_path = temp_path("jsonl-writer-allocation");
+    let (real_jsonl_allocated, real_jsonl_size) =
+        real_jsonl_writer_bytes_allocated(&jsonl_writer_path, &write_items).await;
+    let _ = std::fs::remove_file(&jsonl_writer_path);
+    assert_eq!(real_jsonl_size, naive_jsonl_size as u64);
+    assert!(
+        naive_jsonl_allocated >= naive_jsonl_size,
+        "the whole-batch JSONL control must retain an allocation proportional to its encoded \
+         bytes: allocated={naive_jsonl_allocated} encoded={naive_jsonl_size}"
+    );
+    assert!(
+        real_jsonl_allocated < naive_jsonl_allocated / 2,
+        "the production JSONL writer must not allocate a whole serialized batch: \
+         real={real_jsonl_allocated} control={naive_jsonl_allocated}"
+    );
+
+    let (naive_array_allocated, naive_array_size) =
+        naive_json_array_batch_bytes_allocated(&write_items);
+    let array_writer_path = temp_path("json-array-writer-allocation");
+    let (real_array_allocated, real_array_size) =
+        real_json_array_writer_bytes_allocated(&array_writer_path, &write_items).await;
+    let _ = std::fs::remove_file(&array_writer_path);
+    assert_eq!(real_array_size, naive_array_size as u64 - 2);
+    assert!(
+        naive_array_allocated >= naive_array_size,
+        "the whole-batch JSON-array control must retain an allocation proportional to its \
+         encoded bytes: allocated={naive_array_allocated} encoded={naive_array_size}"
+    );
+    assert!(
+        real_array_allocated < naive_array_allocated / 2,
+        "the production JSON-array writer must not allocate a whole serialized batch: \
+         real={real_array_allocated} control={naive_array_allocated}"
     );
 }

@@ -4,20 +4,20 @@
 //! One top-level array element is one item. [`JsonArrayReader`] streams
 //! elements without ever deserializing the whole array into `Vec<Value>`:
 //! this module owns only the byte-level framing around `[`, `,`, `]`, and
-//! JSON whitespace -- recognizing exactly those five ASCII bytes never
+//! JSON whitespace -- recognizing this small set of ASCII framing bytes never
 //! requires understanding string escaping or nesting, so it is not "a second
 //! JSON grammar" -- while every value's own bytes are parsed by
 //! [`serde_json`] itself, via the documented, public
 //! [`serde_json::Deserializer::from_slice`] plus
 //! [`serde_json::StreamDeserializer::byte_offset`] idiom for resuming a
 //! partial parse: grow an owned, bounded buffer and retry parsing it from the
-//! start until `serde_json` reports either a complete value (with its exact
-//! byte length) or a genuine syntax error, never an unattributed EOF. This is
-//! the same idiom `serde_json`'s own documentation recommends for streaming
-//! a value out of a byte source of unknown length, and it is what makes this
-//! reader safe against delimiters appearing inside escaped strings: framing
-//! bytes are only ever inspected in the byte range *after* `serde_json` has
-//! already told us exactly where a value ends.
+//! start until `serde_json` reports a complete value with a candidate byte
+//! length. That candidate is accepted only after the following framing is
+//! proven to be JSON whitespace plus `,` or `]`; a parser result alone is not
+//! enough because a buffer can end in the middle of a number token. This is
+//! what makes the reader safe against delimiters appearing inside escaped
+//! strings: framing bytes are only ever inspected after `serde_json` has
+//! identified the value bytes.
 //!
 //! # Malformed-input recovery
 //!
@@ -295,6 +295,18 @@ enum ParsedElement {
     FailClosed,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ValueFraming {
+    /// The parser-proven value is followed by a valid array delimiter.
+    Delimited,
+    /// The source ended at an ambiguous value prefix, so more bytes are
+    /// needed before the value can be accepted as complete.
+    NeedMore,
+    /// Bytes after the parser-proven value cannot frame a top-level array
+    /// element.
+    Invalid,
+}
+
 /// A restartable [`crate::ItemReader`] over any `Read + Seek` top-level
 /// JSON-array source. See the module documentation for the streaming and
 /// malformed-input design.
@@ -312,14 +324,12 @@ enum ParsedElement {
 /// - **Thread safety**: `Send`; used exclusively (`&mut self`).
 /// - **Reentrancy**: not reentrant (owns the parse position).
 /// - **Transaction/delivery**: not applicable.
-/// - **Bounded resource**: an element is parsed into an owned buffer grown
-///   in doubling steps and never past
-///   [`JsonArrayFormat::with_max_value_bytes`]; the buffer is (re)parsed with
-///   [`serde_json::Deserializer::from_slice`] after each growth step, so
-///   retained memory for a single element never exceeds the configured
-///   bound regardless of the element's real size (a value whose complete
-///   parse would need more than the bound is rejected, never fully
-///   materialized). See
+/// - **Bounded resource**: the raw input buffer used to frame one element is
+///   grown in doubling steps and never past
+///   [`JsonArrayFormat::with_max_value_bytes`]. Parser/value allocations are
+///   record-dependent but remain `O(max_value_bytes)` for accepted input; a
+///   value whose raw source span would exceed the bound is rejected before
+///   source-sized raw accumulation. See
 ///   `crates/oxide-batch/tests/item_components_json_allocation.rs`.
 /// - **Cancellation**: cooperative stop is observed by the driving
 ///   [`crate::ChunkStep`] between calls.
@@ -335,9 +345,9 @@ enum ParsedElement {
 ///   documentation for why this reader has exactly one failure mode, always
 ///   fail-closed, never a safe mid-array skip. Configure fail for this
 ///   failure class; skip cannot be honored (the M3 runtime requires forward
-///   checkpoint proof) and retry reproduces the identical failure
-///   deterministically (this reader seeks the source back to the last proven
-///   boundary before returning the error).
+///   checkpoint proof). A direct retry is deterministic: this reader restores
+///   the source position and framing state to the last proven boundary before
+///   returning the error, so the same malformed element is attempted again.
 /// - **Support tier**: first-party.
 /// - **Evidence**: `crates/oxide-batch-test/tests/item_components_json_array.rs`,
 ///   `crates/oxide-batch-test/tests/postgres_json_restart.rs`.
@@ -353,6 +363,62 @@ pub struct JsonArrayReader<Src> {
 }
 
 impl<Src: Read + Seek> JsonArrayReader<Src> {
+    fn restore_read_state(&mut self, position: u64, expect_separator: bool) {
+        let _ = self.source.seek(SeekFrom::Start(position));
+        self.consumed_absolute = position;
+        self.expect_separator = expect_separator;
+        self.done = false;
+    }
+
+    /// Accepts a closing bracket only when all remaining source bytes are
+    /// JSON whitespace and then true EOF. The first non-whitespace byte is
+    /// left unread so the caller can restore the last proven boundary on
+    /// failure.
+    fn consume_closing_bracket(&mut self) -> Result<(), ReaderError> {
+        self.source.consume(1);
+        self.consumed_absolute += 1;
+        let (skipped, byte) = skip_whitespace(&mut self.source)
+            .map_err(|_| ReaderError::with_category(FailureCategory::TransientInfrastructure))?;
+        self.consumed_absolute += skipped;
+        if byte.is_some() {
+            return Err(ReaderError::new());
+        }
+        self.done = true;
+        Ok(())
+    }
+
+    /// Proves the framing immediately after a parser-proven value. Only the
+    /// byte range after `byte_offset()` is inspected; nested or quoted
+    /// delimiters are therefore never considered framing. A non-whitespace
+    /// byte immediately adjacent to the buffer may still be a continuation of
+    /// a bare JSON token (most importantly a number), so that case requests
+    /// another bounded growth step. Once whitespace has intervened, a
+    /// non-delimiter is definitively invalid rather than something to scan
+    /// past heuristically.
+    fn prove_value_framing(&mut self, offset: usize) -> Result<ValueFraming, ReaderError> {
+        let suffix = &self.buffer[offset..];
+        let first_non_whitespace = suffix
+            .iter()
+            .position(|byte| !matches!(byte, b' ' | b'\t' | b'\n' | b'\r'));
+        if let Some(index) = first_non_whitespace {
+            return Ok(match suffix[index] {
+                b',' | b']' => ValueFraming::Delimited,
+                _ if index == 0 => ValueFraming::NeedMore,
+                _ => ValueFraming::Invalid,
+            });
+        }
+
+        let buffered_whitespace = !suffix.is_empty();
+        let (skipped, byte) = skip_whitespace(&mut self.source)
+            .map_err(|_| ReaderError::with_category(FailureCategory::TransientInfrastructure))?;
+        Ok(match byte {
+            Some(b',' | b']') => ValueFraming::Delimited,
+            Some(_) if buffered_whitespace || skipped > 0 => ValueFraming::Invalid,
+            Some(_) => ValueFraming::NeedMore,
+            None => ValueFraming::Invalid,
+        })
+    }
+
     /// Runs once per instance: on initial execution, seeks to byte 0 (a
     /// no-op) and consumes the opening bracket (and, for an empty array, the
     /// closing one too); on restart, seeks to the persisted checkpoint and
@@ -362,10 +428,12 @@ impl<Src: Read + Seek> JsonArrayReader<Src> {
         if self.started {
             return Ok(());
         }
-        self.started = true;
         let target = *self.position.lock().unwrap_or_else(PoisonError::into_inner);
+        self.source
+            .seek(SeekFrom::Start(target))
+            .map_err(|_| ReaderError::new())?;
+        self.consumed_absolute = target;
         if target == 0 {
-            self.consumed_absolute = 0;
             let (skipped, byte) = skip_whitespace(&mut self.source).map_err(|_| {
                 ReaderError::with_category(FailureCategory::TransientInfrastructure)
             })?;
@@ -381,22 +449,18 @@ impl<Src: Read + Seek> JsonArrayReader<Src> {
             self.consumed_absolute += skipped;
             match byte {
                 Some(b']') => {
-                    self.source.consume(1);
-                    self.consumed_absolute += 1;
-                    self.done = true;
+                    self.consume_closing_bracket()?;
                 }
                 Some(_) => {
                     self.expect_separator = false;
                 }
                 None => return Err(ReaderError::new()),
             }
+            self.started = true;
             Ok(())
         } else {
-            self.source
-                .seek(SeekFrom::Start(target))
-                .map_err(|_| ReaderError::new())?;
-            self.consumed_absolute = target;
             self.expect_separator = true;
+            self.started = true;
             Ok(())
         }
     }
@@ -411,9 +475,7 @@ impl<Src: Read + Seek> JsonArrayReader<Src> {
         self.consumed_absolute += skipped;
         match byte {
             Some(b']') => {
-                self.source.consume(1);
-                self.consumed_absolute += 1;
-                self.done = true;
+                self.consume_closing_bracket()?;
                 Ok(false)
             }
             Some(b',') => {
@@ -436,8 +498,11 @@ impl<Src: Read + Seek> JsonArrayReader<Src> {
     /// growing [`Self::buffer`] and never past `max_value_bytes`. Returns
     /// the element and its exact raw byte span, or [`ParsedElement::FailClosed`].
     fn parse_element(&mut self) -> Result<ParsedElement, ReaderError> {
+        if self.max_value_bytes == 0 {
+            return Ok(ParsedElement::FailClosed);
+        }
         self.buffer.clear();
-        let mut target = INITIAL_GROWTH_BYTES.min(self.max_value_bytes).max(1);
+        let mut target = INITIAL_GROWTH_BYTES.min(self.max_value_bytes);
         loop {
             let hit_eof = grow_to(&mut self.source, &mut self.buffer, target).map_err(|_| {
                 ReaderError::with_category(FailureCategory::TransientInfrastructure)
@@ -448,12 +513,27 @@ impl<Src: Read + Seek> JsonArrayReader<Src> {
             let offset = stream.byte_offset();
             drop(stream);
             match result {
-                Some(Ok(value)) => {
-                    return Ok(ParsedElement::Value {
-                        value,
-                        consumed: offset as u64,
-                    });
-                }
+                Some(Ok(value)) => match self.prove_value_framing(offset) {
+                    Ok(ValueFraming::Delimited) => {
+                        return Ok(ParsedElement::Value {
+                            value,
+                            consumed: offset as u64,
+                        });
+                    }
+                    Ok(ValueFraming::NeedMore)
+                        if !hit_eof && self.buffer.len() < self.max_value_bytes =>
+                    {
+                        let next = target.saturating_mul(2).min(self.max_value_bytes);
+                        if next <= target {
+                            return Ok(ParsedElement::FailClosed);
+                        }
+                        target = next;
+                    }
+                    Ok(ValueFraming::NeedMore | ValueFraming::Invalid) => {
+                        return Ok(ParsedElement::FailClosed);
+                    }
+                    Err(error) => return Err(error),
+                },
                 Some(Err(error))
                     if error.is_eof() && !hit_eof && self.buffer.len() < self.max_value_bytes =>
                 {
@@ -479,22 +559,21 @@ where
         if self.done {
             return Ok(ReadOutcome::EndOfInput);
         }
+        let checkpoint_before_read = self.consumed_absolute;
+        let expect_separator_before_read = self.expect_separator;
         if self.expect_separator {
-            let before = self.consumed_absolute;
             match self.resolve_separator() {
                 Ok(true) => {}
                 Ok(false) => return Ok(ReadOutcome::EndOfInput),
                 Err(error) => {
-                    let _ = self.source.seek(SeekFrom::Start(before));
-                    self.consumed_absolute = before;
+                    self.restore_read_state(checkpoint_before_read, expect_separator_before_read);
                     return Err(error);
                 }
             }
         }
-        let before = self.consumed_absolute;
         match self.parse_element() {
             Ok(ParsedElement::Value { value, consumed }) => {
-                self.consumed_absolute = before + consumed;
+                self.consumed_absolute += consumed;
                 // `parse_element`'s bounded growth may have read further
                 // ahead from `source` than the element's own bytes (its
                 // growth target is not tailored to this element's exact
@@ -511,13 +590,11 @@ where
                 Ok(ReadOutcome::Item(value.into()))
             }
             Ok(ParsedElement::FailClosed) => {
-                let _ = self.source.seek(SeekFrom::Start(before));
-                self.consumed_absolute = before;
+                self.restore_read_state(checkpoint_before_read, expect_separator_before_read);
                 Err(ReaderError::new())
             }
             Err(error) => {
-                let _ = self.source.seek(SeekFrom::Start(before));
-                self.consumed_absolute = before;
+                self.restore_read_state(checkpoint_before_read, expect_separator_before_read);
                 Err(error)
             }
         }
@@ -652,7 +729,8 @@ where
 /// - **Transaction/delivery**: does not enlist; file bytes are outside the
 ///   OxideBatch-owned business transaction. No directory-entry fsync is
 ///   performed.
-/// - **Bounded resource**: one file handle; buffers at most one write batch.
+/// - **Bounded resource**: one file handle; serializes each item directly to
+///   the file and does not materialize the serialized write batch.
 /// - **Cancellation**: honors the call-scoped stop token before writing.
 /// - **Close**: [`crate::ItemStream::close`] appends the closing `]` *only*
 ///   when [`crate::StreamRuntimeOutcome::Committed`] is reported -- the file
@@ -688,29 +766,29 @@ where
         if items.is_empty() {
             return Ok(WriteOutcome::Written);
         }
-        let mut already_have_items = *self
+        let already_have_items = *self
             .committed_items
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             > 0;
-        let mut buffer: Vec<u8> = Vec::new();
-        for item in items {
-            if already_have_items {
-                buffer.push(b',');
-            }
-            already_have_items = true;
-            let value: Value = item.clone().into();
-            serde_json::to_writer(&mut buffer, &value).map_err(|_| WriterError::new())?;
-        }
         let mut guard = self.file.lock().unwrap_or_else(PoisonError::into_inner);
-        guard.write_all(&buffer).map_err(|_| WriterError::new())?;
+        let mut has_items = already_have_items;
+        for item in items {
+            if has_items {
+                guard.write_all(b",").map_err(|_| WriterError::new())?;
+            }
+            has_items = true;
+            let value: Value = item.clone().into();
+            serde_json::to_writer(&mut *guard, &value).map_err(|_| WriterError::new())?;
+        }
         guard.sync_data().map_err(|_| WriterError::new())?;
+        let candidate_bytes = guard.stream_position().map_err(|_| WriterError::new())?;
         drop(guard);
         let mut committed_bytes = self
             .committed_bytes
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        *committed_bytes = committed_bytes.saturating_add(buffer.len() as u64);
+        *committed_bytes = candidate_bytes;
         drop(committed_bytes);
         let mut committed_items = self
             .committed_items

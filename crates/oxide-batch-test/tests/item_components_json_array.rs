@@ -11,15 +11,16 @@
 
 #![allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 
-use std::io::Cursor;
+use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::sync::{Arc, Mutex};
 
 use oxide_batch::item_components::basic::IdentityProcessor;
 use oxide_batch::item_components::{JsonArrayFormat, json_array_reader, json_array_writer};
 use oxide_batch::{
     BoxedProcessor, BoxedReader, BoxedWriter, ChunkExecutionOutcome, ChunkSize,
-    ComponentStreamIdentity, ItemReader, ItemStream, ItemWriter, ReadContext, ReadOutcome,
-    ReaderError, WriteOutcome, WriterError,
+    ComponentStateEnvelope, ComponentStatePayload, ComponentStreamIdentity, FailureCategory,
+    ItemReader, ItemStream, ItemWriter, ReadContext, ReadOutcome, ReaderError, WriteOutcome,
+    WriterError,
 };
 use oxide_batch_test::{ComponentFixture, TestStep};
 use serde_json::{Value, json};
@@ -41,6 +42,67 @@ fn temp_path(name: &str) -> std::path::PathBuf {
         .expect("time moves forward")
         .as_nanos();
     std::env::temp_dir().join(format!("oxide-batch-148-json-array-{name}-{nonce}.json"))
+}
+
+fn reader_checkpoint_byte(envelope: &ComponentStateEnvelope) -> u64 {
+    let ComponentStatePayload::Inline(payload) = envelope.payload().unwrap() else {
+        panic!("reader checkpoints must use an inline payload");
+    };
+    serde_json::from_slice::<Value>(&payload)
+        .unwrap()
+        .get("byte")
+        .and_then(Value::as_u64)
+        .expect("reader checkpoint byte")
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum SourceEvent {
+    Seek(u64),
+    Read { start: u64, end: u64 },
+}
+
+struct TracedSource {
+    inner: Cursor<Vec<u8>>,
+    events: Arc<Mutex<Vec<SourceEvent>>>,
+}
+
+impl TracedSource {
+    fn new(bytes: Vec<u8>) -> (Self, Arc<Mutex<Vec<SourceEvent>>>) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        (
+            Self {
+                inner: Cursor::new(bytes),
+                events: Arc::clone(&events),
+            },
+            events,
+        )
+    }
+}
+
+impl Read for TracedSource {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let start = self.inner.position();
+        let read = self.inner.read(buf)?;
+        self.events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(SourceEvent::Read {
+                start,
+                end: start + read as u64,
+            });
+        Ok(read)
+    }
+}
+
+impl Seek for TracedSource {
+    fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+        let target = self.inner.seek(position)?;
+        self.events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(SourceEvent::Seek(target));
+        Ok(target)
+    }
 }
 
 // --------------------------------------------------------------- A: basic --
@@ -166,6 +228,103 @@ async fn pretty_printed_input_with_newlines_and_extra_whitespace_parses_correctl
     );
 }
 
+#[tokio::test]
+async fn long_number_crossing_growth_bound_is_one_element_and_restartable() {
+    let number = format!("1.{}2", "0".repeat(1024));
+    let source = format!("[{number},2]").into_bytes();
+    let expected_number: Value = serde_json::from_str(&number).unwrap();
+    let fixture = ComponentFixture::new();
+    let (mut reader_a, stream_a, _c) = json_array_reader::<Value, _>(
+        Cursor::new(source.clone()),
+        JsonArrayFormat::new(),
+        identity(),
+    );
+
+    let ReadOutcome::Item(first) = read_next(&mut reader_a, fixture.read_context())
+        .await
+        .unwrap()
+    else {
+        panic!("the long number must be emitted as one complete element");
+    };
+    assert_eq!(first, expected_number);
+    let checkpoint = stream_a
+        .update(fixture.stream_update_context())
+        .await
+        .unwrap();
+    let expected_boundary = 1 + number.len() as u64;
+    assert_eq!(
+        reader_checkpoint_byte(&checkpoint),
+        expected_boundary,
+        "the checkpoint must end after the complete number, not at an initial growth boundary"
+    );
+
+    let (mut reader_b, stream_b, _c) =
+        json_array_reader::<Value, _>(Cursor::new(source), JsonArrayFormat::new(), identity());
+    stream_b
+        .open(fixture.stream_open_context(Some(&checkpoint)))
+        .await
+        .unwrap();
+    assert_eq!(
+        read_next(&mut reader_b, fixture.read_context())
+            .await
+            .unwrap(),
+        ReadOutcome::Item(json!(2))
+    );
+    assert_eq!(
+        read_next(&mut reader_b, fixture.read_context())
+            .await
+            .unwrap(),
+        ReadOutcome::EndOfInput
+    );
+}
+
+#[tokio::test]
+async fn trailing_garbage_after_top_level_array_is_rejected_but_json_whitespace_is_allowed() {
+    let fixture = ComponentFixture::new();
+    for source in [b"[]".as_slice(), b"[]\n", b"[1]    ", b"[1]\r\n\t"] {
+        let (mut reader, _s, _c) = json_array_reader::<Value, _>(
+            Cursor::new(source.to_vec()),
+            JsonArrayFormat::new(),
+            identity(),
+        );
+        assert_eq!(
+            read_next(&mut reader, fixture.read_context())
+                .await
+                .unwrap(),
+            if source.starts_with(b"[]") {
+                ReadOutcome::EndOfInput
+            } else {
+                ReadOutcome::Item(json!(1))
+            }
+        );
+        assert_eq!(
+            read_next(&mut reader, fixture.read_context())
+                .await
+                .unwrap(),
+            ReadOutcome::EndOfInput
+        );
+    }
+
+    for source in [b"[]x".as_slice(), b"[1]garbage", b"[1] {}", b"[1][2]"] {
+        let (mut reader, _s, _c) = json_array_reader::<Value, _>(
+            Cursor::new(source.to_vec()),
+            JsonArrayFormat::new(),
+            identity(),
+        );
+        let result = read_next(&mut reader, fixture.read_context()).await;
+        let error = if source.starts_with(b"[]") {
+            result.expect_err("trailing garbage must fail the empty array")
+        } else {
+            assert_eq!(result.unwrap(), ReadOutcome::Item(json!(1)));
+            read_next(&mut reader, fixture.read_context())
+                .await
+                .expect_err("trailing garbage must fail after the final element")
+        };
+        assert_eq!(error.category(), FailureCategory::UserComponent);
+        assert!(!error.has_checkpoint_advanced());
+    }
+}
+
 /// Counts top-level, comma-separated segments the way a naive, quote-unaware
 /// implementation might: every raw comma byte is a separator, full stop.
 /// This is the exact class of bug streaming array-element framing must not
@@ -227,9 +386,6 @@ async fn missing_closing_bracket_is_unrecoverable_and_fails_closed() {
     let _ = read_next(&mut reader, fixture.read_context())
         .await
         .unwrap();
-    let _ = read_next(&mut reader, fixture.read_context())
-        .await
-        .unwrap();
     let error = read_next(&mut reader, fixture.read_context())
         .await
         .expect_err("a truncated array missing its closing bracket must fail closed");
@@ -254,6 +410,11 @@ async fn malformed_element_syntax_is_unrecoverable_and_fails_closed() {
         .await
         .expect_err("a syntactically invalid element must fail closed");
     assert!(!error.has_checkpoint_advanced());
+    let retry = read_next(&mut reader, fixture.read_context())
+        .await
+        .expect_err("retry must re-evaluate the same malformed element boundary");
+    assert_eq!(retry.category(), FailureCategory::UserComponent);
+    assert!(!retry.has_checkpoint_advanced());
 }
 
 #[tokio::test]
@@ -263,9 +424,6 @@ async fn missing_separator_between_elements_is_unrecoverable_and_fails_closed() 
         json_array_reader::<Value, _>(source, JsonArrayFormat::new(), identity());
     let fixture = ComponentFixture::new();
 
-    let _ = read_next(&mut reader, fixture.read_context())
-        .await
-        .unwrap();
     let error = read_next(&mut reader, fixture.read_context())
         .await
         .expect_err("two elements with no comma between them must fail closed");
@@ -360,6 +518,86 @@ async fn restart_resumes_at_the_next_element_boundary_not_byte_zero() {
             .await
             .unwrap(),
         ReadOutcome::EndOfInput
+    );
+}
+
+#[tokio::test]
+async fn restart_instrumentation_observes_byte_zero_rescan_control_and_real_reader_avoids_it() {
+    let bytes = br#"["first",{"nested":["a,b",2]},"third"]"#.to_vec();
+    let fixture = ComponentFixture::new();
+
+    let (source_a, _events_a) = TracedSource::new(bytes.clone());
+    let (mut reader_a, stream_a, _c) =
+        json_array_reader::<Value, _>(source_a, JsonArrayFormat::new(), identity());
+    assert!(matches!(
+        read_next(&mut reader_a, fixture.read_context())
+            .await
+            .unwrap(),
+        ReadOutcome::Item(_)
+    ));
+    assert!(matches!(
+        read_next(&mut reader_a, fixture.read_context())
+            .await
+            .unwrap(),
+        ReadOutcome::Item(_)
+    ));
+    let checkpoint = stream_a
+        .update(fixture.stream_update_context())
+        .await
+        .unwrap();
+    let checkpoint_byte = reader_checkpoint_byte(&checkpoint);
+    let committed_prefix = br#"["first",{"nested":["a,b",2]}"#;
+    assert_eq!(checkpoint_byte, committed_prefix.len() as u64);
+
+    let (source_b, events_b) = TracedSource::new(bytes.clone());
+    let (mut reader_b, stream_b, _c) =
+        json_array_reader::<Value, _>(source_b, JsonArrayFormat::new(), identity());
+    stream_b
+        .open(fixture.stream_open_context(Some(&checkpoint)))
+        .await
+        .unwrap();
+    assert_eq!(
+        read_next(&mut reader_b, fixture.read_context())
+            .await
+            .unwrap(),
+        ReadOutcome::Item(json!("third"))
+    );
+    let events = events_b
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert!(
+        events.contains(&SourceEvent::Seek(checkpoint_byte)),
+        "a restored reader must seek to its persisted boundary: {events:?}"
+    );
+    assert!(
+        events.iter().all(|event| match event {
+            SourceEvent::Seek(target) => *target >= checkpoint_byte,
+            SourceEvent::Read { start, end } => *start >= checkpoint_byte && *end >= *start,
+        }),
+        "restored reader must not seek or read before the checkpoint: {events:?}"
+    );
+    assert!(!events.contains(&SourceEvent::Seek(0)));
+
+    let (mut naive, control_events) = TracedSource::new(bytes);
+    naive.seek(SeekFrom::Start(0)).unwrap();
+    let mut committed_prefix = vec![0_u8; usize::try_from(checkpoint_byte).unwrap()];
+    naive.read_exact(&mut committed_prefix).unwrap();
+    let control_events = control_events
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert!(
+        control_events.contains(&SourceEvent::Seek(0)),
+        "the positive control must actually observe its byte-zero seek: {control_events:?}"
+    );
+    assert!(
+        control_events.iter().any(|event| matches!(
+            event,
+            SourceEvent::Read { start, end }
+                if *start == 0 && *end == checkpoint_byte
+        )),
+        "the positive control must actually observe rereading the committed prefix: {control_events:?}"
     );
 }
 

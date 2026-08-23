@@ -151,6 +151,66 @@ async fn crlf_and_lf_terminators_parse_identically() {
     }
 }
 
+fn json_string_with_raw_length(length: usize) -> (Vec<u8>, String) {
+    assert!(
+        length >= 2,
+        "a JSON string needs opening and closing quotes"
+    );
+    let value = "x".repeat(length - 2);
+    (format!("\"{value}\"").into_bytes(), value)
+}
+
+#[tokio::test]
+async fn max_record_bytes_excludes_lf_and_crlf_terminators() {
+    const MAX_RECORD_BYTES: usize = 4096;
+    let fixture = ComponentFixture::new();
+
+    for terminator in [b"\n".as_slice(), b"\r\n".as_slice()] {
+        let (payload, value) = json_string_with_raw_length(MAX_RECORD_BYTES);
+        let mut source = payload;
+        source.extend_from_slice(terminator);
+        let (mut reader, _s, _c) = jsonl_reader::<Value, _>(
+            Cursor::new(source),
+            JsonLinesFormat::new().with_max_record_bytes(MAX_RECORD_BYTES),
+            identity(),
+        );
+        assert_eq!(
+            read_next(&mut reader, fixture.read_context())
+                .await
+                .unwrap(),
+            ReadOutcome::Item(Value::String(value))
+        );
+        assert_eq!(
+            read_next(&mut reader, fixture.read_context())
+                .await
+                .unwrap(),
+            ReadOutcome::EndOfInput
+        );
+    }
+}
+
+#[tokio::test]
+async fn max_record_bytes_rejects_one_extra_payload_byte_for_lf_and_crlf() {
+    const MAX_RECORD_BYTES: usize = 4096;
+    let fixture = ComponentFixture::new();
+
+    for terminator in [b"\n".as_slice(), b"\r\n".as_slice()] {
+        let (payload, _value) = json_string_with_raw_length(MAX_RECORD_BYTES + 1);
+        let mut source = payload;
+        source.extend_from_slice(terminator);
+        let (mut reader, _s, _c) = jsonl_reader::<Value, _>(
+            Cursor::new(source),
+            JsonLinesFormat::new().with_max_record_bytes(MAX_RECORD_BYTES),
+            identity(),
+        );
+        let error = read_next(&mut reader, fixture.read_context())
+            .await
+            .expect_err("one payload byte over the bound must fail");
+        assert_eq!(error.category(), FailureCategory::UserComponent);
+        assert!(error.has_checkpoint_advanced());
+    }
+}
+
 #[tokio::test]
 async fn final_line_without_a_terminator_is_still_a_record() {
     let source = Cursor::new(b"1\n2".to_vec());

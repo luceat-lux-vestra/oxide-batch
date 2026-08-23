@@ -254,9 +254,13 @@ fn read_bounded_line<R: BufRead>(reader: &mut R, max_bytes: usize) -> io::Result
     let mut buf: Vec<u8> = Vec::new();
     let mut consumed_total: u64 = 0;
     let mut too_long = false;
+    let mut pending_cr = false;
     loop {
         let available = reader.fill_buf()?;
         if available.is_empty() {
+            if pending_cr {
+                copy_bounded(&mut buf, b"\r", max_bytes, &mut too_long);
+            }
             if consumed_total == 0 {
                 return Ok(BoundedLine::Eof);
             }
@@ -271,8 +275,33 @@ fn read_bounded_line<R: BufRead>(reader: &mut R, max_bytes: usize) -> io::Result
                 }
             });
         }
+        if pending_cr {
+            if available[0] == b'\n' {
+                reader.consume(1);
+                consumed_total += 1;
+                return Ok(if too_long {
+                    BoundedLine::TooLong {
+                        consumed: consumed_total,
+                    }
+                } else {
+                    BoundedLine::Line {
+                        bytes: buf,
+                        consumed: consumed_total,
+                    }
+                });
+            }
+            copy_bounded(&mut buf, b"\r", max_bytes, &mut too_long);
+            pending_cr = false;
+        }
         if let Some(newline) = available.iter().position(|&byte| byte == b'\n') {
-            copy_bounded(&mut buf, &available[..newline], max_bytes, &mut too_long);
+            let payload_end =
+                newline.saturating_sub(usize::from(newline > 0 && available[newline - 1] == b'\r'));
+            copy_bounded(
+                &mut buf,
+                &available[..payload_end],
+                max_bytes,
+                &mut too_long,
+            );
             let take = newline + 1;
             reader.consume(take);
             consumed_total += take as u64;
@@ -281,14 +310,26 @@ fn read_bounded_line<R: BufRead>(reader: &mut R, max_bytes: usize) -> io::Result
                     consumed: consumed_total,
                 }
             } else {
-                if buf.last() == Some(&b'\r') {
-                    buf.pop();
-                }
                 BoundedLine::Line {
                     bytes: buf,
                     consumed: consumed_total,
                 }
             });
+        }
+        if available.last() == Some(&b'\r') {
+            let payload_end = available.len() - 1;
+            copy_bounded(
+                &mut buf,
+                &available[..payload_end],
+                max_bytes,
+                &mut too_long,
+            );
+            reader.consume(payload_end);
+            consumed_total += payload_end as u64;
+            reader.consume(1);
+            consumed_total += 1;
+            pending_cr = true;
+            continue;
         }
         copy_bounded(&mut buf, available, max_bytes, &mut too_long);
         let chunk_len = available.len();
@@ -311,17 +352,16 @@ fn read_bounded_line<R: BufRead>(reader: &mut R, max_bytes: usize) -> io::Result
 /// - **Thread safety**: `Send`; used exclusively (`&mut self`).
 /// - **Reentrancy**: not reentrant.
 /// - **Transaction/delivery**: not applicable.
-/// - **Bounded resource**: a line is read through the same bounded
+/// - **Bounded resource**: raw line bytes are read through the same bounded
 ///   `fill_buf`/`consume` loop
 ///   [`crate::item_components::fixed_width::FixedWidthReader`] uses, capped
 ///   at [`JsonLinesFormat::with_max_record_bytes`]: each chunk read from the
 ///   source is copied into the line buffer only up to the remaining budget
-///   under that bound, so the buffer's length never exceeds it even
-///   transiently. A line within the bound is then parsed by
-///   [`serde_json::from_slice`], whose own allocation is bounded by the
-///   line's own (already-bounded) byte span -- see
+///   under that bound. Record-dependent parser/value allocations remain
+///   `O(max_record_bytes)` for accepted input, while an oversized line is
+///   rejected before source-sized raw accumulation. See
 ///   `crates/oxide-batch/tests/item_components_json_allocation.rs` for the
-///   allocator-level evidence.
+///   allocator-level positive controls.
 /// - **Cancellation**: cooperative stop is observed by the driving
 ///   [`crate::ChunkStep`] between calls.
 /// - **Close**: closed through the paired stream's
@@ -512,7 +552,8 @@ where
 /// - **Transaction/delivery**: does not enlist; file bytes are outside the
 ///   OxideBatch-owned business transaction. No directory-entry fsync is
 ///   performed (each write batch is flushed with `File::sync_data`).
-/// - **Bounded resource**: one file handle; buffers at most one write batch.
+/// - **Bounded resource**: one file handle; serializes each item directly to
+///   the file and does not materialize the serialized write batch.
 /// - **Cancellation**: honors the call-scoped stop token before writing.
 /// - **Close**: nothing beyond the paired stream's
 ///   [`crate::ItemStream::close`] -- each line is independently complete, so
@@ -544,21 +585,22 @@ where
         if context.stop_token().is_stop_requested() {
             return Ok(WriteOutcome::Stopped);
         }
-        let mut buffer: Vec<u8> = Vec::new();
+        let mut guard = self.file.lock().unwrap_or_else(PoisonError::into_inner);
         for item in items {
             let value: Value = item.clone().into();
-            serde_json::to_writer(&mut buffer, &value).map_err(|_| WriterError::new())?;
-            buffer.extend_from_slice(self.terminator.bytes());
+            serde_json::to_writer(&mut *guard, &value).map_err(|_| WriterError::new())?;
+            guard
+                .write_all(self.terminator.bytes())
+                .map_err(|_| WriterError::new())?;
         }
-        let mut guard = self.file.lock().unwrap_or_else(PoisonError::into_inner);
-        guard.write_all(&buffer).map_err(|_| WriterError::new())?;
         guard.sync_data().map_err(|_| WriterError::new())?;
+        let candidate_bytes = guard.stream_position().map_err(|_| WriterError::new())?;
         drop(guard);
         let mut committed = self
             .committed_bytes
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        *committed = committed.saturating_add(buffer.len() as u64);
+        *committed = candidate_bytes;
         Ok(WriteOutcome::Written)
     }
 }
