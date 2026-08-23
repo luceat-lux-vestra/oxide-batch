@@ -60,12 +60,15 @@ use serde_json::Value;
 /// `ITEM-COMPOSITE-001` and `ITEM-DECORATOR-001` did the same in
 /// [#146](https://github.com/luceat-lux-vestra/oxide-batch/issues/146);
 /// `IO-FLAT-001` did the same in
-/// [#147](https://github.com/luceat-lux-vestra/oxide-batch/issues/147).
+/// [#147](https://github.com/luceat-lux-vestra/oxide-batch/issues/147);
+/// `IO-STRUCTURED-001` did the same (for its M6 JSON/JSONL slice only; XML
+/// and Avro remain `Planned` for M13) in
+/// [#148](https://github.com/luceat-lux-vestra/oxide-batch/issues/148).
 const CLOSED_DISPOSITION: &[(&str, usize)] = &[
     ("Verified", 28),
-    ("Implemented", 9),
+    ("Implemented", 10),
     ("Partial", 13),
-    ("Planned", 31),
+    ("Planned", 30),
     ("Unknown", 2),
 ];
 

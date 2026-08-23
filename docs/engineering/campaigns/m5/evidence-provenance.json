@@ -4,7 +4,7 @@
     "stages": [
       {
         "stage": "actual execution tree",
-        "what": "The tree the campaign really ran against, recorded by the run from inside its own checkout as an object manifest in the report. On a pull request this is the ephemeral merge commit, which no later clone can resolve \u2014 which is exactly why the manifest is recorded rather than the commit name being trusted to stand for it."
+        "what": "The tree the campaign really ran against, recorded by the run from inside its own checkout as an object manifest in the report. On a pull request this is the ephemeral merge commit, which no later clone can resolve — which is exactly why the manifest is recorded rather than the commit name being trusted to stand for it."
       },
       {
         "stage": "workflow run",
@@ -21,7 +21,7 @@
       "Presenting the retention commit as the producer.",
       "Editing a retained artifact so that a recorded hash or commit matches.",
       "Re-running the campaign on each new head to make the execution tree equal the retention commit.",
-      "Treating a summary the report wrote about itself \u2014 a verdict, a total, a pass \u2014 as evidence for the run it describes."
+      "Treating a summary the report wrote about itself — a verdict, a total, a pass — as evidence for the run it describes."
     ]
   },
   "retention_paths": {
@@ -33,7 +33,7 @@
   },
   "binding": {
     "derived_verdicts": "The report's correctness results, growth verdicts and campaign totals are not read as evidence. `cargo xtask soak` recomputes each of them from the raw per-cycle journal and the retained samples, after first requiring the chronology of those arrays to be a contiguous, ordered, correctly phased run of the declared length, and requires the report's own answers to match.",
-    "note": "Two verifications with different reach, and the difference is stated rather than blurred. `cargo xtask evidence` is repository-local: it resolves nothing over the network, so it keeps working long after GitHub has expired the artifacts it describes, and what it establishes is that the retained bytes are the bytes this repository recorded, over a tree whose campaign still means what it meant. It cannot say the retained bytes are the bytes the workflow uploaded. That stronger check needs the GitHub API, which is why it is performed once \u2014 at the moment evidence is promoted \u2014 and its result recorded per entry under remote_verification.",
+    "note": "Two verifications with different reach, and the difference is stated rather than blurred. `cargo xtask evidence` is repository-local: it resolves nothing over the network, so it keeps working long after GitHub has expired the artifacts it describes, and what it establishes is that the retained bytes are the bytes this repository recorded, over a tree whose campaign still means what it meant. It cannot say the retained bytes are the bytes the workflow uploaded. That stronger check needs the GitHub API, which is why it is performed once — at the moment evidence is promoted — and its result recorded per entry under remote_verification.",
     "remote_verification": "Performed once per retention, against the GitHub Actions API: the run, attempt and job exist and succeeded; the artifact's own sha256 digest is recorded; the artifact is downloaded and its extracted report compared byte-for-byte with the retained file. It is deliberately not a permanent CI dependency, because Actions artifacts expire and a verifier that stopped working on a retention boundary would be switched off rather than fixed.",
     "local_verification": "Enforced on every CI run. Artifact git blob identity, the three-way producer/recorded/HEAD binding over campaign-semantics paths, exactly-once matrix coverage, schema completeness, and the report contract.",
     "why_object_ids": "Git object identities for the local binding, because git is already required by this tooling, the values are verifiable by hand with `git rev-parse HEAD:<path>` and `git hash-object <file>`, and no dependency is added to compute them. The GitHub artifact digest is recorded separately and is a different thing: a sha256 over the uploaded archive, which is what the one-time remote check compares against.",
@@ -118,9 +118,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "9556f3b8e5ed96e528b4aecfab8cb8992106f40a",
+        "execution_commit": "c11ba67ee696f326d17e97190297482ad976fa56",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7126ce4d6242f9ffa3e3bd96786dd17fff9fad3f",
+        "branch_head_sha": "63cb8f0d27e63c902bdd750e493068df95471315",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -130,27 +130,27 @@
       "workflow_run": {
         "workflow": "M5 Soak",
         "workflow_file": ".github/workflows/m5-soak.yml",
-        "id": 32581401378,
+        "id": 32626179874,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-soak-campaign",
-        "id": 97051216484,
+        "id": 97161780406,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-15",
-        "id": 9477946338,
-        "digest": "sha256:13322ba4257288357421503725c63389bd4d079d52058b95d0887b6b122da744",
-        "size_bytes": 89194
+        "id": 9489807619,
+        "digest": "sha256:a81aa492fb2a790cdee703b6d5e622c22aa3f05a3d17eeeb10ec13840f5b029b",
+        "size_bytes": 89401
       },
-      "retained_report_git_blob": "6a76bafc05a962974ca8b6799fd211033740b6ff",
+      "retained_report_git_blob": "7afff40ceb182d47d0bc8ad4bddd392b3f3dd874",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-22T20:49:43Z",
-        "run_id": 32581401378,
+        "verified_at": "2026-08-23T08:00:00Z",
+        "run_id": 32626179874,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -158,7 +158,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #165 after the final #147 corrective tree and performance health-check isolation fix; run, job, artifact digest/bytes, and execution tree were checked before retention."
+        "note": "Final evidence retention pass for PR #166 after the third corrective pass (JsonLinesWriter split-lock fix); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     },
     {
@@ -168,9 +168,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "9556f3b8e5ed96e528b4aecfab8cb8992106f40a",
+        "execution_commit": "c11ba67ee696f326d17e97190297482ad976fa56",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7126ce4d6242f9ffa3e3bd96786dd17fff9fad3f",
+        "branch_head_sha": "63cb8f0d27e63c902bdd750e493068df95471315",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -180,27 +180,27 @@
       "workflow_run": {
         "workflow": "M5 Soak",
         "workflow_file": ".github/workflows/m5-soak.yml",
-        "id": 32581401378,
+        "id": 32626179874,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-soak-campaign",
-        "id": 97051216349,
+        "id": 97161780512,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-18",
-        "id": 9477988892,
-        "digest": "sha256:14282aafe29186a08d49b71f60f39d1531adffd5241f0cfbded86a5f9b436730",
-        "size_bytes": 91705
+        "id": 9489797120,
+        "digest": "sha256:75c9ab87681852a5d9d2a2b5aa11613646e6869f6fa74e168e001de2ac8de62d",
+        "size_bytes": 89010
       },
-      "retained_report_git_blob": "bce03ef78f5f5f198499c1bcfeb57f1edb169f83",
+      "retained_report_git_blob": "4584fc21bf5b494bf50ecb55e465a1024179eb9e",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-22T20:49:43Z",
-        "run_id": 32581401378,
+        "verified_at": "2026-08-23T08:00:00Z",
+        "run_id": 32626179874,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -208,7 +208,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #165 after the final #147 corrective tree and performance health-check isolation fix; run, job, artifact digest/bytes, and execution tree were checked before retention."
+        "note": "Final evidence retention pass for PR #166 after the third corrective pass (JsonLinesWriter split-lock fix); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     },
     {
@@ -216,10 +216,11 @@
       "campaign": "M5 PostgreSQL cancellation",
       "matrix_point": "postgres-15",
       "postgres_major_version": "15",
+      "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "9556f3b8e5ed96e528b4aecfab8cb8992106f40a",
+        "execution_commit": "c11ba67ee696f326d17e97190297482ad976fa56",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7126ce4d6242f9ffa3e3bd96786dd17fff9fad3f",
+        "branch_head_sha": "63cb8f0d27e63c902bdd750e493068df95471315",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -229,27 +230,27 @@
       "workflow_run": {
         "workflow": "M5 Cancellation",
         "workflow_file": ".github/workflows/m5-cancellation.yml",
-        "id": 32581401355,
+        "id": 32626179677,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-cancellation-campaign",
-        "id": 97051216016,
+        "id": 97161780163,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-15",
-        "id": 9477915785,
-        "digest": "sha256:72353934a0106756655405de53a0021bf35b30f6eb8031006c39f468c0c83d62",
-        "size_bytes": 5746
+        "id": 9489766505,
+        "digest": "sha256:4b834ed74408648cb7b1d5eca9008358636f94ff8393b2a3dabcf50c6f6e4537",
+        "size_bytes": 5748
       },
-      "retained_report_git_blob": "e64a3e2f193451b7a3c901d1ba93e4522d4e25a9",
+      "retained_report_git_blob": "ba6506b8b89c6256819c0dfc32a221d83d5fba36",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-22T20:49:43Z",
-        "run_id": 32581401355,
+        "verified_at": "2026-08-23T08:00:00Z",
+        "run_id": 32626179677,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -257,19 +258,19 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #165 after the final #147 corrective tree and performance health-check isolation fix; run, job, artifact digest/bytes, and execution tree were checked before retention."
-      },
-      "server_version": "15.19 (Debian 15.19-1.pgdg13+2)"
+        "note": "Final evidence retention pass for PR #166 after the third corrective pass (JsonLinesWriter split-lock fix); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+      }
     },
     {
       "report": "cancellation-campaign-postgres-18.json",
       "campaign": "M5 PostgreSQL cancellation",
       "matrix_point": "postgres-18",
       "postgres_major_version": "18",
+      "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "9556f3b8e5ed96e528b4aecfab8cb8992106f40a",
+        "execution_commit": "c11ba67ee696f326d17e97190297482ad976fa56",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7126ce4d6242f9ffa3e3bd96786dd17fff9fad3f",
+        "branch_head_sha": "63cb8f0d27e63c902bdd750e493068df95471315",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -279,27 +280,27 @@
       "workflow_run": {
         "workflow": "M5 Cancellation",
         "workflow_file": ".github/workflows/m5-cancellation.yml",
-        "id": 32581401355,
+        "id": 32626179677,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-cancellation-campaign",
-        "id": 97051216074,
+        "id": 97161780323,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-18",
-        "id": 9477915832,
-        "digest": "sha256:0626f3b919dd60e22213588b51ab58a3245e92c61dc686b121b0ec0bc6fd66ad",
-        "size_bytes": 5754
+        "id": 9489767477,
+        "digest": "sha256:2f6da93982c961c4afd547d591606cd4e1169674dec39d18181baefbbbebac47",
+        "size_bytes": 5753
       },
-      "retained_report_git_blob": "d7f0b09e69f7cc85ac7836956e1bf132d6b78657",
+      "retained_report_git_blob": "595307a381cb0be08d81faa367afd1291a2a4969",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-22T20:49:43Z",
-        "run_id": 32581401355,
+        "verified_at": "2026-08-23T08:00:00Z",
+        "run_id": 32626179677,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -307,19 +308,19 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #165 after the final #147 corrective tree and performance health-check isolation fix; run, job, artifact digest/bytes, and execution tree were checked before retention."
-      },
-      "server_version": "18.6 (Debian 18.6-1.pgdg13+2)"
+        "note": "Final evidence retention pass for PR #166 after the third corrective pass (JsonLinesWriter split-lock fix); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+      }
     },
     {
       "report": "performance-campaign-postgres-15.json",
       "campaign": "M5 PostgreSQL performance",
       "matrix_point": "postgres-15",
       "postgres_major_version": "15",
+      "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "9556f3b8e5ed96e528b4aecfab8cb8992106f40a",
+        "execution_commit": "c11ba67ee696f326d17e97190297482ad976fa56",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7126ce4d6242f9ffa3e3bd96786dd17fff9fad3f",
+        "branch_head_sha": "63cb8f0d27e63c902bdd750e493068df95471315",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -329,27 +330,27 @@
       "workflow_run": {
         "workflow": "M5 Performance",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 32581401352,
+        "id": 32626179731,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-performance-campaign",
-        "id": 97051216334,
+        "id": 97161780188,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-15",
-        "id": 9477916161,
-        "digest": "sha256:b1d2f1376333c812f0a7f6b8d0a4d2db353486f73718ae70a84c27355781fbde",
-        "size_bytes": 6602
+        "id": 9489764663,
+        "digest": "sha256:7c68008f7ab9d27613cb5f6609a620bece44726992e1fed4925d5d15d205aa34",
+        "size_bytes": 6601
       },
-      "retained_report_git_blob": "9fbe444d6bfd1d7009283446eb24aaaff549e4e9",
+      "retained_report_git_blob": "eaf09c8c61ce04c5c0d3386aa5da386db9188c85",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-22T20:49:43Z",
-        "run_id": 32581401352,
+        "verified_at": "2026-08-23T08:00:00Z",
+        "run_id": 32626179731,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -357,19 +358,19 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #165 after the final #147 corrective tree and performance health-check isolation fix; run, job, artifact digest/bytes, and execution tree were checked before retention."
-      },
-      "server_version": "15.19 (Debian 15.19-1.pgdg13+2)"
+        "note": "Final evidence retention pass for PR #166 after the third corrective pass (JsonLinesWriter split-lock fix); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+      }
     },
     {
       "report": "performance-campaign-postgres-18.json",
       "campaign": "M5 PostgreSQL performance",
       "matrix_point": "postgres-18",
       "postgres_major_version": "18",
+      "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "9556f3b8e5ed96e528b4aecfab8cb8992106f40a",
+        "execution_commit": "c11ba67ee696f326d17e97190297482ad976fa56",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7126ce4d6242f9ffa3e3bd96786dd17fff9fad3f",
+        "branch_head_sha": "63cb8f0d27e63c902bdd750e493068df95471315",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -379,27 +380,27 @@
       "workflow_run": {
         "workflow": "M5 Performance",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 32581401352,
+        "id": 32626179731,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-performance-campaign",
-        "id": 97051216293,
+        "id": 97161780244,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-18",
-        "id": 9477919877,
-        "digest": "sha256:960ff8aaa2969974998b90712a5d1018b432532e8fe2ac8b64eae92c5dba0307",
-        "size_bytes": 6604
+        "id": 9489769698,
+        "digest": "sha256:c3ee8b7525473b65ee8be1284bd7b9050b9f3975f87de775ce7ea3da5b402fcc",
+        "size_bytes": 6598
       },
-      "retained_report_git_blob": "8fefce398ac5534c3a690f29a87d934b2d7ea860",
+      "retained_report_git_blob": "a4cedb3ee607e9f4129949bd81942f2ca74c1b3a",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-22T20:49:43Z",
-        "run_id": 32581401352,
+        "verified_at": "2026-08-23T08:00:00Z",
+        "run_id": 32626179731,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -407,9 +408,8 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #165 after the final #147 corrective tree and performance health-check isolation fix; run, job, artifact digest/bytes, and execution tree were checked before retention."
-      },
-      "server_version": "18.6 (Debian 18.6-1.pgdg13+2)"
+        "note": "Final evidence retention pass for PR #166 after the third corrective pass (JsonLinesWriter split-lock fix); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+      }
     },
     {
       "report": "conformance-campaign-postgres-15.json",
@@ -417,9 +417,9 @@
       "matrix_point": "postgres-15",
       "postgres_major_version": "15",
       "producer": {
-        "execution_commit": "9556f3b8e5ed96e528b4aecfab8cb8992106f40a",
+        "execution_commit": "c11ba67ee696f326d17e97190297482ad976fa56",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7126ce4d6242f9ffa3e3bd96786dd17fff9fad3f",
+        "branch_head_sha": "63cb8f0d27e63c902bdd750e493068df95471315",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -429,27 +429,27 @@
       "workflow_run": {
         "workflow": "M5 Conformance",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 32581401303,
+        "id": 32626179743,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-conformance-campaign",
-        "id": 97051215929,
+        "id": 97161780577,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-15",
-        "id": 9477929966,
-        "digest": "sha256:1967eb9df6bae313ace7eddf107a647d2732910ca1da3a34f64d067668e6a54e",
-        "size_bytes": 7132
+        "id": 9489774057,
+        "digest": "sha256:70d73d6c5a118c9523924d57255d3f05dc2876a95c90ae96405329d6539eaa07",
+        "size_bytes": 7126
       },
-      "retained_report_git_blob": "f204613a139e19f9010bab531df156f5d95d1dbc",
+      "retained_report_git_blob": "c1e7f13c9e8cab0d28dd9cb604a38056385e3624",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-22T20:49:43Z",
-        "run_id": 32581401303,
+        "verified_at": "2026-08-23T08:00:00Z",
+        "run_id": 32626179743,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -457,7 +457,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #165 after the final #147 corrective tree and performance health-check isolation fix; run, job, artifact digest/bytes, and execution tree were checked before retention."
+        "note": "Final evidence retention pass for PR #166 after the third corrective pass (JsonLinesWriter split-lock fix); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     },
     {
@@ -466,9 +466,9 @@
       "matrix_point": "postgres-18",
       "postgres_major_version": "18",
       "producer": {
-        "execution_commit": "9556f3b8e5ed96e528b4aecfab8cb8992106f40a",
+        "execution_commit": "c11ba67ee696f326d17e97190297482ad976fa56",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7126ce4d6242f9ffa3e3bd96786dd17fff9fad3f",
+        "branch_head_sha": "63cb8f0d27e63c902bdd750e493068df95471315",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -478,27 +478,27 @@
       "workflow_run": {
         "workflow": "M5 Conformance",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 32581401303,
+        "id": 32626179743,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-conformance-campaign",
-        "id": 97051215981,
+        "id": 97161780664,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-18",
-        "id": 9477930869,
-        "digest": "sha256:0bb3afb40185132a3231f79be0ce5352fe421c4e93c64adab9ec59c058893f6a",
-        "size_bytes": 7132
+        "id": 9489773449,
+        "digest": "sha256:602f865381615406e6f8a25006d6c5caca80d05b881a3b6703b8ff9a74eaf4ef",
+        "size_bytes": 7126
       },
-      "retained_report_git_blob": "4e934ba157e191d72c1edaf64a0ac5268c0d5632",
+      "retained_report_git_blob": "3bc67987dd05ad696e7efbbbaa58ad28e1e14590",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-22T20:49:43Z",
-        "run_id": 32581401303,
+        "verified_at": "2026-08-23T08:00:00Z",
+        "run_id": 32626179743,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -506,7 +506,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #165 after the final #147 corrective tree and performance health-check isolation fix; run, job, artifact digest/bytes, and execution tree were checked before retention."
+        "note": "Final evidence retention pass for PR #166 after the third corrective pass (JsonLinesWriter split-lock fix); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     },
     {
@@ -514,10 +514,11 @@
       "campaign": "M5 crash and restore",
       "matrix_point": "postgres-15",
       "postgres_major_version": "15",
+      "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "9556f3b8e5ed96e528b4aecfab8cb8992106f40a",
+        "execution_commit": "c11ba67ee696f326d17e97190297482ad976fa56",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7126ce4d6242f9ffa3e3bd96786dd17fff9fad3f",
+        "branch_head_sha": "63cb8f0d27e63c902bdd750e493068df95471315",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -527,27 +528,27 @@
       "workflow_run": {
         "workflow": "M5 Crash and Restore",
         "workflow_file": ".github/workflows/m5-crash-restore.yml",
-        "id": 32581401380,
+        "id": 32626179675,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-crash-restore-campaign",
-        "id": 97051216306,
+        "id": 97161780109,
         "conclusion": "success"
       },
       "artifact": {
         "name": "crash-restore-campaign-postgres-15",
-        "id": 9477915436,
-        "digest": "sha256:7269bbb58f45ea7caf16296c689bb17ba2e1c093740e3c453547ebbf2272e99b",
-        "size_bytes": 6686
+        "id": 9489766296,
+        "digest": "sha256:78392467270a6a36d2e81e358cb5333d68c6164da67cfcacd582606f10cb2fd5",
+        "size_bytes": 6694
       },
-      "retained_report_git_blob": "f09663a28002d247507fbb79f4983f892a5ca81f",
+      "retained_report_git_blob": "44a945b7bc40d6d10e81daec6c965da6899cd3cc",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-22T20:49:43Z",
-        "run_id": 32581401380,
+        "verified_at": "2026-08-23T08:00:00Z",
+        "run_id": 32626179675,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -555,19 +556,19 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #165 after the final #147 corrective tree and performance health-check isolation fix; run, job, artifact digest/bytes, and execution tree were checked before retention."
-      },
-      "server_version": "15.19 (Debian 15.19-1.pgdg13+2)"
+        "note": "Final evidence retention pass for PR #166 after the third corrective pass (JsonLinesWriter split-lock fix); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+      }
     },
     {
       "report": "crash-restore-campaign-postgres-18.json",
       "campaign": "M5 crash and restore",
       "matrix_point": "postgres-18",
       "postgres_major_version": "18",
+      "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "9556f3b8e5ed96e528b4aecfab8cb8992106f40a",
+        "execution_commit": "c11ba67ee696f326d17e97190297482ad976fa56",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7126ce4d6242f9ffa3e3bd96786dd17fff9fad3f",
+        "branch_head_sha": "63cb8f0d27e63c902bdd750e493068df95471315",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -577,27 +578,27 @@
       "workflow_run": {
         "workflow": "M5 Crash and Restore",
         "workflow_file": ".github/workflows/m5-crash-restore.yml",
-        "id": 32581401380,
+        "id": 32626179675,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-crash-restore-campaign",
-        "id": 97051216157,
+        "id": 97161780007,
         "conclusion": "success"
       },
       "artifact": {
         "name": "crash-restore-campaign-postgres-18",
-        "id": 9477914953,
-        "digest": "sha256:8822af3c2ed44e309e224984554ca58de85b6d5860125da2aa287a9d4c6ddd62",
-        "size_bytes": 6691
+        "id": 9489768325,
+        "digest": "sha256:10f27eb65659de8969182b822cab84278d9dc59f059d20e49a9ae694d3da7740",
+        "size_bytes": 6680
       },
-      "retained_report_git_blob": "7dd3e798d90b506c4caafd89ff637b17a1466d66",
+      "retained_report_git_blob": "44c511bfc9eb5e5c94e2c8bae03e0dca0a33000f",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-22T20:49:43Z",
-        "run_id": 32581401380,
+        "verified_at": "2026-08-23T08:00:00Z",
+        "run_id": 32626179675,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -605,19 +606,19 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #165 after the final #147 corrective tree and performance health-check isolation fix; run, job, artifact digest/bytes, and execution tree were checked before retention."
-      },
-      "server_version": "18.6 (Debian 18.6-1.pgdg13+2)"
+        "note": "Final evidence retention pass for PR #166 after the third corrective pass (JsonLinesWriter split-lock fix); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+      }
     },
     {
       "report": "upgrade-campaign-postgres-15.json",
       "campaign": "M5 PostgreSQL upgrade",
       "matrix_point": "postgres-15",
       "postgres_major_version": "15",
+      "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "9556f3b8e5ed96e528b4aecfab8cb8992106f40a",
+        "execution_commit": "c11ba67ee696f326d17e97190297482ad976fa56",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7126ce4d6242f9ffa3e3bd96786dd17fff9fad3f",
+        "branch_head_sha": "63cb8f0d27e63c902bdd750e493068df95471315",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -627,27 +628,27 @@
       "workflow_run": {
         "workflow": "M5 Upgrade",
         "workflow_file": ".github/workflows/m5-upgrade.yml",
-        "id": 32581401308,
+        "id": 32626179672,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-upgrade-campaign",
-        "id": 97051215943,
+        "id": 97161779997,
         "conclusion": "success"
       },
       "artifact": {
         "name": "upgrade-campaign-postgres-15",
-        "id": 9477929039,
-        "digest": "sha256:b7f27c38fe8bece84c0d19666807665e078586d0c9d1ff491983c42eb285b6da",
-        "size_bytes": 5763
+        "id": 9489774853,
+        "digest": "sha256:126278ae3b08653b316d63f087daa8b24aa35cbb6609e42039a02b1051d4fd5a",
+        "size_bytes": 5764
       },
-      "retained_report_git_blob": "a3a08a746e9a97fe3f1d68c8f07d73f3386b1deb",
+      "retained_report_git_blob": "2e2c7930b034ef2a1bd186cc85b8af010f9734a0",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-22T20:49:43Z",
-        "run_id": 32581401308,
+        "verified_at": "2026-08-23T08:00:00Z",
+        "run_id": 32626179672,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -655,19 +656,19 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #165 after the final #147 corrective tree and performance health-check isolation fix; run, job, artifact digest/bytes, and execution tree were checked before retention."
-      },
-      "server_version": "15.19 (Debian 15.19-1.pgdg13+2)"
+        "note": "Final evidence retention pass for PR #166 after the third corrective pass (JsonLinesWriter split-lock fix); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+      }
     },
     {
       "report": "upgrade-campaign-postgres-18.json",
       "campaign": "M5 PostgreSQL upgrade",
       "matrix_point": "postgres-18",
       "postgres_major_version": "18",
+      "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "9556f3b8e5ed96e528b4aecfab8cb8992106f40a",
+        "execution_commit": "c11ba67ee696f326d17e97190297482ad976fa56",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7126ce4d6242f9ffa3e3bd96786dd17fff9fad3f",
+        "branch_head_sha": "63cb8f0d27e63c902bdd750e493068df95471315",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -677,27 +678,27 @@
       "workflow_run": {
         "workflow": "M5 Upgrade",
         "workflow_file": ".github/workflows/m5-upgrade.yml",
-        "id": 32581401308,
+        "id": 32626179672,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-upgrade-campaign",
-        "id": 97051216042,
+        "id": 97161780111,
         "conclusion": "success"
       },
       "artifact": {
         "name": "upgrade-campaign-postgres-18",
-        "id": 9477928874,
-        "digest": "sha256:ff5bd348bdeba96968d5bccc4f8a3be895039e40e30d4d42e9187f1b7a992c13",
-        "size_bytes": 5760
+        "id": 9489773626,
+        "digest": "sha256:1414d12785038a19508dfc4dbfc8798eaf16a0987dc990632cf6fba5cc764561",
+        "size_bytes": 5757
       },
-      "retained_report_git_blob": "cd11d22978de12e5bde901983ab0bd86d6a34f4c",
+      "retained_report_git_blob": "18d2ebc41631589f3672a6d69e6abd51a64f7890",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-22T20:49:43Z",
-        "run_id": 32581401308,
+        "verified_at": "2026-08-23T08:00:00Z",
+        "run_id": 32626179672,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -705,9 +706,8 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #165 after the final #147 corrective tree and performance health-check isolation fix; run, job, artifact digest/bytes, and execution tree were checked before retention."
-      },
-      "server_version": "18.6 (Debian 18.6-1.pgdg13+2)"
+        "note": "Final evidence retention pass for PR #166 after the third corrective pass (JsonLinesWriter split-lock fix); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+      }
     },
     {
       "report": "security-campaign-postgres-15.json",
@@ -716,9 +716,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "9556f3b8e5ed96e528b4aecfab8cb8992106f40a",
+        "execution_commit": "c11ba67ee696f326d17e97190297482ad976fa56",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7126ce4d6242f9ffa3e3bd96786dd17fff9fad3f",
+        "branch_head_sha": "63cb8f0d27e63c902bdd750e493068df95471315",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -728,27 +728,27 @@
       "workflow_run": {
         "workflow": "M5 Security",
         "workflow_file": ".github/workflows/m5-security.yml",
-        "id": 32581401375,
+        "id": 32626179700,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-security-campaign",
-        "id": 97051216328,
+        "id": 97161780242,
         "conclusion": "success"
       },
       "artifact": {
         "name": "security-campaign-postgres-15",
-        "id": 9477913984,
-        "digest": "sha256:a479de2fc8649bb8698d7ad329bca26900ab5086ce501b12637e54a1c7b35806",
-        "size_bytes": 7078
+        "id": 9489765460,
+        "digest": "sha256:6a20cf7e9a22f049b3d3aef21377143265f6ad58c5e3323c1cbd9da63434bd2f",
+        "size_bytes": 7076
       },
-      "retained_report_git_blob": "d148b635d6c65ffe300799f7902add2c34225652",
+      "retained_report_git_blob": "c9f4dfba715d0c5aca981981c85e4dc84ce56eac",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-22T20:49:43Z",
-        "run_id": 32581401375,
+        "verified_at": "2026-08-23T08:00:00Z",
+        "run_id": 32626179700,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -756,7 +756,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #165 after the final #147 corrective tree and performance health-check isolation fix; run, job, artifact digest/bytes, and execution tree were checked before retention."
+        "note": "Final evidence retention pass for PR #166 after the third corrective pass (JsonLinesWriter split-lock fix); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     },
     {
@@ -766,9 +766,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "9556f3b8e5ed96e528b4aecfab8cb8992106f40a",
+        "execution_commit": "c11ba67ee696f326d17e97190297482ad976fa56",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7126ce4d6242f9ffa3e3bd96786dd17fff9fad3f",
+        "branch_head_sha": "63cb8f0d27e63c902bdd750e493068df95471315",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -778,27 +778,27 @@
       "workflow_run": {
         "workflow": "M5 Security",
         "workflow_file": ".github/workflows/m5-security.yml",
-        "id": 32581401375,
+        "id": 32626179700,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-security-campaign",
-        "id": 97051216459,
+        "id": 97161780351,
         "conclusion": "success"
       },
       "artifact": {
         "name": "security-campaign-postgres-18",
-        "id": 9477911657,
-        "digest": "sha256:369df240ab07a8a37e69908c2f8e58e2ad45483c850066ffafe023b36c2a150c",
-        "size_bytes": 7077
+        "id": 9489761926,
+        "digest": "sha256:deeef59a8dfc33c950206ec1c0346d50c986630d536eea6a7cc9c272b3fadfb0",
+        "size_bytes": 7075
       },
-      "retained_report_git_blob": "d935b13435b48ed1b5266b08c31247d0528457f7",
+      "retained_report_git_blob": "bf6307256a78334c3c3aa91dd6fd5bbf6efe32ec",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-22T20:49:43Z",
-        "run_id": 32581401375,
+        "verified_at": "2026-08-23T08:00:00Z",
+        "run_id": 32626179700,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -806,7 +806,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #165 after the final #147 corrective tree and performance health-check isolation fix; run, job, artifact digest/bytes, and execution tree were checked before retention."
+        "note": "Final evidence retention pass for PR #166 after the third corrective pass (JsonLinesWriter split-lock fix); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     },
     {
@@ -816,9 +816,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "9556f3b8e5ed96e528b4aecfab8cb8992106f40a",
+        "execution_commit": "c11ba67ee696f326d17e97190297482ad976fa56",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7126ce4d6242f9ffa3e3bd96786dd17fff9fad3f",
+        "branch_head_sha": "63cb8f0d27e63c902bdd750e493068df95471315",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -828,27 +828,27 @@
       "workflow_run": {
         "workflow": "M5 Resource Bounds",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 32581401356,
+        "id": 32626179661,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-resource-bounds-campaign",
-        "id": 97051216299,
+        "id": 97161780268,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-15",
-        "id": 9477913927,
-        "digest": "sha256:2697851e9794814fb1ae9ba4031907416b3bc3fa1f7637de17bf72975f5e5280",
-        "size_bytes": 13092
+        "id": 9489764330,
+        "digest": "sha256:df516def2057b498f58578e37fd41e999458f01cf12bdfef3991dd034163d6ff",
+        "size_bytes": 13091
       },
-      "retained_report_git_blob": "0b385dbaa4a1d68dd80036a79dca6420c5dad65d",
+      "retained_report_git_blob": "1707b99c210db575429096a9d0499d9a0e4b3efa",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-22T20:49:43Z",
-        "run_id": 32581401356,
+        "verified_at": "2026-08-23T08:00:00Z",
+        "run_id": 32626179661,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -856,7 +856,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #165 after the final #147 corrective tree and performance health-check isolation fix; run, job, artifact digest/bytes, and execution tree were checked before retention."
+        "note": "Final evidence retention pass for PR #166 after the third corrective pass (JsonLinesWriter split-lock fix); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     },
     {
@@ -866,9 +866,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "9556f3b8e5ed96e528b4aecfab8cb8992106f40a",
+        "execution_commit": "c11ba67ee696f326d17e97190297482ad976fa56",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7126ce4d6242f9ffa3e3bd96786dd17fff9fad3f",
+        "branch_head_sha": "63cb8f0d27e63c902bdd750e493068df95471315",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -878,27 +878,27 @@
       "workflow_run": {
         "workflow": "M5 Resource Bounds",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 32581401356,
+        "id": 32626179661,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-resource-bounds-campaign",
-        "id": 97051216168,
+        "id": 97161780046,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-18",
-        "id": 9477911840,
-        "digest": "sha256:2964eef856983b0e906d722ec05158ab1acc52f193d40ed94ff4d378cc2ccf15",
-        "size_bytes": 13092
+        "id": 9489765867,
+        "digest": "sha256:8d0f5ae5ce0597e9e547405fe6663033ad698d9846a5f836c22e87edb1ae91b2",
+        "size_bytes": 13090
       },
-      "retained_report_git_blob": "a97d8e9003612f6660dae5a8c79dcdc19c422077",
+      "retained_report_git_blob": "0cc6ca6d549ae7d5cca628e5308b4dca5227abf5",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-22T20:49:43Z",
-        "run_id": 32581401356,
+        "verified_at": "2026-08-23T08:00:00Z",
+        "run_id": 32626179661,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -906,7 +906,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #165 after the final #147 corrective tree and performance health-check isolation fix; run, job, artifact digest/bytes, and execution tree were checked before retention."
+        "note": "Final evidence retention pass for PR #166 after the third corrective pass (JsonLinesWriter split-lock fix); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     }
   ],
