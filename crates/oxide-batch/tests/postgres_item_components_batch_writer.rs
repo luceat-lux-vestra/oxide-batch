@@ -669,6 +669,11 @@ fn commit_ambiguity_after_writer_statements_already_executed_is_never_guessed()
         .execute(&pool)
         .await?;
         pool.close().await;
+        // `remove_job_rows` also clears the *shared* `batch_writer_output`
+        // table other tests in this file use (this test writes to its own,
+        // dedicated `OUTPUT_TABLE` instead) -- it must exist first, exactly
+        // like every other test here that calls `remove_job_rows`.
+        prepare_business_fixture(&runtime_url).await?;
         remove_job_rows(&runtime_url, JOB).await?;
 
         let repository = PostgresJobRepository::connect(
