@@ -4,9 +4,10 @@
 //! second lock for an additive committed-byte counter. The negative controls
 //! below force the exact harmful interleaving without sleeps: the first
 //! physical write lands, the second write lands and publishes its increment,
-//! and an update snapshots the counter before the first increment is
-//! published. The snapshot can therefore describe no physical write-call
-//! prefix even though the final additive total is numerically correct.
+//! and an update-equivalent snapshot reads the counter before the first
+//! increment is published. The snapshot can therefore describe no physical
+//! write-call prefix even though the final additive total is numerically
+//! correct.
 //!
 //! The production tests then race two unequal-sized public `write()` calls
 //! against the real `ItemStream::update()` API. The fixed single-state-lock
@@ -18,7 +19,7 @@
 
 #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::{Arc, Barrier, Mutex, PoisonError, mpsc};
 use std::thread;
@@ -227,14 +228,13 @@ fn delimited_update_racing_unequal_writes_observes_only_complete_write_prefixes(
     write_b.join().unwrap();
 
     let final_bytes = std::fs::read(&path).unwrap();
-    let (first_boundary, expected) = if final_bytes == b"AAAA\nB\n" {
-        (5_u64, b"AAAA\nB\n".as_slice())
+    let first_boundary = if final_bytes == b"AAAA\nB\n" {
+        5_u64
     } else if final_bytes == b"B\nAAAA\n" {
-        (2_u64, b"B\nAAAA\n".as_slice())
+        2_u64
     } else {
         panic!("both public writes must land exactly once as whole serialized batches: {final_bytes:?}");
     };
-    assert_eq!(final_bytes.as_slice(), expected);
 
     let observed = committed_byte(&envelope);
     assert!(
@@ -262,8 +262,14 @@ fn delimited_update_racing_unequal_writes_observes_only_complete_write_prefixes(
     let restarted = std::fs::read(&path).unwrap();
     assert_eq!(restarted, final_bytes[..observed as usize]);
     assert!(
-        [b"".as_slice(), b"AAAA\n".as_slice(), b"B\n".as_slice(), b"AAAA\nB\n".as_slice(), b"B\nAAAA\n".as_slice()]
-            .contains(&restarted.as_slice()),
+        [
+            b"".as_slice(),
+            b"AAAA\n".as_slice(),
+            b"B\n".as_slice(),
+            b"AAAA\nB\n".as_slice(),
+            b"B\nAAAA\n".as_slice(),
+        ]
+        .contains(&restarted.as_slice()),
         "restart must preserve a complete CSV write prefix, never a partial record"
     );
 
