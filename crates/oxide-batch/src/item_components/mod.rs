@@ -38,6 +38,11 @@
 //!   ([`DelimitedReader`], [`DelimitedWriter`]).
 //! - [`fixed_width`]: restartable fixed-width file I/O (#147, `IO-FLAT-001`)
 //!   ([`FixedWidthReader`], [`FixedWidthWriter`]).
+//! - [`jsonl`]: restartable JSON Lines file I/O (#148, `IO-STRUCTURED-001` M6
+//!   slice) ([`JsonLinesReader`], [`JsonLinesWriter`]).
+//! - [`json_array`]: restartable streaming top-level JSON-array file I/O
+//!   (#148, `IO-STRUCTURED-001` M6 slice) ([`JsonArrayReader`],
+//!   [`JsonArrayWriter`]).
 
 pub mod aggregate;
 pub mod basic;
@@ -46,6 +51,8 @@ pub mod composite;
 pub mod delimited;
 pub mod filter;
 pub mod fixed_width;
+pub mod json_array;
+pub mod jsonl;
 pub mod peek;
 pub mod sync;
 pub mod validate;
@@ -64,6 +71,14 @@ pub use fixed_width::{
     FixedWidthField, FixedWidthLayout, FixedWidthReader, FixedWidthReaderStream, FixedWidthRecord,
     FixedWidthTerminator, FixedWidthWriter, FixedWidthWriterStream, fixed_width_file_reader,
     fixed_width_reader, fixed_width_writer,
+};
+pub use json_array::{
+    JsonArrayFormat, JsonArrayReader, JsonArrayReaderStream, JsonArrayWriter,
+    JsonArrayWriterStream, json_array_file_reader, json_array_reader, json_array_writer,
+};
+pub use jsonl::{
+    JsonLinesFormat, JsonLinesReader, JsonLinesReaderStream, JsonLinesTerminator, JsonLinesWriter,
+    JsonLinesWriterStream, jsonl_file_reader, jsonl_reader, jsonl_writer,
 };
 pub use peek::{PeekOutcome, PeekReader};
 pub use sync::{SynchronizedProcessor, SynchronizedWriter};

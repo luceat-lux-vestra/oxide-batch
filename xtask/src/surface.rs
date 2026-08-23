@@ -80,7 +80,68 @@ struct Accepted {
 /// appears in a public signature; an entry here only records where an approved
 /// exception already applies, and carries the ADR that approved it. An entry
 /// without one is the exception approving itself.
-const ACCEPTED: &[Accepted] = &[];
+const ACCEPTED: &[Accepted] = &[
+    Accepted {
+        item: "oxide_batch::ItemReader#impl-ItemReader%3CI%3E-for-JsonArrayReader%3CSrc%3E",
+        dependency: "serde_json",
+        reason: "ADR-0012: JSON item representation is serde_json::Value directly",
+    },
+    Accepted {
+        item: "oxide_batch::ItemReader#impl-ItemReader%3CI%3E-for-JsonLinesReader%3CSrc%3E",
+        dependency: "serde_json",
+        reason: "ADR-0012: JSON item representation is serde_json::Value directly",
+    },
+    Accepted {
+        item: "oxide_batch::ItemWriter#impl-ItemWriter%3CI%3E-for-JsonArrayWriter",
+        dependency: "serde_json",
+        reason: "ADR-0012: JSON item representation is serde_json::Value directly",
+    },
+    Accepted {
+        item: "oxide_batch::ItemWriter#impl-ItemWriter%3CI%3E-for-JsonLinesWriter",
+        dependency: "serde_json",
+        reason: "ADR-0012: JSON item representation is serde_json::Value directly",
+    },
+    Accepted {
+        item: "oxide_batch::JsonArrayReader#impl-ItemReader%3CI%3E-for-JsonArrayReader%3CSrc%3E",
+        dependency: "serde_json",
+        reason: "ADR-0012: JSON item representation is serde_json::Value directly",
+    },
+    Accepted {
+        item: "oxide_batch::JsonArrayWriter#impl-ItemWriter%3CI%3E-for-JsonArrayWriter",
+        dependency: "serde_json",
+        reason: "ADR-0012: JSON item representation is serde_json::Value directly",
+    },
+    Accepted {
+        item: "oxide_batch::JsonLinesReader#impl-ItemReader%3CI%3E-for-JsonLinesReader%3CSrc%3E",
+        dependency: "serde_json",
+        reason: "ADR-0012: JSON item representation is serde_json::Value directly",
+    },
+    Accepted {
+        item: "oxide_batch::JsonLinesWriter#impl-ItemWriter%3CI%3E-for-JsonLinesWriter",
+        dependency: "serde_json",
+        reason: "ADR-0012: JSON item representation is serde_json::Value directly",
+    },
+    Accepted {
+        item: "oxide_batch::json_array_file_reader",
+        dependency: "serde_json",
+        reason: "ADR-0012: JSON item representation is serde_json::Value directly",
+    },
+    Accepted {
+        item: "oxide_batch::json_array_reader",
+        dependency: "serde_json",
+        reason: "ADR-0012: JSON item representation is serde_json::Value directly",
+    },
+    Accepted {
+        item: "oxide_batch::jsonl_file_reader",
+        dependency: "serde_json",
+        reason: "ADR-0012: JSON item representation is serde_json::Value directly",
+    },
+    Accepted {
+        item: "oxide_batch::jsonl_reader",
+        dependency: "serde_json",
+        reason: "ADR-0012: JSON item representation is serde_json::Value directly",
+    },
+];
 
 /// Runs the rendered-surface disclosure inspection.
 ///

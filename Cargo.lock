@@ -810,6 +810,7 @@ version = "0.5.0"
 dependencies = [
  "futures-executor",
  "oxide-batch",
+ "serde_json",
  "tokio",
 ]
 

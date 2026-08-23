@@ -29,6 +29,7 @@ data, correctness, security, or dependency direction.
 | [0009](0009-definition-fingerprint-input-set.md) | Definition fingerprint input set | Accepted |
 | [0010](0010-extracted-crate-publication.md) | Extracted implementation crate publication | Accepted; partially supersedes ADR-0001 |
 | [0011](0011-extraction-order-and-value-placement.md) | Durable value placement across extracted boundaries | Accepted |
+| [0012](0012-json-item-representation-discloses-serde-json-value.md) | JSON item representation discloses `serde_json::Value` | Accepted |
 
 Copy [template.md](template.md) for a new decision. ADRs are immutable after
 acceptance except for status and links; changed decisions receive a new ADR.
