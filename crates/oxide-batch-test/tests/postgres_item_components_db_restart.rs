@@ -27,16 +27,16 @@
 use std::error::Error;
 
 use oxide_batch::item_components::{
-    KeysetColumn, PostgresBatchMode, PostgresCursorFormat, PostgresPagingFormat,
+    KeysetColumn, PostgresBatchMode, PostgresCursorFormat, PostgresPagingFormat, PostgresRow,
     postgres_batch_writer, postgres_cursor_reader, postgres_paging_reader,
 };
 use oxide_batch::{
     BatchStatus, BusinessValue, Checkpoint, ChunkCommitReceipt, ChunkCounts, ChunkDeliveryMode,
     ChunkJob, ChunkSize, ChunkStep, ChunkTransactionManager, ComponentRevision,
     ComponentStreamIdentity, DefinitionRevision, ExecutionContext, ExecutionCounts, ItemProcessor,
-    JobName, JobParameters, PostgresChunkStateError, PostgresChunkStateProvider, ProcessContext,
-    ProcessOutcome, ProcessorError, ReaderError, StateLimits, StopSource, WriteContext,
-    WriteOutcome, WriterError,
+    JobName, JobParameters, PostgresChunkStateError, PostgresChunkStateProvider, PostgresConfig,
+    PostgresConfigError, ProcessContext, ProcessOutcome, ProcessorError, ReaderError, StateLimits,
+    StopSource, TlsMode, WriteContext, WriteOutcome, WriterError,
 };
 use oxide_batch_test::inject::{
     ComponentAction, InjectedReader, InjectedTransactions, InjectionId, InjectionLog,
@@ -44,13 +44,16 @@ use oxide_batch_test::inject::{
 };
 use oxide_batch_test::postgres::PostgresFixture;
 use oxide_batch_test::{NoCompletion, TestJob, chunk_component_revisions_with_delivery_mode};
-use sqlx::Row;
-use sqlx::postgres::{PgPoolOptions, PgRow};
+use sqlx::postgres::PgPoolOptions;
 
 fn runtime_url() -> Option<String> {
     std::env::var("OXIDEBATCH_POSTGRES_TEST_URL")
         .ok()
         .filter(|value| !value.is_empty())
+}
+
+fn plaintext_config(url: String) -> Result<PostgresConfig, PostgresConfigError> {
+    Ok(PostgresConfig::new(url)?.with_tls_mode(TlsMode::Plaintext))
 }
 
 fn nonce() -> u128 {
@@ -125,9 +128,8 @@ struct BusinessRow {
     id: i64,
 }
 
-fn map_row(row: &PgRow) -> Result<BusinessRow, ReaderError> {
-    let id: i64 = row.try_get("id").map_err(|_| ReaderError::new())?;
-    Ok(BusinessRow { id })
+fn map_row(row: &PostgresRow<'_>) -> Result<BusinessRow, ReaderError> {
+    Ok(BusinessRow { id: row.i64("id")? })
 }
 
 fn key_columns() -> Vec<KeysetColumn> {
@@ -260,12 +262,9 @@ async fn postgres_cursor_reader_restart_through_the_real_launch_path() -> Result
     // genuinely read (advancing the in-memory, not-yet-durable position)
     // into chunk 2, then a stop is injected on row 4's read call, so chunk
     // 2 never commits.
-    let pool_a = PgPoolOptions::new()
-        .max_connections(4)
-        .connect(&url)
-        .await?;
+    let config_a = plaintext_config(url.clone())?;
     let (reader_a, stream_a, contract_a) = postgres_cursor_reader(
-        pool_a,
+        config_a,
         reader_base_query(job_name.as_str()),
         key_columns(),
         PostgresCursorFormat::new().with_fetch_size(2),
@@ -318,12 +317,9 @@ async fn postgres_cursor_reader_restart_through_the_real_launch_path() -> Result
 
     // Attempt B: a fresh reader/stream pair, restored from attempt A's
     // committed checkpoint.
-    let pool_b = PgPoolOptions::new()
-        .max_connections(4)
-        .connect(&url)
-        .await?;
+    let config_b = plaintext_config(url.clone())?;
     let (reader_b, stream_b, contract_b) = postgres_cursor_reader(
-        pool_b,
+        config_b,
         reader_base_query(job_name.as_str()),
         key_columns(),
         PostgresCursorFormat::new().with_fetch_size(2),
@@ -398,12 +394,9 @@ async fn postgres_paging_reader_restart_through_the_real_launch_path() -> Result
                 ComponentRevision::new("paging-reader-v1")?,
             );
 
-    let pool_a = PgPoolOptions::new()
-        .max_connections(4)
-        .connect(&url)
-        .await?;
+    let config_a = plaintext_config(url.clone())?;
     let (reader_a, stream_a, contract_a) = postgres_paging_reader(
-        pool_a,
+        config_a,
         reader_base_query(job_name.as_str()),
         key_columns(),
         PostgresPagingFormat::new().with_page_size(2),
@@ -450,12 +443,9 @@ async fn postgres_paging_reader_restart_through_the_real_launch_path() -> Result
         BatchStatus::Stopped,
     );
 
-    let pool_b = PgPoolOptions::new()
-        .max_connections(4)
-        .connect(&url)
-        .await?;
+    let config_b = plaintext_config(url.clone())?;
     let (reader_b, stream_b, contract_b) = postgres_paging_reader(
-        pool_b,
+        config_b,
         reader_base_query(job_name.as_str()),
         key_columns(),
         PostgresPagingFormat::new().with_page_size(2),

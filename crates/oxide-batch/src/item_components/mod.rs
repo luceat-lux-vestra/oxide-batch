@@ -102,7 +102,9 @@ pub use postgres_cursor::{
     PostgresCursorFormat, PostgresCursorReader, PostgresCursorReaderStream, postgres_cursor_reader,
 };
 #[cfg(feature = "postgres")]
-pub use postgres_keyset::{KeysetColumn, KeysetColumnKind, PostgresComponentConfigError};
+pub use postgres_keyset::{
+    KeysetColumn, KeysetColumnKind, PostgresComponentConfigError, PostgresRow,
+};
 #[cfg(feature = "postgres")]
 pub use postgres_paging::{
     PostgresPagingFormat, PostgresPagingReader, PostgresPagingReaderStream, postgres_paging_reader,

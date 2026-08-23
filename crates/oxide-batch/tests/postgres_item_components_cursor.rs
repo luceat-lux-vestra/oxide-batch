@@ -11,19 +11,24 @@
 use std::error::Error;
 
 use oxide_batch::item_components::{
-    KeysetColumn, PostgresComponentConfigError, PostgresCursorFormat, postgres_cursor_reader,
+    KeysetColumn, PostgresComponentConfigError, PostgresCursorFormat, PostgresRow,
+    postgres_cursor_reader,
 };
 use oxide_batch::{
-    ComponentStreamIdentity, FailureCategory, ItemReader, ItemStream, ReadContext, ReadOutcome,
-    StopSource, StreamCloseContext, StreamOpenContext, StreamRuntimeOutcome, StreamUpdateContext,
+    ComponentStreamIdentity, FailureCategory, ItemReader, ItemStream, PostgresConfig,
+    PostgresConfigError, ReadContext, ReadOutcome, StopSource, StreamCloseContext,
+    StreamOpenContext, StreamRuntimeOutcome, StreamUpdateContext, TlsMode,
 };
-use sqlx::Row;
-use sqlx::postgres::{PgPoolOptions, PgRow};
+use sqlx::postgres::PgPoolOptions;
 
 fn runtime_url() -> Option<String> {
     std::env::var("OXIDEBATCH_POSTGRES_TEST_URL")
         .ok()
         .filter(|value| !value.is_empty())
+}
+
+fn plaintext_config(url: String) -> Result<PostgresConfig, PostgresConfigError> {
+    Ok(PostgresConfig::new(url)?.with_tls_mode(TlsMode::Plaintext))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -33,24 +38,15 @@ struct BusinessRow {
     payload: String,
 }
 
-fn map_row(row: &PgRow) -> Result<BusinessRow, oxide_batch::ReaderError> {
-    let sort_key: String = row
-        .try_get("sort_key")
-        .map_err(|_| oxide_batch::ReaderError::new())?;
-    let id: i64 = row
-        .try_get("id")
-        .map_err(|_| oxide_batch::ReaderError::new())?;
-    let payload: String = row
-        .try_get("payload")
-        .map_err(|_| oxide_batch::ReaderError::new())?;
+fn map_row(row: &PostgresRow<'_>) -> Result<BusinessRow, oxide_batch::ReaderError> {
     Ok(BusinessRow {
-        sort_key,
-        id,
-        payload,
+        sort_key: row.text("sort_key")?,
+        id: row.i64("id")?,
+        payload: row.text("payload")?,
     })
 }
 
-fn failing_map_row(_row: &PgRow) -> Result<BusinessRow, oxide_batch::ReaderError> {
+fn failing_map_row(_row: &PostgresRow<'_>) -> Result<BusinessRow, oxide_batch::ReaderError> {
     Err(oxide_batch::ReaderError::with_category(
         FailureCategory::UserComponent,
     ))
@@ -147,12 +143,9 @@ fn empty_result_reports_end_of_input_immediately() -> Result<(), Box<dyn Error>>
     runtime.block_on(async {
         let scope = "cursor_empty_result";
         prepare_scope(&url, scope, &[]).await?;
-        let pool = PgPoolOptions::new()
-            .max_connections(4)
-            .connect(&url)
-            .await?;
+        let config = plaintext_config(url.clone())?;
         let (mut reader, stream, _contract) = postgres_cursor_reader(
-            pool,
+            config,
             base_query(scope),
             key_columns(),
             PostgresCursorFormat::new().with_fetch_size(4),
@@ -199,12 +192,9 @@ fn streams_bounded_batches_without_materializing_the_full_result_set() -> Result
         prepare_scope(&url, scope, &borrowed).await?;
 
         let fetch_size = 32usize;
-        let pool = PgPoolOptions::new()
-            .max_connections(4)
-            .connect(&url)
-            .await?;
+        let config = plaintext_config(url.clone())?;
         let (mut reader, stream, _contract) = postgres_cursor_reader(
-            pool,
+            config,
             base_query(scope),
             key_columns(),
             PostgresCursorFormat::new().with_fetch_size(fetch_size),
@@ -267,12 +257,9 @@ fn restart_resumes_from_the_last_committed_key_without_gap_or_duplicate()
         // never call `close`.
         let mut delivered_before_crash = Vec::new();
         let envelope = {
-            let pool = PgPoolOptions::new()
-                .max_connections(4)
-                .connect(&url)
-                .await?;
+            let config = plaintext_config(url.clone())?;
             let (mut reader, stream, _contract) = postgres_cursor_reader(
-                pool,
+                config,
                 base_query(scope),
                 key_columns(),
                 PostgresCursorFormat::new().with_fetch_size(3),
@@ -313,12 +300,9 @@ fn restart_resumes_from_the_last_committed_key_without_gap_or_duplicate()
 
         // Restart: a fresh reader/stream pair restores from the captured
         // envelope.
-        let pool = PgPoolOptions::new()
-            .max_connections(4)
-            .connect(&url)
-            .await?;
+        let config = plaintext_config(url.clone())?;
         let (mut reader, stream, _contract) = postgres_cursor_reader(
-            pool,
+            config,
             base_query(scope),
             key_columns(),
             PostgresCursorFormat::new().with_fetch_size(3),
@@ -372,12 +356,9 @@ fn malformed_row_fails_closed_without_advancing_the_checkpoint() -> Result<(), B
         let scope = "cursor_malformed_row";
         prepare_scope(&url, scope, &[("k", 1, "payload-1"), ("k", 2, "payload-2")]).await?;
 
-        let pool = PgPoolOptions::new()
-            .max_connections(4)
-            .connect(&url)
-            .await?;
+        let config = plaintext_config(url.clone())?;
         let (mut reader, stream, _contract) = postgres_cursor_reader(
-            pool,
+            config,
             base_query(scope),
             key_columns(),
             PostgresCursorFormat::new().with_fetch_size(4),
@@ -414,12 +395,9 @@ fn malformed_row_fails_closed_without_advancing_the_checkpoint() -> Result<(), B
         // A fresh reader restored from that envelope, now with a
         // succeeding `map_row`, must still start at id = 1: the checkpoint
         // never advanced past the row `map_row` kept failing on.
-        let pool = PgPoolOptions::new()
-            .max_connections(4)
-            .connect(&url)
-            .await?;
+        let config = plaintext_config(url.clone())?;
         let (mut reader, stream, _contract) = postgres_cursor_reader(
-            pool,
+            config,
             base_query(scope),
             key_columns(),
             PostgresCursorFormat::new().with_fetch_size(4),
@@ -464,12 +442,9 @@ fn close_rolls_back_and_leaves_no_idle_in_transaction_backend() -> Result<(), Bo
         let scope = "cursor_cleanup";
         prepare_scope(&url, scope, &[("k", 1, "payload-1"), ("k", 2, "payload-2")]).await?;
 
-        let pool = PgPoolOptions::new()
-            .max_connections(4)
-            .connect(&url)
-            .await?;
+        let config = plaintext_config(url.clone())?;
         let (mut reader, stream, _contract) = postgres_cursor_reader(
-            pool,
+            config,
             base_query(scope),
             key_columns(),
             PostgresCursorFormat::new().with_fetch_size(1),
@@ -499,33 +474,23 @@ fn close_rolls_back_and_leaves_no_idle_in_transaction_backend() -> Result<(), Bo
 }
 
 #[test]
-fn empty_key_columns_are_rejected_at_construction() {
-    let pool_url = runtime_url();
-    let Some(url) = pool_url else {
+fn empty_key_columns_are_rejected_at_construction() -> Result<(), Box<dyn Error>> {
+    let Some(url) = runtime_url() else {
         eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
-        return;
+        return Ok(());
     };
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
-        let pool = PgPoolOptions::new()
-            .max_connections(1)
-            .connect(&url)
-            .await
-            .unwrap();
-        let result = postgres_cursor_reader::<BusinessRow>(
-            pool,
-            base_query("unused"),
-            Vec::new(),
-            PostgresCursorFormat::new(),
-            map_row,
-            identity("empty_key_columns"),
-        );
-        assert_eq!(
-            result.err(),
-            Some(PostgresComponentConfigError::EmptyKeyColumns)
-        );
-    });
+    let config = plaintext_config(url)?;
+    let result = postgres_cursor_reader::<BusinessRow>(
+        config,
+        base_query("unused"),
+        Vec::new(),
+        PostgresCursorFormat::new(),
+        map_row,
+        identity("empty_key_columns"),
+    );
+    assert_eq!(
+        result.err(),
+        Some(PostgresComponentConfigError::EmptyKeyColumns)
+    );
+    Ok(())
 }

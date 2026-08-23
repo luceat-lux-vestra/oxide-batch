@@ -9,18 +9,24 @@
 
 use std::error::Error;
 
-use oxide_batch::item_components::{KeysetColumn, PostgresPagingFormat, postgres_paging_reader};
-use oxide_batch::{
-    ComponentStreamIdentity, ItemReader, ItemStream, ReadContext, ReadOutcome, StopSource,
-    StreamCloseContext, StreamOpenContext, StreamRuntimeOutcome, StreamUpdateContext,
+use oxide_batch::item_components::{
+    KeysetColumn, PostgresPagingFormat, PostgresRow, postgres_paging_reader,
 };
-use sqlx::Row;
-use sqlx::postgres::{PgPoolOptions, PgRow};
+use oxide_batch::{
+    ComponentStreamIdentity, ItemReader, ItemStream, PostgresConfig, PostgresConfigError,
+    ReadContext, ReadOutcome, StopSource, StreamCloseContext, StreamOpenContext,
+    StreamRuntimeOutcome, StreamUpdateContext, TlsMode,
+};
+use sqlx::postgres::PgPoolOptions;
 
 fn runtime_url() -> Option<String> {
     std::env::var("OXIDEBATCH_POSTGRES_TEST_URL")
         .ok()
         .filter(|value| !value.is_empty())
+}
+
+fn plaintext_config(url: String) -> Result<PostgresConfig, PostgresConfigError> {
+    Ok(PostgresConfig::new(url)?.with_tls_mode(TlsMode::Plaintext))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -29,14 +35,11 @@ struct BusinessRow {
     id: i64,
 }
 
-fn map_row(row: &PgRow) -> Result<BusinessRow, oxide_batch::ReaderError> {
-    let sort_key: String = row
-        .try_get("sort_key")
-        .map_err(|_| oxide_batch::ReaderError::new())?;
-    let id: i64 = row
-        .try_get("id")
-        .map_err(|_| oxide_batch::ReaderError::new())?;
-    Ok(BusinessRow { sort_key, id })
+fn map_row(row: &PostgresRow<'_>) -> Result<BusinessRow, oxide_batch::ReaderError> {
+    Ok(BusinessRow {
+        sort_key: row.text("sort_key")?,
+        id: row.i64("id")?,
+    })
 }
 
 fn key_columns() -> Vec<KeysetColumn> {
@@ -136,12 +139,9 @@ fn empty_result_reports_end_of_input_immediately() -> Result<(), Box<dyn Error>>
     runtime.block_on(async {
         let scope = "paging_empty";
         prepare_scope(&url, scope, &[]).await?;
-        let pool = PgPoolOptions::new()
-            .max_connections(4)
-            .connect(&url)
-            .await?;
+        let config = plaintext_config(url.clone())?;
         let (mut reader, stream, _contract) = postgres_paging_reader(
-            pool,
+            config,
             base_query(scope),
             key_columns(),
             PostgresPagingFormat::new().with_page_size(4),
@@ -184,12 +184,9 @@ fn page_boundaries_deliver_every_row_exactly_once() -> Result<(), Box<dyn Error>
                 .collect();
             prepare_scope(&url, &scope, &borrowed).await?;
 
-            let pool = PgPoolOptions::new()
-                .max_connections(4)
-                .connect(&url)
-                .await?;
+            let config = plaintext_config(url.clone())?;
             let (mut reader, stream, _contract) = postgres_paging_reader(
-                pool,
+                config,
                 base_query(&scope),
                 key_columns(),
                 PostgresPagingFormat::new().with_page_size(page_size),
@@ -234,12 +231,9 @@ fn duplicate_primary_sort_key_is_resolved_by_the_unique_tiebreaker() -> Result<(
         let rows: Vec<(&str, i64)> = (0..17_i64).map(|id| ("same", id)).collect();
         prepare_scope(&url, scope, &rows).await?;
 
-        let pool = PgPoolOptions::new()
-            .max_connections(4)
-            .connect(&url)
-            .await?;
+        let config = plaintext_config(url.clone())?;
         let (mut reader, stream, _contract) = postgres_paging_reader(
-            pool,
+            config,
             base_query(scope),
             key_columns(),
             PostgresPagingFormat::new().with_page_size(5),
@@ -284,12 +278,9 @@ fn restart_resumes_from_the_last_committed_key_without_skip_or_duplicate()
         prepare_scope(&url, scope, &borrowed).await?;
 
         let envelope = {
-            let pool = PgPoolOptions::new()
-                .max_connections(4)
-                .connect(&url)
-                .await?;
+            let config = plaintext_config(url.clone())?;
             let (mut reader, stream, _contract) = postgres_paging_reader(
-                pool,
+                config,
                 base_query(scope),
                 key_columns(),
                 PostgresPagingFormat::new().with_page_size(4),
@@ -330,12 +321,9 @@ fn restart_resumes_from_the_last_committed_key_without_skip_or_duplicate()
         .await?;
         pool.close().await;
 
-        let pool = PgPoolOptions::new()
-            .max_connections(4)
-            .connect(&url)
-            .await?;
+        let config = plaintext_config(url.clone())?;
         let (mut reader, stream, _contract) = postgres_paging_reader(
-            pool,
+            config,
             base_query(scope),
             key_columns(),
             PostgresPagingFormat::new().with_page_size(4),
@@ -377,12 +365,9 @@ fn no_server_side_resource_is_held_between_pages() -> Result<(), Box<dyn Error>>
         prepare_scope(&url, scope, &rows).await?;
 
         let baseline = active_backend_count(&url).await?;
-        let pool = PgPoolOptions::new()
-            .max_connections(4)
-            .connect(&url)
-            .await?;
+        let config = plaintext_config(url.clone())?;
         let (mut reader, stream, _contract) = postgres_paging_reader(
-            pool,
+            config,
             base_query(scope),
             key_columns(),
             PostgresPagingFormat::new().with_page_size(3),

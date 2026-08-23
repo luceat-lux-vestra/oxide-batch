@@ -17,29 +17,29 @@
 //! [`crate::item_components::JsonArrayReader`]'s byte offset: updated in
 //! memory after every successful read, made durable only at a committing
 //! chunk's [`crate::ItemStream::update`] boundary, and authoritative only if
-//! that chunk transaction actually commits. On restart, [`ensure_started`]
-//! re-`DECLARE`s a fresh cursor filtered by the restored key
+//! that chunk transaction actually commits. On restart, this reader's first
+//! `read()` call re-`DECLARE`s a fresh cursor filtered by the restored key
 //! (`WHERE (cols...) > (restored...)`), so a crash mid-chunk re-reads
 //! whatever that chunk had not yet committed rather than skipping or
 //! silently duplicating past a committed boundary.
-//!
-//! [`ensure_started`]: PostgresCursorReader::ensure_started
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use sqlx::postgres::PgRow;
-use sqlx::{AssertSqlSafe, PgPool, Postgres};
+use sqlx::{AssertSqlSafe, Postgres};
 
 use crate::item_components::postgres_keyset::{
     self, CursorKeysetSchema, KeysetColumn, KeysetPosition, PostgresComponentConfigError,
-    classify_pg_error, extract_keyset, keyset_predicate_sql, order_by_sql, validate_key_columns,
+    PostgresRow, classify_pg_error, extract_keyset, keyset_predicate_sql, order_by_sql,
+    validate_key_columns,
 };
 use crate::{
     CodecId, CodecVersion, ComponentStateEnvelope, ComponentStreamIdentity, DefaultComponentCodec,
-    FailureCategory, ReadContext, ReadOutcome, ReaderError, RestartabilityDeclaration, StateLimits,
-    StreamCloseContext, StreamCloseError, StreamCloseOutcome, StreamOpenContext, StreamOpenError,
-    StreamOpenOutcome, StreamStateContract, StreamUpdateContext, StreamUpdateError,
+    FailureCategory, PostgresConfig, ReadContext, ReadOutcome, ReaderError,
+    RestartabilityDeclaration, StateLimits, StreamCloseContext, StreamCloseError,
+    StreamCloseOutcome, StreamOpenContext, StreamOpenError, StreamOpenOutcome, StreamStateContract,
+    StreamUpdateContext, StreamUpdateError,
 };
 
 /// The default `FETCH` batch size: bounds how many rows this reader ever
@@ -163,12 +163,12 @@ fn declare_cursor_sql(
 /// - **Evidence**: `crates/oxide-batch/tests/postgres_item_components_cursor.rs`,
 ///   `crates/oxide-batch-test/tests/postgres_item_components_db_restart.rs`.
 pub struct PostgresCursorReader<I> {
-    pool: PgPool,
+    config: PostgresConfig,
     base_query: String,
     key_columns: Vec<KeysetColumn>,
     fetch_size: usize,
     #[allow(clippy::type_complexity, reason = "one caller-supplied row mapper")]
-    map_row: Arc<dyn Fn(&PgRow) -> Result<I, ReaderError> + Send + Sync>,
+    map_row: Arc<dyn Fn(&PostgresRow<'_>) -> Result<I, ReaderError> + Send + Sync>,
     position: Arc<Mutex<KeysetPosition>>,
     transaction_slot: Arc<Mutex<Option<sqlx::Transaction<'static, Postgres>>>>,
     buffered: VecDeque<PgRow>,
@@ -177,10 +177,10 @@ pub struct PostgresCursorReader<I> {
 }
 
 impl<I> PostgresCursorReader<I> {
-    /// Establishes this instance's dedicated transaction and server-side
-    /// cursor on first use, filtered by whatever position was restored (or
-    /// unfiltered on initial execution). A restarted attempt always runs
-    /// this again from a fresh process/connection -- see the module
+    /// Establishes this instance's dedicated pool, transaction, and
+    /// server-side cursor on first use, filtered by whatever position was
+    /// restored (or unfiltered on initial execution). A restarted attempt
+    /// always runs this again from a fresh process -- see the module
     /// documentation.
     async fn ensure_started(&mut self) -> Result<(), ReaderError> {
         if self.started {
@@ -191,8 +191,11 @@ impl<I> PostgresCursorReader<I> {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
-        let mut transaction = self
-            .pool
+        let pool =
+            self.config.connect_pool().await.map_err(|_| {
+                ReaderError::with_category(FailureCategory::TransientInfrastructure)
+            })?;
+        let mut transaction = pool
             .begin()
             .await
             .map_err(|error| ReaderError::with_category(classify_pg_error(&error)))?;
@@ -270,7 +273,7 @@ where
             return Ok(ReadOutcome::EndOfInput);
         };
         let key = extract_keyset(row, &self.key_columns)?;
-        let item = (self.map_row)(row)?;
+        let item = (self.map_row)(&PostgresRow::new(row))?;
         // Only consumed -- and the checkpoint only allowed to advance --
         // once both the keyset extraction and `map_row` have succeeded. A
         // forward-only server cursor cannot "unfetch" a row, but this
@@ -348,8 +351,13 @@ impl crate::ItemStream for PostgresCursorReaderStream {
     }
 }
 
-/// Builds a `(reader, stream, contract)` triple over `pool`, namespaced
-/// under `identity`.
+/// Builds a `(reader, stream, contract)` triple over a `PostgreSQL`
+/// connection described by `config`, namespaced under `identity`.
+///
+/// `config` is stored, not connected: the reader opens its own dedicated
+/// pool/connection lazily on first `read()`, never at construction (the
+/// pool never crosses this function's own signature -- see
+/// `docs/api/design-guidelines.md`'s disclosure gate).
 ///
 /// `base_query` must be a full `SELECT` (no trailing `ORDER BY`/`LIMIT`)
 /// whose projection includes every `key_columns` column by name.
@@ -360,11 +368,11 @@ impl crate::ItemStream for PostgresCursorReaderStream {
 /// column name is not a safe SQL identifier, or `format`'s fetch size is
 /// zero.
 pub fn postgres_cursor_reader<I>(
-    pool: PgPool,
+    config: PostgresConfig,
     base_query: impl Into<String>,
     key_columns: Vec<KeysetColumn>,
     format: PostgresCursorFormat,
-    map_row: impl Fn(&PgRow) -> Result<I, ReaderError> + Send + Sync + 'static,
+    map_row: impl Fn(&PostgresRow<'_>) -> Result<I, ReaderError> + Send + Sync + 'static,
     identity: ComponentStreamIdentity,
 ) -> Result<
     (
@@ -384,7 +392,7 @@ where
     let position = Arc::new(Mutex::new(KeysetPosition::none()));
     let transaction_slot = Arc::new(Mutex::new(None));
     let reader = PostgresCursorReader {
-        pool,
+        config,
         base_query: base_query.into(),
         key_columns,
         fetch_size: format.fetch_size,

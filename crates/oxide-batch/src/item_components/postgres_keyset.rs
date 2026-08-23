@@ -265,6 +265,47 @@ pub(crate) fn classify_pg_error(error: &sqlx::Error) -> FailureCategory {
     FailureCategory::TransientInfrastructure
 }
 
+/// A borrowed, `PostgreSQL`-driver-hiding view of one row a
+/// [`super::postgres_cursor::PostgresCursorReader`] or
+/// [`super::postgres_paging::PostgresPagingReader`] fetched, handed to the
+/// caller-supplied `map_row` closure.
+///
+/// Deliberately narrow, matching [`KeysetColumnKind`]'s supported types:
+/// `sqlx::postgres::PgRow` itself never crosses this public boundary (see
+/// `docs/api/design-guidelines.md`'s disclosure gate, which names a
+/// database driver row type as a prohibited public disclosure).
+pub struct PostgresRow<'a>(&'a PgRow);
+
+impl<'a> PostgresRow<'a> {
+    pub(crate) const fn new(row: &'a PgRow) -> Self {
+        Self(row)
+    }
+
+    /// Reads a `text`/`varchar` column by name.
+    ///
+    /// # Errors
+    ///
+    /// Returns a value-redacted [`ReaderError`] when the column is missing
+    /// or is not text-typed.
+    pub fn text(&self, column: &str) -> Result<String, ReaderError> {
+        self.0
+            .try_get(column)
+            .map_err(|_| ReaderError::with_category(FailureCategory::UserComponent))
+    }
+
+    /// Reads a `bigint`/integer-family column by name.
+    ///
+    /// # Errors
+    ///
+    /// Returns a value-redacted [`ReaderError`] when the column is missing
+    /// or is not integer-typed.
+    pub fn i64(&self, column: &str) -> Result<i64, ReaderError> {
+        self.0
+            .try_get(column)
+            .map_err(|_| ReaderError::with_category(FailureCategory::UserComponent))
+    }
+}
+
 fn encode_keyset(value: &KeysetPosition) -> Result<Vec<u8>, StateCodecError> {
     let items: Vec<Value> = value
         .values()

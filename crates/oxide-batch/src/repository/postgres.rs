@@ -378,6 +378,56 @@ impl PostgresConfig {
         };
         Ok(options)
     }
+
+    /// Opens a bounded `PostgreSQL` pool from this configuration, without the
+    /// `oxide_batch` metadata schema-version verification
+    /// [`PostgresJobRepository::connect`] additionally performs -- for a
+    /// business-data pool (e.g. an `item_components::postgres_cursor`/
+    /// `postgres_paging` reader), not a metadata repository connection.
+    ///
+    /// `pub(crate)` only: never a public constructor, so `sqlx::PgPool`
+    /// itself never crosses the public facade boundary (see
+    /// `docs/api/design-guidelines.md`'s disclosure gate) -- every public
+    /// entry point that needs a pool takes a [`PostgresConfig`] and calls
+    /// this instead.
+    pub(crate) async fn connect_pool(&self) -> Result<PgPool, PostgresPoolError> {
+        self.validate().map_err(PostgresPoolError::Config)?;
+        let options = self.connect_options().map_err(PostgresPoolError::Config)?;
+        tokio::time::timeout(
+            self.connect_timeout,
+            PgPoolOptions::new()
+                .max_connections(self.pool_size)
+                .acquire_timeout(self.acquire_timeout)
+                .idle_timeout(Some(self.connection_idle_timeout))
+                .max_lifetime(Some(self.connection_max_lifetime))
+                .connect_with(options),
+        )
+        .await
+        .map_err(|_| PostgresPoolError::Connect)?
+        .map_err(|_| PostgresPoolError::Connect)
+    }
+}
+
+/// A value-redacted failure opening a [`PostgresConfig::connect_pool`] pool.
+///
+/// `pub(crate)` only, deliberately distinct from the public
+/// [`PostgresConfigError`]: that type is pure sync configuration validation
+/// used by `PostgresConfig`'s own public builder methods, which never
+/// connect, so it has no "connection failed" variant to reuse honestly.
+pub(crate) enum PostgresPoolError {
+    /// The configuration itself was rejected before any connection attempt.
+    Config(PostgresConfigError),
+    /// The connection attempt failed or timed out.
+    Connect,
+}
+
+impl fmt::Display for PostgresPoolError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Config(error) => write!(formatter, "invalid PostgreSQL configuration: {error}"),
+            Self::Connect => formatter.write_str("PostgreSQL connection attempt failed"),
+        }
+    }
 }
 
 impl fmt::Debug for PostgresConfig {

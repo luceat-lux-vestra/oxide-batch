@@ -19,13 +19,15 @@ use sqlx::{AssertSqlSafe, PgPool};
 
 use crate::item_components::postgres_keyset::{
     self, KeysetColumn, KeysetPosition, PagingKeysetSchema, PostgresComponentConfigError,
-    classify_pg_error, extract_keyset, keyset_predicate_sql, order_by_sql, validate_key_columns,
+    PostgresRow, classify_pg_error, extract_keyset, keyset_predicate_sql, order_by_sql,
+    validate_key_columns,
 };
 use crate::{
     CodecId, CodecVersion, ComponentStateEnvelope, ComponentStreamIdentity, DefaultComponentCodec,
-    FailureCategory, ReadContext, ReadOutcome, ReaderError, RestartabilityDeclaration, StateLimits,
-    StreamCloseContext, StreamCloseError, StreamCloseOutcome, StreamOpenContext, StreamOpenError,
-    StreamOpenOutcome, StreamStateContract, StreamUpdateContext, StreamUpdateError,
+    FailureCategory, PostgresConfig, ReadContext, ReadOutcome, ReaderError,
+    RestartabilityDeclaration, StateLimits, StreamCloseContext, StreamCloseError,
+    StreamCloseOutcome, StreamOpenContext, StreamOpenError, StreamOpenOutcome, StreamStateContract,
+    StreamUpdateContext, StreamUpdateError,
 };
 
 /// The default page size.
@@ -125,18 +127,35 @@ fn page_query_sql(base_query: &str, key_columns: &[KeysetColumn], has_restored: 
 /// - **Evidence**: `crates/oxide-batch/tests/postgres_item_components_paging.rs`,
 ///   `crates/oxide-batch-test/tests/postgres_item_components_db_restart.rs`.
 pub struct PostgresPagingReader<I> {
-    pool: PgPool,
+    config: PostgresConfig,
+    pool: Option<PgPool>,
     base_query: String,
     key_columns: Vec<KeysetColumn>,
     page_size: usize,
     #[allow(clippy::type_complexity, reason = "one caller-supplied row mapper")]
-    map_row: Arc<dyn Fn(&PgRow) -> Result<I, ReaderError> + Send + Sync>,
+    map_row: Arc<dyn Fn(&PostgresRow<'_>) -> Result<I, ReaderError> + Send + Sync>,
     position: Arc<Mutex<KeysetPosition>>,
     buffered: VecDeque<PgRow>,
     exhausted: bool,
 }
 
 impl<I> PostgresPagingReader<I> {
+    /// Returns this instance's lazily-opened pool, connecting once on first
+    /// use and reusing it for every subsequent page -- unlike the cursor
+    /// reader's one-shot connection, a paging reader issues many independent
+    /// statements over its lifetime, so reconnecting per page would be
+    /// wasteful.
+    async fn pool(&mut self) -> Result<&PgPool, ReaderError> {
+        if self.pool.is_none() {
+            let pool = self.config.connect_pool().await.map_err(|_| {
+                ReaderError::with_category(FailureCategory::TransientInfrastructure)
+            })?;
+            self.pool = Some(pool);
+        }
+        #[allow(clippy::unwrap_used, reason = "just populated above when it was None")]
+        Ok(self.pool.as_ref().unwrap())
+    }
+
     async fn fetch_next_page(&mut self) -> Result<(), ReaderError> {
         if self.exhausted {
             return Ok(());
@@ -154,8 +173,9 @@ impl<I> PostgresPagingReader<I> {
         let page_size = i64::try_from(self.page_size)
             .map_err(|_| ReaderError::with_category(FailureCategory::Invariant))?;
         query = query.bind(page_size);
+        let pool = self.pool().await?;
         let rows = query
-            .fetch_all(&self.pool)
+            .fetch_all(pool)
             .await
             .map_err(|error| ReaderError::with_category(classify_pg_error(&error)))?;
         if rows.len() < self.page_size {
@@ -178,7 +198,7 @@ where
             return Ok(ReadOutcome::EndOfInput);
         };
         let key = extract_keyset(row, &self.key_columns)?;
-        let item = (self.map_row)(row)?;
+        let item = (self.map_row)(&PostgresRow::new(row))?;
         // See `postgres_cursor::PostgresCursorReader::read` for why the row
         // is only popped -- and the checkpoint only advanced -- after both
         // succeed: a failure must deterministically retry the same row.
@@ -241,8 +261,13 @@ impl crate::ItemStream for PostgresPagingReaderStream {
     }
 }
 
-/// Builds a `(reader, stream, contract)` triple over `pool`, namespaced
-/// under `identity`.
+/// Builds a `(reader, stream, contract)` triple over a `PostgreSQL`
+/// connection described by `config`, namespaced under `identity`.
+///
+/// `config` is stored, not connected: the reader opens its own dedicated
+/// pool lazily on first `read()`, reused for every subsequent page (the
+/// pool never crosses this function's own signature -- see
+/// `docs/api/design-guidelines.md`'s disclosure gate).
 ///
 /// `base_query` must be a full `SELECT` (no trailing `ORDER BY`/`LIMIT`)
 /// whose projection includes every `key_columns` column by name.
@@ -253,11 +278,11 @@ impl crate::ItemStream for PostgresPagingReaderStream {
 /// column name is not a safe SQL identifier, or `format`'s page size is
 /// zero.
 pub fn postgres_paging_reader<I>(
-    pool: PgPool,
+    config: PostgresConfig,
     base_query: impl Into<String>,
     key_columns: Vec<KeysetColumn>,
     format: PostgresPagingFormat,
-    map_row: impl Fn(&PgRow) -> Result<I, ReaderError> + Send + Sync + 'static,
+    map_row: impl Fn(&PostgresRow<'_>) -> Result<I, ReaderError> + Send + Sync + 'static,
     identity: ComponentStreamIdentity,
 ) -> Result<
     (
@@ -276,7 +301,8 @@ where
     }
     let position = Arc::new(Mutex::new(KeysetPosition::none()));
     let reader = PostgresPagingReader {
-        pool,
+        config,
+        pool: None,
         base_query: base_query.into(),
         key_columns,
         page_size: format.page_size,

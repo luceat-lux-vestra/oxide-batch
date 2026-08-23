@@ -6,7 +6,7 @@
 
 mod memory;
 #[cfg(feature = "postgres")]
-mod postgres;
+pub(crate) mod postgres;
 
 pub use memory::{InMemoryExplorer, InMemoryJobRepository};
 #[cfg(feature = "postgres")]

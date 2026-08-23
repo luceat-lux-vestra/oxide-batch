@@ -85,7 +85,7 @@ the existing `postgres` Cargo feature (already pulling in `sqlx` 0.9 with
 
 | Family | Type(s) | Module |
 | --- | --- | --- |
-| Shared keyset plumbing (`pub(crate)`) | `KeysetColumn`, `KeysetColumnKind`, `PostgresComponentConfigError` (the only genuinely new public error type) | `item_components::postgres_keyset` |
+| Shared keyset plumbing (`pub(crate)`) | `KeysetColumn`, `KeysetColumnKind`, `PostgresComponentConfigError`, `PostgresRow` | `item_components::postgres_keyset` |
 | Cursor reader | `PostgresCursorFormat`, `PostgresCursorReader`, `PostgresCursorReaderStream`, `postgres_cursor_reader` | `item_components::postgres_cursor` |
 | Paging/keyset reader | `PostgresPagingFormat`, `PostgresPagingReader`, `PostgresPagingReaderStream`, `postgres_paging_reader` | `item_components::postgres_paging` |
 | SQL batch / same-resource enlisted writer | `PostgresBatchMode`, `PostgresBatchWriter`, `postgres_batch_writer` | `item_components::postgres_batch` |
@@ -96,16 +96,43 @@ the error hierarchy, no new repository-capability abstraction, no runtime
 `Any`/downcast plumbing, no PostgreSQL-specific backend SPI beyond these four
 component types.
 
-Accepting `sqlx::PgPool`/`sqlx::postgres::PgRow` directly in these
-constructors (rather than hiding them behind a new wrapper type) is
-consistent with existing precedent: `JsonArrayReader<Src>` already accepts a
-concrete `Src` directly, and `crates/oxide-batch/tests/postgres_repository.rs`
-already builds ad hoc `sqlx::PgPool`s for business data. The "driver types
-stay private" principle in `docs/architecture/repository-and-transaction-model.md`
-is scoped to the `ChunkTransaction`/`BusinessTransaction`/`JobRepository`
-*ports*, not to a `PostgreSQL`-specific item component; inventing a wrapper
-type here would be exactly the unneeded "lowest common denominator"
-abstraction the issue forbids.
+**Design correction found by `cargo xtask surface`, not by review.** The
+first version of `postgres_cursor_reader`/`postgres_paging_reader` accepted
+`sqlx::PgPool` directly and handed `map_row` a `&sqlx::postgres::PgRow` --
+reasoned (wrongly) as consistent with `JsonArrayReader<Src>` accepting a
+concrete `Src` directly. `docs/api/design-guidelines.md`'s M5 disclosure gate
+is more specific than that precedent suggests: it flatly prohibits "a
+database driver, connection, pool, row, or SQL fragment type" in *any*
+public signature, project-wide -- not merely at the
+`ChunkTransaction`/`BusinessTransaction`/`JobRepository` port boundary. The
+facade-surface CI job (`quality`'s `cargo xtask surface` step) caught this
+immediately: `oxide_batch::postgres_cursor_reader discloses the database
+driver crate sqlx_postgres` (and the same for `postgres_paging_reader`), a
+hard failure (exit code 1), not an advisory. The fix:
+
+- Both constructors now take `PostgresConfig` (already public, already used
+  by `PostgresJobRepository::connect`) instead of a caller-built `PgPool`.
+  A new `pub(crate)`-only `PostgresConfig::connect_pool` (in
+  `repository/postgres.rs`, reachable from `item_components` because
+  `repository::postgres` was widened from a private to a `pub(crate)`
+  module) opens the pool internally -- `sqlx::PgPool` itself never appears
+  in either function's signature. The cursor reader connects lazily on
+  first `read()` (a one-shot connection, matching its one dedicated
+  transaction); the paging reader also connects lazily but caches the pool
+  across pages, since reconnecting per page would be wasted work its
+  cursor sibling doesn't pay.
+- `map_row` now takes `&PostgresRow<'_>`, a new `pub` wrapper
+  (`item_components::postgres_keyset::PostgresRow`) whose only public
+  methods are `text(column)`/`i64(column)`, deliberately matching
+  `KeysetColumnKind`'s own narrow vocabulary. Its private field is a
+  `&sqlx::postgres::PgRow`, never disclosed. `cargo xtask surface` passes
+  clean after this change (`facade surface discloses nothing further`) --
+  confirmed by re-running it, not merely inferred from the type signatures.
+
+This is a real instance of the class of gap `docs/api/design-guidelines.md`
+itself exists to catch mechanically rather than rely on every contributor
+correctly scoping "driver types stay private" from prose alone; it is
+recorded here rather than quietly folded into the diff.
 
 ## Cursor reader: real server-side streaming, not fetch-all
 
@@ -311,6 +338,7 @@ cargo test -p oxide-batch --features postgres --test postgres_item_components_cu
 cargo test -p oxide-batch --features postgres --test postgres_item_components_paging -- --nocapture --test-threads=1
 cargo test -p oxide-batch --features postgres --test postgres_item_components_batch_writer -- --nocapture --test-threads=1
 cargo test -p oxide-batch-test --features postgres --test postgres_item_components_db_restart -- --nocapture --test-threads=1
+cargo run --package oxide-batch-xtask -- surface
 ```
 
 All of the above were run locally against a real `PostgreSQL 18.4`
