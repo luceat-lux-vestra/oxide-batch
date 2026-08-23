@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "9556f3b8e5ed96e528b4aecfab8cb8992106f40a",
+    "source_commit": "833bc8df774512fd728aee1910098b3ab797af7d",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -20,12 +20,12 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "9556f3b8e5ed96e528b4aecfab8cb8992106f40a",
+      "execution_commit": "833bc8df774512fd728aee1910098b3ab797af7d",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
         ".github/workflows/m5-conformance.yml": "39e3e1fefaf2ac8284847c1f86995e109cca335c",
-        "Cargo.lock": "983f2ee81b4a33ba4ff73368dbccf64fc78f8267",
+        "Cargo.lock": "36ae53cce092c3dd3ff110d11b1ac1d4206c8e86",
         "Cargo.toml": "37ad0088277e0638aa3cf3b6de4e64f590aed874",
         "crates/oxide-batch-cli/Cargo.toml": "7188ffd250361f0c045a8db59e067da09f9fdb19",
         "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
@@ -39,7 +39,7 @@
         "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
         "crates/oxide-batch/Cargo.toml": "762ee1faab89b474e219bc1a97dc5e8bdb21a03a",
         "crates/oxide-batch/migrations": "7923dcfb1ff0d152499466259107986cd8ae27e5",
-        "crates/oxide-batch/src": "47c0ffe8c91a514604cd37ad5813fb607eed6492",
+        "crates/oxide-batch/src": "93a2e37e38a772fa9251ff56d75ce4773f856843",
         "crates/oxide-batch/tests/chunk_fault_runtime.rs": "4571e2b1e5945d3d2ad381f2124a64cf5abdcf27",
         "crates/oxide-batch/tests/chunk_runtime.rs": "685c4a7e2021e1ce7771100f5eb9d7b298219b03",
         "crates/oxide-batch/tests/conformance": "2ca0aff137df4c70c755ed7a41edf39e3b01a7fe",
