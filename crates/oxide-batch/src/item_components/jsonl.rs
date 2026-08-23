@@ -347,7 +347,13 @@ fn read_bounded_line<R: BufRead>(reader: &mut R, max_bytes: usize) -> io::Result
 /// - **State/checkpoint**: restart position is a plain byte offset at the
 ///   last consumed line boundary, persisted through the paired
 ///   [`JsonLinesReaderStream`] -- identical in shape to
-///   [`crate::item_components::fixed_width::FixedWidthReader`]'s.
+///   [`crate::item_components::fixed_width::FixedWidthReader`]'s. A failed
+///   seek or a read that fails partway through a line is
+///   [`crate::FailureCategory::TransientInfrastructure`], never advances
+///   this position, and forces the *next* call to re-seek to it (even when
+///   it is byte 0) before reading anything -- a retry never continues from
+///   an unconfirmed mid-line source position, so it can neither duplicate a
+///   committed line nor resume inside one.
 /// - **Ordering**: preserves file order.
 /// - **Thread safety**: `Send`; used exclusively (`&mut self`).
 /// - **Reentrancy**: not reentrant.
@@ -388,22 +394,26 @@ pub struct JsonLinesReader<Src> {
     source: BufReader<Src>,
     max_record_bytes: usize,
     position: Arc<Mutex<u64>>,
-    seeked: bool,
+    /// `true` until the source's physical position is *confirmed* to match
+    /// the authoritative `position`: armed initially, and re-armed by any
+    /// operation that leaves that match unproven (a failed seek, or a read
+    /// failure partway through a line, which may have already consumed some
+    /// of that line's bytes into the buffered reader without a matching
+    /// commit). Never cleared until an actual `seek` call succeeds -- a
+    /// retry must never trust an unconfirmed position, including byte 0.
+    needs_seek: bool,
 }
 
 impl<Src: Read + Seek> JsonLinesReader<Src> {
     fn seek_if_needed(&mut self) -> Result<(), ReaderError> {
-        if self.seeked {
+        if !self.needs_seek {
             return Ok(());
         }
-        self.seeked = true;
         let target = *self.position.lock().unwrap_or_else(PoisonError::into_inner);
-        if target == 0 {
-            return Ok(());
-        }
         self.source
             .seek(SeekFrom::Start(target))
-            .map_err(|_| ReaderError::new())?;
+            .map_err(|_| ReaderError::with_category(FailureCategory::TransientInfrastructure))?;
+        self.needs_seek = false;
         Ok(())
     }
 }
@@ -416,8 +426,18 @@ where
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<I>, ReaderError> {
         self.seek_if_needed()?;
         let before = *self.position.lock().unwrap_or_else(PoisonError::into_inner);
-        let outcome = read_bounded_line(&mut self.source, self.max_record_bytes)
-            .map_err(|_| ReaderError::with_category(FailureCategory::TransientInfrastructure))?;
+        let Ok(outcome) = read_bounded_line(&mut self.source, self.max_record_bytes) else {
+            // The line may be partially consumed into the buffered reader
+            // at an arbitrary mid-record position with no matching
+            // checkpoint update -- never resume from there. A retry must
+            // re-seek to `before` (the last proven boundary, including 0)
+            // rather than continue from wherever this failed attempt left
+            // the source.
+            self.needs_seek = true;
+            return Err(ReaderError::with_category(
+                FailureCategory::TransientInfrastructure,
+            ));
+        };
         match outcome {
             BoundedLine::Eof => Ok(ReadOutcome::EndOfInput),
             BoundedLine::TooLong { consumed } => {
@@ -501,7 +521,7 @@ where
         source: BufReader::new(source),
         max_record_bytes: format.max_record_bytes,
         position: Arc::clone(&position),
-        seeked: false,
+        needs_seek: true,
     };
     let stream = JsonLinesReaderStream {
         position,

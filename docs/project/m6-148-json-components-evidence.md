@@ -79,6 +79,61 @@ version of this PR found five defects, all in this tree now:
   invariant that holds deterministically after the fix regardless of
   scheduling order, and that failed on every run before it.
 
+**Second corrective pass (PR #166):** a further review found that neither
+reader was retry-safe against a transient (not data) I/O failure: both
+could continue from a physical source position no operation had actually
+confirmed, and both misclassified a failed seek as `UserComponent` instead
+of `FailureCategory::TransientInfrastructure`. Both are fixed:
+
+- `JsonLinesReader`'s one-shot `seeked` flag was set *before* attempting the
+  seek it gated, and was never re-armed by a later failure. A failed
+  restart seek left it permanently (and wrongly) believing the source was
+  correctly positioned; a read that failed partway through a line (after
+  some of that line's bytes were already consumed into the buffered
+  reader, with no matching checkpoint update) left the reader positioned
+  mid-line with nothing to force a re-seek before the next attempt -- a
+  retry would continue from that arbitrary mid-record position rather than
+  the record's own start. The fix replaces the flag with `needs_seek`,
+  armed initially and re-armed by any I/O failure; it is cleared only after
+  an actual seek call succeeds, and the seek always physically executes
+  when armed -- including for checkpoint byte 0, which the removed
+  fast path used to skip entirely.
+  `a_failed_restart_seek_is_transient_and_the_retry_reseeks_to_the_checkpoint`
+  and `a_mid_record_read_failure_is_transient_and_the_retry_returns_the_complete_record_once`
+  are the regression tests, using a deterministic injected-fault `Read + Seek`
+  double (`FaultyIo`) whose fault fires exactly once at a named byte
+  position, not a timing- or stress-only mechanism; both reliably fail
+  against the pre-fix code (confirmed by reverting the fix and re-running
+  them) with the wrong `FailureCategory` and, for the mid-record case, a
+  corrupted read result.
+- `JsonArrayReader` had the same class of gap in two places: `ensure_started`
+  classified its own seek failure as `UserComponent`, and
+  `restore_read_state` executed its rewind seek with `let _ = ...`,
+  discarding the result outright -- if that seek failed, the reader
+  proceeded exactly as though it had succeeded, updating
+  `consumed_absolute`/framing state to a position the physical source was
+  never confirmed to be at. The post-parse "rewind past lookahead overshoot"
+  seek had an even sharper version of the same bug: it updated
+  `consumed_absolute` *before* attempting the seek, so a failure left that
+  field wrong with no restoring call to fix it. The fix adds `reseek_to`,
+  which updates the logical position only after its seek call actually
+  succeeds and otherwise clears `started` (forcing the next call to
+  re-derive its position and framing state from the authoritative
+  checkpoint through `ensure_started`, rather than trust an unconfirmed
+  cursor) and returns `TransientInfrastructure`; every seek in the reader
+  now goes through it.
+  `a_failed_post_parse_rewind_seek_is_transient_and_the_retry_returns_the_same_element`
+  is the regression test (an injected one-shot seek failure via the
+  existing `TracedSource` double, extended with the same fires-once-then-clears
+  fault model), asserting the failed call's category, that the persisted
+  checkpoint does not advance past the unconfirmed element, and that the
+  retry returns that exact element once -- confirmed to fail against the
+  pre-fix code with the wrong category.
+
+Per this pass's own scope, #147's flat-file components were not touched
+even though an analogous pattern may exist there; that is a separate
+finding for a separate pass, not folded into this one.
+
 ## Public component surface
 
 All new types live under `oxide_batch::item_components` (`jsonl` and
@@ -199,7 +254,13 @@ Both families reuse the existing M6 `ItemStream` contract exactly: each
 triple sharing state through an `Arc`, identical to #147's pattern.
 
 **JSONL reader.** Restart position is a plain byte offset at the last
-consumed line boundary -- identical in shape to `FixedWidthReader`'s.
+consumed line boundary -- identical in shape to `FixedWidthReader`'s. A
+failed seek or a read that fails partway through a line is
+`FailureCategory::TransientInfrastructure` and never advances this
+position; it also forces the next call to re-seek to it (even at byte 0)
+before reading anything further, so a retry never continues from an
+unconfirmed mid-line source position (see the second corrective-pass note
+above).
 
 **JSON-array reader.** Restart position is a plain `u64`: the byte offset
 immediately after the last successfully parsed element's own bytes, before
@@ -209,7 +270,12 @@ insufficient, but this design's every-read protocol (evaluate
 separator-or-close, then parse a value) is fully reconstructible from that
 one number plus whether it is zero (meaning "not yet started, consume the
 opening bracket first"). A restart therefore never rereads from byte zero
-and never infers position from a line or item count. The instrumented
+and never infers position from a line or item count. Every seek this
+reader performs -- establishing the initial/restored position, and the
+post-parse rewind past a lookahead overshoot -- updates the logical
+position only if that seek actually succeeds
+(`FailureCategory::TransientInfrastructure` otherwise, never advancing the
+persisted checkpoint); see the second corrective-pass note above. The instrumented
 `restart_instrumentation_observes_byte_zero_rescan_control_and_real_reader_avoids_it`
 test records every source seek/read interval after restore and asserts that
 the production reader does not seek or read before the persisted boundary;
@@ -340,7 +406,11 @@ dev-dependency-cycle reason #146/#147's allocation files can't.
   element, a committed prefix, and an uncommitted in-flight element proven
   neither skipped nor duplicated; a positive control shows a naive
   2-line-based resume point lands before the real second element even
-  ends).
+  ends). Transient-I/O retry-safety (see the second corrective-pass note
+  above) is proven separately with deterministic injected faults:
+  `item_components_jsonl.rs::a_failed_restart_seek_is_transient_and_the_retry_reseeks_to_the_checkpoint`,
+  `::a_mid_record_read_failure_is_transient_and_the_retry_returns_the_complete_record_once`,
+  and `item_components_json_array.rs::a_failed_post_parse_rewind_seek_is_transient_and_the_retry_returns_the_same_element`.
 - **D (writer restart):** `postgres_json_restart.rs::jsonl_writer_truncates_uncommitted_tail_and_resumes_exactly_once`,
   `::jsonl_writer_fails_closed_when_the_file_is_shorter_than_committed`,
   `::json_array_writer_truncates_uncommitted_tail_and_resumes_exactly_once`
@@ -391,6 +461,7 @@ See section G above.
 | A top-level array rejects trailing non-whitespace after `]` | `trailing_garbage_after_top_level_array_is_rejected_but_json_whitespace_is_allowed` accepts JSON whitespace cases and asserts `UserComponent` failure for garbage cases |
 | Array retry restores the last proven framing state | `malformed_element_syntax_is_unrecoverable_and_fails_closed` retries the same malformed element and asserts the same failure category without checkpoint advancement |
 | Array restart resumes at a proven element boundary, never mid-element, never byte zero | `restart_instrumentation_observes_byte_zero_rescan_control_and_real_reader_avoids_it` asserts seek/read intervals after restore and a positive control observes the forbidden zero seek/prefix read; `postgres_json_restart.rs` supplies durable restart evidence |
+| A failed seek/read is transient infrastructure, never advances the checkpoint, and a retry re-seeks to the authoritative position rather than trusting an unconfirmed cursor | `a_failed_restart_seek_is_transient_and_the_retry_reseeks_to_the_checkpoint`, `a_mid_record_read_failure_is_transient_and_the_retry_returns_the_complete_record_once`, and `a_failed_post_parse_rewind_seek_is_transient_and_the_retry_returns_the_same_element`'s exact `FailureCategory::TransientInfrastructure` assertions, unadvanced-checkpoint assertion, and traced re-seek-to-the-exact-byte assertions -- all three reliably fail against the pre-fix code (confirmed by temporarily reverting each fix) |
 | Array restart never duplicates or omits an element | The same test's `combined == [five elements once each]` assertion |
 | Array writer resumes comma state correctly after a restart | `json_array_writer_truncates_uncommitted_tail_and_resumes_exactly_once`'s final `b"[1,2,3]"` byte-exact assertion (a doubled or missing comma, or a re-added opening bracket, would produce different bytes) and its `serde_json::from_slice` reparse |
 | Array writer never claims a complete valid JSON array before the step commits | `json_array_writer_truncates_uncommitted_tail_and_resumes_exactly_once`'s intermediate `b"[1,2"` assertion (no closing bracket) after attempt A |

@@ -319,7 +319,14 @@ enum ValueFraming {
 ///   after the last successfully parsed element, persisted through the
 ///   paired [`JsonArrayReaderStream`]. A restart resumes by evaluating
 ///   separator-or-close at that exact byte, never by re-reading from byte
-///   zero or counting emitted items.
+///   zero or counting emitted items. Every seek this reader performs --
+///   establishing the initial/restored position, and rewinding past a
+///   parser lookahead overshoot after a successful element -- updates the
+///   logical position only if that seek actually succeeds
+///   ([`crate::FailureCategory::TransientInfrastructure`] otherwise,
+///   never advancing the persisted checkpoint); a failed seek forces the
+///   next call to fully re-derive its position and framing state from the
+///   authoritative checkpoint rather than trust an unconfirmed cursor.
 /// - **Ordering**: preserves array order.
 /// - **Thread safety**: `Send`; used exclusively (`&mut self`).
 /// - **Reentrancy**: not reentrant (owns the parse position).
@@ -363,11 +370,38 @@ pub struct JsonArrayReader<Src> {
 }
 
 impl<Src: Read + Seek> JsonArrayReader<Src> {
-    fn restore_read_state(&mut self, position: u64, expect_separator: bool) {
-        let _ = self.source.seek(SeekFrom::Start(position));
-        self.consumed_absolute = position;
+    /// Seeks the physical source to `target` and records the new logical
+    /// position *only if that seek actually succeeds*. A failed seek never
+    /// updates `consumed_absolute`/`position` to pretend it landed there --
+    /// it clears `started` instead, so the next call re-derives everything
+    /// (seek target, and whether to redo the opening-bracket dance or arm
+    /// separator-or-close directly) from the authoritative shared
+    /// checkpoint via [`Self::ensure_started`], rather than trusting a
+    /// physical cursor no operation has actually confirmed.
+    fn reseek_to(&mut self, target: u64) -> Result<(), ReaderError> {
+        if self.source.seek(SeekFrom::Start(target)).is_err() {
+            self.started = false;
+            return Err(ReaderError::with_category(
+                FailureCategory::TransientInfrastructure,
+            ));
+        }
+        self.consumed_absolute = target;
+        Ok(())
+    }
+
+    /// Restores framing state to a previously proven boundary after a
+    /// failed read/parse attempt. Propagates a failure of the restoring
+    /// seek itself (see [`Self::reseek_to`]) rather than ever proceeding as
+    /// though an unconfirmed rewind succeeded.
+    fn restore_read_state(
+        &mut self,
+        position: u64,
+        expect_separator: bool,
+    ) -> Result<(), ReaderError> {
+        self.reseek_to(position)?;
         self.expect_separator = expect_separator;
         self.done = false;
+        Ok(())
     }
 
     /// Accepts a closing bracket only when all remaining source bytes are
@@ -429,10 +463,7 @@ impl<Src: Read + Seek> JsonArrayReader<Src> {
             return Ok(());
         }
         let target = *self.position.lock().unwrap_or_else(PoisonError::into_inner);
-        self.source
-            .seek(SeekFrom::Start(target))
-            .map_err(|_| ReaderError::new())?;
-        self.consumed_absolute = target;
+        self.reseek_to(target)?;
         if target == 0 {
             let (skipped, byte) = skip_whitespace(&mut self.source).map_err(|_| {
                 ReaderError::with_category(FailureCategory::TransientInfrastructure)
@@ -566,35 +597,38 @@ where
                 Ok(true) => {}
                 Ok(false) => return Ok(ReadOutcome::EndOfInput),
                 Err(error) => {
-                    self.restore_read_state(checkpoint_before_read, expect_separator_before_read);
+                    self.restore_read_state(checkpoint_before_read, expect_separator_before_read)?;
                     return Err(error);
                 }
             }
         }
         match self.parse_element() {
             Ok(ParsedElement::Value { value, consumed }) => {
-                self.consumed_absolute += consumed;
                 // `parse_element`'s bounded growth may have read further
                 // ahead from `source` than the element's own bytes (its
                 // growth target is not tailored to this element's exact
                 // size); rewind to the true logical position so the next
                 // call -- whether `resolve_separator` or a restart's fresh
                 // seek -- starts exactly where this element's bytes end,
-                // never mid-lookahead.
-                self.source
-                    .seek(SeekFrom::Start(self.consumed_absolute))
-                    .map_err(|_| ReaderError::new())?;
+                // never mid-lookahead. The target is computed *before*
+                // attempting that seek, and `consumed_absolute`/`position`
+                // are updated only if it actually succeeds (see
+                // `reseek_to`): a failed rewind must never advance the
+                // persisted checkpoint past an element the physical source
+                // was never actually confirmed to be positioned after.
+                let new_position = self.consumed_absolute + consumed;
+                self.reseek_to(new_position)?;
                 *self.position.lock().unwrap_or_else(PoisonError::into_inner) =
                     self.consumed_absolute;
                 self.expect_separator = true;
                 Ok(ReadOutcome::Item(value.into()))
             }
             Ok(ParsedElement::FailClosed) => {
-                self.restore_read_state(checkpoint_before_read, expect_separator_before_read);
+                self.restore_read_state(checkpoint_before_read, expect_separator_before_read)?;
                 Err(ReaderError::new())
             }
             Err(error) => {
-                self.restore_read_state(checkpoint_before_read, expect_separator_before_read);
+                self.restore_read_state(checkpoint_before_read, expect_separator_before_read)?;
                 Err(error)
             }
         }

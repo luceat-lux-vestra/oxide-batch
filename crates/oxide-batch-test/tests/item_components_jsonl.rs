@@ -10,7 +10,7 @@
 
 #![allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
 
-use std::io::Cursor;
+use std::io::{self, Cursor, Read, Seek, SeekFrom};
 use std::sync::{Arc, Mutex};
 
 use oxide_batch::item_components::basic::IdentityProcessor;
@@ -19,14 +19,249 @@ use oxide_batch::item_components::{
 };
 use oxide_batch::{
     BoxedProcessor, BoxedReader, BoxedWriter, ChunkExecutionOutcome, ChunkSize,
-    ComponentStreamIdentity, FailureCategory, ItemReader, ItemWriter, ReadContext, ReadOutcome,
-    ReaderError, WriteOutcome, WriterError,
+    ComponentStateEnvelope, ComponentStatePayload, ComponentStreamIdentity, FailureCategory,
+    ItemReader, ItemStream, ItemWriter, ReadContext, ReadOutcome, ReaderError, WriteOutcome,
+    WriterError,
 };
 use oxide_batch_test::{ComponentFixture, TestStep};
 use serde_json::{Value, json};
 
 fn identity() -> ComponentStreamIdentity {
     ComponentStreamIdentity::new("oxide-batch-test.jsonl").expect("static identity is valid")
+}
+
+fn reader_checkpoint_byte(envelope: &ComponentStateEnvelope) -> u64 {
+    let ComponentStatePayload::Inline(payload) = envelope.payload().unwrap() else {
+        panic!("reader checkpoints must use an inline payload");
+    };
+    serde_json::from_slice::<Value>(&payload)
+        .unwrap()
+        .get("byte")
+        .and_then(Value::as_u64)
+        .expect("reader checkpoint byte")
+}
+
+/// A deterministic, injected-fault `Read + Seek` source: never a timing- or
+/// stress-only double. Each fault fires exactly once, at the exact
+/// semantic point named (a seek to a specific target byte, or a read whose
+/// source position is a specific byte), then clears itself so the *next*
+/// identical operation succeeds -- modeling a transient infrastructure
+/// hiccup that a retry genuinely recovers from, not a permanently broken
+/// source.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum IoEvent {
+    Seek(u64),
+    Read { start: u64, len: usize },
+}
+
+struct FaultyIo {
+    inner: Cursor<Vec<u8>>,
+    max_chunk: usize,
+    fail_seek_once_at: Option<u64>,
+    fail_read_once_at: Option<u64>,
+    events: Arc<Mutex<Vec<IoEvent>>>,
+}
+
+impl FaultyIo {
+    fn new(bytes: Vec<u8>) -> (Self, Arc<Mutex<Vec<IoEvent>>>) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        (
+            Self {
+                inner: Cursor::new(bytes),
+                max_chunk: usize::MAX,
+                fail_seek_once_at: None,
+                fail_read_once_at: None,
+                events: Arc::clone(&events),
+            },
+            events,
+        )
+    }
+
+    fn with_max_chunk(mut self, max_chunk: usize) -> Self {
+        self.max_chunk = max_chunk;
+        self
+    }
+
+    fn fail_seek_once_at(mut self, position: u64) -> Self {
+        self.fail_seek_once_at = Some(position);
+        self
+    }
+
+    fn fail_read_once_at(mut self, position: u64) -> Self {
+        self.fail_read_once_at = Some(position);
+        self
+    }
+}
+
+impl Read for FaultyIo {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let start = self.inner.position();
+        if self.fail_read_once_at == Some(start) {
+            self.fail_read_once_at = None;
+            return Err(io::Error::other("injected read failure"));
+        }
+        let cap = self.max_chunk.min(buf.len());
+        let read = self.inner.read(&mut buf[..cap])?;
+        self.events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(IoEvent::Read { start, len: read });
+        Ok(read)
+    }
+}
+
+impl Seek for FaultyIo {
+    fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+        if let SeekFrom::Start(target) = position
+            && self.fail_seek_once_at == Some(target)
+        {
+            self.fail_seek_once_at = None;
+            return Err(io::Error::other("injected seek failure"));
+        }
+        let target = self.inner.seek(position)?;
+        self.events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(IoEvent::Seek(target));
+        Ok(target)
+    }
+}
+
+// ------------------------------------------------------- retry-safety --
+
+/// A failed restart seek is transient infrastructure, not a data problem,
+/// and must never leave the reader trusting an unconfirmed position: the
+/// next call must re-seek to the *same* authoritative checkpoint and
+/// resume there -- never at byte zero, never skipping or duplicating a
+/// committed record.
+#[tokio::test]
+async fn a_failed_restart_seek_is_transient_and_the_retry_reseeks_to_the_checkpoint() {
+    let bytes = b"1\n2\n3\n".to_vec();
+    let fixture = ComponentFixture::new();
+
+    // Establish a real checkpoint the normal way: read record "1", then ask
+    // the stream for the envelope a committing chunk would persist.
+    let (mut warm_reader, warm_stream, _c) = jsonl_reader::<Value, _>(
+        Cursor::new(bytes.clone()),
+        JsonLinesFormat::new(),
+        identity(),
+    );
+    warm_stream
+        .open(fixture.stream_open_context(None))
+        .await
+        .unwrap();
+    assert_eq!(
+        read_next(&mut warm_reader, fixture.read_context())
+            .await
+            .unwrap(),
+        ReadOutcome::Item(json!(1))
+    );
+    let envelope = warm_stream
+        .update(fixture.stream_update_context())
+        .await
+        .unwrap();
+    let checkpoint = reader_checkpoint_byte(&envelope);
+    assert_eq!(checkpoint, 2, "checkpoint must be exactly after \"1\\n\"");
+
+    let (source, events) = FaultyIo::new(bytes);
+    let source = source.fail_seek_once_at(checkpoint);
+    let (mut reader, stream, _c) =
+        jsonl_reader::<Value, _>(source, JsonLinesFormat::new(), identity());
+    stream
+        .open(fixture.stream_open_context(Some(&envelope)))
+        .await
+        .unwrap();
+
+    let error = read_next(&mut reader, fixture.read_context())
+        .await
+        .expect_err("the injected restart-seek failure must surface, not be silently absorbed");
+    assert_eq!(error.category(), FailureCategory::TransientInfrastructure);
+
+    let value = read_next(&mut reader, fixture.read_context())
+        .await
+        .expect("the retry's seek is no longer failing, so this must succeed");
+    assert_eq!(
+        value,
+        ReadOutcome::Item(json!(2)),
+        "the retry must resume at the checkpoint's own record, never byte-zero data"
+    );
+
+    let seeks_to_checkpoint = events
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .filter(|event| **event == IoEvent::Seek(checkpoint))
+        .count();
+    assert!(
+        seeks_to_checkpoint >= 1,
+        "the retry must have actually reissued a seek to the authoritative checkpoint byte, \
+         not merely continued from wherever the failed attempt left the source"
+    );
+}
+
+/// A read that fails partway through a record (after some of that record's
+/// bytes are already buffered) must not leave the reader resuming from
+/// that mid-record position. The retry must re-seek to the record's own
+/// starting checkpoint and return the complete, original record exactly
+/// once -- never a truncated or corrupted remainder.
+#[tokio::test]
+async fn a_mid_record_read_failure_is_transient_and_the_retry_returns_the_complete_record_once() {
+    // "1\n" (2 bytes, checkpoint after it = 2) then `"hello"` (7 bytes) + \n.
+    let bytes = b"1\n\"hello\"\n".to_vec();
+    let fixture = ComponentFixture::new();
+
+    // Force the second record's read to happen two bytes at a time, and
+    // fail the call whose source position is 4 -- i.e. after `"h` (2 bytes
+    // into the record) has already been read into a partial line buffer,
+    // but before the record completes.
+    let (source, events) = FaultyIo::new(bytes);
+    let source = source.with_max_chunk(2).fail_read_once_at(4);
+    let (mut reader, stream, _c) =
+        jsonl_reader::<Value, _>(source, JsonLinesFormat::new(), identity());
+    stream
+        .open(fixture.stream_open_context(None))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        read_next(&mut reader, fixture.read_context())
+            .await
+            .unwrap(),
+        ReadOutcome::Item(json!(1))
+    );
+
+    let error = read_next(&mut reader, fixture.read_context())
+        .await
+        .expect_err("the injected mid-record read failure must surface");
+    assert_eq!(error.category(), FailureCategory::TransientInfrastructure);
+
+    let value = read_next(&mut reader, fixture.read_context())
+        .await
+        .expect("the retry's reads are no longer failing, so this must succeed");
+    assert_eq!(
+        value,
+        ReadOutcome::Item(json!("hello")),
+        "the retry must return the complete original record exactly once, not a truncated \
+         remainder starting from the partially-buffered \"h"
+    );
+    assert_eq!(
+        read_next(&mut reader, fixture.read_context())
+            .await
+            .unwrap(),
+        ReadOutcome::EndOfInput
+    );
+
+    let seeks_to_checkpoint = events
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .filter(|event| **event == IoEvent::Seek(2))
+        .count();
+    assert!(
+        seeks_to_checkpoint >= 1,
+        "the retry must have actually reissued a seek to the record's starting checkpoint (byte \
+         2), discarding whatever was partially buffered from the failed attempt"
+    );
 }
 
 async fn read_next(

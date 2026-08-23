@@ -64,6 +64,11 @@ enum SourceEvent {
 struct TracedSource {
     inner: Cursor<Vec<u8>>,
     events: Arc<Mutex<Vec<SourceEvent>>>,
+    /// A deterministic, injected fault: the *next* seek whose target is
+    /// exactly this byte fails once, then clears itself, modeling a
+    /// transient infrastructure hiccup a retry genuinely recovers from --
+    /// never a timing- or stress-only fault.
+    fail_seek_once_at: Option<u64>,
 }
 
 impl TracedSource {
@@ -73,9 +78,15 @@ impl TracedSource {
             Self {
                 inner: Cursor::new(bytes),
                 events: Arc::clone(&events),
+                fail_seek_once_at: None,
             },
             events,
         )
+    }
+
+    fn fail_seek_once_at(mut self, position: u64) -> Self {
+        self.fail_seek_once_at = Some(position);
+        self
     }
 }
 
@@ -96,6 +107,12 @@ impl Read for TracedSource {
 
 impl Seek for TracedSource {
     fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+        if let SeekFrom::Start(target) = position
+            && self.fail_seek_once_at == Some(target)
+        {
+            self.fail_seek_once_at = None;
+            return Err(std::io::Error::other("injected seek failure"));
+        }
         let target = self.inner.seek(position)?;
         self.events
             .lock()
@@ -671,6 +688,85 @@ async fn restart_instrumentation_observes_byte_zero_rescan_control_and_real_read
                 if *start == 0 && *end == checkpoint_byte
         )),
         "the positive control must actually observe rereading the committed prefix: {control_events:?}"
+    );
+}
+
+/// A deterministic, injected fault: after successfully parsing an element,
+/// this reader rewinds past whatever lookahead its bounded growth buffer
+/// read beyond that element's own bytes (see `parse_element`'s doc). If
+/// *that* rewind seek fails, it must be reported as transient
+/// infrastructure, must never advance the persisted checkpoint past an
+/// element the physical source was never confirmed to be positioned after,
+/// and the next call must re-seek and return that exact same complete
+/// element -- never skipped, never duplicated.
+#[tokio::test]
+async fn a_failed_post_parse_rewind_seek_is_transient_and_the_retry_returns_the_same_element() {
+    let bytes = b"[1,2]".to_vec();
+    let fixture = ComponentFixture::new();
+
+    // After parsing "1", the rewind target is byte 2 (right after "1",
+    // before the comma): `[` consumes byte 0, leaving `consumed_absolute`
+    // at 1, plus the 1-byte-long value "1" itself.
+    let rewind_target = 2;
+    let (source, events) = TracedSource::new(bytes);
+    let source = source.fail_seek_once_at(rewind_target);
+    let (mut reader, stream, _c) =
+        json_array_reader::<Value, _>(source, JsonArrayFormat::new(), identity());
+    stream
+        .open(fixture.stream_open_context(None))
+        .await
+        .unwrap();
+
+    let error = read_next(&mut reader, fixture.read_context())
+        .await
+        .expect_err("the injected rewind-seek failure must surface, not be silently absorbed");
+    assert_eq!(error.category(), FailureCategory::TransientInfrastructure);
+
+    let envelope = stream
+        .update(fixture.stream_update_context())
+        .await
+        .unwrap();
+    assert_eq!(
+        reader_checkpoint_byte(&envelope),
+        0,
+        "a failed rewind must never advance the persisted checkpoint past an element the \
+         physical source was never confirmed to be positioned after"
+    );
+
+    let value = read_next(&mut reader, fixture.read_context())
+        .await
+        .expect("the retry's seek is no longer failing, so this must succeed");
+    assert_eq!(
+        value,
+        ReadOutcome::Item(json!(1)),
+        "the retry must return the exact same element the failed attempt already parsed, not \
+         skip it and not duplicate it"
+    );
+    assert_eq!(
+        read_next(&mut reader, fixture.read_context())
+            .await
+            .unwrap(),
+        ReadOutcome::Item(json!(2))
+    );
+    assert_eq!(
+        read_next(&mut reader, fixture.read_context())
+            .await
+            .unwrap(),
+        ReadOutcome::EndOfInput
+    );
+
+    let seeks_to_rewind_target = events
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .filter(|event| **event == SourceEvent::Seek(rewind_target))
+        .count();
+    assert!(
+        seeks_to_rewind_target >= 1,
+        "the retry must have actually reissued a seek to the proven element boundary: {:?}",
+        events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     );
 }
 
