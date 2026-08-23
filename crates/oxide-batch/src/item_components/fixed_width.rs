@@ -642,8 +642,12 @@ where
 ///   uncommitted bytes truncated on restart; a shorter-than-committed file
 ///   fails closed).
 /// - **Ordering**: writes items in the order supplied.
-/// - **Thread safety**: `Send + Sync`; internal `Mutex` serializes the
-///   shared file handle.
+/// - **Thread safety**: `Send + Sync`; a single internal `Mutex` guards the
+///   file handle *and* the committed byte count together, so the physical
+///   write, the `sync_data`, and the committed-count update form one
+///   coherent, serialized transition -- a concurrent call can never publish
+///   a stale committed length after a later call's write has already
+///   landed.
 /// - **Reentrancy**: not reentrant against the same path from a second
 ///   concurrent attempt.
 /// - **Transaction/delivery**: does not enlist; file bytes are outside the
@@ -664,9 +668,16 @@ where
 /// - **Evidence**: `crates/oxide-batch-test/tests/item_components_fixed_width.rs`,
 ///   `crates/oxide-batch-test/tests/postgres_flat_file_restart.rs`.
 pub struct FixedWidthWriter {
-    file: Arc<Mutex<File>>,
+    state: Arc<Mutex<FixedWidthWriterState>>,
     layout: FixedWidthLayout,
-    committed_bytes: Arc<Mutex<u64>>,
+}
+
+/// The file and committed byte count a [`FixedWidthWriter`]/
+/// [`FixedWidthWriterStream`] pair shares under one lock, so the physical
+/// write and the committed-count update are never independently observable.
+struct FixedWidthWriterState {
+    file: File,
+    committed_bytes: u64,
 }
 
 impl<I> crate::ItemWriter<I> for FixedWidthWriter
@@ -695,23 +706,28 @@ where
             }
             buffer.extend_from_slice(self.layout.terminator.bytes());
         }
-        let mut guard = self.file.lock().unwrap_or_else(PoisonError::into_inner);
-        guard.write_all(&buffer).map_err(|_| WriterError::new())?;
-        guard.sync_data().map_err(|_| WriterError::new())?;
-        drop(guard);
-        let mut committed = self
-            .committed_bytes
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        *committed = committed.saturating_add(buffer.len() as u64);
+        // The physical write and the committed-count update both happen
+        // under this one lock: no other call can publish a committed byte
+        // count until this entire transition -- write, sync, and commit --
+        // completes.
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state
+            .file
+            .write_all(&buffer)
+            .map_err(|_| WriterError::new())?;
+        state.file.sync_data().map_err(|_| WriterError::new())?;
+        let candidate_bytes = state
+            .file
+            .stream_position()
+            .map_err(|_| WriterError::new())?;
+        state.committed_bytes = candidate_bytes;
         Ok(WriteOutcome::Written)
     }
 }
 
 /// The [`crate::ItemStream`] half of a [`FixedWidthWriter`].
 pub struct FixedWidthWriterStream {
-    file: Arc<Mutex<File>>,
-    committed_bytes: Arc<Mutex<u64>>,
+    state: Arc<Mutex<FixedWidthWriterState>>,
     namespace: ComponentStreamIdentity,
 }
 
@@ -729,21 +745,26 @@ impl crate::ItemStream for FixedWidthWriterStream {
         } else {
             (0, StreamOpenOutcome::Initial)
         };
-        let mut file = self.file.lock().unwrap_or_else(PoisonError::into_inner);
-        let actual_len = file.metadata().map_err(|_| StreamOpenError::new())?.len();
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let actual_len = state
+            .file
+            .metadata()
+            .map_err(|_| StreamOpenError::new())?
+            .len();
         if actual_len < target {
             return Err(StreamOpenError::with_category(FailureCategory::Invariant));
         }
         if actual_len != target {
-            file.set_len(target).map_err(|_| StreamOpenError::new())?;
+            state
+                .file
+                .set_len(target)
+                .map_err(|_| StreamOpenError::new())?;
         }
-        file.seek(SeekFrom::Start(target))
+        state
+            .file
+            .seek(SeekFrom::Start(target))
             .map_err(|_| StreamOpenError::new())?;
-        drop(file);
-        *self
-            .committed_bytes
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = target;
+        state.committed_bytes = target;
         Ok(outcome)
     }
 
@@ -752,10 +773,11 @@ impl crate::ItemStream for FixedWidthWriterStream {
         _context: StreamUpdateContext<'_>,
     ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
         let codec = writer_position_codec();
-        let current = *self
-            .committed_bytes
+        let current = self
+            .state
             .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+            .unwrap_or_else(PoisonError::into_inner)
+            .committed_bytes;
         ComponentStateEnvelope::encode(
             self.namespace.clone(),
             &current,
@@ -794,18 +816,125 @@ pub fn fixed_width_writer(
         .read(true)
         .write(true)
         .open(path)?;
-    let file = Arc::new(Mutex::new(file));
-    let committed_bytes = Arc::new(Mutex::new(0));
+    let state = Arc::new(Mutex::new(FixedWidthWriterState {
+        file,
+        committed_bytes: 0,
+    }));
     let writer = FixedWidthWriter {
-        file: Arc::clone(&file),
+        state: Arc::clone(&state),
         layout,
-        committed_bytes: Arc::clone(&committed_bytes),
     };
     let stream = FixedWidthWriterStream {
-        file,
-        committed_bytes,
+        state,
         namespace: identity,
     };
     let contract = StreamStateContract::new(writer_position_codec());
     Ok((writer, stream, contract))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use std::thread;
+
+    use super::*;
+    use crate::{ComponentStatePayload, ItemStream, ItemWriter, StopSource};
+
+    fn identity() -> ComponentStreamIdentity {
+        ComponentStreamIdentity::new("oxide-batch.fixed-width-writer-unit-test")
+            .expect("static identity is valid")
+    }
+
+    fn temp_path(name: &str) -> std::path::PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time moves forward")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "oxide-batch-167-fixed-width-unit-{name}-{nonce}.txt"
+        ))
+    }
+
+    fn committed_byte(envelope: &ComponentStateEnvelope) -> u64 {
+        let ComponentStatePayload::Inline(payload) = envelope.payload().unwrap() else {
+            panic!("writer checkpoints must use an inline payload");
+        };
+        serde_json::from_slice::<serde_json::Value>(&payload)
+            .unwrap()
+            .get("committed_bytes")
+            .and_then(serde_json::Value::as_u64)
+            .expect("writer checkpoint committed_bytes")
+    }
+
+    /// A structural smoke test for the shared single-state mutex, mirroring
+    /// `delimited::tests::concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_commit`:
+    /// proves the physical write and the committed-count update happen as
+    /// one coherent, serialized transition, not two independently lockable
+    /// steps. Both writes here are equal-sized single records, so every
+    /// committed position observed lands on a record boundary by
+    /// construction -- this alone does not reproduce the historical
+    /// additive-publish defect, which required *unequal*-size writes to
+    /// expose an intermediate checkpoint that is a record boundary without
+    /// being a complete write-call prefix. That reproduction, and its
+    /// restart proof, live in
+    /// `crates/oxide-batch/tests/writer_checkpoint_coherence.rs`; see
+    /// `docs/project/m6-167-writer-checkpoint-coherence.md` for the full
+    /// account.
+    #[test]
+    fn concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_commit() {
+        let path = temp_path("serialized");
+        let layout = FixedWidthLayout::new(vec![FixedWidthField::new(1)]);
+        let (writer, stream, _contract) = fixed_width_writer(&path, layout, identity()).unwrap();
+        let writer = Arc::new(writer);
+        let (_open_stop_source, open_stop_token) = StopSource::new();
+        futures_executor::block_on(stream.open(StreamOpenContext::new(None, &open_stop_token)))
+            .unwrap();
+
+        let mut guard = writer.state.lock().unwrap_or_else(PoisonError::into_inner);
+
+        let writer_for_thread = Arc::clone(&writer);
+        let handle = thread::spawn(move || {
+            let (_stop_source, stop_token) = StopSource::new();
+            futures_executor::block_on(writer_for_thread.write(
+                &[FixedWidthRecord::new(vec!["2".to_owned()])],
+                WriteContext::non_transactional(&stop_token),
+            ))
+            .unwrap();
+        });
+
+        guard.file.write_all(b"1\n").unwrap();
+        guard.file.sync_data().unwrap();
+        guard.committed_bytes = guard.file.stream_position().unwrap();
+        drop(guard);
+
+        handle.join().unwrap();
+
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(
+            bytes,
+            b"1\n2\n".to_vec(),
+            "both writes must land on disk exactly once each, in the order the lock serialized \
+             them"
+        );
+
+        let envelope = futures_executor::block_on(
+            stream.update(crate::StreamUpdateContext::new(&open_stop_token)),
+        )
+        .unwrap();
+        let committed = committed_byte(&envelope);
+        assert_eq!(
+            committed,
+            bytes.len() as u64,
+            "the published checkpoint must equal the real file length, never a stale, earlier \
+             write's byte count"
+        );
+        assert_eq!(
+            committed % 2,
+            0,
+            "every committed position must land on a record_width(1) + terminator(1) boundary"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
 }

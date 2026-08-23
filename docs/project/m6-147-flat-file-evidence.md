@@ -102,6 +102,81 @@ for the bounded-memory audit to be re-run. All are fixed:
   `DEFAULT_MAX_RECORD_BYTES`, `DelimitedDialect::with_max_record_bytes`, the
   module doc, and `DelimitedReader`'s "Bounded resource" contract bullet.
 
+**Third corrective pass (#167):** an independent review of the merged tree
+found that `DelimitedWriter` and `FixedWidthWriter` both had a
+checkpoint-coherence defect -- the same class #148's `JsonArrayWriter` and
+`JsonLinesWriter` were fixed for during their own corrective passes, though
+the precise failure mode here is not the one an earlier draft of this
+section described; see
+[the dedicated correction note](m6-167-writer-checkpoint-coherence.md) for
+the full authoritative account, summarized here:
+
+- Both writers protected the physical file and the committed-byte count with
+  two independent locks (`file: Arc<Mutex<File>>`,
+  `committed_bytes: Arc<Mutex<u64>>`), and published the count *additively*
+  (`committed_bytes.saturating_add(buffer.len())`), not by assigning a
+  precomputed absolute position. Because the update was additive, two
+  publications finishing out of order did not overwrite a larger total with
+  a smaller one -- once every successful write's increment was published,
+  the final sum still equalled the file's true length. The actual hole was
+  in the *intermediate* state between the two locks: `ItemStream::update()`
+  read only `committed_bytes`, and could snapshot it after some writes'
+  bytes were already durable on disk but before every one of their
+  increments had been published. That snapshot was not required to
+  correspond to any complete physical write-call's ending offset. For
+  example, if write A appends 5 bytes and pauses before publishing while
+  write B appends 2 bytes and publishes immediately, `update()` can observe
+  checkpoint `2` while the file already holds all 7 bytes -- and offset 2
+  can land inside A's own CSV record rather than on any write-call boundary,
+  so a restart from that checkpoint would truncate to an invalid partial
+  record. The eventual final total (7) recovering to the correct value does
+  not make that earlier exposed snapshot safe. `DelimitedWriterStream`/
+  `FixedWidthWriterStream`'s `open`/`update` read the same two fields under
+  the same non-atomic pairing. The fix unifies each writer's file handle
+  and committed byte count into one private state struct
+  (`DelimitedWriterState`, `FixedWidthWriterState`) behind a single
+  `Mutex`, shared by the writer and its paired stream, so an observer can
+  only ever see state from strictly before or strictly after one complete
+  write transition -- never the physical result of a write while still
+  seeing a checkpoint from before it. `committed_bytes` is now read from
+  the file's own `stream_position()` after the write and sync succeed,
+  rather than accumulated independently, so the published value can never
+  diverge from where the file's cursor actually is.
+- The authoritative executable regression for this defect model is
+  `crates/oxide-batch/tests/writer_checkpoint_coherence.rs`: deterministic
+  negative controls that implement the actual historical split-lock/additive
+  algorithm and force the harmful interleaving with synchronous channels (no
+  sleeps, no scheduler-probability assumptions) for both an unequal-size
+  Delimited case (a 5-byte write and a 2-byte write, exposing an
+  intermediate checkpoint of `2` against a physical 7 bytes, landing inside
+  a CSV record) and an unequal-batch Fixed-width case (a 3-record/6-byte
+  write and a 1-record/2-byte write, exposing the same intermediate `2`
+  against a physical 8 bytes -- a position that happens to be a record
+  boundary but is *not* a complete write-call prefix, since it keeps only
+  one of A's three records and discards the rest of A plus all of B); then
+  races two real, unequal-sized public `write()` calls against the real
+  `ItemStream::update()` on the *fixed* implementation, asserting every
+  observed checkpoint is a complete write-call prefix, that a restart from
+  a captured concurrent checkpoint reproduces an exact complete prefix, and
+  that the final `committed_bytes` equals the actual file length.
+- `delimited.rs`'s and `fixed_width.rs`'s inline
+  `tests::concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_commit`
+  remain useful structural smoke tests, proving the shared single-state
+  mutex serializes file mutation and checkpoint publication -- but they use
+  equal-sized writes and are not, by themselves, a reproduction of the
+  historical additive intermediate-state defect described above; that
+  reproduction and its restart proof live only in
+  `writer_checkpoint_coherence.rs`.
+- This class of defect could not have been caught by a reader-side
+  ADR-0008 conformance check or by the existing single-threaded restart
+  tests: both require a second, genuinely concurrent caller to observe,
+  which is exactly what the new tests force deterministically rather than
+  relying on real multi-thread scheduling to sometimes produce.
+
+Per this pass's own scope, #149 (PostgreSQL components) was not started, and
+CSV/fixed-width parsing semantics, restart/truncation/fail-closed behavior,
+and public API surface are unchanged.
+
 ## Public component surface
 
 All new types live under `oxide_batch::item_components` (`delimited` and
@@ -164,7 +239,12 @@ progress. Initial (non-restart) execution truncates/creates the target file
 fresh. Durability across an OS/power failure (as opposed to a process crash)
 is not claimed: each write batch is flushed to the OS (`File::sync_data`),
 but no directory-entry fsync is performed -- this is stated in both writers'
-rustdoc, not left implicit.
+rustdoc, not left implicit. Both writers' file handles and committed byte
+counts each share one `Mutex`-guarded state struct (see the third
+corrective-pass note above): the physical write, the `sync_data`, and the
+committed-count update are one atomic transition per writer, never
+independently-locked steps whose publication order could diverge from
+their write order.
 
 Durable state is namespaced, versioned, bounded, checksummed, and
 restartability-declared through the existing `ComponentStateEnvelope`/
@@ -288,10 +368,11 @@ bound is rejected, classified, and forward-proven under a tight one.
 | `TestJob` + `postgres::PostgresFixture` + `restart`/`inject` | `postgres_flat_file_restart.rs` |
 | `inject::{InjectedReader, InjectedTransactions}` | `item_components_flat_file_fault.rs`, `postgres_flat_file_restart.rs` |
 
-`item_components_flat_file_allocation.rs` (under `crates/oxide-batch/tests/`,
+`item_components_flat_file_allocation.rs` and
+`writer_checkpoint_coherence.rs` (both under `crates/oxide-batch/tests/`,
 not `oxide-batch-test`) cannot depend on the kit itself, for the same
 dev-dependency-cycle reason #146's allocation/equivalence files can't (see
-[M6 #146 evidence](m6-146-composition-catalog-evidence.md)); it drives the
+[M6 #146 evidence](m6-146-composition-catalog-evidence.md)); both drive the
 real production types directly.
 
 `item_components_flat_file_fault.rs` drives a real, hand-assembled
@@ -330,6 +411,15 @@ pattern `crates/oxide-batch/tests/chunk_fault_runtime.rs` established.
   disk with no corresponding commit; restart truncates them and rewrites the
   record exactly once) and
   `delimited_writer_fails_closed_when_the_file_is_shorter_than_committed`.
+  `delimited.rs::tests::concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_commit`
+  and `fixed_width.rs::tests::concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_commit`
+  (see the third corrective-pass note above) are structural smoke tests
+  proving the shared single-state mutex serializes file mutation and
+  checkpoint publication. The authoritative reproduction of the historical
+  additive intermediate-state defect, and the accompanying restart proof,
+  is `crates/oxide-batch/tests/writer_checkpoint_coherence.rs` (see the
+  third corrective-pass note and
+  [the dedicated correction note](m6-167-writer-checkpoint-coherence.md)).
 - **E (malformed skip/fail):** `item_components_flat_file_fault.rs`'s four
   tests: `csv_fail_policy_fails_the_step_with_the_expected_classification`,
   `csv_skip_policy_skips_the_malformed_record_and_processes_later_valid_records`,
@@ -386,6 +476,8 @@ See `typed_and_erased_delimited_pipelines_produce_identical_items` above (G).
 | With headers and non-flexible parsing, the header row -- not the first data row -- establishes the expected field count | `header_field_count_establishes_the_expected_width_for_the_first_data_row`'s `FailureCategory::UserComponent` assertion on a first data row narrower than the header (this test fails against the pre-fix code, which silently accepts the first data row's own width as the baseline) |
 | Typed and erased paths agree | `typed_and_erased_delimited_pipelines_produce_identical_items`'s item-for-item and count equality |
 | Multi-byte UTF-8 char split by a fixed-width field boundary fails, not silently corrupted | `a_field_boundary_splitting_a_multibyte_char_is_a_classified_failure` |
+| The shared single-state mutex serializes a writer's physical write and checkpoint publication into one transition | `delimited.rs::tests::concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_commit` and `fixed_width.rs::tests::concurrent_write_is_fully_serialized_by_one_lock_never_a_stale_commit` lock the writer's own state mutex, spawn a real background thread through the public `write()` API, and assert the file and the decoded `ItemStream::update()` checkpoint agree on the full byte length -- the background call is provably blocked, by `Mutex` semantics, until the held-lock write finishes and publishes. These are structural smoke tests with equal-sized writes, not a reproduction of the historical defect. |
+| A concurrent `ItemStream::update()` can never observe a checkpoint that is not a complete physical write-call prefix, and restart from such a checkpoint never truncates to a partial record | `writer_checkpoint_coherence.rs`'s `legacy_delimited_split_lock_can_publish_a_mid_record_checkpoint` and `legacy_fixed_width_split_lock_can_publish_the_wrong_write_prefix` deterministically reproduce the actual historical additive split-lock algorithm's intermediate-state defect (an unequal-size 5-byte/2-byte write pair exposing checkpoint `2` against a 7-byte file landing inside a CSV record; a 3-record/1-record fixed-width pair exposing the same `2` against 8 bytes at a record boundary that is still not a complete write-call prefix), using synchronous channels, not sleeps. `delimited_update_racing_unequal_writes_observes_only_complete_write_prefixes` and `fixed_width_update_racing_unequal_batches_observes_only_complete_write_prefixes` then race real public `write()` calls against the real, fixed `ItemStream::update()`, assert every observed checkpoint is a complete write-call prefix, and restart from the captured checkpoint to prove the truncated file is an exact complete prefix with `committed_bytes` equal to the final file length |
 
 ## Reproduction
 
