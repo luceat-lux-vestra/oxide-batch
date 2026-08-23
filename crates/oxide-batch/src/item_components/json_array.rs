@@ -703,6 +703,15 @@ where
     Ok(json_array_reader::<I, File>(file, format, identity))
 }
 
+/// The file and committed counts a [`JsonArrayWriter`]/[`JsonArrayWriterStream`]
+/// pair shares under one lock, so a comma decision, its physical write, and
+/// the resulting count update can never be observed half-applied.
+struct WriterState {
+    file: File,
+    committed_bytes: u64,
+    committed_items: u64,
+}
+
 /// A restartable [`crate::ItemWriter`] over a local file, producing a valid
 /// top-level JSON array.
 ///
@@ -722,8 +731,11 @@ where
 ///   committed file fails closed). Initial execution writes the opening
 ///   `[` immediately.
 /// - **Ordering**: writes items in the order supplied.
-/// - **Thread safety**: `Send + Sync`; internal `Mutex` serializes the
-///   shared file handle.
+/// - **Thread safety**: `Send + Sync`; a single internal `Mutex` guards the
+///   file handle *and* the committed byte/item counts together, so the
+///   comma-state decision, the physical write, and the count update form one
+///   coherent, serialized transition -- a concurrent call can never observe
+///   the pre-write item count while another call's write is in flight.
 /// - **Reentrancy**: not reentrant against the same path from a second
 ///   concurrent attempt.
 /// - **Transaction/delivery**: does not enlist; file bytes are outside the
@@ -746,9 +758,7 @@ where
 /// - **Evidence**: `crates/oxide-batch-test/tests/item_components_json_array.rs`,
 ///   `crates/oxide-batch-test/tests/postgres_json_restart.rs`.
 pub struct JsonArrayWriter {
-    file: Arc<Mutex<File>>,
-    committed_bytes: Arc<Mutex<u64>>,
-    committed_items: Arc<Mutex<u64>>,
+    state: Arc<Mutex<WriterState>>,
 }
 
 impl<I> crate::ItemWriter<I> for JsonArrayWriter
@@ -766,44 +776,34 @@ where
         if items.is_empty() {
             return Ok(WriteOutcome::Written);
         }
-        let already_have_items = *self
-            .committed_items
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            > 0;
-        let mut guard = self.file.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut has_items = already_have_items;
+        // The comma decision, the physical write, and the committed-count
+        // update all happen under this one lock: no other call can observe
+        // `committed_items` (to decide its own leading comma) or write to
+        // `file` until this entire transition completes.
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut has_items = state.committed_items > 0;
         for item in items {
             if has_items {
-                guard.write_all(b",").map_err(|_| WriterError::new())?;
+                state.file.write_all(b",").map_err(|_| WriterError::new())?;
             }
             has_items = true;
             let value: Value = item.clone().into();
-            serde_json::to_writer(&mut *guard, &value).map_err(|_| WriterError::new())?;
+            serde_json::to_writer(&mut state.file, &value).map_err(|_| WriterError::new())?;
         }
-        guard.sync_data().map_err(|_| WriterError::new())?;
-        let candidate_bytes = guard.stream_position().map_err(|_| WriterError::new())?;
-        drop(guard);
-        let mut committed_bytes = self
-            .committed_bytes
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        *committed_bytes = candidate_bytes;
-        drop(committed_bytes);
-        let mut committed_items = self
-            .committed_items
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        *committed_items = committed_items.saturating_add(items.len() as u64);
+        state.file.sync_data().map_err(|_| WriterError::new())?;
+        let candidate_bytes = state
+            .file
+            .stream_position()
+            .map_err(|_| WriterError::new())?;
+        state.committed_bytes = candidate_bytes;
+        state.committed_items = state.committed_items.saturating_add(items.len() as u64);
         Ok(WriteOutcome::Written)
     }
 }
 
 /// The [`crate::ItemStream`] half of a [`JsonArrayWriter`].
 pub struct JsonArrayWriterStream {
-    file: Arc<Mutex<File>>,
-    committed_bytes: Arc<Mutex<u64>>,
-    committed_items: Arc<Mutex<u64>>,
+    state: Arc<Mutex<WriterState>>,
     namespace: ComponentStreamIdentity,
 }
 
@@ -813,17 +813,23 @@ impl crate::ItemStream for JsonArrayWriterStream {
         context: StreamOpenContext<'_>,
     ) -> Result<StreamOpenOutcome, StreamOpenError> {
         let codec = writer_position_codec();
-        let mut file = self.file.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let (target, outcome) = if let Some(envelope) = context.inherited_state() {
             let restored = envelope
                 .decode::<WriterPosition>(&codec)
                 .map_err(|_| StreamOpenError::new())?;
-            let actual_len = file.metadata().map_err(|_| StreamOpenError::new())?.len();
+            let actual_len = state
+                .file
+                .metadata()
+                .map_err(|_| StreamOpenError::new())?
+                .len();
             if actual_len < restored.committed_bytes {
                 return Err(StreamOpenError::with_category(FailureCategory::Invariant));
             }
             if actual_len != restored.committed_bytes {
-                file.set_len(restored.committed_bytes)
+                state
+                    .file
+                    .set_len(restored.committed_bytes)
                     .map_err(|_| StreamOpenError::new())?;
             }
             (restored, StreamOpenOutcome::Restored)
@@ -833,24 +839,24 @@ impl crate::ItemStream for JsonArrayWriterStream {
             // crashed attempt that never durably committed anything) is not
             // authoritative -- start over exactly as
             // `crate::item_components::delimited::DelimitedWriter` does.
-            file.set_len(0).map_err(|_| StreamOpenError::new())?;
-            file.seek(SeekFrom::Start(0))
+            state.file.set_len(0).map_err(|_| StreamOpenError::new())?;
+            state
+                .file
+                .seek(SeekFrom::Start(0))
                 .map_err(|_| StreamOpenError::new())?;
-            file.write_all(b"[").map_err(|_| StreamOpenError::new())?;
-            file.sync_data().map_err(|_| StreamOpenError::new())?;
+            state
+                .file
+                .write_all(b"[")
+                .map_err(|_| StreamOpenError::new())?;
+            state.file.sync_data().map_err(|_| StreamOpenError::new())?;
             (WriterPosition::START, StreamOpenOutcome::Initial)
         };
-        file.seek(SeekFrom::Start(target.committed_bytes))
+        state
+            .file
+            .seek(SeekFrom::Start(target.committed_bytes))
             .map_err(|_| StreamOpenError::new())?;
-        drop(file);
-        *self
-            .committed_bytes
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = target.committed_bytes;
-        *self
-            .committed_items
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = target.committed_items;
+        state.committed_bytes = target.committed_bytes;
+        state.committed_items = target.committed_items;
         Ok(outcome)
     }
 
@@ -859,16 +865,12 @@ impl crate::ItemStream for JsonArrayWriterStream {
         _context: StreamUpdateContext<'_>,
     ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
         let codec = writer_position_codec();
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let current = WriterPosition {
-            committed_bytes: *self
-                .committed_bytes
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner),
-            committed_items: *self
-                .committed_items
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner),
+            committed_bytes: state.committed_bytes,
+            committed_items: state.committed_items,
         };
+        drop(state);
         ComponentStateEnvelope::encode(
             self.namespace.clone(),
             &current,
@@ -883,15 +885,20 @@ impl crate::ItemStream for JsonArrayWriterStream {
         context: StreamCloseContext<'_>,
     ) -> Result<StreamCloseOutcome, StreamCloseError> {
         if context.outcome() == StreamRuntimeOutcome::Committed {
-            let mut file = self.file.lock().unwrap_or_else(PoisonError::into_inner);
-            let committed_bytes = *self
-                .committed_bytes
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            file.seek(SeekFrom::Start(committed_bytes))
+            let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+            let committed_bytes = state.committed_bytes;
+            state
+                .file
+                .seek(SeekFrom::Start(committed_bytes))
                 .map_err(|_| StreamCloseError::new())?;
-            file.write_all(b"]").map_err(|_| StreamCloseError::new())?;
-            file.sync_data().map_err(|_| StreamCloseError::new())?;
+            state
+                .file
+                .write_all(b"]")
+                .map_err(|_| StreamCloseError::new())?;
+            state
+                .file
+                .sync_data()
+                .map_err(|_| StreamCloseError::new())?;
         }
         Ok(StreamCloseOutcome::Closed)
     }
@@ -913,18 +920,16 @@ pub fn json_array_writer(
         .read(true)
         .write(true)
         .open(path)?;
-    let file = Arc::new(Mutex::new(file));
-    let committed_bytes = Arc::new(Mutex::new(0));
-    let committed_items = Arc::new(Mutex::new(0));
+    let state = Arc::new(Mutex::new(WriterState {
+        file,
+        committed_bytes: 0,
+        committed_items: 0,
+    }));
     let writer = JsonArrayWriter {
-        file: Arc::clone(&file),
-        committed_bytes: Arc::clone(&committed_bytes),
-        committed_items: Arc::clone(&committed_items),
+        state: Arc::clone(&state),
     };
     let stream = JsonArrayWriterStream {
-        file,
-        committed_bytes,
-        committed_items,
+        state,
         namespace: identity,
     };
     let contract = StreamStateContract::new(writer_position_codec());

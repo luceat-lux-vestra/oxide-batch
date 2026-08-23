@@ -15,6 +15,70 @@ Avro, YAML, MessagePack/CBOR, a generic serde format plugin surface,
 PostgreSQL cursor/paging/SQL components (#149), multi-resource composition
 (#150), or object storage.
 
+**First corrective pass (PR #166):** an independent review of the first
+version of this PR found five defects, all in this tree now:
+
+- `JsonArrayReader::parse_element` accepted a `serde_json::Deserializer`
+  success as a proven element boundary the moment the bounded growth buffer
+  happened to end at a syntactically-valid prefix -- for a non-self-delineated
+  value (a bare number, `true`, `false`, `null`), the *buffer's* end is not
+  the *value's* end: `[123,4]` read under `with_max_value_bytes(2)` could
+  parse the first two bytes `"12"` as a complete, valid number and emit it,
+  silently truncating `123` to `12` and advancing the checkpoint past data
+  that was never actually validated -- a real data-corrupting false success,
+  not a bounds violation caught late. The fix (`prove_value_framing`) treats
+  a parser success as a *candidate* only: the bytes immediately after
+  `byte_offset()` must independently prove JSON whitespace followed by `,` or
+  `]` -- consulting the real source directly (never re-guessing from the
+  bounded buffer alone) when the buffer's own content is exhausted at that
+  point. `a_number_exactly_at_the_growth_boundary_is_not_silently_truncated`
+  is the regression test, with `[12,4]` under the same 2-byte bound as its
+  positive control (a genuinely 2-byte number immediately followed by the
+  array's own comma, which must be accepted).
+- Trailing non-whitespace bytes after a top-level array's closing `]` (e.g.
+  `[1]garbage`, `[]x`, `[1][2]`) were silently accepted as ordinary
+  end-of-input. The fix (`consume_closing_bracket`) requires everything after
+  `]` to be JSON whitespace followed by true source EOF, failing closed
+  otherwise. `trailing_garbage_after_top_level_array_is_rejected_but_json_whitespace_is_allowed`
+  covers both the accepted (`[1]`, `[1] \r\n\t`) and rejected (`[1]garbage`,
+  `[]x`, `[1][2]`) cases.
+- `JsonArrayFormat::with_max_value_bytes(0)`'s documented "largest element
+  accepted" contract was violated: the growth-target computation's `.max(1)`
+  floor meant a one-byte value could still be read and accepted under a
+  nominal zero-byte bound. `parse_element` now checks `max_value_bytes == 0`
+  explicitly up front and fails closed before reading anything.
+  `a_zero_byte_bound_rejects_every_element` is the regression test.
+- `JsonLinesFormat::with_max_record_bytes` is documented to bound a line's
+  raw span *excluding* its terminator, but `read_bounded_line` bound-checked
+  the CRLF terminator's own `\r` as if it were payload content before
+  stripping it, so an input using `\r\n` failed one byte earlier than the
+  identical input using bare `\n` under the same configured bound. The fix
+  holds a trailing `\r` (including one split across a `fill_buf` refill
+  boundary) as pending until the following byte proves whether it is a real
+  CRLF terminator or ordinary content, so it is never bound-checked as
+  payload when it is the former.
+  `max_record_bytes_excludes_lf_and_crlf_terminators`/
+  `max_record_bytes_rejects_one_extra_payload_byte_for_lf_and_crlf` prove LF
+  and CRLF now behave identically at the exact configured boundary.
+- `JsonArrayWriter`'s comma-state decision (whether the batch's first item
+  needs a leading comma) was read from a `committed_items` lock taken and
+  released *before* the file lock that serializes the physical write and the
+  resulting count update -- the file lock only ever serialized bytes, never
+  the comma decision derived from the count. Two genuinely concurrent
+  `write()` calls (the type is `Send + Sync`; ADR-0008 and this contract's
+  own "Thread safety" claim both require this to be safe) could each observe
+  `committed_items == 0` before either recorded its own write, producing
+  output with a missing separator between elements -- reliably reproducible,
+  not a rare timing coincidence: a 16-real-OS-thread stress run hit it on
+  every attempt prior to the fix. The fix unifies the file handle and both
+  committed counts under one `Mutex<WriterState>`, so the comma decision, the
+  physical write, and the count update are one atomic transition.
+  `concurrent_writes_to_a_fresh_array_never_lose_or_duplicate_a_comma` drives
+  16 real OS threads released simultaneously by a `Barrier` and asserts an
+  exact comma count, an exact element count, and a valid re-parse -- an
+  invariant that holds deterministically after the fix regardless of
+  scheduling order, and that failed on every run before it.
+
 ## Public component surface
 
 All new types live under `oxide_batch::item_components` (`jsonl` and
@@ -163,7 +227,11 @@ commit); shorter-than-committed is an inconsistent resource and fails
 closed (`StreamOpenError` in `FailureCategory::Invariant`). Initial
 (non-restart) execution truncates/creates the target file fresh; for the
 JSON-array writer, initial execution additionally writes the opening `[`
-immediately, as the first byte of committed state.
+immediately, as the first byte of committed state. The JSON-array writer's
+file handle and both committed counts share one `Mutex<WriterState>` (see
+the corrective-pass note above): the comma-state decision, the physical
+write, and the count update are one atomic transition, never three
+independently-locked steps.
 
 **JSON-array writer close.** [`crate::ItemStream::close`] appends the
 closing `]` *only* when [`crate::StreamRuntimeOutcome::Committed`] is
@@ -279,6 +347,9 @@ dev-dependency-cycle reason #146/#147's allocation files can't.
   (restart occurs after one committed element, so comma-state correctness is
   observable; final output reparses as the exact expected array), and
   `::json_array_writer_fails_closed_when_the_file_is_shorter_than_committed`.
+  `item_components_json_array.rs::concurrent_writes_to_a_fresh_array_never_lose_or_duplicate_a_comma`
+  complements this with the writer's *concurrent-call* correctness (see the
+  corrective-pass note above): real OS threads, not sequential attempts.
 - **E (malformed skip/fail):** `item_components_json_fault.rs`'s five tests:
   `jsonl_fail_policy_fails_the_step_with_the_expected_classification` and
   `jsonl_skip_policy_skips_the_malformed_line_and_processes_later_valid_lines`
@@ -315,12 +386,15 @@ See section G above.
 | A JSON array's malformed structure is never safely skippable | `missing_closing_bracket_is_unrecoverable_and_fails_closed`/`malformed_element_syntax_is_unrecoverable_and_fails_closed`/`missing_separator_between_elements_is_unrecoverable_and_fails_closed`'s `!has_checkpoint_advanced()` assertions, and `json_array_skip_policy_still_fails_the_step_because_no_boundary_is_proven`'s `skip_counts() == 0` assertion under a real skip-configured `FaultRuntime` |
 | Delimiters inside strings do not affect array framing | `delimiters_inside_strings_do_not_affect_framing_and_a_naive_scan_would_be_fooled`'s exact three-element result, contrasted with the naive comma count's differing (wrong) result on the identical bytes |
 | Array elements are parser/framing-proven boundaries, including long tokens across growth boundaries | `long_number_crossing_growth_bound_is_one_element_and_restartable` asserts the complete number value, exact persisted byte boundary, and restart at the second element |
+| A parser success at a bounded-buffer edge is never accepted as a proven element boundary on its own | `a_number_exactly_at_the_growth_boundary_is_not_silently_truncated`'s `[123,4]`-under-2-byte-bound failure (would silently emit `12` without the fix), contrasted with its `[12,4]`-under-2-byte-bound positive control, which must still succeed |
+| A zero-byte bound accepts nothing, including a one-byte value | `a_zero_byte_bound_rejects_every_element`'s failure on `[1]` under `with_max_value_bytes(0)` |
 | A top-level array rejects trailing non-whitespace after `]` | `trailing_garbage_after_top_level_array_is_rejected_but_json_whitespace_is_allowed` accepts JSON whitespace cases and asserts `UserComponent` failure for garbage cases |
 | Array retry restores the last proven framing state | `malformed_element_syntax_is_unrecoverable_and_fails_closed` retries the same malformed element and asserts the same failure category without checkpoint advancement |
 | Array restart resumes at a proven element boundary, never mid-element, never byte zero | `restart_instrumentation_observes_byte_zero_rescan_control_and_real_reader_avoids_it` asserts seek/read intervals after restore and a positive control observes the forbidden zero seek/prefix read; `postgres_json_restart.rs` supplies durable restart evidence |
 | Array restart never duplicates or omits an element | The same test's `combined == [five elements once each]` assertion |
 | Array writer resumes comma state correctly after a restart | `json_array_writer_truncates_uncommitted_tail_and_resumes_exactly_once`'s final `b"[1,2,3]"` byte-exact assertion (a doubled or missing comma, or a re-added opening bracket, would produce different bytes) and its `serde_json::from_slice` reparse |
 | Array writer never claims a complete valid JSON array before the step commits | `json_array_writer_truncates_uncommitted_tail_and_resumes_exactly_once`'s intermediate `b"[1,2"` assertion (no closing bracket) after attempt A |
+| Concurrent writer calls cannot lose or duplicate a comma (the comma decision, write, and count update are one atomic transition) | `concurrent_writes_to_a_fresh_array_never_lose_or_duplicate_a_comma`'s exact comma count, exact element count, and successful re-parse across 16 real, `Barrier`-synchronized OS threads -- reliably failed (zero commas) on every run against the pre-fix split-lock implementation |
 | Writer fails closed on a shorter-than-committed file | `jsonl_writer_fails_closed_when_the_file_is_shorter_than_committed`/`json_array_writer_fails_closed_when_the_file_is_shorter_than_committed`'s `BatchStatus::Failed` and unchanged-file assertions |
 | Reader raw storage is bounded and oversized input is rejected before source-sized accumulation | `json_readers_do_not_retain_memory_proportional_to_input_size` compares small/large streaming retention and reader allocation against whole-input positive controls for flat and nested oversized fixtures |
 | LF and CRLF have identical payload-bound semantics | `max_record_bytes_excludes_lf_and_crlf_terminators` accepts an exact-bound valid JSON record with both terminators; `max_record_bytes_rejects_one_extra_payload_byte_for_lf_and_crlf` rejects the same one-byte overflow |

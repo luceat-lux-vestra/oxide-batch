@@ -455,6 +455,79 @@ async fn an_element_exceeding_the_configured_bound_fails_closed() {
     assert!(!error.has_checkpoint_advanced());
 }
 
+/// A bounded-buffer boundary is not a value boundary: a non-self-delineated
+/// value (a bare number, `true`, `false`, or `null`) can end exactly where a
+/// growth step's buffer happens to end even though the real source keeps
+/// going with more digits. Accepting a parser success at that point without
+/// checking the *real* following byte would silently truncate `123` to `12`
+/// -- a data-corrupting false success, not a bounded-memory rejection. This
+/// is the exact scenario a naive "buffer ended, `serde_json` returned `Ok`,
+/// so the value must be complete" implementation gets wrong.
+#[tokio::test]
+async fn a_number_exactly_at_the_growth_boundary_is_not_silently_truncated() {
+    let fixture = ComponentFixture::new();
+
+    // `123` is genuinely 3 raw bytes -- one more than the 2-byte bound -- so
+    // it must be rejected, not accepted as truncated `12`.
+    let format = JsonArrayFormat::new().with_max_value_bytes(2);
+    let (mut reader, _s, _c) =
+        json_array_reader::<Value, _>(Cursor::new(b"[123,4]".to_vec()), format, identity());
+    let error = read_next(&mut reader, fixture.read_context())
+        .await
+        .expect_err(
+            "a 3-byte number under a 2-byte bound must fail closed, never be silently \
+             truncated to a shorter, different number",
+        );
+    assert!(
+        !error.has_checkpoint_advanced(),
+        "an unproven, possibly-truncated value must not advance the checkpoint"
+    );
+
+    // Positive control: `12` is genuinely a complete 2-byte number here --
+    // the very next real source byte is the array's own comma -- so a
+    // 2-byte bound must accept it. This is what distinguishes "the value is
+    // actually longer than the bound" from "the bound coincides with where
+    // the value legitimately ends."
+    let format = JsonArrayFormat::new().with_max_value_bytes(2);
+    let (mut reader, _s, _c) =
+        json_array_reader::<Value, _>(Cursor::new(b"[12,4]".to_vec()), format, identity());
+    assert_eq!(
+        read_next(&mut reader, fixture.read_context())
+            .await
+            .unwrap(),
+        ReadOutcome::Item(json!(12)),
+        "a value that is genuinely exactly at the bound, followed immediately by the array's \
+         own comma, must be accepted"
+    );
+    assert_eq!(
+        read_next(&mut reader, fixture.read_context())
+            .await
+            .unwrap(),
+        ReadOutcome::Item(json!(4))
+    );
+    assert_eq!(
+        read_next(&mut reader, fixture.read_context())
+            .await
+            .unwrap(),
+        ReadOutcome::EndOfInput
+    );
+}
+
+#[tokio::test]
+async fn a_zero_byte_bound_rejects_every_element() {
+    let fixture = ComponentFixture::new();
+    let format = JsonArrayFormat::new().with_max_value_bytes(0);
+    let (mut reader, _s, _c) =
+        json_array_reader::<Value, _>(Cursor::new(b"[1]".to_vec()), format, identity());
+    let error = read_next(&mut reader, fixture.read_context())
+        .await
+        .expect_err(
+            "a zero-byte bound means no element is small enough to accept, including a \
+             one-byte value -- it must not be silently accepted",
+        );
+    assert!(!error.has_checkpoint_advanced());
+}
+
 // ------------------------------------------------ in-memory restart proof --
 
 /// Proves restart resumes at exactly the next element boundary -- never
@@ -680,4 +753,95 @@ async fn typed_and_erased_json_array_pipelines_produce_identical_items() {
             json!(null)
         ],
     );
+}
+
+/// Proves `JsonArrayWriter`'s comma-state decision, physical write, and
+/// committed-count update form one coherent, serialized state transition --
+/// not merely that the file `Mutex` serializes bytes while a separate
+/// `committed_items` lock is read outside that same critical section.
+///
+/// This drives real OS threads (`std::thread::spawn`, not cooperative
+/// `tokio` task scheduling) released simultaneously by a `Barrier`, so the
+/// writer's `&self` (`ItemWriter` requires `Send + Sync`) is genuinely
+/// exercised under concurrent, overlapping calls rather than sequential
+/// `.await` interleaving. The assertion is deterministic and holds
+/// regardless of which thread's write lands first: exactly `N` elements,
+/// exactly `N - 1` commas, and a file that reparses as a valid JSON array
+/// containing exactly the `N` submitted values. Before the fix, this
+/// reliably (not occasionally) fails: every one of `N` threads can observe
+/// `committed_items == 0` before any of them records its own write, because
+/// that count was read outside the file lock that serializes the physical
+/// bytes -- the concatenated output then contains zero commas at all.
+const CONCURRENT_WRITER_COUNT: usize = 16;
+
+#[allow(
+    clippy::naive_bytecount,
+    reason = "a handful of bytes in a test fixture; the bytecount crate is not a dependency here"
+)]
+fn count_commas(bytes: &[u8]) -> usize {
+    bytes.iter().filter(|&&byte| byte == b',').count()
+}
+
+#[test]
+fn concurrent_writes_to_a_fresh_array_never_lose_or_duplicate_a_comma() {
+    let path = temp_path("writer-concurrency");
+    let (writer, stream, _contract) = json_array_writer(&path, identity()).unwrap();
+    let fixture = ComponentFixture::new();
+    futures_executor::block_on(stream.open(fixture.stream_open_context(None))).unwrap();
+
+    let writer = Arc::new(writer);
+    let barrier = Arc::new(std::sync::Barrier::new(CONCURRENT_WRITER_COUNT));
+    let mut handles = Vec::new();
+    for i in 0..CONCURRENT_WRITER_COUNT {
+        let writer = Arc::clone(&writer);
+        let barrier = Arc::clone(&barrier);
+        handles.push(std::thread::spawn(move || {
+            barrier.wait();
+            let fixture = ComponentFixture::new();
+            futures_executor::block_on(writer.write(&[json!(i)], fixture.write_context())).unwrap();
+        }));
+    }
+    for handle in handles {
+        handle.join().unwrap();
+    }
+    futures_executor::block_on(
+        stream.close(fixture.stream_close_context(oxide_batch::StreamRuntimeOutcome::Committed)),
+    )
+    .unwrap();
+
+    let bytes = std::fs::read(&path).unwrap();
+    let comma_count = count_commas(&bytes);
+    assert_eq!(
+        comma_count,
+        CONCURRENT_WRITER_COUNT - 1,
+        "exactly N-1 commas must separate N concurrently-written elements; \
+         bytes: {}",
+        String::from_utf8_lossy(&bytes),
+    );
+    let parsed: Value = serde_json::from_slice(&bytes).unwrap_or_else(|error| {
+        panic!(
+            "concurrent writes must still produce valid JSON: {error} (bytes: {})",
+            String::from_utf8_lossy(&bytes)
+        )
+    });
+    let Value::Array(items) = parsed else {
+        panic!("expected a top-level array");
+    };
+    assert_eq!(
+        items.len(),
+        CONCURRENT_WRITER_COUNT,
+        "exactly one element per concurrent write"
+    );
+    let mut got: Vec<u64> = items
+        .iter()
+        .map(|value| {
+            value
+                .as_u64()
+                .expect("each element is one of the written indices")
+        })
+        .collect();
+    got.sort_unstable();
+    assert_eq!(got, (0..CONCURRENT_WRITER_COUNT as u64).collect::<Vec<_>>());
+
+    let _ = std::fs::remove_file(&path);
 }
