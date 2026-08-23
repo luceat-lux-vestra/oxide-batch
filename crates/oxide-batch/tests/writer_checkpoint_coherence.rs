@@ -56,6 +56,10 @@ fn committed_byte(envelope: &ComponentStateEnvelope) -> u64 {
         .expect("writer checkpoint committed_bytes")
 }
 
+fn byte_index(offset: u64) -> usize {
+    usize::try_from(offset).expect("test byte offset must fit usize")
+}
+
 /// Deterministic negative control for the pre-#167 split-lock algorithm.
 ///
 /// `first_bytes` is physically appended first but its additive checkpoint
@@ -144,7 +148,7 @@ fn legacy_delimited_split_lock_can_publish_a_mid_record_checkpoint() {
         "the historical intermediate checkpoint must not describe any complete physical write-call prefix"
     );
     assert_eq!(
-        &physical[..intermediate as usize],
+        &physical[..byte_index(intermediate)],
         b"AA",
         "restart at the historical snapshot would retain only part of the first CSV record"
     );
@@ -166,7 +170,7 @@ fn legacy_fixed_width_split_lock_can_publish_the_wrong_write_prefix() {
         "the historical snapshot is a record boundary by accident, but not a complete physical write-call prefix"
     );
     assert_eq!(
-        &physical[..intermediate as usize],
+        &physical[..byte_index(intermediate)],
         b"1\n",
         "restart would keep only one record from the first three-record write while discarding the rest and the later successful write"
     );
@@ -190,7 +194,7 @@ fn delimited_update_racing_unequal_writes_observes_only_complete_write_prefixes(
 
     let writer_a = Arc::clone(&writer);
     let start_a = Arc::clone(&start);
-    let write_a = thread::spawn(move || {
+    let handle_a = thread::spawn(move || {
         let (_source, stop) = StopSource::new();
         let items = [DelimitedRecord::new(vec!["AAAA".to_owned()])];
         start_a.wait();
@@ -200,7 +204,7 @@ fn delimited_update_racing_unequal_writes_observes_only_complete_write_prefixes(
 
     let writer_b = Arc::clone(&writer);
     let start_b = Arc::clone(&start);
-    let write_b = thread::spawn(move || {
+    let handle_b = thread::spawn(move || {
         let (_source, stop) = StopSource::new();
         let items = [DelimitedRecord::new(vec!["B".to_owned()])];
         start_b.wait();
@@ -219,8 +223,8 @@ fn delimited_update_racing_unequal_writes_observes_only_complete_write_prefixes(
 
     start.wait();
     let envelope = update.join().unwrap();
-    write_a.join().unwrap();
-    write_b.join().unwrap();
+    handle_a.join().unwrap();
+    handle_b.join().unwrap();
 
     let final_bytes = std::fs::read(&path).unwrap();
     let first_boundary = if final_bytes == b"AAAA\nB\n" {
@@ -256,7 +260,7 @@ fn delimited_update_racing_unequal_writes_observes_only_complete_write_prefixes(
     .unwrap();
 
     let restarted = std::fs::read(&path).unwrap();
-    assert_eq!(restarted, final_bytes[..observed as usize]);
+    assert_eq!(restarted, final_bytes[..byte_index(observed)]);
     assert!(
         [
             b"".as_slice(),
@@ -288,7 +292,7 @@ fn fixed_width_update_racing_unequal_batches_observes_only_complete_write_prefix
 
     let writer_a = Arc::clone(&writer);
     let start_a = Arc::clone(&start);
-    let write_a = thread::spawn(move || {
+    let handle_a = thread::spawn(move || {
         let (_source, stop) = StopSource::new();
         let items = [
             FixedWidthRecord::new(vec!["1".to_owned()]),
@@ -302,7 +306,7 @@ fn fixed_width_update_racing_unequal_batches_observes_only_complete_write_prefix
 
     let writer_b = Arc::clone(&writer);
     let start_b = Arc::clone(&start);
-    let write_b = thread::spawn(move || {
+    let handle_b = thread::spawn(move || {
         let (_source, stop) = StopSource::new();
         let items = [FixedWidthRecord::new(vec!["4".to_owned()])];
         start_b.wait();
@@ -321,8 +325,8 @@ fn fixed_width_update_racing_unequal_batches_observes_only_complete_write_prefix
 
     start.wait();
     let envelope = update.join().unwrap();
-    write_a.join().unwrap();
-    write_b.join().unwrap();
+    handle_a.join().unwrap();
+    handle_b.join().unwrap();
 
     let final_bytes = std::fs::read(&path).unwrap();
     let first_boundary = if final_bytes == b"1\n2\n3\n4\n" {
@@ -358,7 +362,7 @@ fn fixed_width_update_racing_unequal_batches_observes_only_complete_write_prefix
     .unwrap();
 
     let restarted = std::fs::read(&path).unwrap();
-    assert_eq!(restarted, final_bytes[..observed as usize]);
+    assert_eq!(restarted, final_bytes[..byte_index(observed)]);
     assert_eq!(
         restarted.len() % 2,
         0,
