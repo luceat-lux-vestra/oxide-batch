@@ -1,0 +1,411 @@
+//! #149 evidence: `PostgresPagingReader` keyset paging, restart, and
+//! bounded-resource behavior against a real `PostgreSQL` server.
+//!
+//! Requires `OXIDEBATCH_POSTGRES_TEST_URL`; skips (not fails) otherwise, per
+//! this repository's `PostgreSQL` evidence convention.
+
+#![cfg(feature = "postgres")]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
+
+use std::error::Error;
+
+use oxide_batch::item_components::{KeysetColumn, PostgresPagingFormat, postgres_paging_reader};
+use oxide_batch::{
+    ComponentStreamIdentity, ItemReader, ItemStream, ReadContext, ReadOutcome, StopSource,
+    StreamCloseContext, StreamOpenContext, StreamRuntimeOutcome, StreamUpdateContext,
+};
+use sqlx::Row;
+use sqlx::postgres::{PgPoolOptions, PgRow};
+
+fn runtime_url() -> Option<String> {
+    std::env::var("OXIDEBATCH_POSTGRES_TEST_URL")
+        .ok()
+        .filter(|value| !value.is_empty())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BusinessRow {
+    sort_key: String,
+    id: i64,
+}
+
+fn map_row(row: &PgRow) -> Result<BusinessRow, oxide_batch::ReaderError> {
+    let sort_key: String = row
+        .try_get("sort_key")
+        .map_err(|_| oxide_batch::ReaderError::new())?;
+    let id: i64 = row
+        .try_get("id")
+        .map_err(|_| oxide_batch::ReaderError::new())?;
+    Ok(BusinessRow { sort_key, id })
+}
+
+fn key_columns() -> Vec<KeysetColumn> {
+    vec![KeysetColumn::text("sort_key"), KeysetColumn::i64("id")]
+}
+
+fn identity(name: &str) -> ComponentStreamIdentity {
+    ComponentStreamIdentity::new(format!("oxide-batch-test.postgres-paging-{name}"))
+        .expect("static identity is valid")
+}
+
+async fn prepare_scope(url: &str, scope: &str, rows: &[(&str, i64)]) -> Result<(), sqlx::Error> {
+    let pool = PgPoolOptions::new().max_connections(4).connect(url).await?;
+    let schema_exists: bool =
+        sqlx::query_scalar("SELECT to_regnamespace('oxide_batch_business') IS NOT NULL")
+            .fetch_one(&pool)
+            .await?;
+    if !schema_exists {
+        sqlx::query("CREATE SCHEMA oxide_batch_business")
+            .execute(&pool)
+            .await?;
+    }
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS oxide_batch_business.postgres_component_rows (\
+         scope text NOT NULL, sort_key text NOT NULL, id bigint NOT NULL, \
+         payload text NOT NULL, PRIMARY KEY (scope, id))",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query("DELETE FROM oxide_batch_business.postgres_component_rows WHERE scope = $1")
+        .bind(scope)
+        .execute(&pool)
+        .await?;
+    for (sort_key, id) in rows {
+        sqlx::query(
+            "INSERT INTO oxide_batch_business.postgres_component_rows \
+             (scope, sort_key, id, payload) VALUES ($1, $2, $3, 'unused')",
+        )
+        .bind(scope)
+        .bind(*sort_key)
+        .bind(*id)
+        .execute(&pool)
+        .await?;
+    }
+    pool.close().await;
+    Ok(())
+}
+
+fn base_query(scope: &str) -> String {
+    format!(
+        "SELECT sort_key, id FROM oxide_batch_business.postgres_component_rows \
+         WHERE scope = '{scope}'"
+    )
+}
+
+async fn active_backend_count(url: &str) -> Result<i64, sqlx::Error> {
+    let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_stat_activity WHERE state = 'idle in transaction'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    pool.close().await;
+    Ok(count)
+}
+
+fn stop_source_and_token() -> (StopSource, oxide_batch::StopToken) {
+    let (source, token) = StopSource::new();
+    (source, token)
+}
+
+async fn read_all(
+    reader: &mut oxide_batch::item_components::PostgresPagingReader<BusinessRow>,
+) -> Result<Vec<i64>, Box<dyn Error>> {
+    let (_source, token) = stop_source_and_token();
+    let mut delivered = Vec::new();
+    loop {
+        match reader.read(ReadContext::new(&token)).await? {
+            ReadOutcome::Item(item) => delivered.push(item.id),
+            ReadOutcome::EndOfInput => break,
+            ReadOutcome::Stopped => return Err("stop was never requested".into()),
+            other => return Err(format!("unexpected read outcome: {other:?}").into()),
+        }
+    }
+    Ok(delivered)
+}
+
+#[test]
+fn empty_result_reports_end_of_input_immediately() -> Result<(), Box<dyn Error>> {
+    let Some(url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let scope = "paging_empty";
+        prepare_scope(&url, scope, &[]).await?;
+        let pool = PgPoolOptions::new()
+            .max_connections(4)
+            .connect(&url)
+            .await?;
+        let (mut reader, stream, _contract) = postgres_paging_reader(
+            pool,
+            base_query(scope),
+            key_columns(),
+            PostgresPagingFormat::new().with_page_size(4),
+            map_row,
+            identity("empty"),
+        )?;
+        let (_open_source, open_token) = stop_source_and_token();
+        stream
+            .open(StreamOpenContext::new(None, &open_token))
+            .await?;
+        assert_eq!(read_all(&mut reader).await?, Vec::<i64>::new());
+        stream
+            .close(StreamCloseContext::new(
+                &open_token,
+                StreamRuntimeOutcome::Committed,
+            ))
+            .await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
+
+#[test]
+fn page_boundaries_deliver_every_row_exactly_once() -> Result<(), Box<dyn Error>> {
+    let Some(url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        // Page sizes chosen to cover: one row, less-than-a-page, exactly one
+        // page, and several pages, over the same underlying row count.
+        for (row_count, page_size) in [(1_i64, 4_usize), (3, 10), (10, 10), (25, 4), (1, 1)] {
+            let scope = format!("paging_boundaries_{row_count}_{page_size}");
+            let rows: Vec<(String, i64)> = (0..row_count).map(|id| ("k".to_owned(), id)).collect();
+            let borrowed: Vec<(&str, i64)> = rows
+                .iter()
+                .map(|(sort_key, id)| (sort_key.as_str(), *id))
+                .collect();
+            prepare_scope(&url, &scope, &borrowed).await?;
+
+            let pool = PgPoolOptions::new()
+                .max_connections(4)
+                .connect(&url)
+                .await?;
+            let (mut reader, stream, _contract) = postgres_paging_reader(
+                pool,
+                base_query(&scope),
+                key_columns(),
+                PostgresPagingFormat::new().with_page_size(page_size),
+                map_row,
+                identity(&format!("boundaries_{row_count}_{page_size}")),
+            )?;
+            let (_open_source, open_token) = stop_source_and_token();
+            stream
+                .open(StreamOpenContext::new(None, &open_token))
+                .await?;
+            let delivered = read_all(&mut reader).await?;
+            assert_eq!(
+                delivered,
+                (0..row_count).collect::<Vec<_>>(),
+                "row_count={row_count} page_size={page_size}"
+            );
+            stream
+                .close(StreamCloseContext::new(
+                    &open_token,
+                    StreamRuntimeOutcome::Committed,
+                ))
+                .await?;
+        }
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
+
+#[test]
+fn duplicate_primary_sort_key_is_resolved_by_the_unique_tiebreaker() -> Result<(), Box<dyn Error>> {
+    let Some(url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let scope = "paging_duplicate_sort_key";
+        // Every row shares the same `sort_key`; only `id` (the unique
+        // tiebreaker) distinguishes them. A non-unique-order paging
+        // implementation would skip or repeat rows across page boundaries.
+        let rows: Vec<(&str, i64)> = (0..17_i64).map(|id| ("same", id)).collect();
+        prepare_scope(&url, scope, &rows).await?;
+
+        let pool = PgPoolOptions::new()
+            .max_connections(4)
+            .connect(&url)
+            .await?;
+        let (mut reader, stream, _contract) = postgres_paging_reader(
+            pool,
+            base_query(scope),
+            key_columns(),
+            PostgresPagingFormat::new().with_page_size(5),
+            map_row,
+            identity("duplicate_sort_key"),
+        )?;
+        let (_open_source, open_token) = stop_source_and_token();
+        stream
+            .open(StreamOpenContext::new(None, &open_token))
+            .await?;
+        let mut delivered = read_all(&mut reader).await?;
+        delivered.sort_unstable();
+        assert_eq!(delivered, (0..17_i64).collect::<Vec<_>>());
+        stream
+            .close(StreamCloseContext::new(
+                &open_token,
+                StreamRuntimeOutcome::Committed,
+            ))
+            .await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
+
+#[test]
+fn restart_resumes_from_the_last_committed_key_without_skip_or_duplicate()
+-> Result<(), Box<dyn Error>> {
+    let Some(url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let scope = "paging_restart";
+        let total_rows = 23_i64;
+        let rows: Vec<(String, i64)> = (0..total_rows).map(|id| ("k".to_owned(), id)).collect();
+        let borrowed: Vec<(&str, i64)> = rows
+            .iter()
+            .map(|(sort_key, id)| (sort_key.as_str(), *id))
+            .collect();
+        prepare_scope(&url, scope, &borrowed).await?;
+
+        let envelope = {
+            let pool = PgPoolOptions::new()
+                .max_connections(4)
+                .connect(&url)
+                .await?;
+            let (mut reader, stream, _contract) = postgres_paging_reader(
+                pool,
+                base_query(scope),
+                key_columns(),
+                PostgresPagingFormat::new().with_page_size(4),
+                map_row,
+                identity("restart"),
+            )?;
+            let (_open_source, open_token) = stop_source_and_token();
+            stream
+                .open(StreamOpenContext::new(None, &open_token))
+                .await?;
+            let (_read_source, read_token) = stop_source_and_token();
+            for _ in 0..9 {
+                reader.read(ReadContext::new(&read_token)).await?;
+            }
+            // Commit boundary: rows read after this point are never
+            // committed and must be re-delivered after restart.
+            let envelope = stream.update(StreamUpdateContext::new(&open_token)).await?;
+            for _ in 0..3 {
+                reader.read(ReadContext::new(&read_token)).await?;
+            }
+            envelope
+        };
+
+        // Between the crash and the restart, insert rows into a gap that a
+        // (forbidden) OFFSET-based implementation would silently skip past;
+        // a keyset-based restart is unaffected because it filters on the
+        // last delivered key, not a positional count.
+        let pool = PgPoolOptions::new()
+            .max_connections(4)
+            .connect(&url)
+            .await?;
+        sqlx::query(
+            "INSERT INTO oxide_batch_business.postgres_component_rows \
+             (scope, sort_key, id, payload) VALUES ($1, 'k', -1, 'unused')",
+        )
+        .bind(scope)
+        .execute(&pool)
+        .await?;
+        pool.close().await;
+
+        let pool = PgPoolOptions::new()
+            .max_connections(4)
+            .connect(&url)
+            .await?;
+        let (mut reader, stream, _contract) = postgres_paging_reader(
+            pool,
+            base_query(scope),
+            key_columns(),
+            PostgresPagingFormat::new().with_page_size(4),
+            map_row,
+            identity("restart"),
+        )?;
+        let (_open_source, open_token) = stop_source_and_token();
+        stream
+            .open(StreamOpenContext::new(Some(&envelope), &open_token))
+            .await?;
+        let delivered = read_all(&mut reader).await?;
+        // Exactly the rows from id 9 onward: nothing before the committed
+        // boundary reappears (no duplicate), nothing from 9 up is missing
+        // (no skip), and the out-of-window inserted row (-1) never appears
+        // because it sorts before the restored key.
+        assert_eq!(delivered, (9..total_rows).collect::<Vec<_>>());
+        stream
+            .close(StreamCloseContext::new(
+                &open_token,
+                StreamRuntimeOutcome::Committed,
+            ))
+            .await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
+
+#[test]
+fn no_server_side_resource_is_held_between_pages() -> Result<(), Box<dyn Error>> {
+    let Some(url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let scope = "paging_no_held_resource";
+        let rows: Vec<(&str, i64)> = (0..12_i64).map(|id| ("k", id)).collect();
+        prepare_scope(&url, scope, &rows).await?;
+
+        let baseline = active_backend_count(&url).await?;
+        let pool = PgPoolOptions::new()
+            .max_connections(4)
+            .connect(&url)
+            .await?;
+        let (mut reader, stream, _contract) = postgres_paging_reader(
+            pool,
+            base_query(scope),
+            key_columns(),
+            PostgresPagingFormat::new().with_page_size(3),
+            map_row,
+            identity("no_held_resource"),
+        )?;
+        let (_open_source, open_token) = stop_source_and_token();
+        stream
+            .open(StreamOpenContext::new(None, &open_token))
+            .await?;
+        let (_read_source, read_token) = stop_source_and_token();
+        // Read across a page boundary (page size 3, read 4 rows) and assert
+        // no transaction is left open in between.
+        for _ in 0..4 {
+            reader.read(ReadContext::new(&read_token)).await?;
+        }
+        assert_eq!(active_backend_count(&url).await?, baseline);
+        stream
+            .close(StreamCloseContext::new(
+                &open_token,
+                StreamRuntimeOutcome::Committed,
+            ))
+            .await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
+}

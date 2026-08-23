@@ -43,6 +43,12 @@
 //! - [`json_array`]: restartable streaming top-level JSON-array file I/O
 //!   (#148, `IO-STRUCTURED-001` M6 slice) ([`JsonArrayReader`],
 //!   [`JsonArrayWriter`]).
+//! - [`postgres_cursor`], [`postgres_paging`], [`postgres_batch`]: real
+//!   `PostgreSQL` server-side cursor streaming, restartable keyset paging,
+//!   and bounded same-resource-enlisted SQL batch writing (#149,
+//!   `IO-DB-001` M6 `PostgreSQL` slice, `postgres` feature)
+//!   ([`PostgresCursorReader`], [`PostgresPagingReader`],
+//!   [`PostgresBatchWriter`]).
 
 pub mod aggregate;
 pub mod basic;
@@ -54,6 +60,14 @@ pub mod fixed_width;
 pub mod json_array;
 pub mod jsonl;
 pub mod peek;
+#[cfg(feature = "postgres")]
+pub mod postgres_batch;
+#[cfg(feature = "postgres")]
+pub mod postgres_cursor;
+#[cfg(feature = "postgres")]
+mod postgres_keyset;
+#[cfg(feature = "postgres")]
+pub mod postgres_paging;
 pub mod sync;
 pub mod validate;
 
@@ -81,5 +95,17 @@ pub use jsonl::{
     JsonLinesWriterStream, jsonl_file_reader, jsonl_reader, jsonl_writer,
 };
 pub use peek::{PeekOutcome, PeekReader};
+#[cfg(feature = "postgres")]
+pub use postgres_batch::{PostgresBatchMode, PostgresBatchWriter, postgres_batch_writer};
+#[cfg(feature = "postgres")]
+pub use postgres_cursor::{
+    PostgresCursorFormat, PostgresCursorReader, PostgresCursorReaderStream, postgres_cursor_reader,
+};
+#[cfg(feature = "postgres")]
+pub use postgres_keyset::{KeysetColumn, KeysetColumnKind, PostgresComponentConfigError};
+#[cfg(feature = "postgres")]
+pub use postgres_paging::{
+    PostgresPagingFormat, PostgresPagingReader, PostgresPagingReaderStream, postgres_paging_reader,
+};
 pub use sync::{SynchronizedProcessor, SynchronizedWriter};
 pub use validate::{ItemValidator, ValidatingProcessor};
