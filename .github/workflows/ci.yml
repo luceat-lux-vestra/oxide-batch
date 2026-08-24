@@ -302,6 +302,18 @@ jobs:
             --test postgres_local_split_crash_recovery \
             -- --nocapture --test-threads=1
 
+      - name: Run PostgreSQL M6 #144 item-stream component-state crash/restart evidence
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_item_stream_crash_recovery
+          -- --nocapture --test-threads=1
+
+      - name: Run PostgreSQL M6 #144 retention component-state evidence
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_retention_component_state
+          -- --nocapture --test-threads=1
+
   postgres-item-components:
     name: postgres-${{ matrix.postgres }}-item-components
     runs-on: ubuntu-latest
