@@ -112,12 +112,12 @@ All eleven binaries passed, in the `postgres-item-components` job's own step ord
 
 ### Producer commit
 
-<FILL: commit SHA that introduces the workflow change>
+The workflow change was introduced in commit `d9b2de2ec412db33811a507e3bd71fd9b906e2ad` (PR #173) and has not been touched since. That commit's CI run is the evidence that the new steps actually execute real PostgreSQL-backed tests rather than only existing in YAML:
 
-- `postgres-15-item-components`: <FILL: run log link, pass counts for `restart_harness` and `postgres_fixture`>
-- `postgres-18-item-components`: <FILL: run log link, pass counts>
-- Neither step's log contains `skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set`.
-- All other required checks (quality, msrv, packaging, dependency-review, supply-chain, evidence-provenance, CodeQL, and the full M5 campaign matrix) passed at this same commit.
+- `postgres-15-item-components`: PASS — [run log](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/32721028551/job/97412279026). The job log shows `test restart_harness_resumes_from_the_last_committed_checkpoint ... ok` (1 passed) and `test repository_fixture_cleans_up_isolated_metadata ... ok` (1 passed), each under its own `Run cargo test ... --test restart_harness` / `--test postgres_fixture` step group, after the nine pre-existing steps in the job's real order.
+- `postgres-18-item-components`: PASS — [run log](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/32721028551/job/97412279185), same two tests, same pass counts, same order.
+- Grepping each full job log for `skipped:` returns zero matches — neither test binary printed `skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set` in either job; both executed against the job's real PostgreSQL service container.
+- All other required checks (quality, msrv, packaging, dependency-review, supply-chain, evidence-provenance, CodeQL, postgres-spike, the full PG15/16/17/18 design-gate matrix, postgres-15/18-repository, and the full M5 campaign matrix — cancellation, crash-restore, performance, resource-bounds, security, soak, upgrade, conformance) passed at this same commit.
 
 ### Exact-head merge gate
 
