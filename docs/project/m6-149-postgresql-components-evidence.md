@@ -47,9 +47,10 @@ tests/CI/docs proving all of it.
 
 ## Defects found and fixed during implementation
 
-Two real bugs surfaced while writing this component's own integration tests
-against a real `PostgreSQL` server (not from external review -- this PR's
-tests are the evidence for both):
+Four real bugs surfaced while writing this component's own integration tests
+against a real `PostgreSQL` server. The first two were caught during initial
+development; the second two were caught during strict re-review and are
+proven by dedicated regression tests, not merely fixed and asserted:
 
 - **A failed row was silently skipped, not deterministically retried.**
   Both readers' `read()` originally popped the next buffered row *before*
@@ -76,6 +77,37 @@ tests are the evidence for both):
   envelope path (not just the pure-function unit tests, which encoded and
   decoded the payload directly and so never exercised this constraint). The
   fix wraps the keyset tuple under a `{"keys": [...]}` object.
+- **A `FETCH`-level transient failure left the cursor reader permanently
+  unretryable.** `PostgresCursorReader::fetch_more()`'s error branch dropped
+  the broken transaction (`drop(transaction)`) but never reset `started`;
+  the *next* `read()` call's `ensure_started()` saw `started` still `true`
+  and skipped re-establishing a connection, so `fetch_more()` ran again
+  against an empty `transaction_slot` and failed closed forever with
+  `FailureCategory::Invariant` -- a fault a `Read`/`TransientInfrastructure`
+  retry rule could never actually recover from, no matter how many retries
+  the configured policy allowed. The fix resets `started = false` in that
+  same error branch, so the next `read()` re-`DECLARE`s a fresh cursor
+  filtered by the last row this reader actually delivered.
+  `postgres_item_components_cursor_fault.rs::fetch_level_transient_failure_recovers_without_skip_or_duplicate_through_fault_runtime`
+  drives this through the real `ChunkStep`/`FaultRuntime` machinery (not a
+  hand-rolled retry loop): a genuine `pg_terminate_backend` against the
+  backend actually executing a slow second `FETCH` induces the failure, and
+  the test was confirmed to fail with `ChunkExecutionOutcome::Failed(Reader)`
+  against the pre-fix code before the fix was applied, then re-confirmed
+  passing afterward -- not merely written to match the fixed behavior.
+- **`KeysetColumnKind::I64`'s own doc comment overclaimed
+  "`bigint`/`integer`-family" coverage.** `extract_keyset`'s `I64` arm called
+  a bare `row.try_get::<i64, _>(...)`; `sqlx` decodes strictly by wire type
+  and never implicitly widens an `int4` column into a requested `i64`, so
+  declaring `KeysetColumn::i64` against an ordinary `integer`/`serial`
+  column (not `bigint`/`bigserial`) failed at runtime on every row. The fix
+  adds the same `int8`-then-`int4` fallback
+  [`PostgresRow::f64`](#row-value-coverage-and-the-keysetgeneral-row-mapping-distinction)
+  already established for `f64`/`f32`.
+  `postgres_item_components_paging.rs::keyset_i64_column_kind_decodes_from_a_real_int4_column`
+  pins this against a real `integer`-typed primary key column, across a page
+  boundary (so both decoding and restart-filter binding are exercised, not
+  just a single row read).
 
 ## Public component surface
 
@@ -175,6 +207,25 @@ while `PostgreSQL` still considers it "idle in transaction" --
 `postgres_item_components_cursor.rs::close_rolls_back_and_leaves_no_idle_in_transaction_backend`
 asserts `pg_stat_activity` shows the backend before `close()` and not after.
 
+**Mid-attempt fault recovery.** A `FETCH` can fail for reasons that are
+transient and unrelated to this reader's own logic -- a dropped connection,
+a server restart -- and the real M3 fault-tolerance surface
+(`FaultRuntime`/`FaultPolicy`) is the framework's mechanism for retrying
+exactly that class of failure. `classify_pg_error` maps a connection-severed
+`sqlx::Error` (no database error code at all) to
+`FailureCategory::TransientInfrastructure`, which a caller-configured
+`Read`/`TransientInfrastructure` retry rule can act on -- but only if the
+reader's own internal state is actually retry-safe afterward.
+`postgres_item_components_cursor_fault.rs::fetch_level_transient_failure_recovers_without_skip_or_duplicate_through_fault_runtime`
+proves it is: a real `pg_terminate_backend` against the backend actually
+executing a slow second `FETCH` induces a genuine mid-attempt connection
+loss, and the real `ChunkStep`/`FaultRuntime` machinery retries the failed
+`read()` once, recovering by re-`DECLARE`ing a fresh cursor filtered by the
+last row this reader actually delivered -- every row committed exactly once,
+no skip from the failed `FETCH`'s abandoned rows, no duplicate from the
+retried re-`DECLARE`. See "Defects found and fixed during implementation"
+above for the bug this regression test was written against.
+
 ## Paging/keyset reader: no `OFFSET`, no held resource
 
 `PostgresPagingReader` never uses `OFFSET`. Each page is an independent,
@@ -267,8 +318,6 @@ after that row first becomes visible to a read.
   reader, not a defect of this implementation), not something a workload
   needing to observe late-arriving rows behind its own cursor can rely on
   this delivery mode for.
-- **Inserts after the current position are unaffected** and are delivered
-  normally by a later page/fetch or after a restart.
 - **Mutating a row's `key_columns` values in place, once it has entered the
   read window, is unsafe**: it can produce either a skip (the row's new key
   moves outside every future fetch window) or a duplicate (the row's key
@@ -276,9 +325,56 @@ after that row first becomes visible to a read.
   re-delivers it). Key columns should be values a caller's own business
   logic never updates in place -- an auto-incrementing surrogate key, or an
   immutable creation timestamp paired with a unique tiebreaker.
-- **Deletes are always safe**, whether before, at, or after the committed
-  position -- a deleted row is simply absent from the next fetch/page, with
-  no distinguishable effect from having never existed at that key.
+- **A delete at or before the committed position is always safe for either
+  reader**, on restart or otherwise: the row was already excluded or already
+  delivered, so its deletion has no observable effect.
+
+**This is where the first version of this record overstated a shared
+guarantee that strict re-review caught: it is not true that "inserts after
+the current position are delivered by a later page/fetch or after a
+restart" for both readers, and it is not true that a delete of a
+not-yet-delivered row is "always" absent from the rest of the same attempt
+for both readers either.** A `PostgreSQL` server-side cursor and an
+independent paged `SELECT` are not the same kind of read, and the two
+readers diverge sharply on what an attempt already under way can observe
+from a *different*, concurrently committing transaction. This was verified
+directly against a real server, not asserted from `PostgreSQL` documentation
+alone: `DECLARE` a cursor, `FETCH` part of it, commit an insert and a delete
+of a not-yet-delivered row from a *second* session, then `FETCH` the rest
+from the *same*, already-open cursor.
+
+- **Paging: every page is a fresh, independently visible statement.**
+  `PostgresPagingReader` holds no transaction; under `PostgreSQL`'s default
+  `READ COMMITTED` isolation, each page's statement sees every row committed
+  before it starts. An insert at a key past the current position, committed
+  between two pages of the *same* attempt, **is** delivered by a later page;
+  a delete of a not-yet-delivered row is simply absent from the next page.
+  `postgres_item_components_paging.rs::insert_between_pages_is_visible_to_a_later_page_in_the_same_attempt`
+  proves the insert side directly, without needing a restart.
+- **Cursor: one held transaction, one fixed snapshot, for the whole
+  attempt.** `PostgresCursorReader` keeps one `DECLARE`d cursor and its
+  transaction open for the entire attempt; `PostgreSQL`'s cursors behave as
+  the SQL standard's `INSENSITIVE` cursors do, returning rows under the
+  snapshot fixed when the portal began executing regardless of what other
+  transactions commit afterward. Confirmed directly: an insert at a key past
+  the current position, committed by another transaction *after* this
+  cursor's snapshot was taken, is **not** delivered by a later `FETCH` on
+  the same cursor -- only a restart (a fresh `DECLARE`, a new snapshot)
+  picks it up. A delete of a not-yet-delivered row, committed the same way,
+  does **not** remove it from a later `FETCH` on the same cursor either --
+  the row is still delivered, exactly as `PostgreSQL`'s MVCC snapshot
+  isolation guarantees for any statement that began before the delete
+  committed; a restart's fresh snapshot omits it.
+  `postgres_item_components_cursor.rs::insert_after_declare_is_invisible_to_this_attempt_until_restart`
+  proves the insert side directly: the five pre-existing rows are delivered
+  by the same attempt with the concurrently inserted row absent, and only a
+  restart's fresh reader delivers it.
+
+Neither divergence can cause a skip, a duplicate, or a lost commit -- the
+durable checkpoint is always the last row a reader's caller actually
+processed, never a row it merely fetched-but-stale. It only changes how
+promptly a concurrent insert or delete becomes visible to an attempt already
+in progress; a restart always re-establishes a fresh view either way.
 
 ## SQL batch writer / same-resource enlisted writer
 
@@ -469,7 +565,18 @@ evidence.
   `Bytes` (e.g. a `uuid`/`bytea` key) is not supported in this M6 slice. This
   is narrower than, and independent of, `PostgresRow`'s general
   value-reading coverage below -- it constrains only which columns may be
-  declared as `KeysetColumn`s, not what `map_row` may read.
+  declared as `KeysetColumn`s, not what `map_row` may read. `I64` covers
+  both `bigint`/`bigserial` and `integer`/`serial` columns (an `int8`-then-
+  `int4` decode fallback, mirroring `PostgresRow::f64`'s `f64`-then-`f32`
+  fallback) -- not `bigint` only.
+- The cursor and paging readers diverge on same-attempt visibility of a
+  concurrent insert or delete of a not-yet-delivered row (see "Consistency
+  under concurrent source mutation" above): the cursor's held snapshot means
+  such a change is invisible to the same attempt until a restart, while
+  paging's independent per-page statements see it immediately. This is a
+  documented, empirically-verified difference in *promptness*, not a
+  skip/duplicate/correctness gap -- the durable checkpoint is unaffected
+  either way.
 - `PostgresRow` (the row-mapping type `map_row` receives) covers `text`,
   the integer family (`i32`/`i64`), `boolean`, and floating-point
   (`f64`/`f32`) columns. It does **not** cover `timestamp[tz]`, `uuid`,
@@ -505,6 +612,7 @@ cargo clippy -p oxide-batch-test --features postgres --all-targets -- -D warning
 cargo test -p oxide-batch --features postgres --lib
 cargo test -p oxide-batch --features postgres --test postgres_item_components_cursor -- --nocapture --test-threads=1
 cargo test -p oxide-batch --features postgres --test postgres_item_components_paging -- --nocapture --test-threads=1
+cargo test -p oxide-batch --features postgres --test postgres_item_components_cursor_fault -- --nocapture --test-threads=1
 cargo test -p oxide-batch --features postgres --test postgres_item_components_batch_writer -- --nocapture --test-threads=1
 cargo test -p oxide-batch --features postgres --test postgres_item_components_crash_recovery -- --nocapture --test-threads=1
 cargo test -p oxide-batch-test --features postgres --test postgres_item_components_db_restart -- --nocapture --test-threads=1
@@ -518,9 +626,15 @@ existing `postgres_repository.rs::migration_is_idempotent_when_migrator_fixture_
 test) before this PR was opened: the full `oxide-batch` lib unit test suite
 (31 tests under the `postgres` feature, 17 of them this PR's own
 `item_components::postgres_{keyset,cursor,paging,batch}` unit tests, the
-rest pre-existing and unaffected), 7 cursor integration tests, 6 paging
-integration tests, 7 batch-writer integration tests, 3 real process-kill
-crash/restart tests, and 3 injected-stop restart fixtures, all passing.
+rest pre-existing and unaffected), 8 cursor integration tests, 8 paging
+integration tests, 1 real fault-runtime retry regression test, 7
+batch-writer integration tests, 3 real process-kill crash/restart tests, and
+3 injected-stop restart fixtures, all passing. The
+`fetch_level_transient_failure_recovers_without_skip_or_duplicate_through_fault_runtime`
+regression was additionally confirmed to *fail* against the pre-fix
+`fetch_more()` (`ChunkExecutionOutcome::Failed(Reader)`, not the retried
+`Completed` this fix produces) before the fix was restored and re-confirmed
+passing, so this is a proven regression test, not merely a passing one.
 
 ## Ledger disposition
 
