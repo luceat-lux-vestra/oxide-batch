@@ -161,6 +161,8 @@ fn declare_cursor_sql(
 ///   attempts the exact same row again, never silently skipping it.
 /// - **Support tier**: first-party.
 /// - **Evidence**: `crates/oxide-batch/tests/postgres_item_components_cursor.rs`,
+///   `crates/oxide-batch/tests/postgres_item_components_cursor_fault.rs`,
+///   `crates/oxide-batch/tests/postgres_item_components_crash_recovery.rs`,
 ///   `crates/oxide-batch-test/tests/postgres_item_components_db_restart.rs`.
 pub struct PostgresCursorReader<I> {
     config: PostgresConfig,
@@ -221,7 +223,17 @@ impl<I> PostgresCursorReader<I> {
     /// transaction is moved out of the shared slot for the duration of the
     /// round trip (never held across `.await` inside a lock guard) and
     /// moved back only on success; a failure drops it without a further
-    /// round trip, since the connection is presumed unhealthy.
+    /// round trip, since the connection is presumed unhealthy, and resets
+    /// [`Self::started`] so the *next* `read()` call's
+    /// [`Self::ensure_started`] re-establishes a fresh connection,
+    /// transaction, and server-side cursor -- re-`DECLARE`d filtered by
+    /// [`Self::position`], the last row this reader actually delivered (this
+    /// method never touches [`Self::buffered`] or [`Self::position`] until a
+    /// `FETCH` has succeeded, so both are exactly where the prior successful
+    /// read left them). Without this reset, a failed `FETCH` would leave
+    /// [`Self::started`] `true` with no transaction to fetch from, so every
+    /// subsequent `read()` would fail closed forever with
+    /// [`FailureCategory::Invariant`] instead of recovering.
     async fn fetch_more(&mut self) -> Result<(), ReaderError> {
         if self.done {
             return Ok(());
@@ -254,6 +266,7 @@ impl<I> PostgresCursorReader<I> {
             Err(error) => {
                 let category = classify_pg_error(&error);
                 drop(transaction);
+                self.started = false;
                 Err(ReaderError::with_category(category))
             }
         }

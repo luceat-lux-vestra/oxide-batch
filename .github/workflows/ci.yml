@@ -359,6 +359,12 @@ jobs:
           --test postgres_item_components_crash_recovery
           -- --nocapture --test-threads=1
 
+      - name: Run PostgreSQL cursor FETCH-level fault-runtime retry evidence (#149)
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_item_components_cursor_fault
+          -- --nocapture --test-threads=1
+
       - name: Run PostgreSQL item-component restart fixtures (#149)
         run: >-
           cargo test -p oxide-batch-test --features postgres

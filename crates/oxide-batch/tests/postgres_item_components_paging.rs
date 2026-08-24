@@ -47,6 +47,15 @@ fn key_columns() -> Vec<KeysetColumn> {
     vec![KeysetColumn::text("sort_key"), KeysetColumn::i64("id")]
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Int4Row {
+    id: i32,
+}
+
+fn map_int4_row(row: &PostgresRow<'_>) -> Result<Int4Row, oxide_batch::ReaderError> {
+    Ok(Int4Row { id: row.i32("id")? })
+}
+
 fn identity(name: &str) -> ComponentStreamIdentity {
     ComponentStreamIdentity::new(format!("oxide-batch-test.postgres-paging-{name}"))
         .expect("static identity is valid")
@@ -447,6 +456,176 @@ fn statement_timeout_is_enforced_on_the_paging_business_connection() -> Result<(
                  reader's own connection",
         );
         assert_eq!(error.category(), FailureCategory::Cancelled);
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
+
+/// Pins the paging-specific half of `postgres_keyset`'s "Paging: every page
+/// is a fresh, independently visible statement" documentation directly
+/// against a real server: unlike the cursor reader's held snapshot (see
+/// `postgres_item_components_cursor.rs`'s sibling test), a row committed by
+/// another transaction between two pages of the *same* attempt, at a key
+/// past everything already delivered, is delivered by a later page --
+/// because each page is its own fresh, independent statement, not a portal
+/// held open across the whole attempt.
+#[test]
+fn insert_between_pages_is_visible_to_a_later_page_in_the_same_attempt()
+-> Result<(), Box<dyn Error>> {
+    let Some(url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let scope = "paging_insert_visibility";
+        let rows: Vec<(&str, i64)> = vec![("k", 0), ("k", 1), ("k", 2), ("k", 3), ("k", 4)];
+        prepare_scope(&url, scope, &rows).await?;
+
+        let config = plaintext_config(url.clone())?;
+        let (mut reader, stream, _contract) = postgres_paging_reader(
+            config,
+            base_query(scope),
+            key_columns(),
+            PostgresPagingFormat::new().with_page_size(2),
+            map_row,
+            identity("insert_visibility"),
+        )?;
+        let (_open_source, open_token) = stop_source_and_token();
+        stream
+            .open(StreamOpenContext::new(None, &open_token))
+            .await?;
+        let (_read_source, read_token) = stop_source_and_token();
+
+        // First page (page_size 2) delivers rows 0 and 1.
+        let mut delivered = Vec::new();
+        for _ in 0..2 {
+            match reader.read(ReadContext::new(&read_token)).await? {
+                ReadOutcome::Item(item) => delivered.push(item.id),
+                other => return Err(format!("unexpected outcome: {other:?}").into()),
+            }
+        }
+        assert_eq!(delivered, vec![0, 1]);
+
+        // A second connection commits a row at a key past everything this
+        // scope had, *between* pages of this same, still-in-progress
+        // attempt.
+        let admin = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await?;
+        sqlx::query(
+            "INSERT INTO oxide_batch_business.postgres_component_rows \
+             (scope, sort_key, id, payload) VALUES ($1, 'k', 10, 'unused')",
+        )
+        .bind(scope)
+        .execute(&admin)
+        .await?;
+        admin.close().await;
+
+        // The rest of this same attempt's reads -- several more pages --
+        // must deliver the 5 pre-existing rows *and* the concurrently
+        // inserted row 10, in order, without needing a restart.
+        loop {
+            match reader.read(ReadContext::new(&read_token)).await? {
+                ReadOutcome::Item(item) => delivered.push(item.id),
+                ReadOutcome::EndOfInput => break,
+                other => return Err(format!("unexpected outcome: {other:?}").into()),
+            }
+        }
+        assert_eq!(
+            delivered,
+            vec![0, 1, 2, 3, 4, 10],
+            "a row committed by another transaction between two pages of the same attempt \
+             must be delivered by a later page, unlike the cursor reader's held snapshot"
+        );
+        stream
+            .close(StreamCloseContext::new(
+                &open_token,
+                StreamRuntimeOutcome::Committed,
+            ))
+            .await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
+
+/// `KeysetColumnKind::I64`'s doc comment promises "`bigint`/`integer`-family"
+/// coverage. `sqlx` decodes strictly by wire type and never implicitly
+/// widens an `int4` column into a requested `i64`, so this pins the
+/// int4-specific fallback `extract_keyset` needs directly against a real
+/// `integer`-typed (not `bigint`) primary key column -- a bare
+/// `try_get::<i64, _>` would reject every row here.
+#[test]
+fn keyset_i64_column_kind_decodes_from_a_real_int4_column() -> Result<(), Box<dyn Error>> {
+    let Some(url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await?;
+        sqlx::query("CREATE SCHEMA IF NOT EXISTS oxide_batch_business")
+            .execute(&pool)
+            .await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS oxide_batch_business.postgres_149_int4_keyset_rows (\
+             id integer PRIMARY KEY)",
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query("DELETE FROM oxide_batch_business.postgres_149_int4_keyset_rows")
+            .execute(&pool)
+            .await?;
+        for id in 0_i32..5 {
+            sqlx::query(
+                "INSERT INTO oxide_batch_business.postgres_149_int4_keyset_rows (id) VALUES ($1)",
+            )
+            .bind(id)
+            .execute(&pool)
+            .await?;
+        }
+        pool.close().await;
+
+        let config = plaintext_config(url.clone())?;
+        let (mut reader, stream, _contract) = postgres_paging_reader(
+            config,
+            "SELECT id FROM oxide_batch_business.postgres_149_int4_keyset_rows".to_owned(),
+            vec![KeysetColumn::i64("id")],
+            PostgresPagingFormat::new().with_page_size(2),
+            map_int4_row,
+            identity("int4_keyset"),
+        )?;
+        let (_open_source, open_token) = stop_source_and_token();
+        stream
+            .open(StreamOpenContext::new(None, &open_token))
+            .await?;
+        let (_read_source, read_token) = stop_source_and_token();
+        let mut delivered = Vec::new();
+        loop {
+            match reader.read(ReadContext::new(&read_token)).await? {
+                ReadOutcome::Item(item) => delivered.push(item.id),
+                ReadOutcome::EndOfInput => break,
+                other => return Err(format!("unexpected outcome: {other:?}").into()),
+            }
+        }
+        assert_eq!(
+            delivered,
+            vec![0, 1, 2, 3, 4],
+            "KeysetColumn::i64 must decode and restart-filter correctly against a real int4 \
+             column across a page boundary, not merely accept it at construction"
+        );
+        stream
+            .close(StreamCloseContext::new(
+                &open_token,
+                StreamRuntimeOutcome::Committed,
+            ))
+            .await?;
         Ok::<(), Box<dyn Error>>(())
     })
 }

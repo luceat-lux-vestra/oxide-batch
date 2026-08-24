@@ -33,9 +33,6 @@
 //!   avoid. A workload that must observe such late-arriving rows needs a
 //!   different delivery mode (e.g. a change-data-capture or queue-based
 //!   source), which is out of this M6 slice's scope.
-//! - **Inserts at a key greater than the current position are unaffected**
-//!   and are picked up by a later page/fetch or after a restart, exactly
-//!   like any other not-yet-delivered row.
 //! - **Updating a row's `key_columns` values after it has entered the read
 //!   window is unsafe** and can produce either a skip (the row's new key
 //!   moves outside every future fetch window) or a duplicate (the row's key
@@ -44,12 +41,60 @@
 //!   logic never updates in place -- typically an auto-incrementing
 //!   surrogate key, or an immutable creation timestamp paired with a unique
 //!   tiebreaker -- never a value that changes for existing rows.
-//! - **Deletes are always safe.** Deleting a row at or before the committed
-//!   position has no observable effect (it was already excluded or already
-//!   delivered). Deleting a row between the committed position and either
-//!   reader's current in-memory frontier is equally safe: it is simply
-//!   absent from the next fetch/page, exactly as if it had never existed at
+//! - **A delete at or before the committed position is always safe for
+//!   either reader**, on restart or otherwise: the row was already excluded
+//!   or already delivered, so its deletion has no observable effect.
+//!
+//! What a reader whose attempt is already under way can observe from a
+//! *different*, concurrently committing transaction's insert or delete of a
+//! not-yet-delivered row is where the two readers diverge sharply, because a
+//! `PostgreSQL` server-side cursor and an independent paged `SELECT` are not
+//! the same kind of read. Neither divergence below can cause a skip, a
+//! duplicate, or a lost commit -- the durable checkpoint is always the last
+//! row a reader's caller actually processed, never a row it merely
+//! fetched-but-stale. It only changes how promptly a concurrent insert or
+//! delete becomes visible to an attempt already in progress; a restart
+//! always re-establishes a fresh view either way.
+//!
+//! ## Paging: every page is a fresh, independently visible statement
+//!
+//! [`super::postgres_paging::PostgresPagingReader`] issues one ordinary
+//! `SELECT ... WHERE (cols) > (last) ORDER BY cols LIMIT n` per page, with no
+//! held transaction. Under `PostgreSQL`'s default `READ COMMITTED`
+//! isolation, each such statement sees every row committed before it starts
+//! executing:
+//! - An insert at a key greater than the current position, committed by
+//!   another transaction between two pages, **is** delivered by a later
+//!   page -- exactly like any other not-yet-delivered row.
+//! - A delete of a not-yet-delivered row, committed between two pages, is
+//!   simply absent from the next page, exactly as if it had never existed at
 //!   that key.
+//!
+//! ## Cursor: one held transaction, one fixed snapshot, for the whole attempt
+//!
+//! [`super::postgres_cursor::PostgresCursorReader`] `DECLARE`s one
+//! server-side cursor inside one transaction and keeps both open for the
+//! entire attempt; every `FETCH` runs against that same open portal.
+//! `PostgreSQL`'s cursors behave as the SQL standard's `INSENSITIVE`
+//! cursors do: once a portal begins executing, it keeps returning rows
+//! under the snapshot fixed at that time, regardless of what other
+//! transactions commit afterward. This was confirmed directly against a
+//! real server -- `DECLARE` a cursor, `FETCH` part of it, commit an insert
+//! and a delete from a *second* session, then `FETCH` the rest from the
+//! *same*, already-open cursor:
+//! - An insert at a key greater than the current position, committed by
+//!   another transaction *after* this cursor's snapshot was taken, is
+//!   **not** delivered by a later `FETCH` on the same cursor. Only a
+//!   restart (a fresh `DECLARE`, which takes a new snapshot) picks it up --
+//!   this reader's own restart model already re-`DECLARE`s on every
+//!   attempt, so this is a same-attempt staleness window, not a durability
+//!   gap.
+//! - A delete of a not-yet-delivered row, committed by another transaction
+//!   *after* this cursor's snapshot was taken, does **not** remove it from a
+//!   later `FETCH` on the same cursor -- the row is still delivered, exactly
+//!   as `PostgreSQL`'s MVCC snapshot isolation guarantees for any statement
+//!   that began before the delete committed. A restart's fresh `DECLARE` (a
+//!   new snapshot) omits it, same as any other already-deleted row.
 
 use std::error::Error;
 use std::fmt;
@@ -86,7 +131,14 @@ pub struct KeysetColumn {
 pub enum KeysetColumnKind {
     /// A `text`/`varchar` ordering key.
     Text,
-    /// A `bigint`/`integer`-family ordering key, read as `i64`.
+    /// A `bigint`/`integer`-family ordering key, read as `i64`. Decoding
+    /// tries `int8` first and falls back to `int4`, so both
+    /// `bigint`/`bigserial` and `integer`/`serial` columns are valid.
+    /// Binding a restored value back
+    /// as a query parameter is always sent as `int8`; `PostgreSQL`'s
+    /// built-in cross-type integer comparison operators accept comparing it
+    /// against an `int4` column directly, so no equivalent fallback is
+    /// needed on the bind side.
     I64,
 }
 
@@ -270,6 +322,14 @@ pub(crate) fn bind_keyset<'q>(
 
 /// Reads `columns` back out of `row` as a fresh [`KeysetPosition`], proving
 /// the row actually carries every declared ordering-key column.
+///
+/// `KeysetColumnKind::I64` tries `int8` first, falling back to `int4`: `sqlx`
+/// decodes strictly by wire type and never implicitly widens an `int4`
+/// column into a requested `i64`, so a bare `try_get::<i64, _>` would reject
+/// every ordinary `integer`-typed key column despite
+/// [`KeysetColumnKind::I64`]'s own doc comment promising "integer-family"
+/// coverage. This mirrors [`PostgresRow::f64`]'s established `f64`-then-`f32`
+/// fallback for the same reason.
 pub(crate) fn extract_keyset(
     row: &PgRow,
     columns: &[KeysetColumn],
@@ -283,6 +343,7 @@ pub(crate) fn extract_keyset(
                     .map(PostgresKeyValue::Text),
                 KeysetColumnKind::I64 => row
                     .try_get::<i64, _>(column.name())
+                    .or_else(|_| row.try_get::<i32, _>(column.name()).map(i64::from))
                     .map(PostgresKeyValue::I64),
             };
             result.map_err(|_| ReaderError::with_category(FailureCategory::UserComponent))

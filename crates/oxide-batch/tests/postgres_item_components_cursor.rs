@@ -550,3 +550,137 @@ fn statement_timeout_is_enforced_on_the_cursor_business_connection() -> Result<(
         Ok::<(), Box<dyn Error>>(())
     })
 }
+
+/// Pins the cursor-specific half of `postgres_keyset`'s "Cursor: one held
+/// transaction, one fixed snapshot" documentation directly against a real
+/// server: a row inserted by another transaction *after* this reader's
+/// cursor was `DECLARE`d, at a key past everything already delivered, is not
+/// delivered by this same attempt's later `FETCH`es -- only a restart (a
+/// fresh `DECLARE`, a new snapshot) picks it up. See
+/// `postgres_item_components_paging.rs`'s sibling test for the opposite
+/// paging behavior.
+#[test]
+fn insert_after_declare_is_invisible_to_this_attempt_until_restart() -> Result<(), Box<dyn Error>> {
+    let Some(url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let scope = "cursor_insert_visibility";
+        prepare_scope(
+            &url,
+            scope,
+            &[
+                ("k", 0, "payload-0"),
+                ("k", 1, "payload-1"),
+                ("k", 2, "payload-2"),
+                ("k", 3, "payload-3"),
+                ("k", 4, "payload-4"),
+            ],
+        )
+        .await?;
+
+        let config = plaintext_config(url.clone())?;
+        let (mut reader, stream, _contract) = postgres_cursor_reader(
+            config,
+            base_query(scope),
+            key_columns(),
+            PostgresCursorFormat::new().with_fetch_size(2),
+            map_row,
+            identity("insert_visibility"),
+        )?;
+        let (_open_source, open_token) = stop_source_and_token();
+        stream
+            .open(StreamOpenContext::new(None, &open_token))
+            .await?;
+        let (_read_source, read_token) = stop_source_and_token();
+
+        // First `read()` triggers `ensure_started()`: the cursor is
+        // `DECLARE`d and its snapshot fixed here.
+        let mut delivered = Vec::new();
+        match reader.read(ReadContext::new(&read_token)).await? {
+            ReadOutcome::Item(item) => delivered.push(item.id),
+            other => return Err(format!("unexpected outcome: {other:?}").into()),
+        }
+
+        // A second connection inserts a row at a key past everything this
+        // scope has, and commits, *after* the cursor above was declared.
+        let admin = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await?;
+        sqlx::query(
+            "INSERT INTO oxide_batch_business.postgres_component_rows \
+             (scope, sort_key, id, payload) VALUES ($1, 'k', 10, 'payload-10')",
+        )
+        .bind(scope)
+        .execute(&admin)
+        .await?;
+        admin.close().await;
+
+        // The rest of this same attempt's reads -- several more `FETCH`
+        // round trips, since fetch_size is 2 and 4 rows remain -- must
+        // deliver only the 5 pre-existing rows, never id 10.
+        loop {
+            match reader.read(ReadContext::new(&read_token)).await? {
+                ReadOutcome::Item(item) => delivered.push(item.id),
+                ReadOutcome::EndOfInput => break,
+                other => return Err(format!("unexpected outcome: {other:?}").into()),
+            }
+        }
+        assert_eq!(
+            delivered,
+            vec![0, 1, 2, 3, 4],
+            "a row committed by another transaction after this cursor's snapshot must not \
+             appear in this same attempt, however many more FETCHes it takes"
+        );
+
+        // A restart -- a fresh reader/stream pair, re-`DECLARE`ing with a
+        // new snapshot -- must see it.
+        let envelope = stream.update(StreamUpdateContext::new(&open_token)).await?;
+        stream
+            .close(StreamCloseContext::new(
+                &open_token,
+                StreamRuntimeOutcome::Committed,
+            ))
+            .await?;
+        let config = plaintext_config(url.clone())?;
+        let (mut reader, stream, _contract) = postgres_cursor_reader(
+            config,
+            base_query(scope),
+            key_columns(),
+            PostgresCursorFormat::new().with_fetch_size(2),
+            map_row,
+            identity("insert_visibility"),
+        )?;
+        let (_open_source, open_token) = stop_source_and_token();
+        stream
+            .open(StreamOpenContext::new(Some(&envelope), &open_token))
+            .await?;
+        let (_read_source, read_token) = stop_source_and_token();
+        let mut delivered_after_restart = Vec::new();
+        loop {
+            match reader.read(ReadContext::new(&read_token)).await? {
+                ReadOutcome::Item(item) => delivered_after_restart.push(item.id),
+                ReadOutcome::EndOfInput => break,
+                other => return Err(format!("unexpected outcome: {other:?}").into()),
+            }
+        }
+        assert_eq!(
+            delivered_after_restart,
+            vec![10],
+            "a fresh DECLARE on restart takes a new snapshot and must see the row the prior \
+             attempt's already-open cursor could not"
+        );
+        stream
+            .close(StreamCloseContext::new(
+                &open_token,
+                StreamRuntimeOutcome::Committed,
+            ))
+            .await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
