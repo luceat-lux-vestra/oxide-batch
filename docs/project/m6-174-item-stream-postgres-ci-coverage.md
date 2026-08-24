@@ -266,9 +266,26 @@ not local reproduction — see "CI verification" below.
 
 ## CI verification
 
-TBD — filled in after the PR's CI run completes, per the exact-head
-convention: the evidence below is re-verified against the PR's final head
-SHA, not a producer commit, if any further commits are pushed.
+### Producer commit
+
+The workflow and documentation change was introduced in commit
+`be4b9e4814605275205def865330633358d3b4a5` (PR #175) and, as of this
+writing, is the PR's head. That commit's CI run is the evidence that the two
+new steps actually execute real PostgreSQL-backed tests rather than only
+existing in YAML:
+
+- `postgres-15-repository`: PASS — [run log](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/32765830927/job/97554969885). The "Run PostgreSQL M6 #144 item-stream component-state crash/restart evidence" step group shows `test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out` for `postgres_item_stream_crash_recovery`, with all five named tests present and `ok`: `postgres_preserves_non_canonical_json_bytes_exactly`, `process_kill_after_commit_restores_new_stream_state`, `process_kill_before_commit_restores_previous_stream_state`, `restart_with_new_step_execution_id_inherits_committed_stream_state`, `stream_crash_worker`. The following "Run PostgreSQL M6 #144 retention component-state evidence" step group shows `test purge_deletes_component_state_before_the_step_execution_it_references ... ok` and `test result: ok. 1 passed; 0 failed`.
+- `postgres-18-repository`: PASS — [run log](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/32765830927/job/97554970001). Identical named-test results: `postgres_item_stream_crash_recovery` → 5 passed, 0 failed (same five names, all `ok`); `postgres_retention_component_state` → 1 passed, 0 failed.
+- Grepping each full job log for `skipped:` returns zero matches in both — neither test binary printed `skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set` (or the migrator equivalent) in either job; both executed against the job's real PostgreSQL service container.
+- All other required checks on this PR passed at this same commit: `quality`, `msrv`, `packaging`, `postgres-spike`, the full PG15/16/17/18 `postgres-*-design-gate` matrix, `postgres-15/18-item-components`, the full M5 campaign matrix (cancellation, crash-restore, performance, resource-bounds, security, soak, upgrade, conformance) on both PG15 and PG18, `dependency-review`, `supply-chain`, `evidence-provenance` (Evidence workflow), CodeQL (`Analyze`), the AI pull request review, and the PR labeler.
+
+### Exact-head merge gate
+
+Per this repository's exact-head convention, the PR's actual merge gate is
+whatever its final head SHA is at merge time, not the producer commit
+specifically — see the PR's own Checks tab / description for that result
+rather than a SHA hardcoded in this file, since any further edit to this
+file necessarily advances the head again.
 
 ## Production behavior
 
