@@ -59,6 +59,8 @@ pub mod filter;
 pub mod fixed_width;
 pub mod json_array;
 pub mod jsonl;
+pub mod multi_resource;
+pub mod object_store;
 pub mod peek;
 #[cfg(feature = "postgres")]
 pub mod postgres_batch;
@@ -93,6 +95,19 @@ pub use json_array::{
 pub use jsonl::{
     JsonLinesFormat, JsonLinesReader, JsonLinesReaderStream, JsonLinesTerminator, JsonLinesWriter,
     JsonLinesWriterStream, jsonl_file_reader, jsonl_reader, jsonl_writer,
+};
+pub use multi_resource::{
+    BatchCountRollover, MultiResourceConfigError, MultiResourceOpenError, MultiResourceReader,
+    MultiResourceReaderOpener, MultiResourceReaderStream, MultiResourceWriter,
+    MultiResourceWriterOpener, MultiResourceWriterStream, MultiResourceWriterTriple, NoRollover,
+    ResourceIdentity, ResourceSet, ResourceSetRevision, RolloverPolicy, WriterConfigError,
+    multi_resource_reader, multi_resource_writer,
+};
+pub use object_store::{
+    InMemoryObjectStore, ObjectIdentity, ObjectItemReader, ObjectItemReaderStream,
+    ObjectItemWriter, ObjectItemWriterStream, ObjectListContinuation, ObjectListPage,
+    ObjectMetadata, ObjectStoreCapability, ObjectStoreConfigError, ObjectStoreError,
+    ObjectStoreReaderOpener, ObjectStoreWriterOpener, ObjectVersionToken,
 };
 pub use peek::{PeekOutcome, PeekReader};
 #[cfg(feature = "postgres")]

@@ -401,6 +401,12 @@ jobs:
           --test postgres_item_components_restart
           -- --nocapture --test-threads=1
 
+      - name: Run PostgreSQL multi-resource restart evidence (#150)
+        run: >-
+          cargo test -p oxide-batch-test --features postgres
+          --test postgres_multi_resource_restart
+          -- --nocapture --test-threads=1
+
       - name: Run PostgreSQL Gate G restart harness (#172)
         run: >-
           cargo test -p oxide-batch-test --features postgres

@@ -867,9 +867,9 @@
     },
     {
       "resource": "application readers, writers, and item buffers",
-      "symbols": [],
-      "reason": "Explicitly outside the M0-M4 framework boundary. The capacity budget already states that application readers, writers, and item buffers are budgeted by the workload, and the framework declares no ceiling for them, so the campaign has nothing to prove and does not pretend to.",
-      "covered_by": null
+      "symbols": ["MAX_RESOURCE_IDENTITY_BYTES", "MAX_OBJECT_KEY_BYTES"],
+      "reason": "Explicitly outside the M0-M4 framework boundary. The capacity budget already states that application readers, writers, and item buffers are budgeted by the workload, and the framework declares no ceiling for them, so the campaign has nothing to prove and does not pretend to. `MAX_RESOURCE_IDENTITY_BYTES` (`item_components::multi_resource::ResourceIdentity`) and `MAX_OBJECT_KEY_BYTES` (`item_components::object_store::ObjectIdentity`), added in #150, are validation ceilings on caller-supplied item-component construction inputs, not a framework-held resource the capacity budget names.",
+      "covered_by": "crates/oxide-batch/src/item_components/multi_resource.rs::tests::resource_identity_rejects_one_byte_past_its_ceiling, crates/oxide-batch/src/item_components/object_store.rs::tests::object_identity_rejects_one_byte_past_its_ceiling"
     },
     {
       "resource": "distributed and remote execution resources",
