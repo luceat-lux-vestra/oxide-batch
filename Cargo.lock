@@ -811,6 +811,7 @@ dependencies = [
  "futures-executor",
  "oxide-batch",
  "serde_json",
+ "sqlx",
  "tokio",
 ]
 

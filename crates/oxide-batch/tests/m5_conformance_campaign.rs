@@ -63,12 +63,17 @@ use serde_json::Value;
 /// [#147](https://github.com/luceat-lux-vestra/oxide-batch/issues/147);
 /// `IO-STRUCTURED-001` did the same (for its M6 JSON/JSONL slice only; XML
 /// and Avro remain `Planned` for M13) in
-/// [#148](https://github.com/luceat-lux-vestra/oxide-batch/issues/148).
+/// [#148](https://github.com/luceat-lux-vestra/oxide-batch/issues/148);
+/// `IO-DB-001` did the same (for its M6 `PostgreSQL` cursor/paging/batch/
+/// same-resource-enlisted-writer slice only; upsert, stored-procedure,
+/// ORM/repository forms, other backends, and generic portability remain
+/// `Planned` for M8) in
+/// [#149](https://github.com/luceat-lux-vestra/oxide-batch/issues/149).
 const CLOSED_DISPOSITION: &[(&str, usize)] = &[
     ("Verified", 28),
-    ("Implemented", 10),
+    ("Implemented", 11),
     ("Partial", 13),
-    ("Planned", 30),
+    ("Planned", 29),
     ("Unknown", 2),
 ];
 
