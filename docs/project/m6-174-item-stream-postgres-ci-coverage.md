@@ -1,7 +1,7 @@
 # M6 `#144` Item-Stream/Component-State PostgreSQL CI Coverage Correction
 
 **Issue:** #174
-**PR:** TBD
+**PR:** #175
 
 This is a CI/evidence coverage correction, not a feature or a production
 defect fix. It does not change, strengthen, or reinterpret any semantic claim
@@ -158,11 +158,11 @@ fresh from its own job's `latest_attempt` — no scenario reads or purges any
 job name other than its own, and no scenario's assertions depend on another
 scenario or another binary having already run.
 
-All nine of `postgres-repository`'s pre-existing steps and both new steps
-were run locally, back to back, in the job's real step order, against one
-shared, freshly created PostgreSQL 18 database, with no cleanup between
-binaries — see "Local verification" below for the exact transcript. Nothing
-"passes only when run alone" was relied on as isolation evidence.
+All seven of `postgres-repository`'s pre-existing test/run steps and both
+new steps were run locally, back to back, in the job's real step order,
+against one shared, freshly created PostgreSQL 18 database, with no cleanup
+between binaries — see "Local verification" below for the exact transcript.
+Nothing "passes only when run alone" was relied on as isolation evidence.
 
 ## Shared-database isolation with `stream_crash_worker`
 
@@ -189,9 +189,9 @@ ledger promotion.
 
 Fresh PostgreSQL 18 (Homebrew, `postgresql@18`, port 5432), fresh database
 (`oxide_batch_174_scratch`), the `postgres-repository` job's real step order
-reproduced end to end — all nine pre-existing steps followed immediately by
-the two new steps — against one shared database, with no cleanup between
-binaries:
+reproduced end to end — all seven pre-existing test/run steps followed
+immediately by the two new steps — against one shared database, with no
+cleanup between binaries:
 
 ```
 cargo test -p oxide-batch --features postgres --test postgres_repository \
@@ -256,23 +256,22 @@ cargo test -p oxide-batch --features postgres --test postgres_retention_componen
 All 21 `test result:` lines report `0 failed`. Grepping the full local
 transcript for `skipped:` returns zero matches — neither new binary took its
 missing-environment skip path. This reproduces the job's real step order
-(twenty `cargo test` invocations across its eleven steps, the migration step
-plus the two new steps counted once each) against one shared, freshly
-created PostgreSQL 18 database, with no cleanup between binaries: no state
-leakage or ordering dependency was observed. PostgreSQL 15 is not installed
-locally (only `postgresql@18` via Homebrew); per this repository's PG15
-evidence convention, PG15 enforcement is proven by the PR's CI matrix run,
-not local reproduction — see "CI verification" below.
+(21 `cargo test` invocations across its nine steps — seven pre-existing test/
+run steps plus the two new ones) against one shared, freshly created
+PostgreSQL 18 database, with no cleanup between binaries: no state leakage
+or ordering dependency was observed. PostgreSQL 15 is not installed locally
+(only `postgresql@18` via Homebrew); per this repository's PG15 evidence
+convention, PG15 enforcement is proven by the PR's CI matrix run, not local
+reproduction — see "CI verification" below.
 
 ## CI verification
 
 ### Producer commit
 
-The workflow and documentation change was introduced in commit
-`be4b9e4814605275205def865330633358d3b4a5` (PR #175) and, as of this
-writing, is the PR's head. That commit's CI run is the evidence that the two
-new steps actually execute real PostgreSQL-backed tests rather than only
-existing in YAML:
+The workflow change was introduced in commit
+`be4b9e4814605275205def865330633358d3b4a5` (PR #175). That commit's CI run
+is the evidence that the two new steps actually execute real
+PostgreSQL-backed tests rather than only existing in YAML:
 
 - `postgres-15-repository`: PASS — [run log](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/32765830927/job/97554969885). The "Run PostgreSQL M6 #144 item-stream component-state crash/restart evidence" step group shows `test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out` for `postgres_item_stream_crash_recovery`, with all five named tests present and `ok`: `postgres_preserves_non_canonical_json_bytes_exactly`, `process_kill_after_commit_restores_new_stream_state`, `process_kill_before_commit_restores_previous_stream_state`, `restart_with_new_step_execution_id_inherits_committed_stream_state`, `stream_crash_worker`. The following "Run PostgreSQL M6 #144 retention component-state evidence" step group shows `test purge_deletes_component_state_before_the_step_execution_it_references ... ok` and `test result: ok. 1 passed; 0 failed`.
 - `postgres-18-repository`: PASS — [run log](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/32765830927/job/97554970001). Identical named-test results: `postgres_item_stream_crash_recovery` → 5 passed, 0 failed (same five names, all `ok`); `postgres_retention_component_state` → 1 passed, 0 failed.
