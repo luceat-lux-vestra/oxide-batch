@@ -53,8 +53,8 @@ cross-consumer closure is explicitly deferred to #146 (the first consumer).
 | `full_job_harness_launches_with_deterministic_clock_and_id` | `tests/gate_g_scenarios.rs::full_job_harness_launches_with_deterministic_clock_and_id` |
 | `single_step_and_scoped_component_harness_construct_fixture_context` | `tests/gate_g_scenarios.rs::single_step_and_scoped_component_harness_construct_fixture_context` |
 | `failure_panic_and_stop_injection_are_available_to_application_tests` | `tests/gate_g_scenarios.rs::failure_panic_and_stop_injection_are_available_to_application_tests` |
-| `restart_harness_resumes_from_the_last_committed_checkpoint` | `tests/restart_harness.rs::restart_harness_resumes_from_the_last_committed_checkpoint` (requires `OXIDEBATCH_POSTGRES_TEST_URL` and the `postgres` feature; verified against a local PostgreSQL 18 instance) |
-| `repository_fixture_cleans_up_isolated_metadata` | `tests/postgres_fixture.rs::repository_fixture_cleans_up_isolated_metadata` (same requirement; verified twice in a row for repeatability) |
+| `restart_harness_resumes_from_the_last_committed_checkpoint` | `tests/restart_harness.rs::restart_harness_resumes_from_the_last_committed_checkpoint` (requires `OXIDEBATCH_POSTGRES_TEST_URL` and the `postgres` feature; enforced in CI on release-blocking PostgreSQL 15 and 18 by the `postgres-item-components` matrix job, per #172) |
+| `repository_fixture_cleans_up_isolated_metadata` | `tests/postgres_fixture.rs::repository_fixture_cleans_up_isolated_metadata` (same requirement and CI enforcement, per #172) |
 | `package_dry_run_succeeds_for_oxide_batch_test` | `cargo xtask package`, per this repository's own convention that shelling out to `cargo` is `xtask`'s responsibility, not a `#[test]`'s |
 | Process-kill fixture mechanics | `tests/process_fixture.rs::process_fixture_kills_and_reports_sigkill` (real `SIGKILL`, verified via `ExitStatusExt::signal`) |
 | Application-facing usage (doctests) | `src/clock.rs`, `src/ids.rs`, `src/scope.rs`, `src/step.rs`, `src/job.rs`, `src/repository.rs` doctests, `cargo test --doc -p oxide-batch-test --all-features` |
@@ -77,8 +77,10 @@ cargo xtask package
 
 `tests/postgres_fixture.rs` and `tests/restart_harness.rs` require
 `OXIDEBATCH_POSTGRES_TEST_URL` set to an isolated migrated database and are
-skipped otherwise; `examples/restart.rs` requires the same variable and the
-`postgres` feature.
+skipped otherwise when run outside CI; in CI, the `postgres-item-components`
+PG15/PG18 matrix job sets this variable and runs both against a real
+PostgreSQL service container, per #172. `examples/restart.rs` requires the
+same variable and the `postgres` feature, and remains local-only.
 
 ## Ledger disposition
 

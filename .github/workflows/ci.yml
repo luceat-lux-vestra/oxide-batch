@@ -388,3 +388,15 @@ jobs:
           cargo test -p oxide-batch-test --features postgres
           --test postgres_item_components_restart
           -- --nocapture --test-threads=1
+
+      - name: Run PostgreSQL Gate G restart harness (#172)
+        run: >-
+          cargo test -p oxide-batch-test --features postgres
+          --test restart_harness
+          -- --nocapture --test-threads=1
+
+      - name: Run PostgreSQL Gate G repository fixture cleanup (#172)
+        run: >-
+          cargo test -p oxide-batch-test --features postgres
+          --test postgres_fixture
+          -- --nocapture --test-threads=1
