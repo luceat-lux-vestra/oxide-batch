@@ -33,6 +33,14 @@ No new job, no new abstraction, no reusable workflow.
 
 None of the three added binaries creates or touches a shared PostgreSQL business-data table (`sqlx`-driven `CREATE TABLE`/`DROP TABLE`/`TRUNCATE`) — each uses `PostgresFixture` only for durable job/step/checkpoint state under a per-run nonce-suffixed job name, and (where applicable) an in-process file/document fixture for business data. Locally, all three were run back-to-back with the job's other six steps against one shared, freshly created database (mirroring one live service container across a whole job run), in the job's step order, with no cleanup between binaries: all pass, order-independent, no state leakage.
 
+## CI verification (exact head)
+
+PR #171, head SHA `ff3a3da4cf75d370efd07f18fb05fac43be6a8f5` (no commits followed this verification pass):
+
+- `postgres-15-item-components`: PASS — [run log](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/32695332457/job/97336248066) shows `postgres_flat_file_restart` (4 passed), `postgres_json_restart` (6 passed), and `postgres_item_components_restart` (1 passed) each actually executing, in that order, after the pre-existing steps.
+- `postgres-18-item-components`: PASS — [run log](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/32695332457/job/97336248079), same three binaries, same counts, all passed.
+- All other required checks (quality, msrv, packaging, dependency-review, supply-chain, evidence-provenance, CodeQL, and the full M5 campaign matrix) passed at this same head SHA.
+
 ## Local verification
 
 Fresh PostgreSQL 18 (Homebrew), fresh database, migrations applied via the same `migration_is_idempotent_when_migrator_fixture_is_available` step the job already runs:
