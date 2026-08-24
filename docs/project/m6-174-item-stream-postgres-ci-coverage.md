@@ -131,7 +131,7 @@ Every scenario across both binaries uses a distinct, hardcoded job name —
 `m6_retention_component_state`, `m6_stream_kill_before_commit`,
 `m6_stream_kill_after_commit`, `m6_stream_restart_inherits_state`,
 `m6_stream_non_canonical_bytes` — none of which collides with any job name
-used by `postgres-repository`'s ten pre-existing steps (its process-kill
+used by `postgres-repository`'s pre-existing test/run steps (its process-kill
 matrix alone uses `postgres_durable_restart`, `postgres_chunk_conflict`,
 `postgres_writer_failure`, `postgres_explicit_recovery`,
 `postgres_chunk_disconnect`, `postgres_fault_*`, `postgres_m3_flow_*`,
