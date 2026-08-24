@@ -1,7 +1,7 @@
 # M6 Gate G Test-Kit PostgreSQL CI Coverage Correction
 
 **Issue:** #172
-**PR:** TBD
+**PR:** #173
 
 This is a CI/evidence coverage correction, not a feature or a production defect fix. It does not change, strengthen, or reinterpret any semantic claim made by #145's Gate G test-kit evidence.
 
@@ -20,9 +20,9 @@ This gap, and its scope carve-out from #170, were identified in #170's own corre
 
 Both binaries belong to the `oxide-batch-test` crate, gated behind its `postgres` feature, and self-migrate via `PostgresFixture::migrate` on each `#[tokio::test]` — the same pattern already used by every other `oxide-batch-test` postgres-gated test binary (`postgres_flat_file_restart`, `postgres_json_restart`, `postgres_item_components_restart`, `postgres_item_components_db_restart`).
 
-The `postgres-repository` PG15/18 matrix job never runs `-p oxide-batch-test` at all — it exclusively drives `-p oxide-batch`'s own `postgres_repository`/`postgres_flow`/crash-recovery test binaries. It is not a viable owner for an `oxide-batch-test`-crate binary without inventing new wiring for a crate that job has never touched.
+`postgres-repository`'s PG15/18 matrix, PostgreSQL service container, and `OXIDEBATCH_POSTGRES_TEST_URL`/`_ADMIN_TEST_URL`/`_MIGRATOR_TEST_URL` env vars are technically sufficient to run these two binaries — nothing about that job makes it incapable of it. But that job has never run `-p oxide-batch-test` at all; it exclusively drives `-p oxide-batch`'s own `postgres_repository`/`postgres_flow`/crash-recovery test binaries. Adding these two there would split `oxide-batch-test`'s real-PostgreSQL evidence across two jobs for no functional reason.
 
-`postgres-item-components` is the job that already owns every real-PostgreSQL `oxide-batch-test` binary, including the three added by #170's own fix for this exact class of gap. Its PG15/18 matrix, service container, env vars (`OXIDEBATCH_POSTGRES_TEST_URL`/`_ADMIN_TEST_URL`/`_MIGRATOR_TEST_URL`), and migration step are reused unchanged. No new PostgreSQL job, service container, or reusable workflow was created.
+`postgres-item-components` is the job that already owns every real-PostgreSQL `oxide-batch-test` binary, including the three added by #170's own fix for this exact class of gap. Reusing it — rather than `postgres-repository` — keeps all of `oxide-batch-test`'s PostgreSQL evidence under one job and matches the precedent #170 itself set when it added the sibling `oxide-batch-test` restart binaries here. Its PG15/18 matrix, service container, env vars, and migration step are reused unchanged. No new PostgreSQL job, service container, or reusable workflow was created.
 
 ## Fix
 
@@ -58,7 +58,7 @@ Two new steps were added to the existing `postgres-item-components` job in `.git
 - `MIN_PURGE_AGE` is satisfied deterministically via the fixture's own `ManualClock::advance(Duration::from_mins(61))`, not a real wall-clock wait, so the test is not flaky under CI scheduling variance.
 - The assertions (`job_executions() >= 1`, `job_instances() >= 1`) prove the purge actually removed this job's own durable rows, not merely that the call returned `Ok`.
 
-Both binaries were run locally, back-to-back with the rest of the `postgres-item-components` job's existing seven steps, against one shared, freshly created PostgreSQL 18 database mirroring one live service container across a whole job run, in the job's actual step order, with no cleanup between binaries. See "Local verification" below for exact commands and results.
+Both binaries were run locally immediately after the `postgres-item-components` job's nine pre-existing steps, in the job's actual step order, against one shared, freshly created PostgreSQL 18 database mirroring one live service container across a whole job run, with no cleanup between binaries. See "Local verification" below for the exact command transcript and results.
 
 ## Repository-wide false-green audit
 
@@ -69,7 +69,7 @@ All `oxide-batch`-crate and `oxide-batch-test`-crate postgres-gated binaries hav
 - `postgres_retention_component_state.rs` (M6 `#144`; not referenced by any workflow or `campaign-scope.json`)
 - `postgres_item_stream_crash_recovery.rs` (M6 `#144`; documented in `docs/project/m6-item-stream-evidence.md` as "verified" only via local reproduction commands, with the same skip-on-missing-env pattern, and likewise not referenced by any workflow or `campaign-scope.json`)
 
-These are the same *kind* of gap as #172 (a postgres-gated binary with no real-PostgreSQL CI owner), but a different evidence area — `#144`'s item-stream component-state evidence, not `#145`'s Gate G test-kit boundary — and neither belongs to a job this PR already touches. Per this issue's scope gate, they are not fixed here. **Recommendation: file a separate corrective-closure issue for these two**, following the same pattern as #170/#172.
+These are the same *kind* of gap as #172 (a postgres-gated binary with no real-PostgreSQL CI owner), but a different evidence area — `#144`'s item-stream component-state evidence, not `#145`'s Gate G test-kit boundary — and neither belongs to a job this PR already touches. Per this issue's scope gate, they are not fixed here. **Tracked separately as #174** (`fix(m6): enforce #144 PostgreSQL component-state fixtures in CI`), following the same pattern as #170/#172; #174 owns both binaries above and remains out of scope for this PR.
 
 ## Local verification
 
@@ -106,7 +106,7 @@ cargo test -p oxide-batch-test --features postgres --test postgres_fixture -- --
 # 1 passed; 0 failed
 ```
 
-All eleven binaries passed, in the `postgres-item-components` job's own step order, against one shared, freshly created `oxide_batch_172_scratch` PostgreSQL 18 database, with no cleanup between binaries and no state leakage.
+The complete `postgres-item-components` test sequence was reproduced locally, in the job's real step order, against one shared, freshly created `oxide_batch_172_scratch` PostgreSQL 18 database: the job's nine pre-existing steps (ten `cargo test` invocations, one per distinct test binary — the "cursor and keyset paging" step alone issues two) followed immediately by the two new `restart_harness` and `postgres_fixture` steps. All twelve `cargo test` invocations above are the exact commands run, in that exact order, with no cleanup between them; every one passed with no state leakage.
 
 ## CI verification
 
