@@ -1,7 +1,7 @@
 # M6 PostgreSQL Restart Fixture CI Coverage Correction
 
 **Issue:** #170
-**PR:** (this branch)
+**PR:** #171
 
 This is a CI/evidence coverage correction, not a feature or a production defect fix. It does not change, strengthen, or reinterpret any semantic claim made by #147, #148, or #149's evidence documents.
 
@@ -17,11 +17,11 @@ The sibling binary `postgres_item_components_db_restart.rs`, from the same crate
 
 ### Also found, out of scope here
 
-`crates/oxide-batch-test/tests/postgres_fixture.rs` and `crates/oxide-batch-test/tests/restart_harness.rs` (both from #162, pre-M6 test-kit harness establishment) have the identical execution gap. They are not M6 item-component evidence, so fixing them is left to a separate issue rather than folded in here.
+`crates/oxide-batch-test/tests/postgres_fixture.rs` and `crates/oxide-batch-test/tests/restart_harness.rs` (both added by #162) have the identical execution gap. These are not M6 item-component evidence: they are #145's M6 Gate G test-kit boundary evidence — specifically the named Gate G scenarios `repository_fixture_cleans_up_isolated_metadata` and `restart_harness_resumes_from_the_last_committed_checkpoint` (`docs/project/m6-design-gate-evidence.md`, "Gate G test kit (#145)"). `repository_fixture_cleans_up_isolated_metadata` is also the sole evidence citation for the `TEST-REPO-001` conformance-matrix row (`Implemented`, M6/M8). `docs/project/m6-test-kit-evidence.md` already discloses honestly that both were only verified locally and are skipped in CI; this is a real, already-disclosed gap, not a doc that overclaimed. Tracked separately as #172, out of scope for this PR since it belongs to Gate G's test-kit evidence, not M6 item-component evidence.
 
 ## Fix
 
-Four new steps were added to the existing `postgres-item-components` job in `.github/workflows/ci.yml`, immediately after the existing `postgres_item_components_db_restart` step, reusing that job's PG15/PG18 matrix, service container, env vars, and migration step verbatim:
+Three new steps were added to the existing `postgres-item-components` job in `.github/workflows/ci.yml`, immediately after the existing `postgres_item_components_db_restart` step, reusing that job's PG15/PG18 matrix, service container, env vars, and migration step verbatim:
 
 - `postgres_flat_file_restart`
 - `postgres_json_restart`
@@ -33,13 +33,21 @@ No new job, no new abstraction, no reusable workflow.
 
 None of the three added binaries creates or touches a shared PostgreSQL business-data table (`sqlx`-driven `CREATE TABLE`/`DROP TABLE`/`TRUNCATE`) — each uses `PostgresFixture` only for durable job/step/checkpoint state under a per-run nonce-suffixed job name, and (where applicable) an in-process file/document fixture for business data. Locally, all three were run back-to-back with the job's other six steps against one shared, freshly created database (mirroring one live service container across a whole job run), in the job's step order, with no cleanup between binaries: all pass, order-independent, no state leakage.
 
-## CI verification (exact head)
+## CI verification
 
-PR #171, head SHA `ff3a3da4cf75d370efd07f18fb05fac43be6a8f5` (no commits followed this verification pass):
+### Producer commit
+
+The workflow change itself — the three new steps in `.github/workflows/ci.yml` — was introduced in commit `ff3a3da4cf75d370efd07f18fb05fac43be6a8f5` and has not been touched since. That commit's CI run is the evidence that the new steps actually execute real PostgreSQL-backed tests rather than only existing in YAML:
 
 - `postgres-15-item-components`: PASS — [run log](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/32695332457/job/97336248066) shows `postgres_flat_file_restart` (4 passed), `postgres_json_restart` (6 passed), and `postgres_item_components_restart` (1 passed) each actually executing, in that order, after the pre-existing steps.
 - `postgres-18-item-components`: PASS — [run log](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/32695332457/job/97336248079), same three binaries, same counts, all passed.
-- All other required checks (quality, msrv, packaging, dependency-review, supply-chain, evidence-provenance, CodeQL, and the full M5 campaign matrix) passed at this same head SHA.
+- All other required checks (quality, msrv, packaging, dependency-review, supply-chain, evidence-provenance, CodeQL, and the full M5 campaign matrix) passed at this same commit.
+
+This document and later documentation-only commits in this PR (this file, and #172's carve-out) necessarily land *after* `ff3a3da` — a doc commit that tried to claim "no commits followed" about itself would be self-contradictory the moment it was written. None of those later commits touches `.github/workflows/ci.yml`, `crates/oxide-batch-test/tests/`, or any other executable path, so they do not change what `ff3a3da`'s run demonstrated about the workflow's behavior.
+
+### Exact-head merge gate
+
+Per this repository's exact-head convention, the PR's actual merge gate is whatever its final head SHA is at merge time, not `ff3a3da` specifically — see the PR's own Checks tab / description for that result rather than a SHA hardcoded in this file, since every edit to this file necessarily advances the head again.
 
 ## Local verification
 
