@@ -51,12 +51,13 @@ covered below; the corresponding rows are marked as PR #161 evidence.
 | `close_failure_does_not_skip_remaining_closes` | `tests/item_stream.rs::close_failure_does_not_skip_remaining_closes` |
 | `close_failure_does_not_erase_primary_failure` | `tests/item_stream.rs::close_failure_does_not_erase_primary_failure` |
 | `close_failure_does_not_erase_committed_chunks` | `tests/item_stream.rs::close_failure_does_not_erase_committed_chunks` |
-| `committed_stream_state_survives_same_attempt_process_crash` | `tests/postgres_item_stream_crash_recovery.rs::process_kill_after_commit_restores_new_stream_state`. **Same-step-execution-id atomicity, not a restart**: the process is `SIGKILL`ed and the *same* `step_execution_id` reconnects and reads back its own committed row. This proves the UPSERT is atomic with the checkpoint commit; it does not prove inheritance across a genuinely new attempt (see the next row, added by the PR #161 corrective review). |
-| `committed_stream_state_resumes_on_genuine_restart` | `tests/postgres_item_stream_crash_recovery.rs::restart_with_new_step_execution_id_inherits_committed_stream_state`. Attempt A commits component state, is terminated, and attempt B — created through the normal framework restart path (`create_job_execution_with_definition` + `create_step_execution`, `restart_of_execution_id`-chained) with a genuinely different `job_execution_id`/`step_execution_id` — inherits A's last committed value and opens `ItemStream` with it; a rolled-back candidate from A is proven not visible to B. |
+| `committed_stream_state_survives_same_attempt_process_crash` | `tests/postgres_item_stream_crash_recovery.rs::process_kill_after_commit_restores_new_stream_state`. **Same-step-execution-id atomicity, not a restart**: the process is `SIGKILL`ed and the *same* `step_execution_id` reconnects and reads back its own committed row. This proves the UPSERT is atomic with the checkpoint commit; it does not prove inheritance across a genuinely new attempt (see the next row, added by the PR #161 corrective review). Enforced in CI on release-blocking PostgreSQL 15 and 18 by the `postgres-repository` matrix job, per #174. |
+| `committed_stream_state_resumes_on_genuine_restart` | `tests/postgres_item_stream_crash_recovery.rs::restart_with_new_step_execution_id_inherits_committed_stream_state`. Attempt A commits component state, is terminated, and attempt B — created through the normal framework restart path (`create_job_execution_with_definition` + `create_step_execution`, `restart_of_execution_id`-chained) with a genuinely different `job_execution_id`/`step_execution_id` — inherits A's last committed value and opens `ItemStream` with it; a rolled-back candidate from A is proven not visible to B. Enforced in CI on PostgreSQL 15 and 18, per #174. |
 | `rolled_back_stream_update_does_not_advance_state` / `stream_update_failure_does_not_advance_checkpoint` | `tests/item_stream.rs::close_failure_does_not_erase_primary_failure` and the existing `commit_with_component_state`/rollback path share the same one-transaction boundary already proven by `tests/postgres_repository.rs`'s rollback/disconnect scenarios; an update failure fails the candidate chunk before any commit is attempted (`update_streams` in `chunk_runtime.rs`) |
-| `process_kill_before_commit_restores_previous_stream_state` | `tests/postgres_item_stream_crash_recovery.rs::process_kill_before_commit_restores_previous_stream_state` (real `SIGKILL`, parked inside `PostgresChunkStateProvider::state_for_commit`, before any durable write) |
-| `process_kill_after_commit_restores_new_stream_state` | `tests/postgres_item_stream_crash_recovery.rs::process_kill_after_commit_restores_new_stream_state` (real `SIGKILL` during chunk 2's commit; chunk 1's component state is already durable and correctly reconstructed within the same step execution) |
-| `postgres_preserves_non_canonical_json_bytes_exactly` | `tests/postgres_item_stream_crash_recovery.rs::postgres_preserves_non_canonical_json_bytes_exactly`: a codec emitting non-canonically-formatted (reversed key order, interior whitespace) but valid JSON round-trips through a real commit/reload byte-for-byte, and a direct mutation of the persisted `bytea` is caught as a checksum failure on reload. |
+| `process_kill_before_commit_restores_previous_stream_state` | `tests/postgres_item_stream_crash_recovery.rs::process_kill_before_commit_restores_previous_stream_state` (real `SIGKILL`, parked inside `PostgresChunkStateProvider::state_for_commit`, before any durable write). Enforced in CI on PostgreSQL 15 and 18, per #174. |
+| `process_kill_after_commit_restores_new_stream_state` | `tests/postgres_item_stream_crash_recovery.rs::process_kill_after_commit_restores_new_stream_state` (real `SIGKILL` during chunk 2's commit; chunk 1's component state is already durable and correctly reconstructed within the same step execution). Enforced in CI on PostgreSQL 15 and 18, per #174. |
+| `postgres_preserves_non_canonical_json_bytes_exactly` | `tests/postgres_item_stream_crash_recovery.rs::postgres_preserves_non_canonical_json_bytes_exactly`: a codec emitting non-canonically-formatted (reversed key order, interior whitespace) but valid JSON round-trips through a real commit/reload byte-for-byte, and a direct mutation of the persisted `bytea` is caught as a checksum failure on reload. Enforced in CI on PostgreSQL 15 and 18, per #174. |
+| `purge_deletes_component_state_before_the_step_execution_it_references` | `tests/postgres_retention_component_state.rs::purge_deletes_component_state_before_the_step_execution_it_references`: proves the M5 retention purge path deletes committed `ob_component_state` rows before the step execution they reference, rather than failing closed on the `ON DELETE RESTRICT` foreign key migration `0005` added. Enforced in CI on PostgreSQL 15 and 18 by the `postgres-repository` matrix job, per #174. |
 | `runtime_stream_missing_from_manifest_is_rejected` | `tests/chunk_runtime.rs::stream_contract::runtime_stream_missing_from_manifest_is_rejected` |
 | `manifest_stream_missing_from_runtime_is_rejected` | `tests/chunk_runtime.rs::stream_contract::manifest_stream_missing_from_runtime_is_rejected` |
 | `duplicate_runtime_stream_namespace_is_rejected` | `tests/chunk_runtime.rs::stream_contract::duplicate_runtime_stream_namespace_is_rejected` |
@@ -103,12 +104,15 @@ cargo test --doc --workspace --all-features
 cargo check -p oxide-batch --no-default-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
 cargo test -p oxide-batch --features postgres --test postgres_item_stream_crash_recovery -- --test-threads=1
+cargo test -p oxide-batch --features postgres --test postgres_retention_component_state -- --test-threads=1
 ```
 
-The `postgres_item_stream_crash_recovery` target requires
-`OXIDEBATCH_POSTGRES_TEST_URL` and `OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL` set
-to an isolated migrated database (release-blocking PostgreSQL 15 and 18 per
-the [support matrix](../release/support-matrix.md)) and is skipped otherwise.
+`postgres_item_stream_crash_recovery` and `postgres_retention_component_state`
+require `OXIDEBATCH_POSTGRES_TEST_URL` and
+`OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL` set to an isolated migrated database
+and are skipped otherwise when run outside CI; in CI, the
+`postgres-repository` PG15/PG18 matrix job sets these variables and runs both
+against a real PostgreSQL service container, per #174.
 
 ## Ledger disposition
 
