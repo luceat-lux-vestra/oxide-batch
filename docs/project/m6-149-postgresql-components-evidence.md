@@ -242,18 +242,21 @@ page boundary). Unlike `FETCH`'s literal count, `LIMIT` accepts an ordinary
 bound parameter.
 
 `postgres_item_components_paging.rs::restart_resumes_from_the_last_committed_key_without_skip_or_duplicate`
-additionally inserts a row (`id = -1`) that sorts *before* the committed
-key (`9`), between the crash and the restart, and asserts it never appears
-after restarting. This specifically targets what a forbidden `OFFSET`-based
-restart would get wrong: resuming via `OFFSET 9` counts rows positionally,
-so inserting one new row ahead of the previously-delivered rows shifts
-every later row's position by one, causing that restart to skip or
-duplicate a row depending on direction. This reader's actual restart
-predicate, `WHERE id > 9`, is structurally unaffected by an insertion at
-`id = -1` -- it excludes that row on ordering-key value alone, regardless of
-how many rows exist ahead of the restored position, proving the
-`OFFSET`-style failure mode is impossible here by construction, not merely
-untested.
+additionally inserts a row (`id = -1`) that sorts *before* the last
+committed key (`("k", 8)` -- nine reads deliver `id` `0..=8`), between the
+crash and the restart, and asserts it never appears after restarting. This
+specifically targets what a forbidden `OFFSET`-based restart would get
+wrong in this concrete fixture: resuming via `OFFSET 9` counts rows
+positionally, and inserting `id = -1` ahead of every existing row shifts
+the whole ordering by one, so `OFFSET 9` now lands on what is `id = 8` --
+the row already committed as the ninth delivery of the first attempt --
+producing an exact duplicate rather than resuming at `id = 9`. This
+reader's actual restart predicate, the composite-keyset comparison
+`(sort_key, id) > ('k', 8)`, is structurally unaffected by an insertion at
+`id = -1`: it excludes that row (and re-includes nothing already delivered)
+on ordering-key value alone, regardless of how many rows exist ahead of the
+restored position, proving the `OFFSET`-style duplicate this fixture
+targets is impossible here by construction, not merely untested.
 `duplicate_primary_sort_key_is_resolved_by_the_unique_tiebreaker` proves the
 composite `(sort_key, id)` order is strict even when every row shares the
 same primary sort key.
