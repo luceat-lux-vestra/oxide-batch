@@ -154,12 +154,16 @@ hard failure (exit code 1), not an advisory. The fix:
   across pages, since reconnecting per page would be wasted work its
   cursor sibling doesn't pay.
 - `map_row` now takes `&PostgresRow<'_>`, a new `pub` wrapper
-  (`item_components::postgres_keyset::PostgresRow`) whose only public
-  methods are `text(column)`/`i64(column)`, deliberately matching
-  `KeysetColumnKind`'s own narrow vocabulary. Its private field is a
-  `&sqlx::postgres::PgRow`, never disclosed. `cargo xtask surface` passes
-  clean after this change (`facade surface discloses nothing further`) --
-  confirmed by re-running it, not merely inferred from the type signatures.
+  (`item_components::postgres_keyset::PostgresRow`) whose public methods
+  read scalar column values by name -- at the time of this fix, only
+  `text(column)`/`i64(column)`, deliberately matching `KeysetColumnKind`'s
+  own narrow vocabulary; later widened to also cover `i32`/`bool`/`f64` (see
+  "Row value coverage and the keyset/general-row-mapping distinction"
+  below for the current, full surface). Its private field is a
+  `&sqlx::postgres::PgRow`, never disclosed, at either point. `cargo xtask
+  surface` passes clean after this change (`facade surface discloses
+  nothing further`) -- confirmed by re-running it, not merely inferred from
+  the type signatures.
 
 This is a real instance of the class of gap `docs/api/design-guidelines.md`
 itself exists to catch mechanically rather than rely on every contributor
@@ -238,10 +242,18 @@ page boundary). Unlike `FETCH`'s literal count, `LIMIT` accepts an ordinary
 bound parameter.
 
 `postgres_item_components_paging.rs::restart_resumes_from_the_last_committed_key_without_skip_or_duplicate`
-additionally inserts a row into the gap between the committed key and the
-end of the result set before restarting, and asserts it never appears --
-proving positional (`OFFSET`-style) skip/duplicate is structurally
-impossible here, not merely untested.
+additionally inserts a row (`id = -1`) that sorts *before* the committed
+key (`9`), between the crash and the restart, and asserts it never appears
+after restarting. This specifically targets what a forbidden `OFFSET`-based
+restart would get wrong: resuming via `OFFSET 9` counts rows positionally,
+so inserting one new row ahead of the previously-delivered rows shifts
+every later row's position by one, causing that restart to skip or
+duplicate a row depending on direction. This reader's actual restart
+predicate, `WHERE id > 9`, is structurally unaffected by an insertion at
+`id = -1` -- it excludes that row on ordering-key value alone, regardless of
+how many rows exist ahead of the restored position, proving the
+`OFFSET`-style failure mode is impossible here by construction, not merely
+untested.
 `duplicate_primary_sort_key_is_resolved_by_the_unique_tiebreaker` proves the
 composite `(sort_key, id)` order is strict even when every row shares the
 same primary sort key.
@@ -332,43 +344,51 @@ after that row first becomes visible to a read.
 **This is where the first version of this record overstated a shared
 guarantee that strict re-review caught: it is not true that "inserts after
 the current position are delivered by a later page/fetch or after a
-restart" for both readers, and it is not true that a delete of a
-not-yet-delivered row is "always" absent from the rest of the same attempt
-for both readers either.** A `PostgreSQL` server-side cursor and an
+restart" for both readers.** A `PostgreSQL` server-side cursor and an
 independent paged `SELECT` are not the same kind of read, and the two
-readers diverge sharply on what an attempt already under way can observe
-from a *different*, concurrently committing transaction. This was verified
-directly against a real server, not asserted from `PostgreSQL` documentation
-alone: `DECLARE` a cursor, `FETCH` part of it, commit an insert and a delete
-of a not-yet-delivered row from a *second* session, then `FETCH` the rest
-from the *same*, already-open cursor.
+readers diverge on what an attempt already under way can observe from a
+*different*, concurrently committing transaction's insert of a
+not-yet-delivered row. Delete visibility follows the identical mechanism
+(the same fixed-snapshot-vs-fresh-statement distinction governs both), and
+was manually checked against a real server while writing this correction
+(`DECLARE` a cursor, `FETCH` part of it, commit a delete of a
+not-yet-delivered row from a *second* session, then `FETCH` the rest from
+the *same*, already-open cursor) -- but only the insert side is pinned by an
+executable regression test in this repository. The delete claims below are
+stated as the documented consequence of `PostgreSQL`'s snapshot/`READ
+COMMITTED` semantics, not as separately regression-tested; adding that
+coverage is a candidate follow-up, not folded into this correction to keep
+its scope to documentation and the two insert-visibility tests already
+written.
 
 - **Paging: every page is a fresh, independently visible statement.**
   `PostgresPagingReader` holds no transaction; under `PostgreSQL`'s default
   `READ COMMITTED` isolation, each page's statement sees every row committed
   before it starts. An insert at a key past the current position, committed
-  between two pages of the *same* attempt, **is** delivered by a later page;
-  a delete of a not-yet-delivered row is simply absent from the next page.
-  `postgres_item_components_paging.rs::insert_between_pages_is_visible_to_a_later_page_in_the_same_attempt`
-  proves the insert side directly, without needing a restart.
+  between two pages of the *same* attempt, **is** delivered by a later page
+  -- proven by
+  `postgres_item_components_paging.rs::insert_between_pages_is_visible_to_a_later_page_in_the_same_attempt`,
+  without needing a restart. By the same `READ COMMITTED` reasoning (not
+  separately regression-tested), a delete of a not-yet-delivered row should
+  be simply absent from the next page.
 - **Cursor: one held transaction, one fixed snapshot, for the whole
   attempt.** `PostgresCursorReader` keeps one `DECLARE`d cursor and its
   transaction open for the entire attempt; `PostgreSQL`'s cursors behave as
   the SQL standard's `INSENSITIVE` cursors do, returning rows under the
   snapshot fixed when the portal began executing regardless of what other
-  transactions commit afterward. Confirmed directly: an insert at a key past
-  the current position, committed by another transaction *after* this
-  cursor's snapshot was taken, is **not** delivered by a later `FETCH` on
-  the same cursor -- only a restart (a fresh `DECLARE`, a new snapshot)
-  picks it up. A delete of a not-yet-delivered row, committed the same way,
-  does **not** remove it from a later `FETCH` on the same cursor either --
-  the row is still delivered, exactly as `PostgreSQL`'s MVCC snapshot
-  isolation guarantees for any statement that began before the delete
-  committed; a restart's fresh snapshot omits it.
-  `postgres_item_components_cursor.rs::insert_after_declare_is_invisible_to_this_attempt_until_restart`
-  proves the insert side directly: the five pre-existing rows are delivered
-  by the same attempt with the concurrently inserted row absent, and only a
-  restart's fresh reader delivers it.
+  transactions commit afterward. An insert at a key past the current
+  position, committed by another transaction *after* this cursor's snapshot
+  was taken, is **not** delivered by a later `FETCH` on the same cursor --
+  only a restart (a fresh `DECLARE`, a new snapshot) picks it up -- proven by
+  `postgres_item_components_cursor.rs::insert_after_declare_is_invisible_to_this_attempt_until_restart`:
+  the five pre-existing rows are delivered by the same attempt with the
+  concurrently inserted row absent, and only a restart's fresh reader
+  delivers it. By the same snapshot reasoning (manually checked, not
+  regression-tested), a delete of a not-yet-delivered row committed the same
+  way should **not** remove it from a later `FETCH` on the same cursor
+  either -- `PostgreSQL`'s MVCC snapshot isolation keeps a row visible to any
+  statement that began before its deleting transaction committed; a
+  restart's fresh snapshot should omit it.
 
 Neither divergence can cause a skip, a duplicate, or a lost commit -- the
 durable checkpoint is always the last row a reader's caller actually
@@ -573,10 +593,13 @@ evidence.
   concurrent insert or delete of a not-yet-delivered row (see "Consistency
   under concurrent source mutation" above): the cursor's held snapshot means
   such a change is invisible to the same attempt until a restart, while
-  paging's independent per-page statements see it immediately. This is a
-  documented, empirically-verified difference in *promptness*, not a
-  skip/duplicate/correctness gap -- the durable checkpoint is unaffected
-  either way.
+  paging's independent per-page statements see it immediately. The insert
+  side is pinned by a dedicated regression test for each reader; the delete
+  side follows the identical `PostgreSQL` snapshot/`READ COMMITTED`
+  mechanism and was manually checked but is not separately regression-tested
+  (a candidate follow-up). Either way this is a difference in *promptness*,
+  not a skip/duplicate/correctness gap -- the durable checkpoint is
+  unaffected.
 - `PostgresRow` (the row-mapping type `map_row` receives) covers `text`,
   the integer family (`i32`/`i64`), `boolean`, and floating-point
   (`f64`/`f32`) columns. It does **not** cover `timestamp[tz]`, `uuid`,
