@@ -370,3 +370,21 @@ jobs:
           cargo test -p oxide-batch-test --features postgres
           --test postgres_item_components_db_restart
           -- --nocapture --test-threads=1
+
+      - name: Run PostgreSQL flat-file component restart evidence (#170)
+        run: >-
+          cargo test -p oxide-batch-test --features postgres
+          --test postgres_flat_file_restart
+          -- --nocapture --test-threads=1
+
+      - name: Run PostgreSQL JSON/JSONL component restart evidence (#170)
+        run: >-
+          cargo test -p oxide-batch-test --features postgres
+          --test postgres_json_restart
+          -- --nocapture --test-threads=1
+
+      - name: Run PostgreSQL peek-decorated reader restart evidence (#170)
+        run: >-
+          cargo test -p oxide-batch-test --features postgres
+          --test postgres_item_components_restart
+          -- --nocapture --test-threads=1
