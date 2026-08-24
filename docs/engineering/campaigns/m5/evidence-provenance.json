@@ -118,9 +118,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "8c233d793f84a2b4da364d4a2e41d5634c8d8d8f",
+        "execution_commit": "7fb46b5bc8a759193368d07ebda109b508e1b63d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9327f3568bd171517a1616ccc901014fd25ba897",
+        "branch_head_sha": "d7bf71186c9f4b5314e3cafde607375a77cea11c",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -130,27 +130,27 @@
       "workflow_run": {
         "workflow": "M5 Soak",
         "workflow_file": ".github/workflows/m5-soak.yml",
-        "id": 32668961138,
+        "id": 32679321597,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-soak-campaign",
-        "id": 97266685581,
+        "id": 97293072172,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-15",
-        "id": 9500892236,
-        "digest": "sha256:65f87e58e5f696f62511bab993e4eb4b01ef0af88481a82066f016f26f20bad1",
-        "size_bytes": 89176
+        "id": 9503727087,
+        "digest": "sha256:967e5858a05103719f5bb6f79fb84bac62b4335b1a5c4e5171fc8110c63914c4",
+        "size_bytes": 89868
       },
-      "retained_report_git_blob": "67dec0db88ebd6e53d19b0d7508eec590b676167",
+      "retained_report_git_blob": "7869ba0a7708685cdc5232f14d4fbac4b8548476",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-24T08:00:02+09:00",
-        "run_id": 32668961138,
+        "verified_at": "2026-08-24T10:31:03+09:00",
+        "run_id": 32679321597,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -158,7 +158,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #169 (#149's strict-review follow-up: cursor/paging timeout-semantics tests, a genuine ambiguous-commit fixture, real process-kill crash/restart evidence, PostgresRow widening, the MultiRowValues parameter ceiling, and evidence-doc corrections) after fixing a CI-only test ordering bug in the new unknown-commit fixture (production and campaign code unchanged from the prior push); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+        "note": "Fresh retention for PR #169 (second strict-review round: cursor fetch_more() retry-state fix, KeysetColumn::i64 int4 decode fallback, cursor/paging concurrent-mutation contract split and empirically corrected, real FaultRuntime FETCH-level retry regression); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     },
     {
@@ -168,9 +168,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "8c233d793f84a2b4da364d4a2e41d5634c8d8d8f",
+        "execution_commit": "7fb46b5bc8a759193368d07ebda109b508e1b63d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9327f3568bd171517a1616ccc901014fd25ba897",
+        "branch_head_sha": "d7bf71186c9f4b5314e3cafde607375a77cea11c",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -180,27 +180,27 @@
       "workflow_run": {
         "workflow": "M5 Soak",
         "workflow_file": ".github/workflows/m5-soak.yml",
-        "id": 32668961138,
+        "id": 32679321597,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-soak-campaign",
-        "id": 97266685693,
+        "id": 97293072305,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-18",
-        "id": 9500892227,
-        "digest": "sha256:cc0f66481807c6e1d40e25d78fb3ef4c04d6c1b76f2806e78f251f935ecf2177",
-        "size_bytes": 88745
+        "id": 9503715401,
+        "digest": "sha256:0e6a41572692e24482bdf68218b905cfd368bf5ddd6bb43693d3fce504cdf536",
+        "size_bytes": 90590
       },
-      "retained_report_git_blob": "021e61dd782596040073f9dc157afde431cba33a",
+      "retained_report_git_blob": "eadded67de1a740ff3db9beef87602bf936e72a8",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-24T08:00:02+09:00",
-        "run_id": 32668961138,
+        "verified_at": "2026-08-24T10:31:03+09:00",
+        "run_id": 32679321597,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -208,7 +208,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #169 (#149's strict-review follow-up: cursor/paging timeout-semantics tests, a genuine ambiguous-commit fixture, real process-kill crash/restart evidence, PostgresRow widening, the MultiRowValues parameter ceiling, and evidence-doc corrections) after fixing a CI-only test ordering bug in the new unknown-commit fixture (production and campaign code unchanged from the prior push); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+        "note": "Fresh retention for PR #169 (second strict-review round: cursor fetch_more() retry-state fix, KeysetColumn::i64 int4 decode fallback, cursor/paging concurrent-mutation contract split and empirically corrected, real FaultRuntime FETCH-level retry regression); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     },
     {
@@ -218,9 +218,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "8c233d793f84a2b4da364d4a2e41d5634c8d8d8f",
+        "execution_commit": "7fb46b5bc8a759193368d07ebda109b508e1b63d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9327f3568bd171517a1616ccc901014fd25ba897",
+        "branch_head_sha": "d7bf71186c9f4b5314e3cafde607375a77cea11c",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -230,27 +230,27 @@
       "workflow_run": {
         "workflow": "M5 Cancellation",
         "workflow_file": ".github/workflows/m5-cancellation.yml",
-        "id": 32668961112,
+        "id": 32679321415,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-cancellation-campaign",
-        "id": 97266685512,
+        "id": 97293071790,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-15",
-        "id": 9500851308,
-        "digest": "sha256:84c65e28d5b0f7c808a393f1d41dff89c1fcf63d1687862e70d5dbe330f2b880",
-        "size_bytes": 5756
+        "id": 9503676094,
+        "digest": "sha256:6df9bdd88f77ee2348f0d244746d7e2d6765e843efe15bf9b780612a50ae46a5",
+        "size_bytes": 5747
       },
-      "retained_report_git_blob": "a5787794ad4cd3c39dc99396468b26b56b97c481",
+      "retained_report_git_blob": "d4e64dd29f0d6b23676ab99af95055bf5fca37c9",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-24T08:00:02+09:00",
-        "run_id": 32668961112,
+        "verified_at": "2026-08-24T10:31:03+09:00",
+        "run_id": 32679321415,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -258,7 +258,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #169 (#149's strict-review follow-up: cursor/paging timeout-semantics tests, a genuine ambiguous-commit fixture, real process-kill crash/restart evidence, PostgresRow widening, the MultiRowValues parameter ceiling, and evidence-doc corrections) after fixing a CI-only test ordering bug in the new unknown-commit fixture (production and campaign code unchanged from the prior push); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+        "note": "Fresh retention for PR #169 (second strict-review round: cursor fetch_more() retry-state fix, KeysetColumn::i64 int4 decode fallback, cursor/paging concurrent-mutation contract split and empirically corrected, real FaultRuntime FETCH-level retry regression); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     },
     {
@@ -268,9 +268,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "8c233d793f84a2b4da364d4a2e41d5634c8d8d8f",
+        "execution_commit": "7fb46b5bc8a759193368d07ebda109b508e1b63d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9327f3568bd171517a1616ccc901014fd25ba897",
+        "branch_head_sha": "d7bf71186c9f4b5314e3cafde607375a77cea11c",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -280,27 +280,27 @@
       "workflow_run": {
         "workflow": "M5 Cancellation",
         "workflow_file": ".github/workflows/m5-cancellation.yml",
-        "id": 32668961112,
+        "id": 32679321415,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-cancellation-campaign",
-        "id": 97266685598,
+        "id": 97293071805,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-18",
-        "id": 9500852775,
-        "digest": "sha256:a4d5fdda098ce28d43cfb96264ddac29577d5f69bb0bb5ed91ad4fdabceab4b9",
-        "size_bytes": 5754
+        "id": 9503676439,
+        "digest": "sha256:de0987442062ec4f76f306ac179e9c305ccdfd49d8d3f45b77e3913ca4f79992",
+        "size_bytes": 5746
       },
-      "retained_report_git_blob": "4b7566f1ff360ef3dfb8e1b0d996ce7200088e95",
+      "retained_report_git_blob": "210ee1cc61240ad8bc4c525390296c676751170a",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-24T08:00:02+09:00",
-        "run_id": 32668961112,
+        "verified_at": "2026-08-24T10:31:03+09:00",
+        "run_id": 32679321415,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -308,7 +308,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #169 (#149's strict-review follow-up: cursor/paging timeout-semantics tests, a genuine ambiguous-commit fixture, real process-kill crash/restart evidence, PostgresRow widening, the MultiRowValues parameter ceiling, and evidence-doc corrections) after fixing a CI-only test ordering bug in the new unknown-commit fixture (production and campaign code unchanged from the prior push); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+        "note": "Fresh retention for PR #169 (second strict-review round: cursor fetch_more() retry-state fix, KeysetColumn::i64 int4 decode fallback, cursor/paging concurrent-mutation contract split and empirically corrected, real FaultRuntime FETCH-level retry regression); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     },
     {
@@ -318,9 +318,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "8c233d793f84a2b4da364d4a2e41d5634c8d8d8f",
+        "execution_commit": "7fb46b5bc8a759193368d07ebda109b508e1b63d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9327f3568bd171517a1616ccc901014fd25ba897",
+        "branch_head_sha": "d7bf71186c9f4b5314e3cafde607375a77cea11c",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -330,27 +330,27 @@
       "workflow_run": {
         "workflow": "M5 Performance",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 32668961106,
+        "id": 32679321605,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-performance-campaign",
-        "id": 97266685466,
+        "id": 97293072093,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-15",
-        "id": 9500852845,
-        "digest": "sha256:71a9de177e568f3933fa909984f4ff9a581fcbabc0655ddc48a57af66e60df36",
-        "size_bytes": 6607
+        "id": 9503679130,
+        "digest": "sha256:fd125451ebe4671512a36a149ac3846139a10abb812bb9f0680f2e21a5c3923b",
+        "size_bytes": 6600
       },
-      "retained_report_git_blob": "6bb8939491e0003a55173e76f41dd13924a405d4",
+      "retained_report_git_blob": "0d3cdf0a40773ecf89f0fd630d9a56a86eac5c29",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-24T08:00:02+09:00",
-        "run_id": 32668961106,
+        "verified_at": "2026-08-24T10:31:03+09:00",
+        "run_id": 32679321605,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -358,7 +358,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #169 (#149's strict-review follow-up: cursor/paging timeout-semantics tests, a genuine ambiguous-commit fixture, real process-kill crash/restart evidence, PostgresRow widening, the MultiRowValues parameter ceiling, and evidence-doc corrections) after fixing a CI-only test ordering bug in the new unknown-commit fixture (production and campaign code unchanged from the prior push); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+        "note": "Fresh retention for PR #169 (second strict-review round: cursor fetch_more() retry-state fix, KeysetColumn::i64 int4 decode fallback, cursor/paging concurrent-mutation contract split and empirically corrected, real FaultRuntime FETCH-level retry regression); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     },
     {
@@ -368,9 +368,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "8c233d793f84a2b4da364d4a2e41d5634c8d8d8f",
+        "execution_commit": "7fb46b5bc8a759193368d07ebda109b508e1b63d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9327f3568bd171517a1616ccc901014fd25ba897",
+        "branch_head_sha": "d7bf71186c9f4b5314e3cafde607375a77cea11c",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -380,27 +380,27 @@
       "workflow_run": {
         "workflow": "M5 Performance",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 32668961106,
+        "id": 32679321605,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-performance-campaign",
-        "id": 97266685530,
+        "id": 97293072205,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-18",
-        "id": 9500851597,
-        "digest": "sha256:b8b630326311e4c39dfd769021ceffe9dfdbc4451c574c7e91daf15fae88a43e",
-        "size_bytes": 6605
+        "id": 9503676905,
+        "digest": "sha256:6c3a0e107551b622ff61a7764e62de6637bcf1f8fdc0d085a394e7d3278f17be",
+        "size_bytes": 6602
       },
-      "retained_report_git_blob": "7f79380520f67e227cb8bad7693e81fd9b8c4227",
+      "retained_report_git_blob": "cef2e614d97192895a9a2316226b278422cf83e2",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-24T08:00:02+09:00",
-        "run_id": 32668961106,
+        "verified_at": "2026-08-24T10:31:03+09:00",
+        "run_id": 32679321605,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -408,7 +408,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #169 (#149's strict-review follow-up: cursor/paging timeout-semantics tests, a genuine ambiguous-commit fixture, real process-kill crash/restart evidence, PostgresRow widening, the MultiRowValues parameter ceiling, and evidence-doc corrections) after fixing a CI-only test ordering bug in the new unknown-commit fixture (production and campaign code unchanged from the prior push); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+        "note": "Fresh retention for PR #169 (second strict-review round: cursor fetch_more() retry-state fix, KeysetColumn::i64 int4 decode fallback, cursor/paging concurrent-mutation contract split and empirically corrected, real FaultRuntime FETCH-level retry regression); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     },
     {
@@ -418,9 +418,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "8c233d793f84a2b4da364d4a2e41d5634c8d8d8f",
+        "execution_commit": "7fb46b5bc8a759193368d07ebda109b508e1b63d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9327f3568bd171517a1616ccc901014fd25ba897",
+        "branch_head_sha": "d7bf71186c9f4b5314e3cafde607375a77cea11c",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -430,27 +430,27 @@
       "workflow_run": {
         "workflow": "M5 Conformance",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 32668961131,
+        "id": 32679321448,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-conformance-campaign",
-        "id": 97266685468,
+        "id": 97293071660,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-15",
-        "id": 9500864170,
-        "digest": "sha256:41824ce33c93db79aa9506522ffa5e6d13c0addd4e4418e9aae8381967f6f299",
-        "size_bytes": 7131
+        "id": 9503692060,
+        "digest": "sha256:410e430e3695a3f3239e374599d36da82ad66c212ff780e24a9e055b18a834a5",
+        "size_bytes": 7132
       },
-      "retained_report_git_blob": "7b79e1ad6eaec944989e4337f66e17f7edfcb29d",
+      "retained_report_git_blob": "d1df29fa144dd28ccca22bef03691290f8b05452",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-24T08:00:02+09:00",
-        "run_id": 32668961131,
+        "verified_at": "2026-08-24T10:31:03+09:00",
+        "run_id": 32679321448,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -458,7 +458,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #169 (#149's strict-review follow-up: cursor/paging timeout-semantics tests, a genuine ambiguous-commit fixture, real process-kill crash/restart evidence, PostgresRow widening, the MultiRowValues parameter ceiling, and evidence-doc corrections) after fixing a CI-only test ordering bug in the new unknown-commit fixture (production and campaign code unchanged from the prior push); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+        "note": "Fresh retention for PR #169 (second strict-review round: cursor fetch_more() retry-state fix, KeysetColumn::i64 int4 decode fallback, cursor/paging concurrent-mutation contract split and empirically corrected, real FaultRuntime FETCH-level retry regression); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     },
     {
@@ -468,9 +468,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "8c233d793f84a2b4da364d4a2e41d5634c8d8d8f",
+        "execution_commit": "7fb46b5bc8a759193368d07ebda109b508e1b63d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9327f3568bd171517a1616ccc901014fd25ba897",
+        "branch_head_sha": "d7bf71186c9f4b5314e3cafde607375a77cea11c",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -480,27 +480,27 @@
       "workflow_run": {
         "workflow": "M5 Conformance",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 32668961131,
+        "id": 32679321448,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-conformance-campaign",
-        "id": 97266685571,
+        "id": 97293071831,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-18",
-        "id": 9500864293,
-        "digest": "sha256:52df8134c287f45bb9497b9795eb3f45e93c77474bcf3c29c0cfd06f5603b411",
-        "size_bytes": 7131
+        "id": 9503693381,
+        "digest": "sha256:3c5db46ec11420a25dacf86deb5622adc9e53d5f6a38af0ae0c3060bad86be26",
+        "size_bytes": 7132
       },
-      "retained_report_git_blob": "0e2b7ac681590c10e9b18e7720fe8148effa592d",
+      "retained_report_git_blob": "c2d3c88e47ededdcea1322850e0b92a7eb67353e",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-24T08:00:02+09:00",
-        "run_id": 32668961131,
+        "verified_at": "2026-08-24T10:31:03+09:00",
+        "run_id": 32679321448,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -508,7 +508,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #169 (#149's strict-review follow-up: cursor/paging timeout-semantics tests, a genuine ambiguous-commit fixture, real process-kill crash/restart evidence, PostgresRow widening, the MultiRowValues parameter ceiling, and evidence-doc corrections) after fixing a CI-only test ordering bug in the new unknown-commit fixture (production and campaign code unchanged from the prior push); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+        "note": "Fresh retention for PR #169 (second strict-review round: cursor fetch_more() retry-state fix, KeysetColumn::i64 int4 decode fallback, cursor/paging concurrent-mutation contract split and empirically corrected, real FaultRuntime FETCH-level retry regression); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     },
     {
@@ -518,9 +518,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "8c233d793f84a2b4da364d4a2e41d5634c8d8d8f",
+        "execution_commit": "7fb46b5bc8a759193368d07ebda109b508e1b63d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9327f3568bd171517a1616ccc901014fd25ba897",
+        "branch_head_sha": "d7bf71186c9f4b5314e3cafde607375a77cea11c",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -530,27 +530,27 @@
       "workflow_run": {
         "workflow": "M5 Crash and Restore",
         "workflow_file": ".github/workflows/m5-crash-restore.yml",
-        "id": 32668961104,
+        "id": 32679321434,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-crash-restore-campaign",
-        "id": 97266685641,
+        "id": 97293071686,
         "conclusion": "success"
       },
       "artifact": {
         "name": "crash-restore-campaign-postgres-15",
-        "id": 9500849322,
-        "digest": "sha256:560fe8c5a464428fe39e6cc7b4ee79a737faf86be6e0bb08b61b07cac3f8a688",
-        "size_bytes": 6695
+        "id": 9503676079,
+        "digest": "sha256:a96dc6742af5bdd31c5100a5204c2411215822ef2798deb659163855f7781def",
+        "size_bytes": 6684
       },
-      "retained_report_git_blob": "022a37ae0a08bef29281120d682195ca9f02133a",
+      "retained_report_git_blob": "57afe4a4550ed39c898a7fcb31b1556218273aa6",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-24T08:00:02+09:00",
-        "run_id": 32668961104,
+        "verified_at": "2026-08-24T10:31:03+09:00",
+        "run_id": 32679321434,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -558,7 +558,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #169 (#149's strict-review follow-up: cursor/paging timeout-semantics tests, a genuine ambiguous-commit fixture, real process-kill crash/restart evidence, PostgresRow widening, the MultiRowValues parameter ceiling, and evidence-doc corrections) after fixing a CI-only test ordering bug in the new unknown-commit fixture (production and campaign code unchanged from the prior push); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+        "note": "Fresh retention for PR #169 (second strict-review round: cursor fetch_more() retry-state fix, KeysetColumn::i64 int4 decode fallback, cursor/paging concurrent-mutation contract split and empirically corrected, real FaultRuntime FETCH-level retry regression); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     },
     {
@@ -568,9 +568,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "8c233d793f84a2b4da364d4a2e41d5634c8d8d8f",
+        "execution_commit": "7fb46b5bc8a759193368d07ebda109b508e1b63d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9327f3568bd171517a1616ccc901014fd25ba897",
+        "branch_head_sha": "d7bf71186c9f4b5314e3cafde607375a77cea11c",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -580,27 +580,27 @@
       "workflow_run": {
         "workflow": "M5 Crash and Restore",
         "workflow_file": ".github/workflows/m5-crash-restore.yml",
-        "id": 32668961104,
+        "id": 32679321434,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-crash-restore-campaign",
-        "id": 97266685492,
+        "id": 97293071814,
         "conclusion": "success"
       },
       "artifact": {
         "name": "crash-restore-campaign-postgres-18",
-        "id": 9500848778,
-        "digest": "sha256:85c4307de030eb9546b3f7e76439b34cfd6c38b5fa53ceecf375623d1e1eec99",
-        "size_bytes": 6687
+        "id": 9503675337,
+        "digest": "sha256:fdcd7556aa27f937a9e9317f4c729e1ace82e0fe20f453624689cd95fb64d89d",
+        "size_bytes": 6683
       },
-      "retained_report_git_blob": "f20e60b92bc189e3f543e4ce3866aa021786cc9c",
+      "retained_report_git_blob": "3605c419eb4dc3cd545405ac13aa254389de0d33",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-24T08:00:02+09:00",
-        "run_id": 32668961104,
+        "verified_at": "2026-08-24T10:31:03+09:00",
+        "run_id": 32679321434,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -608,7 +608,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #169 (#149's strict-review follow-up: cursor/paging timeout-semantics tests, a genuine ambiguous-commit fixture, real process-kill crash/restart evidence, PostgresRow widening, the MultiRowValues parameter ceiling, and evidence-doc corrections) after fixing a CI-only test ordering bug in the new unknown-commit fixture (production and campaign code unchanged from the prior push); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+        "note": "Fresh retention for PR #169 (second strict-review round: cursor fetch_more() retry-state fix, KeysetColumn::i64 int4 decode fallback, cursor/paging concurrent-mutation contract split and empirically corrected, real FaultRuntime FETCH-level retry regression); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     },
     {
@@ -618,9 +618,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "8c233d793f84a2b4da364d4a2e41d5634c8d8d8f",
+        "execution_commit": "7fb46b5bc8a759193368d07ebda109b508e1b63d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9327f3568bd171517a1616ccc901014fd25ba897",
+        "branch_head_sha": "d7bf71186c9f4b5314e3cafde607375a77cea11c",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -630,27 +630,27 @@
       "workflow_run": {
         "workflow": "M5 Upgrade",
         "workflow_file": ".github/workflows/m5-upgrade.yml",
-        "id": 32668961094,
+        "id": 32679321384,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-upgrade-campaign",
-        "id": 97266685703,
+        "id": 97293071586,
         "conclusion": "success"
       },
       "artifact": {
         "name": "upgrade-campaign-postgres-15",
-        "id": 9500865249,
-        "digest": "sha256:0569e06194e8ab4972a409bc57073eeea339d5a6a3f9aa9d74b06bd8483088a4",
-        "size_bytes": 5761
+        "id": 9503693075,
+        "digest": "sha256:f3cfed2345e07c0927c85c6380f6a269a748e0a659ed3935b4bca887d90a5bd8",
+        "size_bytes": 5765
       },
-      "retained_report_git_blob": "7ab0c3dee28c3e7cc75ecdbeff696381efe4deb2",
+      "retained_report_git_blob": "f324fcb7a4de0379cf82f9a3e0fa9fa831e53fd2",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-24T08:00:02+09:00",
-        "run_id": 32668961094,
+        "verified_at": "2026-08-24T10:31:03+09:00",
+        "run_id": 32679321384,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -658,7 +658,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #169 (#149's strict-review follow-up: cursor/paging timeout-semantics tests, a genuine ambiguous-commit fixture, real process-kill crash/restart evidence, PostgresRow widening, the MultiRowValues parameter ceiling, and evidence-doc corrections) after fixing a CI-only test ordering bug in the new unknown-commit fixture (production and campaign code unchanged from the prior push); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+        "note": "Fresh retention for PR #169 (second strict-review round: cursor fetch_more() retry-state fix, KeysetColumn::i64 int4 decode fallback, cursor/paging concurrent-mutation contract split and empirically corrected, real FaultRuntime FETCH-level retry regression); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     },
     {
@@ -668,9 +668,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "8c233d793f84a2b4da364d4a2e41d5634c8d8d8f",
+        "execution_commit": "7fb46b5bc8a759193368d07ebda109b508e1b63d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9327f3568bd171517a1616ccc901014fd25ba897",
+        "branch_head_sha": "d7bf71186c9f4b5314e3cafde607375a77cea11c",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -680,27 +680,27 @@
       "workflow_run": {
         "workflow": "M5 Upgrade",
         "workflow_file": ".github/workflows/m5-upgrade.yml",
-        "id": 32668961094,
+        "id": 32679321384,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-upgrade-campaign",
-        "id": 97266685630,
+        "id": 97293071434,
         "conclusion": "success"
       },
       "artifact": {
         "name": "upgrade-campaign-postgres-18",
-        "id": 9500868481,
-        "digest": "sha256:2569d95a2f7b39f173eddcbebdf1506475117c41a08e6a3fb055eed6f8addfc1",
-        "size_bytes": 5761
+        "id": 9503685926,
+        "digest": "sha256:d12f127b366f9316cb156ff9c1e0c8461de343cc97a919f4ca504bd8728e932a",
+        "size_bytes": 5762
       },
-      "retained_report_git_blob": "653f6ad62bddbe3f8e6cd67da550a54a1724813c",
+      "retained_report_git_blob": "6347de20e54eb030359e43643120382bf46d8a97",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-24T08:00:02+09:00",
-        "run_id": 32668961094,
+        "verified_at": "2026-08-24T10:31:03+09:00",
+        "run_id": 32679321384,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -708,7 +708,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #169 (#149's strict-review follow-up: cursor/paging timeout-semantics tests, a genuine ambiguous-commit fixture, real process-kill crash/restart evidence, PostgresRow widening, the MultiRowValues parameter ceiling, and evidence-doc corrections) after fixing a CI-only test ordering bug in the new unknown-commit fixture (production and campaign code unchanged from the prior push); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+        "note": "Fresh retention for PR #169 (second strict-review round: cursor fetch_more() retry-state fix, KeysetColumn::i64 int4 decode fallback, cursor/paging concurrent-mutation contract split and empirically corrected, real FaultRuntime FETCH-level retry regression); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     },
     {
@@ -718,9 +718,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "8c233d793f84a2b4da364d4a2e41d5634c8d8d8f",
+        "execution_commit": "7fb46b5bc8a759193368d07ebda109b508e1b63d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9327f3568bd171517a1616ccc901014fd25ba897",
+        "branch_head_sha": "d7bf71186c9f4b5314e3cafde607375a77cea11c",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -730,27 +730,27 @@
       "workflow_run": {
         "workflow": "M5 Security",
         "workflow_file": ".github/workflows/m5-security.yml",
-        "id": 32668961100,
+        "id": 32679321513,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-security-campaign",
-        "id": 97266685400,
+        "id": 97293071918,
         "conclusion": "success"
       },
       "artifact": {
         "name": "security-campaign-postgres-15",
-        "id": 9500847132,
-        "digest": "sha256:11777dce2a02833b054a1e3ba423c528c671586ca1f3a4d98dd0b3337021690d",
-        "size_bytes": 7079
+        "id": 9503673828,
+        "digest": "sha256:2f780df3f0598bc3bce42eb8a57b063d42721615b98a18c5cde0795e44a64ae8",
+        "size_bytes": 7078
       },
-      "retained_report_git_blob": "e0e88629dc4fecb3d9bd48830a1de2503cf84be4",
+      "retained_report_git_blob": "15c5acd72f81f41f30ddfa8b29be22e3af7f50ba",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-24T08:00:02+09:00",
-        "run_id": 32668961100,
+        "verified_at": "2026-08-24T10:31:03+09:00",
+        "run_id": 32679321513,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -758,7 +758,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #169 (#149's strict-review follow-up: cursor/paging timeout-semantics tests, a genuine ambiguous-commit fixture, real process-kill crash/restart evidence, PostgresRow widening, the MultiRowValues parameter ceiling, and evidence-doc corrections) after fixing a CI-only test ordering bug in the new unknown-commit fixture (production and campaign code unchanged from the prior push); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+        "note": "Fresh retention for PR #169 (second strict-review round: cursor fetch_more() retry-state fix, KeysetColumn::i64 int4 decode fallback, cursor/paging concurrent-mutation contract split and empirically corrected, real FaultRuntime FETCH-level retry regression); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     },
     {
@@ -768,9 +768,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "8c233d793f84a2b4da364d4a2e41d5634c8d8d8f",
+        "execution_commit": "7fb46b5bc8a759193368d07ebda109b508e1b63d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9327f3568bd171517a1616ccc901014fd25ba897",
+        "branch_head_sha": "d7bf71186c9f4b5314e3cafde607375a77cea11c",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -780,27 +780,27 @@
       "workflow_run": {
         "workflow": "M5 Security",
         "workflow_file": ".github/workflows/m5-security.yml",
-        "id": 32668961100,
+        "id": 32679321513,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-security-campaign",
-        "id": 97266685507,
+        "id": 97293071850,
         "conclusion": "success"
       },
       "artifact": {
         "name": "security-campaign-postgres-18",
-        "id": 9500847629,
-        "digest": "sha256:3e2fea4f42b39438b5a1a22d8422fc59c57e1fc8389da6c7e07cc94fd390efc6",
-        "size_bytes": 7078
+        "id": 9503674237,
+        "digest": "sha256:c6f4714e296a4e91ff3af261c53abe7c764ba376300da447caf6dd0375dc06d5",
+        "size_bytes": 7077
       },
-      "retained_report_git_blob": "79907a70ade254f5736c5e8484482200fbfb21b5",
+      "retained_report_git_blob": "7f47cc82c6857d971880b938257bb3334c1cf3ba",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-24T08:00:02+09:00",
-        "run_id": 32668961100,
+        "verified_at": "2026-08-24T10:31:03+09:00",
+        "run_id": 32679321513,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -808,7 +808,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #169 (#149's strict-review follow-up: cursor/paging timeout-semantics tests, a genuine ambiguous-commit fixture, real process-kill crash/restart evidence, PostgresRow widening, the MultiRowValues parameter ceiling, and evidence-doc corrections) after fixing a CI-only test ordering bug in the new unknown-commit fixture (production and campaign code unchanged from the prior push); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+        "note": "Fresh retention for PR #169 (second strict-review round: cursor fetch_more() retry-state fix, KeysetColumn::i64 int4 decode fallback, cursor/paging concurrent-mutation contract split and empirically corrected, real FaultRuntime FETCH-level retry regression); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     },
     {
@@ -818,9 +818,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "8c233d793f84a2b4da364d4a2e41d5634c8d8d8f",
+        "execution_commit": "7fb46b5bc8a759193368d07ebda109b508e1b63d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9327f3568bd171517a1616ccc901014fd25ba897",
+        "branch_head_sha": "d7bf71186c9f4b5314e3cafde607375a77cea11c",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -830,27 +830,27 @@
       "workflow_run": {
         "workflow": "M5 Resource Bounds",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 32668961145,
+        "id": 32679321459,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-resource-bounds-campaign",
-        "id": 97266685674,
+        "id": 97293071801,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-15",
-        "id": 9500851093,
-        "digest": "sha256:fb63a46784fb9198a4c7be4f999a9afc13df2df93d0b10d954a2e21be788ee4c",
-        "size_bytes": 13094
+        "id": 9503674600,
+        "digest": "sha256:776a05c838517294e8a98b5b0041aee63d8a428b3a60694667b1f0fdcb50aab0",
+        "size_bytes": 13092
       },
-      "retained_report_git_blob": "405653166c54136643344a95325e91c697519798",
+      "retained_report_git_blob": "0f3e706ef8b904117d9545ca6429952392217335",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-24T08:00:02+09:00",
-        "run_id": 32668961145,
+        "verified_at": "2026-08-24T10:31:03+09:00",
+        "run_id": 32679321459,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -858,7 +858,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #169 (#149's strict-review follow-up: cursor/paging timeout-semantics tests, a genuine ambiguous-commit fixture, real process-kill crash/restart evidence, PostgresRow widening, the MultiRowValues parameter ceiling, and evidence-doc corrections) after fixing a CI-only test ordering bug in the new unknown-commit fixture (production and campaign code unchanged from the prior push); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+        "note": "Fresh retention for PR #169 (second strict-review round: cursor fetch_more() retry-state fix, KeysetColumn::i64 int4 decode fallback, cursor/paging concurrent-mutation contract split and empirically corrected, real FaultRuntime FETCH-level retry regression); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     },
     {
@@ -868,9 +868,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "8c233d793f84a2b4da364d4a2e41d5634c8d8d8f",
+        "execution_commit": "7fb46b5bc8a759193368d07ebda109b508e1b63d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "9327f3568bd171517a1616ccc901014fd25ba897",
+        "branch_head_sha": "d7bf71186c9f4b5314e3cafde607375a77cea11c",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -880,27 +880,27 @@
       "workflow_run": {
         "workflow": "M5 Resource Bounds",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 32668961145,
+        "id": 32679321459,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-resource-bounds-campaign",
-        "id": 97266685780,
+        "id": 97293071632,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-18",
-        "id": 9500850229,
-        "digest": "sha256:74bbc243570e21d986927676c92172bb60279b8c5d5e6238e561eec1c95310a7",
-        "size_bytes": 13093
+        "id": 9503675921,
+        "digest": "sha256:43c8f994f5f5581098a851128eb7a156b87ff723dfa3002cb2b03f9273486ed8",
+        "size_bytes": 13092
       },
-      "retained_report_git_blob": "ce43222b5c83ca622dc957a46e42457d56810fe1",
+      "retained_report_git_blob": "863c5ad086ba8e5baf640c0082df5c7ba5e91a60",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-24T08:00:02+09:00",
-        "run_id": 32668961145,
+        "verified_at": "2026-08-24T10:31:03+09:00",
+        "run_id": 32679321459,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -908,7 +908,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Fresh retention for PR #169 (#149's strict-review follow-up: cursor/paging timeout-semantics tests, a genuine ambiguous-commit fixture, real process-kill crash/restart evidence, PostgresRow widening, the MultiRowValues parameter ceiling, and evidence-doc corrections) after fixing a CI-only test ordering bug in the new unknown-commit fixture (production and campaign code unchanged from the prior push); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
+        "note": "Fresh retention for PR #169 (second strict-review round: cursor fetch_more() retry-state fix, KeysetColumn::i64 int4 decode fallback, cursor/paging concurrent-mutation contract split and empirically corrected, real FaultRuntime FETCH-level retry regression); campaign report bytes were downloaded from the successful PostgreSQL 15/18 matrix artifacts and checked against the retained files."
       }
     }
   ],
