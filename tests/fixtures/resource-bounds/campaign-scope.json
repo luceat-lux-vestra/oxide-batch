@@ -867,8 +867,14 @@
     },
     {
       "resource": "application readers, writers, and item buffers",
+      "symbols": [],
+      "reason": "Explicitly outside the M0-M4 framework boundary. The capacity budget already states that application readers, writers, and item buffers are budgeted by the workload, and the framework declares no ceiling for them, so the campaign has nothing to prove and does not pretend to.",
+      "covered_by": null
+    },
+    {
+      "resource": "item-component construction-input validation ceilings",
       "symbols": ["MAX_RESOURCE_IDENTITY_BYTES", "MAX_OBJECT_KEY_BYTES"],
-      "reason": "Explicitly outside the M0-M4 framework boundary. The capacity budget already states that application readers, writers, and item buffers are budgeted by the workload, and the framework declares no ceiling for them, so the campaign has nothing to prove and does not pretend to. `MAX_RESOURCE_IDENTITY_BYTES` (`item_components::multi_resource::ResourceIdentity`) and `MAX_OBJECT_KEY_BYTES` (`item_components::object_store::ObjectIdentity`), added in #150, are validation ceilings on caller-supplied item-component construction inputs, not a framework-held resource the capacity budget names.",
+      "reason": "These are framework-declared ceilings, but on the byte length of a caller-supplied constructor input string (a resource identity or object key), not on a resource the M0-M4 capacity budget names or the campaign's runtime resource-bound model covers. `MAX_RESOURCE_IDENTITY_BYTES` (`item_components::multi_resource::ResourceIdentity`) and `MAX_OBJECT_KEY_BYTES` (`item_components::object_store::ObjectIdentity`), added in #150, sit in the same category as every other `XxxTooLong` constructor validation in this crate (e.g. `StateSchemaId`'s byte bound): a fixed-string-length input check enforced once at construction, not a bounded operational resource (queue, buffer, connection, cache) whose steady-state behavior this campaign proves.",
       "covered_by": "crates/oxide-batch/src/item_components/multi_resource.rs::tests::resource_identity_rejects_one_byte_past_its_ceiling, crates/oxide-batch/src/item_components/object_store.rs::tests::object_identity_rejects_one_byte_past_its_ceiling"
     },
     {

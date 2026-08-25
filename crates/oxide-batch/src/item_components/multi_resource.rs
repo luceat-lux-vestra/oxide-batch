@@ -398,6 +398,13 @@ struct MultiResourceState {
     resource_set_revision: ResourceSetRevision,
     resource_index: u32,
     delegate: Option<DelegateEnvelopeColumns>,
+    /// Batches committed to the current resource so far. Durable so
+    /// [`RolloverPolicy::should_roll_over`] sees the true count across a
+    /// restart -- an in-memory-only counter would silently reset to `0` on
+    /// every restart and let a resource accumulate unboundedly many more
+    /// batches than its policy allows. Unused (always `0`) on the reader
+    /// path, which has no rollover decision to make.
+    resource_batches_written: u64,
 }
 
 fn delegate_columns_to_json(delegate: &DelegateEnvelopeColumns) -> serde_json::Value {
@@ -476,6 +483,7 @@ impl VersionedStateCodec<MultiResourceState> for MultiResourcePositionSchema {
             "resource_set_revision": value.resource_set_revision.to_hex(),
             "resource_index": value.resource_index,
             "delegate": delegate,
+            "resource_batches_written": value.resource_batches_written,
         }))
         .map_err(|_| StateCodecError::InvalidPayload)
     }
@@ -503,10 +511,15 @@ impl VersionedStateCodec<MultiResourceState> for MultiResourcePositionSchema {
                     .ok_or(StateCodecError::InvalidPayload)?,
             ),
         };
+        let resource_batches_written = value
+            .get("resource_batches_written")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
         Ok(MultiResourceState {
             resource_set_revision,
             resource_index,
             delegate,
+            resource_batches_written,
         })
     }
 }
@@ -922,6 +935,7 @@ where
             resource_set_revision: self.shared.resources.revision(),
             resource_index,
             delegate,
+            resource_batches_written: 0,
         };
         let codec = multi_resource_position_codec(RestartabilityDeclaration::Restartable);
         ComponentStateEnvelope::encode(
@@ -1226,20 +1240,25 @@ where
     ) -> Result<StreamOpenOutcome, StreamOpenError> {
         let codec = multi_resource_position_codec(RestartabilityDeclaration::Restartable);
         let restored = context.inherited_state().is_some();
-        let (resource_index, inherited_delegate) = match context.inherited_state() {
-            Some(envelope) => {
-                let state = envelope
-                    .decode::<MultiResourceState>(&codec)
-                    .map_err(|_| StreamOpenError::new())?;
-                if state.resource_set_revision != self.shared.resources.revision() {
-                    return Err(StreamOpenError::with_category(
-                        FailureCategory::UnsupportedCapability,
-                    ));
+        let (resource_index, inherited_delegate, resource_batches_written) =
+            match context.inherited_state() {
+                Some(envelope) => {
+                    let state = envelope
+                        .decode::<MultiResourceState>(&codec)
+                        .map_err(|_| StreamOpenError::new())?;
+                    if state.resource_set_revision != self.shared.resources.revision() {
+                        return Err(StreamOpenError::with_category(
+                            FailureCategory::UnsupportedCapability,
+                        ));
+                    }
+                    (
+                        state.resource_index,
+                        state.delegate,
+                        state.resource_batches_written,
+                    )
                 }
-                (state.resource_index, state.delegate)
-            }
-            None => (0, None),
-        };
+                None => (0, None, 0),
+            };
 
         let resources_len = u32::try_from(self.shared.resources.len()).unwrap_or(u32::MAX);
         if resource_index >= resources_len {
@@ -1282,7 +1301,7 @@ where
             index: resource_index,
             writer,
             stream,
-            batches_written: 0,
+            batches_written: resource_batches_written,
         });
 
         Ok(if restored {
@@ -1311,6 +1330,7 @@ where
             resource_set_revision: self.shared.resources.revision(),
             resource_index: active.index,
             delegate: Some(columns),
+            resource_batches_written: active.batches_written,
         };
         drop(guard);
         let codec = multi_resource_position_codec(RestartabilityDeclaration::Restartable);
@@ -2074,6 +2094,83 @@ mod tests {
         // test's job is only the position round-trip asserted above.
         let sink = sink.lock().unwrap();
         assert_eq!(sink.get("a"), Some(&vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn rollover_counter_survives_restart_and_still_caps_batches_per_resource() {
+        // `BatchCountRollover::new(2)` must cap resource "a" at exactly two
+        // committed batches, restart or not. Before this fix,
+        // `batches_written` was an in-memory-only counter that reset to `0`
+        // on every restart, so a crash-and-restart mid-resource silently let
+        // more than `max_batches_per_resource` batches land in one resource
+        // -- the durable envelope now carries the true count instead.
+        let sink = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let (_source, token) = stop();
+
+        let committed_envelope = futures_executor::block_on(async {
+            let opener = TestWriterOpener {
+                sink: Arc::clone(&sink),
+            };
+            let (writer, stream, _contract) = multi_resource_writer::<u64, _, _>(
+                resource_set(&["a", "b"]),
+                opener,
+                identity("rollover-restart"),
+                BatchCountRollover::new(2),
+                RestartabilityDeclaration::Restartable,
+            )
+            .unwrap();
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            // First committed batch to resource "a"; batches_written -> 1.
+            writer.write(&[1], write_context(&token)).await.unwrap();
+            stream
+                .update(StreamUpdateContext::new(&token))
+                .await
+                .unwrap()
+        });
+
+        // Simulate a crash-and-restart: a fresh writer instance restores
+        // from the committed envelope above.
+        futures_executor::block_on(async {
+            let opener = TestWriterOpener {
+                sink: Arc::clone(&sink),
+            };
+            let (writer, stream, _contract) = multi_resource_writer::<u64, _, _>(
+                resource_set(&["a", "b"]),
+                opener,
+                identity("rollover-restart"),
+                BatchCountRollover::new(2),
+                RestartabilityDeclaration::Restartable,
+            )
+            .unwrap();
+            stream
+                .open(StreamOpenContext::new(Some(&committed_envelope), &token))
+                .await
+                .unwrap();
+            // If the restored count were wrongly reset to 0, this would be
+            // read as the resource's 1st and 2nd post-restart batch and
+            // both would land in "a", violating the cap of 2. With the
+            // count correctly restored to 1, this single write is the
+            // resource's 2nd batch (1 -> 2): still no rollover yet.
+            writer.write(&[2], write_context(&token)).await.unwrap();
+            // This next write is attempt number 3 for resource "a" with a
+            // cap of 2: it must roll over to "b" first.
+            writer.write(&[3], write_context(&token)).await.unwrap();
+        });
+
+        let sink = sink.lock().unwrap();
+        assert_eq!(
+            sink.get("a"),
+            Some(&vec![1, 2]),
+            "resource \"a\" must never exceed its 2-batch cap across the restart"
+        );
+        assert_eq!(
+            sink.get("b"),
+            Some(&vec![3]),
+            "the third batch must have rolled over into resource \"b\""
+        );
     }
 
     #[test]

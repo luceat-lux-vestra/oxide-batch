@@ -71,7 +71,7 @@ one resource open at a time.
 ## Durable position: nested envelope, not a second state mechanism
 
 The durable envelope a `MultiResourceReaderStream`/`MultiResourceWriterStream`
-produces carries exactly three things:
+produces carries:
 
 - **`ResourceSetRevision`**: a SHA-256 content fingerprint over the ordered
   resource-identity sequence. A restart whose caller-supplied resource set no
@@ -84,6 +84,15 @@ produces carries exactly three things:
   #150's own instructions) was never implemented.
 - the current resource's ordinal index.
 - the current resource's own delegate position, embedded verbatim.
+- **the writer's current-resource batch count** (`resource_batches_written`,
+  unused/always `0` on the reader path). An earlier draft kept this count
+  in memory only, which reset it to `0` on every restart and let
+  `RolloverPolicy::should_roll_over` silently under-count how many batches a
+  resource had actually received across a crash -- `BatchCountRollover`'s cap
+  could be exceeded by an unbounded number of batches after repeated
+  crash/restart cycles near the boundary. It is now part of the durable
+  envelope and restored on `ItemStream::open`, proven by
+  `rollover_counter_survives_restart_and_still_caps_batches_per_resource`.
 
 That last point is what lets this module reuse the existing M6 component-state
 contract exactly, rather than inventing a second state mechanism: every
@@ -156,6 +165,7 @@ progress -- keeping the payload small regardless of resource-set size.
 | Rollover writes successive batches to successive resources in order | `rollover_writes_batches_to_successive_resources_in_order` |
 | Restart mid-resource resumes the delegate's committed position, not resource start, and does not roll over early | `writer_restart_mid_resource_resumes_committed_position` |
 | Stale resource-set revision rejected on writer restart | `stale_resource_set_revision_is_rejected_on_writer_restart` |
+| The rollover batch count survives a restart, so `BatchCountRollover`'s cap holds across a crash rather than resetting to 0 | `rollover_counter_survives_restart_and_still_caps_batches_per_resource` |
 
 ### #146 residual composition audit (`multi_resource.rs`, `#[cfg(test)]`)
 
@@ -182,6 +192,7 @@ was needed.
 | Replacement object publishes a new version token; `get` returns the latest content and matching token | `put_get_roundtrip_returns_incrementing_version_tokens` |
 | Reader restart resumes ordinal when object version is unchanged | `reader_restart_resumes_ordinal_when_object_version_unchanged` |
 | Reader restart rejects a replaced object (version-token mismatch) rather than resuming against new content | `reader_restart_rejects_replaced_object` |
+| Reader/writer restart over a backend with no stable version identity (both sides `None`) fails closed rather than reading "no proof either time" as a match | `reader_restart_over_a_no_version_backend_fails_closed_rather_than_matching_none_to_none`, `writer_restart_over_a_no_version_backend_fails_closed_rather_than_matching_none_to_none` |
 | Writer roundtrip through `MultiResourceWriter`: whole-object `PUT` accumulation across multiple `write` calls | `writer_roundtrip_through_multi_resource_writer_accumulates_and_puts` |
 
 Cancellation is honored by construction (`ObjectItemWriter::write` and
@@ -253,9 +264,15 @@ module.
 No per-item heap allocation was added to the item hot path: resource
 transitions allocate a fresh delegate reader/writer once per resource (via
 the opener), not once per item, matching #150's own allocation-avoidance
-requirement. The reader's `pending_reader` handoff and `handle`/`active`
-locks are held only across resource-transition boundaries, never across a
-per-item `read`/`write` call in the steady state within one resource.
+requirement. The reader's `pending_reader` handoff and `handle` lock are
+held only across resource-transition boundaries, never across a per-item
+`read` call in the steady state within one resource. The writer's `active`
+lock is scoped differently: `MultiResourceWriter::write` holds it for the
+whole delegate `write` call on every batch, not only at a rollover
+transition, so that the rollover decision and the write it gates stay one
+atomic unit even under concurrent calls (the chunk runtime never actually
+calls `write` concurrently on one writer instance, so this holds no
+contention in practice; see the type's own rustdoc).
 
 ## Reproduction
 

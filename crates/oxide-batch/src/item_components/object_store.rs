@@ -652,12 +652,19 @@ impl ItemStream for ObjectItemReaderStream {
             let restored = envelope
                 .decode::<ObjectReadPosition>(&codec)
                 .map_err(|_| StreamOpenError::new())?;
-            if restored.version_token != fetched {
-                // The object this attempt fetched is not the same version
-                // the last committed checkpoint was recorded against --
-                // replaced content, or an uncommitted write left a
-                // different version in place. Fail closed rather than
-                // silently resuming an ordinal against different bytes.
+            let proven_identical = matches!(
+                (&restored.version_token, &fetched),
+                (Some(then), Some(now)) if then == now
+            );
+            if !proven_identical {
+                // The object this attempt fetched is not proven identical to
+                // the version the last committed checkpoint was recorded
+                // against -- replaced content, an uncommitted write left a
+                // different version in place, or the backend cannot supply a
+                // stable version token at all (both sides `None`, which is
+                // not proof of anything and must not be read as a match).
+                // Fail closed rather than silently resuming an ordinal
+                // against content that was never verified.
                 return Err(StreamOpenError::with_category(
                     FailureCategory::UnsupportedCapability,
                 ));
@@ -956,11 +963,18 @@ impl<C: ObjectStoreCapability> ItemStream for ObjectItemWriterStream<C> {
             let current_token = metadata
                 .version_token()
                 .map(|token| token.as_str().to_owned());
-            if current_token != restored.version_token {
-                // The object no longer matches what this stream last
-                // committed against -- replaced, or a crash left an
-                // uncommitted `put` in place. Fail closed rather than
-                // silently resuming against different content.
+            let proven_identical = matches!(
+                (&current_token, &restored.version_token),
+                (Some(now), Some(then)) if now == then
+            );
+            if !proven_identical {
+                // The object is not proven identical to what this stream
+                // last committed against -- replaced, a crash left an
+                // uncommitted `put` in place, or the backend cannot supply a
+                // stable version token at all (both sides `None`, which is
+                // not proof of anything and must not be read as a match).
+                // Fail closed rather than silently resuming against content
+                // that was never verified.
                 return Err(StreamOpenError::with_category(
                     FailureCategory::UnsupportedCapability,
                 ));
@@ -1304,6 +1318,171 @@ mod tests {
             assert!(
                 result.is_err(),
                 "a replaced object must fail closed on restart"
+            );
+        });
+    }
+
+    /// Wraps [`InMemoryObjectStore`] but reports no version identity, the
+    /// same as a real backend that cannot supply one
+    /// (see [`ObjectVersionToken`]'s own doc). Restart-safety tests use this
+    /// to prove the stream fails closed even when the backend itself
+    /// offers no proof of content identity, rather than only exercising the
+    /// token-present comparison.
+    struct NoVersionObjectStore {
+        inner: InMemoryObjectStore,
+    }
+
+    impl NoVersionObjectStore {
+        fn new(max_object_bytes: usize) -> Self {
+            Self {
+                inner: InMemoryObjectStore::new(max_object_bytes),
+            }
+        }
+    }
+
+    impl ObjectStoreCapability for NoVersionObjectStore {
+        async fn get(
+            &self,
+            id: &ObjectIdentity,
+        ) -> Result<(Vec<u8>, ObjectMetadata), ObjectStoreError> {
+            let (bytes, metadata) = self.inner.get(id).await?;
+            Ok((bytes, ObjectMetadata::new(metadata.size(), None)))
+        }
+
+        async fn put(
+            &self,
+            id: &ObjectIdentity,
+            bytes: Vec<u8>,
+        ) -> Result<ObjectMetadata, ObjectStoreError> {
+            let metadata = self.inner.put(id, bytes).await?;
+            Ok(ObjectMetadata::new(metadata.size(), None))
+        }
+
+        async fn stat(&self, id: &ObjectIdentity) -> Result<ObjectMetadata, ObjectStoreError> {
+            let metadata = self.inner.stat(id).await?;
+            Ok(ObjectMetadata::new(metadata.size(), None))
+        }
+
+        async fn list(
+            &self,
+            prefix: &str,
+            page_size: usize,
+            continuation: Option<&ObjectListContinuation>,
+        ) -> Result<ObjectListPage, ObjectStoreError> {
+            self.inner.list(prefix, page_size, continuation).await
+        }
+    }
+
+    #[test]
+    fn reader_restart_over_a_no_version_backend_fails_closed_rather_than_matching_none_to_none() {
+        // Before this fix, `restored.version_token != fetched` read `None !=
+        // None` as `false` (a match), so a restart over a backend with no
+        // stable version identity silently resumed the ordinal with zero
+        // proof the content was the same. The stream must fail closed
+        // instead -- "no version identity" is not "identical content".
+        let store = Arc::new(NoVersionObjectStore::new(1024));
+        let (_source, token) = stop();
+        futures_executor::block_on(async {
+            store.put(&id("obj"), b"1,2,3".to_vec()).await.unwrap();
+        });
+        let resources = ResourceSet::new(vec![
+            crate::item_components::multi_resource::ResourceIdentity::new("obj").unwrap(),
+        ]);
+        let identity =
+            ComponentStreamIdentity::new("oxide-batch.object-store-unit-test.no-version-reader")
+                .unwrap();
+
+        let committed = futures_executor::block_on(async {
+            let opener = ObjectStoreReaderOpener::new(Arc::clone(&store), 1024, csv_parse);
+            let (mut reader, stream, _contract) = multi_resource_reader::<u64, _>(
+                resources.clone(),
+                opener,
+                identity.clone(),
+                RestartabilityDeclaration::Restartable,
+            );
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            reader.read(ReadContext::new(&token)).await.unwrap();
+            stream
+                .update(StreamUpdateContext::new(&token))
+                .await
+                .unwrap()
+        });
+
+        futures_executor::block_on(async {
+            let opener = ObjectStoreReaderOpener::new(Arc::clone(&store), 1024, csv_parse);
+            let (_reader, stream, _contract) = multi_resource_reader::<u64, _>(
+                resources,
+                opener,
+                identity,
+                RestartabilityDeclaration::Restartable,
+            );
+            let result = stream
+                .open(StreamOpenContext::new(Some(&committed), &token))
+                .await;
+            assert!(
+                result.is_err(),
+                "a restart over a backend with no version identity must fail \
+                 closed, not silently treat 'no proof either time' as a match"
+            );
+        });
+    }
+
+    #[test]
+    fn writer_restart_over_a_no_version_backend_fails_closed_rather_than_matching_none_to_none() {
+        let store = Arc::new(NoVersionObjectStore::new(1024));
+        let (_source, token) = stop();
+        let serialize = |item: &u64| format!("{item},").into_bytes();
+        let resources = ResourceSet::new(vec![
+            crate::item_components::multi_resource::ResourceIdentity::new("obj").unwrap(),
+        ]);
+        let identity =
+            ComponentStreamIdentity::new("oxide-batch.object-store-unit-test.no-version-writer")
+                .unwrap();
+
+        let committed = futures_executor::block_on(async {
+            let opener = ObjectStoreWriterOpener::new(Arc::clone(&store), serialize);
+            let (writer, stream, _contract) = multi_resource_writer::<u64, _, _>(
+                resources.clone(),
+                opener,
+                identity.clone(),
+                crate::item_components::multi_resource::NoRollover,
+                RestartabilityDeclaration::Restartable,
+            )
+            .unwrap();
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            writer
+                .write(&[1], WriteContext::non_transactional(&token))
+                .await
+                .unwrap();
+            stream
+                .update(StreamUpdateContext::new(&token))
+                .await
+                .unwrap()
+        });
+
+        futures_executor::block_on(async {
+            let opener = ObjectStoreWriterOpener::new(Arc::clone(&store), serialize);
+            let (_writer, stream, _contract) = multi_resource_writer::<u64, _, _>(
+                resources,
+                opener,
+                identity,
+                crate::item_components::multi_resource::NoRollover,
+                RestartabilityDeclaration::Restartable,
+            )
+            .unwrap();
+            let result = stream
+                .open(StreamOpenContext::new(Some(&committed), &token))
+                .await;
+            assert!(
+                result.is_err(),
+                "a writer restart over a backend with no version identity must \
+                 fail closed, not silently resume against unverified content"
             );
         });
     }

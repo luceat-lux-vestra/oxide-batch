@@ -391,10 +391,20 @@ fn foreign(href: &str, depth: usize) -> Option<String> {
         rest = parent;
         up_levels += 1;
     }
+    if rest.contains("..") {
+        // A `..` segment survives after the leading run was consumed --
+        // this href is not the normalized "walk up N times, then descend"
+        // shape every rustdoc-rendered relative link has, so the leading
+        // `up_levels` count cannot be trusted to say whether it escapes this
+        // crate. Report it rather than silently accept it: an unfamiliar
+        // relative-link shape is exactly the case this scan cannot afford to
+        // wave through (see the module doc's own disclosure philosophy).
+        return Some("unnormalized-relative-link".to_owned());
+    }
     if up_levels <= depth {
         return None;
     }
-    if rest == href || !rest.contains('/') {
+    if !rest.contains('/') {
         return None;
     }
     crate_name(until(rest, '/'))
@@ -648,6 +658,63 @@ mod tests {
             Some("sqlx".to_owned()),
             "walking up one level past the page's own depth escapes this \
              crate's rendered tree into a genuine sibling crate",
+        );
+    }
+
+    #[test]
+    fn depth_comparison_holds_at_deeper_nesting_than_the_motivating_case() {
+        // The same three boundary cases as the depth-2 test above, one level
+        // deeper (e.g. `item_components/multi_resource/inner/struct.X.html`,
+        // depth 3), proving the depth comparison generalizes rather than
+        // happening to work only at the one nesting level #150 introduced.
+        assert_eq!(
+            foreign("../sibling/struct.Y.html", 3),
+            None,
+            "one `../` from a page nested three directories down still \
+             lands back inside this crate's own rendered tree",
+        );
+        assert_eq!(
+            foreign("../../../struct.TopLevel.html", 3),
+            None,
+            "walking up exactly `depth` (3) levels lands at this crate's \
+             own root, not past it"
+        );
+        assert_eq!(
+            foreign("../../../../sqlx/postgres/struct.PgPool.html", 3),
+            Some("sqlx".to_owned()),
+            "walking up one level past a depth-3 page's own depth still \
+             escapes this crate's rendered tree",
+        );
+    }
+
+    #[test]
+    fn a_relative_link_with_no_further_path_segment_is_not_disclosure() {
+        // A link that walks up past its own depth but names no further
+        // directory segment (bare filename, or an empty segment from a
+        // malformed/non-canonical `../` run) cannot name a foreign crate --
+        // `crate_name` requires a nonempty alphanumeric segment, so this
+        // fails closed to "nothing resolvable" rather than panicking or
+        // guessing a crate name from unexpected input.
+        assert_eq!(foreign("../../bare-file.html", 1), None);
+        assert_eq!(foreign("../../../.html", 1), None);
+    }
+
+    #[test]
+    fn a_non_normalized_relative_link_fails_closed_rather_than_bypassing_the_scan() {
+        // A `..` segment that survives after the leading run is consumed is
+        // not the "walk up N times, then descend" shape any real rustdoc
+        // output has. Before this fix, `up_levels` only counted the leading
+        // run, so this shape left `up_levels == 0 <= depth` and slipped
+        // through as `None` (not disclosure) regardless of what it actually
+        // pointed at -- a fail-open hole for exactly the "malformed or
+        // unfamiliar relative target" case the scan must fail closed on.
+        assert_eq!(
+            foreign("item_components/../../sqlx/struct.PgPool.html", 2),
+            Some("unnormalized-relative-link".to_owned()),
+        );
+        assert_eq!(
+            foreign("item_components/multi_resource/..", 2),
+            Some("unnormalized-relative-link".to_owned()),
         );
     }
 
