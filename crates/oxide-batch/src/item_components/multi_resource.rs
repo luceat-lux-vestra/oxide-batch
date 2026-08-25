@@ -759,6 +759,14 @@ struct ReaderShared<I, O: MultiResourceReaderOpener<I>> {
     /// both sides only ever lock it for a synchronous put/take, never
     /// across an `.await`, so it does not need `O::Reader: Sync`.
     pending_reader: std::sync::Mutex<Option<O::Reader>>,
+    /// Mirrors [`MultiResourceReader::poisoned`] for the paired stream's
+    /// `update`/`close`, which cannot see that local field directly. Safe
+    /// as a separate lock from `handle` (unlike the writer's unified
+    /// active/poisoned state): a reader is used exclusively (`&mut self`),
+    /// so there is no concurrent second `read` that could race a poisoning
+    /// transition the way concurrent `write` calls could -- `update`/
+    /// `close` only ever run in a disjoint framework phase from `read`.
+    poisoned: AsyncMutex<Option<FailureCategory>>,
     limits: StateLimits,
     _marker: PhantomData<fn() -> I>,
 }
@@ -907,6 +915,7 @@ where
                             Err(error) => {
                                 let category = error.category();
                                 self.poisoned = Some(category);
+                                *self.shared.poisoned.lock().await = Some(category);
                                 return Err(ReaderError::with_category(category));
                             }
                         }
@@ -1081,6 +1090,9 @@ where
         &self,
         context: StreamUpdateContext<'_>,
     ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+        if let Some(category) = *self.shared.poisoned.lock().await {
+            return Err(StreamUpdateError::with_category(category));
+        }
         let guard = self.shared.handle.lock().await;
         let (resource_index, delegate) = match guard.as_ref() {
             Some(handle) => {
@@ -1178,6 +1190,7 @@ where
         identity,
         handle: AsyncMutex::new(None),
         pending_reader: std::sync::Mutex::new(None),
+        poisoned: AsyncMutex::new(None),
         limits: StateLimits::default(),
         _marker: PhantomData,
     });
@@ -1284,18 +1297,36 @@ struct ActiveWriteResource<W, S> {
     retired: bool,
 }
 
+/// The writer's state, one lock for both branches.
+///
+/// `Active` and `Poisoned` share [`WriterShared::active`]'s single
+/// [`AsyncMutex`] rather than living behind two separate locks (an active
+/// resource plus a standalone poison flag): deciding *whether* to poison and
+/// committing that decision must be one atomic transition under one lock,
+/// or a concurrent `write` could observe the pre-poisoning state (read the
+/// flag before it flips) after the poisoning transition has already
+/// logically happened, and roll over into a resource this writer is
+/// supposed to have permanently stopped using.
+enum WriterState<W, S> {
+    /// A resource is open and receiving writes.
+    Active(ActiveWriteResource<W, S>),
+    /// A resource-boundary `close` failed. `ItemStream::close` carries no
+    /// idempotency/atomicity guarantee, so this writer never attempts
+    /// another close or write on any delegate again: every later `write`
+    /// returns this same failure. The delegate that failed to close was
+    /// already marked retired before this transition, so there is nothing
+    /// left to close here or at the outer terminal close.
+    Poisoned(FailureCategory),
+}
+
 struct WriterShared<O, Opener: MultiResourceWriterOpener<O>, P> {
     opener: Opener,
     resources: ResourceSet,
     identity: ComponentStreamIdentity,
     rollover: P,
-    active: AsyncMutex<Option<ActiveWriteResource<Opener::Writer, Opener::Stream>>>,
-    /// Set once a resource-boundary `close` (a rollover) has been attempted
-    /// and failed. Never retried on the same delegate instance -- see
-    /// [`MultiResourceReader`]'s `poisoned` docs for why. Once poisoned,
-    /// every later `write` on this writer returns the same failure without
-    /// touching any delegate again.
-    poisoned: AsyncMutex<Option<FailureCategory>>,
+    /// `None` before the paired stream's `open` has run for the first
+    /// time in this attempt.
+    active: AsyncMutex<Option<WriterState<Opener::Writer, Opener::Stream>>>,
     limits: StateLimits,
     _marker: PhantomData<fn() -> O>,
 }
@@ -1314,12 +1345,16 @@ struct WriterShared<O, Opener: MultiResourceWriterOpener<O>, P> {
 ///   order; one `write` batch never spans two resources.
 /// - **Restartability**: supplied explicitly at construction, same as
 ///   [`multi_resource_reader`].
-/// - **Thread safety**: `Send + Sync`; an async-aware lock guards the
-///   active resource and rollover decision together, so a rollover and a
-///   concurrent write attempt on the same instance are serialized (this
-///   crate's chunk runtime never actually calls `write` concurrently on one
-///   writer instance; the lock exists so this type's own invariant --
-///   rollover-then-write is one atomic transition -- holds regardless).
+/// - **Thread safety**: `Send + Sync`; one async-aware lock guards the
+///   active-or-poisoned state, the rollover decision, and the write
+///   together as one atomic critical section (this crate's chunk runtime
+///   never actually calls `write` concurrently on one writer instance; the
+///   lock exists so this type's own invariants hold regardless). The
+///   active resource and the poison flag deliberately share this single
+///   lock rather than living behind two separate ones: two locks would let
+///   a concurrent `write` read "not yet poisoned" before a poisoning
+///   transition commits and then roll over into a resource this writer is
+///   supposed to have permanently stopped using.
 /// - **Transaction/delivery**: never claims a stronger mode than the
 ///   current delegate writer supports; a rollover happens between writer
 ///   calls, never inside one enlisted call.
@@ -1355,24 +1390,30 @@ where
         if stop.is_stop_requested() {
             return Ok(WriteOutcome::Stopped);
         }
-        if let Some(category) = *self.shared.poisoned.lock().await {
-            return Err(WriterError::with_category(category));
-        }
         if self.shared.resources.is_empty() {
             return Err(WriterError::with_category(FailureCategory::Invariant));
         }
 
+        // One lock guards the poison check, the rollover decision, the
+        // close/open transition, and the write itself: all of it is one
+        // atomic critical section, so a concurrent `write` can never
+        // observe a stale "not yet poisoned" read that a poisoning
+        // transition has already superseded (see `WriterState`'s docs).
         let mut guard = self.shared.active.lock().await;
-        let should_roll_over = match guard.as_ref() {
-            Some(active) => self
-                .shared
-                .rollover
-                .should_roll_over(active.batches_written),
+        let (should_roll_over, current_index) = match guard.as_ref() {
+            Some(WriterState::Poisoned(category)) => {
+                return Err(WriterError::with_category(*category));
+            }
+            Some(WriterState::Active(active)) => (
+                self.shared
+                    .rollover
+                    .should_roll_over(active.batches_written),
+                active.index,
+            ),
             None => return Err(WriterError::with_category(FailureCategory::Invariant)),
         };
 
         if should_roll_over {
-            let current_index = guard.as_ref().map_or(0, |active| active.index);
             let next_index = current_index + 1;
             if (next_index as usize) < self.shared.resources.len() {
                 // Close the outgoing resource's stream before opening the
@@ -1385,8 +1426,9 @@ where
                 // The close is attempted exactly once. `ItemStream` carries
                 // no idempotency/atomicity guarantee, so a failed close is
                 // never retried on this same delegate instance -- see
-                // `WriterShared::poisoned`'s docs.
-                if let Some(active) = guard.as_mut()
+                // `WriterState`'s docs.
+                let mut boundary_close_failed = None;
+                if let Some(WriterState::Active(active)) = guard.as_mut()
                     && !active.retired
                 {
                     let closed = active
@@ -1400,11 +1442,12 @@ where
                     // by this instance or by the outer terminal close.
                     active.retired = true;
                     if let Err(error) = closed {
-                        let category = error.category();
-                        drop(guard);
-                        *self.shared.poisoned.lock().await = Some(category);
-                        return Err(WriterError::with_category(category));
+                        boundary_close_failed = Some(error.category());
                     }
+                }
+                if let Some(category) = boundary_close_failed {
+                    *guard = Some(WriterState::Poisoned(category));
+                    return Err(WriterError::with_category(category));
                 }
                 let next_resource = &self.shared.resources.resources()[next_index as usize];
                 // Fresh resource, no inherited state: the returned contract
@@ -1419,20 +1462,20 @@ where
                     .open(StreamOpenContext::new(None, stop))
                     .await
                     .map_err(|error| WriterError::with_category(error.category()))?;
-                *guard = Some(ActiveWriteResource {
+                *guard = Some(WriterState::Active(ActiveWriteResource {
                     index: next_index,
                     writer,
                     stream,
                     batches_written: 0,
                     retired: false,
-                });
+                }));
             }
             // No further resource to roll over into: keep writing to the
             // current (last) resource rather than failing -- the rollover
             // policy is a hint for splitting output, not a hard cap.
         }
 
-        let Some(active) = guard.as_mut() else {
+        let Some(WriterState::Active(active)) = guard.as_mut() else {
             return Err(WriterError::with_category(FailureCategory::Invariant));
         };
         // `WriteContext` holds `Option<&mut dyn BusinessTransaction>`, which
@@ -1539,13 +1582,13 @@ where
             }
         }
 
-        *self.shared.active.lock().await = Some(ActiveWriteResource {
+        *self.shared.active.lock().await = Some(WriterState::Active(ActiveWriteResource {
             index: resource_index,
             writer,
             stream,
             batches_written: resource_batches_written,
             retired: false,
-        });
+        }));
 
         Ok(if restored {
             StreamOpenOutcome::Restored
@@ -1559,8 +1602,12 @@ where
         context: StreamUpdateContext<'_>,
     ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
         let guard = self.shared.active.lock().await;
-        let Some(active) = guard.as_ref() else {
-            return Err(StreamUpdateError::with_category(FailureCategory::Invariant));
+        let active = match guard.as_ref() {
+            Some(WriterState::Active(active)) => active,
+            Some(WriterState::Poisoned(category)) => {
+                return Err(StreamUpdateError::with_category(*category));
+            }
+            None => return Err(StreamUpdateError::with_category(FailureCategory::Invariant)),
         };
         let envelope = active
             .stream
@@ -1596,7 +1643,10 @@ where
         context: StreamCloseContext<'_>,
     ) -> Result<StreamCloseOutcome, StreamCloseError> {
         let guard = self.shared.active.lock().await;
-        if let Some(active) = guard.as_ref()
+        // `Poisoned` means a boundary close was already attempted (and
+        // failed) on the delegate that was active at the time; nothing
+        // further to close here, by construction.
+        if let Some(WriterState::Active(active)) = guard.as_ref()
             && !active.retired
         {
             active
@@ -1652,7 +1702,6 @@ where
         identity,
         rollover,
         active: AsyncMutex::new(None),
-        poisoned: AsyncMutex::new(None),
         limits: StateLimits::default(),
         _marker: PhantomData,
     });
@@ -2355,12 +2404,8 @@ mod tests {
                 reader.read(read_context(&token)).await.unwrap(),
                 ReadOutcome::Item(1)
             );
-            // "a" exhausts; its boundary close fails.
-            let result = reader.read(read_context(&token)).await;
-            assert!(result.is_err(), "a boundary close failure must surface");
-            // The checkpoint must not have silently advanced past "a": the
-            // outer envelope must still describe resource index 0 with "a"'s
-            // own (unclosed) position, not "b".
+            // The last checkpoint captured *before* the failing transition
+            // must still describe resource index 0 with "a"'s own position.
             let envelope = stream
                 .update(StreamUpdateContext::new(&token))
                 .await
@@ -2371,10 +2416,15 @@ mod tests {
                 state.resource_index, 0,
                 "checkpoint advancement must not silently occur after a failed boundary close"
             );
+            // "a" exhausts; its boundary close fails.
+            let result = reader.read(read_context(&token)).await;
+            assert!(result.is_err(), "a boundary close failure must surface");
             // `ItemStream::close` carries no idempotency/atomicity
             // guarantee, so this instance is now poisoned: every further
             // `read` returns the same failure without ever calling `close`
-            // on "a" a second time or proceeding to "b". A real recovery
+            // on "a" a second time or proceeding to "b" -- and `update` also
+            // fails closed rather than exposing a phantom checkpoint for a
+            // reader that can no longer make progress. A real recovery
             // requires a fresh step attempt (a new `MultiResourceReader`,
             // opened from the still-at-"a" checkpoint above), not a retry on
             // this instance.
@@ -2385,14 +2435,19 @@ mod tests {
                     "a poisoned instance must keep failing, never silently recover"
                 );
             }
+            let post_poison_update = stream.update(StreamUpdateContext::new(&token)).await;
+            assert!(
+                post_poison_update.is_err(),
+                "update must fail closed once poisoned, not expose a stale checkpoint"
+            );
         });
         let events = log.lock().unwrap().clone();
         assert_eq!(
             events,
             vec![
                 LifecycleEvent::Open("a".to_owned()),
-                LifecycleEvent::Close("a".to_owned(), RecordedOutcome::ResourceBoundary),
                 LifecycleEvent::Update("a".to_owned()),
+                LifecycleEvent::Close("a".to_owned(), RecordedOutcome::ResourceBoundary),
             ],
             "\"a\" must be closed exactly once, ever -- never retried after a \
              failure, and \"b\" must never be opened"
@@ -3247,10 +3302,8 @@ mod tests {
                 .await
                 .unwrap();
             writer.write(&[1], write_context(&token)).await.unwrap();
-            // Rollover to "b" is now due; closing "a" fails.
-            let result = writer.write(&[2], write_context(&token)).await;
-            assert!(result.is_err(), "a boundary close failure must surface");
-            // The checkpoint must still describe "a", not "b".
+            // The last checkpoint captured *before* the failing write must
+            // still describe "a".
             let envelope = stream
                 .update(StreamUpdateContext::new(&token))
                 .await
@@ -3261,10 +3314,15 @@ mod tests {
                 state.resource_index, 0,
                 "checkpoint advancement must not silently occur after a failed boundary close"
             );
+            // Rollover to "b" is now due; closing "a" fails.
+            let result = writer.write(&[2], write_context(&token)).await;
+            assert!(result.is_err(), "a boundary close failure must surface");
             // `ItemStream::close` carries no idempotency/atomicity
             // guarantee, so this writer is now poisoned: every further
             // `write` returns the same failure without ever calling `close`
-            // on "a" a second time or rolling over to "b".
+            // on "a" a second time or rolling over to "b" -- and `update`
+            // also fails closed rather than exposing a phantom checkpoint
+            // for a writer that can no longer make progress.
             for _ in 0..3 {
                 let retried = writer.write(&[2], write_context(&token)).await;
                 assert!(
@@ -3272,14 +3330,19 @@ mod tests {
                     "a poisoned instance must keep failing, never silently recover"
                 );
             }
+            let post_poison_update = stream.update(StreamUpdateContext::new(&token)).await;
+            assert!(
+                post_poison_update.is_err(),
+                "update must fail closed once poisoned, not expose a stale checkpoint"
+            );
         });
         let events = log.lock().unwrap().clone();
         assert_eq!(
             events,
             vec![
                 LifecycleEvent::Open("a".to_owned()),
-                LifecycleEvent::Close("a".to_owned(), RecordedOutcome::ResourceBoundary),
                 LifecycleEvent::Update("a".to_owned()),
+                LifecycleEvent::Close("a".to_owned(), RecordedOutcome::ResourceBoundary),
             ],
             "\"a\" must be closed exactly once, ever -- never retried after a \
              failure, and \"b\" must never be opened"
@@ -3349,6 +3412,159 @@ mod tests {
             "\"a\" must be closed exactly once total -- the outer terminal \
              close must recognize it is already retired and skip it, not \
              close it a second time with the step's real outcome"
+        );
+    }
+
+    #[test]
+    fn concurrent_writes_never_race_the_poisoning_transition() {
+        // Deterministic, non-flaky proof that `active`/poisoned state
+        // sharing one lock (`WriterState`) actually prevents the race a
+        // separate poison flag would allow: manually poll two `write`
+        // futures with a no-op waker, so every interleaving point is
+        // explicit rather than timing-dependent.
+        struct BlockingCloseStream {
+            namespace: ComponentStreamIdentity,
+            proceed: Arc<tokio::sync::Notify>,
+        }
+        impl ItemStream for BlockingCloseStream {
+            async fn open(
+                &self,
+                _context: StreamOpenContext<'_>,
+            ) -> Result<StreamOpenOutcome, StreamOpenError> {
+                Ok(StreamOpenOutcome::Initial)
+            }
+            async fn update(
+                &self,
+                _context: StreamUpdateContext<'_>,
+            ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+                ComponentStateEnvelope::encode(
+                    self.namespace.clone(),
+                    &VecPosition(0),
+                    &vec_read_codec(),
+                    StateLimits::default(),
+                )
+                .map_err(|_| StreamUpdateError::new())
+            }
+            async fn close(
+                &self,
+                _context: StreamCloseContext<'_>,
+            ) -> Result<StreamCloseOutcome, StreamCloseError> {
+                // Blocks here, still holding the outer `active` lock across
+                // this `.await` (the whole point being tested), until the
+                // test explicitly releases it.
+                self.proceed.notified().await;
+                Err(StreamCloseError::new())
+            }
+        }
+
+        struct BlockingOpener {
+            sink: Arc<std::sync::Mutex<HashMap<String, Vec<u64>>>>,
+            proceed: Arc<tokio::sync::Notify>,
+        }
+        impl MultiResourceWriterOpener<u64> for BlockingOpener {
+            type Writer = VecItemWriter;
+            type Stream = BlockingCloseStream;
+            async fn open(
+                &self,
+                resource: &ResourceIdentity,
+                _resource_ordinal: u32,
+                delegate_identity: &ComponentStreamIdentity,
+            ) -> Result<(Self::Writer, Self::Stream, StreamStateContract), MultiResourceOpenError>
+            {
+                let writer = VecItemWriter {
+                    resource: resource.as_str().to_owned(),
+                    sink: Arc::clone(&self.sink),
+                    committed_len: Arc::new(AsyncMutex::new(0)),
+                };
+                let stream = BlockingCloseStream {
+                    namespace: delegate_identity.clone(),
+                    proceed: Arc::clone(&self.proceed),
+                };
+                Ok((writer, stream, StreamStateContract::new(vec_read_codec())))
+            }
+        }
+
+        let sink = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let proceed = Arc::new(tokio::sync::Notify::new());
+        let opener = BlockingOpener {
+            sink: Arc::clone(&sink),
+            proceed: Arc::clone(&proceed),
+        };
+        let (writer, stream, _contract) = multi_resource_writer::<u64, _, _>(
+            resource_set(&["a", "b"]),
+            opener,
+            identity("concurrent-writer-race"),
+            BatchCountRollover::new(1),
+            RestartabilityDeclaration::Restartable,
+        )
+        .unwrap();
+        let (_source, token) = stop();
+
+        futures_executor::block_on(async {
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            // Fills "a" to its one-batch rollover threshold.
+            writer.write(&[1], write_context(&token)).await.unwrap();
+        });
+
+        let waker = std::task::Waker::noop();
+        let mut cx = std::task::Context::from_waker(waker);
+
+        let mut a_fut = std::pin::pin!(writer.write(&[2], write_context(&token)));
+        // First poll: acquires the one shared lock, decides to roll over,
+        // and calls `close`, which blocks on `proceed` -- still holding
+        // that lock across the `.await`. Pending.
+        assert!(matches!(
+            a_fut.as_mut().poll(&mut cx),
+            std::task::Poll::Pending
+        ));
+
+        let mut b_fut = std::pin::pin!(writer.write(&[3], write_context(&token)));
+        // A second, concurrent `write` call: with `active` and the poison
+        // state unified under the one lock `a_fut` is still holding, this
+        // must block on that same lock -- it must not be possible for it to
+        // observe any intermediate state, poisoned or not, until `a_fut`'s
+        // whole critical section has resolved.
+        assert!(matches!(
+            b_fut.as_mut().poll(&mut cx),
+            std::task::Poll::Pending
+        ));
+
+        // Let the blocked close actually fail now.
+        proceed.notify_one();
+        let a_result = loop {
+            if let std::task::Poll::Ready(result) = a_fut.as_mut().poll(&mut cx) {
+                break result;
+            }
+        };
+        assert!(
+            a_result.is_err(),
+            "the closing write must surface the boundary close failure"
+        );
+
+        // Only now can `b_fut` make progress -- and it must see the
+        // already-poisoned state `a_fut` committed, never a stale
+        // "not yet poisoned" read, and never roll over into "b".
+        let b_result = loop {
+            if let std::task::Poll::Ready(result) = b_fut.as_mut().poll(&mut cx) {
+                break result;
+            }
+        };
+        assert!(
+            b_result.is_err(),
+            "a concurrent write must never observe a stale pre-poisoning \
+             state and must never roll over into \"b\" once the writer is \
+             poisoned"
+        );
+
+        let sink = sink.lock().unwrap();
+        assert_eq!(
+            sink.get("b"),
+            None,
+            "\"b\" must never receive any items once the writer is \
+             poisoned, even under a concurrent write"
         );
     }
 

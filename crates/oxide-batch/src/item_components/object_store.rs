@@ -31,17 +31,17 @@
 //! current object so far, and reissues the full object on every
 //! [`crate::ItemWriter::write`] call (object-store `PUT` semantics are
 //! whole-object, not append). This is bounded by `max_object_bytes` as a
-//! real resource bound, not merely never unbounded: an oversized object or
-//! candidate is rejected before a buffer proportional to its true size is
-//! allocated -- see [`ObjectStoreCapability::get`]'s contract for the
-//! reader side, and [`ObjectItemWriter`]'s `write` for the writer side. The
-//! writer's one residual, inherent limit: `serialize: Fn(&O) -> Vec<u8>`
-//! returns an owned buffer with no size hint, so the wrapper cannot bound
-//! what a single item's own `serialize` call allocates before it returns --
-//! it can, and does, stop calling `serialize` on every item *after* the one
-//! that first pushes the accumulator past `max_object_bytes`, rather than
-//! serializing an entire oversized batch unconditionally first. It is not
-//! streaming/multipart -- that stays M9.
+//! real, pre-materialization resource bound: [`ObjectStoreCapability::get`]
+//! rejects an oversized object before a buffer proportional to its true
+//! size is allocated (see its own contract), and [`ObjectItemWriter`]'s
+//! `write` serializes each item into a [`BoundedSink`] over the candidate
+//! buffer, which refuses any single write that would exceed the bound
+//! *before* copying a byte -- not a post-hoc length check on an
+//! already-built buffer. The one residual, inherent limit -- a `serialize`
+//! implementation that builds one large owned buffer internally before
+//! ever writing to the sink has already paid that allocation before the
+//! sink can refuse it -- is documented on [`ObjectStoreWriterOpener::new`],
+//! not hidden. It is not streaming/multipart -- that stays M9.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -920,6 +920,51 @@ struct WriteAccumulator {
     version_token: Option<String>,
 }
 
+/// A [`std::io::Write`] sink over the accumulator's candidate buffer that
+/// refuses to grow past a declared maximum.
+///
+/// This is what makes `max_object_bytes` a real, pre-materialization bound
+/// on the wrapper's *own* accumulation rather than a post-hoc length check:
+/// every `write` call is checked against the remaining budget *before* any
+/// byte is copied into the candidate, so a caller's `serialize`
+/// implementation that writes incrementally (as any bounded-output encoder
+/// should) is stopped at the exact byte that would exceed the bound,
+/// never after allocating proportional to however far past it that byte
+/// would have landed.
+///
+/// This cannot bound what a `serialize` implementation allocates *before*
+/// handing bytes to this sink (e.g. one internal `format!` call that
+/// builds a single huge `String` and then calls [`std::io::Write::write_all`]
+/// once) -- no fixed sink-based interface can, since `serialize` is
+/// arbitrary caller code that runs before this sink ever sees a byte. That
+/// residual, inherent limit is documented on [`ObjectStoreWriterOpener::new`]
+/// rather than hidden.
+struct BoundedSink<'a> {
+    buf: &'a mut Vec<u8>,
+    max: usize,
+}
+
+impl std::io::Write for BoundedSink<'_> {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        let new_len = self
+            .buf
+            .len()
+            .checked_add(data.len())
+            .ok_or_else(|| std::io::Error::other("object size overflow"))?;
+        if new_len > self.max {
+            return Err(std::io::Error::other(
+                "object write would exceed max_object_bytes",
+            ));
+        }
+        self.buf.extend_from_slice(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// A restartable [`crate::ItemWriter`] that accumulates serialized items in
 /// memory and re-issues the whole object on every write (object-store `PUT`
 /// is whole-object, not append).
@@ -951,7 +996,7 @@ impl<O, C, S> ItemWriter<O> for ObjectItemWriter<O, C, S>
 where
     O: Sync,
     C: ObjectStoreCapability,
-    S: Fn(&O) -> Vec<u8> + Send + Sync,
+    S: Fn(&O, &mut dyn std::io::Write) -> std::io::Result<()> + Send + Sync,
 {
     async fn write<'a>(
         &'a self,
@@ -970,32 +1015,28 @@ where
         // write, unlike cloning it once to build the candidate and again
         // to hand it to `put`.
         //
-        // The bound is checked after each item, before that item's bytes
-        // are appended: `serialize` returns an owned `Vec<u8>` with no size
-        // hint, so this wrapper cannot know an item's encoded length
-        // without calling it (that one item's own allocation cost is the
-        // caller's, inherent to the `serialize` signature, same as any
-        // other per-item serialization cost in this crate) -- but it can,
-        // and does, stop calling `serialize` on every item *after* the one
-        // that first pushes the running total past `max_object_bytes`,
-        // rather than serializing the whole batch unconditionally before
-        // ever checking the bound. On rejection the appended tail is
-        // truncated back off (an O(1) length adjustment, not a copy) so
-        // the accumulator is restored to exactly its prior content.
+        // The bound is a real, pre-materialization bound on *this
+        // wrapper's own* accumulation: `serialize` writes into a
+        // `BoundedSink` over the candidate buffer, and every write to that
+        // sink is checked against the remaining budget before a single
+        // byte is copied in -- never after allocating proportional to an
+        // oversized write. On rejection the appended tail is truncated
+        // back off (an O(1) length adjustment, not a copy) so the
+        // accumulator is restored to exactly its prior content. See
+        // `BoundedSink`'s docs for the one residual limit this cannot
+        // cover (what `serialize` allocates internally before it ever
+        // calls the sink).
         let mut candidate = std::mem::take(&mut accumulator.bytes);
         for item in items {
-            let chunk = (self.serialize)(item);
-            let Some(new_len) = candidate.len().checked_add(chunk.len()) else {
-                candidate.truncate(original_len);
-                accumulator.bytes = candidate;
-                return Err(WriterError::with_category(FailureCategory::Invariant));
+            let mut sink = BoundedSink {
+                buf: &mut candidate,
+                max: self.max_object_bytes,
             };
-            if new_len > self.max_object_bytes {
+            if (self.serialize)(item, &mut sink).is_err() {
                 candidate.truncate(original_len);
                 accumulator.bytes = candidate;
                 return Err(WriterError::with_category(FailureCategory::Invariant));
             }
-            candidate.extend_from_slice(&chunk);
         }
         match self.store.put(&self.id, &candidate).await {
             Ok(metadata) => {
@@ -1111,11 +1152,20 @@ impl<C, S> ObjectStoreWriterOpener<C, S>
 where
     C: ObjectStoreCapability + 'static,
 {
-    /// Builds an opener over `store`, serializing each item with
-    /// `serialize` before appending it to the current object's accumulator;
-    /// a candidate object whose accumulated size would exceed
-    /// `max_object_bytes` is rejected before the accumulator is grown to
-    /// hold it.
+    /// Builds an opener over `store`, serializing each item by calling
+    /// `serialize` with a sink to write its encoded bytes into, before
+    /// appending it to the current object's accumulator.
+    ///
+    /// `serialize` writes to the sink rather than returning an owned
+    /// buffer specifically so `max_object_bytes` can be a real,
+    /// pre-materialization bound: every write to the sink is checked
+    /// against the remaining budget *before* copying a single byte into
+    /// the accumulator (see [`BoundedSink`]'s docs for the one residual
+    /// limit this cannot cover -- an item whose own `serialize`
+    /// implementation allocates a large buffer internally before ever
+    /// calling the sink). A well-behaved `serialize` writes incrementally
+    /// (e.g. via `write!`, or by writing one already-small field at a
+    /// time) rather than building one large owned buffer first.
     #[must_use]
     pub fn new(store: C, serialize: S, max_object_bytes: usize) -> Self {
         Self {
@@ -1130,7 +1180,7 @@ impl<O, C, S> MultiResourceWriterOpener<O> for ObjectStoreWriterOpener<C, S>
 where
     O: Send + Sync + 'static,
     C: ObjectStoreCapability + 'static,
-    S: Fn(&O) -> Vec<u8> + Send + Sync + 'static,
+    S: Fn(&O, &mut dyn std::io::Write) -> std::io::Result<()> + Send + Sync + 'static,
 {
     type Writer = ObjectItemWriter<O, C, S>;
     type Stream = ObjectItemWriterStream<C>;
@@ -1541,7 +1591,9 @@ mod tests {
     fn writer_restart_over_a_no_version_backend_fails_closed_rather_than_matching_none_to_none() {
         let store = Arc::new(NoVersionObjectStore::new(1024));
         let (_source, token) = stop();
-        let serialize = |item: &u64| format!("{item},").into_bytes();
+        let serialize = |item: &u64, sink: &mut dyn std::io::Write| {
+            sink.write_all(format!("{item},").as_bytes())
+        };
         let resources = ResourceSet::new(vec![
             crate::item_components::multi_resource::ResourceIdentity::new("obj").unwrap(),
         ]);
@@ -1598,7 +1650,9 @@ mod tests {
     fn writer_roundtrip_through_multi_resource_writer_accumulates_and_puts() {
         let store = Arc::new(InMemoryObjectStore::new(1024));
         let (_source, token) = stop();
-        let serialize = |item: &u64| format!("{item},").into_bytes();
+        let serialize = |item: &u64, sink: &mut dyn std::io::Write| {
+            sink.write_all(format!("{item},").as_bytes())
+        };
         let opener = ObjectStoreWriterOpener::new(Arc::clone(&store), serialize, 1024);
         let resources = ResourceSet::new(vec![
             crate::item_components::multi_resource::ResourceIdentity::new("out").unwrap(),
@@ -1762,7 +1816,7 @@ mod tests {
             ComponentStreamIdentity::new("oxide-batch.object-store-unit-test.bounded-writer")
                 .unwrap();
         // Four bytes per item; a maximum of 8 bytes allows exactly two items.
-        let serialize = |item: &u8| vec![*item; 4];
+        let serialize = |item: &u8, sink: &mut dyn std::io::Write| sink.write_all(&[*item; 4]);
         let opener = ObjectStoreWriterOpener::new(Arc::clone(&store), serialize, 8);
         let (_source, token) = stop();
         futures_executor::block_on(async {
@@ -1823,9 +1877,9 @@ mod tests {
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counted_serialize = {
             let calls = Arc::clone(&calls);
-            move |item: &u8| {
+            move |item: &u8, sink: &mut dyn std::io::Write| {
                 calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                vec![*item; 3]
+                sink.write_all(&[*item; 3])
             }
         };
         let opener = ObjectStoreWriterOpener::new(Arc::clone(&store), counted_serialize, 7);

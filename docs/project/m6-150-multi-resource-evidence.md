@@ -124,6 +124,45 @@ against the same standard applied to #176.
    fail-closed hard boundary, not a migration, proven by
    `stale_v1_delegate_record_without_a_namespace_fails_closed_on_restore`.
 
+### Third round: independent strict review of the second-round corrections
+
+A third review found two more defects, both in the second round's own fixes
+(findings 4 and 6, above) rather than in the original #176 code:
+
+8. **The object-store writer bound was still not a real pre-materialization
+   bound.** Finding 5's fix stopped serializing further *items* after the
+   bound was exceeded, but each item was still serialized by
+   `serialize: Fn(&O) -> Vec<u8>` -- a single adversarial item's own
+   `serialize` call could still allocate an arbitrarily large owned buffer
+   (e.g. 1 GB against a 1 MB `max_object_bytes`) before its length was ever
+   checked. Fixed by changing `serialize`'s signature to write into a
+   caller-supplied sink (`Fn(&O, &mut dyn std::io::Write) -> io::Result<()>`)
+   backed by a new [`BoundedSink`](../../crates/oxide-batch/src/item_components/object_store.rs)
+   that refuses any write which would exceed the remaining budget *before*
+   copying a byte -- a real, incremental, pre-materialization bound at the
+   wrapper's own accumulation boundary. The one residual, inherent limit
+   (a `serialize` implementation that builds one large buffer internally
+   before ever calling the sink has already paid that allocation) is
+   documented on `ObjectStoreWriterOpener::new`, not hidden: no sink-based
+   interface can bound what arbitrary caller code allocates before handing
+   bytes to it.
+9. **Finding 4's poisoning fix introduced a concurrent-write race.** The
+   writer kept the active resource and the poison flag behind two separate
+   locks. Two concurrent `write` calls could both pass the poison check
+   before either acquired the active-resource lock; if the first then
+   failed its boundary close and poisoned the *separate* lock, the second
+   -- already past its own poison check -- could still roll over into the
+   next resource, violating the documented `Send + Sync` /
+   fail-closed guarantee (undetectable by a sequential test). Fixed by
+   unifying the active resource and the poison state into one `WriterState`
+   enum behind the *one* lock `MultiResourceWriter` already held, so
+   deciding to poison and committing that decision is the same atomic
+   transition a concurrent `write` cannot observe half of. Proven by
+   `concurrent_writes_never_race_the_poisoning_transition`, which manually
+   polls two `write` futures with a no-op waker (deterministic, not
+   timing-dependent) to force exactly the interleaving the race required
+   and show it can no longer happen.
+
 ## Audit performed before implementation
 
 Per #150's own instruction not to re-derive or duplicate #146's catalog, the
@@ -295,6 +334,7 @@ progress -- keeping the payload small regardless of resource-set size.
 | The rollover batch count survives a restart, so `BatchCountRollover`'s cap holds across a crash rather than resetting to 0 | `rollover_counter_survives_restart_and_still_caps_batches_per_resource` |
 | **(#177)** Rollover closes the outgoing delegate exactly once, with `ResourceBoundary`, before opening the next resource | `writer_rollover_closes_outgoing_delegate_exactly_once_with_resource_boundary_outcome` |
 | **(#177)** A boundary close failure is propagated, the write never reaches the next resource, the checkpoint does not advance, and the writer is poisoned rather than retrying the same failed close | `writer_resource_boundary_close_failure_poisons_the_writer_without_rolling_over_or_retrying` |
+| **(#177)** A concurrent `write` can never observe a stale pre-poisoning state or roll over after another `write` has poisoned the writer (deterministic manual-poll evidence, not timing-dependent) | `concurrent_writes_never_race_the_poisoning_transition` |
 | **(#177)** The outer terminal close does not re-close a delegate already retired at a boundary | `outer_terminal_close_does_not_double_close_a_writer_delegate_already_retired_at_a_boundary` |
 | **(#177)** A delegate reporting the wrong namespace fails the outer `update` closed | `writer_update_fails_closed_when_delegate_reports_the_wrong_namespace` |
 
@@ -329,6 +369,7 @@ was needed.
 | **(#177)** The reader opener rejects an oversized object without the backend ever materializing a buffer for it (mock backend that structurally cannot hand back over-bound content) | `reader_opener_rejects_an_oversized_object_without_ever_materializing_it` |
 | **(#177)** The writer accumulator rejects growth past `max_object_bytes` before touching the existing buffer, and allows the exact boundary | `writer_rejects_growth_past_max_object_bytes_and_allows_the_exact_boundary` |
 | **(#177)** A batch that crosses the bound mid-batch stops calling `serialize` on every item after the one that first exceeds it | `writer_stops_serializing_further_items_once_one_write_call_exceeds_the_bound` |
+| **(#177, third round)** `serialize` writes into a `BoundedSink` that refuses a write before copying a byte once it would exceed the bound, superseding the item-count-only check above with a true pre-materialization bound | covered by the tests above, now exercised through the sink; see `BoundedSink`'s own doc comment for the residual limit |
 
 Cancellation is honored by construction (`ObjectItemWriter::write` and
 `MultiResourceWriter::write` both check `context.stop_token()` before doing
