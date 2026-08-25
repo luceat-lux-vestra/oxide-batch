@@ -68,12 +68,16 @@ use serde_json::Value;
 /// same-resource-enlisted-writer slice only; upsert, stored-procedure,
 /// ORM/repository forms, other backends, and generic portability remain
 /// `Planned` for M8) in
-/// [#149](https://github.com/luceat-lux-vestra/oxide-batch/issues/149).
+/// [#149](https://github.com/luceat-lux-vestra/oxide-batch/issues/149);
+/// `ITEM-MULTI-001` and `IO-OBJECT-001` did the same (the latter for its M6
+/// provider-neutral object-store capability basics slice only; S3/Azure/GCS
+/// certification remains `Planned` for M9) in
+/// [#150](https://github.com/luceat-lux-vestra/oxide-batch/issues/150).
 const CLOSED_DISPOSITION: &[(&str, usize)] = &[
     ("Verified", 28),
-    ("Implemented", 11),
+    ("Implemented", 13),
     ("Partial", 13),
-    ("Planned", 29),
+    ("Planned", 27),
     ("Unknown", 2),
 ];
 

@@ -198,7 +198,11 @@ fn scan(root: &Path) -> Result<BTreeSet<(String, String)>, String> {
     for page in pages(root)? {
         let rendered = fs::read_to_string(&page)
             .map_err(|error| format!("could not read {}: {error}", page.display()))?;
-        found.extend(disclosures(&item_prefix(&page), &rendered));
+        found.extend(disclosures(
+            &item_prefix(&page),
+            depth_of(&page, root),
+            &rendered,
+        ));
     }
     Ok(found)
 }
@@ -253,7 +257,11 @@ fn item_prefix(page: &Path) -> String {
 /// scope: a documentation comment may link anywhere, and a link in a sentence
 /// discloses nothing. The owning item is the nearest anchor identifier before
 /// the declaration.
-fn disclosures(prefix: &str, page: &str) -> BTreeSet<(String, String)> {
+///
+/// `depth` is how many directories the rendered page sits below this crate's
+/// own documentation root (0 for a page documenting a crate-root item); see
+/// [`foreign`] for why a same-crate cross-module link needs it.
+fn disclosures(prefix: &str, depth: usize, page: &str) -> BTreeSet<(String, String)> {
     const ANCHOR: &str = "id=\"";
     const LINK: &str = "href=\"";
 
@@ -278,7 +286,7 @@ fn disclosures(prefix: &str, page: &str) -> BTreeSet<(String, String)> {
             (_, Some((start, end))) => {
                 let block = &rendered[start..end];
                 for link in block.split(LINK).skip(1) {
-                    if let Some(dependency) = foreign(until(link, '"')) {
+                    if let Some(dependency) = foreign(until(link, '"'), depth) {
                         found.insert((item(prefix, &anchor), dependency));
                     }
                 }
@@ -350,7 +358,16 @@ fn declared(page: &str) -> &str {
 /// library, or a dependency, and a fourth kind of destination is something the
 /// review has not seen. Failing on it costs one allowlist entry; ignoring it
 /// would hide the next disclosure that arrives in an unfamiliar form.
-fn foreign(href: &str) -> Option<String> {
+///
+/// `depth` (see [`disclosures`]) is what tells a same-crate, cross-module
+/// relative link apart from a genuine one-hop link to a sibling *crate*: both
+/// have the identical `../foo/...` shape when counted by leading `../`
+/// segments alone, and only comparing that count against how deep the
+/// *linking* page actually sits resolves the two. A link that walks up no
+/// further than the page's own depth lands back at or inside this crate's
+/// own rendered tree; only a link that walks up one level further than that
+/// escapes it.
+fn foreign(href: &str, depth: usize) -> Option<String> {
     const DOCS_RS: &str = "https://docs.rs/";
     const RUST: &str = "https://doc.rust-lang.org/";
 
@@ -369,13 +386,40 @@ fn foreign(href: &str) -> Option<String> {
     }
 
     let mut rest = href;
+    let mut up_levels = 0usize;
     while let Some(parent) = rest.strip_prefix("../") {
         rest = parent;
+        up_levels += 1;
     }
-    if rest == href || !rest.contains('/') {
+    if rest.contains("..") {
+        // A `..` segment survives after the leading run was consumed --
+        // this href is not the normalized "walk up N times, then descend"
+        // shape every rustdoc-rendered relative link has, so the leading
+        // `up_levels` count cannot be trusted to say whether it escapes this
+        // crate. Report it rather than silently accept it: an unfamiliar
+        // relative-link shape is exactly the case this scan cannot afford to
+        // wave through (see the module doc's own disclosure philosophy).
+        return Some("unnormalized-relative-link".to_owned());
+    }
+    if up_levels <= depth {
+        return None;
+    }
+    if !rest.contains('/') {
         return None;
     }
     crate_name(until(rest, '/'))
+}
+
+/// Returns how many directories `page` sits below `root`.
+///
+/// A page documenting a crate-root item (`root/struct.Foo.html`) is at depth
+/// `0`; a page nested under submodule directories (e.g.
+/// `root/item_components/multi_resource/struct.X.html`) is at depth `2`. See
+/// [`foreign`] for why [`disclosures`] needs this.
+fn depth_of(page: &Path, root: &Path) -> usize {
+    page.parent()
+        .and_then(|directory| directory.strip_prefix(root).ok())
+        .map_or(0, |relative| relative.components().count())
 }
 
 /// Borrows the host of an absolute link, when the link is absolute.
@@ -493,7 +537,7 @@ fn against(
 mod tests {
     #![allow(clippy::expect_used, clippy::panic)]
 
-    use super::{against, declared, disclosures, foreign, item_prefix};
+    use super::{against, declared, depth_of, disclosures, foreign, item_prefix};
     use std::collections::BTreeSet;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -509,7 +553,7 @@ mod tests {
 
     /// Collects the dependencies one page discloses, without their items.
     fn dependencies(prefix: &str, page: &str) -> BTreeSet<String> {
-        disclosures(prefix, page)
+        disclosures(prefix, 0, page)
             .into_iter()
             .map(|(_, dependency)| dependency)
             .collect()
@@ -523,7 +567,7 @@ mod tests {
         );
 
         assert_eq!(
-            disclosures("oxide_batch::FlowTarget", &page),
+            disclosures("oxide_batch::FlowTarget", 0, &page),
             BTreeSet::from([(
                 "oxide_batch::FlowTarget::manifest_value".to_owned(),
                 "serde_json".to_owned()
@@ -536,7 +580,7 @@ mod tests {
         let page = method("method.handle", "../tokio/runtime/struct.Handle.html");
 
         assert_eq!(
-            disclosures("oxide_batch::JobLauncher", &page),
+            disclosures("oxide_batch::JobLauncher", 0, &page),
             BTreeSet::from([(
                 "oxide_batch::JobLauncher::handle".to_owned(),
                 "tokio".to_owned()
@@ -561,22 +605,116 @@ mod tests {
 
     #[test]
     fn local_and_standard_library_links_are_not_disclosure() {
-        assert_eq!(foreign("struct.JobName.html"), None);
-        assert_eq!(foreign("#method.new"), None);
-        assert_eq!(foreign("../oxide_batch/struct.JobName.html"), None);
-        assert_eq!(foreign("../src/oxide_batch/lib.rs.html"), None);
-        assert_eq!(foreign("../static.files/main.js"), None);
+        assert_eq!(foreign("struct.JobName.html", 0), None);
+        assert_eq!(foreign("#method.new", 0), None);
+        assert_eq!(foreign("../oxide_batch/struct.JobName.html", 0), None);
+        assert_eq!(foreign("../src/oxide_batch/lib.rs.html", 0), None);
+        assert_eq!(foreign("../static.files/main.js", 0), None);
         assert_eq!(
-            foreign("https://doc.rust-lang.org/1.97.1/core/option/enum.Option.html"),
+            foreign(
+                "https://doc.rust-lang.org/1.97.1/core/option/enum.Option.html",
+                0
+            ),
             None
         );
         assert_eq!(
-            foreign("https://doc.rust-lang.org/1.97.1/std/vec/struct.Vec.html"),
+            foreign(
+                "https://doc.rust-lang.org/1.97.1/std/vec/struct.Vec.html",
+                0
+            ),
             None
         );
         assert_eq!(
-            foreign("../sqlx/postgres/struct.PgPool.html"),
+            foreign("../sqlx/postgres/struct.PgPool.html", 0),
             Some("sqlx".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_same_crate_cross_module_link_is_not_disclosure_regardless_of_leading_dotdot() {
+        // A page two directories below the crate root (e.g.
+        // `item_components/multi_resource/trait.Foo.html`) links to a sibling
+        // submodule (`item_components/object_store/struct.Bar.html`) with
+        // exactly one `../` -- the identical shape a crate-root page's
+        // one-hop link to a genuinely foreign sibling *crate* has. Depth is
+        // what tells them apart.
+        assert_eq!(
+            foreign("../object_store/struct.ObjectStoreReaderOpener.html", 2),
+            None,
+            "one `../` from a page nested two directories down still lands \
+             back inside this crate's own rendered tree",
+        );
+        // Walking up exactly as many levels as the page is nested reaches
+        // this crate's own root, not past it -- also not a disclosure.
+        assert_eq!(
+            foreign("../../struct.TopLevel.html", 2),
+            None,
+            "walking up exactly `depth` levels lands at this crate's own root"
+        );
+        // One level further than the page's own depth genuinely escapes this
+        // crate's rendered tree, exactly like the depth-0 sibling-crate case.
+        assert_eq!(
+            foreign("../../../sqlx/postgres/struct.PgPool.html", 2),
+            Some("sqlx".to_owned()),
+            "walking up one level past the page's own depth escapes this \
+             crate's rendered tree into a genuine sibling crate",
+        );
+    }
+
+    #[test]
+    fn depth_comparison_holds_at_deeper_nesting_than_the_motivating_case() {
+        // The same three boundary cases as the depth-2 test above, one level
+        // deeper (e.g. `item_components/multi_resource/inner/struct.X.html`,
+        // depth 3), proving the depth comparison generalizes rather than
+        // happening to work only at the one nesting level #150 introduced.
+        assert_eq!(
+            foreign("../sibling/struct.Y.html", 3),
+            None,
+            "one `../` from a page nested three directories down still \
+             lands back inside this crate's own rendered tree",
+        );
+        assert_eq!(
+            foreign("../../../struct.TopLevel.html", 3),
+            None,
+            "walking up exactly `depth` (3) levels lands at this crate's \
+             own root, not past it"
+        );
+        assert_eq!(
+            foreign("../../../../sqlx/postgres/struct.PgPool.html", 3),
+            Some("sqlx".to_owned()),
+            "walking up one level past a depth-3 page's own depth still \
+             escapes this crate's rendered tree",
+        );
+    }
+
+    #[test]
+    fn a_relative_link_with_no_further_path_segment_is_not_disclosure() {
+        // A link that walks up past its own depth but names no further
+        // directory segment (bare filename, or an empty segment from a
+        // malformed/non-canonical `../` run) cannot name a foreign crate --
+        // `crate_name` requires a nonempty alphanumeric segment, so this
+        // fails closed to "nothing resolvable" rather than panicking or
+        // guessing a crate name from unexpected input.
+        assert_eq!(foreign("../../bare-file.html", 1), None);
+        assert_eq!(foreign("../../../.html", 1), None);
+    }
+
+    #[test]
+    fn a_non_normalized_relative_link_fails_closed_rather_than_bypassing_the_scan() {
+        // A `..` segment that survives after the leading run is consumed is
+        // not the "walk up N times, then descend" shape any real rustdoc
+        // output has. Before this fix, `up_levels` only counted the leading
+        // run, so this shape left `up_levels == 0 <= depth` and slipped
+        // through as `None` (not disclosure) regardless of what it actually
+        // pointed at -- a fail-open hole for exactly the "malformed or
+        // unfamiliar relative target" case the scan must fail closed on.
+        assert_eq!(
+            foreign("item_components/../../sqlx/struct.PgPool.html", 2),
+            Some("unnormalized-relative-link".to_owned()),
+        );
+        assert_eq!(
+            foreign("item_components/multi_resource/..", 2),
+            Some("unnormalized-relative-link".to_owned()),
         );
     }
 
@@ -587,7 +725,7 @@ mod tests {
                     for the executor this crate does not own.</p></div>";
 
         assert!(
-            disclosures("oxide_batch::JobLauncher", page).is_empty(),
+            disclosures("oxide_batch::JobLauncher", 0, page).is_empty(),
             "a link in a sentence is a reference, not a signature",
         );
     }
@@ -600,7 +738,7 @@ mod tests {
         );
 
         assert!(!declared(&page).contains("either"));
-        assert!(disclosures("oxide_batch::JobName", &page).is_empty());
+        assert!(disclosures("oxide_batch::JobName", 0, &page).is_empty());
     }
 
     #[test]
@@ -612,6 +750,25 @@ mod tests {
         assert_eq!(
             item_prefix(Path::new("target/doc/oxide_batch/index.html")),
             "oxide_batch"
+        );
+    }
+
+    #[test]
+    fn depth_is_the_directory_nesting_below_the_crate_root() {
+        let root = Path::new("target/doc/oxide_batch");
+        assert_eq!(
+            depth_of(
+                Path::new("target/doc/oxide_batch/struct.JobName.html"),
+                root
+            ),
+            0
+        );
+        assert_eq!(
+            depth_of(
+                Path::new("target/doc/oxide_batch/item_components/multi_resource/struct.X.html"),
+                root
+            ),
+            2
         );
     }
 
@@ -667,7 +824,7 @@ mod tests {
         for (page, prefix, items) in expected {
             let rendered = fs::read_to_string(fixture(page))
                 .unwrap_or_else(|error| panic!("could not read the {page} fixture: {error}"));
-            let found = disclosures(prefix, &rendered);
+            let found = disclosures(prefix, 0, &rendered);
 
             for item in items {
                 assert!(

@@ -128,7 +128,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "7fb46b5bc8a759193368d07ebda109b508e1b63d",
+    "source_commit": "1b78514057714097a08fa27c65978c9db9531a4d",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -143,7 +143,7 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "7fb46b5bc8a759193368d07ebda109b508e1b63d",
+      "execution_commit": "1b78514057714097a08fa27c65978c9db9531a4d",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -162,13 +162,13 @@
         "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
         "crates/oxide-batch/Cargo.toml": "762ee1faab89b474e219bc1a97dc5e8bdb21a03a",
         "crates/oxide-batch/migrations": "7923dcfb1ff0d152499466259107986cd8ae27e5",
-        "crates/oxide-batch/src": "1877d27b8dc5ba2afaa5d9209c0de52ed595540c",
+        "crates/oxide-batch/src": "0dcc5ad3557cde67277527895b1b220a777adcee",
         "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "2c68359b1043311db6a60b6bc7e6f4e0e0766fa1",
         "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "1bbb800be11c7ada42b16be604313ccdf5ba96fc",
         "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "2ef89b558074e73bb417c07a56cddfb708af1a7a",
         "crates/oxide-batch/tests/resource_bounds": "3e90ae5015649f6f8086e86082cee17d97b71006",
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
-        "tests/fixtures/resource-bounds/campaign-scope.json": "20b60cecd84c3481fc949f90d566ce294394cd49",
+        "tests/fixtures/resource-bounds/campaign-scope.json": "2e0e2ac5cccb0239a91ce32fc6d52967583c8073",
         "tests/fixtures/resource-bounds/campaign-semantics.json": "47e677ff95774ac67204adcd1821f8a8d9f707a8",
         "tests/fixtures/resource-bounds/execution-contract.json": "b40bd36435adcd5e8638ebb69651e5ed897b142c",
         "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
@@ -247,6 +247,15 @@
       "reason": "Explicitly outside the M0-M4 framework boundary. The capacity budget already states that application readers, writers, and item buffers are budgeted by the workload, and the framework declares no ceiling for them, so the campaign has nothing to prove and does not pretend to.",
       "resource": "application readers, writers, and item buffers",
       "symbols": []
+    },
+    {
+      "covered_by": "crates/oxide-batch/src/item_components/multi_resource.rs::tests::resource_identity_rejects_one_byte_past_its_ceiling, crates/oxide-batch/src/item_components/object_store.rs::tests::object_identity_rejects_one_byte_past_its_ceiling",
+      "reason": "These are framework-declared ceilings, but on the byte length of a caller-supplied constructor input string (a resource identity or object key), not on a resource the M0-M4 capacity budget names or the campaign's runtime resource-bound model covers. `MAX_RESOURCE_IDENTITY_BYTES` (`item_components::multi_resource::ResourceIdentity`) and `MAX_OBJECT_KEY_BYTES` (`item_components::object_store::ObjectIdentity`), added in #150, sit in the same category as every other `XxxTooLong` constructor validation in this crate (e.g. `StateSchemaId`'s byte bound): a fixed-string-length input check enforced once at construction, not a bounded operational resource (queue, buffer, connection, cache) whose steady-state behavior this campaign proves.",
+      "resource": "item-component construction-input validation ceilings",
+      "symbols": [
+        "MAX_RESOURCE_IDENTITY_BYTES",
+        "MAX_OBJECT_KEY_BYTES"
+      ]
     },
     {
       "covered_by": null,
@@ -513,7 +522,7 @@
           "violations": []
         },
         "execution_manifest": {
-          "execution_commit": "7fb46b5bc8a759193368d07ebda109b508e1b63d",
+          "execution_commit": "1b78514057714097a08fa27c65978c9db9531a4d",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -532,13 +541,13 @@
             "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
             "crates/oxide-batch/Cargo.toml": "762ee1faab89b474e219bc1a97dc5e8bdb21a03a",
             "crates/oxide-batch/migrations": "7923dcfb1ff0d152499466259107986cd8ae27e5",
-            "crates/oxide-batch/src": "1877d27b8dc5ba2afaa5d9209c0de52ed595540c",
+            "crates/oxide-batch/src": "0dcc5ad3557cde67277527895b1b220a777adcee",
             "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "2c68359b1043311db6a60b6bc7e6f4e0e0766fa1",
             "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "1bbb800be11c7ada42b16be604313ccdf5ba96fc",
             "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "2ef89b558074e73bb417c07a56cddfb708af1a7a",
             "crates/oxide-batch/tests/resource_bounds": "3e90ae5015649f6f8086e86082cee17d97b71006",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
-            "tests/fixtures/resource-bounds/campaign-scope.json": "20b60cecd84c3481fc949f90d566ce294394cd49",
+            "tests/fixtures/resource-bounds/campaign-scope.json": "2e0e2ac5cccb0239a91ce32fc6d52967583c8073",
             "tests/fixtures/resource-bounds/campaign-semantics.json": "47e677ff95774ac67204adcd1821f8a8d9f707a8",
             "tests/fixtures/resource-bounds/execution-contract.json": "b40bd36435adcd5e8638ebb69651e5ed897b142c",
             "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
@@ -733,7 +742,7 @@
           }
         ],
         "execution_manifest": {
-          "execution_commit": "7fb46b5bc8a759193368d07ebda109b508e1b63d",
+          "execution_commit": "1b78514057714097a08fa27c65978c9db9531a4d",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -752,13 +761,13 @@
             "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
             "crates/oxide-batch/Cargo.toml": "762ee1faab89b474e219bc1a97dc5e8bdb21a03a",
             "crates/oxide-batch/migrations": "7923dcfb1ff0d152499466259107986cd8ae27e5",
-            "crates/oxide-batch/src": "1877d27b8dc5ba2afaa5d9209c0de52ed595540c",
+            "crates/oxide-batch/src": "0dcc5ad3557cde67277527895b1b220a777adcee",
             "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "2c68359b1043311db6a60b6bc7e6f4e0e0766fa1",
             "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "1bbb800be11c7ada42b16be604313ccdf5ba96fc",
             "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "2ef89b558074e73bb417c07a56cddfb708af1a7a",
             "crates/oxide-batch/tests/resource_bounds": "3e90ae5015649f6f8086e86082cee17d97b71006",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
-            "tests/fixtures/resource-bounds/campaign-scope.json": "20b60cecd84c3481fc949f90d566ce294394cd49",
+            "tests/fixtures/resource-bounds/campaign-scope.json": "2e0e2ac5cccb0239a91ce32fc6d52967583c8073",
             "tests/fixtures/resource-bounds/campaign-semantics.json": "47e677ff95774ac67204adcd1821f8a8d9f707a8",
             "tests/fixtures/resource-bounds/execution-contract.json": "b40bd36435adcd5e8638ebb69651e5ed897b142c",
             "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
@@ -1408,7 +1417,7 @@
           "violations": []
         },
         "execution_manifest": {
-          "execution_commit": "7fb46b5bc8a759193368d07ebda109b508e1b63d",
+          "execution_commit": "1b78514057714097a08fa27c65978c9db9531a4d",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -1427,13 +1436,13 @@
             "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
             "crates/oxide-batch/Cargo.toml": "762ee1faab89b474e219bc1a97dc5e8bdb21a03a",
             "crates/oxide-batch/migrations": "7923dcfb1ff0d152499466259107986cd8ae27e5",
-            "crates/oxide-batch/src": "1877d27b8dc5ba2afaa5d9209c0de52ed595540c",
+            "crates/oxide-batch/src": "0dcc5ad3557cde67277527895b1b220a777adcee",
             "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "2c68359b1043311db6a60b6bc7e6f4e0e0766fa1",
             "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "1bbb800be11c7ada42b16be604313ccdf5ba96fc",
             "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "2ef89b558074e73bb417c07a56cddfb708af1a7a",
             "crates/oxide-batch/tests/resource_bounds": "3e90ae5015649f6f8086e86082cee17d97b71006",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
-            "tests/fixtures/resource-bounds/campaign-scope.json": "20b60cecd84c3481fc949f90d566ce294394cd49",
+            "tests/fixtures/resource-bounds/campaign-scope.json": "2e0e2ac5cccb0239a91ce32fc6d52967583c8073",
             "tests/fixtures/resource-bounds/campaign-semantics.json": "47e677ff95774ac67204adcd1821f8a8d9f707a8",
             "tests/fixtures/resource-bounds/execution-contract.json": "b40bd36435adcd5e8638ebb69651e5ed897b142c",
             "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
@@ -1960,7 +1969,7 @@
           "violations": []
         },
         "execution_manifest": {
-          "execution_commit": "7fb46b5bc8a759193368d07ebda109b508e1b63d",
+          "execution_commit": "1b78514057714097a08fa27c65978c9db9531a4d",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -1979,13 +1988,13 @@
             "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
             "crates/oxide-batch/Cargo.toml": "762ee1faab89b474e219bc1a97dc5e8bdb21a03a",
             "crates/oxide-batch/migrations": "7923dcfb1ff0d152499466259107986cd8ae27e5",
-            "crates/oxide-batch/src": "1877d27b8dc5ba2afaa5d9209c0de52ed595540c",
+            "crates/oxide-batch/src": "0dcc5ad3557cde67277527895b1b220a777adcee",
             "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "2c68359b1043311db6a60b6bc7e6f4e0e0766fa1",
             "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "1bbb800be11c7ada42b16be604313ccdf5ba96fc",
             "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "2ef89b558074e73bb417c07a56cddfb708af1a7a",
             "crates/oxide-batch/tests/resource_bounds": "3e90ae5015649f6f8086e86082cee17d97b71006",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
-            "tests/fixtures/resource-bounds/campaign-scope.json": "20b60cecd84c3481fc949f90d566ce294394cd49",
+            "tests/fixtures/resource-bounds/campaign-scope.json": "2e0e2ac5cccb0239a91ce32fc6d52967583c8073",
             "tests/fixtures/resource-bounds/campaign-semantics.json": "47e677ff95774ac67204adcd1821f8a8d9f707a8",
             "tests/fixtures/resource-bounds/execution-contract.json": "b40bd36435adcd5e8638ebb69651e5ed897b142c",
             "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",

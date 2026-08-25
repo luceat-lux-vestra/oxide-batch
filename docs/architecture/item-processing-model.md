@@ -276,6 +276,73 @@ stay in `oxide-batch`'s own suite). See
 [the M6 #146 evidence record](../project/m6-146-composition-catalog-evidence.md)
 for the full scenario inventory.
 
+### Implementation status (#150)
+
+Multi-resource readers/writers and the M6 slice of object-store capability
+basics, deliberately excluded from #146's scope above, are implemented under
+`oxide_batch::item_components::multi_resource` and
+`oxide_batch::item_components::object_store`.
+
+`MultiResourceReader`/`MultiResourceWriter` treat an ordered, caller-declared
+[`ResourceSet`] as one logical stream rather than a fixed, statically
+registered delegate list (the shape `CompositeReader` already has, but
+which cannot itself be restartable when the resource count is only known at
+runtime): both own exactly one `ItemStream`/`ComponentStreamIdentity`
+namespace for the whole resource set, whose durable envelope carries a
+content-fingerprinted `ResourceSetRevision` over the ordered resource
+identities, the current resource's ordinal, and the current resource's own
+delegate `ComponentStateEnvelope` embedded verbatim (never a second, hidden
+state mechanism) -- per the composition taxonomy's checkpoint/state and
+restartability rules above. A restart whose caller-supplied resource set no
+longer fingerprints to the same revision fails closed
+(`FailureCategory::UnsupportedCapability`) rather than reinterpreting a
+stored ordinal against a different physical resource. A failure opening or
+reading one resource does not advance the checkpoint past it, and a retried
+attempt re-resolves the same resource transition rather than skipping ahead,
+per the composition taxonomy's error-classification rule.
+
+`item_components::object_store` provides the M6-basics, provider-neutral
+capability boundary (`ObjectStoreCapability`: bounded `get`/`put`/`stat`/
+`list` with deterministic pagination and an opaque `ObjectVersionToken`
+where the backend supplies one) that `ObjectStoreReaderOpener`/
+`ObjectStoreWriterOpener` bridge into `MultiResourceReaderOpener`/
+`MultiResourceWriterOpener`, so object-store multi-resource I/O sits on the
+same ordered/versioned/restartable model as file-backed multi-resource I/O.
+`InMemoryObjectStore` is the first-class, executable contract fixture for
+that capability boundary; no cloud SDK integration is in scope here --
+S3/Azure/GCS certification remains M9, per `IO-OBJECT-001`'s own M6/M9
+split. A backend without a stable per-object version token cannot claim
+restartability it cannot back up: `ObjectItemReaderStream`/
+`ObjectItemWriterStream` compare the freshly fetched version token against
+the last *committed* checkpoint's recorded token on restart and fail closed
+on any mismatch (replaced content, or an uncommitted `put` a crash left in
+place) rather than silently resuming against different bytes -- the
+documented, non-hidden limitation the integration model requires instead of
+a fabricated exactly-once guarantee.
+
+Executable evidence:
+`crates/oxide-batch/src/item_components/multi_resource.rs` and
+`object_store.rs` (`#[cfg(test)]` unit suites, including the two #146
+residual-composition checks below) and
+`crates/oxide-batch-test/tests/postgres_multi_resource_restart.rs` (real
+`PostgreSQL`-backed crash/restart evidence through the production
+`ChunkJob`/`ChunkStep`/`PostgresChunkStateProvider` path). See
+[the M6 #150 evidence record](../project/m6-150-multi-resource-evidence.md)
+for the full scenario inventory.
+
+`PeekReader` and `SynchronizedWriter` -- the two #146 decorators whose
+interaction with a runtime-sized resource set was not exercised by #146
+itself -- compose over `MultiResourceReader`/`MultiResourceWriter` with no
+special-casing: both delegate 100% of restartability/ordering to their
+inner component already, so a resource-boundary transition mid-peek or
+mid-rollover is exactly the existing single-resource case from the inner
+component's point of view. No production change to either decorator was
+needed; `multi_resource.rs`'s
+`peek_reader_over_multi_resource_reader_crosses_resource_boundary_without_corrupting_order`
+and
+`synchronized_writer_over_multi_resource_writer_preserves_rollover_order`
+are that audit's evidence.
+
 ## Completion, retry, skip, and rollback
 
 Completion policies may use bounded item count, time, composite conditions, or
