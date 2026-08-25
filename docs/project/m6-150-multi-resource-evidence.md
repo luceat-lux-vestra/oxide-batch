@@ -1,6 +1,6 @@
 # M6 Multi-Resource and Object-Store Basics Evidence
 
-**State:** Complete on merge
+**State:** Complete on merge; corrected by #177 after post-merge strict review
 
 **Issue:** [#150](https://github.com/luceat-lux-vestra/oxide-batch/issues/150)
 
@@ -11,11 +11,56 @@ capability basics, deliberately excluded from #146's scope, under the
 composition rules closed by
 [M6 Gate E](m6-design-gate-evidence.md#gate-e--composition-semantics) applied
 to a resource set instead of a fixed, statically declared delegate list. It
-does not reopen ADR-0008, Gate C/D/E, or the `ItemStream` contract (#144); it
 does not implement S3/Azure/GCS SDK integrations, credential management,
 multipart certification, or provider-specific retry/consistency
 certification (all M9); and it does not touch #151 (listeners), #152
 (configuration ergonomics), or #153 (M6 exit campaign).
+
+## Corrective update (#177)
+
+Independent post-merge strict review of the original #176 merge found three
+confirmed HIGH-severity defects that green final-head CI/evidence had not
+caught. #150 was reopened; #177 tracked the correction; this document, the
+production modules it describes, and the ledger dispositions below reflect
+the corrected state.
+
+1. **Nested `ItemStream` lifecycle was violated at resource transitions.**
+   `MultiResourceReader`/`MultiResourceWriter` opened the next delegate (or,
+   for the reader, discarded the last one) without ever calling the outgoing
+   delegate's `ItemStream::close`. Fixed by closing every retiring delegate
+   at its own resource boundary, before the next resource is opened -- this
+   *does* touch the `ItemStream` contract (Gate C), additively: a new
+   [`StreamRuntimeOutcome::ResourceBoundary`](../../crates/oxide-batch/src/item_stream.rs)
+   variant reports "this nested resource reached its own boundary" as a
+   distinct, honest event from the enclosing step attempt's terminal
+   commit/failure/stop/unknown outcome, so a resource-boundary close can
+   never be mistaken for -- or misreported as -- `Committed`. See the
+   "Nested resource lifecycle" section of `multi_resource.rs`'s module docs.
+2. **`max_object_bytes` was post-materialization validation, not a real
+   resource bound.** The reader fetched the whole object into a `Vec<u8>`
+   first and only then compared its length; the writer had no bound at all
+   and cloned its accumulator twice per `write`. Fixed by threading an
+   explicit `max_bytes`/`max_object_bytes` bound into
+   `ObjectStoreCapability::get` and `ObjectStoreWriterOpener`/
+   `ObjectItemWriter`, enforced before allocation proportional to an
+   oversized object/candidate, and by replacing the writer's double clone
+   with one buffer reused via `mem::take`/`truncate`.
+3. **Nested delegate namespace was not preserved or validated**, so a
+   delegate that reported the wrong namespace would have its candidate
+   silently normalized into the multi-resource wrapper's own expected
+   identity instead of being rejected, bypassing the core runtime's
+   fail-closed namespace-mismatch invariant. Fixed by storing the delegate's
+   reported namespace as a durable column and rejecting a mismatch, fail
+   closed, both when the outer candidate is produced (`ItemStream::update`)
+   and independently again on restore (`ItemStream::open`).
+
+None of these three findings changed the module's public API shape except
+where the fix required it: `ObjectStoreCapability::get` gained a `max_bytes`
+parameter, `ObjectStoreCapability::put` now borrows its bytes instead of
+consuming them, and `ObjectStoreWriterOpener::new` gained a
+`max_object_bytes` parameter. `StreamRuntimeOutcome` gained the additive
+`ResourceBoundary` variant. See the scenario/test tables below for the
+regression evidence added for each finding.
 
 ## Audit performed before implementation
 
@@ -36,7 +81,10 @@ following was confirmed present and reused rather than rebuilt:
 
 No production defect was found in existing runtime/state/transaction code
 during this audit or implementation; the stop condition in #150's own
-instructions was never triggered.
+instructions was never triggered. (This is about the pre-existing runtime
+this PR built on top of, not the new code the PR itself introduced --
+independent post-merge review of the *new* code found three defects; see
+"Corrective update (#177)" above.)
 
 ## Component families delivered
 
@@ -83,7 +131,11 @@ produces carries:
   `{ resource_index: usize, offset: u64 }` position (explicitly rejected by
   #150's own instructions) was never implemented.
 - the current resource's ordinal index.
-- the current resource's own delegate position, embedded verbatim.
+- the current resource's own delegate position, embedded verbatim, including
+  its namespace. The namespace is validated -- not merely assumed -- against
+  the identity the multi-resource opener assigned that delegate, both when
+  the outer candidate is produced and again independently on restore: see
+  "Corrective update (#177)" above.
 - **the writer's current-resource batch count** (`resource_batches_written`,
   unused/always `0` on the reader path). An earlier draft kept this count
   in memory only, which reset it to `0` on every restart and let
@@ -137,9 +189,16 @@ progress -- keeping the payload small regardless of resource-set size.
 - **Failure semantics**: a failure while opening or reading/writing resource
   N does not roll over to resource N+1 -- the same delegate/transition is
   retried at the same resource on the framework's own retry contract.
-- **Close**: the currently active resource's delegate stream is closed
-  through the paired stream's `close`; resources already advanced past were
-  never left open.
+- **Close**: every delegate that opened successfully is closed exactly once
+  -- a resource that retires mid-attempt (a reader delegate exhausting, or a
+  writer delegate rolling over) is closed right there, with
+  `StreamRuntimeOutcome::ResourceBoundary` (never `Committed`, since the
+  enclosing step attempt has not reached its own terminal outcome yet); the
+  paired stream's own `close` closes whichever resource, if any, is still
+  active once the step attempt's real terminal outcome is known, and skips a
+  resource already retired at a boundary rather than closing it a second
+  time. A close failure at a boundary is propagated as a read/write error
+  rather than silently advancing to the next resource.
 - **Errors**: `MultiResourceOpenError`/`ObjectStoreError` carry only a
   resource ordinal (or nothing) and a stable `FailureCategory` -- never the
   underlying I/O error's payload, path, or message, per this crate's
@@ -157,6 +216,11 @@ progress -- keeping the payload small regardless of resource-set size.
 | Resource-set/order changed since the committed checkpoint -> reject | `resource_set_revision_mismatch_on_restart_is_rejected` |
 | Resource open failure does not advance past the failure point; a retry re-hits the same transition | `resource_open_failure_does_not_advance_past_the_failure_point` |
 | `ResourceIdentity` construction refuses one byte past its ceiling, empty input, and control characters | `resource_identity_rejects_one_byte_past_its_ceiling`, `resource_identity_rejects_empty_and_control_characters` |
+| **(#177)** Intermediate and final delegates each open exactly once and close exactly once, in order, with `ResourceBoundary` | `reader_closes_each_delegate_exactly_once_with_resource_boundary_outcome_in_order` |
+| **(#177)** A boundary close failure is propagated, the checkpoint does not advance past it, and a retry recovers without re-opening or double-closing | `reader_resource_boundary_close_failure_is_propagated_without_advancing_or_double_closing` |
+| **(#177)** The outer terminal close does not re-close a delegate already retired at a boundary | `outer_terminal_close_does_not_double_close_a_reader_delegate_already_retired_at_a_boundary` |
+| **(#177)** A delegate reporting the wrong namespace fails the outer `update` closed | `reader_update_fails_closed_when_delegate_reports_the_wrong_namespace` |
+| **(#177)** A hand-crafted durable record with a mismatched delegate namespace fails `open` closed on restore | `reader_open_fails_closed_on_a_hand_crafted_mismatched_namespace_record` |
 
 ### Writer (`multi_resource.rs`, `#[cfg(test)]`)
 
@@ -166,6 +230,10 @@ progress -- keeping the payload small regardless of resource-set size.
 | Restart mid-resource resumes the delegate's committed position, not resource start, and does not roll over early | `writer_restart_mid_resource_resumes_committed_position` |
 | Stale resource-set revision rejected on writer restart | `stale_resource_set_revision_is_rejected_on_writer_restart` |
 | The rollover batch count survives a restart, so `BatchCountRollover`'s cap holds across a crash rather than resetting to 0 | `rollover_counter_survives_restart_and_still_caps_batches_per_resource` |
+| **(#177)** Rollover closes the outgoing delegate exactly once, with `ResourceBoundary`, before opening the next resource | `writer_rollover_closes_outgoing_delegate_exactly_once_with_resource_boundary_outcome` |
+| **(#177)** A boundary close failure is propagated, the write never reaches the next resource, the checkpoint does not advance, and a retry recovers without double-closing | `writer_resource_boundary_close_failure_is_propagated_without_rolling_over` |
+| **(#177)** The outer terminal close does not re-close a delegate already retired at a boundary | `outer_terminal_close_does_not_double_close_a_writer_delegate_already_retired_at_a_boundary` |
+| **(#177)** A delegate reporting the wrong namespace fails the outer `update` closed | `writer_update_fails_closed_when_delegate_reports_the_wrong_namespace` |
 
 ### #146 residual composition audit (`multi_resource.rs`, `#[cfg(test)]`)
 
@@ -194,6 +262,9 @@ was needed.
 | Reader restart rejects a replaced object (version-token mismatch) rather than resuming against new content | `reader_restart_rejects_replaced_object` |
 | Reader/writer restart over a backend with no stable version identity (both sides `None`) fails closed rather than reading "no proof either time" as a match | `reader_restart_over_a_no_version_backend_fails_closed_rather_than_matching_none_to_none`, `writer_restart_over_a_no_version_backend_fails_closed_rather_than_matching_none_to_none` |
 | Writer roundtrip through `MultiResourceWriter`: whole-object `PUT` accumulation across multiple `write` calls | `writer_roundtrip_through_multi_resource_writer_accumulates_and_puts` |
+| **(#177)** `get` rejects an object over the caller's `max_bytes` at the exact boundary vs. one byte over | `get_bounded_by_caller_supplied_max_bytes_without_materializing_the_oversized_object` |
+| **(#177)** The reader opener rejects an oversized object without the backend ever materializing a buffer for it (mock backend that structurally cannot hand back over-bound content) | `reader_opener_rejects_an_oversized_object_without_ever_materializing_it` |
+| **(#177)** The writer accumulator rejects growth past `max_object_bytes` before touching the existing buffer, and allows the exact boundary | `writer_rejects_growth_past_max_object_bytes_and_allows_the_exact_boundary` |
 
 Cancellation is honored by construction (`ObjectItemWriter::write` and
 `MultiResourceWriter::write` both check `context.stop_token()` before doing
@@ -243,9 +314,17 @@ Both object-store bridges buffer a whole object in memory:
 items from it; `ObjectStoreWriterOpener`'s accumulator holds everything
 written to the current object so far, and reissues the full object on every
 `ItemWriter::write` call (object-store `PUT` semantics are whole-object, not
-append). This is bounded by a caller-supplied `max_object_bytes`, never
-unbounded, but it is not streaming/multipart -- that stays M9, per #150's own
-scope note.
+append). This is bounded by a caller-supplied `max_object_bytes` as a real
+resource bound: `ObjectStoreCapability::get` takes an explicit `max_bytes`
+and must reject an oversized object before delivering (or, for a backend
+that must materialize to know the length, cloning) content beyond it --
+`InMemoryObjectStore` checks the stored length before cloning, never after;
+the writer computes the prospective candidate length and rejects growth
+before touching the existing accumulator. It is not streaming/multipart --
+that stays M9, per #150's own scope note. (Before #177's correction, the
+reader fetched the whole object unconditionally and only compared its length
+afterward, and the writer had no bound at all -- see "Corrective update
+(#177)" above.)
 
 `ObjectItemWriter`'s rustdoc documents its one known limitation directly: a
 crash between a successful `put` and the runtime's own durable commit leaves
@@ -272,7 +351,12 @@ whole delegate `write` call on every batch, not only at a rollover
 transition, so that the rollover decision and the write it gates stay one
 atomic unit even under concurrent calls (the chunk runtime never actually
 calls `write` concurrently on one writer instance, so this holds no
-contention in practice; see the type's own rustdoc).
+contention in practice; see the type's own rustdoc). `ObjectItemWriter::write`
+(#177) builds its `put` candidate with exactly one owned buffer per call --
+the existing accumulator is moved out (`mem::take`, no clone) and extended in
+place, handed to `put` by reference, and kept as the new accumulator on
+success or truncated back to its prior length on failure -- rather than the
+two full clones the pre-#177 implementation performed on every write.
 
 ## Reproduction
 

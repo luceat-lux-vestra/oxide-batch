@@ -26,7 +26,28 @@
 //! whole ordered resource set, and construct each resource's delegate
 //! on demand through a [`MultiResourceReaderOpener`]/
 //! [`MultiResourceWriterOpener`] -- never more than one resource open at a
-//! time (bounded, one-resource-at-a-time ownership).
+//! time (bounded, one-resource-at-a-time ownership): the current resource's
+//! delegate stream is always closed before the next one is opened.
+//!
+//! # Nested resource lifecycle
+//!
+//! A resource reaching its own boundary (a reader delegate exhausting, or a
+//! writer delegate rolling over) is a different event from the *enclosing*
+//! step attempt reaching its terminal outcome: the boundary can be, and
+//! usually is, reached before the chunk transaction in flight when it is
+//! discovered has committed. So the retiring delegate's stream is closed
+//! right there, with [`crate::StreamRuntimeOutcome::ResourceBoundary`] --
+//! never [`crate::StreamRuntimeOutcome::Committed`], which would falsely
+//! claim the outer step attempt itself had reached a durable, terminal
+//! commit. A close failure at a boundary is propagated as a read/write
+//! error rather than silently advancing to the next resource, so the
+//! checkpoint (produced by [`crate::ItemStream::update`], which runs only
+//! after a chunk's work -- including any resource transition -- has fully
+//! succeeded) never advances past a resource whose close failed. Every
+//! resource this module opens is closed exactly once: at its own boundary
+//! if it retires mid-attempt, or by this module's outer
+//! [`crate::ItemStream::close`] if it is still active when the step
+//! attempt's own terminal outcome is known -- never both.
 //!
 //! # Durable position
 //!
@@ -41,7 +62,8 @@
 //!   resource -- inserting or removing a resource ahead of the committed
 //!   index is exactly the case this guards.
 //! - the current resource's ordinal index.
-//! - the current resource's own delegate position, embedded verbatim.
+//! - the current resource's own delegate position, embedded verbatim,
+//!   including its namespace.
 //!
 //! That last point is what lets this module reuse the existing M6
 //! component-state contract exactly, rather than inventing a second state
@@ -55,13 +77,22 @@
 //! [`crate::item_components::delimited_reader`] already returns -- has its
 //! *own* candidate envelope captured by calling its `ItemStream::update`
 //! internally, and that envelope's durable columns are embedded as plain
-//! data inside this module's own envelope. On restart, the reverse happens:
-//! the embedded columns are used to reconstruct the delegate's envelope via
-//! `from_durable` (re-verifying its checksum), and the delegate's own
-//! `ItemStream::open` restores its position from it, unaware it is nested
-//! inside another component's state at all. No delegate state is hidden --
-//! it is carried in full, just not under a second, separately registered
-//! namespace, because there is no separate registration to hide it from.
+//! data inside this module's own envelope. Before that embedding happens,
+//! the delegate's reported namespace is checked against the identity this
+//! module's opener assigned it: a mismatch fails the update closed rather
+//! than let an invalid nested candidate become part of this module's own
+//! outer candidate, since the core runtime's own fail-closed namespace
+//! check has no visibility into state nested this way. On restart, the
+//! reverse happens: the embedded columns are used to reconstruct the
+//! delegate's envelope via `from_durable` (re-verifying its checksum) --
+//! but only after the *stored* namespace is re-checked against the same
+//! expected identity, so a corrupted or hand-crafted durable record cannot
+//! be silently normalized into a valid one either. Once reconstructed, the
+//! delegate's own `ItemStream::open` restores its position from it, unaware
+//! it is nested inside another component's state at all. No delegate state
+//! is hidden -- it is carried in full, just not under a second, separately
+//! registered namespace, because there is no separate registration to hide
+//! it from.
 //!
 //! Everything before the current resource is implicitly fully committed
 //! (this module never revisits a resource once it advances past it, exactly
@@ -90,8 +121,8 @@ use crate::{
     ItemWriter, ReadContext, ReadOutcome, ReaderError, RestartabilityDeclaration, StateCodecError,
     StateLimits, StateSchemaId, StateSchemaVersion, StateSensitivity, StreamCloseContext,
     StreamCloseError, StreamCloseOutcome, StreamOpenContext, StreamOpenError, StreamOpenOutcome,
-    StreamStateContract, StreamUpdateContext, StreamUpdateError, VersionedStateCodec, WriteContext,
-    WriteOutcome, WriterError,
+    StreamRuntimeOutcome, StreamStateContract, StreamUpdateContext, StreamUpdateError,
+    VersionedStateCodec, WriteContext, WriteOutcome, WriterError,
 };
 
 // ---------------------------------------------------------------------
@@ -313,8 +344,19 @@ fn hex_decode(text: &str) -> Option<Vec<u8>> {
 
 /// The durable columns of one delegate [`crate::ComponentStateEnvelope`],
 /// embedded verbatim inside this module's own envelope.
+///
+/// `namespace` is carried alongside the other columns specifically so a
+/// restore can verify -- not merely assume -- that the delegate which
+/// produced these columns actually reported the identity the
+/// multi-resource opener assigned it (see
+/// [`MultiResourceReaderStream::open`]/[`MultiResourceWriterStream::open`]'s
+/// namespace check). Reconstructing the delegate envelope with the
+/// caller-expected namespace regardless of what was actually stored would
+/// normalize a bad namespace into a good one and bypass the core runtime's
+/// fail-closed namespace-mismatch invariant.
 #[derive(Clone)]
 struct DelegateEnvelopeColumns {
+    namespace: String,
     schema_id: String,
     schema_version: u32,
     codec_id: String,
@@ -343,6 +385,7 @@ impl DelegateEnvelopeColumns {
                 ),
             };
         Ok(Self {
+            namespace: envelope.namespace().as_str().to_owned(),
             schema_id: envelope.schema_id().as_str().to_owned(),
             schema_version: envelope.schema_version().get(),
             codec_id: envelope.codec_id().as_str().to_owned(),
@@ -355,6 +398,14 @@ impl DelegateEnvelopeColumns {
             payload_external_content_id_hex,
             payload_external_len,
         })
+    }
+
+    /// Returns whether this record's stored namespace exactly matches
+    /// `expected` -- the delegate identity the multi-resource opener
+    /// assigned. Callers must reject a mismatch fail-closed rather than
+    /// reconstruct the envelope anyway.
+    fn namespace_matches(&self, expected: &ComponentStreamIdentity) -> bool {
+        self.namespace == expected.as_str()
     }
 
     fn to_envelope(
@@ -409,6 +460,7 @@ struct MultiResourceState {
 
 fn delegate_columns_to_json(delegate: &DelegateEnvelopeColumns) -> serde_json::Value {
     serde_json::json!({
+        "namespace": delegate.namespace,
         "schema_id": delegate.schema_id,
         "schema_version": delegate.schema_version,
         "codec_id": delegate.codec_id,
@@ -428,6 +480,7 @@ fn delegate_columns_from_json(value: &serde_json::Value) -> Option<DelegateEnvel
     let checksum_bytes = hex_decode(checksum_hex)?;
     let checksum: [u8; 32] = checksum_bytes.try_into().ok()?;
     Some(DelegateEnvelopeColumns {
+        namespace: value.get("namespace")?.as_str()?.to_owned(),
         schema_id: value.get("schema_id")?.as_str()?.to_owned(),
         schema_version: u32::try_from(value.get("schema_version")?.as_u64()?).ok()?,
         codec_id: value.get("codec_id")?.as_str()?.to_owned(),
@@ -657,6 +710,17 @@ pub trait MultiResourceReaderOpener<I>: Send + Sync {
 struct StreamHandle<S> {
     index: u32,
     stream: S,
+    /// `true` once this handle's `stream` has already been closed at a
+    /// resource boundary (see [`crate::StreamRuntimeOutcome::ResourceBoundary`]).
+    /// A handle is replaced (never mutated back to `false` in place) once
+    /// the transition to the next resource completes, so this flag exists
+    /// only to let [`MultiResourceReaderStream::close`] recognize -- and
+    /// skip -- a handle whose stream a resource-transition attempt already
+    /// closed but has not yet been able to replace (the transition's own
+    /// next-resource open failed and is pending retry). Without this, the
+    /// outer terminal close would close the same already-closed delegate a
+    /// second time.
+    retired: bool,
 }
 
 struct ReaderShared<I, O: MultiResourceReaderOpener<I>> {
@@ -699,27 +763,38 @@ struct ReaderShared<I, O: MultiResourceReaderOpener<I>> {
 ///   internally synchronized with its paired stream via an async-aware
 ///   lock, since the stream (`&self`) must observe the same active
 ///   resource's position at a commit boundary.
-/// - **Bounded resource**: at most one resource's delegate open at a time.
-/// - **Close**: the currently active resource's delegate stream is closed
-///   through the paired [`MultiResourceReaderStream::close`]; resources
-///   already advanced past were never left open.
+/// - **Bounded resource**: at most one resource's delegate open at a time;
+///   the current resource's delegate stream is always closed (with
+///   [`crate::StreamRuntimeOutcome::ResourceBoundary`]) before the next
+///   resource is opened, never overlapping.
+/// - **Close**: a resource exhausted mid-attempt is closed immediately,
+///   right there, rather than held open until the outer step attempt ends;
+///   the paired [`MultiResourceReaderStream::close`] closes whichever
+///   resource (if any) is still active when the step attempt reaches its
+///   own terminal outcome, and never re-closes a resource already closed at
+///   a boundary.
 /// - **Support tier**: first-party.
 pub struct MultiResourceReader<I, O: MultiResourceReaderOpener<I>> {
     shared: Arc<ReaderShared<I, O>>,
     /// Owned exclusively by this half; see [`StreamHandle`]'s docs for why
     /// the delegate reader cannot live in the shared, lock-guarded state.
     ///
-    /// Deliberately *not* cleared to `None` when a transition to the next
-    /// resource fails: a retried `read` re-observes the same
-    /// already-exhausted delegate's `EndOfInput` and re-attempts the same
-    /// transition, rather than a bare `None` being mistaken for "the
-    /// resource set is exhausted" (see [`Self::started`]).
+    /// `None` whenever [`Self::transitioning`] is `true` (the delegate that
+    /// hit `EndOfInput` has already been closed and must never be polled
+    /// again) or once the whole resource set is exhausted; `Some` while a
+    /// delegate is open and has not yet reached its own boundary.
     reader: Option<O::Reader>,
     /// Whether `pending_reader` has been consumed yet this attempt. The
     /// handoff happens at most once, on the first `read` call; every later
     /// `None` in `reader` is a mid-transition state the loop below resolves
     /// itself, never a second reason to consult `pending_reader`.
     started: bool,
+    /// `true` between closing an exhausted resource's delegate stream and
+    /// completing the transition to the next resource (or to fully
+    /// exhausted). Gates the loop below so a retried `read` -- after the
+    /// transition's own open step failed -- resumes the transition instead
+    /// of polling the already-closed delegate's `ItemReader` half again.
+    transitioning: bool,
 }
 
 impl<I, O> ItemReader<I> for MultiResourceReader<I, O>
@@ -747,62 +822,100 @@ where
             }
         }
         loop {
-            let Some(reader) = self.reader.as_mut() else {
-                // Once `started`, `reader` is `None` if and only if the
-                // terminal exhaustion branch below has already run: every
-                // repeated call after that must keep reporting `EndOfInput`,
-                // exactly like `CompositeReader` once its delegate list is
-                // exhausted, never error.
-                return Ok(ReadOutcome::EndOfInput);
-            };
-            match reader.read(context).await? {
-                ReadOutcome::Item(item) => return Ok(ReadOutcome::Item(item)),
-                ReadOutcome::Stopped => return Ok(ReadOutcome::Stopped),
-                ReadOutcome::EndOfInput => {
-                    let current_index = {
-                        let guard = self.shared.handle.lock().await;
-                        guard
-                            .as_ref()
-                            .ok_or_else(|| ReaderError::with_category(FailureCategory::Invariant))?
-                            .index
-                    };
-                    let next_index = current_index + 1;
-                    if next_index as usize >= self.shared.resources.len() {
+            if !self.transitioning {
+                let Some(reader) = self.reader.as_mut() else {
+                    // Once `started`, `reader` is `None` and not
+                    // transitioning if and only if the terminal exhaustion
+                    // branch below has already run: every repeated call
+                    // after that must keep reporting `EndOfInput`, exactly
+                    // like `CompositeReader` once its delegate list is
+                    // exhausted, never error.
+                    return Ok(ReadOutcome::EndOfInput);
+                };
+                match reader.read(context).await? {
+                    ReadOutcome::Item(item) => return Ok(ReadOutcome::Item(item)),
+                    ReadOutcome::Stopped => return Ok(ReadOutcome::Stopped),
+                    ReadOutcome::EndOfInput => {
+                        // The resource this delegate reads is exhausted.
+                        // Close its stream *now*, before opening anything
+                        // else: `StreamRuntimeOutcome::ResourceBoundary`
+                        // (never `Committed` -- the enclosing step attempt
+                        // has not reached a terminal outcome yet) tells the
+                        // delegate its own local work is done without
+                        // falsely claiming the outer transaction committed.
+                        // A close failure here must not silently advance
+                        // past this resource: it is propagated as a read
+                        // error, `self.reader` stays cleared, and
+                        // `transitioning` stays unset so this same close is
+                        // retried on the next `read` call rather than
+                        // treated as already done.
+                        let mut guard = self.shared.handle.lock().await;
+                        let handle = guard.as_mut().ok_or_else(|| {
+                            ReaderError::with_category(FailureCategory::Invariant)
+                        })?;
+                        handle
+                            .stream
+                            .close(StreamCloseContext::new(
+                                context.stop_token(),
+                                StreamRuntimeOutcome::ResourceBoundary,
+                            ))
+                            .await
+                            .map_err(|error| ReaderError::with_category(error.category()))?;
+                        handle.retired = true;
+                        drop(guard);
                         self.reader = None;
-                        *self.shared.handle.lock().await = None;
-                        return Ok(ReadOutcome::EndOfInput);
+                        self.transitioning = true;
                     }
-                    let next_resource = &self.shared.resources.resources()[next_index as usize];
-                    // The freshly opened resource has no inherited state to
-                    // validate (it was never touched before this attempt),
-                    // so the contract returned here has nothing left to do.
-                    // On failure, `self.reader` is left as the current
-                    // (already-exhausted) delegate: a retried `read` re-hits
-                    // this same `EndOfInput` branch and retries this same
-                    // transition, rather than silently reporting the whole
-                    // reader exhausted.
-                    let (new_reader, stream, _contract) = self
-                        .shared
-                        .opener
-                        .open(next_resource, next_index, &self.shared.identity)
-                        .await
-                        .map_err(|error| ReaderError::with_category(error.category()))?;
-                    stream
-                        .open(StreamOpenContext::new(None, context.stop_token()))
-                        .await
-                        .map_err(|_| ReaderError::new())?;
-                    // Both halves of the pair are updated together, in one
-                    // critical section, so `StreamHandle::index` never
-                    // observably points at a resource `self.reader` has not
-                    // yet transitioned to.
-                    let mut guard = self.shared.handle.lock().await;
-                    self.reader = Some(new_reader);
-                    *guard = Some(StreamHandle {
-                        index: next_index,
-                        stream,
-                    });
                 }
             }
+
+            // `transitioning`: the current resource's delegate stream is
+            // already closed. Complete the move to the next resource, or to
+            // fully exhausted, before this call returns or loops back to
+            // poll a (new) delegate reader.
+            let current_index = {
+                let guard = self.shared.handle.lock().await;
+                guard
+                    .as_ref()
+                    .ok_or_else(|| ReaderError::with_category(FailureCategory::Invariant))?
+                    .index
+            };
+            let next_index = current_index + 1;
+            if next_index as usize >= self.shared.resources.len() {
+                *self.shared.handle.lock().await = None;
+                self.transitioning = false;
+                return Ok(ReadOutcome::EndOfInput);
+            }
+            let next_resource = &self.shared.resources.resources()[next_index as usize];
+            // The freshly opened resource has no inherited state to
+            // validate (it was never touched before this attempt), so the
+            // contract returned here has nothing left to do. On failure,
+            // `transitioning` stays set and `reader` stays `None`: a
+            // retried `read` re-attempts this same open, never re-closes
+            // the already-retired previous delegate and never silently
+            // reports the whole reader exhausted.
+            let (new_reader, stream, _contract) = self
+                .shared
+                .opener
+                .open(next_resource, next_index, &self.shared.identity)
+                .await
+                .map_err(|error| ReaderError::with_category(error.category()))?;
+            stream
+                .open(StreamOpenContext::new(None, context.stop_token()))
+                .await
+                .map_err(|_| ReaderError::new())?;
+            // Both halves of the pair are updated together, in one critical
+            // section, so `StreamHandle::index` never observably points at
+            // a resource `self.reader` has not yet transitioned to.
+            let mut guard = self.shared.handle.lock().await;
+            self.reader = Some(new_reader);
+            *guard = Some(StreamHandle {
+                index: next_index,
+                stream,
+                retired: false,
+            });
+            drop(guard);
+            self.transitioning = false;
         }
     }
 }
@@ -866,6 +979,15 @@ where
 
         match inherited_delegate {
             Some(columns) => {
+                // Fail closed if the delegate that produced this durable
+                // record did not actually report the namespace this opener
+                // assigned it -- reconstructing the envelope under the
+                // expected namespace regardless would normalize a bad
+                // namespace into a good one (see
+                // `DelegateEnvelopeColumns`'s docs).
+                if !columns.namespace_matches(&self.shared.identity) {
+                    return Err(StreamOpenError::with_category(FailureCategory::Invariant));
+                }
                 let inner = columns
                     .to_envelope(self.shared.identity.clone(), self.shared.limits)
                     .ok_or_else(StreamOpenError::new)?;
@@ -900,6 +1022,7 @@ where
         *self.shared.handle.lock().await = Some(StreamHandle {
             index: resource_index,
             stream,
+            retired: false,
         });
 
         Ok(if restored {
@@ -921,6 +1044,14 @@ where
                     .update(StreamUpdateContext::new(context.stop_token()))
                     .await
                     .map_err(|_| StreamUpdateError::new())?;
+                // Fail closed before this candidate can be embedded in the
+                // outer candidate: the delegate must report exactly the
+                // namespace this opener assigned it, never a substitute the
+                // core runtime's own `ItemStream::update` fail-closed
+                // namespace check would have rejected at the top level.
+                if envelope.namespace() != &self.shared.identity {
+                    return Err(StreamUpdateError::with_category(FailureCategory::Invariant));
+                }
                 let columns = DelegateEnvelopeColumns::from_envelope(&envelope)
                     .map_err(|_| StreamUpdateError::new())?;
                 (handle.index, Some(columns))
@@ -952,7 +1083,9 @@ where
         context: StreamCloseContext<'_>,
     ) -> Result<StreamCloseOutcome, StreamCloseError> {
         let guard = self.shared.handle.lock().await;
-        if let Some(handle) = guard.as_ref() {
+        if let Some(handle) = guard.as_ref()
+            && !handle.retired
+        {
             handle
                 .stream
                 .close(StreamCloseContext::new(
@@ -1007,6 +1140,7 @@ where
         shared: Arc::clone(&shared),
         reader: None,
         started: false,
+        transitioning: false,
     };
     let stream = MultiResourceReaderStream { shared };
     let contract = StreamStateContract::new(multi_resource_position_codec(restartability));
@@ -1095,6 +1229,13 @@ struct ActiveWriteResource<W, S> {
     writer: W,
     stream: S,
     batches_written: u64,
+    /// `true` once `stream` has already been closed at a resource boundary
+    /// (see [`crate::StreamRuntimeOutcome::ResourceBoundary`]) but rollover
+    /// has not yet been able to replace this entry with the next resource
+    /// (the next resource's own open failed and is pending retry). Guards
+    /// against closing the same delegate twice, both on a retried rollover
+    /// and at the outer terminal close.
+    retired: bool,
 }
 
 struct WriterShared<O, Opener: MultiResourceWriterOpener<O>, P> {
@@ -1134,6 +1275,14 @@ struct WriterShared<O, Opener: MultiResourceWriterOpener<O>, P> {
 ///   roll over to resource N+1 -- the same delegate is retried at the same
 ///   resource on the framework's own retry contract, exactly like an
 ///   undecorated writer.
+/// - **Close**: rollover closes the outgoing resource's delegate stream
+///   (with [`crate::StreamRuntimeOutcome::ResourceBoundary`], never
+///   `Committed` -- the enclosing step attempt has not reached a terminal
+///   outcome yet) before opening the next one, never leaving two resources'
+///   delegates open at once; the paired [`MultiResourceWriterStream::close`]
+///   closes whichever resource is still active at the step attempt's own
+///   terminal outcome, and never re-closes a resource already closed by a
+///   rollover.
 /// - **Support tier**: first-party.
 pub struct MultiResourceWriter<O, Opener: MultiResourceWriterOpener<O>, P> {
     shared: Arc<WriterShared<O, Opener, P>>,
@@ -1171,6 +1320,27 @@ where
             let current_index = guard.as_ref().map_or(0, |active| active.index);
             let next_index = current_index + 1;
             if (next_index as usize) < self.shared.resources.len() {
+                // Close the outgoing resource's stream before opening the
+                // next one: `StreamRuntimeOutcome::ResourceBoundary` (never
+                // `Committed` -- the enclosing step attempt has not reached
+                // a terminal outcome yet) tells the delegate its own local
+                // work is done without falsely claiming the outer
+                // transaction committed. Guarded by `retired` so a retried
+                // rollover (the open below failed on a previous attempt)
+                // never closes the same delegate twice.
+                if let Some(active) = guard.as_mut()
+                    && !active.retired
+                {
+                    active
+                        .stream
+                        .close(StreamCloseContext::new(
+                            stop,
+                            StreamRuntimeOutcome::ResourceBoundary,
+                        ))
+                        .await
+                        .map_err(|error| WriterError::with_category(error.category()))?;
+                    active.retired = true;
+                }
                 let next_resource = &self.shared.resources.resources()[next_index as usize];
                 // Fresh resource, no inherited state: the returned contract
                 // has nothing left to validate.
@@ -1189,6 +1359,7 @@ where
                     writer,
                     stream,
                     batches_written: 0,
+                    retired: false,
                 });
             }
             // No further resource to roll over into: keep writing to the
@@ -1275,6 +1446,12 @@ where
 
         match inherited_delegate {
             Some(columns) => {
+                // Fail closed if the delegate that produced this durable
+                // record did not actually report the namespace this opener
+                // assigned it -- see `DelegateEnvelopeColumns`'s docs.
+                if !columns.namespace_matches(&self.shared.identity) {
+                    return Err(StreamOpenError::with_category(FailureCategory::Invariant));
+                }
                 let inner = columns
                     .to_envelope(self.shared.identity.clone(), self.shared.limits)
                     .ok_or_else(StreamOpenError::new)?;
@@ -1302,6 +1479,7 @@ where
             writer,
             stream,
             batches_written: resource_batches_written,
+            retired: false,
         });
 
         Ok(if restored {
@@ -1324,6 +1502,11 @@ where
             .update(StreamUpdateContext::new(context.stop_token()))
             .await
             .map_err(|_| StreamUpdateError::new())?;
+        // Fail closed before this candidate can be embedded in the outer
+        // candidate -- see the reader stream's `update` for the same check.
+        if envelope.namespace() != &self.shared.identity {
+            return Err(StreamUpdateError::with_category(FailureCategory::Invariant));
+        }
         let columns = DelegateEnvelopeColumns::from_envelope(&envelope)
             .map_err(|_| StreamUpdateError::new())?;
         let state = MultiResourceState {
@@ -1348,7 +1531,9 @@ where
         context: StreamCloseContext<'_>,
     ) -> Result<StreamCloseOutcome, StreamCloseError> {
         let guard = self.shared.active.lock().await;
-        if let Some(active) = guard.as_ref() {
+        if let Some(active) = guard.as_ref()
+            && !active.retired
+        {
             active
                 .stream
                 .close(StreamCloseContext::new(
@@ -1871,6 +2056,484 @@ mod tests {
         });
     }
 
+    // -- Finding 1/3 (#177) regression evidence: recording delegates that
+    // log every `open`/`update`/`close` call (and the `StreamRuntimeOutcome`
+    // `close` receives) so tests can assert the exact nested lifecycle,
+    // not only its externally observable read/write effects.
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum LifecycleEvent {
+        Open(String),
+        Update(String),
+        Close(String, RecordedOutcome),
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum RecordedOutcome {
+        Committed,
+        Failed,
+        Stopped,
+        Unknown,
+        ResourceBoundary,
+    }
+
+    impl From<StreamRuntimeOutcome> for RecordedOutcome {
+        fn from(outcome: StreamRuntimeOutcome) -> Self {
+            match outcome {
+                StreamRuntimeOutcome::Committed => Self::Committed,
+                StreamRuntimeOutcome::Failed => Self::Failed,
+                StreamRuntimeOutcome::Stopped => Self::Stopped,
+                StreamRuntimeOutcome::Unknown => Self::Unknown,
+                StreamRuntimeOutcome::ResourceBoundary => Self::ResourceBoundary,
+            }
+        }
+    }
+
+    type Log = Arc<std::sync::Mutex<Vec<LifecycleEvent>>>;
+
+    fn log_event(log: &Log, event: LifecycleEvent) {
+        log.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(event);
+    }
+
+    struct RecordingReaderStream {
+        ordinal: Arc<AsyncMutex<u64>>,
+        namespace: ComponentStreamIdentity,
+        resource: String,
+        log: Log,
+        /// Closing this resource fails exactly once (then the flag clears
+        /// itself), so a test can prove both propagation *and* that a
+        /// retried close recovers cleanly.
+        fail_close_once: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl ItemStream for RecordingReaderStream {
+        async fn open(
+            &self,
+            context: StreamOpenContext<'_>,
+        ) -> Result<StreamOpenOutcome, StreamOpenError> {
+            log_event(&self.log, LifecycleEvent::Open(self.resource.clone()));
+            let codec = vec_read_codec();
+            if let Some(envelope) = context.inherited_state() {
+                let restored = envelope
+                    .decode::<VecPosition>(&codec)
+                    .map_err(|_| StreamOpenError::new())?;
+                *self.ordinal.lock().await = restored.0;
+                Ok(StreamOpenOutcome::Restored)
+            } else {
+                *self.ordinal.lock().await = 0;
+                Ok(StreamOpenOutcome::Initial)
+            }
+        }
+
+        async fn update(
+            &self,
+            _context: StreamUpdateContext<'_>,
+        ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+            log_event(&self.log, LifecycleEvent::Update(self.resource.clone()));
+            let codec = vec_read_codec();
+            let ordinal = *self.ordinal.lock().await;
+            ComponentStateEnvelope::encode(
+                self.namespace.clone(),
+                &VecPosition(ordinal),
+                &codec,
+                StateLimits::default(),
+            )
+            .map_err(|_| StreamUpdateError::new())
+        }
+
+        async fn close(
+            &self,
+            context: StreamCloseContext<'_>,
+        ) -> Result<StreamCloseOutcome, StreamCloseError> {
+            log_event(
+                &self.log,
+                LifecycleEvent::Close(self.resource.clone(), context.outcome().into()),
+            );
+            if self
+                .fail_close_once
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err(StreamCloseError::new());
+            }
+            Ok(StreamCloseOutcome::Closed)
+        }
+    }
+
+    struct RecordingReaderOpener {
+        data: HashMap<String, Vec<u64>>,
+        log: Log,
+        fail_open: HashSet<String>,
+        fail_close_once: HashMap<String, Arc<std::sync::atomic::AtomicBool>>,
+    }
+
+    impl MultiResourceReaderOpener<u64> for RecordingReaderOpener {
+        type Reader = VecItemReader;
+        type Stream = RecordingReaderStream;
+
+        async fn open(
+            &self,
+            resource: &ResourceIdentity,
+            resource_ordinal: u32,
+            delegate_identity: &ComponentStreamIdentity,
+        ) -> Result<(Self::Reader, Self::Stream, StreamStateContract), MultiResourceOpenError>
+        {
+            if self.fail_open.contains(resource.as_str()) {
+                return Err(MultiResourceOpenError::new(resource_ordinal));
+            }
+            let items = self
+                .data
+                .get(resource.as_str())
+                .cloned()
+                .unwrap_or_default();
+            let ordinal = Arc::new(AsyncMutex::new(0));
+            let reader = VecItemReader {
+                items,
+                ordinal: Arc::clone(&ordinal),
+            };
+            let fail_close_once = self
+                .fail_close_once
+                .get(resource.as_str())
+                .cloned()
+                .unwrap_or_else(|| Arc::new(std::sync::atomic::AtomicBool::new(false)));
+            let stream = RecordingReaderStream {
+                ordinal,
+                namespace: delegate_identity.clone(),
+                resource: resource.as_str().to_owned(),
+                log: Arc::clone(&self.log),
+                fail_close_once,
+            };
+            Ok((reader, stream, StreamStateContract::new(vec_read_codec())))
+        }
+    }
+
+    #[test]
+    fn reader_closes_each_delegate_exactly_once_with_resource_boundary_outcome_in_order() {
+        let mut data = HashMap::new();
+        data.insert("a".to_owned(), vec![1, 2]);
+        data.insert("b".to_owned(), vec![3]);
+        let log: Log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let opener = RecordingReaderOpener {
+            data,
+            log: Arc::clone(&log),
+            fail_open: HashSet::new(),
+            fail_close_once: HashMap::new(),
+        };
+        let (mut reader, stream, _contract) = multi_resource_reader::<u64, _>(
+            resource_set(&["a", "b"]),
+            opener,
+            identity("lifecycle-order"),
+            RestartabilityDeclaration::Restartable,
+        );
+        let (_source, token) = stop();
+        futures_executor::block_on(async {
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            loop {
+                match reader.read(read_context(&token)).await.unwrap() {
+                    ReadOutcome::Item(_) => {}
+                    ReadOutcome::EndOfInput => break,
+                    ReadOutcome::Stopped => panic!("unexpected stop"),
+                }
+            }
+        });
+        let events = log.lock().unwrap().clone();
+        assert_eq!(
+            events,
+            vec![
+                LifecycleEvent::Open("a".to_owned()),
+                LifecycleEvent::Close("a".to_owned(), RecordedOutcome::ResourceBoundary),
+                LifecycleEvent::Open("b".to_owned()),
+                LifecycleEvent::Close("b".to_owned(), RecordedOutcome::ResourceBoundary),
+            ],
+            "the intermediate delegate (\"a\") and the final delegate (\"b\") must \
+             each open exactly once and close exactly once, in order, with \
+             `ResourceBoundary` -- never `Committed`, which would falsely \
+             claim the enclosing step attempt itself had committed"
+        );
+    }
+
+    #[test]
+    fn reader_resource_boundary_close_failure_is_propagated_without_advancing_or_double_closing() {
+        let mut data = HashMap::new();
+        data.insert("a".to_owned(), vec![1]);
+        data.insert("b".to_owned(), vec![2]);
+        let log: Log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut fail_close_once = HashMap::new();
+        fail_close_once.insert(
+            "a".to_owned(),
+            Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        );
+        let opener = RecordingReaderOpener {
+            data,
+            log: Arc::clone(&log),
+            fail_open: HashSet::new(),
+            fail_close_once,
+        };
+        let (mut reader, stream, _contract) = multi_resource_reader::<u64, _>(
+            resource_set(&["a", "b"]),
+            opener,
+            identity("boundary-close-failure"),
+            RestartabilityDeclaration::Restartable,
+        );
+        let (_source, token) = stop();
+        futures_executor::block_on(async {
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            assert_eq!(
+                reader.read(read_context(&token)).await.unwrap(),
+                ReadOutcome::Item(1)
+            );
+            // "a" exhausts; its boundary close fails.
+            let result = reader.read(read_context(&token)).await;
+            assert!(result.is_err(), "a boundary close failure must surface");
+            // The checkpoint must not have silently advanced past "a": the
+            // outer envelope must still describe resource index 0 with "a"'s
+            // own (unclosed) position, not "b".
+            let envelope = stream
+                .update(StreamUpdateContext::new(&token))
+                .await
+                .unwrap();
+            let codec = multi_resource_position_codec(RestartabilityDeclaration::Restartable);
+            let state = envelope.decode::<MultiResourceState>(&codec).unwrap();
+            assert_eq!(
+                state.resource_index, 0,
+                "checkpoint advancement must not silently occur after a failed boundary close"
+            );
+            // A retry re-attempts the same close (which now succeeds) and
+            // completes the transition to "b" -- never re-opening "a" and
+            // never treating the first, failed close as if it were a second,
+            // separate closed delegate.
+            assert_eq!(
+                reader.read(read_context(&token)).await.unwrap(),
+                ReadOutcome::Item(2)
+            );
+        });
+        let events = log.lock().unwrap().clone();
+        assert_eq!(
+            events,
+            vec![
+                LifecycleEvent::Open("a".to_owned()),
+                LifecycleEvent::Close("a".to_owned(), RecordedOutcome::ResourceBoundary),
+                LifecycleEvent::Update("a".to_owned()),
+                LifecycleEvent::Close("a".to_owned(), RecordedOutcome::ResourceBoundary),
+                LifecycleEvent::Open("b".to_owned()),
+            ],
+            "exactly one failed close attempt on \"a\" followed by exactly one \
+             successful retry, never a second delegate opened for \"a\", never \
+             \"b\" opened before \"a\" is fully retired"
+        );
+    }
+
+    #[test]
+    fn outer_terminal_close_does_not_double_close_a_reader_delegate_already_retired_at_a_boundary()
+    {
+        let mut data = HashMap::new();
+        data.insert("a".to_owned(), vec![1]);
+        let mut fail_open = HashSet::new();
+        fail_open.insert("b".to_owned());
+        let log: Log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let opener = RecordingReaderOpener {
+            data,
+            log: Arc::clone(&log),
+            fail_open,
+            fail_close_once: HashMap::new(),
+        };
+        let (mut reader, stream, _contract) = multi_resource_reader::<u64, _>(
+            resource_set(&["a", "b"]),
+            opener,
+            identity("no-double-close"),
+            RestartabilityDeclaration::Restartable,
+        );
+        let (_source, token) = stop();
+        futures_executor::block_on(async {
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            assert_eq!(
+                reader.read(read_context(&token)).await.unwrap(),
+                ReadOutcome::Item(1)
+            );
+            // "a" exhausts and closes successfully; opening "b" then fails,
+            // so the step attempt gives up and the outer terminal close
+            // runs with the step's real (failed) outcome.
+            let result = reader.read(read_context(&token)).await;
+            assert!(result.is_err());
+            stream
+                .close(StreamCloseContext::new(
+                    &token,
+                    StreamRuntimeOutcome::Failed,
+                ))
+                .await
+                .unwrap();
+        });
+        let events = log.lock().unwrap().clone();
+        assert_eq!(
+            events,
+            vec![
+                LifecycleEvent::Open("a".to_owned()),
+                LifecycleEvent::Close("a".to_owned(), RecordedOutcome::ResourceBoundary),
+            ],
+            "\"a\" must be closed exactly once total -- the outer terminal \
+             close must recognize it is already retired and skip it, not \
+             close it a second time with the step's real outcome"
+        );
+    }
+
+    #[test]
+    fn reader_update_fails_closed_when_delegate_reports_the_wrong_namespace() {
+        struct WrongNamespaceStream {
+            wrong_namespace: ComponentStreamIdentity,
+        }
+        impl ItemStream for WrongNamespaceStream {
+            async fn open(
+                &self,
+                context: StreamOpenContext<'_>,
+            ) -> Result<StreamOpenOutcome, StreamOpenError> {
+                Ok(if context.inherited_state().is_some() {
+                    StreamOpenOutcome::Restored
+                } else {
+                    StreamOpenOutcome::Initial
+                })
+            }
+            async fn update(
+                &self,
+                _context: StreamUpdateContext<'_>,
+            ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+                // A buggy/malicious delegate that ignores the identity the
+                // multi-resource opener assigned it and reports a different
+                // namespace of its own choosing.
+                ComponentStateEnvelope::encode(
+                    self.wrong_namespace.clone(),
+                    &VecPosition(0),
+                    &vec_read_codec(),
+                    StateLimits::default(),
+                )
+                .map_err(|_| StreamUpdateError::new())
+            }
+            async fn close(
+                &self,
+                _context: StreamCloseContext<'_>,
+            ) -> Result<StreamCloseOutcome, StreamCloseError> {
+                Ok(StreamCloseOutcome::Closed)
+            }
+        }
+
+        struct WrongNamespaceOpener {
+            wrong_namespace: ComponentStreamIdentity,
+        }
+        impl MultiResourceReaderOpener<u64> for WrongNamespaceOpener {
+            type Reader = VecItemReader;
+            type Stream = WrongNamespaceStream;
+            async fn open(
+                &self,
+                _resource: &ResourceIdentity,
+                _resource_ordinal: u32,
+                _delegate_identity: &ComponentStreamIdentity,
+            ) -> Result<(Self::Reader, Self::Stream, StreamStateContract), MultiResourceOpenError>
+            {
+                Ok((
+                    VecItemReader {
+                        items: vec![1],
+                        ordinal: Arc::new(AsyncMutex::new(0)),
+                    },
+                    WrongNamespaceStream {
+                        wrong_namespace: self.wrong_namespace.clone(),
+                    },
+                    StreamStateContract::new(vec_read_codec()),
+                ))
+            }
+        }
+
+        let opener = WrongNamespaceOpener {
+            wrong_namespace: identity("attacker-namespace"),
+        };
+        let (mut reader, stream, _contract) = multi_resource_reader::<u64, _>(
+            resource_set(&["a"]),
+            opener,
+            identity("expected-namespace"),
+            RestartabilityDeclaration::Restartable,
+        );
+        let (_source, token) = stop();
+        futures_executor::block_on(async {
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            reader.read(read_context(&token)).await.unwrap();
+            let result = stream.update(StreamUpdateContext::new(&token)).await;
+            assert!(
+                result.is_err(),
+                "a nested delegate reporting the wrong namespace must fail \
+                 the outer update closed, not be embedded into an outer \
+                 candidate that could reach durable checkpoint state"
+            );
+        });
+    }
+
+    #[test]
+    fn reader_open_fails_closed_on_a_hand_crafted_mismatched_namespace_record() {
+        // Bypasses the update-time check entirely (which already prevents a
+        // wrong-namespace candidate from ever being committed) to prove
+        // restore *independently* rejects a durable record whose embedded
+        // delegate namespace does not match the expected identity -- e.g. if
+        // such a record reached storage by some other means.
+        let expected_identity = identity("restore-namespace-check");
+        let wrong_identity = identity("restore-namespace-check-wrong");
+        let delegate_envelope = ComponentStateEnvelope::encode(
+            wrong_identity,
+            &VecPosition(0),
+            &vec_read_codec(),
+            StateLimits::default(),
+        )
+        .unwrap();
+        let columns = DelegateEnvelopeColumns::from_envelope(&delegate_envelope).unwrap();
+        let resources = resource_set(&["a"]);
+        let state = MultiResourceState {
+            resource_set_revision: resources.revision(),
+            resource_index: 0,
+            delegate: Some(columns),
+            resource_batches_written: 0,
+        };
+        let codec = multi_resource_position_codec(RestartabilityDeclaration::Restartable);
+        let outer_envelope = ComponentStateEnvelope::encode(
+            expected_identity.clone(),
+            &state,
+            &codec,
+            StateLimits::default(),
+        )
+        .unwrap();
+
+        let mut data = HashMap::new();
+        data.insert("a".to_owned(), vec![1]);
+        let opener = TestReaderOpener {
+            data,
+            fail: HashSet::new(),
+        };
+        let (_reader, stream, _contract) = multi_resource_reader::<u64, _>(
+            resources,
+            opener,
+            expected_identity,
+            RestartabilityDeclaration::Restartable,
+        );
+        let (_source, token) = stop();
+        let result = futures_executor::block_on(
+            stream.open(StreamOpenContext::new(Some(&outer_envelope), &token)),
+        );
+        assert!(
+            result.is_err(),
+            "a stored delegate envelope under the wrong namespace must fail \
+             closed on restore, never be silently reconstructed under the \
+             expected identity"
+        );
+    }
+
     // -- writer side: a minimal in-memory delegate mirroring the reader
     // fixture above.
 
@@ -2219,6 +2882,375 @@ mod tests {
             assert!(
                 result.is_err(),
                 "changed resource set must be rejected on writer restart too"
+            );
+        });
+    }
+
+    // -- Finding 1/3 (#177) regression evidence: writer-side recording
+    // delegate mirroring the reader's above.
+
+    struct RecordingWriterStream {
+        committed_len: Arc<AsyncMutex<u64>>,
+        namespace: ComponentStreamIdentity,
+        resource: String,
+        log: Log,
+        fail_close_once: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl ItemStream for RecordingWriterStream {
+        async fn open(
+            &self,
+            context: StreamOpenContext<'_>,
+        ) -> Result<StreamOpenOutcome, StreamOpenError> {
+            log_event(&self.log, LifecycleEvent::Open(self.resource.clone()));
+            let codec = vec_read_codec();
+            if let Some(envelope) = context.inherited_state() {
+                let restored = envelope
+                    .decode::<VecPosition>(&codec)
+                    .map_err(|_| StreamOpenError::new())?;
+                *self.committed_len.lock().await = restored.0;
+                Ok(StreamOpenOutcome::Restored)
+            } else {
+                *self.committed_len.lock().await = 0;
+                Ok(StreamOpenOutcome::Initial)
+            }
+        }
+
+        async fn update(
+            &self,
+            _context: StreamUpdateContext<'_>,
+        ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+            log_event(&self.log, LifecycleEvent::Update(self.resource.clone()));
+            let codec = vec_read_codec();
+            let committed = *self.committed_len.lock().await;
+            ComponentStateEnvelope::encode(
+                self.namespace.clone(),
+                &VecPosition(committed),
+                &codec,
+                StateLimits::default(),
+            )
+            .map_err(|_| StreamUpdateError::new())
+        }
+
+        async fn close(
+            &self,
+            context: StreamCloseContext<'_>,
+        ) -> Result<StreamCloseOutcome, StreamCloseError> {
+            log_event(
+                &self.log,
+                LifecycleEvent::Close(self.resource.clone(), context.outcome().into()),
+            );
+            if self
+                .fail_close_once
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err(StreamCloseError::new());
+            }
+            Ok(StreamCloseOutcome::Closed)
+        }
+    }
+
+    struct RecordingWriterOpener {
+        sink: Arc<std::sync::Mutex<HashMap<String, Vec<u64>>>>,
+        log: Log,
+        fail_open: HashSet<String>,
+        fail_close_once: HashMap<String, Arc<std::sync::atomic::AtomicBool>>,
+    }
+
+    impl MultiResourceWriterOpener<u64> for RecordingWriterOpener {
+        type Writer = VecItemWriter;
+        type Stream = RecordingWriterStream;
+
+        async fn open(
+            &self,
+            resource: &ResourceIdentity,
+            resource_ordinal: u32,
+            delegate_identity: &ComponentStreamIdentity,
+        ) -> Result<(Self::Writer, Self::Stream, StreamStateContract), MultiResourceOpenError>
+        {
+            if self.fail_open.contains(resource.as_str()) {
+                return Err(MultiResourceOpenError::new(resource_ordinal));
+            }
+            let committed_len = Arc::new(AsyncMutex::new(0));
+            let writer = VecItemWriter {
+                resource: resource.as_str().to_owned(),
+                sink: Arc::clone(&self.sink),
+                committed_len: Arc::clone(&committed_len),
+            };
+            let fail_close_once = self
+                .fail_close_once
+                .get(resource.as_str())
+                .cloned()
+                .unwrap_or_else(|| Arc::new(std::sync::atomic::AtomicBool::new(false)));
+            let stream = RecordingWriterStream {
+                committed_len,
+                namespace: delegate_identity.clone(),
+                resource: resource.as_str().to_owned(),
+                log: Arc::clone(&self.log),
+                fail_close_once,
+            };
+            Ok((writer, stream, StreamStateContract::new(vec_read_codec())))
+        }
+    }
+
+    #[test]
+    fn writer_rollover_closes_outgoing_delegate_exactly_once_with_resource_boundary_outcome() {
+        let sink = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let log: Log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let opener = RecordingWriterOpener {
+            sink: Arc::clone(&sink),
+            log: Arc::clone(&log),
+            fail_open: HashSet::new(),
+            fail_close_once: HashMap::new(),
+        };
+        let (writer, stream, _contract) = multi_resource_writer::<u64, _, _>(
+            resource_set(&["a", "b"]),
+            opener,
+            identity("writer-lifecycle-order"),
+            BatchCountRollover::new(1),
+            RestartabilityDeclaration::Restartable,
+        )
+        .unwrap();
+        let (_source, token) = stop();
+        futures_executor::block_on(async {
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            writer.write(&[1], write_context(&token)).await.unwrap();
+            writer.write(&[2], write_context(&token)).await.unwrap();
+        });
+        let events = log.lock().unwrap().clone();
+        assert_eq!(
+            events,
+            vec![
+                LifecycleEvent::Open("a".to_owned()),
+                LifecycleEvent::Close("a".to_owned(), RecordedOutcome::ResourceBoundary),
+                LifecycleEvent::Open("b".to_owned()),
+            ],
+            "rollover must close the outgoing delegate (\"a\") exactly once, \
+             with `ResourceBoundary` -- never `Committed` -- before opening \
+             the next resource (\"b\")"
+        );
+    }
+
+    #[test]
+    fn writer_resource_boundary_close_failure_is_propagated_without_rolling_over() {
+        let sink = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let log: Log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut fail_close_once = HashMap::new();
+        fail_close_once.insert(
+            "a".to_owned(),
+            Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        );
+        let opener = RecordingWriterOpener {
+            sink: Arc::clone(&sink),
+            log: Arc::clone(&log),
+            fail_open: HashSet::new(),
+            fail_close_once,
+        };
+        let (writer, stream, _contract) = multi_resource_writer::<u64, _, _>(
+            resource_set(&["a", "b"]),
+            opener,
+            identity("writer-boundary-close-failure"),
+            BatchCountRollover::new(1),
+            RestartabilityDeclaration::Restartable,
+        )
+        .unwrap();
+        let (_source, token) = stop();
+        futures_executor::block_on(async {
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            writer.write(&[1], write_context(&token)).await.unwrap();
+            // Rollover to "b" is now due; closing "a" fails.
+            let result = writer.write(&[2], write_context(&token)).await;
+            assert!(result.is_err(), "a boundary close failure must surface");
+            // The checkpoint must still describe "a", not "b".
+            let envelope = stream
+                .update(StreamUpdateContext::new(&token))
+                .await
+                .unwrap();
+            let codec = multi_resource_position_codec(RestartabilityDeclaration::Restartable);
+            let state = envelope.decode::<MultiResourceState>(&codec).unwrap();
+            assert_eq!(
+                state.resource_index, 0,
+                "checkpoint advancement must not silently occur after a failed boundary close"
+            );
+            // A retry re-attempts the same close (which now succeeds) and
+            // completes the rollover to "b".
+            writer.write(&[2], write_context(&token)).await.unwrap();
+        });
+        let events = log.lock().unwrap().clone();
+        assert_eq!(
+            events,
+            vec![
+                LifecycleEvent::Open("a".to_owned()),
+                LifecycleEvent::Close("a".to_owned(), RecordedOutcome::ResourceBoundary),
+                LifecycleEvent::Update("a".to_owned()),
+                LifecycleEvent::Close("a".to_owned(), RecordedOutcome::ResourceBoundary),
+                LifecycleEvent::Open("b".to_owned()),
+            ],
+            "exactly one failed close attempt on \"a\" followed by exactly one \
+             successful retry, never a second delegate opened for \"a\", never \
+             \"b\" opened before \"a\" is fully retired"
+        );
+        let sink = sink.lock().unwrap();
+        assert_eq!(
+            sink.get("a"),
+            Some(&vec![1]),
+            "the item from the failed rollover attempt must never have \
+             reached \"b\" -- write only succeeded once the retry rolled \
+             over cleanly"
+        );
+        assert_eq!(sink.get("b"), Some(&vec![2]));
+    }
+
+    #[test]
+    fn outer_terminal_close_does_not_double_close_a_writer_delegate_already_retired_at_a_boundary()
+    {
+        let sink = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let log: Log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut fail_open = HashSet::new();
+        fail_open.insert("b".to_owned());
+        let opener = RecordingWriterOpener {
+            sink: Arc::clone(&sink),
+            log: Arc::clone(&log),
+            fail_open,
+            fail_close_once: HashMap::new(),
+        };
+        let (writer, stream, _contract) = multi_resource_writer::<u64, _, _>(
+            resource_set(&["a", "b"]),
+            opener,
+            identity("writer-no-double-close"),
+            BatchCountRollover::new(1),
+            RestartabilityDeclaration::Restartable,
+        )
+        .unwrap();
+        let (_source, token) = stop();
+        futures_executor::block_on(async {
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            writer.write(&[1], write_context(&token)).await.unwrap();
+            // Rollover is now due: "a" closes successfully, but opening "b"
+            // then fails, so the step attempt gives up and the outer
+            // terminal close runs with the step's real (failed) outcome.
+            let result = writer.write(&[2], write_context(&token)).await;
+            assert!(result.is_err());
+            stream
+                .close(StreamCloseContext::new(
+                    &token,
+                    StreamRuntimeOutcome::Failed,
+                ))
+                .await
+                .unwrap();
+        });
+        let events = log.lock().unwrap().clone();
+        assert_eq!(
+            events,
+            vec![
+                LifecycleEvent::Open("a".to_owned()),
+                LifecycleEvent::Close("a".to_owned(), RecordedOutcome::ResourceBoundary),
+            ],
+            "\"a\" must be closed exactly once total -- the outer terminal \
+             close must recognize it is already retired and skip it, not \
+             close it a second time with the step's real outcome"
+        );
+    }
+
+    #[test]
+    fn writer_update_fails_closed_when_delegate_reports_the_wrong_namespace() {
+        struct WrongNamespaceWriterStream {
+            wrong_namespace: ComponentStreamIdentity,
+        }
+        impl ItemStream for WrongNamespaceWriterStream {
+            async fn open(
+                &self,
+                context: StreamOpenContext<'_>,
+            ) -> Result<StreamOpenOutcome, StreamOpenError> {
+                Ok(if context.inherited_state().is_some() {
+                    StreamOpenOutcome::Restored
+                } else {
+                    StreamOpenOutcome::Initial
+                })
+            }
+            async fn update(
+                &self,
+                _context: StreamUpdateContext<'_>,
+            ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+                ComponentStateEnvelope::encode(
+                    self.wrong_namespace.clone(),
+                    &VecPosition(0),
+                    &vec_read_codec(),
+                    StateLimits::default(),
+                )
+                .map_err(|_| StreamUpdateError::new())
+            }
+            async fn close(
+                &self,
+                _context: StreamCloseContext<'_>,
+            ) -> Result<StreamCloseOutcome, StreamCloseError> {
+                Ok(StreamCloseOutcome::Closed)
+            }
+        }
+
+        struct WrongNamespaceWriterOpener {
+            sink: Arc<std::sync::Mutex<HashMap<String, Vec<u64>>>>,
+            wrong_namespace: ComponentStreamIdentity,
+        }
+        impl MultiResourceWriterOpener<u64> for WrongNamespaceWriterOpener {
+            type Writer = VecItemWriter;
+            type Stream = WrongNamespaceWriterStream;
+            async fn open(
+                &self,
+                resource: &ResourceIdentity,
+                _resource_ordinal: u32,
+                _delegate_identity: &ComponentStreamIdentity,
+            ) -> Result<(Self::Writer, Self::Stream, StreamStateContract), MultiResourceOpenError>
+            {
+                Ok((
+                    VecItemWriter {
+                        resource: resource.as_str().to_owned(),
+                        sink: Arc::clone(&self.sink),
+                        committed_len: Arc::new(AsyncMutex::new(0)),
+                    },
+                    WrongNamespaceWriterStream {
+                        wrong_namespace: self.wrong_namespace.clone(),
+                    },
+                    StreamStateContract::new(vec_read_codec()),
+                ))
+            }
+        }
+
+        let sink = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let opener = WrongNamespaceWriterOpener {
+            sink,
+            wrong_namespace: identity("attacker-namespace-writer"),
+        };
+        let (writer, stream, _contract) = multi_resource_writer::<u64, _, _>(
+            resource_set(&["a"]),
+            opener,
+            identity("expected-namespace-writer"),
+            NoRollover,
+            RestartabilityDeclaration::Restartable,
+        )
+        .unwrap();
+        let (_source, token) = stop();
+        futures_executor::block_on(async {
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            writer.write(&[1], write_context(&token)).await.unwrap();
+            let result = stream.update(StreamUpdateContext::new(&token)).await;
+            assert!(
+                result.is_err(),
+                "a nested delegate reporting the wrong namespace must fail \
+                 the outer update closed, not be embedded into an outer \
+                 candidate that could reach durable checkpoint state"
             );
         });
     }

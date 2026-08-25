@@ -104,6 +104,23 @@ pub enum StreamRuntimeOutcome {
     Stopped,
     /// The step attempt's commit outcome is unknown.
     Unknown,
+    /// A nested resource this stream owns reached its own logical boundary
+    /// (a delegate reader exhausted, or a delegate writer rolled over)
+    /// while the *enclosing* step attempt's terminal outcome is not yet
+    /// known.
+    ///
+    /// Only ever reported by a component that nests other [`ItemStream`]s
+    /// and must close a retiring delegate ahead of its own outer close --
+    /// for example
+    /// [`crate::item_components::multi_resource::MultiResourceReader`]/
+    /// [`crate::item_components::multi_resource::MultiResourceWriter`]
+    /// closing the resource they are transitioning away from. The
+    /// top-level chunk runtime itself never reports this variant: it is
+    /// strictly weaker than [`Self::Committed`] (the retiring resource's
+    /// own prior work may already be durable, but the step attempt that
+    /// observed its boundary has not yet reached a terminal outcome), so a
+    /// delegate must not treat it as proof of a durable commit.
+    ResourceBoundary,
 }
 
 /// Borrowed call state for [`ItemStream::close`].

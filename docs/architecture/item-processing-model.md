@@ -291,20 +291,30 @@ runtime): both own exactly one `ItemStream`/`ComponentStreamIdentity`
 namespace for the whole resource set, whose durable envelope carries a
 content-fingerprinted `ResourceSetRevision` over the ordered resource
 identities, the current resource's ordinal, and the current resource's own
-delegate `ComponentStateEnvelope` embedded verbatim (never a second, hidden
-state mechanism) -- per the composition taxonomy's checkpoint/state and
-restartability rules above. A restart whose caller-supplied resource set no
-longer fingerprints to the same revision fails closed
-(`FailureCategory::UnsupportedCapability`) rather than reinterpreting a
-stored ordinal against a different physical resource. A failure opening or
-reading one resource does not advance the checkpoint past it, and a retried
-attempt re-resolves the same resource transition rather than skipping ahead,
-per the composition taxonomy's error-classification rule.
+delegate `ComponentStateEnvelope` embedded verbatim, including its
+namespace (validated -- not merely assumed -- against the identity the
+opener assigned that delegate, both when the outer candidate is produced
+and again on restore; never a second, hidden state mechanism) -- per the
+composition taxonomy's checkpoint/state and restartability rules above. A
+restart whose caller-supplied resource set no longer fingerprints to the
+same revision fails closed (`FailureCategory::UnsupportedCapability`)
+rather than reinterpreting a stored ordinal against a different physical
+resource. A failure opening or reading one resource does not advance the
+checkpoint past it, and a retried attempt re-resolves the same resource
+transition rather than skipping ahead, per the composition taxonomy's
+error-classification rule. A delegate stream that opened successfully is
+always closed exactly once: at its own resource boundary if it retires
+mid-attempt (with `StreamRuntimeOutcome::ResourceBoundary`, distinct from
+the enclosing step attempt's own terminal outcome, which is not yet known
+at that point), or by the outer stream's own close otherwise.
 
 `item_components::object_store` provides the M6-basics, provider-neutral
-capability boundary (`ObjectStoreCapability`: bounded `get`/`put`/`stat`/
-`list` with deterministic pagination and an opaque `ObjectVersionToken`
-where the backend supplies one) that `ObjectStoreReaderOpener`/
+capability boundary (`ObjectStoreCapability`: `get`/`put`/`stat`/`list`
+with deterministic pagination and an opaque `ObjectVersionToken` where the
+backend supplies one; `get` and the writer's accumulator are bounded as
+real pre-materialization resource bounds, rejecting an oversized
+object/candidate before allocating proportional to it, not merely
+validating after the fact) that `ObjectStoreReaderOpener`/
 `ObjectStoreWriterOpener` bridge into `MultiResourceReaderOpener`/
 `MultiResourceWriterOpener`, so object-store multi-resource I/O sits on the
 same ordered/versioned/restartable model as file-backed multi-resource I/O.
