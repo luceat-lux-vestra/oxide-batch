@@ -62,6 +62,68 @@ consuming them, and `ObjectStoreWriterOpener::new` gained a
 `ResourceBoundary` variant. See the scenario/test tables below for the
 regression evidence added for each finding.
 
+### Second round: independent strict review of the #177 corrective PR itself
+
+A second independent review, of #177's own corrective diff (before it was
+merged), found four further defects. All four are fixed in the same PR;
+none was found by CI/local tests, only by re-reading the correction itself
+against the same standard applied to #176.
+
+4. **Lifecycle "exactly once" was still not exactly once.** The first pass
+   made a boundary `close` failure return an error, but left the delegate's
+   state untouched -- a retried `read`/`write` re-observed the same
+   exhausted/rollover-due condition and called `close` on the *same*
+   delegate instance a second time. `ItemStream::close` carries no
+   idempotency/atomicity guarantee, so a delegate that performs an
+   irreversible side effect (flush, finalize, release) before returning an
+   error could be double-finalized/double-released by that retry. Fixed by
+   never retrying a failed boundary `close`: the attempt is marked as made
+   (successful or not) exactly once, and on failure the reader/writer
+   instance is poisoned -- every later call returns the same failure
+   without touching any delegate again. Recovery is a fresh step attempt (a
+   new instance opened from the durable checkpoint, which the failed close
+   never advanced past), never a retry on the poisoned instance.
+5. **The object-store writer bound still was not a real pre-materialization
+   bound.** The first pass checked the *sum* of all items' serialized
+   lengths against `max_object_bytes`, but computed that sum by calling
+   `serialize` on every item in the batch first, collecting a
+   `Vec<Vec<u8>>` -- so one adversarial item (or a large batch) could still
+   force allocation proportional to the oversized total before the bound
+   was ever checked, and the "exactly one owned buffer" claim was false
+   while `serialized` and the accumulator candidate coexisted. Fixed by
+   checking the running total after each item, one at a time, and never
+   calling `serialize` on any item after the one that first exceeds the
+   bound. The residual, inherent limit -- a single item's own `serialize`
+   call can itself allocate arbitrarily, because `Fn(&O) -> Vec<u8>` has no
+   size hint -- is now stated plainly rather than implied away.
+6. **The wrapper laundered delegate error categories.** Multiple call sites
+   received a delegate's own typed error (carrying a real
+   `FailureCategory` such as `Invariant` or `UnsupportedCapability`, e.g.
+   from `MultiResourceOpenError`, `StreamOpenError`, `StreamUpdateError`,
+   `StreamCloseError`, `ObjectStoreError`) and discarded it via
+   `map_err(|_| ...::new())`, silently downgrading it to the generic
+   `UserComponent` default. Since a wrapper must not weaken or strengthen a
+   delegate's own failure classification (composition taxonomy), and
+   classification can affect retry/skip/fail policy, every such site in
+   both `multi_resource.rs`'s reader/writer paths and `object_store.rs`'s
+   bridge was corrected to preserve the delegate's `category()`. Sites with
+   no delegate-typed source (durable-state JSON decode, envelope
+   reconstruction) are unaffected -- there is no category to launder there.
+7. **The durable schema changed shape without a version bump.** Making the
+   embedded delegate namespace a required column (finding 3, above) changed
+   what `oxide-batch.multi-resource-position` version 1 means, but the
+   schema's `current_version()` stayed `1`. A durable record #176 actually
+   produced (no delegate namespace) would now fail `decode` as malformed
+   rather than being explicitly, legibly rejected as an unsupported
+   version -- and patching a namespace onto an old record to make it decode
+   would recreate the exact laundering defect finding 3 fixed. Fixed by
+   bumping `current_version()` to `2` with no declared upgrade edge from
+   `1`, so the framework's shared upgrade-chain walk
+   (`crate::state::upgrade_schema_chain`) rejects a recorded version 1 with
+   `NoUpgradePath` before any codec's `decode` runs on it -- a deliberate,
+   fail-closed hard boundary, not a migration, proven by
+   `stale_v1_delegate_record_without_a_namespace_fails_closed_on_restore`.
+
 ## Audit performed before implementation
 
 Per #150's own instruction not to re-derive or duplicate #146's catalog, the
@@ -217,10 +279,11 @@ progress -- keeping the payload small regardless of resource-set size.
 | Resource open failure does not advance past the failure point; a retry re-hits the same transition | `resource_open_failure_does_not_advance_past_the_failure_point` |
 | `ResourceIdentity` construction refuses one byte past its ceiling, empty input, and control characters | `resource_identity_rejects_one_byte_past_its_ceiling`, `resource_identity_rejects_empty_and_control_characters` |
 | **(#177)** Intermediate and final delegates each open exactly once and close exactly once, in order, with `ResourceBoundary` | `reader_closes_each_delegate_exactly_once_with_resource_boundary_outcome_in_order` |
-| **(#177)** A boundary close failure is propagated, the checkpoint does not advance past it, and a retry recovers without re-opening or double-closing | `reader_resource_boundary_close_failure_is_propagated_without_advancing_or_double_closing` |
+| **(#177)** A boundary close failure is propagated, the checkpoint does not advance past it, and the reader is poisoned rather than retrying the same failed close | `reader_resource_boundary_close_failure_poisons_the_reader_without_advancing_or_retrying` |
 | **(#177)** The outer terminal close does not re-close a delegate already retired at a boundary | `outer_terminal_close_does_not_double_close_a_reader_delegate_already_retired_at_a_boundary` |
 | **(#177)** A delegate reporting the wrong namespace fails the outer `update` closed | `reader_update_fails_closed_when_delegate_reports_the_wrong_namespace` |
 | **(#177)** A hand-crafted durable record with a mismatched delegate namespace fails `open` closed on restore | `reader_open_fails_closed_on_a_hand_crafted_mismatched_namespace_record` |
+| **(#177)** A stale schema-version-1 durable record (pre-#177, no delegate namespace) fails `open` closed rather than being migrated or accepted | `stale_v1_delegate_record_without_a_namespace_fails_closed_on_restore` |
 
 ### Writer (`multi_resource.rs`, `#[cfg(test)]`)
 
@@ -231,7 +294,7 @@ progress -- keeping the payload small regardless of resource-set size.
 | Stale resource-set revision rejected on writer restart | `stale_resource_set_revision_is_rejected_on_writer_restart` |
 | The rollover batch count survives a restart, so `BatchCountRollover`'s cap holds across a crash rather than resetting to 0 | `rollover_counter_survives_restart_and_still_caps_batches_per_resource` |
 | **(#177)** Rollover closes the outgoing delegate exactly once, with `ResourceBoundary`, before opening the next resource | `writer_rollover_closes_outgoing_delegate_exactly_once_with_resource_boundary_outcome` |
-| **(#177)** A boundary close failure is propagated, the write never reaches the next resource, the checkpoint does not advance, and a retry recovers without double-closing | `writer_resource_boundary_close_failure_is_propagated_without_rolling_over` |
+| **(#177)** A boundary close failure is propagated, the write never reaches the next resource, the checkpoint does not advance, and the writer is poisoned rather than retrying the same failed close | `writer_resource_boundary_close_failure_poisons_the_writer_without_rolling_over_or_retrying` |
 | **(#177)** The outer terminal close does not re-close a delegate already retired at a boundary | `outer_terminal_close_does_not_double_close_a_writer_delegate_already_retired_at_a_boundary` |
 | **(#177)** A delegate reporting the wrong namespace fails the outer `update` closed | `writer_update_fails_closed_when_delegate_reports_the_wrong_namespace` |
 
@@ -265,6 +328,7 @@ was needed.
 | **(#177)** `get` rejects an object over the caller's `max_bytes` at the exact boundary vs. one byte over | `get_bounded_by_caller_supplied_max_bytes_without_materializing_the_oversized_object` |
 | **(#177)** The reader opener rejects an oversized object without the backend ever materializing a buffer for it (mock backend that structurally cannot hand back over-bound content) | `reader_opener_rejects_an_oversized_object_without_ever_materializing_it` |
 | **(#177)** The writer accumulator rejects growth past `max_object_bytes` before touching the existing buffer, and allows the exact boundary | `writer_rejects_growth_past_max_object_bytes_and_allows_the_exact_boundary` |
+| **(#177)** A batch that crosses the bound mid-batch stops calling `serialize` on every item after the one that first exceeds it | `writer_stops_serializing_further_items_once_one_write_call_exceeds_the_bound` |
 
 Cancellation is honored by construction (`ObjectItemWriter::write` and
 `MultiResourceWriter::write` both check `context.stop_token()` before doing

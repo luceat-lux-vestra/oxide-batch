@@ -34,8 +34,14 @@
 //! real resource bound, not merely never unbounded: an oversized object or
 //! candidate is rejected before a buffer proportional to its true size is
 //! allocated -- see [`ObjectStoreCapability::get`]'s contract for the
-//! reader side, and [`ObjectItemWriter`]'s `write` for the writer side. It
-//! is not streaming/multipart -- that stays M9.
+//! reader side, and [`ObjectItemWriter`]'s `write` for the writer side. The
+//! writer's one residual, inherent limit: `serialize: Fn(&O) -> Vec<u8>`
+//! returns an owned buffer with no size hint, so the wrapper cannot bound
+//! what a single item's own `serialize` call allocates before it returns --
+//! it can, and does, stop calling `serialize` on every item *after* the one
+//! that first pushes the accumulator past `max_object_bytes`, rather than
+//! serializing an entire oversized batch unconditionally first. It is not
+//! streaming/multipart -- that stays M9.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -956,44 +962,55 @@ where
             return Ok(WriteOutcome::Stopped);
         }
         let mut accumulator = self.accumulator.lock().await;
-        let serialized: Vec<Vec<u8>> = items.iter().map(|item| (self.serialize)(item)).collect();
-        let additional: usize = serialized.iter().map(Vec::len).sum();
         let original_len = accumulator.bytes.len();
-        // Reject growth *before* touching the existing accumulator: a
-        // candidate that would exceed the object's declared maximum must
-        // not first pay for cloning/extending a buffer proportional to the
-        // (already potentially large, legitimately accumulated) existing
-        // content, only to be rejected afterward.
-        let prospective_len = original_len
-            .checked_add(additional)
-            .ok_or_else(|| WriterError::with_category(FailureCategory::Invariant))?;
-        if prospective_len > self.max_object_bytes {
-            return Err(WriterError::with_category(FailureCategory::Invariant));
-        }
-        // Exactly one buffer: take the existing content out (no clone),
-        // extend it in place, hand the backend a borrow, then keep the same
-        // buffer as the new accumulator content -- never two full copies of
-        // the accumulated object for one write, unlike cloning it once to
-        // build the candidate and again to hand it to `put`. On a `put`
-        // failure the appended tail is truncated back off (an O(1) length
-        // adjustment, not a copy) so the accumulator is restored to exactly
-        // its prior content rather than left empty or holding a candidate a
-        // retry would then duplicate on top of.
+        // Exactly one buffer: take the existing content out (no clone) and
+        // extend it in place, one item at a time, hand the backend a
+        // borrow, then keep the same buffer as the new accumulator content
+        // -- never two full copies of the accumulated object for one
+        // write, unlike cloning it once to build the candidate and again
+        // to hand it to `put`.
+        //
+        // The bound is checked after each item, before that item's bytes
+        // are appended: `serialize` returns an owned `Vec<u8>` with no size
+        // hint, so this wrapper cannot know an item's encoded length
+        // without calling it (that one item's own allocation cost is the
+        // caller's, inherent to the `serialize` signature, same as any
+        // other per-item serialization cost in this crate) -- but it can,
+        // and does, stop calling `serialize` on every item *after* the one
+        // that first pushes the running total past `max_object_bytes`,
+        // rather than serializing the whole batch unconditionally before
+        // ever checking the bound. On rejection the appended tail is
+        // truncated back off (an O(1) length adjustment, not a copy) so
+        // the accumulator is restored to exactly its prior content.
         let mut candidate = std::mem::take(&mut accumulator.bytes);
-        for chunk in &serialized {
-            candidate.extend_from_slice(chunk);
+        for item in items {
+            let chunk = (self.serialize)(item);
+            let Some(new_len) = candidate.len().checked_add(chunk.len()) else {
+                candidate.truncate(original_len);
+                accumulator.bytes = candidate;
+                return Err(WriterError::with_category(FailureCategory::Invariant));
+            };
+            if new_len > self.max_object_bytes {
+                candidate.truncate(original_len);
+                accumulator.bytes = candidate;
+                return Err(WriterError::with_category(FailureCategory::Invariant));
+            }
+            candidate.extend_from_slice(&chunk);
         }
-        if let Ok(metadata) = self.store.put(&self.id, &candidate).await {
-            accumulator.bytes = candidate;
-            accumulator.committed_item_count += u64::try_from(items.len()).unwrap_or(u64::MAX);
-            accumulator.version_token = metadata
-                .version_token()
-                .map(|token| token.as_str().to_owned());
-            Ok(WriteOutcome::Written)
-        } else {
-            candidate.truncate(original_len);
-            accumulator.bytes = candidate;
-            Err(WriterError::new())
+        match self.store.put(&self.id, &candidate).await {
+            Ok(metadata) => {
+                accumulator.bytes = candidate;
+                accumulator.committed_item_count += u64::try_from(items.len()).unwrap_or(u64::MAX);
+                accumulator.version_token = metadata
+                    .version_token()
+                    .map(|token| token.as_str().to_owned());
+                Ok(WriteOutcome::Written)
+            }
+            Err(error) => {
+                candidate.truncate(original_len);
+                accumulator.bytes = candidate;
+                Err(WriterError::with_category(error.category()))
+            }
         }
     }
 }
@@ -1021,7 +1038,7 @@ impl<C: ObjectStoreCapability> ItemStream for ObjectItemWriterStream<C> {
                 .store
                 .get(&self.id, self.max_object_bytes)
                 .await
-                .map_err(|_| StreamOpenError::new())?;
+                .map_err(|error| StreamOpenError::with_category(error.category()))?;
             let current_token = metadata
                 .version_token()
                 .map(|token| token.as_str().to_owned());
@@ -1786,6 +1803,57 @@ mod tests {
             "the rejected third write must not have reached the backend, \
              and the accumulator must remain exactly at its pre-rejection \
              content"
+        );
+    }
+
+    #[test]
+    fn writer_stops_serializing_further_items_once_one_write_call_exceeds_the_bound() {
+        // Five items in one `write` call, three bytes each, a seven-byte
+        // bound: items 1 and 2 fit (six bytes); item 3 alone pushes the
+        // running total to nine, over the bound. Proves the wrapper checks
+        // the bound incrementally, per item, rather than serializing the
+        // whole batch unconditionally before ever checking it -- items 4
+        // and 5 must never be handed to `serialize` at all.
+        let store = Arc::new(InMemoryObjectStore::new(1024));
+        let resources = ResourceSet::new(vec![ResourceIdentity::new("out").unwrap()]);
+        let identity = ComponentStreamIdentity::new(
+            "oxide-batch.object-store-unit-test.bounded-writer-stops-early",
+        )
+        .unwrap();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted_serialize = {
+            let calls = Arc::clone(&calls);
+            move |item: &u8| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                vec![*item; 3]
+            }
+        };
+        let opener = ObjectStoreWriterOpener::new(Arc::clone(&store), counted_serialize, 7);
+        let (_source, token) = stop();
+        futures_executor::block_on(async {
+            let (writer, stream, _contract) = multi_resource_writer::<u8, _, _>(
+                resources,
+                opener,
+                identity,
+                crate::item_components::multi_resource::NoRollover,
+                RestartabilityDeclaration::Restartable,
+            )
+            .unwrap();
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            let result = writer
+                .write(&[1, 2, 3, 4, 5], WriteContext::non_transactional(&token))
+                .await;
+            assert!(result.is_err(), "the batch must be rejected");
+        });
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            3,
+            "serialize must be called for items 1, 2, and the offending item \
+             3, and never again after that -- items 4 and 5 must never be \
+             serialized once the running total has already exceeded the bound"
         );
     }
 }

@@ -44,10 +44,19 @@
 //! checkpoint (produced by [`crate::ItemStream::update`], which runs only
 //! after a chunk's work -- including any resource transition -- has fully
 //! succeeded) never advances past a resource whose close failed. Every
-//! resource this module opens is closed exactly once: at its own boundary
-//! if it retires mid-attempt, or by this module's outer
+//! resource this module opens is closed **exactly once, ever** -- at its
+//! own boundary if it retires mid-attempt, or by this module's outer
 //! [`crate::ItemStream::close`] if it is still active when the step
-//! attempt's own terminal outcome is known -- never both.
+//! attempt's own terminal outcome is known -- never both, and never
+//! retried: [`crate::ItemStream::close`] carries no idempotency/atomicity
+//! guarantee, so a boundary close that fails poisons this reader/writer
+//! instance (every later call returns that same failure without touching
+//! any delegate again) rather than calling `close` a second time on a
+//! delegate that may already have performed an irreversible side effect.
+//! Recovery is a fresh step attempt: a new instance, opened from the
+//! durable checkpoint (which the failed close never advanced past), whose
+//! own resource-boundary close is a first attempt on a brand-new delegate,
+//! not a retry of the failed one.
 //!
 //! # Durable position
 //!
@@ -523,11 +532,25 @@ impl VersionedStateCodec<MultiResourceState> for MultiResourcePositionSchema {
     }
 
     fn current_version(&self) -> StateSchemaVersion {
+        // Version 2 (#177): the embedded delegate envelope's `namespace`
+        // column became a required field, so a durable version-1 record
+        // (produced before #177, which never carried a delegate namespace)
+        // no longer satisfies this schema's shape. No upgrade edge is
+        // declared from 1 to 2 (`Self::upgrades` keeps `VersionedStateCodec`'s
+        // default, empty implementation): the shared upgrade-chain walk
+        // (`upgrade_schema_chain`, used by both `crate::state` and
+        // `crate::component_state`) therefore rejects a recorded version 1
+        // with `NoUpgradePath` before this codec's own `decode` ever runs,
+        // fail-closed by construction. A version-1 record's delegate
+        // namespace cannot be reconstructed after the fact -- there is
+        // nothing honest to backfill it with -- so this is deliberately a
+        // hard boundary, not a migration, proven by
+        // `stale_v1_delegate_record_without_a_namespace_fails_closed_on_restore`.
         #[allow(
             clippy::unwrap_used,
             reason = "fixed literal schema version cannot fail validation"
         )]
-        StateSchemaVersion::new(1).unwrap()
+        StateSchemaVersion::new(2).unwrap()
     }
 
     fn encode(&self, value: &MultiResourceState) -> Result<Vec<u8>, StateCodecError> {
@@ -795,6 +818,17 @@ pub struct MultiResourceReader<I, O: MultiResourceReaderOpener<I>> {
     /// transition's own open step failed -- resumes the transition instead
     /// of polling the already-closed delegate's `ItemReader` half again.
     transitioning: bool,
+    /// Set once a resource-boundary `close` has been attempted and failed.
+    /// [`crate::ItemStream::close`] carries no idempotency/atomicity
+    /// guarantee: a delegate may perform an irreversible side effect (flush,
+    /// finalize, release) before returning an error, so a failed close is
+    /// never retried on the same delegate instance. Once poisoned, every
+    /// later `read` on this instance returns the same failure without
+    /// touching the delegate again; only a fresh step attempt -- a new
+    /// `MultiResourceReader` opened from the durable checkpoint, which
+    /// therefore never re-opens the poisoned instance -- may attempt this
+    /// resource's close again.
+    poisoned: Option<FailureCategory>,
 }
 
 impl<I, O> ItemReader<I> for MultiResourceReader<I, O>
@@ -803,6 +837,9 @@ where
     O: MultiResourceReaderOpener<I> + 'static,
 {
     async fn read(&mut self, context: ReadContext<'_>) -> Result<ReadOutcome<I>, ReaderError> {
+        if let Some(category) = self.poisoned {
+            return Err(ReaderError::with_category(category));
+        }
         if !self.started {
             self.started = true;
             let taken = self
@@ -843,28 +880,36 @@ where
                         // has not reached a terminal outcome yet) tells the
                         // delegate its own local work is done without
                         // falsely claiming the outer transaction committed.
-                        // A close failure here must not silently advance
-                        // past this resource: it is propagated as a read
-                        // error, `self.reader` stays cleared, and
-                        // `transitioning` stays unset so this same close is
-                        // retried on the next `read` call rather than
-                        // treated as already done.
+                        //
+                        // The close is attempted exactly once. `ItemStream`
+                        // carries no idempotency/atomicity guarantee, so a
+                        // failed close is never retried on this same
+                        // delegate instance -- see `Self::poisoned`'s docs.
                         let mut guard = self.shared.handle.lock().await;
                         let handle = guard.as_mut().ok_or_else(|| {
                             ReaderError::with_category(FailureCategory::Invariant)
                         })?;
-                        handle
+                        let closed = handle
                             .stream
                             .close(StreamCloseContext::new(
                                 context.stop_token(),
                                 StreamRuntimeOutcome::ResourceBoundary,
                             ))
-                            .await
-                            .map_err(|error| ReaderError::with_category(error.category()))?;
+                            .await;
+                        // Attempted (successfully or not): never closed
+                        // again, by this instance or by the outer terminal
+                        // close.
                         handle.retired = true;
                         drop(guard);
                         self.reader = None;
-                        self.transitioning = true;
+                        match closed {
+                            Ok(_) => self.transitioning = true,
+                            Err(error) => {
+                                let category = error.category();
+                                self.poisoned = Some(category);
+                                return Err(ReaderError::with_category(category));
+                            }
+                        }
                     }
                 }
             }
@@ -903,7 +948,7 @@ where
             stream
                 .open(StreamOpenContext::new(None, context.stop_token()))
                 .await
-                .map_err(|_| ReaderError::new())?;
+                .map_err(|error| ReaderError::with_category(error.category()))?;
             // Both halves of the pair are updated together, in one critical
             // section, so `StreamHandle::index` never observably points at
             // a resource `self.reader` has not yet transitioned to.
@@ -975,7 +1020,7 @@ where
             .opener
             .open(resource, resource_index, &self.shared.identity)
             .await
-            .map_err(|_| StreamOpenError::new())?;
+            .map_err(|error| StreamOpenError::with_category(error.category()))?;
 
         match inherited_delegate {
             Some(columns) => {
@@ -1000,13 +1045,13 @@ where
                         context.stop_token(),
                     ))
                     .await
-                    .map_err(|_| StreamOpenError::new())?;
+                    .map_err(|error| StreamOpenError::with_category(error.category()))?;
             }
             None => {
                 stream
                     .open(StreamOpenContext::new(None, context.stop_token()))
                     .await
-                    .map_err(|_| StreamOpenError::new())?;
+                    .map_err(|error| StreamOpenError::with_category(error.category()))?;
             }
         }
 
@@ -1043,7 +1088,7 @@ where
                     .stream
                     .update(StreamUpdateContext::new(context.stop_token()))
                     .await
-                    .map_err(|_| StreamUpdateError::new())?;
+                    .map_err(|error| StreamUpdateError::with_category(error.category()))?;
                 // Fail closed before this candidate can be embedded in the
                 // outer candidate: the delegate must report exactly the
                 // namespace this opener assigned it, never a substitute the
@@ -1093,7 +1138,7 @@ where
                     context.outcome(),
                 ))
                 .await
-                .map_err(|_| StreamCloseError::new())?;
+                .map_err(|error| StreamCloseError::with_category(error.category()))?;
         }
         Ok(StreamCloseOutcome::Closed)
     }
@@ -1141,6 +1186,7 @@ where
         reader: None,
         started: false,
         transitioning: false,
+        poisoned: None,
     };
     let stream = MultiResourceReaderStream { shared };
     let contract = StreamStateContract::new(multi_resource_position_codec(restartability));
@@ -1244,6 +1290,12 @@ struct WriterShared<O, Opener: MultiResourceWriterOpener<O>, P> {
     identity: ComponentStreamIdentity,
     rollover: P,
     active: AsyncMutex<Option<ActiveWriteResource<Opener::Writer, Opener::Stream>>>,
+    /// Set once a resource-boundary `close` (a rollover) has been attempted
+    /// and failed. Never retried on the same delegate instance -- see
+    /// [`MultiResourceReader`]'s `poisoned` docs for why. Once poisoned,
+    /// every later `write` on this writer returns the same failure without
+    /// touching any delegate again.
+    poisoned: AsyncMutex<Option<FailureCategory>>,
     limits: StateLimits,
     _marker: PhantomData<fn() -> O>,
 }
@@ -1303,6 +1355,9 @@ where
         if stop.is_stop_requested() {
             return Ok(WriteOutcome::Stopped);
         }
+        if let Some(category) = *self.shared.poisoned.lock().await {
+            return Err(WriterError::with_category(category));
+        }
         if self.shared.resources.is_empty() {
             return Err(WriterError::with_category(FailureCategory::Invariant));
         }
@@ -1325,21 +1380,31 @@ where
                 // `Committed` -- the enclosing step attempt has not reached
                 // a terminal outcome yet) tells the delegate its own local
                 // work is done without falsely claiming the outer
-                // transaction committed. Guarded by `retired` so a retried
-                // rollover (the open below failed on a previous attempt)
-                // never closes the same delegate twice.
+                // transaction committed.
+                //
+                // The close is attempted exactly once. `ItemStream` carries
+                // no idempotency/atomicity guarantee, so a failed close is
+                // never retried on this same delegate instance -- see
+                // `WriterShared::poisoned`'s docs.
                 if let Some(active) = guard.as_mut()
                     && !active.retired
                 {
-                    active
+                    let closed = active
                         .stream
                         .close(StreamCloseContext::new(
                             stop,
                             StreamRuntimeOutcome::ResourceBoundary,
                         ))
-                        .await
-                        .map_err(|error| WriterError::with_category(error.category()))?;
+                        .await;
+                    // Attempted (successfully or not): never closed again,
+                    // by this instance or by the outer terminal close.
                     active.retired = true;
+                    if let Err(error) = closed {
+                        let category = error.category();
+                        drop(guard);
+                        *self.shared.poisoned.lock().await = Some(category);
+                        return Err(WriterError::with_category(category));
+                    }
                 }
                 let next_resource = &self.shared.resources.resources()[next_index as usize];
                 // Fresh resource, no inherited state: the returned contract
@@ -1349,11 +1414,11 @@ where
                     .opener
                     .open(next_resource, next_index, &self.shared.identity)
                     .await
-                    .map_err(|_| WriterError::new())?;
+                    .map_err(|error| WriterError::with_category(error.category()))?;
                 stream
                     .open(StreamOpenContext::new(None, stop))
                     .await
-                    .map_err(|_| WriterError::new())?;
+                    .map_err(|error| WriterError::with_category(error.category()))?;
                 *guard = Some(ActiveWriteResource {
                     index: next_index,
                     writer,
@@ -1442,7 +1507,7 @@ where
             .opener
             .open(resource, resource_index, &self.shared.identity)
             .await
-            .map_err(|_| StreamOpenError::new())?;
+            .map_err(|error| StreamOpenError::with_category(error.category()))?;
 
         match inherited_delegate {
             Some(columns) => {
@@ -1464,13 +1529,13 @@ where
                         context.stop_token(),
                     ))
                     .await
-                    .map_err(|_| StreamOpenError::new())?;
+                    .map_err(|error| StreamOpenError::with_category(error.category()))?;
             }
             None => {
                 stream
                     .open(StreamOpenContext::new(None, context.stop_token()))
                     .await
-                    .map_err(|_| StreamOpenError::new())?;
+                    .map_err(|error| StreamOpenError::with_category(error.category()))?;
             }
         }
 
@@ -1501,7 +1566,7 @@ where
             .stream
             .update(StreamUpdateContext::new(context.stop_token()))
             .await
-            .map_err(|_| StreamUpdateError::new())?;
+            .map_err(|error| StreamUpdateError::with_category(error.category()))?;
         // Fail closed before this candidate can be embedded in the outer
         // candidate -- see the reader stream's `update` for the same check.
         if envelope.namespace() != &self.shared.identity {
@@ -1541,7 +1606,7 @@ where
                     context.outcome(),
                 ))
                 .await
-                .map_err(|_| StreamCloseError::new())?;
+                .map_err(|error| StreamCloseError::with_category(error.category()))?;
         }
         Ok(StreamCloseOutcome::Closed)
     }
@@ -1587,6 +1652,7 @@ where
         identity,
         rollover,
         active: AsyncMutex::new(None),
+        poisoned: AsyncMutex::new(None),
         limits: StateLimits::default(),
         _marker: PhantomData,
     });
@@ -2102,10 +2168,13 @@ mod tests {
         namespace: ComponentStreamIdentity,
         resource: String,
         log: Log,
-        /// Closing this resource fails exactly once (then the flag clears
-        /// itself), so a test can prove both propagation *and* that a
-        /// retried close recovers cleanly.
-        fail_close_once: Arc<std::sync::atomic::AtomicBool>,
+        /// When set, closing this resource fails. `ItemStream::close` is
+        /// only ever attempted once per instance (see the module's "Nested
+        /// resource lifecycle" docs), so this is never cleared/retried by
+        /// the wrapper -- a test that wants to prove recovery constructs a
+        /// *second*, independent delegate instance instead, exactly as a
+        /// fresh step attempt would.
+        fail_close: Arc<std::sync::atomic::AtomicBool>,
     }
 
     impl ItemStream for RecordingReaderStream {
@@ -2151,10 +2220,7 @@ mod tests {
                 &self.log,
                 LifecycleEvent::Close(self.resource.clone(), context.outcome().into()),
             );
-            if self
-                .fail_close_once
-                .swap(false, std::sync::atomic::Ordering::SeqCst)
-            {
+            if self.fail_close.load(std::sync::atomic::Ordering::SeqCst) {
                 return Err(StreamCloseError::new());
             }
             Ok(StreamCloseOutcome::Closed)
@@ -2165,7 +2231,7 @@ mod tests {
         data: HashMap<String, Vec<u64>>,
         log: Log,
         fail_open: HashSet<String>,
-        fail_close_once: HashMap<String, Arc<std::sync::atomic::AtomicBool>>,
+        fail_close: HashMap<String, Arc<std::sync::atomic::AtomicBool>>,
     }
 
     impl MultiResourceReaderOpener<u64> for RecordingReaderOpener {
@@ -2192,8 +2258,8 @@ mod tests {
                 items,
                 ordinal: Arc::clone(&ordinal),
             };
-            let fail_close_once = self
-                .fail_close_once
+            let fail_close = self
+                .fail_close
                 .get(resource.as_str())
                 .cloned()
                 .unwrap_or_else(|| Arc::new(std::sync::atomic::AtomicBool::new(false)));
@@ -2202,7 +2268,7 @@ mod tests {
                 namespace: delegate_identity.clone(),
                 resource: resource.as_str().to_owned(),
                 log: Arc::clone(&self.log),
-                fail_close_once,
+                fail_close,
             };
             Ok((reader, stream, StreamStateContract::new(vec_read_codec())))
         }
@@ -2218,7 +2284,7 @@ mod tests {
             data,
             log: Arc::clone(&log),
             fail_open: HashSet::new(),
-            fail_close_once: HashMap::new(),
+            fail_close: HashMap::new(),
         };
         let (mut reader, stream, _contract) = multi_resource_reader::<u64, _>(
             resource_set(&["a", "b"]),
@@ -2257,13 +2323,13 @@ mod tests {
     }
 
     #[test]
-    fn reader_resource_boundary_close_failure_is_propagated_without_advancing_or_double_closing() {
+    fn reader_resource_boundary_close_failure_poisons_the_reader_without_advancing_or_retrying() {
         let mut data = HashMap::new();
         data.insert("a".to_owned(), vec![1]);
         data.insert("b".to_owned(), vec![2]);
         let log: Log = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let mut fail_close_once = HashMap::new();
-        fail_close_once.insert(
+        let mut fail_close = HashMap::new();
+        fail_close.insert(
             "a".to_owned(),
             Arc::new(std::sync::atomic::AtomicBool::new(true)),
         );
@@ -2271,7 +2337,7 @@ mod tests {
             data,
             log: Arc::clone(&log),
             fail_open: HashSet::new(),
-            fail_close_once,
+            fail_close,
         };
         let (mut reader, stream, _contract) = multi_resource_reader::<u64, _>(
             resource_set(&["a", "b"]),
@@ -2305,14 +2371,20 @@ mod tests {
                 state.resource_index, 0,
                 "checkpoint advancement must not silently occur after a failed boundary close"
             );
-            // A retry re-attempts the same close (which now succeeds) and
-            // completes the transition to "b" -- never re-opening "a" and
-            // never treating the first, failed close as if it were a second,
-            // separate closed delegate.
-            assert_eq!(
-                reader.read(read_context(&token)).await.unwrap(),
-                ReadOutcome::Item(2)
-            );
+            // `ItemStream::close` carries no idempotency/atomicity
+            // guarantee, so this instance is now poisoned: every further
+            // `read` returns the same failure without ever calling `close`
+            // on "a" a second time or proceeding to "b". A real recovery
+            // requires a fresh step attempt (a new `MultiResourceReader`,
+            // opened from the still-at-"a" checkpoint above), not a retry on
+            // this instance.
+            for _ in 0..3 {
+                let retried = reader.read(read_context(&token)).await;
+                assert!(
+                    retried.is_err(),
+                    "a poisoned instance must keep failing, never silently recover"
+                );
+            }
         });
         let events = log.lock().unwrap().clone();
         assert_eq!(
@@ -2321,12 +2393,9 @@ mod tests {
                 LifecycleEvent::Open("a".to_owned()),
                 LifecycleEvent::Close("a".to_owned(), RecordedOutcome::ResourceBoundary),
                 LifecycleEvent::Update("a".to_owned()),
-                LifecycleEvent::Close("a".to_owned(), RecordedOutcome::ResourceBoundary),
-                LifecycleEvent::Open("b".to_owned()),
             ],
-            "exactly one failed close attempt on \"a\" followed by exactly one \
-             successful retry, never a second delegate opened for \"a\", never \
-             \"b\" opened before \"a\" is fully retired"
+            "\"a\" must be closed exactly once, ever -- never retried after a \
+             failure, and \"b\" must never be opened"
         );
     }
 
@@ -2342,7 +2411,7 @@ mod tests {
             data,
             log: Arc::clone(&log),
             fail_open,
-            fail_close_once: HashMap::new(),
+            fail_close: HashMap::new(),
         };
         let (mut reader, stream, _contract) = multi_resource_reader::<u64, _>(
             resource_set(&["a", "b"]),
@@ -2531,6 +2600,122 @@ mod tests {
             "a stored delegate envelope under the wrong namespace must fail \
              closed on restore, never be silently reconstructed under the \
              expected identity"
+        );
+    }
+
+    /// Encodes the schema-1 shape #176 actually persisted: no `namespace`
+    /// column on the embedded delegate. Used only to construct a realistic
+    /// stale durable record for
+    /// [`stale_v1_delegate_record_without_a_namespace_fails_closed_on_restore`]
+    /// -- production code never encodes this shape again.
+    #[derive(Clone, Copy)]
+    struct LegacyV1MultiResourceSchema;
+
+    impl VersionedStateCodec<MultiResourceState> for LegacyV1MultiResourceSchema {
+        fn schema_id(&self) -> &StateSchemaId {
+            static SCHEMA: std::sync::OnceLock<StateSchemaId> = std::sync::OnceLock::new();
+            SCHEMA.get_or_init(|| StateSchemaId::new(MULTI_RESOURCE_SCHEMA).unwrap())
+        }
+
+        fn current_version(&self) -> StateSchemaVersion {
+            StateSchemaVersion::new(1).unwrap()
+        }
+
+        fn encode(&self, value: &MultiResourceState) -> Result<Vec<u8>, StateCodecError> {
+            let delegate = value.delegate.as_ref().map(|delegate| {
+                serde_json::json!({
+                    "schema_id": delegate.schema_id,
+                    "schema_version": delegate.schema_version,
+                    "codec_id": delegate.codec_id,
+                    "codec_version": delegate.codec_version,
+                    "checksum_algorithm": delegate.checksum_algorithm,
+                    "checksum_algorithm_version": delegate.checksum_algorithm_version,
+                    "checksum": hex_encode(&delegate.checksum),
+                    "is_external": delegate.is_external,
+                    "payload_inline": delegate.payload_inline_hex,
+                    "payload_external_content_id": delegate.payload_external_content_id_hex,
+                    "payload_external_len": delegate.payload_external_len,
+                })
+            });
+            serde_json::to_vec(&serde_json::json!({
+                "resource_set_revision": value.resource_set_revision.to_hex(),
+                "resource_index": value.resource_index,
+                "delegate": delegate,
+                "resource_batches_written": value.resource_batches_written,
+            }))
+            .map_err(|_| StateCodecError::InvalidPayload)
+        }
+
+        fn decode(&self, _payload: &[u8]) -> Result<MultiResourceState, StateCodecError> {
+            unreachable!(
+                "only used to construct a stale v1 fixture; the current (v2) \
+                 codec has no declared upgrade edge from v1, so the shared \
+                 upgrade-chain walk rejects a recorded v1 envelope before \
+                 any codec's `decode` runs on it"
+            )
+        }
+    }
+
+    #[test]
+    fn stale_v1_delegate_record_without_a_namespace_fails_closed_on_restore() {
+        // #176 persisted schema version 1, whose delegate columns never
+        // included a namespace. #177 made namespace a required column and
+        // bumped the schema to version 2 without declaring an upgrade edge
+        // from 1 -- there is nothing honest to backfill a pre-#177 record's
+        // missing delegate namespace with, so this must be a hard,
+        // fail-closed boundary, never a silent migration.
+        let identity = identity("legacy-v1-fail-closed");
+        let inner_envelope = ComponentStateEnvelope::encode(
+            identity.clone(),
+            &VecPosition(0),
+            &vec_read_codec(),
+            StateLimits::default(),
+        )
+        .unwrap();
+        let columns = DelegateEnvelopeColumns::from_envelope(&inner_envelope).unwrap();
+        let resources = resource_set(&["a"]);
+        let state = MultiResourceState {
+            resource_set_revision: resources.revision(),
+            resource_index: 0,
+            delegate: Some(columns),
+            resource_batches_written: 0,
+        };
+        #[allow(clippy::unwrap_used)]
+        let legacy_codec = DefaultComponentCodec::new(
+            LegacyV1MultiResourceSchema,
+            crate::CodecId::new(MULTI_RESOURCE_CODEC).unwrap(),
+            crate::CodecVersion::new(1).unwrap(),
+            RestartabilityDeclaration::Restartable,
+        );
+        let legacy_envelope = ComponentStateEnvelope::encode(
+            identity.clone(),
+            &state,
+            &legacy_codec,
+            StateLimits::default(),
+        )
+        .unwrap();
+
+        let mut data = HashMap::new();
+        data.insert("a".to_owned(), vec![1]);
+        let opener = TestReaderOpener {
+            data,
+            fail: HashSet::new(),
+        };
+        let (_reader, stream, _contract) = multi_resource_reader::<u64, _>(
+            resources,
+            opener,
+            identity,
+            RestartabilityDeclaration::Restartable,
+        );
+        let (_source, token) = stop();
+        let result = futures_executor::block_on(
+            stream.open(StreamOpenContext::new(Some(&legacy_envelope), &token)),
+        );
+        assert!(
+            result.is_err(),
+            "a version-1 durable record (pre-#177, no delegate namespace) \
+             must fail closed on restore -- never silently accepted, and \
+             never migrated by inventing a namespace it never carried"
         );
     }
 
@@ -2894,7 +3079,7 @@ mod tests {
         namespace: ComponentStreamIdentity,
         resource: String,
         log: Log,
-        fail_close_once: Arc<std::sync::atomic::AtomicBool>,
+        fail_close: Arc<std::sync::atomic::AtomicBool>,
     }
 
     impl ItemStream for RecordingWriterStream {
@@ -2940,10 +3125,7 @@ mod tests {
                 &self.log,
                 LifecycleEvent::Close(self.resource.clone(), context.outcome().into()),
             );
-            if self
-                .fail_close_once
-                .swap(false, std::sync::atomic::Ordering::SeqCst)
-            {
+            if self.fail_close.load(std::sync::atomic::Ordering::SeqCst) {
                 return Err(StreamCloseError::new());
             }
             Ok(StreamCloseOutcome::Closed)
@@ -2954,7 +3136,7 @@ mod tests {
         sink: Arc<std::sync::Mutex<HashMap<String, Vec<u64>>>>,
         log: Log,
         fail_open: HashSet<String>,
-        fail_close_once: HashMap<String, Arc<std::sync::atomic::AtomicBool>>,
+        fail_close: HashMap<String, Arc<std::sync::atomic::AtomicBool>>,
     }
 
     impl MultiResourceWriterOpener<u64> for RecordingWriterOpener {
@@ -2977,8 +3159,8 @@ mod tests {
                 sink: Arc::clone(&self.sink),
                 committed_len: Arc::clone(&committed_len),
             };
-            let fail_close_once = self
-                .fail_close_once
+            let fail_close = self
+                .fail_close
                 .get(resource.as_str())
                 .cloned()
                 .unwrap_or_else(|| Arc::new(std::sync::atomic::AtomicBool::new(false)));
@@ -2987,7 +3169,7 @@ mod tests {
                 namespace: delegate_identity.clone(),
                 resource: resource.as_str().to_owned(),
                 log: Arc::clone(&self.log),
-                fail_close_once,
+                fail_close,
             };
             Ok((writer, stream, StreamStateContract::new(vec_read_codec())))
         }
@@ -3001,7 +3183,7 @@ mod tests {
             sink: Arc::clone(&sink),
             log: Arc::clone(&log),
             fail_open: HashSet::new(),
-            fail_close_once: HashMap::new(),
+            fail_close: HashMap::new(),
         };
         let (writer, stream, _contract) = multi_resource_writer::<u64, _, _>(
             resource_set(&["a", "b"]),
@@ -3035,11 +3217,12 @@ mod tests {
     }
 
     #[test]
-    fn writer_resource_boundary_close_failure_is_propagated_without_rolling_over() {
+    fn writer_resource_boundary_close_failure_poisons_the_writer_without_rolling_over_or_retrying()
+    {
         let sink = Arc::new(std::sync::Mutex::new(HashMap::new()));
         let log: Log = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let mut fail_close_once = HashMap::new();
-        fail_close_once.insert(
+        let mut fail_close = HashMap::new();
+        fail_close.insert(
             "a".to_owned(),
             Arc::new(std::sync::atomic::AtomicBool::new(true)),
         );
@@ -3047,7 +3230,7 @@ mod tests {
             sink: Arc::clone(&sink),
             log: Arc::clone(&log),
             fail_open: HashSet::new(),
-            fail_close_once,
+            fail_close,
         };
         let (writer, stream, _contract) = multi_resource_writer::<u64, _, _>(
             resource_set(&["a", "b"]),
@@ -3078,9 +3261,17 @@ mod tests {
                 state.resource_index, 0,
                 "checkpoint advancement must not silently occur after a failed boundary close"
             );
-            // A retry re-attempts the same close (which now succeeds) and
-            // completes the rollover to "b".
-            writer.write(&[2], write_context(&token)).await.unwrap();
+            // `ItemStream::close` carries no idempotency/atomicity
+            // guarantee, so this writer is now poisoned: every further
+            // `write` returns the same failure without ever calling `close`
+            // on "a" a second time or rolling over to "b".
+            for _ in 0..3 {
+                let retried = writer.write(&[2], write_context(&token)).await;
+                assert!(
+                    retried.is_err(),
+                    "a poisoned instance must keep failing, never silently recover"
+                );
+            }
         });
         let events = log.lock().unwrap().clone();
         assert_eq!(
@@ -3089,22 +3280,22 @@ mod tests {
                 LifecycleEvent::Open("a".to_owned()),
                 LifecycleEvent::Close("a".to_owned(), RecordedOutcome::ResourceBoundary),
                 LifecycleEvent::Update("a".to_owned()),
-                LifecycleEvent::Close("a".to_owned(), RecordedOutcome::ResourceBoundary),
-                LifecycleEvent::Open("b".to_owned()),
             ],
-            "exactly one failed close attempt on \"a\" followed by exactly one \
-             successful retry, never a second delegate opened for \"a\", never \
-             \"b\" opened before \"a\" is fully retired"
+            "\"a\" must be closed exactly once, ever -- never retried after a \
+             failure, and \"b\" must never be opened"
         );
         let sink = sink.lock().unwrap();
         assert_eq!(
             sink.get("a"),
             Some(&vec![1]),
             "the item from the failed rollover attempt must never have \
-             reached \"b\" -- write only succeeded once the retry rolled \
-             over cleanly"
+             reached \"b\""
         );
-        assert_eq!(sink.get("b"), Some(&vec![2]));
+        assert_eq!(
+            sink.get("b"),
+            None,
+            "\"b\" must never receive any items once the writer is poisoned"
+        );
     }
 
     #[test]
@@ -3118,7 +3309,7 @@ mod tests {
             sink: Arc::clone(&sink),
             log: Arc::clone(&log),
             fail_open,
-            fail_close_once: HashMap::new(),
+            fail_close: HashMap::new(),
         };
         let (writer, stream, _contract) = multi_resource_writer::<u64, _, _>(
             resource_set(&["a", "b"]),
