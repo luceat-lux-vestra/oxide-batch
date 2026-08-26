@@ -939,19 +939,26 @@ struct WriteAccumulator {
 /// arbitrary caller code that runs before this sink ever sees a byte. That
 /// residual, inherent limit is documented on [`ObjectStoreWriterOpener::new`]
 /// rather than hidden.
+///
+/// `overflowed` is sticky and checked by [`ObjectItemWriter::write`]
+/// regardless of what `serialize` itself returns: a `serialize`
+/// implementation that ignores this sink's `Err` and returns `Ok(())`
+/// anyway must never be able to turn a resource-limit rejection into a
+/// partial item silently reaching the backend.
 struct BoundedSink<'a> {
     buf: &'a mut Vec<u8>,
     max: usize,
+    overflowed: bool,
 }
 
 impl std::io::Write for BoundedSink<'_> {
     fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
-        let new_len = self
-            .buf
-            .len()
-            .checked_add(data.len())
-            .ok_or_else(|| std::io::Error::other("object size overflow"))?;
+        let Some(new_len) = self.buf.len().checked_add(data.len()) else {
+            self.overflowed = true;
+            return Err(std::io::Error::other("object size overflow"));
+        };
         if new_len > self.max {
+            self.overflowed = true;
             return Err(std::io::Error::other(
                 "object write would exceed max_object_bytes",
             ));
@@ -962,6 +969,31 @@ impl std::io::Write for BoundedSink<'_> {
 
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
+    }
+}
+
+/// Truncates the accumulator's candidate buffer back to its pre-write
+/// length on drop, unless disarmed -- including when the drop happens
+/// because the current scope is unwinding from a panic inside the
+/// caller-supplied `serialize` closure (or, defensively, anywhere else in
+/// [`ObjectItemWriter::write`] before the candidate is committed).
+/// Without this, a panicking `serialize` call would unwind straight through
+/// the growing candidate, and because the accumulator's prior content was
+/// moved into that candidate (never cloned, by design -- see this module's
+/// allocation docs) rather than merely borrowed, the panic would silently
+/// discard every item this writer had previously, successfully committed
+/// to the object, not just the one item being serialized when it panicked.
+struct TruncateOnDrop<'a> {
+    target: &'a mut Vec<u8>,
+    original_len: usize,
+    armed: bool,
+}
+
+impl Drop for TruncateOnDrop<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.target.truncate(self.original_len);
+        }
     }
 }
 
@@ -1008,50 +1040,62 @@ where
         }
         let mut accumulator = self.accumulator.lock().await;
         let original_len = accumulator.bytes.len();
-        // Exactly one buffer: take the existing content out (no clone) and
-        // extend it in place, one item at a time, hand the backend a
-        // borrow, then keep the same buffer as the new accumulator content
-        // -- never two full copies of the accumulated object for one
-        // write, unlike cloning it once to build the candidate and again
-        // to hand it to `put`.
+        // Extend the accumulator's buffer in place -- never a second, full
+        // copy of the accumulated object for one write, unlike cloning it
+        // once to build a candidate and again to hand it to `put`. Guarded
+        // by `TruncateOnDrop`, armed for the whole growth phase: any early
+        // return (a rejected or failed item) *or* a panic unwinding out of
+        // the caller-supplied `serialize` call truncates the buffer back to
+        // its pre-write length instead of leaving a partial item appended
+        // or, worse, an emptied accumulator (see `TruncateOnDrop`'s docs).
         //
         // The bound is a real, pre-materialization bound on *this
         // wrapper's own* accumulation: `serialize` writes into a
-        // `BoundedSink` over the candidate buffer, and every write to that
-        // sink is checked against the remaining budget before a single
-        // byte is copied in -- never after allocating proportional to an
-        // oversized write. On rejection the appended tail is truncated
-        // back off (an O(1) length adjustment, not a copy) so the
-        // accumulator is restored to exactly its prior content. See
-        // `BoundedSink`'s docs for the one residual limit this cannot
-        // cover (what `serialize` allocates internally before it ever
-        // calls the sink).
-        let mut candidate = std::mem::take(&mut accumulator.bytes);
+        // `BoundedSink` over the buffer, and every write to that sink is
+        // checked against the remaining budget before a single byte is
+        // copied in -- never after allocating proportional to an oversized
+        // write. See `BoundedSink`'s docs for the one residual limit this
+        // cannot cover (what `serialize` allocates internally before it
+        // ever calls the sink).
+        let mut guard = TruncateOnDrop {
+            target: &mut accumulator.bytes,
+            original_len,
+            armed: true,
+        };
         for item in items {
             let mut sink = BoundedSink {
-                buf: &mut candidate,
+                buf: &mut *guard.target,
                 max: self.max_object_bytes,
+                overflowed: false,
             };
-            if (self.serialize)(item, &mut sink).is_err() {
-                candidate.truncate(original_len);
-                accumulator.bytes = candidate;
+            let result = (self.serialize)(item, &mut sink);
+            // Checked unconditionally, regardless of what `serialize`
+            // itself returned: a `serialize` that ignores the sink's `Err`
+            // and returns `Ok(())` anyway must not turn a resource-limit
+            // rejection into a partial item reaching the backend.
+            if sink.overflowed {
                 return Err(WriterError::with_category(FailureCategory::Invariant));
             }
+            if result.is_err() {
+                // The serializer's own failure, distinct from the sink
+                // refusing a write: `FailureCategory::Invariant` is not
+                // policy-eligible for retry/skip, but a delegate/user
+                // component failure is, and this is exactly that -- the
+                // wrapper's own bound was never in question here.
+                return Err(WriterError::new());
+            }
         }
-        match self.store.put(&self.id, &candidate).await {
+        match self.store.put(&self.id, guard.target.as_slice()).await {
             Ok(metadata) => {
-                accumulator.bytes = candidate;
+                guard.armed = false;
+                drop(guard);
                 accumulator.committed_item_count += u64::try_from(items.len()).unwrap_or(u64::MAX);
                 accumulator.version_token = metadata
                     .version_token()
                     .map(|token| token.as_str().to_owned());
                 Ok(WriteOutcome::Written)
             }
-            Err(error) => {
-                candidate.truncate(original_len);
-                accumulator.bytes = candidate;
-                Err(WriterError::with_category(error.category()))
-            }
+            Err(error) => Err(WriterError::with_category(error.category())),
         }
     }
 }
@@ -1908,6 +1952,240 @@ mod tests {
             "serialize must be called for items 1, 2, and the offending item \
              3, and never again after that -- items 4 and 5 must never be \
              serialized once the running total has already exceeded the bound"
+        );
+    }
+
+    #[test]
+    fn writer_panic_during_serialize_does_not_lose_previously_accumulated_content() {
+        // `serialize` panics while writing item 2. The panic must not wipe
+        // out item 1's already-accumulated content: `TruncateOnDrop` must
+        // restore the accumulator to its pre-write length even though the
+        // unwind happens through `mem`-taken/borrowed state, not just
+        // through an explicit `Err` return.
+        let store = Arc::new(InMemoryObjectStore::new(1024));
+        let resources = ResourceSet::new(vec![ResourceIdentity::new("out").unwrap()]);
+        let identity =
+            ComponentStreamIdentity::new("oxide-batch.object-store-unit-test.panic-safety")
+                .unwrap();
+        let serialize = |item: &u64, sink: &mut dyn std::io::Write| {
+            assert!(
+                *item != 2,
+                "serializer panics on item 2, deliberately, for this test"
+            );
+            sink.write_all(format!("{item},").as_bytes())
+        };
+        let opener = ObjectStoreWriterOpener::new(Arc::clone(&store), serialize, 1024);
+        let (_source, token) = stop();
+        futures_executor::block_on(async {
+            let (writer, stream, _contract) = multi_resource_writer::<u64, _, _>(
+                resources,
+                opener,
+                identity,
+                crate::item_components::multi_resource::NoRollover,
+                RestartabilityDeclaration::Restartable,
+            )
+            .unwrap();
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            writer
+                .write(&[1], WriteContext::non_transactional(&token))
+                .await
+                .unwrap();
+
+            let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                futures_executor::block_on(
+                    writer.write(&[2], WriteContext::non_transactional(&token)),
+                )
+            }));
+            assert!(panicked.is_err(), "the panic must actually propagate here");
+
+            // Item 1's content must still be there, and a subsequent normal
+            // write must succeed and append correctly -- never observe an
+            // emptied or corrupted accumulator left behind by the panic.
+            writer
+                .write(&[3], WriteContext::non_transactional(&token))
+                .await
+                .unwrap();
+        });
+        let (bytes, _metadata) = futures_executor::block_on(store.get(&id("out"), 1024)).unwrap();
+        assert_eq!(
+            bytes,
+            b"1,3,".to_vec(),
+            "item 1 must not have been lost by the panic on item 2, and item \
+             2 itself must never appear -- the panic must have unwound \
+             before its bytes were ever appended"
+        );
+    }
+
+    #[test]
+    fn writer_serializer_failure_is_classified_as_user_component_not_invariant() {
+        // A serializer failure that has nothing to do with the sink's
+        // bound (e.g. the item itself is malformed) must be classified
+        // as a delegate/user-component failure -- policy-eligible for
+        // retry/skip -- never as `Invariant`, which is not.
+        let store = Arc::new(InMemoryObjectStore::new(1024));
+        let resources = ResourceSet::new(vec![ResourceIdentity::new("out").unwrap()]);
+        let identity = ComponentStreamIdentity::new(
+            "oxide-batch.object-store-unit-test.serializer-failure-category",
+        )
+        .unwrap();
+        let serialize = |item: &u64, sink: &mut dyn std::io::Write| {
+            if *item == 2 {
+                return Err(std::io::Error::other("item 2 is deliberately malformed"));
+            }
+            sink.write_all(format!("{item},").as_bytes())
+        };
+        let opener = ObjectStoreWriterOpener::new(Arc::clone(&store), serialize, 1024);
+        let (_source, token) = stop();
+        let category = futures_executor::block_on(async {
+            let (writer, stream, _contract) = multi_resource_writer::<u64, _, _>(
+                resources,
+                opener,
+                identity,
+                crate::item_components::multi_resource::NoRollover,
+                RestartabilityDeclaration::Restartable,
+            )
+            .unwrap();
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            let result = writer
+                .write(&[2], WriteContext::non_transactional(&token))
+                .await;
+            result
+                .expect_err("a malformed item must fail the write")
+                .category()
+        });
+        assert_eq!(
+            category,
+            FailureCategory::UserComponent,
+            "a serializer's own failure must be classified as a \
+             policy-eligible user-component failure, not as `Invariant` \
+             (which the wrapper's own resource-bound rejection uses and \
+             which is not policy-eligible for retry/skip)"
+        );
+    }
+
+    #[test]
+    fn writer_ignoring_the_sink_overflow_error_still_fails_closed() {
+        // A `serialize` that writes past the bound, gets an `Err` back from
+        // the sink, and then *ignores* it (returns `Ok(())` anyway) must
+        // still have the whole write rejected -- the sink's sticky
+        // `overflowed` flag is checked unconditionally, not only when
+        // `serialize` itself propagates the error.
+        let store = Arc::new(InMemoryObjectStore::new(1024));
+        let resources = ResourceSet::new(vec![ResourceIdentity::new("out").unwrap()]);
+        let identity = ComponentStreamIdentity::new(
+            "oxide-batch.object-store-unit-test.ignored-overflow-fails-closed",
+        )
+        .unwrap();
+        // Eight-byte bound; each item is four bytes, so a second item pushes
+        // the sink past the bound. The closure deliberately swallows the
+        // sink's `Err` and returns `Ok(())` regardless.
+        let serialize = |item: &u64, sink: &mut dyn std::io::Write| {
+            let _ = sink.write_all(&[u8::try_from(*item).unwrap(); 4]);
+            Ok(())
+        };
+        let opener = ObjectStoreWriterOpener::new(Arc::clone(&store), serialize, 8);
+        let (_source, token) = stop();
+        futures_executor::block_on(async {
+            let (writer, stream, _contract) = multi_resource_writer::<u64, _, _>(
+                resources,
+                opener,
+                identity,
+                crate::item_components::multi_resource::NoRollover,
+                RestartabilityDeclaration::Restartable,
+            )
+            .unwrap();
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            // Two items in one batch: the second alone pushes 4 -> 8 (still
+            // within bound), so extend with a third item in the same batch
+            // that would push 8 -> 12, over the bound, to exercise the
+            // ignored-overflow path within a single `write` call.
+            let result = writer
+                .write(&[1, 2, 3], WriteContext::non_transactional(&token))
+                .await;
+            assert!(
+                result.is_err(),
+                "the batch must fail even though `serialize` itself always \
+                 returns Ok"
+            );
+        });
+        // The object must never have been created at all: `put` is never
+        // reached once the sink has overflowed.
+        let missing = futures_executor::block_on(store.stat(&id("out")));
+        assert!(
+            missing.is_err(),
+            "the backend must never receive a partial object built from an \
+             ignored sink overflow"
+        );
+    }
+
+    const LARGE_OUTPUT_TEST_MAX_OBJECT_BYTES: usize = 64;
+
+    #[test]
+    fn writer_bounds_a_large_logical_output_written_via_many_small_sink_writes() {
+        // A real streaming encoder writes incrementally, many small `write`
+        // calls per item, not one large owned buffer. Proves the bound
+        // holds against that realistic usage: a logical output far larger
+        // than `max_object_bytes`, built entirely from small (one-byte)
+        // sink writes, is rejected without the candidate ever exceeding the
+        // bound and without the backend ever being called.
+        let store = Arc::new(InMemoryObjectStore::new(1_000_000));
+        let resources = ResourceSet::new(vec![ResourceIdentity::new("out").unwrap()]);
+        let identity = ComponentStreamIdentity::new(
+            "oxide-batch.object-store-unit-test.large-output-many-small-writes",
+        )
+        .unwrap();
+        // Each item writes 100 individual one-byte `write_all` calls (a
+        // stand-in for a real incremental encoder) -- 100 bytes per item,
+        // far more than `MAX_OBJECT_BYTES`, so even the *first* item alone
+        // must be rejected partway through, one byte-sized write at a time.
+        let serialize = |_item: &u64, sink: &mut dyn std::io::Write| {
+            for _ in 0..100 {
+                sink.write_all(&[0u8])?;
+            }
+            Ok(())
+        };
+        let opener = ObjectStoreWriterOpener::new(
+            Arc::clone(&store),
+            serialize,
+            LARGE_OUTPUT_TEST_MAX_OBJECT_BYTES,
+        );
+        let (_source, token) = stop();
+        futures_executor::block_on(async {
+            let (writer, stream, _contract) = multi_resource_writer::<u64, _, _>(
+                resources,
+                opener,
+                identity,
+                crate::item_components::multi_resource::NoRollover,
+                RestartabilityDeclaration::Restartable,
+            )
+            .unwrap();
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            let result = writer
+                .write(&[1], WriteContext::non_transactional(&token))
+                .await;
+            assert!(
+                result.is_err(),
+                "a logical output far exceeding the bound, built from many \
+                 small writes, must still be rejected"
+            );
+        });
+        let missing = futures_executor::block_on(store.stat(&id("out")));
+        assert!(
+            missing.is_err(),
+            "the backend must never be called for an oversized object, no \
+             matter how many small writes built it up"
         );
     }
 }

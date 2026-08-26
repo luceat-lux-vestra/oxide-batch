@@ -163,6 +163,55 @@ A third review found two more defects, both in the second round's own fixes
    timing-dependent) to force exactly the interleaving the race required
    and show it can no longer happen.
 
+### Fourth round: independent strict review of the third round's `serialize` API
+
+A fourth review found three more defects, all in the third round's own
+`BoundedSink`/`serialize`-as-sink redesign:
+
+10. **A panicking `serialize` call could lose previously-accumulated
+    content, not just the item it panicked on.** `write` moved the
+    accumulator's buffer out with `mem::take` and grew it in place; if
+    `serialize` panicked partway through an item, the panic unwound through
+    the growing buffer, and because the prior content had been moved (never
+    cloned) into it, the accumulator was left holding whatever `mem::take`
+    left behind (empty) once the runtime's own panic-catching machinery
+    caught it and retried the same writer instance. Fixed by a
+    `TruncateOnDrop` guard that borrows the accumulator's buffer in place
+    (no `mem::take` at all now) and, unless explicitly disarmed after a
+    successful `put`, truncates it back to its pre-write length on drop --
+    including drops caused by an unwinding panic, not only explicit early
+    returns. Proven by
+    `writer_panic_during_serialize_does_not_lose_previously_accumulated_content`.
+11. **A serializer's own failure was misclassified as `Invariant`.** Every
+    `Err` from the `serialize` callback -- whether the sink refused a write
+    over budget, or the serializer failed for its own reasons (malformed
+    input, an internal encoding error) -- was reported as
+    `FailureCategory::Invariant`. `Invariant` is not policy-eligible for
+    retry/skip; a delegate/user-component failure is, and a serializer's own
+    failure is exactly that. Fixed by distinguishing the two: a sink
+    rejection is still `Invariant` (a real resource-bound violation), but
+    any other `Err` from `serialize` is now `FailureCategory::UserComponent`
+    (via `WriterError::new()`'s default). Proven by
+    `writer_serializer_failure_is_classified_as_user_component_not_invariant`.
+12. **A `serialize` that ignored the sink's overflow `Err` could still
+    reach the backend with a partial item.** The sink's rejection was only
+    ever observed if `serialize` propagated the `Err` it received; a
+    `serialize` that swallowed the error and returned `Ok(())` anyway would
+    let `write` proceed to `put` a candidate built from a silently-truncated
+    write, turning what should have been a hard resource-limit rejection
+    into a partial write reaching the backend. Fixed by making
+    `BoundedSink::overflowed` sticky and checking it unconditionally after
+    every `serialize` call, regardless of what `serialize` itself returned.
+    Proven by `writer_ignoring_the_sink_overflow_error_still_fails_closed`.
+
+Also added, per this round's request for allocator/resource evidence beyond
+small fixed-size cases:
+`writer_bounds_a_large_logical_output_written_via_many_small_sink_writes`,
+which builds a logical output far larger than `max_object_bytes` entirely
+from many small (one-byte) sink writes -- the shape a real incremental
+encoder would actually produce -- and proves the candidate never crosses the
+bound and the backend is never called.
+
 ## Audit performed before implementation
 
 Per #150's own instruction not to re-derive or duplicate #146's catalog, the
@@ -370,6 +419,10 @@ was needed.
 | **(#177)** The writer accumulator rejects growth past `max_object_bytes` before touching the existing buffer, and allows the exact boundary | `writer_rejects_growth_past_max_object_bytes_and_allows_the_exact_boundary` |
 | **(#177)** A batch that crosses the bound mid-batch stops calling `serialize` on every item after the one that first exceeds it | `writer_stops_serializing_further_items_once_one_write_call_exceeds_the_bound` |
 | **(#177, third round)** `serialize` writes into a `BoundedSink` that refuses a write before copying a byte once it would exceed the bound, superseding the item-count-only check above with a true pre-materialization bound | covered by the tests above, now exercised through the sink; see `BoundedSink`'s own doc comment for the residual limit |
+| **(#177, fourth round)** A panicking `serialize` call does not lose previously-accumulated content | `writer_panic_during_serialize_does_not_lose_previously_accumulated_content` |
+| **(#177, fourth round)** A serializer's own failure is classified as a policy-eligible user-component failure, not `Invariant` | `writer_serializer_failure_is_classified_as_user_component_not_invariant` |
+| **(#177, fourth round)** A `serialize` that ignores the sink's overflow `Err` still fails closed and never reaches the backend | `writer_ignoring_the_sink_overflow_error_still_fails_closed` |
+| **(#177, fourth round)** A logical output far exceeding the bound, built from many small sink writes (a realistic incremental encoder shape), is rejected without the candidate crossing the bound or the backend ever being called | `writer_bounds_a_large_logical_output_written_via_many_small_sink_writes` |
 
 Cancellation is honored by construction (`ObjectItemWriter::write` and
 `MultiResourceWriter::write` both check `context.stop_token()` before doing
