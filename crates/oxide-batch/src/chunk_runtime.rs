@@ -14,19 +14,19 @@ use crate::{
     BackoffOutcome, BoxFuture, BoxedStream, ChunkCommitReceipt, ChunkCompletion,
     ChunkCompletionContext, ChunkCompletionOutcome, ChunkComponentRevisions, ChunkCount,
     ChunkCounts, ChunkFaultProgress, ChunkSize, ChunkTransaction, ChunkTransactionContext,
-    ChunkTransactionError, ChunkTransactionManager, CompiledExecutionPlan, ComponentStateEnvelope,
-    ComponentStreamIdentity, DefinitionError, DefinitionIdentity, DefinitionRevision,
-    ExecutionCorrelation, FailureCategory, FailureId, FailureSummary, FaultDecision,
-    FaultDescriptor, FaultEvidence, FaultPhase, FaultProgress, FaultRuntime, InFlightPolicy,
-    InheritedStepProgress, ItemListenerContext, ItemListenerFailure, ItemListenerSet,
-    ItemProcessor, ItemReader, ItemStream, ItemWriter, JobExecutionListener, JobLauncher, JobName,
-    JobParameters, LaunchError, LaunchReport, LifecycleEventKind, ListenerFailureKind,
-    ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome, ReaderError,
-    RestartabilityDeclaration, RetryCounts, RetryKey, RetryOrdinal, RetryOutcome, RetryReservation,
-    RollbackDisposition, SkipCounts, StepComponents, StepExecutionListener, StepName, StopToken,
-    StreamCloseContext, StreamOpenContext, StreamRuntimeOutcome, StreamStateContract,
-    StreamUpdateContext, Tasklet, TaskletContext, TaskletError, TaskletJob, TaskletOutcome,
-    TaskletStep, WriteContext, WriteOutcome, WriterError,
+    ChunkTransactionError, ChunkTransactionManager, CompiledExecutionPlan, CompletionPolicy,
+    ComponentStateEnvelope, ComponentStreamIdentity, DefinitionError, DefinitionIdentity,
+    DefinitionRevision, ExecutionCorrelation, FailureCategory, FailureId, FailureSummary,
+    FaultDecision, FaultDescriptor, FaultEvidence, FaultPhase, FaultProgress, FaultRuntime,
+    InFlightPolicy, InheritedStepProgress, ItemListenerContext, ItemListenerFailure,
+    ItemListenerSet, ItemProcessor, ItemReader, ItemStream, ItemWriter, JobExecutionListener,
+    JobLauncher, JobName, JobParameters, LaunchError, LaunchReport, LifecycleEventKind,
+    ListenerFailureKind, ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome,
+    ReaderError, RestartabilityDeclaration, RetryCounts, RetryKey, RetryOrdinal, RetryOutcome,
+    RetryReservation, RollbackDisposition, SkipCounts, StepComponents, StepExecutionListener,
+    StepName, StopToken, StreamCloseContext, StreamOpenContext, StreamRuntimeOutcome,
+    StreamStateContract, StreamUpdateContext, Tasklet, TaskletContext, TaskletError, TaskletJob,
+    TaskletOutcome, TaskletStep, WriteContext, WriteOutcome, WriterError,
 };
 
 /// A validated one-step chunk definition.
@@ -38,6 +38,7 @@ pub struct ChunkStep<I, O, R, P, W> {
     writer: W,
     transactions: Arc<dyn ChunkTransactionManager>,
     completion: Arc<dyn ChunkCompletion>,
+    completion_policy: Option<Arc<dyn CompletionPolicy>>,
     listeners: Vec<Arc<dyn ChunkListener>>,
     step_listeners: Vec<Arc<dyn StepExecutionListener>>,
     item_listeners: ItemListenerSet<I, O>,
@@ -78,6 +79,7 @@ where
             writer,
             transactions,
             completion,
+            completion_policy: None,
             listeners: Vec::new(),
             step_listeners: Vec::new(),
             item_listeners: ItemListenerSet::new(),
@@ -86,6 +88,19 @@ where
             in_flight_policy: InFlightPolicy::FinishChunk,
             definition_digest: [0; 32],
         }
+    }
+
+    /// Installs an additional early-completion policy.
+    ///
+    /// The configured [`ChunkSize`] passed to [`Self::new`] always remains
+    /// the hard resource-safety ceiling for buffered items; installing a
+    /// policy here only allows a chunk to stop *earlier* than that ceiling,
+    /// per `REPEAT-POLICY-001`. Without a policy, completion is exactly the
+    /// pre-#151 `ChunkSize`-only behavior.
+    #[must_use]
+    pub fn with_completion_policy(mut self, policy: Arc<dyn CompletionPolicy>) -> Self {
+        self.completion_policy = Some(policy);
+        self
     }
 
     /// Registers a chunk listener in deterministic before-order.
@@ -1150,6 +1165,7 @@ struct Components<'a, I, O, P, W> {
     step_name: &'a StepName,
     definition_digest: [u8; 32],
     size: ChunkSize,
+    completion_policy: Option<&'a dyn CompletionPolicy>,
 }
 
 /// Borrowed call state for one chunk attempt.
@@ -1223,6 +1239,7 @@ where
         writer,
         transactions,
         completion,
+        completion_policy,
         listeners,
         item_listeners,
         fault,
@@ -1240,6 +1257,7 @@ where
         step_name: name,
         definition_digest: *definition_digest,
         size: *size,
+        completion_policy: completion_policy.as_deref(),
     };
 
     let (inherited, opened) = match inherited_progress(
@@ -1855,7 +1873,15 @@ where
     E: FnMut(ChunkRuntimeEvent),
 {
     let listener_context = scope.listener_context();
-    while !buffer.end_of_input && buffer.slots.len() < components.size.get() as usize {
+    if let Some(policy) = components.completion_policy {
+        policy.begin_chunk();
+    }
+    while !buffer.end_of_input
+        && buffer.slots.len() < components.size.get() as usize
+        && !components
+            .completion_policy
+            .is_some_and(|policy| policy.is_complete(ChunkCount::new(buffer.slots.len() as u64)))
+    {
         if scope.stop.is_stop_requested() {
             return Verdict::Terminal(ChunkExecutionOutcome::Stopped);
         }

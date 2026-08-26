@@ -1,4 +1,6 @@
 oxide_batch::ActorRef
+oxide_batch::AdaptiveBounds
+oxide_batch::AdaptiveCompletionPolicy
 oxide_batch::AuthorizationClass
 oxide_batch::BackoffKind
 oxide_batch::BackoffOutcome
@@ -50,6 +52,7 @@ oxide_batch::ChunkProgress
 oxide_batch::ChunkRestartContract
 oxide_batch::ChunkSize
 oxide_batch::ChunkStep
+oxide_batch::ChunkTimeThreshold
 oxide_batch::ChunkTransaction
 oxide_batch::ChunkTransactionContext
 oxide_batch::ChunkTransactionError
@@ -60,12 +63,16 @@ oxide_batch::CodecId
 oxide_batch::CodecVersion
 oxide_batch::CodecVersionUpgrade
 oxide_batch::CompiledExecutionPlan
+oxide_batch::CompletionPolicy
+oxide_batch::CompletionPolicyError
 oxide_batch::ComponentRevision
 oxide_batch::ComponentStateCodec
 oxide_batch::ComponentStateEnvelope
 oxide_batch::ComponentStateError
 oxide_batch::ComponentStatePayload
 oxide_batch::ComponentStreamIdentity
+oxide_batch::CompositeCompletionPolicy
+oxide_batch::CompositeMode
 oxide_batch::ContentIdentity
 oxide_batch::Cursor
 oxide_batch::CursorError
@@ -175,6 +182,7 @@ oxide_batch::InMemoryJobRepository
 oxide_batch::IncidentBufferConfigurationError
 oxide_batch::IncidentEventBuffer
 oxide_batch::InheritedStepProgress
+oxide_batch::ItemCountCompletionPolicy
 oxide_batch::ItemListenerContext
 oxide_batch::ItemListenerError
 oxide_batch::ItemListenerFailure
@@ -218,6 +226,7 @@ oxide_batch::LocalFailurePolicy
 oxide_batch::MAX_ACTOR_REF_BYTES
 oxide_batch::MAX_BRANCH_STEPS
 oxide_batch::MAX_CLOCK_SKEW
+oxide_batch::MAX_COMPOSITE_MEMBERS
 oxide_batch::MAX_CURSOR_BYTES
 oxide_batch::MAX_DROP_REPORT_WINDOW
 oxide_batch::MAX_EXPORT_QUEUE_RECORDS
@@ -446,6 +455,7 @@ oxide_batch::TelemetrySpanKind
 oxide_batch::TelemetrySpanStatus
 oxide_batch::TerminalKind
 oxide_batch::TerminalStatusSet
+oxide_batch::TimeCompletionPolicy
 oxide_batch::TlsMode [postgres]
 oxide_batch::UnjoinedPhase
 oxide_batch::VERSION

@@ -361,6 +361,68 @@ durable at their defined commit boundary. Backoff is cancellable. Rollback
 classification is typed, and no-rollback behavior must state which effects and
 state can remain visible.
 
+### Implementation status (#151)
+
+`REPEAT-POLICY-001`'s completion-policy surface and `LISTENER-ITEM-001`'s
+remaining item/chunk-listener taxonomy audit are implemented.
+
+A [`CompletionPolicy`](../../crates/oxide-batch/src/completion.rs) decides,
+*in addition to* the [`ChunkSize`] ceiling a `ChunkStep` already enforces,
+whether a chunk should stop accepting further items before that ceiling is
+reached. `ChunkStep::with_completion_policy` installs one; without it,
+completion is exactly the pre-#151 `ChunkSize`-only behavior, so the change is
+additive. Four families are provided:
+
+- `ItemCountCompletionPolicy` -- the `ChunkSize` bound expressed as a policy,
+  useful as a `CompositeCompletionPolicy` member.
+- `TimeCompletionPolicy` -- a bounded (`1 ms..=24 h`) duration threshold
+  against an injected `oxide_batch::Clock`, so tests substitute a deterministic
+  clock (`oxide_batch_test::ManualClock`) instead of reading wall-clock time
+  from runtime logic. The enclosing `ChunkSize` ceiling still bounds buffering
+  while the threshold has not elapsed.
+- `CompositeCompletionPolicy` -- a bounded (`MAX_COMPOSITE_MEMBERS = 32`)
+  `Any` (OR) or `All` (AND) combination of other policies. Composition does
+  not recurse without bound: each level's member count is validated the same
+  way, so there is no unbounded or implicit recursive structure.
+- `AdaptiveCompletionPolicy` -- a bounded (`AdaptiveBounds`) policy whose
+  target chunk size adjusts toward an observed target duration. Its
+  authoritative decision (the confirmed target) is persisted through the same
+  `ItemStream` open/update/close contract as any other component state --
+  registered under the same namespace as both the step's completion policy and
+  one of its `ItemStream`s -- never a second persistence path. A process crash
+  before a chunk commits leaves the previously committed target authoritative;
+  `ItemStream::open` restores exactly that target. A rolled-back attempt that
+  gets replayed recomputes the identical candidate from the same confirmed
+  baseline and the same freshly observed metrics, so replaying is idempotent
+  even though `ItemStream::update` runs before the commit its result is
+  conditioned on.
+
+The item/chunk/skip/retry listener taxonomy audited against
+`LISTENER-ITEM-001` (`ReadListener`, `ProcessListener`, `WriteListener`,
+`RetryListener`, `SkipListener` in `item_listener.rs`, and `ChunkListener` in
+`chunk_runtime.rs`) was already complete as of #150; #151's remaining gap was
+evidence, not a missing callback. `ChunkListener::after_chunk`'s
+`ChunkAttemptOutcome` parameter (`Committed`/`RolledBack`/`Stopped`/`Unknown`)
+is the accepted Rust-native equivalent of Spring's separate
+`afterChunkError`: one callback with an outcome enum rather than a second
+method, which is the documented `LISTENER-ITEM-001` divergence, not a gap.
+[Gate F](../project/m6-design-gate-evidence.md#gate-f--item-listener-allocation)'s
+KEEP decision (the ADR-0002 boxed `ItemListenerSet` representation) is
+unchanged by #151; no listener trait, registration, or dispatch shape was
+touched.
+
+Executable evidence: `crates/oxide-batch/src/completion.rs` (`#[cfg(test)]`
+unit suite for count/time/composite/adaptive boundaries and bounds),
+`crates/oxide-batch/tests/chunk_fault_runtime.rs` (cross-family listener order
+fixtures interleaving the chunk listener with read/process/write/retry/skip
+listeners in one committed attempt), `crates/oxide-batch/tests/item_listener_allocation.rs`
+(Gate F regression: a registered listener's allocator-call count scales with
+item count, measured separately from `chunk_allocation.rs`'s listener-free
+guarantee), and `crates/oxide-batch/tests/postgres_completion_policy_restart.rs`
+(PostgreSQL-backed adaptive-decision restart evidence). See
+[the M6 #151 evidence record](../project/m6-151-completion-and-listener-evidence.md)
+for the full scenario inventory.
+
 ## Standard-component requirements
 
 Closed by [M6 Gate D](../project/m6-design-gate-evidence.md#gate-d--standard-component-semantics).

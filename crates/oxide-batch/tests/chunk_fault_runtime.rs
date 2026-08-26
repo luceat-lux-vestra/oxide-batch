@@ -35,9 +35,9 @@ use oxide_batch::{
     BusinessTransactionError, BusinessWriteResult, Checkpoint, ChunkCommitReceipt, ChunkCompletion,
     ChunkCompletionContext, ChunkCompletionError, ChunkCompletionOutcome, ChunkComponentRevisions,
     ChunkCounts, ChunkDeliveryMode, ChunkExecutionOutcome, ChunkExecutionReport, ChunkFailure,
-    ChunkFaultProgress, ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep, ChunkTransaction,
-    ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager, ClassifierRevision,
-    ComponentRevision, DefinitionRevision, ExecutionAttempt, ExecutionContext,
+    ChunkFaultProgress, ChunkJob, ChunkListener, ChunkRestartContract, ChunkSize, ChunkStep,
+    ChunkTransaction, ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager,
+    ClassifierRevision, ComponentRevision, DefinitionRevision, ExecutionAttempt, ExecutionContext,
     ExecutionCorrelation, FailureCategory, FaultAction, FaultClassifier, FaultDescriptor,
     FaultPhase, FaultPolicy, FaultPolicyError, FaultProgress, FaultRule, FaultRuntime,
     FaultStateStore, InMemoryFaultState, InMemoryJobRepository, InheritedStepProgress,
@@ -1542,6 +1542,242 @@ fn assert_redacted(report: &ChunkExecutionReport) {
         !rendered.contains("audit"),
         "the report exposes no component or listener payload"
     );
+}
+
+// ------------------------------------------ cross-family order fixtures -----
+//
+// `item_listeners_nest_and_reverse_after_order` and the tests above each
+// exercise one listener family (or one family plus retry/skip) against the
+// chunk lifecycle in isolation. The two tests below assert one combined,
+// deterministic order across the chunk listener, every item-listener family,
+// and the fault runtime's retry/skip callbacks together, per
+// `LISTENER-ITEM-001`'s "complete taxonomy" requirement.
+
+/// A [`ChunkListener`] that records into the shared [`Trace`].
+struct ChunkTracer {
+    trace: Trace,
+}
+
+impl ChunkListener for ChunkTracer {
+    fn before_chunk<'a>(
+        &'a self,
+        _context: oxide_batch::ChunkListenerContext<'a>,
+    ) -> BoxFuture<'a, Result<(), oxide_batch::ChunkListenerError>> {
+        self.trace.record("chunk:before");
+        Box::pin(async { Ok(()) })
+    }
+
+    fn after_chunk<'a>(
+        &'a self,
+        _context: oxide_batch::ChunkListenerContext<'a>,
+        outcome: oxide_batch::ChunkAttemptOutcome,
+    ) -> BoxFuture<'a, Result<(), oxide_batch::ChunkListenerError>> {
+        self.trace.record(format!("chunk:after:{outcome:?}"));
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// A processor that fails one nominated item once with a retryable category,
+/// and fails a second nominated item every time with a skippable category --
+/// so one chunk can exercise both the retry and skip scopes.
+struct DualFaultProcessor {
+    retry_once_for: i32,
+    skip_for: i32,
+    retried: Mutex<bool>,
+    trace: Trace,
+}
+
+impl ItemProcessor<i32, i32> for DualFaultProcessor {
+    async fn process(
+        &self,
+        item: &i32,
+        _context: ProcessContext<'_>,
+    ) -> Result<ProcessOutcome<i32>, ProcessorError> {
+        self.trace.record(format!("processor:{item}"));
+        if *item == self.retry_once_for {
+            let mut retried = self.retried.lock().expect("retry flag lock poisoned");
+            if !*retried {
+                *retried = true;
+                return Err(ProcessorError::with_category(FailureCategory::Timeout));
+            }
+        }
+        if *item == self.skip_for {
+            return Err(ProcessorError::with_category(
+                FailureCategory::UserComponent,
+            ));
+        }
+        Ok(ProcessOutcome::Item(item * 10))
+    }
+}
+
+#[test]
+fn chunk_read_process_write_and_retry_listeners_interleave_in_one_committed_attempt() {
+    let trace = Trace::default();
+    let (writer, batches) = Writer::new(trace.clone());
+    let listeners = ItemListenerSet::<i32, i32>::new()
+        .with_read_listener(Arc::new(TracingListener::new("audit", trace.clone())))
+        .expect("registration is bounded")
+        .with_process_listener(Arc::new(TracingListener::new("audit", trace.clone())))
+        .expect("registration is bounded")
+        .with_write_listener(Arc::new(TracingListener::new("audit", trace.clone())))
+        .expect("registration is bounded")
+        .with_retry_listener(Arc::new(RetryTracer {
+            trace: trace.clone(),
+        }))
+        .expect("registration is bounded");
+
+    let mut step = ChunkStep::new(
+        step_name(),
+        chunk_size(1),
+        Reader::new([1], trace.clone()),
+        DualFaultProcessor {
+            retry_once_for: 1,
+            skip_for: -1,
+            retried: Mutex::new(false),
+            trace: trace.clone(),
+        },
+        writer,
+        Arc::new(Transactions::new(trace.clone())),
+        Arc::new(Completion),
+    )
+    .with_item_listeners(listeners)
+    .with_chunk_listener(Arc::new(ChunkTracer {
+        trace: trace.clone(),
+    }))
+    .with_fault_runtime(runtime(
+        policy(
+            [rule(
+                FaultPhase::Process,
+                FailureCategory::Timeout,
+                FaultAction::retry(),
+            )],
+            1,
+            0,
+            BackoffPolicy::none(),
+        ),
+        Arc::new(RecordingSleeper::new()),
+        ChunkDeliveryMode::AtLeastOnce,
+    ));
+
+    let report = block_on(step.execute(&correlation(), &StopSource::new().1));
+
+    assert_eq!(report.outcome(), ChunkExecutionOutcome::Completed);
+    assert_eq!(
+        batches.lock().expect("batch lock poisoned").as_slice(),
+        [vec![10]]
+    );
+    let entries = trace.entries();
+    assert_eq!(
+        entries,
+        [
+            // Attempt 1: process fails, so the chunk rolls back and a retry
+            // is reserved. `TracingListener` does not override
+            // `on_process_error` (its default is a silent no-op), so no
+            // "audit:process_error" entry is expected here.
+            "chunk:before",
+            "audit:before_read",
+            "reader",
+            "audit:after_read",
+            "audit:before_process",
+            "processor:1",
+            "rollback",
+            "before_retry",
+            "chunk:after:RolledBack",
+            // Attempt 2 (the reserved retry): the already-buffered item is
+            // not re-read -- only the failed phase (process) re-runs -- and
+            // this attempt commits.
+            "chunk:before",
+            "audit:before_process",
+            "processor:1",
+            "audit:after_process",
+            "after_retry:Recovered",
+            "audit:before_write",
+            "writer",
+            "audit:after_write",
+            "commit",
+            "chunk:after:Committed",
+            // Attempt 3: the step's final, empty end-of-input probe -- read
+            // observes end-of-input with nothing buffered, so the runtime
+            // discards that empty attempt's transaction before reporting the
+            // step `Completed`.
+            "chunk:before",
+            "audit:before_read",
+            "reader",
+            "rollback",
+            "chunk:after:RolledBack",
+        ],
+        "the chunk, item, and retry listener families interleave in one \
+         deterministic order across the failed and recovered attempt"
+    );
+}
+
+#[test]
+fn chunk_and_item_listeners_observe_a_skip_before_its_commit() {
+    let trace = Trace::default();
+    let (writer, batches) = Writer::new(trace.clone());
+    let listeners = ItemListenerSet::<i32, i32>::new()
+        .with_read_listener(Arc::new(TracingListener::new("audit", trace.clone())))
+        .expect("registration is bounded")
+        .with_write_listener(Arc::new(TracingListener::new("audit", trace.clone())))
+        .expect("registration is bounded")
+        .with_skip_listener(Arc::new(TracingListener::new("audit", trace.clone())))
+        .expect("registration is bounded");
+
+    let mut step = ChunkStep::new(
+        step_name(),
+        chunk_size(2),
+        Reader::new([1, 2], trace.clone()),
+        DualFaultProcessor {
+            retry_once_for: -1,
+            skip_for: 2,
+            retried: Mutex::new(false),
+            trace: trace.clone(),
+        },
+        writer,
+        Arc::new(Transactions::new(trace.clone()).enlisted()),
+        Arc::new(Completion),
+    )
+    .with_item_listeners(listeners)
+    .with_chunk_listener(Arc::new(ChunkTracer {
+        trace: trace.clone(),
+    }))
+    .with_fault_runtime(runtime(
+        policy(
+            [rule(
+                FaultPhase::Process,
+                FailureCategory::UserComponent,
+                FaultAction::skip(RollbackDisposition::CommitSafeSkip),
+            )],
+            0,
+            4,
+            BackoffPolicy::none(),
+        ),
+        Arc::new(RecordingSleeper::new()),
+        ChunkDeliveryMode::AtomicSameResource,
+    ));
+
+    let report = block_on(step.execute(&correlation(), &StopSource::new().1));
+
+    assert_eq!(report.outcome(), ChunkExecutionOutcome::Completed);
+    assert_eq!(report.skip_counts().process(), 1);
+    assert_eq!(
+        batches.lock().expect("batch lock poisoned").as_slice(),
+        [vec![10]]
+    );
+
+    let before_chunk = trace.position("chunk:before").expect("chunk listener ran");
+    let skip = trace
+        .position("audit:skip_process")
+        .expect("the skip callback ran");
+    let write = trace.position("audit:before_write").expect("write ran");
+    let commit = trace.position("commit").expect("the chunk committed");
+    let after_chunk = trace
+        .position("chunk:after:Committed")
+        .expect("chunk listener observed the commit");
+
+    assert!(before_chunk < write, "chunk listener brackets item work");
+    assert!(skip < commit, "the skip callback precedes its commit");
+    assert!(commit < after_chunk, "chunk listener observes after commit");
 }
 
 // ------------------------------------------------------- reservation state --
