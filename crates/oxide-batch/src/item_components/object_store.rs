@@ -30,8 +30,18 @@
 //! [`ObjectStoreWriterOpener`]'s accumulator holds everything written to the
 //! current object so far, and reissues the full object on every
 //! [`crate::ItemWriter::write`] call (object-store `PUT` semantics are
-//! whole-object, not append). This is bounded by `max_object_bytes`, never
-//! unbounded, but it is not streaming/multipart -- that stays M9.
+//! whole-object, not append). This is bounded by `max_object_bytes` as a
+//! real, pre-materialization resource bound: [`ObjectStoreCapability::get`]
+//! rejects an oversized object before a buffer proportional to its true
+//! size is allocated (see its own contract), and [`ObjectItemWriter`]'s
+//! `write` serializes each item into a `BoundedSink` (private) over the candidate
+//! buffer, which refuses any single write that would exceed the bound
+//! *before* copying a byte -- not a post-hoc length check on an
+//! already-built buffer. The one residual, inherent limit -- a `serialize`
+//! implementation that builds one large owned buffer internally before
+//! ever writing to the sink has already paid that allocation before the
+//! sink can refuse it -- is documented on [`ObjectStoreWriterOpener::new`],
+//! not hidden. It is not streaming/multipart -- that stays M9.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -306,8 +316,16 @@ impl std::error::Error for ObjectStoreError {}
 /// # Contract every implementation must honor
 ///
 /// - **Bounded read/write**: `get`/`put` operate on the whole object, up to
-///   an implementation-declared bound; neither is unbounded streaming
-///   (multipart upload/download is M9 scope).
+///   a *caller-declared* bound (`get`'s `max_bytes`, `put`'s own size),
+///   neither is unbounded streaming (multipart upload/download is M9
+///   scope). Critically, the bound is a real resource bound, not
+///   post-materialization validation: an implementation must reject an
+///   object larger than `max_bytes` before allocating/copying a buffer
+///   proportional to its true, oversized size -- a `stat`-then-compare, a
+///   ranged read, or (as [`InMemoryObjectStore`] does, since it already
+///   holds the object's bytes in memory regardless) checking the known
+///   length before ever cloning it are all acceptable; materializing the
+///   full oversized object first and rejecting it afterward is not.
 /// - **Deterministic listing**: two `list` calls for the same prefix (with
 ///   no intervening `put`/mutation) return entries in the same order.
 /// - **Version identity**: `version_token` is `None` only when the backend
@@ -315,21 +333,29 @@ impl std::error::Error for ObjectStoreError {}
 /// - **Sensitive metadata**: implementations must not leak object content
 ///   or raw provider error payloads through [`ObjectStoreError`].
 pub trait ObjectStoreCapability: Send + Sync {
-    /// Fetches an object's full content and metadata.
+    /// Fetches an object's full content and metadata, rejecting before
+    /// delivery if the object exceeds `max_bytes`.
     ///
     /// # Errors
     ///
     /// Returns [`FailureCategory::UnsupportedCapability`]-categorized
-    /// [`ObjectStoreError`] when `id` does not exist, or another redacted
-    /// failure category for other faults.
+    /// [`ObjectStoreError`] when `id` does not exist,
+    /// [`FailureCategory::Invariant`]-categorized [`ObjectStoreError`] when
+    /// the object exceeds `max_bytes`, or another redacted failure category
+    /// for other faults.
     fn get<'a>(
         &'a self,
         id: &'a ObjectIdentity,
+        max_bytes: usize,
     ) -> impl Future<Output = Result<(Vec<u8>, ObjectMetadata), ObjectStoreError>> + Send + 'a;
 
     /// Writes an object's full content, replacing any prior content at
     /// `id`, and returns the resulting metadata (with a fresh version token
     /// when the backend supplies one).
+    ///
+    /// Takes `bytes` by reference so a caller that must retain its own copy
+    /// (e.g. an accumulator that keeps growing) never has to clone it a
+    /// second time purely to satisfy this call.
     ///
     /// # Errors
     ///
@@ -337,7 +363,7 @@ pub trait ObjectStoreCapability: Send + Sync {
     fn put<'a>(
         &'a self,
         id: &'a ObjectIdentity,
-        bytes: Vec<u8>,
+        bytes: &'a [u8],
     ) -> impl Future<Output = Result<ObjectMetadata, ObjectStoreError>> + Send + 'a;
 
     /// Fetches an object's metadata without its content.
@@ -369,14 +395,15 @@ impl<C: ObjectStoreCapability + ?Sized> ObjectStoreCapability for Arc<C> {
     fn get<'a>(
         &'a self,
         id: &'a ObjectIdentity,
+        max_bytes: usize,
     ) -> impl Future<Output = Result<(Vec<u8>, ObjectMetadata), ObjectStoreError>> + Send + 'a {
-        C::get(self, id)
+        C::get(self, id, max_bytes)
     }
 
     fn put<'a>(
         &'a self,
         id: &'a ObjectIdentity,
-        bytes: Vec<u8>,
+        bytes: &'a [u8],
     ) -> impl Future<Output = Result<ObjectMetadata, ObjectStoreError>> + Send + 'a {
         C::put(self, id, bytes)
     }
@@ -440,11 +467,19 @@ impl ObjectStoreCapability for InMemoryObjectStore {
     async fn get(
         &self,
         id: &ObjectIdentity,
+        max_bytes: usize,
     ) -> Result<(Vec<u8>, ObjectMetadata), ObjectStoreError> {
         let objects = self.objects.lock().unwrap_or_else(PoisonError::into_inner);
         let stored = objects.get(id.as_str()).ok_or_else(|| {
             ObjectStoreError::with_category(FailureCategory::UnsupportedCapability)
         })?;
+        // Reject before cloning: even though this fixture already holds the
+        // object's bytes in memory regardless, the wrapper-visible resource
+        // bound must not let a caller pay for a copy proportional to an
+        // oversized object merely to have it rejected afterward.
+        if stored.bytes.len() > max_bytes {
+            return Err(ObjectStoreError::with_category(FailureCategory::Invariant));
+        }
         let metadata = ObjectMetadata::new(
             u64::try_from(stored.bytes.len()).unwrap_or(u64::MAX),
             Some(Self::version_token(stored.version)),
@@ -455,7 +490,7 @@ impl ObjectStoreCapability for InMemoryObjectStore {
     async fn put(
         &self,
         id: &ObjectIdentity,
-        bytes: Vec<u8>,
+        bytes: &[u8],
     ) -> Result<ObjectMetadata, ObjectStoreError> {
         if bytes.len() > self.max_object_bytes {
             return Err(ObjectStoreError::with_category(FailureCategory::Invariant));
@@ -465,7 +500,13 @@ impl ObjectStoreCapability for InMemoryObjectStore {
             .get(id.as_str())
             .map_or(1, |existing| existing.version + 1);
         let size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
-        objects.insert(id.as_str().to_owned(), StoredObject { bytes, version });
+        objects.insert(
+            id.as_str().to_owned(),
+            StoredObject {
+                bytes: bytes.to_vec(),
+                version,
+            },
+        );
         Ok(ObjectMetadata::new(
             size,
             Some(Self::version_token(version)),
@@ -765,15 +806,16 @@ where
     ) -> Result<(Self::Reader, Self::Stream, StreamStateContract), MultiResourceOpenError> {
         let id = ObjectIdentity::new(resource.as_str())
             .map_err(|_| MultiResourceOpenError::new(resource_ordinal))?;
-        let (bytes, metadata) = self.store.get(&id).await.map_err(|error| {
-            MultiResourceOpenError::with_category(resource_ordinal, error.category())
-        })?;
-        if bytes.len() > self.max_object_bytes {
-            return Err(MultiResourceOpenError::with_category(
-                resource_ordinal,
-                FailureCategory::Invariant,
-            ));
-        }
+        // `max_bytes` is enforced by the backend before the whole object is
+        // delivered -- see `ObjectStoreCapability::get`'s contract -- so
+        // there is no post-fetch length check left to perform here.
+        let (bytes, metadata) =
+            self.store
+                .get(&id, self.max_object_bytes)
+                .await
+                .map_err(|error| {
+                    MultiResourceOpenError::with_category(resource_ordinal, error.category())
+                })?;
         let items = (self.parse)(&bytes).map_err(|error| {
             MultiResourceOpenError::with_category(resource_ordinal, error.category())
         })?;
@@ -878,6 +920,83 @@ struct WriteAccumulator {
     version_token: Option<String>,
 }
 
+/// A [`std::io::Write`] sink over the accumulator's candidate buffer that
+/// refuses to grow past a declared maximum.
+///
+/// This is what makes `max_object_bytes` a real, pre-materialization bound
+/// on the wrapper's *own* accumulation rather than a post-hoc length check:
+/// every `write` call is checked against the remaining budget *before* any
+/// byte is copied into the candidate, so a caller's `serialize`
+/// implementation that writes incrementally (as any bounded-output encoder
+/// should) is stopped at the exact byte that would exceed the bound,
+/// never after allocating proportional to however far past it that byte
+/// would have landed.
+///
+/// This cannot bound what a `serialize` implementation allocates *before*
+/// handing bytes to this sink (e.g. one internal `format!` call that
+/// builds a single huge `String` and then calls [`std::io::Write::write_all`]
+/// once) -- no fixed sink-based interface can, since `serialize` is
+/// arbitrary caller code that runs before this sink ever sees a byte. That
+/// residual, inherent limit is documented on [`ObjectStoreWriterOpener::new`]
+/// rather than hidden.
+///
+/// `overflowed` is sticky and checked by [`ObjectItemWriter::write`]
+/// regardless of what `serialize` itself returns: a `serialize`
+/// implementation that ignores this sink's `Err` and returns `Ok(())`
+/// anyway must never be able to turn a resource-limit rejection into a
+/// partial item silently reaching the backend.
+struct BoundedSink<'a> {
+    buf: &'a mut Vec<u8>,
+    max: usize,
+    overflowed: bool,
+}
+
+impl std::io::Write for BoundedSink<'_> {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        let Some(new_len) = self.buf.len().checked_add(data.len()) else {
+            self.overflowed = true;
+            return Err(std::io::Error::other("object size overflow"));
+        };
+        if new_len > self.max {
+            self.overflowed = true;
+            return Err(std::io::Error::other(
+                "object write would exceed max_object_bytes",
+            ));
+        }
+        self.buf.extend_from_slice(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Truncates the accumulator's candidate buffer back to its pre-write
+/// length on drop, unless disarmed -- including when the drop happens
+/// because the current scope is unwinding from a panic inside the
+/// caller-supplied `serialize` closure (or, defensively, anywhere else in
+/// [`ObjectItemWriter::write`] before the candidate is committed).
+/// Without this, a panicking `serialize` call would unwind straight through
+/// the growing candidate, and because the accumulator's prior content was
+/// moved into that candidate (never cloned, by design -- see this module's
+/// allocation docs) rather than merely borrowed, the panic would silently
+/// discard every item this writer had previously, successfully committed
+/// to the object, not just the one item being serialized when it panicked.
+struct TruncateOnDrop<'a> {
+    target: &'a mut Vec<u8>,
+    original_len: usize,
+    armed: bool,
+}
+
+impl Drop for TruncateOnDrop<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.target.truncate(self.original_len);
+        }
+    }
+}
+
 /// A restartable [`crate::ItemWriter`] that accumulates serialized items in
 /// memory and re-issues the whole object on every write (object-store `PUT`
 /// is whole-object, not append).
@@ -901,6 +1020,7 @@ pub struct ObjectItemWriter<O, C, S> {
     store: Arc<C>,
     serialize: Arc<S>,
     accumulator: Arc<AsyncMutex<WriteAccumulator>>,
+    max_object_bytes: usize,
     _marker: std::marker::PhantomData<fn(O)>,
 }
 
@@ -908,7 +1028,7 @@ impl<O, C, S> ItemWriter<O> for ObjectItemWriter<O, C, S>
 where
     O: Sync,
     C: ObjectStoreCapability,
-    S: Fn(&O) -> Vec<u8> + Send + Sync,
+    S: Fn(&O, &mut dyn std::io::Write) -> std::io::Result<()> + Send + Sync,
 {
     async fn write<'a>(
         &'a self,
@@ -919,21 +1039,64 @@ where
             return Ok(WriteOutcome::Stopped);
         }
         let mut accumulator = self.accumulator.lock().await;
-        let mut candidate = accumulator.bytes.clone();
+        let original_len = accumulator.bytes.len();
+        // Extend the accumulator's buffer in place -- never a second, full
+        // copy of the accumulated object for one write, unlike cloning it
+        // once to build a candidate and again to hand it to `put`. Guarded
+        // by `TruncateOnDrop`, armed for the whole growth phase: any early
+        // return (a rejected or failed item) *or* a panic unwinding out of
+        // the caller-supplied `serialize` call truncates the buffer back to
+        // its pre-write length instead of leaving a partial item appended
+        // or, worse, an emptied accumulator (see `TruncateOnDrop`'s docs).
+        //
+        // The bound is a real, pre-materialization bound on *this
+        // wrapper's own* accumulation: `serialize` writes into a
+        // `BoundedSink` over the buffer, and every write to that sink is
+        // checked against the remaining budget before a single byte is
+        // copied in -- never after allocating proportional to an oversized
+        // write. See `BoundedSink`'s docs for the one residual limit this
+        // cannot cover (what `serialize` allocates internally before it
+        // ever calls the sink).
+        let mut guard = TruncateOnDrop {
+            target: &mut accumulator.bytes,
+            original_len,
+            armed: true,
+        };
         for item in items {
-            candidate.extend_from_slice(&(self.serialize)(item));
+            let mut sink = BoundedSink {
+                buf: &mut *guard.target,
+                max: self.max_object_bytes,
+                overflowed: false,
+            };
+            let result = (self.serialize)(item, &mut sink);
+            // Checked unconditionally, regardless of what `serialize`
+            // itself returned: a `serialize` that ignores the sink's `Err`
+            // and returns `Ok(())` anyway must not turn a resource-limit
+            // rejection into a partial item reaching the backend.
+            if sink.overflowed {
+                return Err(WriterError::with_category(FailureCategory::Invariant));
+            }
+            if result.is_err() {
+                // The serializer's own failure, distinct from the sink
+                // refusing a write: `FailureCategory::Invariant` is not
+                // policy-eligible for retry/skip, but a delegate/user
+                // component failure is, and this is exactly that -- the
+                // wrapper's own bound was never in question here.
+                return Err(WriterError::new());
+            }
         }
-        let metadata = self
-            .store
-            .put(&self.id, candidate.clone())
-            .await
-            .map_err(|_| WriterError::new())?;
-        accumulator.bytes = candidate;
-        accumulator.committed_item_count += u64::try_from(items.len()).unwrap_or(u64::MAX);
-        accumulator.version_token = metadata
-            .version_token()
-            .map(|token| token.as_str().to_owned());
-        Ok(WriteOutcome::Written)
+        match self.store.put(&self.id, guard.target.as_slice()).await {
+            Ok(metadata) => {
+                guard.armed = false;
+                drop(guard);
+                accumulator.committed_item_count += u64::try_from(items.len()).unwrap_or(u64::MAX);
+                accumulator.version_token = metadata
+                    .version_token()
+                    .map(|token| token.as_str().to_owned());
+                Ok(WriteOutcome::Written)
+            }
+            Err(error) => Err(WriterError::with_category(error.category())),
+        }
     }
 }
 
@@ -943,6 +1106,7 @@ pub struct ObjectItemWriterStream<C> {
     store: Arc<C>,
     accumulator: Arc<AsyncMutex<WriteAccumulator>>,
     namespace: ComponentStreamIdentity,
+    max_object_bytes: usize,
 }
 
 impl<C: ObjectStoreCapability> ItemStream for ObjectItemWriterStream<C> {
@@ -957,9 +1121,9 @@ impl<C: ObjectStoreCapability> ItemStream for ObjectItemWriterStream<C> {
                 .map_err(|_| StreamOpenError::new())?;
             let (bytes, metadata) = self
                 .store
-                .get(&self.id)
+                .get(&self.id, self.max_object_bytes)
                 .await
-                .map_err(|_| StreamOpenError::new())?;
+                .map_err(|error| StreamOpenError::with_category(error.category()))?;
             let current_token = metadata
                 .version_token()
                 .map(|token| token.as_str().to_owned());
@@ -1025,19 +1189,33 @@ impl<C: ObjectStoreCapability> ItemStream for ObjectItemWriterStream<C> {
 pub struct ObjectStoreWriterOpener<C, S> {
     store: Arc<C>,
     serialize: Arc<S>,
+    max_object_bytes: usize,
 }
 
 impl<C, S> ObjectStoreWriterOpener<C, S>
 where
     C: ObjectStoreCapability + 'static,
 {
-    /// Builds an opener over `store`, serializing each item with
-    /// `serialize` before appending it to the current object's accumulator.
+    /// Builds an opener over `store`, serializing each item by calling
+    /// `serialize` with a sink to write its encoded bytes into, before
+    /// appending it to the current object's accumulator.
+    ///
+    /// `serialize` writes to the sink rather than returning an owned
+    /// buffer specifically so `max_object_bytes` can be a real,
+    /// pre-materialization bound: every write to the sink is checked
+    /// against the remaining budget *before* copying a single byte into
+    /// the accumulator (see the private `BoundedSink` sink type's docs for
+    /// the one residual limit this cannot cover -- an item whose own `serialize`
+    /// implementation allocates a large buffer internally before ever
+    /// calling the sink). A well-behaved `serialize` writes incrementally
+    /// (e.g. via `write!`, or by writing one already-small field at a
+    /// time) rather than building one large owned buffer first.
     #[must_use]
-    pub fn new(store: C, serialize: S) -> Self {
+    pub fn new(store: C, serialize: S, max_object_bytes: usize) -> Self {
         Self {
             store: Arc::new(store),
             serialize: Arc::new(serialize),
+            max_object_bytes,
         }
     }
 }
@@ -1046,7 +1224,7 @@ impl<O, C, S> MultiResourceWriterOpener<O> for ObjectStoreWriterOpener<C, S>
 where
     O: Send + Sync + 'static,
     C: ObjectStoreCapability + 'static,
-    S: Fn(&O) -> Vec<u8> + Send + Sync + 'static,
+    S: Fn(&O, &mut dyn std::io::Write) -> std::io::Result<()> + Send + Sync + 'static,
 {
     type Writer = ObjectItemWriter<O, C, S>;
     type Stream = ObjectItemWriterStream<C>;
@@ -1069,6 +1247,7 @@ where
             store: Arc::clone(&self.store),
             serialize: Arc::clone(&self.serialize),
             accumulator: Arc::clone(&accumulator),
+            max_object_bytes: self.max_object_bytes,
             _marker: std::marker::PhantomData,
         };
         let stream = ObjectItemWriterStream {
@@ -1076,6 +1255,7 @@ where
             store: Arc::clone(&self.store),
             accumulator,
             namespace: delegate_identity.clone(),
+            max_object_bytes: self.max_object_bytes,
         };
         let contract = StreamStateContract::new(object_write_position_codec());
         Ok((writer, stream, contract))
@@ -1126,7 +1306,7 @@ mod tests {
         let store = InMemoryObjectStore::new(1024);
         futures_executor::block_on(async {
             for key in ["b", "a", "c", "d"] {
-                store.put(&id(key), key.as_bytes().to_vec()).await.unwrap();
+                store.put(&id(key), key.as_bytes()).await.unwrap();
             }
             let page1 = store.list("", 2, None).await.unwrap();
             let keys1: Vec<_> = page1
@@ -1158,7 +1338,7 @@ mod tests {
     fn missing_object_get_and_stat_fail_with_unsupported_capability() {
         let store = InMemoryObjectStore::new(1024);
         futures_executor::block_on(async {
-            let error = store.get(&id("missing")).await.unwrap_err();
+            let error = store.get(&id("missing"), 1024).await.unwrap_err();
             assert_eq!(error.category(), FailureCategory::UnsupportedCapability);
             let error = store.stat(&id("missing")).await.unwrap_err();
             assert_eq!(error.category(), FailureCategory::UnsupportedCapability);
@@ -1169,12 +1349,32 @@ mod tests {
     fn put_bounded_by_max_object_bytes() {
         let store = InMemoryObjectStore::new(4);
         futures_executor::block_on(async {
-            let result = store.put(&id("x"), vec![0u8; 5]).await;
+            let result = store.put(&id("x"), &[0u8; 5]).await;
             assert!(
                 result.is_err(),
                 "an oversized put must be rejected, not silently truncated"
             );
-            store.put(&id("x"), vec![0u8; 4]).await.unwrap();
+            store.put(&id("x"), &[0u8; 4]).await.unwrap();
+        });
+    }
+
+    #[test]
+    fn get_bounded_by_caller_supplied_max_bytes_without_materializing_the_oversized_object() {
+        // The backend already holds the object's bytes regardless (this is
+        // an in-memory fixture), so this test proves the *wrapper-visible*
+        // guarantee: a `get` whose `max_bytes` is smaller than the stored
+        // object is rejected, and the caller never receives (nor is a copy
+        // made of) content beyond the declared bound. See
+        // `reader_opener_never_receives_more_than_max_object_bytes` below
+        // for a backend-side proof that no oversized copy is ever made at
+        // all, not even internally.
+        let store = InMemoryObjectStore::new(1024);
+        futures_executor::block_on(async {
+            store.put(&id("x"), &[0u8; 100]).await.unwrap();
+            let error = store.get(&id("x"), 99).await.unwrap_err();
+            assert_eq!(error.category(), FailureCategory::Invariant);
+            let (bytes, _metadata) = store.get(&id("x"), 100).await.unwrap();
+            assert_eq!(bytes.len(), 100, "exactly-at-bound must still succeed");
         });
     }
 
@@ -1182,14 +1382,14 @@ mod tests {
     fn put_get_roundtrip_returns_incrementing_version_tokens() {
         let store = InMemoryObjectStore::new(1024);
         futures_executor::block_on(async {
-            let first = store.put(&id("x"), b"one".to_vec()).await.unwrap();
-            let second = store.put(&id("x"), b"two".to_vec()).await.unwrap();
+            let first = store.put(&id("x"), b"one").await.unwrap();
+            let second = store.put(&id("x"), b"two").await.unwrap();
             assert_ne!(
                 first.version_token(),
                 second.version_token(),
                 "a replaced object must publish a different version token"
             );
-            let (bytes, metadata) = store.get(&id("x")).await.unwrap();
+            let (bytes, metadata) = store.get(&id("x"), 1024).await.unwrap();
             assert_eq!(bytes, b"two");
             assert_eq!(metadata.version_token(), second.version_token());
         });
@@ -1216,7 +1416,7 @@ mod tests {
         let store = Arc::new(InMemoryObjectStore::new(1024));
         let (_source, token) = stop();
         futures_executor::block_on(async {
-            store.put(&id("obj"), b"1,2,3".to_vec()).await.unwrap();
+            store.put(&id("obj"), b"1,2,3").await.unwrap();
         });
         let resources = ResourceSet::new(vec![
             crate::item_components::multi_resource::ResourceIdentity::new("obj").unwrap(),
@@ -1271,7 +1471,7 @@ mod tests {
         let store = Arc::new(InMemoryObjectStore::new(1024));
         let (_source, token) = stop();
         futures_executor::block_on(async {
-            store.put(&id("obj"), b"1,2,3".to_vec()).await.unwrap();
+            store.put(&id("obj"), b"1,2,3").await.unwrap();
         });
         let resources = ResourceSet::new(vec![
             crate::item_components::multi_resource::ResourceIdentity::new("obj").unwrap(),
@@ -1302,7 +1502,7 @@ mod tests {
         // the restart -- this must be rejected, not silently resumed
         // against the new content at the old ordinal.
         futures_executor::block_on(async {
-            store.put(&id("obj"), b"9,9,9".to_vec()).await.unwrap();
+            store.put(&id("obj"), b"9,9,9").await.unwrap();
         });
         futures_executor::block_on(async {
             let opener = ObjectStoreReaderOpener::new(Arc::clone(&store), 1024, csv_parse);
@@ -1344,15 +1544,16 @@ mod tests {
         async fn get(
             &self,
             id: &ObjectIdentity,
+            max_bytes: usize,
         ) -> Result<(Vec<u8>, ObjectMetadata), ObjectStoreError> {
-            let (bytes, metadata) = self.inner.get(id).await?;
+            let (bytes, metadata) = self.inner.get(id, max_bytes).await?;
             Ok((bytes, ObjectMetadata::new(metadata.size(), None)))
         }
 
         async fn put(
             &self,
             id: &ObjectIdentity,
-            bytes: Vec<u8>,
+            bytes: &[u8],
         ) -> Result<ObjectMetadata, ObjectStoreError> {
             let metadata = self.inner.put(id, bytes).await?;
             Ok(ObjectMetadata::new(metadata.size(), None))
@@ -1383,7 +1584,7 @@ mod tests {
         let store = Arc::new(NoVersionObjectStore::new(1024));
         let (_source, token) = stop();
         futures_executor::block_on(async {
-            store.put(&id("obj"), b"1,2,3".to_vec()).await.unwrap();
+            store.put(&id("obj"), b"1,2,3").await.unwrap();
         });
         let resources = ResourceSet::new(vec![
             crate::item_components::multi_resource::ResourceIdentity::new("obj").unwrap(),
@@ -1434,7 +1635,9 @@ mod tests {
     fn writer_restart_over_a_no_version_backend_fails_closed_rather_than_matching_none_to_none() {
         let store = Arc::new(NoVersionObjectStore::new(1024));
         let (_source, token) = stop();
-        let serialize = |item: &u64| format!("{item},").into_bytes();
+        let serialize = |item: &u64, sink: &mut dyn std::io::Write| {
+            sink.write_all(format!("{item},").as_bytes())
+        };
         let resources = ResourceSet::new(vec![
             crate::item_components::multi_resource::ResourceIdentity::new("obj").unwrap(),
         ]);
@@ -1443,7 +1646,7 @@ mod tests {
                 .unwrap();
 
         let committed = futures_executor::block_on(async {
-            let opener = ObjectStoreWriterOpener::new(Arc::clone(&store), serialize);
+            let opener = ObjectStoreWriterOpener::new(Arc::clone(&store), serialize, 1024);
             let (writer, stream, _contract) = multi_resource_writer::<u64, _, _>(
                 resources.clone(),
                 opener,
@@ -1467,7 +1670,7 @@ mod tests {
         });
 
         futures_executor::block_on(async {
-            let opener = ObjectStoreWriterOpener::new(Arc::clone(&store), serialize);
+            let opener = ObjectStoreWriterOpener::new(Arc::clone(&store), serialize, 1024);
             let (_writer, stream, _contract) = multi_resource_writer::<u64, _, _>(
                 resources,
                 opener,
@@ -1491,8 +1694,10 @@ mod tests {
     fn writer_roundtrip_through_multi_resource_writer_accumulates_and_puts() {
         let store = Arc::new(InMemoryObjectStore::new(1024));
         let (_source, token) = stop();
-        let serialize = |item: &u64| format!("{item},").into_bytes();
-        let opener = ObjectStoreWriterOpener::new(Arc::clone(&store), serialize);
+        let serialize = |item: &u64, sink: &mut dyn std::io::Write| {
+            sink.write_all(format!("{item},").as_bytes())
+        };
+        let opener = ObjectStoreWriterOpener::new(Arc::clone(&store), serialize, 1024);
         let resources = ResourceSet::new(vec![
             crate::item_components::multi_resource::ResourceIdentity::new("out").unwrap(),
         ]);
@@ -1520,7 +1725,739 @@ mod tests {
                 .await
                 .unwrap();
         });
-        let (bytes, _metadata) = futures_executor::block_on(store.get(&id("out"))).unwrap();
+        let (bytes, _metadata) = futures_executor::block_on(store.get(&id("out"), 1024)).unwrap();
         assert_eq!(bytes, b"1,2,3,".to_vec());
+    }
+
+    // -- Finding 2 (#177) regression evidence: real resource bounds, not
+    // post-materialization validation.
+
+    /// A backend that never actually stores content, only a *declared*
+    /// length, and can only ever materialize a `Vec<u8>` for a `get` within
+    /// the caller's `max_bytes`. Proves the reader bridge's bound is
+    /// enforced *before* delivery -- there is no way for this fixture to
+    /// hand back an over-`max_bytes` buffer at all, so a passing test
+    /// structurally cannot be explained by "materialize first, reject
+    /// after".
+    struct DeclaredSizeObjectStore {
+        declared_len: Mutex<BTreeMap<String, usize>>,
+        materialize_calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl DeclaredSizeObjectStore {
+        fn new() -> Self {
+            Self {
+                declared_len: Mutex::new(BTreeMap::new()),
+                materialize_calls: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+
+        fn declare(&self, key: &str, len: usize) {
+            self.declared_len
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(key.to_owned(), len);
+        }
+    }
+
+    impl ObjectStoreCapability for DeclaredSizeObjectStore {
+        async fn get(
+            &self,
+            id: &ObjectIdentity,
+            max_bytes: usize,
+        ) -> Result<(Vec<u8>, ObjectMetadata), ObjectStoreError> {
+            let len = *self
+                .declared_len
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(id.as_str())
+                .ok_or_else(|| {
+                    ObjectStoreError::with_category(FailureCategory::UnsupportedCapability)
+                })?;
+            if len > max_bytes {
+                return Err(ObjectStoreError::with_category(FailureCategory::Invariant));
+            }
+            self.materialize_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let metadata = ObjectMetadata::new(u64::try_from(len).unwrap_or(u64::MAX), None);
+            Ok((vec![0u8; len], metadata))
+        }
+
+        async fn put(
+            &self,
+            id: &ObjectIdentity,
+            bytes: &[u8],
+        ) -> Result<ObjectMetadata, ObjectStoreError> {
+            self.declare(id.as_str(), bytes.len());
+            Ok(ObjectMetadata::new(
+                u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+                None,
+            ))
+        }
+
+        async fn stat(&self, id: &ObjectIdentity) -> Result<ObjectMetadata, ObjectStoreError> {
+            let len = *self
+                .declared_len
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(id.as_str())
+                .ok_or_else(|| {
+                    ObjectStoreError::with_category(FailureCategory::UnsupportedCapability)
+                })?;
+            Ok(ObjectMetadata::new(
+                u64::try_from(len).unwrap_or(u64::MAX),
+                None,
+            ))
+        }
+
+        async fn list(
+            &self,
+            _prefix: &str,
+            _page_size: usize,
+            _continuation: Option<&ObjectListContinuation>,
+        ) -> Result<ObjectListPage, ObjectStoreError> {
+            Ok(ObjectListPage {
+                entries: Vec::new(),
+                continuation: None,
+            })
+        }
+    }
+
+    #[test]
+    fn reader_opener_rejects_an_oversized_object_without_ever_materializing_it() {
+        let store = Arc::new(DeclaredSizeObjectStore::new());
+        // Ten gigabytes, declared only -- never actually allocated anywhere
+        // by this fixture or by the code under test.
+        store.declare("huge", 10_000_000_000);
+        let resource = ResourceIdentity::new("huge").unwrap();
+        let identity =
+            ComponentStreamIdentity::new("oxide-batch.object-store-unit-test.bounded-reader")
+                .unwrap();
+        let opener = ObjectStoreReaderOpener::new(Arc::clone(&store), 1024, csv_parse);
+        let result = futures_executor::block_on(MultiResourceReaderOpener::<u64>::open(
+            &opener, &resource, 0, &identity,
+        ));
+        assert!(
+            result.is_err(),
+            "an object declared larger than max_object_bytes must be rejected"
+        );
+        assert_eq!(
+            store
+                .materialize_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the backend must never construct a buffer for an over-bound \
+             object at all, proving this is a real pre-materialization \
+             resource bound rather than post-fetch validation"
+        );
+    }
+
+    #[test]
+    fn writer_rejects_growth_past_max_object_bytes_and_allows_the_exact_boundary() {
+        let store = Arc::new(InMemoryObjectStore::new(1024));
+        let resources = ResourceSet::new(vec![ResourceIdentity::new("out").unwrap()]);
+        let identity =
+            ComponentStreamIdentity::new("oxide-batch.object-store-unit-test.bounded-writer")
+                .unwrap();
+        // Four bytes per item; a maximum of 8 bytes allows exactly two items.
+        let serialize = |item: &u8, sink: &mut dyn std::io::Write| sink.write_all(&[*item; 4]);
+        let opener = ObjectStoreWriterOpener::new(Arc::clone(&store), serialize, 8);
+        let (_source, token) = stop();
+        futures_executor::block_on(async {
+            let (writer, stream, _contract) = multi_resource_writer::<u8, _, _>(
+                resources,
+                opener,
+                identity,
+                crate::item_components::multi_resource::NoRollover,
+                RestartabilityDeclaration::Restartable,
+            )
+            .unwrap();
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            writer
+                .write(&[1], WriteContext::non_transactional(&token))
+                .await
+                .unwrap();
+            // Exactly at the boundary (8 bytes total): must still succeed.
+            writer
+                .write(&[2], WriteContext::non_transactional(&token))
+                .await
+                .unwrap();
+            // One byte past the boundary: must be rejected, and the object
+            // actually stored must remain exactly what the two successful
+            // writes produced -- proving the rejected write never reached
+            // the backend and never corrupted the accumulator.
+            let result = writer
+                .write(&[3], WriteContext::non_transactional(&token))
+                .await;
+            assert!(result.is_err(), "growth past the bound must be rejected");
+        });
+        let (bytes, _metadata) = futures_executor::block_on(store.get(&id("out"), 1024)).unwrap();
+        assert_eq!(
+            bytes,
+            vec![1, 1, 1, 1, 2, 2, 2, 2],
+            "the rejected third write must not have reached the backend, \
+             and the accumulator must remain exactly at its pre-rejection \
+             content"
+        );
+    }
+
+    #[test]
+    fn writer_stops_serializing_further_items_once_one_write_call_exceeds_the_bound() {
+        // Five items in one `write` call, three bytes each, a seven-byte
+        // bound: items 1 and 2 fit (six bytes); item 3 alone pushes the
+        // running total to nine, over the bound. Proves the wrapper checks
+        // the bound incrementally, per item, rather than serializing the
+        // whole batch unconditionally before ever checking it -- items 4
+        // and 5 must never be handed to `serialize` at all.
+        let store = Arc::new(InMemoryObjectStore::new(1024));
+        let resources = ResourceSet::new(vec![ResourceIdentity::new("out").unwrap()]);
+        let identity = ComponentStreamIdentity::new(
+            "oxide-batch.object-store-unit-test.bounded-writer-stops-early",
+        )
+        .unwrap();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted_serialize = {
+            let calls = Arc::clone(&calls);
+            move |item: &u8, sink: &mut dyn std::io::Write| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                sink.write_all(&[*item; 3])
+            }
+        };
+        let opener = ObjectStoreWriterOpener::new(Arc::clone(&store), counted_serialize, 7);
+        let (_source, token) = stop();
+        futures_executor::block_on(async {
+            let (writer, stream, _contract) = multi_resource_writer::<u8, _, _>(
+                resources,
+                opener,
+                identity,
+                crate::item_components::multi_resource::NoRollover,
+                RestartabilityDeclaration::Restartable,
+            )
+            .unwrap();
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            let result = writer
+                .write(&[1, 2, 3, 4, 5], WriteContext::non_transactional(&token))
+                .await;
+            assert!(result.is_err(), "the batch must be rejected");
+        });
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            3,
+            "serialize must be called for items 1, 2, and the offending item \
+             3, and never again after that -- items 4 and 5 must never be \
+             serialized once the running total has already exceeded the bound"
+        );
+    }
+
+    #[test]
+    fn writer_panic_during_serialize_does_not_lose_previously_accumulated_content() {
+        // `serialize` panics while writing item 2. The panic must not wipe
+        // out item 1's already-accumulated content: `TruncateOnDrop` must
+        // restore the accumulator to its pre-write length even though the
+        // unwind happens through `mem`-taken/borrowed state, not just
+        // through an explicit `Err` return.
+        let store = Arc::new(InMemoryObjectStore::new(1024));
+        let resources = ResourceSet::new(vec![ResourceIdentity::new("out").unwrap()]);
+        let identity =
+            ComponentStreamIdentity::new("oxide-batch.object-store-unit-test.panic-safety")
+                .unwrap();
+        let serialize = |item: &u64, sink: &mut dyn std::io::Write| {
+            assert!(
+                *item != 2,
+                "serializer panics on item 2, deliberately, for this test"
+            );
+            sink.write_all(format!("{item},").as_bytes())
+        };
+        let opener = ObjectStoreWriterOpener::new(Arc::clone(&store), serialize, 1024);
+        let (_source, token) = stop();
+        futures_executor::block_on(async {
+            let (writer, stream, _contract) = multi_resource_writer::<u64, _, _>(
+                resources,
+                opener,
+                identity,
+                crate::item_components::multi_resource::NoRollover,
+                RestartabilityDeclaration::Restartable,
+            )
+            .unwrap();
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            writer
+                .write(&[1], WriteContext::non_transactional(&token))
+                .await
+                .unwrap();
+
+            let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                futures_executor::block_on(
+                    writer.write(&[2], WriteContext::non_transactional(&token)),
+                )
+            }));
+            assert!(panicked.is_err(), "the panic must actually propagate here");
+
+            // Item 1's content must still be there, and a subsequent normal
+            // write must succeed and append correctly -- never observe an
+            // emptied or corrupted accumulator left behind by the panic.
+            writer
+                .write(&[3], WriteContext::non_transactional(&token))
+                .await
+                .unwrap();
+        });
+        let (bytes, _metadata) = futures_executor::block_on(store.get(&id("out"), 1024)).unwrap();
+        assert_eq!(
+            bytes,
+            b"1,3,".to_vec(),
+            "item 1 must not have been lost by the panic on item 2, and item \
+             2 itself must never appear -- the panic must have unwound \
+             before its bytes were ever appended"
+        );
+    }
+
+    #[test]
+    fn writer_serializer_failure_is_classified_as_user_component_not_invariant() {
+        // A serializer failure that has nothing to do with the sink's
+        // bound (e.g. the item itself is malformed) must be classified
+        // as a delegate/user-component failure -- policy-eligible for
+        // retry/skip -- never as `Invariant`, which is not.
+        let store = Arc::new(InMemoryObjectStore::new(1024));
+        let resources = ResourceSet::new(vec![ResourceIdentity::new("out").unwrap()]);
+        let identity = ComponentStreamIdentity::new(
+            "oxide-batch.object-store-unit-test.serializer-failure-category",
+        )
+        .unwrap();
+        let serialize = |item: &u64, sink: &mut dyn std::io::Write| {
+            if *item == 2 {
+                return Err(std::io::Error::other("item 2 is deliberately malformed"));
+            }
+            sink.write_all(format!("{item},").as_bytes())
+        };
+        let opener = ObjectStoreWriterOpener::new(Arc::clone(&store), serialize, 1024);
+        let (_source, token) = stop();
+        let category = futures_executor::block_on(async {
+            let (writer, stream, _contract) = multi_resource_writer::<u64, _, _>(
+                resources,
+                opener,
+                identity,
+                crate::item_components::multi_resource::NoRollover,
+                RestartabilityDeclaration::Restartable,
+            )
+            .unwrap();
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            let result = writer
+                .write(&[2], WriteContext::non_transactional(&token))
+                .await;
+            result
+                .expect_err("a malformed item must fail the write")
+                .category()
+        });
+        assert_eq!(
+            category,
+            FailureCategory::UserComponent,
+            "a serializer's own failure must be classified as a \
+             policy-eligible user-component failure, not as `Invariant` \
+             (which the wrapper's own resource-bound rejection uses and \
+             which is not policy-eligible for retry/skip)"
+        );
+    }
+
+    #[test]
+    fn writer_ignoring_the_sink_overflow_error_still_fails_closed() {
+        // A `serialize` that writes past the bound, gets an `Err` back from
+        // the sink, and then *ignores* it (returns `Ok(())` anyway) must
+        // still have the whole write rejected -- the sink's sticky
+        // `overflowed` flag is checked unconditionally, not only when
+        // `serialize` itself propagates the error.
+        let store = Arc::new(InMemoryObjectStore::new(1024));
+        let resources = ResourceSet::new(vec![ResourceIdentity::new("out").unwrap()]);
+        let identity = ComponentStreamIdentity::new(
+            "oxide-batch.object-store-unit-test.ignored-overflow-fails-closed",
+        )
+        .unwrap();
+        // Eight-byte bound; each item is four bytes, so a second item pushes
+        // the sink past the bound. The closure deliberately swallows the
+        // sink's `Err` and returns `Ok(())` regardless.
+        let serialize = |item: &u64, sink: &mut dyn std::io::Write| {
+            let _ = sink.write_all(&[u8::try_from(*item).unwrap(); 4]);
+            Ok(())
+        };
+        let opener = ObjectStoreWriterOpener::new(Arc::clone(&store), serialize, 8);
+        let (_source, token) = stop();
+        futures_executor::block_on(async {
+            let (writer, stream, _contract) = multi_resource_writer::<u64, _, _>(
+                resources,
+                opener,
+                identity,
+                crate::item_components::multi_resource::NoRollover,
+                RestartabilityDeclaration::Restartable,
+            )
+            .unwrap();
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            // Two items in one batch: the second alone pushes 4 -> 8 (still
+            // within bound), so extend with a third item in the same batch
+            // that would push 8 -> 12, over the bound, to exercise the
+            // ignored-overflow path within a single `write` call.
+            let result = writer
+                .write(&[1, 2, 3], WriteContext::non_transactional(&token))
+                .await;
+            assert!(
+                result.is_err(),
+                "the batch must fail even though `serialize` itself always \
+                 returns Ok"
+            );
+        });
+        // The object must never have been created at all: `put` is never
+        // reached once the sink has overflowed.
+        let missing = futures_executor::block_on(store.stat(&id("out")));
+        assert!(
+            missing.is_err(),
+            "the backend must never receive a partial object built from an \
+             ignored sink overflow"
+        );
+    }
+
+    const LARGE_OUTPUT_TEST_MAX_OBJECT_BYTES: usize = 64;
+
+    #[test]
+    fn writer_bounds_a_large_logical_output_written_via_many_small_sink_writes() {
+        // A real streaming encoder writes incrementally, many small `write`
+        // calls per item, not one large owned buffer. Proves the bound
+        // holds against that realistic usage: a logical output far larger
+        // than `max_object_bytes`, built entirely from small (one-byte)
+        // sink writes, is rejected without the candidate ever exceeding the
+        // bound and without the backend ever being called.
+        let store = Arc::new(InMemoryObjectStore::new(1_000_000));
+        let resources = ResourceSet::new(vec![ResourceIdentity::new("out").unwrap()]);
+        let identity = ComponentStreamIdentity::new(
+            "oxide-batch.object-store-unit-test.large-output-many-small-writes",
+        )
+        .unwrap();
+        // Each item writes 100 individual one-byte `write_all` calls (a
+        // stand-in for a real incremental encoder) -- 100 bytes per item,
+        // far more than `MAX_OBJECT_BYTES`, so even the *first* item alone
+        // must be rejected partway through, one byte-sized write at a time.
+        let serialize = |_item: &u64, sink: &mut dyn std::io::Write| {
+            for _ in 0..100 {
+                sink.write_all(&[0u8])?;
+            }
+            Ok(())
+        };
+        let opener = ObjectStoreWriterOpener::new(
+            Arc::clone(&store),
+            serialize,
+            LARGE_OUTPUT_TEST_MAX_OBJECT_BYTES,
+        );
+        let (_source, token) = stop();
+        futures_executor::block_on(async {
+            let (writer, stream, _contract) = multi_resource_writer::<u64, _, _>(
+                resources,
+                opener,
+                identity,
+                crate::item_components::multi_resource::NoRollover,
+                RestartabilityDeclaration::Restartable,
+            )
+            .unwrap();
+            stream
+                .open(StreamOpenContext::new(None, &token))
+                .await
+                .unwrap();
+            let result = writer
+                .write(&[1], WriteContext::non_transactional(&token))
+                .await;
+            assert!(
+                result.is_err(),
+                "a logical output far exceeding the bound, built from many \
+                 small writes, must still be rejected"
+            );
+        });
+        let missing = futures_executor::block_on(store.stat(&id("out")));
+        assert!(
+            missing.is_err(),
+            "the backend must never be called for an oversized object, no \
+             matter how many small writes built it up"
+        );
+    }
+
+    #[test]
+    fn chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content() {
+        // `writer_panic_during_serialize_does_not_lose_previously_accumulated_content`
+        // above proves the `TruncateOnDrop` guard itself, directly, via a
+        // hand-driven `catch_unwind`. This test proves the thing that
+        // actually makes that guard load-bearing: the *chunk runtime's own*
+        // panic-catch-and-retry path (`invoke_writer` classifying the panic
+        // as `WriterError::new()`/`UserComponent`, then a `FaultDecision::Retry`
+        // reinvoking the same writer instance). It drives a real
+        // `ObjectItemWriter`, constructed exactly as production code would
+        // via `ObjectStoreWriterOpener`/`MultiResourceWriterOpener`, through
+        // a real `ChunkStep`/`FaultRuntime`, with the paired
+        // `ObjectItemWriterStream` *registered* via `ChunkStep::with_item_stream`
+        // (not driven by hand): the runtime opens it, calls its `update` once
+        // per committing attempt, and hands the resulting envelope to
+        // `ChunkTransaction::commit_with_component_state`, exactly as a real
+        // adapter would receive it. The durable-checkpoint assertions below
+        // decode the envelope this test's transaction captured *from that
+        // call*, not a value obtained by calling `update` a second time by
+        // hand after the run -- the latter would only prove the writer's
+        // in-memory candidate, not what the runtime actually committed.
+        use crate::{
+            BackoffOutcome, BackoffPolicy, BackoffSleeper, BoxFuture, Checkpoint,
+            ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext, ChunkCompletionError,
+            ChunkCompletionOutcome, ChunkCounts, ChunkDeliveryMode, ChunkExecutionOutcome,
+            ChunkFaultProgress, ChunkSize, ChunkStep, ChunkTransaction, ChunkTransactionError,
+            ChunkTransactionManager, ClassifierRevision, ComponentStateEnvelope, ExecutionAttempt,
+            ExecutionContext, ExecutionCorrelation, FaultAction, FaultClassifier, FaultPhase,
+            FaultPolicy, FaultRule, FaultRuntime, InMemoryFaultState, ItemProcessor,
+            JobExecutionId, JobInstanceId, JobName, ProcessContext, ProcessOutcome, ProcessorError,
+            RetryLimit, RetryStateLimit, SkipLimit, StepExecutionId, StepName,
+        };
+        use std::collections::VecDeque;
+        use std::num::NonZeroU64;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
+
+        struct FixedReader(VecDeque<u64>);
+        impl ItemReader<u64> for FixedReader {
+            async fn read(
+                &mut self,
+                _context: ReadContext<'_>,
+            ) -> Result<ReadOutcome<u64>, ReaderError> {
+                Ok(self
+                    .0
+                    .pop_front()
+                    .map_or(ReadOutcome::EndOfInput, ReadOutcome::Item))
+            }
+        }
+
+        struct Identity;
+        impl ItemProcessor<u64, u64> for Identity {
+            async fn process(
+                &self,
+                item: &u64,
+                _context: ProcessContext<'_>,
+            ) -> Result<ProcessOutcome<u64>, ProcessorError> {
+                Ok(ProcessOutcome::Item(*item))
+            }
+        }
+
+        struct NoWaitSleeper;
+        impl BackoffSleeper for NoWaitSleeper {
+            fn sleep<'a>(
+                &'a self,
+                _delay: Duration,
+                _stop: &'a crate::StopToken,
+            ) -> BoxFuture<'a, BackoffOutcome> {
+                Box::pin(async { BackoffOutcome::Elapsed })
+            }
+        }
+
+        // Captures the exact `component_state` slice the runtime hands to
+        // `commit_with_component_state` on the most recent successful
+        // commit -- overwritten (not accumulated) each time, so what
+        // remains after the run is the *last durably committed* envelope,
+        // matching what a real adapter would have persisted.
+        struct NoopTransaction {
+            captured: Arc<Mutex<Vec<ComponentStateEnvelope>>>,
+        }
+        impl ChunkTransaction for NoopTransaction {
+            fn business_transaction(&mut self) -> Option<&mut dyn crate::BusinessTransaction> {
+                None
+            }
+
+            fn commit(
+                &mut self,
+                counts: ChunkCounts,
+                fault: ChunkFaultProgress,
+            ) -> BoxFuture<'_, Result<ChunkCommitReceipt, ChunkTransactionError>> {
+                self.commit_with_component_state(counts, fault, &[])
+            }
+
+            fn commit_with_component_state<'a>(
+                &'a mut self,
+                _counts: ChunkCounts,
+                _fault: ChunkFaultProgress,
+                component_state: &'a [ComponentStateEnvelope],
+            ) -> BoxFuture<'a, Result<ChunkCommitReceipt, ChunkTransactionError>> {
+                *self.captured.lock().unwrap_or_else(PoisonError::into_inner) =
+                    component_state.to_vec();
+                Box::pin(async {
+                    let checkpoint = Checkpoint::from_json(
+                        br#"{"format":"oxide-batch.checkpoint","format_version":1,"schema":"test.position","schema_version":1,"payload":{"position":0}}"#,
+                        StateLimits::default(),
+                    )
+                    .expect("checkpoint fixture must be valid");
+                    let context = ExecutionContext::from_json(
+                        br#"{"format":"oxide-batch.execution-context","format_version":1,"schema":"test.context","schema_version":1,"payload":{}}"#,
+                        StateLimits::default(),
+                    )
+                    .expect("context fixture must be valid");
+                    Ok(ChunkCommitReceipt::new(checkpoint, context))
+                })
+            }
+
+            fn rollback(&mut self) -> BoxFuture<'_, Result<(), ChunkTransactionError>> {
+                Box::pin(async { Ok(()) })
+            }
+        }
+
+        struct NoopTransactions {
+            captured: Arc<Mutex<Vec<ComponentStateEnvelope>>>,
+        }
+        impl ChunkTransactionManager for NoopTransactions {
+            fn begin(
+                &self,
+            ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>>
+            {
+                let transaction = NoopTransaction {
+                    captured: Arc::clone(&self.captured),
+                };
+                Box::pin(async move { Ok(Box::new(transaction) as Box<dyn ChunkTransaction>) })
+            }
+        }
+
+        struct NoopCompletion;
+        impl ChunkCompletion for NoopCompletion {
+            fn after_commit<'a>(
+                &'a self,
+                _context: ChunkCompletionContext<'a>,
+            ) -> BoxFuture<'a, Result<ChunkCompletionOutcome, ChunkCompletionError>> {
+                Box::pin(async { Ok(ChunkCompletionOutcome::Acknowledged) })
+            }
+        }
+
+        // The real object-store writer, constructed exactly as production
+        // code would via `ObjectStoreWriterOpener`/`MultiResourceWriterOpener`.
+        let store = Arc::new(InMemoryObjectStore::new(1024));
+        let panicked_once = Arc::new(AtomicBool::new(false));
+        let panicked_once_for_serialize = Arc::clone(&panicked_once);
+        let serialize = move |item: &u64, sink: &mut dyn std::io::Write| {
+            let first_attempt_on_item_two =
+                *item == 2 && !panicked_once_for_serialize.swap(true, Ordering::SeqCst);
+            assert!(
+                !first_attempt_on_item_two,
+                "serializer panics on item 2's first attempt, deliberately, for this test"
+            );
+            sink.write_all(format!("{item},").as_bytes())
+        };
+        let opener = ObjectStoreWriterOpener::new(Arc::clone(&store), serialize, 1024);
+        let resource = ResourceIdentity::new("out").unwrap();
+        let identity = ComponentStreamIdentity::new(
+            "oxide-batch.object-store-unit-test.panic-retry-integration",
+        )
+        .unwrap();
+        let (_source, token) = stop();
+        let (writer, write_stream, contract) = futures_executor::block_on(
+            MultiResourceWriterOpener::<u64>::open(&opener, &resource, 0, &identity),
+        )
+        .unwrap();
+
+        let committed_component_state: Arc<Mutex<Vec<ComponentStateEnvelope>>> =
+            Arc::new(Mutex::new(Vec::new()));
+
+        let mut step = ChunkStep::new(
+            StepName::new("object_store_panic_retry_step").unwrap(),
+            ChunkSize::new(1).unwrap(),
+            FixedReader(VecDeque::from([1_u64, 2_u64])),
+            Identity,
+            writer,
+            Arc::new(NoopTransactions {
+                captured: Arc::clone(&committed_component_state),
+            }),
+            Arc::new(NoopCompletion),
+        )
+        .with_item_stream(identity, write_stream, contract)
+        .with_fault_runtime(
+            FaultRuntime::new(
+                FaultPolicy::new(
+                    FaultClassifier::new(
+                        ClassifierRevision::new("panic_retry_test_v1").unwrap(),
+                        [FaultRule::new(
+                            FaultPhase::Write,
+                            FailureCategory::UserComponent,
+                            FaultAction::retry(),
+                        )
+                        .unwrap()],
+                    )
+                    .unwrap(),
+                    RetryLimit::new(1).unwrap(),
+                    RetryStateLimit::new(4).unwrap(),
+                    SkipLimit::new(0),
+                    BackoffPolicy::none(),
+                )
+                .unwrap(),
+                Arc::new(NoWaitSleeper),
+                Arc::new(InMemoryFaultState::new(RetryStateLimit::new(4).unwrap())),
+                ChunkDeliveryMode::AtLeastOnce,
+            )
+            .unwrap(),
+        );
+
+        let correlation = ExecutionCorrelation::new(
+            JobName::new("object_store_panic_retry_job").unwrap(),
+            JobInstanceId::new(1).unwrap(),
+            JobExecutionId::new(1).unwrap(),
+            ExecutionAttempt::new(NonZeroU64::new(1).unwrap()),
+            StepName::new("object_store_panic_retry_step").unwrap(),
+            StepExecutionId::new(1).unwrap(),
+            ExecutionAttempt::new(NonZeroU64::new(1).unwrap()),
+        );
+
+        let report = futures_executor::block_on(step.execute(&correlation, &token));
+
+        assert_eq!(report.outcome(), ChunkExecutionOutcome::Completed);
+        assert_eq!(
+            report.retry_counts().write(),
+            1,
+            "the panic on item 2's chunk must have been observed and retried \
+             exactly once by the chunk runtime"
+        );
+        assert_eq!(report.committed_counts().written().get(), 2);
+
+        let (bytes, metadata) = futures_executor::block_on(store.get(&id("out"), 1024)).unwrap();
+        assert_eq!(
+            bytes,
+            b"1,2,".to_vec(),
+            "item 1's prior committed content must survive the panic on \
+             item 2's chunk, and item 2 must appear exactly once after the \
+             retry -- never duplicated, never dropped"
+        );
+
+        // The durably committed checkpoint, exactly as the runtime handed
+        // it to `commit_with_component_state` on the last successful
+        // commit -- not a value obtained by calling `update` by hand after
+        // the run.
+        let captured = committed_component_state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        assert_eq!(
+            captured.len(),
+            1,
+            "the one registered stream must produce exactly one committed \
+             envelope per commit"
+        );
+        let restored: ObjectWritePosition =
+            captured[0].decode(&object_write_position_codec()).unwrap();
+        drop(captured);
+        assert_eq!(
+            restored.committed_item_count, 2,
+            "the durably committed checkpoint must reflect both items, not \
+             just the one written before the panic"
+        );
+        assert_eq!(
+            restored.version_token.as_deref(),
+            metadata.version_token().map(ObjectVersionToken::as_str),
+            "the committed checkpoint's recorded version token must match \
+             the object's actual, final version after the retried write"
+        );
     }
 }

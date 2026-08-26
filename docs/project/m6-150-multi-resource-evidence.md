@@ -1,6 +1,6 @@
 # M6 Multi-Resource and Object-Store Basics Evidence
 
-**State:** Complete on merge
+**State:** Complete on merge; corrected by #177 after post-merge strict review
 
 **Issue:** [#150](https://github.com/luceat-lux-vestra/oxide-batch/issues/150)
 
@@ -11,11 +11,268 @@ capability basics, deliberately excluded from #146's scope, under the
 composition rules closed by
 [M6 Gate E](m6-design-gate-evidence.md#gate-e--composition-semantics) applied
 to a resource set instead of a fixed, statically declared delegate list. It
-does not reopen ADR-0008, Gate C/D/E, or the `ItemStream` contract (#144); it
 does not implement S3/Azure/GCS SDK integrations, credential management,
 multipart certification, or provider-specific retry/consistency
 certification (all M9); and it does not touch #151 (listeners), #152
 (configuration ergonomics), or #153 (M6 exit campaign).
+
+## Corrective update (#177)
+
+Independent post-merge strict review of the original #176 merge found three
+confirmed HIGH-severity defects that green final-head CI/evidence had not
+caught. #150 was reopened; #177 tracked the correction; this document, the
+production modules it describes, and the ledger dispositions below reflect
+the corrected state.
+
+1. **Nested `ItemStream` lifecycle was violated at resource transitions.**
+   `MultiResourceReader`/`MultiResourceWriter` opened the next delegate (or,
+   for the reader, discarded the last one) without ever calling the outgoing
+   delegate's `ItemStream::close`. Fixed by closing every retiring delegate
+   at its own resource boundary, before the next resource is opened -- this
+   *does* touch the `ItemStream` contract (Gate C), additively: a new
+   [`StreamRuntimeOutcome::ResourceBoundary`](../../crates/oxide-batch/src/item_stream.rs)
+   variant reports "this nested resource reached its own boundary" as a
+   distinct, honest event from the enclosing step attempt's terminal
+   commit/failure/stop/unknown outcome, so a resource-boundary close can
+   never be mistaken for -- or misreported as -- `Committed`. See the
+   "Nested resource lifecycle" section of `multi_resource.rs`'s module docs.
+2. **`max_object_bytes` was post-materialization validation, not a real
+   resource bound.** The reader fetched the whole object into a `Vec<u8>`
+   first and only then compared its length; the writer had no bound at all
+   and cloned its accumulator twice per `write`. Fixed by threading an
+   explicit `max_bytes`/`max_object_bytes` bound into
+   `ObjectStoreCapability::get` and `ObjectStoreWriterOpener`/
+   `ObjectItemWriter`, enforced before allocation proportional to an
+   oversized object/candidate, and by replacing the writer's double clone
+   with one buffer reused via `mem::take`/`truncate`.
+3. **Nested delegate namespace was not preserved or validated**, so a
+   delegate that reported the wrong namespace would have its candidate
+   silently normalized into the multi-resource wrapper's own expected
+   identity instead of being rejected, bypassing the core runtime's
+   fail-closed namespace-mismatch invariant. Fixed by storing the delegate's
+   reported namespace as a durable column and rejecting a mismatch, fail
+   closed, both when the outer candidate is produced (`ItemStream::update`)
+   and independently again on restore (`ItemStream::open`).
+
+None of these three findings changed the module's public API shape except
+where the fix required it: `ObjectStoreCapability::get` gained a `max_bytes`
+parameter, `ObjectStoreCapability::put` now borrows its bytes instead of
+consuming them, and `ObjectStoreWriterOpener::new` gained a
+`max_object_bytes` parameter. `StreamRuntimeOutcome` gained the additive
+`ResourceBoundary` variant. See the scenario/test tables below for the
+regression evidence added for each finding.
+
+### Second round: independent strict review of the #177 corrective PR itself
+
+A second independent review, of #177's own corrective diff (before it was
+merged), found four further defects. All four are fixed in the same PR;
+none was found by CI/local tests, only by re-reading the correction itself
+against the same standard applied to #176.
+
+4. **Lifecycle "exactly once" was still not exactly once.** The first pass
+   made a boundary `close` failure return an error, but left the delegate's
+   state untouched -- a retried `read`/`write` re-observed the same
+   exhausted/rollover-due condition and called `close` on the *same*
+   delegate instance a second time. `ItemStream::close` carries no
+   idempotency/atomicity guarantee, so a delegate that performs an
+   irreversible side effect (flush, finalize, release) before returning an
+   error could be double-finalized/double-released by that retry. Fixed by
+   never retrying a failed boundary `close`: the attempt is marked as made
+   (successful or not) exactly once, and on failure the reader/writer
+   instance is poisoned -- every later call returns the same failure
+   without touching any delegate again. Recovery is a fresh step attempt (a
+   new instance opened from the durable checkpoint, which the failed close
+   never advanced past), never a retry on the poisoned instance.
+5. **The object-store writer bound still was not a real pre-materialization
+   bound.** The first pass checked the *sum* of all items' serialized
+   lengths against `max_object_bytes`, but computed that sum by calling
+   `serialize` on every item in the batch first, collecting a
+   `Vec<Vec<u8>>` -- so one adversarial item (or a large batch) could still
+   force allocation proportional to the oversized total before the bound
+   was ever checked, and the "exactly one owned buffer" claim was false
+   while `serialized` and the accumulator candidate coexisted. Fixed by
+   checking the running total after each item, one at a time, and never
+   calling `serialize` on any item after the one that first exceeds the
+   bound. The residual, inherent limit -- a single item's own `serialize`
+   call can itself allocate arbitrarily, because `Fn(&O) -> Vec<u8>` has no
+   size hint -- is now stated plainly rather than implied away.
+6. **The wrapper laundered delegate error categories.** Multiple call sites
+   received a delegate's own typed error (carrying a real
+   `FailureCategory` such as `Invariant` or `UnsupportedCapability`, e.g.
+   from `MultiResourceOpenError`, `StreamOpenError`, `StreamUpdateError`,
+   `StreamCloseError`, `ObjectStoreError`) and discarded it via
+   `map_err(|_| ...::new())`, silently downgrading it to the generic
+   `UserComponent` default. Since a wrapper must not weaken or strengthen a
+   delegate's own failure classification (composition taxonomy), and
+   classification can affect retry/skip/fail policy, every such site in
+   both `multi_resource.rs`'s reader/writer paths and `object_store.rs`'s
+   bridge was corrected to preserve the delegate's `category()`. Sites with
+   no delegate-typed source (durable-state JSON decode, envelope
+   reconstruction) are unaffected -- there is no category to launder there.
+7. **The durable schema changed shape without a version bump.** Making the
+   embedded delegate namespace a required column (finding 3, above) changed
+   what `oxide-batch.multi-resource-position` version 1 means, but the
+   schema's `current_version()` stayed `1`. A durable record #176 actually
+   produced (no delegate namespace) would now fail `decode` as malformed
+   rather than being explicitly, legibly rejected as an unsupported
+   version -- and patching a namespace onto an old record to make it decode
+   would recreate the exact laundering defect finding 3 fixed. Fixed by
+   bumping `current_version()` to `2` with no declared upgrade edge from
+   `1`, so the framework's shared upgrade-chain walk
+   (`crate::state::upgrade_schema_chain`) rejects a recorded version 1 with
+   `NoUpgradePath` before any codec's `decode` runs on it -- a deliberate,
+   fail-closed hard boundary, not a migration, proven by
+   `stale_v1_delegate_record_without_a_namespace_fails_closed_on_restore`.
+
+### Third round: independent strict review of the second-round corrections
+
+A third review found two more defects, both in the second round's own fixes
+(findings 4 and 6, above) rather than in the original #176 code:
+
+8. **The object-store writer bound was still not a real pre-materialization
+   bound.** Finding 5's fix stopped serializing further *items* after the
+   bound was exceeded, but each item was still serialized by
+   `serialize: Fn(&O) -> Vec<u8>` -- a single adversarial item's own
+   `serialize` call could still allocate an arbitrarily large owned buffer
+   (e.g. 1 GB against a 1 MB `max_object_bytes`) before its length was ever
+   checked. Fixed by changing `serialize`'s signature to write into a
+   caller-supplied sink (`Fn(&O, &mut dyn std::io::Write) -> io::Result<()>`)
+   backed by a new [`BoundedSink`](../../crates/oxide-batch/src/item_components/object_store.rs)
+   that refuses any write which would exceed the remaining budget *before*
+   copying a byte -- a real, incremental, pre-materialization bound at the
+   wrapper's own accumulation boundary. The one residual, inherent limit
+   (a `serialize` implementation that builds one large buffer internally
+   before ever calling the sink has already paid that allocation) is
+   documented on `ObjectStoreWriterOpener::new`, not hidden: no sink-based
+   interface can bound what arbitrary caller code allocates before handing
+   bytes to it.
+9. **Finding 4's poisoning fix introduced a concurrent-write race.** The
+   writer kept the active resource and the poison flag behind two separate
+   locks. Two concurrent `write` calls could both pass the poison check
+   before either acquired the active-resource lock; if the first then
+   failed its boundary close and poisoned the *separate* lock, the second
+   -- already past its own poison check -- could still roll over into the
+   next resource, violating the documented `Send + Sync` /
+   fail-closed guarantee (undetectable by a sequential test). Fixed by
+   unifying the active resource and the poison state into one `WriterState`
+   enum behind the *one* lock `MultiResourceWriter` already held, so
+   deciding to poison and committing that decision is the same atomic
+   transition a concurrent `write` cannot observe half of. Proven by
+   `concurrent_writes_never_race_the_poisoning_transition`, which manually
+   polls two `write` futures with a no-op waker (deterministic, not
+   timing-dependent) to force exactly the interleaving the race required
+   and show it can no longer happen.
+
+### Fourth round: independent strict review of the third round's `serialize` API
+
+A fourth review found three more defects, all in the third round's own
+`BoundedSink`/`serialize`-as-sink redesign:
+
+10. **A panicking `serialize` call could lose previously-accumulated
+    content, not just the item it panicked on.** `write` moved the
+    accumulator's buffer out with `mem::take` and grew it in place; if
+    `serialize` panicked partway through an item, the panic unwound through
+    the growing buffer, and because the prior content had been moved (never
+    cloned) into it, the accumulator was left holding whatever `mem::take`
+    left behind (empty) once the runtime's own panic-catching machinery
+    caught it and retried the same writer instance. Fixed by a
+    `TruncateOnDrop` guard that borrows the accumulator's buffer in place
+    (no `mem::take` at all now) and, unless explicitly disarmed after a
+    successful `put`, truncates it back to its pre-write length on drop --
+    including drops caused by an unwinding panic, not only explicit early
+    returns. Proven by
+    `writer_panic_during_serialize_does_not_lose_previously_accumulated_content`.
+11. **A serializer's own failure was misclassified as `Invariant`.** Every
+    `Err` from the `serialize` callback -- whether the sink refused a write
+    over budget, or the serializer failed for its own reasons (malformed
+    input, an internal encoding error) -- was reported as
+    `FailureCategory::Invariant`. `Invariant` is not policy-eligible for
+    retry/skip; a delegate/user-component failure is, and a serializer's own
+    failure is exactly that. Fixed by distinguishing the two: a sink
+    rejection is still `Invariant` (a real resource-bound violation), but
+    any other `Err` from `serialize` is now `FailureCategory::UserComponent`
+    (via `WriterError::new()`'s default). Proven by
+    `writer_serializer_failure_is_classified_as_user_component_not_invariant`.
+12. **A `serialize` that ignored the sink's overflow `Err` could still
+    reach the backend with a partial item.** The sink's rejection was only
+    ever observed if `serialize` propagated the `Err` it received; a
+    `serialize` that swallowed the error and returned `Ok(())` anyway would
+    let `write` proceed to `put` a candidate built from a silently-truncated
+    write, turning what should have been a hard resource-limit rejection
+    into a partial write reaching the backend. Fixed by making
+    `BoundedSink::overflowed` sticky and checking it unconditionally after
+    every `serialize` call, regardless of what `serialize` itself returned.
+    Proven by `writer_ignoring_the_sink_overflow_error_still_fails_closed`.
+
+Also added, per this round's request for allocator/resource evidence beyond
+small fixed-size cases:
+`writer_bounds_a_large_logical_output_written_via_many_small_sink_writes`,
+which builds a logical output far larger than `max_object_bytes` entirely
+from many small (one-byte) sink writes -- the shape a real incremental
+encoder would actually produce -- and proves the candidate never crosses the
+bound and the backend is never called.
+
+### Fifth round: independent strict review of the fourth round's production fix
+
+A fifth review found the fourth round's production fixes (panic safety,
+serializer classification, sticky sink overflow) materially correct, but
+raised two evidence/reconciliation gaps rather than a new production defect:
+
+13. **This evidence document described a design the final implementation no
+    longer has.** The Allocation/performance and Whole-object buffering
+    sections still said `ObjectItemWriter::write` moves the accumulator out
+    with `mem::take` and computes a candidate length before touching the
+    existing buffer -- both true of an earlier revision, neither true of the
+    final in-place-plus-`TruncateOnDrop` design. Fixed by rewriting both
+    sections to describe the final behavior; the "Fourth round" narrative
+    above is left as-is because it correctly describes what that round
+    changed *from* and *to*, not a final-state claim.
+14. **The previously-required panic/retry regression proved the guard, not
+    the runtime path that makes the guard load-bearing.**
+    `writer_panic_during_serialize_does_not_lose_previously_accumulated_content`
+    drives the panic through a direct `catch_unwind`, which proves
+    `TruncateOnDrop` itself but not that the chunk runtime's own
+    `invoke_writer` panic-catch and `FaultDecision::Retry` reinvoke the same
+    writer instance correctly end to end. Fixed by adding
+    `chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content`,
+    which drives a real `ObjectItemWriter` (constructed via
+    `ObjectStoreWriterOpener`/`MultiResourceWriterOpener`, exactly as
+    production code would) through a real `ChunkStep`/`FaultRuntime`: a
+    first chunk commits item 1, a second chunk's `serialize` panics once on
+    item 2, the runtime observes and retries, and the test asserts the final
+    object bytes (`"1,2,"`, not `"2,"` or `"1,2,2,"`), the retry count, and
+    the committed item count. See the sixth round below for a correction to
+    how this test observed the committed checkpoint.
+
+### Sixth round: independent strict review of the fifth round's new regression
+
+A sixth review found the fifth round's new integration regression itself
+unsound as durable-checkpoint evidence, though the production code and the
+object-bytes/retry-count assertions were correct:
+
+15. **The "committed checkpoint" the test asserted on was never actually
+    committed.** The test never registered the paired
+    `ObjectItemWriterStream` with `ChunkStep::with_item_stream`, so the
+    runtime had no registered stream to call `update` on or to hand to
+    `ChunkTransaction::commit_with_component_state` -- the test's
+    `NoopTransaction` implemented only the base `commit`, which the
+    trait's default `commit_with_component_state` accepts unconditionally
+    only because `component_state` was always empty for an unregistered
+    stream. The item-count/version-token assertions then decoded an
+    envelope obtained by calling `ObjectItemWriterStream::update` *by hand*
+    after the run -- the writer's in-memory candidate state, not anything
+    the runtime had committed. Fixed by registering `write_stream` via
+    `with_item_stream` (the runtime now opens it and calls `update` once
+    per committing attempt, exactly as production code exercises it), and
+    by implementing `commit_with_component_state` on the test's transaction
+    to capture the `component_state` slice the runtime actually hands it on
+    each successful commit (overwritten, not accumulated, so what survives
+    the run is the *last* durably committed envelope). The item-count and
+    version-token assertions now decode that captured envelope instead of a
+    hand-driven `update` call; a test-only assertion that exactly one
+    envelope was captured (`captured.len() == 1`) makes the dependency on
+    registration explicit and catches a future regression that silently
+    drops it.
 
 ## Audit performed before implementation
 
@@ -36,7 +293,10 @@ following was confirmed present and reused rather than rebuilt:
 
 No production defect was found in existing runtime/state/transaction code
 during this audit or implementation; the stop condition in #150's own
-instructions was never triggered.
+instructions was never triggered. (This is about the pre-existing runtime
+this PR built on top of, not the new code the PR itself introduced --
+independent post-merge review of the *new* code found three defects; see
+"Corrective update (#177)" above.)
 
 ## Component families delivered
 
@@ -83,7 +343,11 @@ produces carries:
   `{ resource_index: usize, offset: u64 }` position (explicitly rejected by
   #150's own instructions) was never implemented.
 - the current resource's ordinal index.
-- the current resource's own delegate position, embedded verbatim.
+- the current resource's own delegate position, embedded verbatim, including
+  its namespace. The namespace is validated -- not merely assumed -- against
+  the identity the multi-resource opener assigned that delegate, both when
+  the outer candidate is produced and again independently on restore: see
+  "Corrective update (#177)" above.
 - **the writer's current-resource batch count** (`resource_batches_written`,
   unused/always `0` on the reader path). An earlier draft kept this count
   in memory only, which reset it to `0` on every restart and let
@@ -137,9 +401,16 @@ progress -- keeping the payload small regardless of resource-set size.
 - **Failure semantics**: a failure while opening or reading/writing resource
   N does not roll over to resource N+1 -- the same delegate/transition is
   retried at the same resource on the framework's own retry contract.
-- **Close**: the currently active resource's delegate stream is closed
-  through the paired stream's `close`; resources already advanced past were
-  never left open.
+- **Close**: every delegate that opened successfully is closed exactly once
+  -- a resource that retires mid-attempt (a reader delegate exhausting, or a
+  writer delegate rolling over) is closed right there, with
+  `StreamRuntimeOutcome::ResourceBoundary` (never `Committed`, since the
+  enclosing step attempt has not reached its own terminal outcome yet); the
+  paired stream's own `close` closes whichever resource, if any, is still
+  active once the step attempt's real terminal outcome is known, and skips a
+  resource already retired at a boundary rather than closing it a second
+  time. A close failure at a boundary is propagated as a read/write error
+  rather than silently advancing to the next resource.
 - **Errors**: `MultiResourceOpenError`/`ObjectStoreError` carry only a
   resource ordinal (or nothing) and a stable `FailureCategory` -- never the
   underlying I/O error's payload, path, or message, per this crate's
@@ -157,6 +428,12 @@ progress -- keeping the payload small regardless of resource-set size.
 | Resource-set/order changed since the committed checkpoint -> reject | `resource_set_revision_mismatch_on_restart_is_rejected` |
 | Resource open failure does not advance past the failure point; a retry re-hits the same transition | `resource_open_failure_does_not_advance_past_the_failure_point` |
 | `ResourceIdentity` construction refuses one byte past its ceiling, empty input, and control characters | `resource_identity_rejects_one_byte_past_its_ceiling`, `resource_identity_rejects_empty_and_control_characters` |
+| **(#177)** Intermediate and final delegates each open exactly once and close exactly once, in order, with `ResourceBoundary` | `reader_closes_each_delegate_exactly_once_with_resource_boundary_outcome_in_order` |
+| **(#177)** A boundary close failure is propagated, the checkpoint does not advance past it, and the reader is poisoned rather than retrying the same failed close | `reader_resource_boundary_close_failure_poisons_the_reader_without_advancing_or_retrying` |
+| **(#177)** The outer terminal close does not re-close a delegate already retired at a boundary | `outer_terminal_close_does_not_double_close_a_reader_delegate_already_retired_at_a_boundary` |
+| **(#177)** A delegate reporting the wrong namespace fails the outer `update` closed | `reader_update_fails_closed_when_delegate_reports_the_wrong_namespace` |
+| **(#177)** A hand-crafted durable record with a mismatched delegate namespace fails `open` closed on restore | `reader_open_fails_closed_on_a_hand_crafted_mismatched_namespace_record` |
+| **(#177)** A stale schema-version-1 durable record (pre-#177, no delegate namespace) fails `open` closed rather than being migrated or accepted | `stale_v1_delegate_record_without_a_namespace_fails_closed_on_restore` |
 
 ### Writer (`multi_resource.rs`, `#[cfg(test)]`)
 
@@ -166,6 +443,11 @@ progress -- keeping the payload small regardless of resource-set size.
 | Restart mid-resource resumes the delegate's committed position, not resource start, and does not roll over early | `writer_restart_mid_resource_resumes_committed_position` |
 | Stale resource-set revision rejected on writer restart | `stale_resource_set_revision_is_rejected_on_writer_restart` |
 | The rollover batch count survives a restart, so `BatchCountRollover`'s cap holds across a crash rather than resetting to 0 | `rollover_counter_survives_restart_and_still_caps_batches_per_resource` |
+| **(#177)** Rollover closes the outgoing delegate exactly once, with `ResourceBoundary`, before opening the next resource | `writer_rollover_closes_outgoing_delegate_exactly_once_with_resource_boundary_outcome` |
+| **(#177)** A boundary close failure is propagated, the write never reaches the next resource, the checkpoint does not advance, and the writer is poisoned rather than retrying the same failed close | `writer_resource_boundary_close_failure_poisons_the_writer_without_rolling_over_or_retrying` |
+| **(#177)** A concurrent `write` can never observe a stale pre-poisoning state or roll over after another `write` has poisoned the writer (deterministic manual-poll evidence, not timing-dependent) | `concurrent_writes_never_race_the_poisoning_transition` |
+| **(#177)** The outer terminal close does not re-close a delegate already retired at a boundary | `outer_terminal_close_does_not_double_close_a_writer_delegate_already_retired_at_a_boundary` |
+| **(#177)** A delegate reporting the wrong namespace fails the outer `update` closed | `writer_update_fails_closed_when_delegate_reports_the_wrong_namespace` |
 
 ### #146 residual composition audit (`multi_resource.rs`, `#[cfg(test)]`)
 
@@ -194,6 +476,16 @@ was needed.
 | Reader restart rejects a replaced object (version-token mismatch) rather than resuming against new content | `reader_restart_rejects_replaced_object` |
 | Reader/writer restart over a backend with no stable version identity (both sides `None`) fails closed rather than reading "no proof either time" as a match | `reader_restart_over_a_no_version_backend_fails_closed_rather_than_matching_none_to_none`, `writer_restart_over_a_no_version_backend_fails_closed_rather_than_matching_none_to_none` |
 | Writer roundtrip through `MultiResourceWriter`: whole-object `PUT` accumulation across multiple `write` calls | `writer_roundtrip_through_multi_resource_writer_accumulates_and_puts` |
+| **(#177)** `get` rejects an object over the caller's `max_bytes` at the exact boundary vs. one byte over | `get_bounded_by_caller_supplied_max_bytes_without_materializing_the_oversized_object` |
+| **(#177)** The reader opener rejects an oversized object without the backend ever materializing a buffer for it (mock backend that structurally cannot hand back over-bound content) | `reader_opener_rejects_an_oversized_object_without_ever_materializing_it` |
+| **(#177)** The writer accumulator rejects growth past `max_object_bytes` before touching the existing buffer, and allows the exact boundary | `writer_rejects_growth_past_max_object_bytes_and_allows_the_exact_boundary` |
+| **(#177)** A batch that crosses the bound mid-batch stops calling `serialize` on every item after the one that first exceeds it | `writer_stops_serializing_further_items_once_one_write_call_exceeds_the_bound` |
+| **(#177, third round)** `serialize` writes into a `BoundedSink` that refuses a write before copying a byte once it would exceed the bound, superseding the item-count-only check above with a true pre-materialization bound | covered by the tests above, now exercised through the sink; see `BoundedSink`'s own doc comment for the residual limit |
+| **(#177, fourth round)** A panicking `serialize` call does not lose previously-accumulated content | `writer_panic_during_serialize_does_not_lose_previously_accumulated_content` |
+| **(#177, fourth round)** A serializer's own failure is classified as a policy-eligible user-component failure, not `Invariant` | `writer_serializer_failure_is_classified_as_user_component_not_invariant` |
+| **(#177, fourth round)** A `serialize` that ignores the sink's overflow `Err` still fails closed and never reaches the backend | `writer_ignoring_the_sink_overflow_error_still_fails_closed` |
+| **(#177, fourth round)** A logical output far exceeding the bound, built from many small sink writes (a realistic incremental encoder shape), is rejected without the candidate crossing the bound or the backend ever being called | `writer_bounds_a_large_logical_output_written_via_many_small_sink_writes` |
+| **(#177, review of the fourth round; corrected in the sixth round)** A real `ChunkStep`/`FaultRuntime`, with the paired `ItemStream` registered via `with_item_stream`, observes a panic from `serialize` and retries the same writer instance: prior committed content survives, the retried item succeeds without duplication or loss, the final object bytes are correct, and the *durably committed* checkpoint (captured from `ChunkTransaction::commit_with_component_state`, not a hand-driven `update` call) reflects the correct item count and version token | `chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content` |
 
 Cancellation is honored by construction (`ObjectItemWriter::write` and
 `MultiResourceWriter::write` both check `context.stop_token()` before doing
@@ -243,9 +535,20 @@ Both object-store bridges buffer a whole object in memory:
 items from it; `ObjectStoreWriterOpener`'s accumulator holds everything
 written to the current object so far, and reissues the full object on every
 `ItemWriter::write` call (object-store `PUT` semantics are whole-object, not
-append). This is bounded by a caller-supplied `max_object_bytes`, never
-unbounded, but it is not streaming/multipart -- that stays M9, per #150's own
-scope note.
+append). This is bounded by a caller-supplied `max_object_bytes` as a real
+resource bound: `ObjectStoreCapability::get` takes an explicit `max_bytes`
+and must reject an oversized object before delivering (or, for a backend
+that must materialize to know the length, cloning) content beyond it --
+`InMemoryObjectStore` checks the stored length before cloning, never after;
+the writer extends its existing accumulator in place through a `BoundedSink`
+that checks each write against the remaining budget *before* copying a byte
+into it, and a `TruncateOnDrop` guard restores the accumulator to its
+pre-write length on any rejection, serializer failure, or panic unwinding out
+of `serialize` -- never after allocating a candidate proportional to an
+oversized write. It is not streaming/multipart -- that stays M9, per #150's
+own scope note. (Before #177's correction, the reader fetched the whole
+object unconditionally and only compared its length afterward, and the
+writer had no bound at all -- see "Corrective update (#177)" above.)
 
 `ObjectItemWriter`'s rustdoc documents its one known limitation directly: a
 crash between a successful `put` and the runtime's own durable commit leaves
@@ -272,7 +575,15 @@ whole delegate `write` call on every batch, not only at a rollover
 transition, so that the rollover decision and the write it gates stay one
 atomic unit even under concurrent calls (the chunk runtime never actually
 calls `write` concurrently on one writer instance, so this holds no
-contention in practice; see the type's own rustdoc).
+contention in practice; see the type's own rustdoc). `ObjectItemWriter::write`
+(#177) builds its `put` candidate with exactly one owned buffer, reused across
+calls -- the accumulator is never moved or cloned, only mutated in place
+behind a `TruncateOnDrop` guard, and handed to `put` by reference. The guard
+disarms only after a successful `put`; any early return, rejected write, or a
+panic unwinding out of the caller-supplied `serialize` truncates the buffer
+back to its length from before that call, so a failure never loses content a
+prior, already-committed call had accumulated -- rather than the two full
+clones the pre-#177 implementation performed on every write.
 
 ## Reproduction
 
