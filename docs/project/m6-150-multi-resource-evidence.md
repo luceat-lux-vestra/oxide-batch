@@ -240,10 +240,39 @@ raised two evidence/reconciliation gaps rather than a new production defect:
     production code would) through a real `ChunkStep`/`FaultRuntime`: a
     first chunk commits item 1, a second chunk's `serialize` panics once on
     item 2, the runtime observes and retries, and the test asserts the final
-    object bytes (`"1,2,"`, not `"2,"` or `"1,2,2,"`), the retry count, the
-    committed item count, and the writer's own committed checkpoint
-    (`ObjectWritePosition`, decoded from `ObjectItemWriterStream::update`).
-    This test fails against the pre-fourth-round `mem::take` implementation.
+    object bytes (`"1,2,"`, not `"2,"` or `"1,2,2,"`), the retry count, and
+    the committed item count. See the sixth round below for a correction to
+    how this test observed the committed checkpoint.
+
+### Sixth round: independent strict review of the fifth round's new regression
+
+A sixth review found the fifth round's new integration regression itself
+unsound as durable-checkpoint evidence, though the production code and the
+object-bytes/retry-count assertions were correct:
+
+15. **The "committed checkpoint" the test asserted on was never actually
+    committed.** The test never registered the paired
+    `ObjectItemWriterStream` with `ChunkStep::with_item_stream`, so the
+    runtime had no registered stream to call `update` on or to hand to
+    `ChunkTransaction::commit_with_component_state` -- the test's
+    `NoopTransaction` implemented only the base `commit`, which the
+    trait's default `commit_with_component_state` accepts unconditionally
+    only because `component_state` was always empty for an unregistered
+    stream. The item-count/version-token assertions then decoded an
+    envelope obtained by calling `ObjectItemWriterStream::update` *by hand*
+    after the run -- the writer's in-memory candidate state, not anything
+    the runtime had committed. Fixed by registering `write_stream` via
+    `with_item_stream` (the runtime now opens it and calls `update` once
+    per committing attempt, exactly as production code exercises it), and
+    by implementing `commit_with_component_state` on the test's transaction
+    to capture the `component_state` slice the runtime actually hands it on
+    each successful commit (overwritten, not accumulated, so what survives
+    the run is the *last* durably committed envelope). The item-count and
+    version-token assertions now decode that captured envelope instead of a
+    hand-driven `update` call; a test-only assertion that exactly one
+    envelope was captured (`captured.len() == 1`) makes the dependency on
+    registration explicit and catches a future regression that silently
+    drops it.
 
 ## Audit performed before implementation
 
@@ -456,7 +485,7 @@ was needed.
 | **(#177, fourth round)** A serializer's own failure is classified as a policy-eligible user-component failure, not `Invariant` | `writer_serializer_failure_is_classified_as_user_component_not_invariant` |
 | **(#177, fourth round)** A `serialize` that ignores the sink's overflow `Err` still fails closed and never reaches the backend | `writer_ignoring_the_sink_overflow_error_still_fails_closed` |
 | **(#177, fourth round)** A logical output far exceeding the bound, built from many small sink writes (a realistic incremental encoder shape), is rejected without the candidate crossing the bound or the backend ever being called | `writer_bounds_a_large_logical_output_written_via_many_small_sink_writes` |
-| **(#177, review of the fourth round)** A real `ChunkStep`/`FaultRuntime` observes a panic from `serialize` and retries the same writer instance: prior committed content survives, the retried item succeeds without duplication or loss, the final object bytes are correct, and the writer's own committed checkpoint (item count, version token) reflects both items | `chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content` |
+| **(#177, review of the fourth round; corrected in the sixth round)** A real `ChunkStep`/`FaultRuntime`, with the paired `ItemStream` registered via `with_item_stream`, observes a panic from `serialize` and retries the same writer instance: prior committed content survives, the retried item succeeds without duplication or loss, the final object bytes are correct, and the *durably committed* checkpoint (captured from `ChunkTransaction::commit_with_component_state`, not a hand-driven `update` call) reflects the correct item count and version token | `chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content` |
 
 Cancellation is honored by construction (`ObjectItemWriter::write` and
 `MultiResourceWriter::write` both check `context.stop_token()` before doing

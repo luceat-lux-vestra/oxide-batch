@@ -2200,22 +2200,26 @@ mod tests {
         // reinvoking the same writer instance). It drives a real
         // `ObjectItemWriter`, constructed exactly as production code would
         // via `ObjectStoreWriterOpener`/`MultiResourceWriterOpener`, through
-        // a real `ChunkStep`/`FaultRuntime`, and checks every layer the
-        // review asked for: the runtime observes the panic and retries, the
-        // same logical item succeeds on retry without duplicating or
-        // dropping prior content, the final object bytes are correct, and
-        // the writer's own committed checkpoint (item count and version
-        // token) reflects both items.
+        // a real `ChunkStep`/`FaultRuntime`, with the paired
+        // `ObjectItemWriterStream` *registered* via `ChunkStep::with_item_stream`
+        // (not driven by hand): the runtime opens it, calls its `update` once
+        // per committing attempt, and hands the resulting envelope to
+        // `ChunkTransaction::commit_with_component_state`, exactly as a real
+        // adapter would receive it. The durable-checkpoint assertions below
+        // decode the envelope this test's transaction captured *from that
+        // call*, not a value obtained by calling `update` a second time by
+        // hand after the run -- the latter would only prove the writer's
+        // in-memory candidate, not what the runtime actually committed.
         use crate::{
             BackoffOutcome, BackoffPolicy, BackoffSleeper, BoxFuture, Checkpoint,
             ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext, ChunkCompletionError,
             ChunkCompletionOutcome, ChunkCounts, ChunkDeliveryMode, ChunkExecutionOutcome,
-            ChunkFaultProgress, ChunkSize, ChunkStep, ChunkTransaction, ChunkTransactionContext,
-            ChunkTransactionError, ChunkTransactionManager, ClassifierRevision, ExecutionAttempt,
+            ChunkFaultProgress, ChunkSize, ChunkStep, ChunkTransaction, ChunkTransactionError,
+            ChunkTransactionManager, ClassifierRevision, ComponentStateEnvelope, ExecutionAttempt,
             ExecutionContext, ExecutionCorrelation, FaultAction, FaultClassifier, FaultPhase,
-            FaultPolicy, FaultRule, FaultRuntime, InMemoryFaultState, InheritedStepProgress,
-            ItemProcessor, JobExecutionId, JobInstanceId, JobName, ProcessContext, ProcessOutcome,
-            ProcessorError, RetryLimit, RetryStateLimit, SkipLimit, StepExecutionId, StepName,
+            FaultPolicy, FaultRule, FaultRuntime, InMemoryFaultState, ItemProcessor,
+            JobExecutionId, JobInstanceId, JobName, ProcessContext, ProcessOutcome, ProcessorError,
+            RetryLimit, RetryStateLimit, SkipLimit, StepExecutionId, StepName,
         };
         use std::collections::VecDeque;
         use std::num::NonZeroU64;
@@ -2257,7 +2261,14 @@ mod tests {
             }
         }
 
-        struct NoopTransaction;
+        // Captures the exact `component_state` slice the runtime hands to
+        // `commit_with_component_state` on the most recent successful
+        // commit -- overwritten (not accumulated) each time, so what
+        // remains after the run is the *last durably committed* envelope,
+        // matching what a real adapter would have persisted.
+        struct NoopTransaction {
+            captured: Arc<Mutex<Vec<ComponentStateEnvelope>>>,
+        }
         impl ChunkTransaction for NoopTransaction {
             fn business_transaction(&mut self) -> Option<&mut dyn crate::BusinessTransaction> {
                 None
@@ -2265,9 +2276,20 @@ mod tests {
 
             fn commit(
                 &mut self,
+                counts: ChunkCounts,
+                fault: ChunkFaultProgress,
+            ) -> BoxFuture<'_, Result<ChunkCommitReceipt, ChunkTransactionError>> {
+                self.commit_with_component_state(counts, fault, &[])
+            }
+
+            fn commit_with_component_state<'a>(
+                &'a mut self,
                 _counts: ChunkCounts,
                 _fault: ChunkFaultProgress,
-            ) -> BoxFuture<'_, Result<ChunkCommitReceipt, ChunkTransactionError>> {
+                component_state: &'a [ComponentStateEnvelope],
+            ) -> BoxFuture<'a, Result<ChunkCommitReceipt, ChunkTransactionError>> {
+                *self.captured.lock().unwrap_or_else(PoisonError::into_inner) =
+                    component_state.to_vec();
                 Box::pin(async {
                     let checkpoint = Checkpoint::from_json(
                         br#"{"format":"oxide-batch.checkpoint","format_version":1,"schema":"test.position","schema_version":1,"payload":{"position":0}}"#,
@@ -2288,20 +2310,18 @@ mod tests {
             }
         }
 
-        struct NoopTransactions;
+        struct NoopTransactions {
+            captured: Arc<Mutex<Vec<ComponentStateEnvelope>>>,
+        }
         impl ChunkTransactionManager for NoopTransactions {
             fn begin(
                 &self,
             ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>>
             {
-                Box::pin(async move { Ok(Box::new(NoopTransaction) as Box<dyn ChunkTransaction>) })
-            }
-
-            fn inherited_progress(
-                &self,
-                _context: ChunkTransactionContext,
-            ) -> BoxFuture<'_, Result<InheritedStepProgress, ChunkTransactionError>> {
-                Box::pin(async { Ok(InheritedStepProgress::NONE) })
+                let transaction = NoopTransaction {
+                    captured: Arc::clone(&self.captured),
+                };
+                Box::pin(async move { Ok(Box::new(transaction) as Box<dyn ChunkTransaction>) })
             }
         }
 
@@ -2336,12 +2356,13 @@ mod tests {
         )
         .unwrap();
         let (_source, token) = stop();
-        let (writer, write_stream, _contract) = futures_executor::block_on(
+        let (writer, write_stream, contract) = futures_executor::block_on(
             MultiResourceWriterOpener::<u64>::open(&opener, &resource, 0, &identity),
         )
         .unwrap();
-        futures_executor::block_on(write_stream.open(StreamOpenContext::new(None, &token)))
-            .unwrap();
+
+        let committed_component_state: Arc<Mutex<Vec<ComponentStateEnvelope>>> =
+            Arc::new(Mutex::new(Vec::new()));
 
         let mut step = ChunkStep::new(
             StepName::new("object_store_panic_retry_step").unwrap(),
@@ -2349,9 +2370,12 @@ mod tests {
             FixedReader(VecDeque::from([1_u64, 2_u64])),
             Identity,
             writer,
-            Arc::new(NoopTransactions),
+            Arc::new(NoopTransactions {
+                captured: Arc::clone(&committed_component_state),
+            }),
             Arc::new(NoopCompletion),
         )
+        .with_item_stream(identity, write_stream, contract)
         .with_fault_runtime(
             FaultRuntime::new(
                 FaultPolicy::new(
@@ -2408,21 +2432,32 @@ mod tests {
              retry -- never duplicated, never dropped"
         );
 
-        let envelope =
-            futures_executor::block_on(write_stream.update(StreamUpdateContext::new(&token)))
-                .unwrap();
+        // The durably committed checkpoint, exactly as the runtime handed
+        // it to `commit_with_component_state` on the last successful
+        // commit -- not a value obtained by calling `update` by hand after
+        // the run.
+        let captured = committed_component_state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        assert_eq!(
+            captured.len(),
+            1,
+            "the one registered stream must produce exactly one committed \
+             envelope per commit"
+        );
         let restored: ObjectWritePosition =
-            envelope.decode(&object_write_position_codec()).unwrap();
+            captured[0].decode(&object_write_position_codec()).unwrap();
+        drop(captured);
         assert_eq!(
             restored.committed_item_count, 2,
-            "the writer's own committed checkpoint must reflect both items, \
-             not just the one written before the panic"
+            "the durably committed checkpoint must reflect both items, not \
+             just the one written before the panic"
         );
         assert_eq!(
             restored.version_token.as_deref(),
             metadata.version_token().map(ObjectVersionToken::as_str),
-            "the checkpoint's recorded version token must match the \
-             object's actual, final version after the retried write"
+            "the committed checkpoint's recorded version token must match \
+             the object's actual, final version after the retried write"
         );
     }
 }
