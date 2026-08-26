@@ -67,7 +67,7 @@ enum Withheld {
 const REVIEWED_SURFACE: &[(&str, usize)] = &[
     ("chunk", 32),
     ("chunk_runtime", 13),
-    ("completion", 10),
+    ("completion", 11),
     ("diagnostics", 9),
     ("fault", 2),
     ("fault_state", 11),

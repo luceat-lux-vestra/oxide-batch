@@ -28,27 +28,88 @@ exactly the pre-#151 `ChunkSize`-only behavior.
   `support/clock.rs` `ManualClock`) substitutes deterministically in tests.
   The enclosing `ChunkSize` ceiling still bounds buffering while the
   threshold has not elapsed.
-- **`CompositeCompletionPolicy`** -- a bounded (`MAX_COMPOSITE_MEMBERS = 32`)
-  `CompositeMode::Any` (OR) or `::All` (AND) combination. Composition does
-  not recurse without bound: member count is validated the same way at every
-  nesting level.
+- **`CompositeCompletionPolicy`** -- bounded in both member count
+  (`MAX_COMPOSITE_MEMBERS = 32`) and nesting depth (`MAX_COMPOSITE_DEPTH = 8`,
+  counting the outermost composite as depth `1`), combined via
+  `CompositeMode::Any` (OR) or `::All` (AND). Both bounds are validated
+  eagerly at construction -- via `CompletionPolicy::composite_depth`, a
+  `#[doc(hidden)]` protocol method every leaf policy defaults to `0` and only
+  `CompositeCompletionPolicy` overrides -- so a too-deep tree, direct or
+  indirect, is rejected with `CompletionPolicyError::CompositeTooDeep` before
+  it exists, never discovered by runtime recursion.
 - **`AdaptiveCompletionPolicy`** -- a bounded (`AdaptiveBounds`) policy whose
   confirmed target chunk size adjusts toward an observed `target_duration`.
   Its authoritative decision is persisted through the existing `ItemStream`
   open/update/close contract -- the same commit-boundary mechanism
   `#144`/`#150` already built -- registered under the same
   `ComponentStreamIdentity` as both the step's completion policy and one of
-  its `ItemStream`s. No second persistence path is introduced.
+  its `ItemStream`s, via a single `ChunkStep::with_adaptive_completion_policy(Arc<AdaptiveCompletionPolicy>)`
+  call. No second persistence path is introduced, and no second way to
+  (mis)register the two roles onto different instances exists: the method
+  takes one `Arc`, derives the identity and the `StreamStateContract` from
+  the policy itself (the contract's codec is this policy's own private
+  implementation detail, so a caller could never reconstruct a matching one
+  by hand), and wires a private `ItemStream`-delegating newtype around the
+  same `Arc` -- never a public `impl ItemStream for Arc<T>` blanket, which
+  would still let two *different* instances be registered by mistake.
 
-### Restart safety
+### Speculative vs. confirmed state (post-review correction)
 
-`ItemStream::update` runs once per committing chunk *attempt*, before the
-commit it is conditioned on; a rollback leaves the previously committed
-envelope authoritative and the same recomputation, run again on a replayed
-attempt, is idempotent because it is a pure function of the last confirmed
-target and this attempt's freshly observed metrics -- never a value mutated
-speculatively and left stranded by a discarded commit. See the `Restart
-safety` section of `completion.rs`'s `AdaptiveCompletionPolicy` docs.
+An independent strict merge-gate review of PR #179 found that the original
+`AdaptiveCompletionPolicy::update()` mutated the same `confirmed` field
+`CompletionPolicy::is_complete` reads, *before* the chunk it was computed for
+had committed. A rollback therefore left that speculative value looking
+authoritative for the rest of the process, and a replayed attempt recomputed
+its candidate from an already-corrupted baseline instead of the true last
+commit.
+
+The corrected design splits `AdaptiveInterior` into `confirmed` (mutated only
+by `ItemStream::open`, restoring the last *durable* commit, and by the new
+`CompletionPolicy::end_chunk` hook below) and `pending` (written by `update`,
+read by nothing else). `CompletionPolicy` gained
+`end_chunk(&self, outcome: ChunkAttemptOutcome)` -- called exactly once per
+chunk attempt, after its terminal outcome is known and always before the next
+attempt's `begin_chunk` -- with a no-op default correct for every stateless
+policy. `AdaptiveCompletionPolicy::end_chunk` promotes `pending` into
+`confirmed` only on `ChunkAttemptOutcome::Committed`; every other outcome
+discards it, and `begin_chunk` discards it defensively too, so `confirmed`
+can never reflect work this process has not itself observed commit.
+
+`update` is now pure with respect to `confirmed`: it only reads the baseline
+and this attempt's freshly observed duration, so a replayed attempt (rolled
+back and retried without an intervening commit) recomputes the identical
+candidate from the same unmodified baseline -- deterministically, not merely
+by convention. See the `Restart safety` and `Same-process rollback safety`
+sections of `completion.rs`'s `AdaptiveCompletionPolicy` docs.
+
+### Completion-policy panics are contained
+
+`begin_chunk`, `is_complete`, and `end_chunk` are synchronous calls into a
+public, user-implementable trait, and were previously invoked directly in
+`chunk_runtime.rs`'s read loop with no panic boundary -- unlike every other
+user-supplied component call in the same module. A panic in any of the three
+(including one raised by a `CompositeCompletionPolicy` child, since the
+composite's own dispatch is inside the same call) is now caught with the
+same `catch_unwind(AssertUnwindSafe(...))` discipline the reader/processor/
+writer/listener calls already use, fails the attempt through the existing
+typed path (`ChunkFailure::CompletionPolicyPanic`), and never suppresses an
+already-committed chunk's counts.
+
+### Completion-policy configuration is restart-relevant
+
+`CompletionPolicy` gained `fingerprint(&self) -> String` (default: the
+concrete type name, overridden by every policy in this module with its
+actual configuration -- `CompositeCompletionPolicy` recurses into its
+members' fingerprints, so nested structure participates too).
+`ChunkComponentRevisions` gained an optional `completion_policy` revision
+slot (`with_completion_policy_revision`), populated automatically --
+`ChunkJob::new` and `FlowJob::with_chunk_step` hash whatever policy the
+`ChunkStep` actually has installed into a `ComponentRevision` and fold it in,
+so an application never has to remember to bump anything, and can never
+silently change completion semantics across a restart without the
+definition fingerprint changing too. A step with no completion policy
+installed folds in nothing, so its fingerprint is byte-for-byte identical to
+one built before this existed.
 
 `crates/oxide-batch/tests/postgres_completion_policy_restart.rs` proves, with
 a real `PostgreSQL` transaction (`PostgresChunkTransactionManager`, not a
@@ -78,8 +139,31 @@ generic harness does not exercise.
 Unit coverage (`completion.rs`'s `#[cfg(test)]` module): count-policy
 boundaries (minimum/normal/exact/above), time-threshold bounds validation,
 composite empty/oversized rejection, composite `Any`/`All` semantics,
-adaptive bounds rejection (`min > max`), and the `adjust_target` function's
-convergence and clamping at both bounds.
+composite depth boundary and overflow (direct and indirect nesting),
+adaptive bounds rejection (`min > max`), the `adjust_target` function's
+convergence and clamping at both bounds, `AdaptiveCompletionPolicy`'s
+`update`/`end_chunk` promotion-vs-discard state machine (commit, rollback,
+and a discarded pending value never surviving `open`), and `fingerprint`
+determinism/sensitivity for every policy family including nested composites.
+
+`crates/oxide-batch/tests/chunk_runtime.rs`'s
+`adaptive_completion_policy_integration` module drives the real
+`ChunkStep::execute` path (not the policy's methods called directly):
+cross-chunk growth from one `Arc<AdaptiveCompletionPolicy>` registered via
+`with_adaptive_completion_policy` for both roles at once, a real
+transaction-manager rollback leaving `confirmed` exactly where the last
+commit left it, a second `execute` call on the same step/policy instance
+recovering from that unchanged baseline, a panicking `CompletionPolicy`
+(and a panicking composite child) failing with
+`ChunkFailure::CompletionPolicyPanic` and no payload leak, and
+`ChunkComponentRevisions`'s definition fingerprint changing with completion-policy
+configuration (including nested composite structure and `AdaptiveBounds`)
+while staying identical for identical configuration.
+`crates/oxide-batch/tests/postgres_completion_policy_restart.rs` extends its
+real-`PostgreSQL` rollback/restart evidence with an explicit `end_chunk`
+call sequence and a same-process replay-then-commit cycle after the
+rollback, proving the corrected state machine against a real transaction
+rather than only the in-memory fixtures above.
 
 ## Listener taxonomy audit (`LISTENER-ITEM-001`)
 
@@ -159,6 +243,10 @@ side-channel persistence path was introduced.
 - `crates/oxide-batch/tests/chunk_fault_runtime.rs` (cross-family order
   fixtures, plus the existing M3/M6 fault-tolerance suite, unmodified in
   substance)
+- `crates/oxide-batch/tests/chunk_runtime.rs`'s
+  `adaptive_completion_policy_integration` module (real `ChunkStep::execute`
+  growth/rollback/recovery/panic-containment/fingerprint evidence)
 - `crates/oxide-batch/tests/item_listener_allocation.rs` (Gate F regression)
 - `crates/oxide-batch/tests/postgres_completion_policy_restart.rs`
-  (`PostgreSQL`-backed adaptive-decision rollback/restart evidence)
+  (`PostgreSQL`-backed adaptive-decision commit/rollback/replay/restart
+  evidence)

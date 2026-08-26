@@ -882,6 +882,18 @@
       "symbols": [],
       "reason": "No remote worker, broker credit, or assignment queue exists in the accepted M0-M4 scope. A campaign row for one would be a claim about unwritten code.",
       "covered_by": null
+    },
+    {
+      "resource": "completion-policy time-threshold bounds",
+      "symbols": ["MAX_TIME_THRESHOLD", "MIN_TIME_THRESHOLD"],
+      "reason": "ChunkTimeThreshold bounds how long a TimeCompletionPolicy or AdaptiveCompletionPolicy waits before deciding a chunk is complete, not how much of a resource is concurrently held -- the same category as the operation-timeouts entry above, just for a completion decision rather than a database operation. The enclosing ChunkSize ceiling remains the actual buffering resource bound while the threshold has not elapsed. Added in #151/#179.",
+      "covered_by": "crates/oxide-batch/src/completion.rs::tests::time_threshold_rejects_out_of_bounds"
+    },
+    {
+      "resource": "completion-policy composition shape ceilings",
+      "symbols": ["MAX_COMPOSITE_MEMBERS", "MAX_COMPOSITE_DEPTH"],
+      "reason": "These bound the shape of a CompositeCompletionPolicy tree an application constructs -- member count and nesting depth -- not a resource the framework holds at runtime. Both are validated once at CompositeCompletionPolicy::new, in the same category as MAX_RESOURCE_IDENTITY_BYTES/MAX_OBJECT_KEY_BYTES above: a fixed structural check enforced at construction, not a bounded operational resource (queue, buffer, connection, cache) whose steady-state behavior this campaign proves. Added in #151/#179.",
+      "covered_by": "crates/oxide-batch/src/completion.rs::tests::composite_rejects_empty_and_oversized, crates/oxide-batch/src/completion.rs::tests::composite_depth_boundary_and_overflow, crates/oxide-batch/src/completion.rs::tests::composite_depth_bounded_via_indirect_nesting"
     }
   ],
   "related": [

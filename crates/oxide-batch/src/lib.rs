@@ -425,7 +425,7 @@ pub use chunk_runtime::{
 pub use completion::{
     AdaptiveBounds, AdaptiveCompletionPolicy, ChunkTimeThreshold, CompletionPolicy,
     CompletionPolicyError, CompositeCompletionPolicy, CompositeMode, ItemCountCompletionPolicy,
-    MAX_COMPOSITE_MEMBERS, TimeCompletionPolicy,
+    MAX_COMPOSITE_DEPTH, MAX_COMPOSITE_MEMBERS, TimeCompletionPolicy,
 };
 pub use diagnostics::{
     DiagnosticField, EventComponent, EventSeverity, ExecutionAttempt, ExecutionCorrelation,

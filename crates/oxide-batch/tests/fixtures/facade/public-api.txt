@@ -226,6 +226,7 @@ oxide_batch::LocalFailurePolicy
 oxide_batch::MAX_ACTOR_REF_BYTES
 oxide_batch::MAX_BRANCH_STEPS
 oxide_batch::MAX_CLOCK_SKEW
+oxide_batch::MAX_COMPOSITE_DEPTH
 oxide_batch::MAX_COMPOSITE_MEMBERS
 oxide_batch::MAX_CURSOR_BYTES
 oxide_batch::MAX_DROP_REPORT_WINDOW

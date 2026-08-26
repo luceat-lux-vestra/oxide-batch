@@ -234,13 +234,16 @@ pub struct ChunkComponentRevisions {
     checkpoint: ComponentRevision,
     restart: ChunkRestartContract,
     streams: BTreeMap<ComponentStreamIdentity, ComponentRevision>,
+    completion_policy: Option<ComponentRevision>,
 }
 
 impl ChunkComponentRevisions {
     /// Constructs the four restart-relevant chunk component revisions.
     ///
-    /// Registers no `ItemStream` namespaces; use
-    /// [`with_stream_revision`](Self::with_stream_revision) to add them.
+    /// Registers no `ItemStream` namespaces and no completion-policy
+    /// revision; use [`with_stream_revision`](Self::with_stream_revision) and
+    /// [`with_completion_policy_revision`](Self::with_completion_policy_revision)
+    /// to add them.
     #[must_use]
     pub const fn new(
         reader: ComponentRevision,
@@ -256,6 +259,7 @@ impl ChunkComponentRevisions {
             checkpoint,
             restart,
             streams: BTreeMap::new(),
+            completion_policy: None,
         }
     }
 
@@ -282,6 +286,27 @@ impl ChunkComponentRevisions {
         &self,
     ) -> impl Iterator<Item = (&ComponentStreamIdentity, &ComponentRevision)> {
         self.streams.iter()
+    }
+
+    /// Records the restart-relevant revision of an installed
+    /// [`crate::CompletionPolicy`](../../oxide_batch/trait.CompletionPolicy.html)
+    /// (an early-completion policy supplementing the chunk's `ChunkSize`
+    /// ceiling).
+    ///
+    /// A definition with no completion policy installed produces a manifest
+    /// and fingerprint byte-for-byte identical to one built before this
+    /// method existed.
+    #[must_use]
+    pub fn with_completion_policy_revision(mut self, revision: ComponentRevision) -> Self {
+        self.completion_policy = Some(revision);
+        self
+    }
+
+    /// Borrows the completion policy's restart-relevant revision, if one was
+    /// registered.
+    #[must_use]
+    pub const fn completion_policy_revision(&self) -> Option<&ComponentRevision> {
+        self.completion_policy.as_ref()
     }
 
     /// Returns the delivery mode declared by the restart contract.
@@ -529,6 +554,14 @@ impl DefinitionIdentity {
                 })
                 .collect();
             object.insert("streams".to_owned(), serde_json::Value::Array(streams));
+        }
+        if let Some(policy_revision) = &components.completion_policy
+            && let Some(object) = manifest.as_object_mut()
+        {
+            object.insert(
+                "completion_policy".to_owned(),
+                serde_json::Value::String(policy_revision.as_str().to_owned()),
+            );
         }
         Self::encode(job_name.clone(), revision, &manifest)
     }

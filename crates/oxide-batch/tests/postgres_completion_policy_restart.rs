@@ -35,10 +35,10 @@ use std::time::Duration;
 
 use clock::ManualClock;
 use oxide_batch::{
-    AdaptiveBounds, AdaptiveCompletionPolicy, ChunkCount, ChunkCounts, ChunkFaultProgress,
-    ChunkSize, ChunkTimeThreshold, ChunkTransactionContext, ChunkTransactionManager,
-    CompletionPolicy, ComponentStreamIdentity, ItemStream, PostgresJobRepository, PostgresMigrator,
-    StopSource, StreamOpenContext, StreamUpdateContext,
+    AdaptiveBounds, AdaptiveCompletionPolicy, ChunkAttemptOutcome, ChunkCount, ChunkCounts,
+    ChunkFaultProgress, ChunkSize, ChunkTimeThreshold, ChunkTransactionContext,
+    ChunkTransactionManager, CompletionPolicy, ComponentStreamIdentity, ItemStream,
+    PostgresJobRepository, PostgresMigrator, StopSource, StreamOpenContext, StreamUpdateContext,
 };
 
 use crash_restore::{
@@ -94,15 +94,15 @@ async fn run(runtime_url: &str, migrator_url: &str) -> Result<(), Box<dyn Error>
         target_duration,
         Arc::new(clock.clone()),
     );
-    let (_source, stop) = StopSource::new();
+    let (_source, stop_token) = StopSource::new();
     policy.begin_chunk();
     clock.advance(Duration::from_millis(100))?;
-    let committed_envelope = policy.update(StreamUpdateContext::new(&stop)).await?;
-    assert!(
-        policy.current_target().get() > bounds.min().get(),
-        "a fast chunk must grow the target past the configured minimum"
+    let committed_envelope = policy.update(StreamUpdateContext::new(&stop_token)).await?;
+    assert_eq!(
+        policy.current_target().get(),
+        bounds.min().get(),
+        "an uncommitted candidate must never be visible as the authoritative target"
     );
-    let committed_target = policy.current_target();
 
     let mut transaction = manager.begin_for(scope).await?;
     crash_restore::write_items(&mut *transaction, JOB, &[1]).await?;
@@ -114,15 +114,24 @@ async fn run(runtime_url: &str, migrator_url: &str) -> Result<(), Box<dyn Error>
             &[committed_envelope],
         )
         .await?;
+    // Only now -- after the real commit -- may the candidate become
+    // authoritative.
+    policy.end_chunk(ChunkAttemptOutcome::Committed);
+    assert!(
+        policy.current_target().get() > bounds.min().get(),
+        "a fast chunk must grow the target past the configured minimum once committed"
+    );
+    let committed_target = policy.current_target();
 
-    // A second, slow attempt shrinks the in-memory candidate -- but this
+    // A second, slow attempt computes a shrinking candidate -- but this
     // attempt rolls back instead of committing.
     policy.begin_chunk();
     clock.advance(Duration::from_secs(10))?;
-    let _uncommitted_envelope = policy.update(StreamUpdateContext::new(&stop)).await?;
-    assert!(
-        policy.current_target().get() < committed_target.get(),
-        "the in-memory candidate reflects the slow, not-yet-committed attempt"
+    let uncommitted_envelope = policy.update(StreamUpdateContext::new(&stop_token)).await?;
+    assert_eq!(
+        policy.current_target().get(),
+        committed_target.get(),
+        "the not-yet-committed candidate must not be visible while its transaction is open"
     );
 
     // This attempt never calls `commit_with_component_state` at all: an
@@ -131,6 +140,40 @@ async fn run(runtime_url: &str, migrator_url: &str) -> Result<(), Box<dyn Error>
     let mut rolled_back = manager.begin_for(scope).await?;
     crash_restore::write_items(&mut *rolled_back, JOB, &[2]).await?;
     rolled_back.rollback().await?;
+    policy.end_chunk(ChunkAttemptOutcome::RolledBack);
+    assert_eq!(
+        policy.current_target().get(),
+        committed_target.get(),
+        "a rollback must leave the previously committed target exactly as it was"
+    );
+
+    // Same process, next attempt of the same logical chunk: replaying with
+    // the identical inputs recomputes the identical candidate from the same
+    // unmodified confirmed baseline -- proving `update` is pure with respect
+    // to `confirmed` even across a real rolled-back PostgreSQL transaction.
+    policy.begin_chunk();
+    clock.advance(Duration::from_secs(10))?;
+    let replayed_envelope = policy.update(StreamUpdateContext::new(&stop_token)).await?;
+    assert_eq!(
+        replayed_envelope, uncommitted_envelope,
+        "replaying the same logical chunk must recompute the identical candidate"
+    );
+    let mut replayed = manager.begin_for(scope).await?;
+    crash_restore::write_items(&mut *replayed, JOB, &[2]).await?;
+    let count = ChunkCount::new(1);
+    replayed
+        .commit_with_component_state(
+            ChunkCounts::new(count, count, count, ChunkCount::ZERO)?,
+            ChunkFaultProgress::NONE,
+            &[replayed_envelope],
+        )
+        .await?;
+    policy.end_chunk(ChunkAttemptOutcome::Committed);
+    assert!(
+        policy.current_target().get() < committed_target.get(),
+        "committing the replayed slow chunk must shrink the confirmed target"
+    );
+    let committed_target = policy.current_target();
 
     let inherited = manager.inherited_component_state(scope).await?;
     let restored_envelope = inherited
@@ -155,7 +198,10 @@ async fn run(runtime_url: &str, migrator_url: &str) -> Result<(), Box<dyn Error>
         "an unopened, freshly rebuilt policy starts at the configured minimum"
     );
     fresh
-        .open(StreamOpenContext::new(Some(&restored_envelope), &stop))
+        .open(StreamOpenContext::new(
+            Some(&restored_envelope),
+            &stop_token,
+        ))
         .await?;
     assert_eq!(
         fresh.current_target().get(),

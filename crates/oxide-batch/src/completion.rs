@@ -17,9 +17,14 @@
 //! - [`CompositeCompletionPolicy`] -- bounded `Any`/`All` composition of
 //!   other policies.
 //! - [`AdaptiveCompletionPolicy`] -- a bounded policy whose target chunk
-//!   size adapts toward an observed target duration. Its authoritative
-//!   decision is persisted through the same [`crate::ItemStream`] contract
-//!   as any other component state; there is no second persistence path.
+//!   size adapts toward an observed target duration. It is both a
+//!   [`CompletionPolicy`] and an [`crate::ItemStream`] over the *same*
+//!   instance state; [`crate::ChunkStep::with_adaptive_completion_policy`]
+//!   registers one `Arc<AdaptiveCompletionPolicy>` for both roles in a
+//!   single call, so the authoritative decision is persisted through the
+//!   same commit boundary as any other component state, with no second
+//!   persistence path and no risk of the two registrations drifting onto
+//!   different instances.
 //!
 //! ```
 //! use std::sync::Arc;
@@ -38,11 +43,12 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
 
 use crate::{
-    ChunkCount, ChunkSize, Clock, CodecId, CodecVersion, ComponentStateEnvelope,
-    ComponentStreamIdentity, DefaultComponentCodec, ItemStream, RestartabilityDeclaration,
-    StateCodecError, StateLimits, StateSchemaId, StateSchemaVersion, StreamCloseContext,
-    StreamCloseError, StreamCloseOutcome, StreamOpenContext, StreamOpenError, StreamOpenOutcome,
-    StreamUpdateContext, StreamUpdateError, VersionedStateCodec,
+    ChunkAttemptOutcome, ChunkCount, ChunkSize, Clock, CodecId, CodecVersion,
+    ComponentStateEnvelope, ComponentStreamIdentity, DefaultComponentCodec, ItemStream,
+    RestartabilityDeclaration, StateCodecError, StateLimits, StateSchemaId, StateSchemaVersion,
+    StreamCloseContext, StreamCloseError, StreamCloseOutcome, StreamOpenContext, StreamOpenError,
+    StreamOpenOutcome, StreamStateContract, StreamUpdateContext, StreamUpdateError,
+    VersionedStateCodec,
 };
 
 /// Decides whether a chunk should stop accepting further items.
@@ -68,6 +74,53 @@ pub trait CompletionPolicy: Send + Sync {
     /// `items_read` is the number of items already read into the current
     /// chunk attempt.
     fn is_complete(&self, items_read: ChunkCount) -> bool;
+
+    /// Observes the terminal outcome of the chunk attempt this policy's most
+    /// recent [`begin_chunk`](Self::begin_chunk) started.
+    ///
+    /// The chunk runtime calls this exactly once per chunk attempt, after the
+    /// attempt's transaction has committed, rolled back, stopped, or reached
+    /// an unknown commit result -- and always before the next attempt's
+    /// `begin_chunk`. The default implementation does nothing, which is
+    /// correct for any policy whose decisions depend only on the current
+    /// attempt (every policy in this module except
+    /// [`AdaptiveCompletionPolicy`], which uses this callback to promote a
+    /// speculative candidate into authoritative state only once its chunk is
+    /// known to have committed, never before).
+    fn end_chunk(&self, _outcome: ChunkAttemptOutcome) {}
+
+    /// Returns a canonical, deterministic description of this policy's
+    /// restart-relevant *configuration*, hashed into the owning chunk
+    /// definition's fingerprint so a configuration change that alters
+    /// completion semantics is never mistaken for the same definition across
+    /// a restart.
+    ///
+    /// Must depend only on how this policy was configured, never on state it
+    /// observes at runtime (for example [`AdaptiveCompletionPolicy`]'s
+    /// currently confirmed target): two instances configured identically
+    /// must return the same string regardless of what either has observed so
+    /// far, and a configuration change that changes completion behavior must
+    /// change this string.
+    ///
+    /// The default falls back to this policy's concrete type name, which
+    /// distinguishes different policy *kinds* but not different
+    /// *configurations* of the same kind; every policy in this module
+    /// overrides it with its actual configuration.
+    fn fingerprint(&self) -> String {
+        std::any::type_name::<Self>().to_owned()
+    }
+
+    /// Returns this policy's own composite nesting depth: `0` for a leaf
+    /// policy, or `1 + ` the greatest depth among a composite's own members.
+    ///
+    /// Used by [`CompositeCompletionPolicy::new`] to enforce
+    /// [`MAX_COMPOSITE_DEPTH`] against direct *and* indirect nesting. The
+    /// default of `0` is correct for every leaf policy; only
+    /// [`CompositeCompletionPolicy`] overrides it.
+    #[doc(hidden)]
+    fn composite_depth(&self) -> usize {
+        0
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -100,6 +153,10 @@ impl ItemCountCompletionPolicy {
 impl CompletionPolicy for ItemCountCompletionPolicy {
     fn is_complete(&self, items_read: ChunkCount) -> bool {
         items_read.get() >= u64::from(self.0.get())
+    }
+
+    fn fingerprint(&self) -> String {
+        format!("count/{}", self.0.get())
     }
 }
 
@@ -185,6 +242,10 @@ impl CompletionPolicy for TimeCompletionPolicy {
             .unwrap_or(Duration::ZERO);
         elapsed >= self.threshold.get()
     }
+
+    fn fingerprint(&self) -> String {
+        format!("time/{}", self.threshold.get().as_nanos())
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -204,15 +265,28 @@ pub enum CompositeMode {
 /// The largest number of members one [`CompositeCompletionPolicy`] may hold.
 pub const MAX_COMPOSITE_MEMBERS: usize = 32;
 
+/// The largest nesting depth one [`CompositeCompletionPolicy`] tree may
+/// reach, counting the outermost composite as depth `1`.
+///
+/// Bounds direct *and* indirect nesting: a composite whose member is itself a
+/// composite (at any remove) contributes its own depth plus one to its
+/// parent's. [`CompositeCompletionPolicy::new`] enforces this eagerly at
+/// construction, before any nested structure exists to recurse over at
+/// runtime.
+pub const MAX_COMPOSITE_DEPTH: usize = 8;
+
 /// A deterministic, bounded composition of completion policies.
 ///
 /// Composition never recurses without bound: a composite's own member count
-/// is validated at construction against [`MAX_COMPOSITE_MEMBERS`]. Nesting
-/// one composite inside another is bounded the same way at every level, so
-/// there is no unbounded or implicit recursive structure.
+/// is validated at construction against [`MAX_COMPOSITE_MEMBERS`], and its
+/// full nesting depth (direct and indirect) is validated against
+/// [`MAX_COMPOSITE_DEPTH`]. Both checks run at construction, so a
+/// too-deep tree is rejected before it exists rather than discovered by
+/// runtime recursion.
 pub struct CompositeCompletionPolicy {
     members: Vec<Arc<dyn CompletionPolicy>>,
     mode: CompositeMode,
+    depth: usize,
 }
 
 impl fmt::Debug for CompositeCompletionPolicy {
@@ -221,6 +295,7 @@ impl fmt::Debug for CompositeCompletionPolicy {
             .debug_struct("CompositeCompletionPolicy")
             .field("mode", &self.mode)
             .field("members", &self.members.len())
+            .field("depth", &self.depth)
             .finish()
     }
 }
@@ -231,8 +306,10 @@ impl CompositeCompletionPolicy {
     /// # Errors
     ///
     /// Returns [`CompletionPolicyError::EmptyComposite`] for an empty
-    /// `members`, or [`CompletionPolicyError::TooManyMembers`] above
-    /// [`MAX_COMPOSITE_MEMBERS`].
+    /// `members`, [`CompletionPolicyError::TooManyMembers`] above
+    /// [`MAX_COMPOSITE_MEMBERS`], or [`CompletionPolicyError::CompositeTooDeep`]
+    /// when nesting a member (at any remove) would exceed
+    /// [`MAX_COMPOSITE_DEPTH`].
     pub fn new(
         mode: CompositeMode,
         members: Vec<Arc<dyn CompletionPolicy>>,
@@ -245,7 +322,21 @@ impl CompositeCompletionPolicy {
                 max: MAX_COMPOSITE_MEMBERS,
             });
         }
-        Ok(Self { members, mode })
+        let depth = 1 + members
+            .iter()
+            .map(|member| member.composite_depth())
+            .max()
+            .unwrap_or(0);
+        if depth > MAX_COMPOSITE_DEPTH {
+            return Err(CompletionPolicyError::CompositeTooDeep {
+                max: MAX_COMPOSITE_DEPTH,
+            });
+        }
+        Ok(Self {
+            members,
+            mode,
+            depth,
+        })
     }
 }
 
@@ -268,6 +359,26 @@ impl CompletionPolicy for CompositeCompletionPolicy {
                 .all(|member| member.is_complete(items_read)),
         }
     }
+
+    fn end_chunk(&self, outcome: ChunkAttemptOutcome) {
+        for member in &self.members {
+            member.end_chunk(outcome);
+        }
+    }
+
+    fn fingerprint(&self) -> String {
+        let members = self
+            .members
+            .iter()
+            .map(|member| member.fingerprint())
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("composite/{:?}/[{members}]", self.mode)
+    }
+
+    fn composite_depth(&self) -> usize {
+        self.depth
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -287,6 +398,12 @@ pub enum CompletionPolicyError {
         /// The maximum accepted member count.
         max: usize,
     },
+    /// Nesting a composite policy's member (at any remove) would exceed
+    /// [`MAX_COMPOSITE_DEPTH`].
+    CompositeTooDeep {
+        /// The maximum accepted nesting depth.
+        max: usize,
+    },
     /// An adaptive policy's minimum bound exceeded its maximum bound.
     InvalidAdaptiveBounds,
 }
@@ -303,6 +420,10 @@ impl fmt::Display for CompletionPolicyError {
             Self::TooManyMembers { max } => write!(
                 formatter,
                 "a composite completion policy accepts at most {max} members"
+            ),
+            Self::CompositeTooDeep { max } => write!(
+                formatter,
+                "a composite completion policy nests at most {max} levels deep"
             ),
             Self::InvalidAdaptiveBounds => formatter
                 .write_str("adaptive completion policy minimum bound exceeds its maximum bound"),
@@ -418,7 +539,21 @@ fn adaptive_decision_codec() -> DefaultComponentCodec<AdaptiveDecisionSchema> {
 }
 
 struct AdaptiveInterior {
+    /// The authoritative target: the last value this process has observed
+    /// *commit* (via [`CompletionPolicy::end_chunk`]) or restore (via
+    /// [`ItemStream::open`]). [`CompletionPolicy::is_complete`] and
+    /// [`AdaptiveCompletionPolicy::current_target`] read only this field --
+    /// never `pending` -- so an in-flight, not-yet-committed candidate can
+    /// never be observed as authoritative.
     confirmed: ChunkSize,
+    /// This attempt's not-yet-committed candidate, computed by
+    /// [`ItemStream::update`] from `confirmed` and this attempt's freshly
+    /// observed duration. Promoted into `confirmed` by
+    /// [`CompletionPolicy::end_chunk`] on [`ChunkAttemptOutcome::Committed`],
+    /// and discarded on every other outcome (including by the next
+    /// [`CompletionPolicy::begin_chunk`], defensively, should `end_chunk`
+    /// never run for this attempt).
+    pending: Option<ChunkSize>,
     chunk_started: Option<SystemTime>,
 }
 
@@ -427,22 +562,34 @@ struct AdaptiveInterior {
 /// The policy adjusts its target chunk size toward `target_duration`,
 /// clamped to `bounds`, based on the most recently *committed* chunk's
 /// observed duration. Register this policy as both the step's completion
-/// policy (via [`crate::ChunkStep::with_completion_policy`]) and as a
-/// namespaced [`ItemStream`] (via [`crate::ChunkStep::with_item_stream`])
-/// under the same identity returned by [`identity`](Self::identity), so the
-/// confirmed target survives restart through the same commit-boundary
-/// mechanism as any other component state -- never a second persistence
-/// path.
+/// policy and as a namespaced [`ItemStream`] under the same identity
+/// returned by [`identity`](Self::identity) with a single call to
+/// [`crate::ChunkStep::with_adaptive_completion_policy`], so the confirmed
+/// target survives restart through the same commit-boundary mechanism as any
+/// other component state -- never a second persistence path, and never two
+/// registrations that could drift onto different instances.
 ///
 /// # Restart safety
 ///
 /// A process crash before a chunk commits leaves the previously committed
 /// target authoritative: [`ItemStream::open`] restores exactly that target
 /// from the durable envelope, never a value a still-open, not-yet-committed
-/// attempt only speculated. A rolled-back attempt that gets replayed
-/// recomputes the identical candidate from the same confirmed baseline and
-/// the same freshly observed metrics, so replaying is idempotent even though
-/// [`ItemStream::update`] runs before the commit it is conditioned on.
+/// attempt only speculated.
+///
+/// # Same-process rollback safety
+///
+/// [`ItemStream::update`] never mutates the confirmed target: it only
+/// computes a candidate from the confirmed baseline and this attempt's
+/// freshly observed duration, storing it as a separate, speculative
+/// `pending` value. That candidate is promoted to `confirmed` -- becoming
+/// visible to [`CompletionPolicy::is_complete`] -- only when
+/// [`CompletionPolicy::end_chunk`] observes
+/// [`ChunkAttemptOutcome::Committed`]; every other outcome discards it. A
+/// rolled-back attempt that gets replayed therefore recomputes the identical
+/// candidate from the same unmodified confirmed baseline and the same kind
+/// of freshly observed metrics, so replaying is idempotent even though
+/// `update` runs before the commit it is conditioned on, and a rollback can
+/// never leave a speculative target looking authoritative.
 pub struct AdaptiveCompletionPolicy {
     bounds: AdaptiveBounds,
     target_duration: ChunkTimeThreshold,
@@ -469,6 +616,7 @@ impl AdaptiveCompletionPolicy {
             identity,
             state: Mutex::new(AdaptiveInterior {
                 confirmed: bounds.min(),
+                pending: None,
                 chunk_started: None,
             }),
         }
@@ -481,9 +629,22 @@ impl AdaptiveCompletionPolicy {
         &self.identity
     }
 
+    /// Returns the `StreamStateContract` matching this policy's own
+    /// internal codec.
+    ///
+    /// This policy's schema and codec identity are its own implementation
+    /// detail: a caller has no way to reconstruct a matching contract
+    /// itself, so [`crate::ChunkStep::with_adaptive_completion_policy`]
+    /// calls this rather than accepting a contract parameter that could
+    /// mismatch.
+    pub(crate) fn stream_state_contract() -> StreamStateContract {
+        StreamStateContract::new(adaptive_decision_codec())
+    }
+
     /// Returns the current confirmed target: the authoritative decision as
     /// of the last chunk this process has observed commit (or restored at
-    /// [`ItemStream::open`]).
+    /// [`ItemStream::open`]). Never a speculative, not-yet-committed
+    /// candidate.
     #[must_use]
     pub fn current_target(&self) -> ChunkSize {
         self.state
@@ -496,12 +657,35 @@ impl AdaptiveCompletionPolicy {
 impl CompletionPolicy for AdaptiveCompletionPolicy {
     fn begin_chunk(&self) {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        // Defensive: a pending candidate only survives here if this attempt's
+        // `end_chunk` never ran (for example a fatal error outside the
+        // ordinary commit/rollback/stop/unknown outcomes). Discarding it
+        // keeps `confirmed` the sole source of truth for the attempt about
+        // to begin.
+        state.pending = None;
         state.chunk_started = Some(self.clock.now());
     }
 
     fn is_complete(&self, items_read: ChunkCount) -> bool {
         let target = self.current_target();
         items_read.get() >= u64::from(target.get())
+    }
+
+    fn end_chunk(&self, outcome: ChunkAttemptOutcome) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let pending = state.pending.take();
+        if let (ChunkAttemptOutcome::Committed, Some(pending)) = (outcome, pending) {
+            state.confirmed = pending;
+        }
+    }
+
+    fn fingerprint(&self) -> String {
+        format!(
+            "adaptive/{}/{}/{}",
+            self.bounds.min().get(),
+            self.bounds.max().get(),
+            self.target_duration.get().as_nanos()
+        )
     }
 }
 
@@ -519,6 +703,7 @@ impl ItemStream for AdaptiveCompletionPolicy {
             .map_err(|_| StreamOpenError::new())?;
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         state.confirmed = decoded.target;
+        state.pending = None;
         Ok(StreamOpenOutcome::Restored)
     }
 
@@ -526,6 +711,12 @@ impl ItemStream for AdaptiveCompletionPolicy {
         &self,
         _context: StreamUpdateContext<'_>,
     ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+        // Pure with respect to `confirmed`: reads the confirmed baseline but
+        // never writes it, so a replayed attempt (rolled back and retried
+        // without an intervening commit) recomputes this exact candidate
+        // again from the same baseline. Only `pending` -- never observed by
+        // `is_complete` -- records the result, and only `end_chunk` may ever
+        // promote it into `confirmed`.
         let next_target = {
             let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             let elapsed = state.chunk_started.map(|started| {
@@ -543,7 +734,7 @@ impl ItemStream for AdaptiveCompletionPolicy {
         };
         {
             let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-            state.confirmed = next_target;
+            state.pending = Some(next_target);
         }
         let codec = adaptive_decision_codec();
         ComponentStateEnvelope::encode(
@@ -729,5 +920,371 @@ mod tests {
             bounds,
         );
         assert_eq!(still_slow.get(), 4, "must not go below the configured min");
+    }
+
+    struct ManualClock(Mutex<SystemTime>);
+
+    impl ManualClock {
+        fn new(start: SystemTime) -> Self {
+            Self(Mutex::new(start))
+        }
+
+        fn advance(&self, delta: Duration) {
+            let mut now = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+            *now += delta;
+        }
+    }
+
+    impl Clock for ManualClock {
+        fn now(&self) -> SystemTime {
+            *self.0.lock().unwrap_or_else(PoisonError::into_inner)
+        }
+    }
+
+    fn decode_target(envelope: &ComponentStateEnvelope) -> ChunkSize {
+        let codec = adaptive_decision_codec();
+        #[allow(
+            clippy::unwrap_used,
+            reason = "test decodes a value this test just encoded"
+        )]
+        let decoded: AdaptiveDecision = envelope.decode(&codec).unwrap();
+        decoded.target
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used, reason = "test builds a controlled nesting chain")]
+    fn composite_depth_boundary_and_overflow() {
+        #[allow(clippy::unwrap_used, reason = "test literal is a valid ChunkSize")]
+        let mut current: Arc<dyn CompletionPolicy> =
+            Arc::new(ItemCountCompletionPolicy::new(ChunkSize::new(1).unwrap()));
+        for depth in 1..=MAX_COMPOSITE_DEPTH {
+            let composite =
+                CompositeCompletionPolicy::new(CompositeMode::Any, vec![current]).unwrap();
+            assert_eq!(composite.composite_depth(), depth);
+            current = Arc::new(composite);
+        }
+        // One more level of nesting exceeds MAX_COMPOSITE_DEPTH.
+        assert!(matches!(
+            CompositeCompletionPolicy::new(CompositeMode::Any, vec![current]),
+            Err(CompletionPolicyError::CompositeTooDeep { max }) if max == MAX_COMPOSITE_DEPTH
+        ));
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used, reason = "test builds a controlled nesting chain")]
+    fn composite_depth_bounded_via_indirect_nesting() {
+        #[allow(clippy::unwrap_used, reason = "test literal is a valid ChunkSize")]
+        let leaf: Arc<dyn CompletionPolicy> =
+            Arc::new(ItemCountCompletionPolicy::new(ChunkSize::new(1).unwrap()));
+        let mut deep = Arc::clone(&leaf);
+        for _ in 0..MAX_COMPOSITE_DEPTH - 1 {
+            deep =
+                Arc::new(CompositeCompletionPolicy::new(CompositeMode::Any, vec![deep]).unwrap());
+        }
+        // `deep` has composite_depth() == MAX_COMPOSITE_DEPTH - 1.
+        let at_boundary =
+            CompositeCompletionPolicy::new(CompositeMode::All, vec![leaf.clone(), deep.clone()])
+                .unwrap();
+        assert_eq!(at_boundary.composite_depth(), MAX_COMPOSITE_DEPTH);
+
+        let one_level_deeper =
+            Arc::new(CompositeCompletionPolicy::new(CompositeMode::Any, vec![deep]).unwrap());
+        assert!(matches!(
+            CompositeCompletionPolicy::new(CompositeMode::All, vec![leaf, one_level_deeper]),
+            Err(CompletionPolicyError::CompositeTooDeep { max }) if max == MAX_COMPOSITE_DEPTH
+        ));
+    }
+
+    #[test]
+    #[allow(
+        clippy::unwrap_used,
+        reason = "test drives a controlled adaptive policy"
+    )]
+    fn adaptive_update_never_mutates_confirmed_and_end_chunk_gates_promotion() {
+        #[allow(clippy::unwrap_used, reason = "test literal is a valid identity")]
+        let identity = ComponentStreamIdentity::new("test.adaptive").unwrap();
+        #[allow(clippy::unwrap_used, reason = "test literals are valid ChunkSizes")]
+        let bounds =
+            AdaptiveBounds::new(ChunkSize::new(1).unwrap(), ChunkSize::new(100).unwrap()).unwrap();
+        #[allow(clippy::unwrap_used, reason = "test literal is a valid threshold")]
+        let target_duration = ChunkTimeThreshold::new(Duration::from_secs(1)).unwrap();
+        let clock = Arc::new(ManualClock::new(SystemTime::UNIX_EPOCH));
+        let policy = AdaptiveCompletionPolicy::new(
+            identity,
+            bounds,
+            target_duration,
+            Arc::clone(&clock) as Arc<dyn Clock>,
+        );
+        let (_source, stop) = crate::StopSource::new();
+        let initial = policy.current_target();
+
+        // Attempt 1: a fast chunk, then rolled back.
+        policy.begin_chunk();
+        clock.advance(Duration::from_millis(50));
+        #[allow(clippy::unwrap_used, reason = "test drives a known-valid update")]
+        let candidate_1 =
+            futures_executor::block_on(policy.update(StreamUpdateContext::new(&stop))).unwrap();
+        assert_eq!(
+            policy.current_target(),
+            initial,
+            "update must never mutate the confirmed target before commit"
+        );
+        policy.end_chunk(ChunkAttemptOutcome::RolledBack);
+        assert_eq!(
+            policy.current_target(),
+            initial,
+            "a rolled-back attempt must leave confirmed exactly as it was"
+        );
+
+        // Attempt 2 (replay of the same logical chunk): identical inputs must
+        // recompute the identical candidate from the same unmodified baseline.
+        policy.begin_chunk();
+        clock.advance(Duration::from_millis(50));
+        #[allow(clippy::unwrap_used, reason = "test drives a known-valid update")]
+        let candidate_2 =
+            futures_executor::block_on(policy.update(StreamUpdateContext::new(&stop))).unwrap();
+        assert_eq!(
+            decode_target(&candidate_1),
+            decode_target(&candidate_2),
+            "a replayed attempt must recompute the identical candidate"
+        );
+        assert_ne!(
+            decode_target(&candidate_2).get(),
+            initial.get(),
+            "the fast chunk should have produced a larger candidate than the baseline"
+        );
+
+        // Committing promotes the pending candidate, and only the pending one.
+        policy.end_chunk(ChunkAttemptOutcome::Committed);
+        assert_eq!(
+            policy.current_target(),
+            decode_target(&candidate_2),
+            "a committed attempt must promote its candidate to confirmed"
+        );
+
+        // Attempt 3: a further update recomputes from the new baseline, but an
+        // `Unknown` outcome must not promote it either.
+        policy.begin_chunk();
+        #[allow(clippy::unwrap_used, reason = "test drives a known-valid update")]
+        let _candidate_3 =
+            futures_executor::block_on(policy.update(StreamUpdateContext::new(&stop))).unwrap();
+        let confirmed_after_commit = policy.current_target();
+        policy.end_chunk(ChunkAttemptOutcome::Unknown);
+        assert_eq!(
+            policy.current_target(),
+            confirmed_after_commit,
+            "an unknown commit outcome must not promote a speculative candidate"
+        );
+    }
+
+    #[test]
+    #[allow(
+        clippy::unwrap_used,
+        reason = "test drives a controlled adaptive policy"
+    )]
+    fn adaptive_open_restores_confirmed_and_discards_stale_pending() {
+        #[allow(clippy::unwrap_used, reason = "test literal is a valid identity")]
+        let identity = ComponentStreamIdentity::new("test.adaptive").unwrap();
+        #[allow(clippy::unwrap_used, reason = "test literals are valid ChunkSizes")]
+        let bounds =
+            AdaptiveBounds::new(ChunkSize::new(1).unwrap(), ChunkSize::new(100).unwrap()).unwrap();
+        #[allow(clippy::unwrap_used, reason = "test literal is a valid threshold")]
+        let target_duration = ChunkTimeThreshold::new(Duration::from_secs(1)).unwrap();
+        let clock = Arc::new(ManualClock::new(SystemTime::UNIX_EPOCH));
+        let policy = AdaptiveCompletionPolicy::new(
+            identity.clone(),
+            bounds,
+            target_duration,
+            Arc::clone(&clock) as Arc<dyn Clock>,
+        );
+        let (_source, stop) = crate::StopSource::new();
+
+        // Produce a pending candidate that never gets confirmed.
+        policy.begin_chunk();
+        clock.advance(Duration::from_millis(1));
+        #[allow(clippy::unwrap_used, reason = "test drives a known-valid update")]
+        let _pending =
+            futures_executor::block_on(policy.update(StreamUpdateContext::new(&stop))).unwrap();
+
+        #[allow(clippy::unwrap_used, reason = "test literal is a valid ChunkSize")]
+        let restored_target = ChunkSize::new(42).unwrap();
+        let codec = adaptive_decision_codec();
+        #[allow(clippy::unwrap_used, reason = "test builds a known-valid envelope")]
+        let inherited = ComponentStateEnvelope::encode(
+            identity,
+            &AdaptiveDecision {
+                target: restored_target,
+            },
+            &codec,
+            StateLimits::default(),
+        )
+        .unwrap();
+        #[allow(clippy::unwrap_used, reason = "test drives a known-valid open")]
+        futures_executor::block_on(policy.open(StreamOpenContext::new(Some(&inherited), &stop)))
+            .unwrap();
+        assert_eq!(
+            policy.current_target(),
+            restored_target,
+            "open must restore the durable envelope's target"
+        );
+
+        // The pending candidate from before `open` must never resurface.
+        policy.end_chunk(ChunkAttemptOutcome::Committed);
+        assert_eq!(
+            policy.current_target(),
+            restored_target,
+            "a pending candidate predating `open` must never be promoted"
+        );
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used, reason = "test constructs known-valid policies")]
+    fn fingerprint_is_deterministic_for_identical_configuration() {
+        #[allow(clippy::unwrap_used, reason = "test literal is a valid ChunkSize")]
+        let a = ItemCountCompletionPolicy::new(ChunkSize::new(7).unwrap());
+        #[allow(clippy::unwrap_used, reason = "test literal is a valid ChunkSize")]
+        let b = ItemCountCompletionPolicy::new(ChunkSize::new(7).unwrap());
+        assert_eq!(a.fingerprint(), b.fingerprint());
+
+        #[allow(clippy::unwrap_used, reason = "test literal is a valid threshold")]
+        let threshold = ChunkTimeThreshold::new(Duration::from_secs(3)).unwrap();
+        let clock_a: Arc<dyn Clock> = Arc::new(ManualClock::new(SystemTime::UNIX_EPOCH));
+        let clock_b: Arc<dyn Clock> = Arc::new(ManualClock::new(SystemTime::UNIX_EPOCH));
+        let time_a = TimeCompletionPolicy::new(clock_a, threshold);
+        let time_b = TimeCompletionPolicy::new(clock_b, threshold);
+        assert_eq!(
+            time_a.fingerprint(),
+            time_b.fingerprint(),
+            "the injected clock is runtime state, not configuration"
+        );
+
+        #[allow(clippy::unwrap_used, reason = "test literals are valid ChunkSizes")]
+        let bounds =
+            AdaptiveBounds::new(ChunkSize::new(2).unwrap(), ChunkSize::new(9).unwrap()).unwrap();
+        #[allow(clippy::unwrap_used, reason = "test literal is a valid identity")]
+        let adaptive_a = AdaptiveCompletionPolicy::new(
+            ComponentStreamIdentity::new("a").unwrap(),
+            bounds,
+            threshold,
+            Arc::new(ManualClock::new(SystemTime::UNIX_EPOCH)),
+        );
+        #[allow(clippy::unwrap_used, reason = "test literal is a valid identity")]
+        let adaptive_b = AdaptiveCompletionPolicy::new(
+            ComponentStreamIdentity::new("b").unwrap(),
+            bounds,
+            threshold,
+            Arc::new(ManualClock::new(SystemTime::UNIX_EPOCH)),
+        );
+        assert_eq!(
+            adaptive_a.fingerprint(),
+            adaptive_b.fingerprint(),
+            "identity and clock are runtime wiring, not configuration"
+        );
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used, reason = "test constructs known-valid policies")]
+    fn fingerprint_changes_with_configuration() {
+        #[allow(clippy::unwrap_used, reason = "test literal is a valid ChunkSize")]
+        let count_5 = ItemCountCompletionPolicy::new(ChunkSize::new(5).unwrap());
+        #[allow(clippy::unwrap_used, reason = "test literal is a valid ChunkSize")]
+        let count_6 = ItemCountCompletionPolicy::new(ChunkSize::new(6).unwrap());
+        assert_ne!(count_5.fingerprint(), count_6.fingerprint());
+
+        #[allow(clippy::unwrap_used, reason = "test literal is a valid ChunkSize")]
+        let small: Arc<dyn CompletionPolicy> =
+            Arc::new(ItemCountCompletionPolicy::new(ChunkSize::new(2).unwrap()));
+        #[allow(clippy::unwrap_used, reason = "test literal is a valid ChunkSize")]
+        let large: Arc<dyn CompletionPolicy> =
+            Arc::new(ItemCountCompletionPolicy::new(ChunkSize::new(5).unwrap()));
+        #[allow(
+            clippy::unwrap_used,
+            reason = "test constructs a known-valid composite"
+        )]
+        let any = CompositeCompletionPolicy::new(
+            CompositeMode::Any,
+            vec![Arc::clone(&small), Arc::clone(&large)],
+        )
+        .unwrap();
+        #[allow(
+            clippy::unwrap_used,
+            reason = "test constructs a known-valid composite"
+        )]
+        let all = CompositeCompletionPolicy::new(CompositeMode::All, vec![small, large]).unwrap();
+        assert_ne!(
+            any.fingerprint(),
+            all.fingerprint(),
+            "Any vs All must fingerprint differently even with the same members"
+        );
+
+        #[allow(clippy::unwrap_used, reason = "test literals are valid ChunkSizes")]
+        let bounds_a =
+            AdaptiveBounds::new(ChunkSize::new(1).unwrap(), ChunkSize::new(10).unwrap()).unwrap();
+        #[allow(clippy::unwrap_used, reason = "test literals are valid ChunkSizes")]
+        let bounds_b =
+            AdaptiveBounds::new(ChunkSize::new(1).unwrap(), ChunkSize::new(20).unwrap()).unwrap();
+        #[allow(clippy::unwrap_used, reason = "test literal is a valid threshold")]
+        let threshold = ChunkTimeThreshold::new(Duration::from_secs(1)).unwrap();
+        #[allow(clippy::unwrap_used, reason = "test literal is a valid identity")]
+        let adaptive_a = AdaptiveCompletionPolicy::new(
+            ComponentStreamIdentity::new("same").unwrap(),
+            bounds_a,
+            threshold,
+            Arc::new(ManualClock::new(SystemTime::UNIX_EPOCH)),
+        );
+        #[allow(clippy::unwrap_used, reason = "test literal is a valid identity")]
+        let adaptive_b = AdaptiveCompletionPolicy::new(
+            ComponentStreamIdentity::new("same").unwrap(),
+            bounds_b,
+            threshold,
+            Arc::new(ManualClock::new(SystemTime::UNIX_EPOCH)),
+        );
+        assert_ne!(
+            adaptive_a.fingerprint(),
+            adaptive_b.fingerprint(),
+            "a bounds change must change the fingerprint"
+        );
+
+        // Nested composite structure must be reflected too.
+        #[allow(clippy::unwrap_used, reason = "test literal is a valid ChunkSize")]
+        let nested_leaf: Arc<dyn CompletionPolicy> =
+            Arc::new(ItemCountCompletionPolicy::new(ChunkSize::new(2).unwrap()));
+        #[allow(
+            clippy::unwrap_used,
+            reason = "test constructs a known-valid composite"
+        )]
+        let inner_any =
+            CompositeCompletionPolicy::new(CompositeMode::Any, vec![Arc::clone(&nested_leaf)])
+                .unwrap();
+        #[allow(
+            clippy::unwrap_used,
+            reason = "test constructs a known-valid composite"
+        )]
+        let inner_all =
+            CompositeCompletionPolicy::new(CompositeMode::All, vec![nested_leaf]).unwrap();
+        #[allow(clippy::unwrap_used, reason = "test literal is a valid ChunkSize")]
+        let sibling: Arc<dyn CompletionPolicy> =
+            Arc::new(ItemCountCompletionPolicy::new(ChunkSize::new(3).unwrap()));
+        #[allow(
+            clippy::unwrap_used,
+            reason = "test constructs a known-valid composite"
+        )]
+        let outer_a = CompositeCompletionPolicy::new(
+            CompositeMode::All,
+            vec![Arc::new(inner_any), Arc::clone(&sibling)],
+        )
+        .unwrap();
+        #[allow(
+            clippy::unwrap_used,
+            reason = "test constructs a known-valid composite"
+        )]
+        let outer_b =
+            CompositeCompletionPolicy::new(CompositeMode::All, vec![Arc::new(inner_all), sibling])
+                .unwrap();
+        assert_ne!(
+            outer_a.fingerprint(),
+            outer_b.fingerprint(),
+            "a mode change nested inside a composite must change the outer fingerprint"
+        );
     }
 }
