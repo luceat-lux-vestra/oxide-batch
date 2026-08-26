@@ -34,7 +34,7 @@
 //! real, pre-materialization resource bound: [`ObjectStoreCapability::get`]
 //! rejects an oversized object before a buffer proportional to its true
 //! size is allocated (see its own contract), and [`ObjectItemWriter`]'s
-//! `write` serializes each item into a [`BoundedSink`] over the candidate
+//! `write` serializes each item into a `BoundedSink` (private) over the candidate
 //! buffer, which refuses any single write that would exceed the bound
 //! *before* copying a byte -- not a post-hoc length check on an
 //! already-built buffer. The one residual, inherent limit -- a `serialize`
@@ -1160,8 +1160,8 @@ where
     /// buffer specifically so `max_object_bytes` can be a real,
     /// pre-materialization bound: every write to the sink is checked
     /// against the remaining budget *before* copying a single byte into
-    /// the accumulator (see [`BoundedSink`]'s docs for the one residual
-    /// limit this cannot cover -- an item whose own `serialize`
+    /// the accumulator (see the private `BoundedSink` sink type's docs for
+    /// the one residual limit this cannot cover -- an item whose own `serialize`
     /// implementation allocates a large buffer internally before ever
     /// calling the sink). A well-behaved `serialize` writes incrementally
     /// (e.g. via `write!`, or by writing one already-small field at a
