@@ -128,7 +128,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "e9571fc66c11402864409675d643e089ee6298d7",
+    "source_commit": "208415b296720a98b6b47b67046bd4ffd89af7c5",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -143,7 +143,7 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "e9571fc66c11402864409675d643e089ee6298d7",
+      "execution_commit": "208415b296720a98b6b47b67046bd4ffd89af7c5",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -162,7 +162,7 @@
         "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
         "crates/oxide-batch/Cargo.toml": "762ee1faab89b474e219bc1a97dc5e8bdb21a03a",
         "crates/oxide-batch/migrations": "7923dcfb1ff0d152499466259107986cd8ae27e5",
-        "crates/oxide-batch/src": "7f1a25deb8ea7019cd1c241edaec2933ea88a775",
+        "crates/oxide-batch/src": "5c1f24d4d5b7f0ceebe1509326f5e52c0f0afc67",
         "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "2c68359b1043311db6a60b6bc7e6f4e0e0766fa1",
         "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "1bbb800be11c7ada42b16be604313ccdf5ba96fc",
         "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "2ef89b558074e73bb417c07a56cddfb708af1a7a",
@@ -522,7 +522,7 @@
           "violations": []
         },
         "execution_manifest": {
-          "execution_commit": "e9571fc66c11402864409675d643e089ee6298d7",
+          "execution_commit": "208415b296720a98b6b47b67046bd4ffd89af7c5",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -541,7 +541,7 @@
             "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
             "crates/oxide-batch/Cargo.toml": "762ee1faab89b474e219bc1a97dc5e8bdb21a03a",
             "crates/oxide-batch/migrations": "7923dcfb1ff0d152499466259107986cd8ae27e5",
-            "crates/oxide-batch/src": "7f1a25deb8ea7019cd1c241edaec2933ea88a775",
+            "crates/oxide-batch/src": "5c1f24d4d5b7f0ceebe1509326f5e52c0f0afc67",
             "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "2c68359b1043311db6a60b6bc7e6f4e0e0766fa1",
             "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "1bbb800be11c7ada42b16be604313ccdf5ba96fc",
             "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "2ef89b558074e73bb417c07a56cddfb708af1a7a",
@@ -742,7 +742,7 @@
           }
         ],
         "execution_manifest": {
-          "execution_commit": "e9571fc66c11402864409675d643e089ee6298d7",
+          "execution_commit": "208415b296720a98b6b47b67046bd4ffd89af7c5",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -761,7 +761,7 @@
             "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
             "crates/oxide-batch/Cargo.toml": "762ee1faab89b474e219bc1a97dc5e8bdb21a03a",
             "crates/oxide-batch/migrations": "7923dcfb1ff0d152499466259107986cd8ae27e5",
-            "crates/oxide-batch/src": "7f1a25deb8ea7019cd1c241edaec2933ea88a775",
+            "crates/oxide-batch/src": "5c1f24d4d5b7f0ceebe1509326f5e52c0f0afc67",
             "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "2c68359b1043311db6a60b6bc7e6f4e0e0766fa1",
             "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "1bbb800be11c7ada42b16be604313ccdf5ba96fc",
             "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "2ef89b558074e73bb417c07a56cddfb708af1a7a",
@@ -1417,7 +1417,7 @@
           "violations": []
         },
         "execution_manifest": {
-          "execution_commit": "e9571fc66c11402864409675d643e089ee6298d7",
+          "execution_commit": "208415b296720a98b6b47b67046bd4ffd89af7c5",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -1436,7 +1436,7 @@
             "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
             "crates/oxide-batch/Cargo.toml": "762ee1faab89b474e219bc1a97dc5e8bdb21a03a",
             "crates/oxide-batch/migrations": "7923dcfb1ff0d152499466259107986cd8ae27e5",
-            "crates/oxide-batch/src": "7f1a25deb8ea7019cd1c241edaec2933ea88a775",
+            "crates/oxide-batch/src": "5c1f24d4d5b7f0ceebe1509326f5e52c0f0afc67",
             "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "2c68359b1043311db6a60b6bc7e6f4e0e0766fa1",
             "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "1bbb800be11c7ada42b16be604313ccdf5ba96fc",
             "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "2ef89b558074e73bb417c07a56cddfb708af1a7a",
@@ -1969,7 +1969,7 @@
           "violations": []
         },
         "execution_manifest": {
-          "execution_commit": "e9571fc66c11402864409675d643e089ee6298d7",
+          "execution_commit": "208415b296720a98b6b47b67046bd4ffd89af7c5",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -1988,7 +1988,7 @@
             "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
             "crates/oxide-batch/Cargo.toml": "762ee1faab89b474e219bc1a97dc5e8bdb21a03a",
             "crates/oxide-batch/migrations": "7923dcfb1ff0d152499466259107986cd8ae27e5",
-            "crates/oxide-batch/src": "7f1a25deb8ea7019cd1c241edaec2933ea88a775",
+            "crates/oxide-batch/src": "5c1f24d4d5b7f0ceebe1509326f5e52c0f0afc67",
             "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "2c68359b1043311db6a60b6bc7e6f4e0e0766fa1",
             "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "1bbb800be11c7ada42b16be604313ccdf5ba96fc",
             "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "2ef89b558074e73bb417c07a56cddfb708af1a7a",

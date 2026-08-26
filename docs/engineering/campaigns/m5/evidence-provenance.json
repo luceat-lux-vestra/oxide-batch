@@ -118,9 +118,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "e9571fc66c11402864409675d643e089ee6298d7",
+        "execution_commit": "208415b296720a98b6b47b67046bd4ffd89af7c5",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "698ece59cb61776fcec0d9e68b79dd5dc37700b5",
+        "branch_head_sha": "ea8948cd4c81455302be0d2189438c8839ce9fd8",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -130,27 +130,27 @@
       "workflow_run": {
         "workflow": "M5 Soak",
         "workflow_file": ".github/workflows/m5-soak.yml",
-        "id": 32914358699,
+        "id": 32918487760,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-soak-campaign",
-        "id": 98014806711,
+        "id": 98027088412,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-15",
-        "id": 9587731049,
-        "digest": "sha256:86fbd6bdc0e48b50ff175f03e312a002702573b8820d3ee6491b4ab6dbeea12d",
-        "size_bytes": 89947
+        "id": 9589101124,
+        "digest": "sha256:9a23d6e8086e91b49c342736cd7fe7de2bc63b184fcecc75a9b84325ef0796b2",
+        "size_bytes": 88209
       },
-      "retained_report_git_blob": "a7d052f0265957db8966824f935db5e88401baa0",
+      "retained_report_git_blob": "d64acdf4ce2cd93b404d49453c16b631160df017",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T09:24:56+09:00",
-        "run_id": 32914358699,
+        "verified_at": "2026-08-26T10:29:23+09:00",
+        "run_id": 32918487760,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -158,7 +158,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, three rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, and a concurrent-writer poisoning race fix), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, four rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, a concurrent-writer poisoning race fix, and the fourth round's object-store writer panic-safety/error-classification/sink-overflow fail-closed fixes), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
       }
     },
     {
@@ -168,9 +168,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "e9571fc66c11402864409675d643e089ee6298d7",
+        "execution_commit": "208415b296720a98b6b47b67046bd4ffd89af7c5",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "698ece59cb61776fcec0d9e68b79dd5dc37700b5",
+        "branch_head_sha": "ea8948cd4c81455302be0d2189438c8839ce9fd8",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -180,27 +180,27 @@
       "workflow_run": {
         "workflow": "M5 Soak",
         "workflow_file": ".github/workflows/m5-soak.yml",
-        "id": 32914358699,
+        "id": 32918487760,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-soak-campaign",
-        "id": 98014806921,
+        "id": 98027088490,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-18",
-        "id": 9587746290,
-        "digest": "sha256:2033bff1b1c41d005fc24ff646a035f4b236203ed8a5f7d6775433d1bf1e5ba9",
-        "size_bytes": 89861
+        "id": 9589102660,
+        "digest": "sha256:96143fb5427d16eca4e086ddebfc69519e4becc269eb94b7d7633781d8f883e0",
+        "size_bytes": 88773
       },
-      "retained_report_git_blob": "77b2886ffd26d3a32871f5649600154c5b7aefe5",
+      "retained_report_git_blob": "5f8dd87e48ccd7b7b8cea93d6f1ced57a07c163d",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T09:24:56+09:00",
-        "run_id": 32914358699,
+        "verified_at": "2026-08-26T10:29:23+09:00",
+        "run_id": 32918487760,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -208,7 +208,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, three rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, and a concurrent-writer poisoning race fix), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, four rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, a concurrent-writer poisoning race fix, and the fourth round's object-store writer panic-safety/error-classification/sink-overflow fail-closed fixes), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
       }
     },
     {
@@ -218,9 +218,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "e9571fc66c11402864409675d643e089ee6298d7",
+        "execution_commit": "208415b296720a98b6b47b67046bd4ffd89af7c5",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "698ece59cb61776fcec0d9e68b79dd5dc37700b5",
+        "branch_head_sha": "ea8948cd4c81455302be0d2189438c8839ce9fd8",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -230,27 +230,27 @@
       "workflow_run": {
         "workflow": "M5 Cancellation",
         "workflow_file": ".github/workflows/m5-cancellation.yml",
-        "id": 32914358743,
+        "id": 32918487829,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-cancellation-campaign",
-        "id": 98014807019,
+        "id": 98027090236,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-15",
-        "id": 9587653302,
-        "digest": "sha256:65a984f4e0d78f0bf6fae6a0ff5dfe8c748b57c6fc2ac46ce527f1911a8d35fa",
-        "size_bytes": 5734
+        "id": 9589035470,
+        "digest": "sha256:9d7fc62b9639adbb4468efeb4f89ec7864d3f399af8cbaa293904d7bf98603df",
+        "size_bytes": 5750
       },
-      "retained_report_git_blob": "9842052579db9783d715aba342876292dd9eb4d1",
+      "retained_report_git_blob": "9a2f7cde0a33e5b1712e38ed64adc3b0fe831546",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T09:24:56+09:00",
-        "run_id": 32914358743,
+        "verified_at": "2026-08-26T10:29:23+09:00",
+        "run_id": 32918487829,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -258,7 +258,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, three rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, and a concurrent-writer poisoning race fix), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, four rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, a concurrent-writer poisoning race fix, and the fourth round's object-store writer panic-safety/error-classification/sink-overflow fail-closed fixes), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
       }
     },
     {
@@ -268,9 +268,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "e9571fc66c11402864409675d643e089ee6298d7",
+        "execution_commit": "208415b296720a98b6b47b67046bd4ffd89af7c5",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "698ece59cb61776fcec0d9e68b79dd5dc37700b5",
+        "branch_head_sha": "ea8948cd4c81455302be0d2189438c8839ce9fd8",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -280,27 +280,27 @@
       "workflow_run": {
         "workflow": "M5 Cancellation",
         "workflow_file": ".github/workflows/m5-cancellation.yml",
-        "id": 32914358743,
+        "id": 32918487829,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-cancellation-campaign",
-        "id": 98014806868,
+        "id": 98027090038,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-18",
-        "id": 9587654695,
-        "digest": "sha256:386e2e6fa4415ee25d7ef0ea06448025bab37078c5191050c539f65a23677054",
-        "size_bytes": 5754
+        "id": 9589039593,
+        "digest": "sha256:dde79602101d3522f139c7a21cf5cdbbe19e933dfd28767ff89d15ee9aabc714",
+        "size_bytes": 5749
       },
-      "retained_report_git_blob": "e67bae62d8b2c0a89a0885cd9054a8993f16c72f",
+      "retained_report_git_blob": "d9a39db3ba6760df9109cd469696d8d6e7c417a2",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T09:24:56+09:00",
-        "run_id": 32914358743,
+        "verified_at": "2026-08-26T10:29:23+09:00",
+        "run_id": 32918487829,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -308,7 +308,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, three rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, and a concurrent-writer poisoning race fix), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, four rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, a concurrent-writer poisoning race fix, and the fourth round's object-store writer panic-safety/error-classification/sink-overflow fail-closed fixes), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
       }
     },
     {
@@ -318,9 +318,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "e9571fc66c11402864409675d643e089ee6298d7",
+        "execution_commit": "208415b296720a98b6b47b67046bd4ffd89af7c5",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "698ece59cb61776fcec0d9e68b79dd5dc37700b5",
+        "branch_head_sha": "ea8948cd4c81455302be0d2189438c8839ce9fd8",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -330,27 +330,27 @@
       "workflow_run": {
         "workflow": "M5 Performance",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 32914358667,
+        "id": 32918487719,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-performance-campaign",
-        "id": 98014806269,
+        "id": 98027088096,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-15",
-        "id": 9587659313,
-        "digest": "sha256:3dc41dd54d42aa20105fb8cee7fd763c5ddc4e5057344029c9ceba706ac9e68f",
-        "size_bytes": 6612
+        "id": 9589039049,
+        "digest": "sha256:5ab5bc7aec2168fd935b4fe7ee16b7f87cfa7d25cbb42c19e55aef4e50ec7d31",
+        "size_bytes": 6605
       },
-      "retained_report_git_blob": "d4f01ace34e2eea1446767f69666af9c5f743906",
+      "retained_report_git_blob": "f74076b73da60f2972cc6df80492902fdcea16ba",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T09:24:56+09:00",
-        "run_id": 32914358667,
+        "verified_at": "2026-08-26T10:29:23+09:00",
+        "run_id": 32918487719,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -358,7 +358,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, three rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, and a concurrent-writer poisoning race fix), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, four rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, a concurrent-writer poisoning race fix, and the fourth round's object-store writer panic-safety/error-classification/sink-overflow fail-closed fixes), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
       }
     },
     {
@@ -368,9 +368,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "e9571fc66c11402864409675d643e089ee6298d7",
+        "execution_commit": "208415b296720a98b6b47b67046bd4ffd89af7c5",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "698ece59cb61776fcec0d9e68b79dd5dc37700b5",
+        "branch_head_sha": "ea8948cd4c81455302be0d2189438c8839ce9fd8",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -380,27 +380,27 @@
       "workflow_run": {
         "workflow": "M5 Performance",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 32914358667,
+        "id": 32918487719,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-performance-campaign",
-        "id": 98014806075,
+        "id": 98027088304,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-18",
-        "id": 9587653851,
-        "digest": "sha256:40c54817dff5058124f78cce268b38a69764cbdc14a2503b0e01002bb40168a6",
-        "size_bytes": 6607
+        "id": 9589041068,
+        "digest": "sha256:6da16905c61e73e6c94d6092c1af709f955075316721019c3e51c12bc7e5febd",
+        "size_bytes": 6603
       },
-      "retained_report_git_blob": "d1120a5a70b168a85c06cf7746ce39b524914fee",
+      "retained_report_git_blob": "3486b790ac76249bf114ed9e936033109efc1078",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T09:24:56+09:00",
-        "run_id": 32914358667,
+        "verified_at": "2026-08-26T10:29:23+09:00",
+        "run_id": 32918487719,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -408,7 +408,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, three rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, and a concurrent-writer poisoning race fix), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, four rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, a concurrent-writer poisoning race fix, and the fourth round's object-store writer panic-safety/error-classification/sink-overflow fail-closed fixes), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
       }
     },
     {
@@ -418,9 +418,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "e9571fc66c11402864409675d643e089ee6298d7",
+        "execution_commit": "208415b296720a98b6b47b67046bd4ffd89af7c5",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "698ece59cb61776fcec0d9e68b79dd5dc37700b5",
+        "branch_head_sha": "ea8948cd4c81455302be0d2189438c8839ce9fd8",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -430,27 +430,27 @@
       "workflow_run": {
         "workflow": "M5 Conformance",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 32914358723,
+        "id": 32918487664,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-conformance-campaign",
-        "id": 98014806573,
+        "id": 98027088418,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-15",
-        "id": 9587696046,
-        "digest": "sha256:c3c423c49fcd89e8abd3969702ffa78207021d0735da04c3e9372d897591aedc",
-        "size_bytes": 7126
+        "id": 9589056225,
+        "digest": "sha256:d7b872483ba9952653ad8b367b53c2fb3922d99115853dd4eb46ff9eb5fdf066",
+        "size_bytes": 7127
       },
-      "retained_report_git_blob": "69530776a03afc332b0a9cb2710eb96ebf6a359c",
+      "retained_report_git_blob": "da3009ccb5b919369cee36e189f56c08f56ff506",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T09:24:56+09:00",
-        "run_id": 32914358723,
+        "verified_at": "2026-08-26T10:29:23+09:00",
+        "run_id": 32918487664,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -458,7 +458,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, three rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, and a concurrent-writer poisoning race fix), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, four rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, a concurrent-writer poisoning race fix, and the fourth round's object-store writer panic-safety/error-classification/sink-overflow fail-closed fixes), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
       }
     },
     {
@@ -468,9 +468,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "e9571fc66c11402864409675d643e089ee6298d7",
+        "execution_commit": "208415b296720a98b6b47b67046bd4ffd89af7c5",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "698ece59cb61776fcec0d9e68b79dd5dc37700b5",
+        "branch_head_sha": "ea8948cd4c81455302be0d2189438c8839ce9fd8",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -480,27 +480,27 @@
       "workflow_run": {
         "workflow": "M5 Conformance",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 32914358723,
+        "id": 32918487664,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-conformance-campaign",
-        "id": 98014806380,
+        "id": 98027088218,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-18",
-        "id": 9587672210,
-        "digest": "sha256:6fd90c4310049729432ab7c6e06c2c20f18184fe2e9e69f319c5a36f809cc2ee",
-        "size_bytes": 7126
+        "id": 9589060287,
+        "digest": "sha256:3bc8df43a1f97d059302b1b917d52d58f896960c578b74a2d09705e7f160a9ad",
+        "size_bytes": 7127
       },
-      "retained_report_git_blob": "764b7a94914e9fb2cf8521bdc6dd4bf8f6f5faf5",
+      "retained_report_git_blob": "dbe6b6caf0e61676be4a0633e5ece01392e236fa",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T09:24:56+09:00",
-        "run_id": 32914358723,
+        "verified_at": "2026-08-26T10:29:23+09:00",
+        "run_id": 32918487664,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -508,7 +508,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, three rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, and a concurrent-writer poisoning race fix), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, four rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, a concurrent-writer poisoning race fix, and the fourth round's object-store writer panic-safety/error-classification/sink-overflow fail-closed fixes), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
       }
     },
     {
@@ -518,9 +518,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "e9571fc66c11402864409675d643e089ee6298d7",
+        "execution_commit": "208415b296720a98b6b47b67046bd4ffd89af7c5",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "698ece59cb61776fcec0d9e68b79dd5dc37700b5",
+        "branch_head_sha": "ea8948cd4c81455302be0d2189438c8839ce9fd8",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -530,27 +530,27 @@
       "workflow_run": {
         "workflow": "M5 Crash and Restore",
         "workflow_file": ".github/workflows/m5-crash-restore.yml",
-        "id": 32914358690,
+        "id": 32918487566,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-crash-restore-campaign",
-        "id": 98014806157,
+        "id": 98027087937,
         "conclusion": "success"
       },
       "artifact": {
         "name": "crash-restore-campaign-postgres-15",
-        "id": 9587651501,
-        "digest": "sha256:afd9a95a4e3759796ac1c9c2bb57cf581717f3124755eb0bbbba68b1ebe72a87",
-        "size_bytes": 6684
+        "id": 9589034338,
+        "digest": "sha256:ba546533f2df8c0b9d78ff0dc998a8bb249f61dafd8759d974dae3c49f9c5532",
+        "size_bytes": 6682
       },
-      "retained_report_git_blob": "9034ba83a855656649f065e624d10122e3cce68f",
+      "retained_report_git_blob": "2b335d6c92bd904f47190415a846f5be975793c9",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T09:24:56+09:00",
-        "run_id": 32914358690,
+        "verified_at": "2026-08-26T10:29:23+09:00",
+        "run_id": 32918487566,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -558,7 +558,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, three rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, and a concurrent-writer poisoning race fix), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, four rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, a concurrent-writer poisoning race fix, and the fourth round's object-store writer panic-safety/error-classification/sink-overflow fail-closed fixes), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
       }
     },
     {
@@ -568,9 +568,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "e9571fc66c11402864409675d643e089ee6298d7",
+        "execution_commit": "208415b296720a98b6b47b67046bd4ffd89af7c5",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "698ece59cb61776fcec0d9e68b79dd5dc37700b5",
+        "branch_head_sha": "ea8948cd4c81455302be0d2189438c8839ce9fd8",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -580,27 +580,27 @@
       "workflow_run": {
         "workflow": "M5 Crash and Restore",
         "workflow_file": ".github/workflows/m5-crash-restore.yml",
-        "id": 32914358690,
+        "id": 32918487566,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-crash-restore-campaign",
-        "id": 98014806324,
+        "id": 98027087999,
         "conclusion": "success"
       },
       "artifact": {
         "name": "crash-restore-campaign-postgres-18",
-        "id": 9587646913,
-        "digest": "sha256:17a3fdd11cdd7ddb55c606a877d4f5b43375d4ebce899a8dbfe8506b89e51793",
-        "size_bytes": 6665
+        "id": 9589032870,
+        "digest": "sha256:6333b90a6b63ac29aa83299d68348f5e7d8b89db011f2dde366a2b43be009db2",
+        "size_bytes": 6677
       },
-      "retained_report_git_blob": "a8af14649d8120e83f0f6a8ee7aebb23fe2f9045",
+      "retained_report_git_blob": "57af0d1f57469acf3d7b264fbeba42d8ec8ec984",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T09:24:56+09:00",
-        "run_id": 32914358690,
+        "verified_at": "2026-08-26T10:29:23+09:00",
+        "run_id": 32918487566,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -608,7 +608,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, three rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, and a concurrent-writer poisoning race fix), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, four rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, a concurrent-writer poisoning race fix, and the fourth round's object-store writer panic-safety/error-classification/sink-overflow fail-closed fixes), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
       }
     },
     {
@@ -618,9 +618,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "e9571fc66c11402864409675d643e089ee6298d7",
+        "execution_commit": "208415b296720a98b6b47b67046bd4ffd89af7c5",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "698ece59cb61776fcec0d9e68b79dd5dc37700b5",
+        "branch_head_sha": "ea8948cd4c81455302be0d2189438c8839ce9fd8",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -630,27 +630,27 @@
       "workflow_run": {
         "workflow": "M5 Upgrade",
         "workflow_file": ".github/workflows/m5-upgrade.yml",
-        "id": 32914358644,
+        "id": 32918487685,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-upgrade-campaign",
-        "id": 98014806345,
+        "id": 98027088407,
         "conclusion": "success"
       },
       "artifact": {
         "name": "upgrade-campaign-postgres-15",
-        "id": 9587681319,
-        "digest": "sha256:d5d832348b4c3717e4f72c9b5ef4736c66c770a87dbbe6b6103e0f757669784d",
-        "size_bytes": 5759
+        "id": 9589057310,
+        "digest": "sha256:bfa3d1a3942ef17cb92abe7e5d62f833b21e37ee1a0a4800bbf5fcc9fe19a210",
+        "size_bytes": 5763
       },
-      "retained_report_git_blob": "4a6906beed0a411998b5c1fd07b93365c49b3769",
+      "retained_report_git_blob": "2d522030e3bbe99e3f58264f17a45c2402e9584d",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T09:24:56+09:00",
-        "run_id": 32914358644,
+        "verified_at": "2026-08-26T10:29:23+09:00",
+        "run_id": 32918487685,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -658,7 +658,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, three rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, and a concurrent-writer poisoning race fix), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, four rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, a concurrent-writer poisoning race fix, and the fourth round's object-store writer panic-safety/error-classification/sink-overflow fail-closed fixes), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
       }
     },
     {
@@ -668,9 +668,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "e9571fc66c11402864409675d643e089ee6298d7",
+        "execution_commit": "208415b296720a98b6b47b67046bd4ffd89af7c5",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "698ece59cb61776fcec0d9e68b79dd5dc37700b5",
+        "branch_head_sha": "ea8948cd4c81455302be0d2189438c8839ce9fd8",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -680,27 +680,27 @@
       "workflow_run": {
         "workflow": "M5 Upgrade",
         "workflow_file": ".github/workflows/m5-upgrade.yml",
-        "id": 32914358644,
+        "id": 32918487685,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-upgrade-campaign",
-        "id": 98014806163,
+        "id": 98027088488,
         "conclusion": "success"
       },
       "artifact": {
         "name": "upgrade-campaign-postgres-18",
-        "id": 9587685330,
-        "digest": "sha256:a9011e5154b91beea073ddf329b90d47c0c97f7442f167061e7bc57639a69474",
-        "size_bytes": 5760
+        "id": 9589058579,
+        "digest": "sha256:4f949b66f8cec712f3a7b3d545b03002b6f3ca90955c6ad7e806c49b689e0ae5",
+        "size_bytes": 5756
       },
-      "retained_report_git_blob": "2652b36cb04276afe8b5b5391d77a6a5193379a1",
+      "retained_report_git_blob": "9ee677415110f68edc3957a373b1beabc45924a7",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T09:24:56+09:00",
-        "run_id": 32914358644,
+        "verified_at": "2026-08-26T10:29:23+09:00",
+        "run_id": 32918487685,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -708,7 +708,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, three rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, and a concurrent-writer poisoning race fix), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, four rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, a concurrent-writer poisoning race fix, and the fourth round's object-store writer panic-safety/error-classification/sink-overflow fail-closed fixes), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
       }
     },
     {
@@ -718,9 +718,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "e9571fc66c11402864409675d643e089ee6298d7",
+        "execution_commit": "208415b296720a98b6b47b67046bd4ffd89af7c5",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "698ece59cb61776fcec0d9e68b79dd5dc37700b5",
+        "branch_head_sha": "ea8948cd4c81455302be0d2189438c8839ce9fd8",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -730,27 +730,27 @@
       "workflow_run": {
         "workflow": "M5 Security",
         "workflow_file": ".github/workflows/m5-security.yml",
-        "id": 32914358707,
+        "id": 32918487716,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-security-campaign",
-        "id": 98014806828,
+        "id": 98027088351,
         "conclusion": "success"
       },
       "artifact": {
         "name": "security-campaign-postgres-15",
-        "id": 9587647838,
-        "digest": "sha256:e446387b40ac087d7f872fc321be428eb4e03b3bd013e987d91ad501466bbf56",
-        "size_bytes": 7077
+        "id": 9589033219,
+        "digest": "sha256:94fd1d1771648821f085b216a1f18b2ee5ca0dc7a172f87bb530996df76ec1c2",
+        "size_bytes": 7078
       },
-      "retained_report_git_blob": "2b851655420508e731e1362e1c5e4d3db5b6ad1b",
+      "retained_report_git_blob": "913b2cd29e603985ea566f410bb4dd327d9e6612",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T09:24:56+09:00",
-        "run_id": 32914358707,
+        "verified_at": "2026-08-26T10:29:23+09:00",
+        "run_id": 32918487716,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -758,7 +758,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, three rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, and a concurrent-writer poisoning race fix), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, four rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, a concurrent-writer poisoning race fix, and the fourth round's object-store writer panic-safety/error-classification/sink-overflow fail-closed fixes), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
       }
     },
     {
@@ -768,9 +768,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "e9571fc66c11402864409675d643e089ee6298d7",
+        "execution_commit": "208415b296720a98b6b47b67046bd4ffd89af7c5",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "698ece59cb61776fcec0d9e68b79dd5dc37700b5",
+        "branch_head_sha": "ea8948cd4c81455302be0d2189438c8839ce9fd8",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -780,27 +780,27 @@
       "workflow_run": {
         "workflow": "M5 Security",
         "workflow_file": ".github/workflows/m5-security.yml",
-        "id": 32914358707,
+        "id": 32918487716,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-security-campaign",
-        "id": 98014806586,
+        "id": 98027088173,
         "conclusion": "success"
       },
       "artifact": {
         "name": "security-campaign-postgres-18",
-        "id": 9587651265,
-        "digest": "sha256:127acf27e74b30d23c3696eb0d9fa7184afb0861c14370f91c180336ab223ae0",
-        "size_bytes": 7076
+        "id": 9589031648,
+        "digest": "sha256:32e7ef33ea96579ff97d72a45d33f2123d82ec692d6362e238f827cd40e7ba8e",
+        "size_bytes": 7077
       },
-      "retained_report_git_blob": "d2275408b068ae0fc2f152bcfefaa747fe2d121d",
+      "retained_report_git_blob": "948d73dd70e68f11201af5e990d632a905d19390",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T09:24:56+09:00",
-        "run_id": 32914358707,
+        "verified_at": "2026-08-26T10:29:23+09:00",
+        "run_id": 32918487716,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -808,7 +808,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, three rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, and a concurrent-writer poisoning race fix), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, four rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, a concurrent-writer poisoning race fix, and the fourth round's object-store writer panic-safety/error-classification/sink-overflow fail-closed fixes), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
       }
     },
     {
@@ -818,9 +818,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "e9571fc66c11402864409675d643e089ee6298d7",
+        "execution_commit": "208415b296720a98b6b47b67046bd4ffd89af7c5",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "698ece59cb61776fcec0d9e68b79dd5dc37700b5",
+        "branch_head_sha": "ea8948cd4c81455302be0d2189438c8839ce9fd8",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -830,27 +830,27 @@
       "workflow_run": {
         "workflow": "M5 Resource Bounds",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 32914358663,
+        "id": 32918487655,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-resource-bounds-campaign",
-        "id": 98014806391,
+        "id": 98027088139,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-15",
-        "id": 9587651769,
-        "digest": "sha256:5ab413916474ae6c67e434b9d83623d06c231d4a456b42ca0fd06e271354d203",
-        "size_bytes": 13485
+        "id": 9589036944,
+        "digest": "sha256:a71a8e5728e6318bf62c7fd9bd9dde011ca180bdbbe695a6585e390549c487bf",
+        "size_bytes": 13483
       },
-      "retained_report_git_blob": "8e841d76c6a9b75d05774d0870356c179dda4505",
+      "retained_report_git_blob": "336871da0ef9c7c93dd0c126780ad48dadfd7fa2",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T09:24:56+09:00",
-        "run_id": 32914358663,
+        "verified_at": "2026-08-26T10:29:23+09:00",
+        "run_id": 32918487655,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -858,7 +858,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, three rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, and a concurrent-writer poisoning race fix), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, four rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, a concurrent-writer poisoning race fix, and the fourth round's object-store writer panic-safety/error-classification/sink-overflow fail-closed fixes), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
       }
     },
     {
@@ -868,9 +868,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "e9571fc66c11402864409675d643e089ee6298d7",
+        "execution_commit": "208415b296720a98b6b47b67046bd4ffd89af7c5",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "698ece59cb61776fcec0d9e68b79dd5dc37700b5",
+        "branch_head_sha": "ea8948cd4c81455302be0d2189438c8839ce9fd8",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -880,27 +880,27 @@
       "workflow_run": {
         "workflow": "M5 Resource Bounds",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 32914358663,
+        "id": 32918487655,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-resource-bounds-campaign",
-        "id": 98014806124,
+        "id": 98027087936,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-18",
-        "id": 9587654333,
-        "digest": "sha256:95d7666159db7d7e16931ae735d2bec134b2cfa9b4819e7ca558fc0a5ea151e6",
+        "id": 9589031232,
+        "digest": "sha256:72398762d1a8363e87ad13ccb355287b712341e9d3dd6129ef7efeebc58f025c",
         "size_bytes": 13484
       },
-      "retained_report_git_blob": "a1ff9a4ed33e86a9f1e46694e074b9e864507c8d",
+      "retained_report_git_blob": "2682007e9f17be6df7449c3216f9b739e23d06f5",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T09:24:56+09:00",
-        "run_id": 32914358663,
+        "verified_at": "2026-08-26T10:29:23+09:00",
+        "run_id": 32918487655,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -908,7 +908,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, three rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, and a concurrent-writer poisoning race fix), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, four rounds): crates/oxide-batch/src changed (multi-resource nested lifecycle close-exactly-once/poisoning, object-store real pre-materialization bounds via BoundedSink, delegate error-category preservation, durable schema version bump, a concurrent-writer poisoning race fix, and the fourth round's object-store writer panic-safety/error-classification/sink-overflow fail-closed fixes), invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
       }
     }
   ],
