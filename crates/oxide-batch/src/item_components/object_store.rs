@@ -2188,4 +2188,241 @@ mod tests {
              matter how many small writes built it up"
         );
     }
+
+    #[test]
+    fn chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content() {
+        // `writer_panic_during_serialize_does_not_lose_previously_accumulated_content`
+        // above proves the `TruncateOnDrop` guard itself, directly, via a
+        // hand-driven `catch_unwind`. This test proves the thing that
+        // actually makes that guard load-bearing: the *chunk runtime's own*
+        // panic-catch-and-retry path (`invoke_writer` classifying the panic
+        // as `WriterError::new()`/`UserComponent`, then a `FaultDecision::Retry`
+        // reinvoking the same writer instance). It drives a real
+        // `ObjectItemWriter`, constructed exactly as production code would
+        // via `ObjectStoreWriterOpener`/`MultiResourceWriterOpener`, through
+        // a real `ChunkStep`/`FaultRuntime`, and checks every layer the
+        // review asked for: the runtime observes the panic and retries, the
+        // same logical item succeeds on retry without duplicating or
+        // dropping prior content, the final object bytes are correct, and
+        // the writer's own committed checkpoint (item count and version
+        // token) reflects both items.
+        use crate::{
+            BackoffOutcome, BackoffPolicy, BackoffSleeper, BoxFuture, Checkpoint,
+            ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext, ChunkCompletionError,
+            ChunkCompletionOutcome, ChunkCounts, ChunkDeliveryMode, ChunkExecutionOutcome,
+            ChunkFaultProgress, ChunkSize, ChunkStep, ChunkTransaction, ChunkTransactionContext,
+            ChunkTransactionError, ChunkTransactionManager, ClassifierRevision, ExecutionAttempt,
+            ExecutionContext, ExecutionCorrelation, FaultAction, FaultClassifier, FaultPhase,
+            FaultPolicy, FaultRule, FaultRuntime, InMemoryFaultState, InheritedStepProgress,
+            ItemProcessor, JobExecutionId, JobInstanceId, JobName, ProcessContext, ProcessOutcome,
+            ProcessorError, RetryLimit, RetryStateLimit, SkipLimit, StepExecutionId, StepName,
+        };
+        use std::collections::VecDeque;
+        use std::num::NonZeroU64;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
+
+        struct FixedReader(VecDeque<u64>);
+        impl ItemReader<u64> for FixedReader {
+            async fn read(
+                &mut self,
+                _context: ReadContext<'_>,
+            ) -> Result<ReadOutcome<u64>, ReaderError> {
+                Ok(self
+                    .0
+                    .pop_front()
+                    .map_or(ReadOutcome::EndOfInput, ReadOutcome::Item))
+            }
+        }
+
+        struct Identity;
+        impl ItemProcessor<u64, u64> for Identity {
+            async fn process(
+                &self,
+                item: &u64,
+                _context: ProcessContext<'_>,
+            ) -> Result<ProcessOutcome<u64>, ProcessorError> {
+                Ok(ProcessOutcome::Item(*item))
+            }
+        }
+
+        struct NoWaitSleeper;
+        impl BackoffSleeper for NoWaitSleeper {
+            fn sleep<'a>(
+                &'a self,
+                _delay: Duration,
+                _stop: &'a crate::StopToken,
+            ) -> BoxFuture<'a, BackoffOutcome> {
+                Box::pin(async { BackoffOutcome::Elapsed })
+            }
+        }
+
+        struct NoopTransaction;
+        impl ChunkTransaction for NoopTransaction {
+            fn business_transaction(&mut self) -> Option<&mut dyn crate::BusinessTransaction> {
+                None
+            }
+
+            fn commit(
+                &mut self,
+                _counts: ChunkCounts,
+                _fault: ChunkFaultProgress,
+            ) -> BoxFuture<'_, Result<ChunkCommitReceipt, ChunkTransactionError>> {
+                Box::pin(async {
+                    let checkpoint = Checkpoint::from_json(
+                        br#"{"format":"oxide-batch.checkpoint","format_version":1,"schema":"test.position","schema_version":1,"payload":{"position":0}}"#,
+                        StateLimits::default(),
+                    )
+                    .expect("checkpoint fixture must be valid");
+                    let context = ExecutionContext::from_json(
+                        br#"{"format":"oxide-batch.execution-context","format_version":1,"schema":"test.context","schema_version":1,"payload":{}}"#,
+                        StateLimits::default(),
+                    )
+                    .expect("context fixture must be valid");
+                    Ok(ChunkCommitReceipt::new(checkpoint, context))
+                })
+            }
+
+            fn rollback(&mut self) -> BoxFuture<'_, Result<(), ChunkTransactionError>> {
+                Box::pin(async { Ok(()) })
+            }
+        }
+
+        struct NoopTransactions;
+        impl ChunkTransactionManager for NoopTransactions {
+            fn begin(
+                &self,
+            ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>>
+            {
+                Box::pin(async move { Ok(Box::new(NoopTransaction) as Box<dyn ChunkTransaction>) })
+            }
+
+            fn inherited_progress(
+                &self,
+                _context: ChunkTransactionContext,
+            ) -> BoxFuture<'_, Result<InheritedStepProgress, ChunkTransactionError>> {
+                Box::pin(async { Ok(InheritedStepProgress::NONE) })
+            }
+        }
+
+        struct NoopCompletion;
+        impl ChunkCompletion for NoopCompletion {
+            fn after_commit<'a>(
+                &'a self,
+                _context: ChunkCompletionContext<'a>,
+            ) -> BoxFuture<'a, Result<ChunkCompletionOutcome, ChunkCompletionError>> {
+                Box::pin(async { Ok(ChunkCompletionOutcome::Acknowledged) })
+            }
+        }
+
+        // The real object-store writer, constructed exactly as production
+        // code would via `ObjectStoreWriterOpener`/`MultiResourceWriterOpener`.
+        let store = Arc::new(InMemoryObjectStore::new(1024));
+        let panicked_once = Arc::new(AtomicBool::new(false));
+        let panicked_once_for_serialize = Arc::clone(&panicked_once);
+        let serialize = move |item: &u64, sink: &mut dyn std::io::Write| {
+            let first_attempt_on_item_two =
+                *item == 2 && !panicked_once_for_serialize.swap(true, Ordering::SeqCst);
+            assert!(
+                !first_attempt_on_item_two,
+                "serializer panics on item 2's first attempt, deliberately, for this test"
+            );
+            sink.write_all(format!("{item},").as_bytes())
+        };
+        let opener = ObjectStoreWriterOpener::new(Arc::clone(&store), serialize, 1024);
+        let resource = ResourceIdentity::new("out").unwrap();
+        let identity = ComponentStreamIdentity::new(
+            "oxide-batch.object-store-unit-test.panic-retry-integration",
+        )
+        .unwrap();
+        let (_source, token) = stop();
+        let (writer, write_stream, _contract) = futures_executor::block_on(
+            MultiResourceWriterOpener::<u64>::open(&opener, &resource, 0, &identity),
+        )
+        .unwrap();
+        futures_executor::block_on(write_stream.open(StreamOpenContext::new(None, &token)))
+            .unwrap();
+
+        let mut step = ChunkStep::new(
+            StepName::new("object_store_panic_retry_step").unwrap(),
+            ChunkSize::new(1).unwrap(),
+            FixedReader(VecDeque::from([1_u64, 2_u64])),
+            Identity,
+            writer,
+            Arc::new(NoopTransactions),
+            Arc::new(NoopCompletion),
+        )
+        .with_fault_runtime(
+            FaultRuntime::new(
+                FaultPolicy::new(
+                    FaultClassifier::new(
+                        ClassifierRevision::new("panic_retry_test_v1").unwrap(),
+                        [FaultRule::new(
+                            FaultPhase::Write,
+                            FailureCategory::UserComponent,
+                            FaultAction::retry(),
+                        )
+                        .unwrap()],
+                    )
+                    .unwrap(),
+                    RetryLimit::new(1).unwrap(),
+                    RetryStateLimit::new(4).unwrap(),
+                    SkipLimit::new(0),
+                    BackoffPolicy::none(),
+                )
+                .unwrap(),
+                Arc::new(NoWaitSleeper),
+                Arc::new(InMemoryFaultState::new(RetryStateLimit::new(4).unwrap())),
+                ChunkDeliveryMode::AtLeastOnce,
+            )
+            .unwrap(),
+        );
+
+        let correlation = ExecutionCorrelation::new(
+            JobName::new("object_store_panic_retry_job").unwrap(),
+            JobInstanceId::new(1).unwrap(),
+            JobExecutionId::new(1).unwrap(),
+            ExecutionAttempt::new(NonZeroU64::new(1).unwrap()),
+            StepName::new("object_store_panic_retry_step").unwrap(),
+            StepExecutionId::new(1).unwrap(),
+            ExecutionAttempt::new(NonZeroU64::new(1).unwrap()),
+        );
+
+        let report = futures_executor::block_on(step.execute(&correlation, &token));
+
+        assert_eq!(report.outcome(), ChunkExecutionOutcome::Completed);
+        assert_eq!(
+            report.retry_counts().write(),
+            1,
+            "the panic on item 2's chunk must have been observed and retried \
+             exactly once by the chunk runtime"
+        );
+        assert_eq!(report.committed_counts().written().get(), 2);
+
+        let (bytes, metadata) = futures_executor::block_on(store.get(&id("out"), 1024)).unwrap();
+        assert_eq!(
+            bytes,
+            b"1,2,".to_vec(),
+            "item 1's prior committed content must survive the panic on \
+             item 2's chunk, and item 2 must appear exactly once after the \
+             retry -- never duplicated, never dropped"
+        );
+
+        let envelope =
+            futures_executor::block_on(write_stream.update(StreamUpdateContext::new(&token)))
+                .unwrap();
+        let restored: ObjectWritePosition =
+            envelope.decode(&object_write_position_codec()).unwrap();
+        assert_eq!(
+            restored.committed_item_count, 2,
+            "the writer's own committed checkpoint must reflect both items, \
+             not just the one written before the panic"
+        );
+        assert_eq!(
+            restored.version_token.as_deref(),
+            metadata.version_token().map(ObjectVersionToken::as_str),
+            "the checkpoint's recorded version token must match the \
+             object's actual, final version after the retried write"
+        );
+    }
 }

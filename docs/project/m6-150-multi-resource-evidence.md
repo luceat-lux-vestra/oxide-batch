@@ -212,6 +212,39 @@ from many small (one-byte) sink writes -- the shape a real incremental
 encoder would actually produce -- and proves the candidate never crosses the
 bound and the backend is never called.
 
+### Fifth round: independent strict review of the fourth round's production fix
+
+A fifth review found the fourth round's production fixes (panic safety,
+serializer classification, sticky sink overflow) materially correct, but
+raised two evidence/reconciliation gaps rather than a new production defect:
+
+13. **This evidence document described a design the final implementation no
+    longer has.** The Allocation/performance and Whole-object buffering
+    sections still said `ObjectItemWriter::write` moves the accumulator out
+    with `mem::take` and computes a candidate length before touching the
+    existing buffer -- both true of an earlier revision, neither true of the
+    final in-place-plus-`TruncateOnDrop` design. Fixed by rewriting both
+    sections to describe the final behavior; the "Fourth round" narrative
+    above is left as-is because it correctly describes what that round
+    changed *from* and *to*, not a final-state claim.
+14. **The previously-required panic/retry regression proved the guard, not
+    the runtime path that makes the guard load-bearing.**
+    `writer_panic_during_serialize_does_not_lose_previously_accumulated_content`
+    drives the panic through a direct `catch_unwind`, which proves
+    `TruncateOnDrop` itself but not that the chunk runtime's own
+    `invoke_writer` panic-catch and `FaultDecision::Retry` reinvoke the same
+    writer instance correctly end to end. Fixed by adding
+    `chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content`,
+    which drives a real `ObjectItemWriter` (constructed via
+    `ObjectStoreWriterOpener`/`MultiResourceWriterOpener`, exactly as
+    production code would) through a real `ChunkStep`/`FaultRuntime`: a
+    first chunk commits item 1, a second chunk's `serialize` panics once on
+    item 2, the runtime observes and retries, and the test asserts the final
+    object bytes (`"1,2,"`, not `"2,"` or `"1,2,2,"`), the retry count, the
+    committed item count, and the writer's own committed checkpoint
+    (`ObjectWritePosition`, decoded from `ObjectItemWriterStream::update`).
+    This test fails against the pre-fourth-round `mem::take` implementation.
+
 ## Audit performed before implementation
 
 Per #150's own instruction not to re-derive or duplicate #146's catalog, the
@@ -423,6 +456,7 @@ was needed.
 | **(#177, fourth round)** A serializer's own failure is classified as a policy-eligible user-component failure, not `Invariant` | `writer_serializer_failure_is_classified_as_user_component_not_invariant` |
 | **(#177, fourth round)** A `serialize` that ignores the sink's overflow `Err` still fails closed and never reaches the backend | `writer_ignoring_the_sink_overflow_error_still_fails_closed` |
 | **(#177, fourth round)** A logical output far exceeding the bound, built from many small sink writes (a realistic incremental encoder shape), is rejected without the candidate crossing the bound or the backend ever being called | `writer_bounds_a_large_logical_output_written_via_many_small_sink_writes` |
+| **(#177, review of the fourth round)** A real `ChunkStep`/`FaultRuntime` observes a panic from `serialize` and retries the same writer instance: prior committed content survives, the retried item succeeds without duplication or loss, the final object bytes are correct, and the writer's own committed checkpoint (item count, version token) reflects both items | `chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content` |
 
 Cancellation is honored by construction (`ObjectItemWriter::write` and
 `MultiResourceWriter::write` both check `context.stop_token()` before doing
@@ -477,12 +511,15 @@ resource bound: `ObjectStoreCapability::get` takes an explicit `max_bytes`
 and must reject an oversized object before delivering (or, for a backend
 that must materialize to know the length, cloning) content beyond it --
 `InMemoryObjectStore` checks the stored length before cloning, never after;
-the writer computes the prospective candidate length and rejects growth
-before touching the existing accumulator. It is not streaming/multipart --
-that stays M9, per #150's own scope note. (Before #177's correction, the
-reader fetched the whole object unconditionally and only compared its length
-afterward, and the writer had no bound at all -- see "Corrective update
-(#177)" above.)
+the writer extends its existing accumulator in place through a `BoundedSink`
+that checks each write against the remaining budget *before* copying a byte
+into it, and a `TruncateOnDrop` guard restores the accumulator to its
+pre-write length on any rejection, serializer failure, or panic unwinding out
+of `serialize` -- never after allocating a candidate proportional to an
+oversized write. It is not streaming/multipart -- that stays M9, per #150's
+own scope note. (Before #177's correction, the reader fetched the whole
+object unconditionally and only compared its length afterward, and the
+writer had no bound at all -- see "Corrective update (#177)" above.)
 
 `ObjectItemWriter`'s rustdoc documents its one known limitation directly: a
 crash between a successful `put` and the runtime's own durable commit leaves
@@ -510,11 +547,14 @@ transition, so that the rollover decision and the write it gates stay one
 atomic unit even under concurrent calls (the chunk runtime never actually
 calls `write` concurrently on one writer instance, so this holds no
 contention in practice; see the type's own rustdoc). `ObjectItemWriter::write`
-(#177) builds its `put` candidate with exactly one owned buffer per call --
-the existing accumulator is moved out (`mem::take`, no clone) and extended in
-place, handed to `put` by reference, and kept as the new accumulator on
-success or truncated back to its prior length on failure -- rather than the
-two full clones the pre-#177 implementation performed on every write.
+(#177) builds its `put` candidate with exactly one owned buffer, reused across
+calls -- the accumulator is never moved or cloned, only mutated in place
+behind a `TruncateOnDrop` guard, and handed to `put` by reference. The guard
+disarms only after a successful `put`; any early return, rejected write, or a
+panic unwinding out of the caller-supplied `serialize` truncates the buffer
+back to its length from before that call, so a failure never loses content a
+prior, already-committed call had accumulated -- rather than the two full
+clones the pre-#177 implementation performed on every write.
 
 ## Reproduction
 
