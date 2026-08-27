@@ -296,14 +296,14 @@ fn validate_stream_registrations<I, O, R, P, W>(
 /// in automatically.
 ///
 /// [`ChunkJob::new`] builds its compiled plan and its runtime step from the
-/// same call, so it can call this for you. [`FlowJob::with_chunk_step`]
+/// same call, so it can call this for you. [`FlowJob::with_chunk_step`](crate::FlowJob::with_chunk_step)
 /// cannot: a flow node is compiled from bare [`ChunkComponentRevisions`]
 /// before any concrete [`ChunkStep`] (or the completion policy it installs)
 /// exists, so nothing at compile time can fold a not-yet-installed policy's
 /// fingerprint in. Call this explicitly instead, fold the result into the
 /// [`ChunkComponentRevisions`] used for *both*
 /// [`crate::FlowGraph`](crate::FlowGraph) compilation and the later
-/// [`FlowJob::with_chunk_step`] call (via
+/// [`FlowJob::with_chunk_step`](crate::FlowJob::with_chunk_step) call (via
 /// [`ChunkComponentRevisions::with_completion_policy_revision`]) -- the same
 /// pattern already used to declare a stream revision up front, rather than
 /// relying on the automatic folding only a single-call constructor can do.
@@ -349,7 +349,7 @@ pub fn completion_policy_revision(
 ///
 /// This automatic folding is only sound for [`ChunkJob::new`], which builds
 /// the compiled plan and the runtime step together in one call; see
-/// [`completion_policy_revision`] for why [`FlowJob::with_chunk_step`]
+/// [`completion_policy_revision`] for why [`FlowJob::with_chunk_step`](crate::FlowJob::with_chunk_step)
 /// cannot do the same and must validate a declared revision instead.
 ///
 /// # Errors
@@ -373,7 +373,7 @@ fn completion_policy_component_revisions<I, O, R, P, W>(
 /// Validates that a step's live completion-policy fingerprint (if any)
 /// matches the completion-policy revision already declared in `revisions`.
 ///
-/// Unlike [`ChunkJob::new`], [`FlowJob::with_chunk_step`] binds a runtime
+/// Unlike [`ChunkJob::new`], [`FlowJob::with_chunk_step`](crate::FlowJob::with_chunk_step) binds a runtime
 /// step to a plan compiled earlier from bare [`ChunkComponentRevisions`], so
 /// it cannot compute this fingerprint for the caller -- it can only check
 /// that whatever the caller declared (via [`completion_policy_revision`],
