@@ -466,3 +466,4 @@ oxide_batch::WriteListener
 oxide_batch::WriteOutcome
 oxide_batch::WriterError
 oxide_batch::aggregate_step_partitions
+oxide_batch::completion_policy_revision

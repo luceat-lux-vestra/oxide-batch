@@ -1963,12 +1963,14 @@ mod adaptive_completion_policy_integration {
         ChunkTransaction, ChunkTransactionError, ChunkTransactionManager, CompletionPolicy,
         ComponentRevision, ComponentStateEnvelope, ComponentStreamIdentity,
         CompositeCompletionPolicy, CompositeMode, DefinitionError, DefinitionRevision,
-        ItemCountCompletionPolicy, JobName, StepName, StopSource,
+        FlowExecutionOutcome, FlowGraph, FlowJob, FlowJobError, FlowLauncher, FlowNode, FlowTarget,
+        InMemoryJobRepository, ItemCountCompletionPolicy, JobName, JobParameters, NodeId,
+        StepComponents, StepName, StepNode, StopSource, TerminalKind, completion_policy_revision,
     };
 
     use super::{
-        Boundary, Completion, ManualClock, OrderedListener, Processor, Reader, Writer,
-        chunk_revisions, correlation, receipt,
+        Boundary, Completion, DeterministicIds, ManualClock, NonZeroU64, OrderedListener,
+        Processor, Reader, Writer, chunk_revisions, correlation, receipt,
     };
 
     fn identity() -> ComponentStreamIdentity {
@@ -2276,6 +2278,195 @@ mod adaptive_completion_policy_integration {
              under the same instance -- otherwise its persisted decision \
              would never reach the durable commit, and a restart would \
              silently lose it"
+        );
+    }
+
+    #[tokio::test]
+    async fn replacing_a_completion_policy_removes_its_stale_stream_registration() {
+        let clock: Arc<dyn oxide_batch::Clock> = Arc::new(ManualClock::new(UNIX_EPOCH));
+        let policy = adaptive_policy(clock);
+        let (writer, _batches) = Writer::new(Boundary::Normal);
+        let (completion, _calls) = Completion::new(Boundary::Normal);
+        let transactions = ToggleTransactions {
+            receipt: receipt(),
+            attempt: Arc::new(AtomicUsize::new(0)),
+            fail_at: 0,
+            evidence: Arc::new(ToggleEvidence::default()),
+        };
+        let replacement: Arc<dyn CompletionPolicy> = Arc::new(ItemCountCompletionPolicy::new(
+            ChunkSize::new(2).expect("valid ChunkSize"),
+        ));
+        let step = ChunkStep::new(
+            StepName::new("policy_replacement").expect("valid step name"),
+            ChunkSize::new(2).expect("valid chunk size"),
+            Reader::new([1]),
+            Processor::normal(),
+            writer,
+            Arc::new(transactions),
+            Arc::new(completion),
+        )
+        .with_completion_policy(Arc::clone(&policy) as Arc<dyn CompletionPolicy>)
+        .with_completion_policy(replacement);
+
+        let result = ChunkJob::new(
+            JobName::new("policy_replacement_job").expect("valid job name"),
+            step,
+            DefinitionRevision::new("v1").expect("valid revision"),
+            &chunk_revisions(),
+        );
+
+        assert!(
+            result.is_ok(),
+            "replacing a completion policy must remove the previous \
+             policy's registered ItemStream -- a stale registration left \
+             behind either fails binding with RuntimeStreamNotDeclared, or, \
+             if a caller happened to declare it, keeps the discarded \
+             instance open/updating as a ghost stream no longer driving any \
+             completion decision"
+        );
+    }
+
+    #[tokio::test]
+    async fn flow_job_rejects_completion_policy_without_declared_revision() {
+        let clock: Arc<dyn oxide_batch::Clock> = Arc::new(ManualClock::new(UNIX_EPOCH));
+        let policy = adaptive_policy(clock);
+        let (writer, _batches) = Writer::new(Boundary::Normal);
+        let (completion, _calls) = Completion::new(Boundary::Normal);
+        let transactions = ToggleTransactions {
+            receipt: receipt(),
+            attempt: Arc::new(AtomicUsize::new(0)),
+            fail_at: 0,
+            evidence: Arc::new(ToggleEvidence::default()),
+        };
+        let step = ChunkStep::new(
+            StepName::new("adaptive_flow_step").expect("valid step name"),
+            ChunkSize::new(2).expect("valid chunk size"),
+            Reader::new([1]),
+            Processor::normal(),
+            writer,
+            Arc::new(transactions),
+            Arc::new(completion),
+        )
+        .with_completion_policy(Arc::clone(&policy) as Arc<dyn CompletionPolicy>);
+
+        // The normal FlowGraph::compile-then-bind ordering: `revisions` is
+        // built and compiled into the graph *before* this step (or the
+        // policy it installs) exists, so it cannot declare a completion
+        // policy revision automatically the way ChunkJob::new can.
+        let revisions = chunk_revisions();
+        let node = NodeId::new("adaptive_flow").expect("valid node id");
+        let name = JobName::new("adaptive_flow_job").expect("valid job name");
+        let plan = FlowGraph::new(node.clone())
+            .with_node(FlowNode::step(StepNode::new(
+                node.clone(),
+                StepName::new("adaptive_flow_step").expect("valid step name"),
+                StepComponents::Chunk {
+                    size: ChunkSize::new(2).expect("valid chunk size"),
+                    revisions: Box::new(revisions.clone()),
+                },
+            )))
+            .with_sequence(node.clone(), FlowTarget::Terminal(TerminalKind::Complete))
+            .expect("valid sequence")
+            .compile(
+                &name,
+                DefinitionRevision::new("flow-v1").expect("valid revision"),
+            )
+            .expect("flow compiles");
+
+        let result = FlowJob::new(name, plan)
+            .expect("format-2 flow is valid")
+            .with_chunk_step(node, step, &revisions);
+
+        assert!(
+            matches!(result, Err(FlowJobError::ComponentMismatch { .. })),
+            "binding a step that installs a completion policy must fail when \
+             the bound component revisions do not declare a matching \
+             completion-policy revision"
+        );
+    }
+
+    #[tokio::test]
+    async fn flow_job_binds_and_executes_adaptive_completion_policy_when_revision_is_declared_up_front()
+     {
+        let clock: Arc<dyn oxide_batch::Clock> = Arc::new(ManualClock::new(UNIX_EPOCH));
+        let policy = adaptive_policy(clock);
+        let (writer, _batches) = Writer::new(Boundary::Normal);
+        let (completion, _calls) = Completion::new(Boundary::Normal);
+        let transactions = ToggleTransactions {
+            receipt: receipt(),
+            attempt: Arc::new(AtomicUsize::new(0)),
+            fail_at: 0,
+            evidence: Arc::new(ToggleEvidence::default()),
+        };
+        let step = ChunkStep::new(
+            StepName::new("adaptive_flow_step").expect("valid step name"),
+            ChunkSize::new(2).expect("valid chunk size"),
+            Reader::new([1]),
+            Processor::normal(),
+            writer,
+            Arc::new(transactions),
+            Arc::new(completion),
+        )
+        .with_completion_policy(Arc::clone(&policy) as Arc<dyn CompletionPolicy>);
+
+        // Declared up front -- via the public `completion_policy_revision`
+        // helper -- and folded into the *same* `revisions` used for both
+        // graph compilation and binding, the way a stream revision already
+        // must be. Installing the adaptive policy directly also registers
+        // its own ItemStream (blocker #2's fix), so its stream revision must
+        // be declared too, exactly like any other stream.
+        let completion_revision = completion_policy_revision(policy.as_ref())
+            .expect("adaptive policy fingerprint must hash cleanly");
+        let revisions = chunk_revisions()
+            .with_completion_policy_revision(completion_revision)
+            .with_stream_revision(
+                identity(),
+                ComponentRevision::new("adaptive-v1").expect("valid revision"),
+            );
+        let node = NodeId::new("adaptive_flow").expect("valid node id");
+        let name = JobName::new("adaptive_flow_job").expect("valid job name");
+        let plan = FlowGraph::new(node.clone())
+            .with_node(FlowNode::step(StepNode::new(
+                node.clone(),
+                StepName::new("adaptive_flow_step").expect("valid step name"),
+                StepComponents::Chunk {
+                    size: ChunkSize::new(2).expect("valid chunk size"),
+                    revisions: Box::new(revisions.clone()),
+                },
+            )))
+            .with_sequence(node.clone(), FlowTarget::Terminal(TerminalKind::Complete))
+            .expect("valid sequence")
+            .compile(
+                &name,
+                DefinitionRevision::new("flow-v1").expect("valid revision"),
+            )
+            .expect("flow compiles");
+
+        let job = FlowJob::new(name, plan)
+            .expect("format-2 flow is valid")
+            .with_chunk_step(node, step, &revisions)
+            .expect(
+                "the declared completion-policy revision matches the step's live policy",
+            );
+
+        let launch_clock = ManualClock::new(UNIX_EPOCH + Duration::from_secs(500));
+        let ids = DeterministicIds::new(NonZeroU64::MIN);
+        let repository =
+            InMemoryJobRepository::new(Arc::new(launch_clock.clone()), Arc::new(ids.clone()));
+        let (_source, stop) = StopSource::new();
+
+        let report = FlowLauncher::new(&repository, &launch_clock, &ids)
+            .launch(&job, &JobParameters::new(), &stop)
+            .await
+            .expect("flow chunk launch must complete");
+
+        assert_eq!(report.outcome(), &FlowExecutionOutcome::Completed);
+        assert_eq!(
+            policy.current_target().get(),
+            2,
+            "the adaptive policy installed through FlowJob::with_chunk_step \
+             must still drive completion and commit its target through the \
+             same instance as a standalone ChunkJob would"
         );
     }
 

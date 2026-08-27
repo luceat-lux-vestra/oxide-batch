@@ -421,6 +421,7 @@ pub use chunk_runtime::{
     ChunkAttemptOutcome, ChunkExecutionOutcome, ChunkExecutionReport, ChunkFailure, ChunkJob,
     ChunkLaunchReport, ChunkListener, ChunkListenerContext, ChunkListenerError,
     ChunkListenerFailure, ChunkListenerFailureKind, ChunkListenerPhase, ChunkStep,
+    completion_policy_revision,
 };
 pub use completion::{
     AdaptiveBounds, AdaptiveCompletionPolicy, ChunkTimeThreshold, CompletionPolicy,

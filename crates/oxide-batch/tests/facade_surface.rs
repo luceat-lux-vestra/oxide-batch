@@ -137,6 +137,7 @@ mod resolves {
         TelemetryRecord, TelemetrySpanKind, TelemetrySpanStatus, TerminalKind, TerminalStatusSet,
         TimeCompletionPolicy, UnjoinedPhase, VERSION, VersionedStateCodec, WriteContext,
         WriteListener, WriteOutcome, WriterError, aggregate_step_partitions,
+        completion_policy_revision,
     };
 
     #[cfg(feature = "postgres")]

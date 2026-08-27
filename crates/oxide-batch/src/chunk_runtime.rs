@@ -108,8 +108,24 @@ where
     /// correctly whether it is installed directly here or nested anywhere
     /// inside a composite -- there is no second, composite-blind path that
     /// could silently drop it.
+    ///
+    /// Calling this again to replace a previously installed policy first
+    /// removes exactly the previous policy's own registered streams (by the
+    /// identities its [`CompletionPolicy::stream_registrations`] reports),
+    /// never a manually registered [`Self::with_item_stream`] stream that
+    /// happens to coexist: a policy replacement is a full replacement, not
+    /// an accumulation of every policy this step ever installed.
     #[must_use]
     pub fn with_completion_policy(mut self, policy: Arc<dyn CompletionPolicy>) -> Self {
+        if let Some(previous) = self.completion_policy.as_ref() {
+            let stale: Vec<ComponentStreamIdentity> = previous
+                .stream_registrations()
+                .into_iter()
+                .map(|(identity, _, _)| identity)
+                .collect();
+            self.streams
+                .retain(|(identity, _, _)| !stale.contains(identity));
+        }
         for (identity, stream, contract) in policy.stream_registrations() {
             self.streams.push((identity, stream, contract));
         }
@@ -274,9 +290,52 @@ fn validate_stream_registrations<I, O, R, P, W>(
     Ok(())
 }
 
+/// Computes the [`ChunkComponentRevisions`] completion-policy revision token
+/// for `policy`: the restart-relevant hash of its live
+/// [`CompletionPolicy::fingerprint`], the same one [`ChunkJob::new`] folds
+/// in automatically.
+///
+/// [`ChunkJob::new`] builds its compiled plan and its runtime step from the
+/// same call, so it can call this for you. [`FlowJob::with_chunk_step`]
+/// cannot: a flow node is compiled from bare [`ChunkComponentRevisions`]
+/// before any concrete [`ChunkStep`] (or the completion policy it installs)
+/// exists, so nothing at compile time can fold a not-yet-installed policy's
+/// fingerprint in. Call this explicitly instead, fold the result into the
+/// [`ChunkComponentRevisions`] used for *both*
+/// [`crate::FlowGraph`](crate::FlowGraph) compilation and the later
+/// [`FlowJob::with_chunk_step`] call (via
+/// [`ChunkComponentRevisions::with_completion_policy_revision`]) -- the same
+/// pattern already used to declare a stream revision up front, rather than
+/// relying on the automatic folding only a single-call constructor can do.
+///
+/// The configuration is hashed (rather than embedded verbatim) so an
+/// arbitrarily large composite tree still yields a bounded-length revision
+/// token.
+///
+/// # Errors
+///
+/// Returns [`DefinitionError::CompletionPolicyFingerprintPanic`] if the
+/// application-supplied [`CompletionPolicy::fingerprint`] panics, and
+/// [`DefinitionError`] if the computed digest somehow failed
+/// [`ComponentRevision`]'s token validation, which cannot happen for a fixed
+/// hex-digest shape.
+pub fn completion_policy_revision(
+    policy: &dyn CompletionPolicy,
+) -> Result<ComponentRevision, DefinitionError> {
+    let fingerprint = catch_unwind(AssertUnwindSafe(|| policy.fingerprint()))
+        .map_err(|_| DefinitionError::CompletionPolicyFingerprintPanic)?;
+    let digest: [u8; 32] = Sha256::digest(fingerprint.as_bytes()).into();
+    let hex = digest.iter().fold(String::new(), |mut hex, byte| {
+        use std::fmt::Write as _;
+        let _ = write!(hex, "{byte:02x}");
+        hex
+    });
+    ComponentRevision::new(format!("completion:{hex}"))
+}
+
 /// Folds an installed completion policy's configuration into the
-/// restart-relevant component revisions used to compute a chunk
-/// definition's fingerprint.
+/// restart-relevant component revisions used to compute a standalone
+/// [`ChunkJob`]'s definition fingerprint.
 ///
 /// Computed automatically from the live [`CompletionPolicy::fingerprint`] of
 /// whatever policy [`ChunkStep::with_completion_policy`] (or
@@ -286,9 +345,12 @@ fn validate_stream_registrations<I, O, R, P, W>(
 /// completion semantics always changes the resulting definition fingerprint.
 /// A step with no completion policy installed folds in nothing, so its
 /// fingerprint stays byte-for-byte identical to one built before this
-/// function existed. The configuration is hashed (rather than embedded
-/// verbatim) so an arbitrarily large composite tree still yields a
-/// bounded-length revision token.
+/// function existed.
+///
+/// This automatic folding is only sound for [`ChunkJob::new`], which builds
+/// the compiled plan and the runtime step together in one call; see
+/// [`completion_policy_revision`] for why [`FlowJob::with_chunk_step`]
+/// cannot do the same and must validate a declared revision instead.
 ///
 /// # Errors
 ///
@@ -304,16 +366,41 @@ fn completion_policy_component_revisions<I, O, R, P, W>(
     let Some(policy) = step.completion_policy.as_ref() else {
         return Ok(components.clone());
     };
-    let fingerprint = catch_unwind(AssertUnwindSafe(|| policy.fingerprint()))
-        .map_err(|_| DefinitionError::CompletionPolicyFingerprintPanic)?;
-    let digest: [u8; 32] = Sha256::digest(fingerprint.as_bytes()).into();
-    let hex = digest.iter().fold(String::new(), |mut hex, byte| {
-        use std::fmt::Write as _;
-        let _ = write!(hex, "{byte:02x}");
-        hex
-    });
-    let revision = ComponentRevision::new(format!("completion:{hex}"))?;
+    let revision = completion_policy_revision(policy.as_ref())?;
     Ok(components.clone().with_completion_policy_revision(revision))
+}
+
+/// Validates that a step's live completion-policy fingerprint (if any)
+/// matches the completion-policy revision already declared in `revisions`.
+///
+/// Unlike [`ChunkJob::new`], [`FlowJob::with_chunk_step`] binds a runtime
+/// step to a plan compiled earlier from bare [`ChunkComponentRevisions`], so
+/// it cannot compute this fingerprint for the caller -- it can only check
+/// that whatever the caller declared (via [`completion_policy_revision`],
+/// folded in before compiling the graph) still matches the step's actual,
+/// live policy. A step with no completion policy installed must declare
+/// none either.
+///
+/// # Errors
+///
+/// Returns [`DefinitionError::CompletionPolicyFingerprintPanic`] if the
+/// installed policy's [`CompletionPolicy::fingerprint`] panics, and
+/// [`DefinitionError::CompletionPolicyRevisionMismatch`] if the declared and
+/// live revisions disagree.
+fn validate_completion_policy_revision<I, O, R, P, W>(
+    step: &ChunkStep<I, O, R, P, W>,
+    revisions: &ChunkComponentRevisions,
+) -> Result<(), DefinitionError> {
+    let expected = step
+        .completion_policy
+        .as_ref()
+        .map(|policy| completion_policy_revision(policy.as_ref()))
+        .transpose()?;
+    if expected.as_ref() == revisions.completion_policy_revision() {
+        Ok(())
+    } else {
+        Err(DefinitionError::CompletionPolicyRevisionMismatch)
+    }
 }
 
 impl<I, O, R, P, W> fmt::Debug for ChunkStep<I, O, R, P, W> {
@@ -453,10 +540,21 @@ impl crate::FlowJob {
     /// and [`BoxedWriter`](crate::BoxedWriter) available if a caller wants
     /// item-level erasure too.
     ///
+    /// If `step` installs a [`CompletionPolicy`], `revisions` must already
+    /// declare the matching completion-policy revision -- computed via
+    /// [`completion_policy_revision`] and folded in with
+    /// [`ChunkComponentRevisions::with_completion_policy_revision`] *before*
+    /// the enclosing [`crate::FlowGraph`] was compiled, the same way a
+    /// stream revision is declared up front rather than derived here.
+    /// Unlike [`ChunkJob::new`], this method cannot compute it for you: the
+    /// plan was already compiled from bare `ChunkComponentRevisions` before
+    /// this step (or the policy it installs) existed.
+    ///
     /// # Errors
     ///
     /// Returns [`crate::FlowJobError::ComponentMismatch`] when executable and
-    /// manifest declarations differ, or the ordinary binding errors for an
+    /// manifest declarations differ (including a missing or stale declared
+    /// completion-policy revision), or the ordinary binding errors for an
     /// unknown, wrong-kind, duplicate, or differently named node.
     pub fn with_chunk_step<I, O, R, P, W>(
         mut self,
@@ -474,10 +572,9 @@ impl crate::FlowJob {
         let Some(crate::FlowNode::Step(compiled)) = self.compiled_plan().node(&node_id) else {
             return Err(crate::FlowJobError::WrongNodeKind { node: node_id });
         };
-        let Ok(revisions) = completion_policy_component_revisions(&step, revisions) else {
+        if validate_completion_policy_revision(&step, revisions).is_err() {
             return Err(crate::FlowJobError::ComponentMismatch { node: node_id });
-        };
-        let revisions = &revisions;
+        }
         let expected = StepComponents::Chunk {
             size: step.size,
             revisions: Box::new(revisions.clone()),

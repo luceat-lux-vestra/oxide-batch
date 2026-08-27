@@ -1068,6 +1068,20 @@ pub enum DefinitionError {
     /// other definition-construction failure is, rather than unwinding out
     /// of a constructor with a `Result` return type.
     CompletionPolicyFingerprintPanic,
+    /// A chunk step's live completion-policy fingerprint does not match the
+    /// completion-policy revision already declared in the
+    /// [`ChunkComponentRevisions`] a compiled flow node was bound against.
+    ///
+    /// Unlike a standalone chunk job (which builds its compiled plan and
+    /// runtime step from the same call, so it can fold a completion
+    /// policy's fingerprint in automatically), a flow node is bound to a
+    /// plan that was already compiled from bare `ChunkComponentRevisions`
+    /// -- before any concrete step, or its installed policy, existed. The
+    /// caller must declare the matching revision up front (the same way a
+    /// stream revision is declared up front and validated against its
+    /// runtime registration) rather than relying on it being computed
+    /// automatically.
+    CompletionPolicyRevisionMismatch,
 }
 
 impl fmt::Display for DefinitionError {
@@ -1124,6 +1138,10 @@ impl fmt::Display for DefinitionError {
             Self::CompletionPolicyFingerprintPanic => {
                 formatter.write_str("completion policy fingerprint() panicked")
             }
+            Self::CompletionPolicyRevisionMismatch => formatter.write_str(
+                "the step's live completion-policy fingerprint does not match the \
+                 completion-policy revision declared in the bound component revisions",
+            ),
         }
     }
 }
