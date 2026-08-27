@@ -110,7 +110,7 @@ it.
 | `shutdown` | 20 | shutdown coordination, deadlines, and drain reporting |
 | `runtime` | 18 | the launcher, tasklet contracts, and cooperative stop |
 | `repository` | 14 | the in-memory adapters, plus 12 optional `postgres` names |
-| `chunk_runtime` | 13 | chunk step execution, its report, and chunk listeners |
+| `chunk_runtime` | 14 | chunk step execution, its report, chunk listeners, and the completion-policy revision helper a `FlowJob` bind must declare up front |
 | `item_listener` | 12 | the read, process, write, retry, and skip listener families |
 | `fault_state` | 11 | bounded retry-state storage and its envelope |
 | `diagnostics` | 9 | lifecycle events, correlation, and metric labels |

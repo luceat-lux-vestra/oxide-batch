@@ -7,27 +7,55 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::FutureExt;
+use sha2::{Digest, Sha256};
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::runtime::{lower_one_step, one_step_node};
 use crate::{
-    BackoffOutcome, BoxFuture, BoxedStream, ChunkCommitReceipt, ChunkCompletion,
-    ChunkCompletionContext, ChunkCompletionOutcome, ChunkComponentRevisions, ChunkCount,
-    ChunkCounts, ChunkFaultProgress, ChunkSize, ChunkTransaction, ChunkTransactionContext,
-    ChunkTransactionError, ChunkTransactionManager, CompiledExecutionPlan, ComponentStateEnvelope,
-    ComponentStreamIdentity, DefinitionError, DefinitionIdentity, DefinitionRevision,
-    ExecutionCorrelation, FailureCategory, FailureId, FailureSummary, FaultDecision,
-    FaultDescriptor, FaultEvidence, FaultPhase, FaultProgress, FaultRuntime, InFlightPolicy,
-    InheritedStepProgress, ItemListenerContext, ItemListenerFailure, ItemListenerSet,
-    ItemProcessor, ItemReader, ItemStream, ItemWriter, JobExecutionListener, JobLauncher, JobName,
-    JobParameters, LaunchError, LaunchReport, LifecycleEventKind, ListenerFailureKind,
-    ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome, ReaderError,
-    RestartabilityDeclaration, RetryCounts, RetryKey, RetryOrdinal, RetryOutcome, RetryReservation,
-    RollbackDisposition, SkipCounts, StepComponents, StepExecutionListener, StepName, StopToken,
-    StreamCloseContext, StreamOpenContext, StreamRuntimeOutcome, StreamStateContract,
-    StreamUpdateContext, Tasklet, TaskletContext, TaskletError, TaskletJob, TaskletOutcome,
-    TaskletStep, WriteContext, WriteOutcome, WriterError,
+    AdaptiveCompletionPolicy, BackoffOutcome, BoxFuture, BoxedStream, ChunkCommitReceipt,
+    ChunkCompletion, ChunkCompletionContext, ChunkCompletionOutcome, ChunkComponentRevisions,
+    ChunkCount, ChunkCounts, ChunkFaultProgress, ChunkSize, ChunkTransaction,
+    ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager, CompiledExecutionPlan,
+    CompletionPolicy, ComponentRevision, ComponentStateEnvelope, ComponentStreamIdentity,
+    DefinitionError, DefinitionIdentity, DefinitionRevision, ExecutionCorrelation, FailureCategory,
+    FailureId, FailureSummary, FaultDecision, FaultDescriptor, FaultEvidence, FaultPhase,
+    FaultProgress, FaultRuntime, InFlightPolicy, InheritedStepProgress, ItemListenerContext,
+    ItemListenerFailure, ItemListenerSet, ItemProcessor, ItemReader, ItemStream, ItemWriter,
+    JobExecutionListener, JobLauncher, JobName, JobParameters, LaunchError, LaunchReport,
+    LifecycleEventKind, ListenerFailureKind, ProcessContext, ProcessOutcome, ProcessorError,
+    ReadContext, ReadOutcome, ReaderError, RestartabilityDeclaration, RetryCounts, RetryKey,
+    RetryOrdinal, RetryOutcome, RetryReservation, RollbackDisposition, SkipCounts, StepComponents,
+    StepExecutionListener, StepName, StopToken, StreamCloseContext, StreamOpenContext,
+    StreamRuntimeOutcome, StreamStateContract, StreamUpdateContext, Tasklet, TaskletContext,
+    TaskletError, TaskletJob, TaskletOutcome, TaskletStep, WriteContext, WriteOutcome, WriterError,
 };
+
+/// Distinguishes who registered one runtime [`ItemStream`] entry, so a
+/// completion-policy replacement can remove exactly the registrations it
+/// itself installed and never one a caller registered directly.
+///
+/// Ownership is tracked explicitly per entry rather than inferred from
+/// [`ComponentStreamIdentity`] equality: two entries can legitimately share
+/// one identity for a moment while a `ChunkStep` is still being built (a
+/// manual registration and a policy's own registration, installed in either
+/// order), and removing "whatever this policy reports" must never remove
+/// the wrong one just because the values match.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StreamOwner {
+    /// Registered directly via [`ChunkStep::with_item_stream`].
+    Manual,
+    /// Registered by [`ChunkStep::with_completion_policy`] on behalf of the
+    /// installed [`CompletionPolicy`]'s own [`CompletionPolicy::stream_registrations`].
+    Policy,
+}
+
+/// One runtime [`ItemStream`] registration and its explicit provenance.
+type StreamRegistration = (
+    ComponentStreamIdentity,
+    Arc<BoxedStream>,
+    StreamStateContract,
+    StreamOwner,
+);
 
 /// A validated one-step chunk definition.
 pub struct ChunkStep<I, O, R, P, W> {
@@ -38,15 +66,12 @@ pub struct ChunkStep<I, O, R, P, W> {
     writer: W,
     transactions: Arc<dyn ChunkTransactionManager>,
     completion: Arc<dyn ChunkCompletion>,
+    completion_policy: Option<Arc<dyn CompletionPolicy>>,
     listeners: Vec<Arc<dyn ChunkListener>>,
     step_listeners: Vec<Arc<dyn StepExecutionListener>>,
     item_listeners: ItemListenerSet<I, O>,
     fault: Option<FaultRuntime>,
-    streams: Vec<(
-        ComponentStreamIdentity,
-        Arc<BoxedStream>,
-        StreamStateContract,
-    )>,
+    streams: Vec<StreamRegistration>,
     in_flight_policy: InFlightPolicy,
     definition_digest: [u8; 32],
 }
@@ -78,6 +103,7 @@ where
             writer,
             transactions,
             completion,
+            completion_policy: None,
             listeners: Vec::new(),
             step_listeners: Vec::new(),
             item_listeners: ItemListenerSet::new(),
@@ -86,6 +112,61 @@ where
             in_flight_policy: InFlightPolicy::FinishChunk,
             definition_digest: [0; 32],
         }
+    }
+
+    /// Installs an additional early-completion policy.
+    ///
+    /// The configured [`ChunkSize`] passed to [`Self::new`] always remains
+    /// the hard resource-safety ceiling for buffered items; installing a
+    /// policy here only allows a chunk to stop *earlier* than that ceiling,
+    /// per `REPEAT-POLICY-001`. Without a policy, completion is exactly the
+    /// pre-#151 `ChunkSize`-only behavior.
+    ///
+    /// Also registers every [`ItemStream`] that `policy` (or, for a
+    /// [`crate::CompositeCompletionPolicy`], any of its members at any
+    /// nesting depth) reports through
+    /// [`CompletionPolicy::stream_registrations`], bound to that exact
+    /// instance. This is the only place that registration happens, so an
+    /// [`AdaptiveCompletionPolicy`] gets its persisted decision wired
+    /// correctly whether it is installed directly here or nested anywhere
+    /// inside a composite -- there is no second, composite-blind path that
+    /// could silently drop it.
+    ///
+    /// Calling this again to replace a previously installed policy first
+    /// removes exactly the previous policy's own registered streams --
+    /// every entry this method itself tagged as policy-owned, never a
+    /// manually registered [`Self::with_item_stream`] entry that happens
+    /// to coexist, even under the identical [`ComponentStreamIdentity`]: a
+    /// policy replacement is a full replacement of what *this method*
+    /// installed, not an accumulation of every policy this step ever
+    /// installed, and ownership is tracked per entry rather than inferred
+    /// from identity equality, so a coincidental identity collision with a
+    /// manual registration can never cause that manual entry to be removed.
+    #[must_use]
+    pub fn with_completion_policy(mut self, policy: Arc<dyn CompletionPolicy>) -> Self {
+        if self.completion_policy.is_some() {
+            self.streams
+                .retain(|(_, _, _, owner)| *owner != StreamOwner::Policy);
+        }
+        for (identity, stream, contract) in policy.stream_registrations() {
+            self.streams
+                .push((identity, stream, contract, StreamOwner::Policy));
+        }
+        self.completion_policy = Some(policy);
+        self
+    }
+
+    /// Registers one [`AdaptiveCompletionPolicy`] instance as this step's
+    /// completion policy.
+    ///
+    /// A thin, discoverable alias for [`Self::with_completion_policy`]:
+    /// [`CompletionPolicy::stream_registrations`] already binds this exact
+    /// instance's persisted decision to the step, so there is exactly one
+    /// registration mechanism regardless of which method installs it --
+    /// never a second path that could drift onto a different instance.
+    #[must_use]
+    pub fn with_adaptive_completion_policy(self, policy: Arc<AdaptiveCompletionPolicy>) -> Self {
+        self.with_completion_policy(policy)
     }
 
     /// Registers a chunk listener in deterministic before-order.
@@ -145,8 +226,12 @@ where
         stream: impl ItemStream + 'static,
         contract: StreamStateContract,
     ) -> Self {
-        self.streams
-            .push((identity, Arc::new(BoxedStream::new(stream)), contract));
+        self.streams.push((
+            identity,
+            Arc::new(BoxedStream::new(stream)),
+            contract,
+            StreamOwner::Manual,
+        ));
         self
     }
 
@@ -198,7 +283,7 @@ fn validate_stream_registrations<I, O, R, P, W>(
     components: &ChunkComponentRevisions,
 ) -> Result<(), DefinitionError> {
     let mut seen: BTreeSet<&ComponentStreamIdentity> = BTreeSet::new();
-    for (identity, _, contract) in &step.streams {
+    for (identity, _, contract, _owner) in &step.streams {
         if !seen.insert(identity) {
             return Err(DefinitionError::DuplicateRuntimeStream {
                 namespace: identity.clone(),
@@ -222,7 +307,7 @@ fn validate_stream_registrations<I, O, R, P, W>(
         if !step
             .streams
             .iter()
-            .any(|(identity, _, _)| identity == declared)
+            .any(|(identity, _, _, _)| identity == declared)
         {
             return Err(DefinitionError::DeclaredStreamMissingRuntime {
                 namespace: declared.clone(),
@@ -230,6 +315,119 @@ fn validate_stream_registrations<I, O, R, P, W>(
         }
     }
     Ok(())
+}
+
+/// Computes the [`ChunkComponentRevisions`] completion-policy revision token
+/// for `policy`: the restart-relevant hash of its live
+/// [`CompletionPolicy::fingerprint`], the same one [`ChunkJob::new`] folds
+/// in automatically.
+///
+/// [`ChunkJob::new`] builds its compiled plan and its runtime step from the
+/// same call, so it can call this for you. [`FlowJob::with_chunk_step`](crate::FlowJob::with_chunk_step)
+/// cannot: a flow node is compiled from bare [`ChunkComponentRevisions`]
+/// before any concrete [`ChunkStep`] (or the completion policy it installs)
+/// exists, so nothing at compile time can fold a not-yet-installed policy's
+/// fingerprint in. Call this explicitly instead, fold the result into the
+/// [`ChunkComponentRevisions`] used for *both*
+/// [`crate::FlowGraph`](crate::FlowGraph) compilation and the later
+/// [`FlowJob::with_chunk_step`](crate::FlowJob::with_chunk_step) call (via
+/// [`ChunkComponentRevisions::with_completion_policy_revision`]) -- the same
+/// pattern already used to declare a stream revision up front, rather than
+/// relying on the automatic folding only a single-call constructor can do.
+///
+/// The configuration is hashed (rather than embedded verbatim) so an
+/// arbitrarily large composite tree still yields a bounded-length revision
+/// token.
+///
+/// # Errors
+///
+/// Returns [`DefinitionError::CompletionPolicyFingerprintPanic`] if the
+/// application-supplied [`CompletionPolicy::fingerprint`] panics, and
+/// [`DefinitionError`] if the computed digest somehow failed
+/// [`ComponentRevision`]'s token validation, which cannot happen for a fixed
+/// hex-digest shape.
+pub fn completion_policy_revision(
+    policy: &dyn CompletionPolicy,
+) -> Result<ComponentRevision, DefinitionError> {
+    let fingerprint = catch_unwind(AssertUnwindSafe(|| policy.fingerprint()))
+        .map_err(|_| DefinitionError::CompletionPolicyFingerprintPanic)?;
+    let digest: [u8; 32] = Sha256::digest(fingerprint.as_bytes()).into();
+    let hex = digest.iter().fold(String::new(), |mut hex, byte| {
+        use std::fmt::Write as _;
+        let _ = write!(hex, "{byte:02x}");
+        hex
+    });
+    ComponentRevision::new(format!("completion:{hex}"))
+}
+
+/// Folds an installed completion policy's configuration into the
+/// restart-relevant component revisions used to compute a standalone
+/// [`ChunkJob`]'s definition fingerprint.
+///
+/// Computed automatically from the live [`CompletionPolicy::fingerprint`] of
+/// whatever policy [`ChunkStep::with_completion_policy`] (or
+/// [`ChunkStep::with_adaptive_completion_policy`]) installed, never from an
+/// application-supplied token: an application cannot forget to bump a
+/// revision it never has to declare, and a configuration change that alters
+/// completion semantics always changes the resulting definition fingerprint.
+/// A step with no completion policy installed folds in nothing, so its
+/// fingerprint stays byte-for-byte identical to one built before this
+/// function existed.
+///
+/// This automatic folding is only sound for [`ChunkJob::new`], which builds
+/// the compiled plan and the runtime step together in one call; see
+/// [`completion_policy_revision`] for why [`FlowJob::with_chunk_step`](crate::FlowJob::with_chunk_step)
+/// cannot do the same and must validate a declared revision instead.
+///
+/// # Errors
+///
+/// Returns [`DefinitionError::CompletionPolicyFingerprintPanic`] if the
+/// installed policy's application-supplied [`CompletionPolicy::fingerprint`]
+/// panics, and [`DefinitionError`] if the computed digest somehow failed
+/// [`ComponentRevision`]'s token validation, which cannot happen for a fixed
+/// hex-digest shape.
+fn completion_policy_component_revisions<I, O, R, P, W>(
+    step: &ChunkStep<I, O, R, P, W>,
+    components: &ChunkComponentRevisions,
+) -> Result<ChunkComponentRevisions, DefinitionError> {
+    let Some(policy) = step.completion_policy.as_ref() else {
+        return Ok(components.clone());
+    };
+    let revision = completion_policy_revision(policy.as_ref())?;
+    Ok(components.clone().with_completion_policy_revision(revision))
+}
+
+/// Validates that a step's live completion-policy fingerprint (if any)
+/// matches the completion-policy revision already declared in `revisions`.
+///
+/// Unlike [`ChunkJob::new`], [`FlowJob::with_chunk_step`](crate::FlowJob::with_chunk_step) binds a runtime
+/// step to a plan compiled earlier from bare [`ChunkComponentRevisions`], so
+/// it cannot compute this fingerprint for the caller -- it can only check
+/// that whatever the caller declared (via [`completion_policy_revision`],
+/// folded in before compiling the graph) still matches the step's actual,
+/// live policy. A step with no completion policy installed must declare
+/// none either.
+///
+/// # Errors
+///
+/// Returns [`DefinitionError::CompletionPolicyFingerprintPanic`] if the
+/// installed policy's [`CompletionPolicy::fingerprint`] panics, and
+/// [`DefinitionError::CompletionPolicyRevisionMismatch`] if the declared and
+/// live revisions disagree.
+fn validate_completion_policy_revision<I, O, R, P, W>(
+    step: &ChunkStep<I, O, R, P, W>,
+    revisions: &ChunkComponentRevisions,
+) -> Result<(), DefinitionError> {
+    let expected = step
+        .completion_policy
+        .as_ref()
+        .map(|policy| completion_policy_revision(policy.as_ref()))
+        .transpose()?;
+    if expected.as_ref() == revisions.completion_policy_revision() {
+        Ok(())
+    } else {
+        Err(DefinitionError::CompletionPolicyRevisionMismatch)
+    }
 }
 
 impl<I, O, R, P, W> fmt::Debug for ChunkStep<I, O, R, P, W> {
@@ -281,6 +479,8 @@ impl<I, O, R, P, W> ChunkJob<I, O, R, P, W> {
             return Err(DefinitionError::DeliveryModeMismatch);
         }
         validate_stream_registrations(&step, components)?;
+        let components = completion_policy_component_revisions(&step, components)?;
+        let components = &components;
         let step_name = step.name.clone();
         let definition =
             DefinitionIdentity::chunk(&name, &step_name, step.size, revision, components)?;
@@ -367,10 +567,21 @@ impl crate::FlowJob {
     /// and [`BoxedWriter`](crate::BoxedWriter) available if a caller wants
     /// item-level erasure too.
     ///
+    /// If `step` installs a [`CompletionPolicy`], `revisions` must already
+    /// declare the matching completion-policy revision -- computed via
+    /// [`completion_policy_revision`] and folded in with
+    /// [`ChunkComponentRevisions::with_completion_policy_revision`] *before*
+    /// the enclosing [`crate::FlowGraph`] was compiled, the same way a
+    /// stream revision is declared up front rather than derived here.
+    /// Unlike [`ChunkJob::new`], this method cannot compute it for you: the
+    /// plan was already compiled from bare `ChunkComponentRevisions` before
+    /// this step (or the policy it installs) existed.
+    ///
     /// # Errors
     ///
     /// Returns [`crate::FlowJobError::ComponentMismatch`] when executable and
-    /// manifest declarations differ, or the ordinary binding errors for an
+    /// manifest declarations differ (including a missing or stale declared
+    /// completion-policy revision), or the ordinary binding errors for an
     /// unknown, wrong-kind, duplicate, or differently named node.
     pub fn with_chunk_step<I, O, R, P, W>(
         mut self,
@@ -388,6 +599,9 @@ impl crate::FlowJob {
         let Some(crate::FlowNode::Step(compiled)) = self.compiled_plan().node(&node_id) else {
             return Err(crate::FlowJobError::WrongNodeKind { node: node_id });
         };
+        if validate_completion_policy_revision(&step, revisions).is_err() {
+            return Err(crate::FlowJobError::ComponentMismatch { node: node_id });
+        }
         let expected = StepComponents::Chunk {
             size: step.size,
             revisions: Box::new(revisions.clone()),
@@ -768,6 +982,9 @@ pub enum ChunkFailure {
     StreamUpdate,
     /// An `ItemStream` failed to close.
     StreamClose,
+    /// A completion policy panicked in `begin_chunk`, `is_complete`, or
+    /// `end_chunk`.
+    CompletionPolicyPanic,
 }
 
 /// Final result of deterministic chunk orchestration.
@@ -1142,14 +1359,11 @@ struct Components<'a, I, O, P, W> {
     writer: &'a W,
     item_listeners: &'a ItemListenerSet<I, O>,
     fault: Option<&'a FaultRuntime>,
-    streams: &'a [(
-        ComponentStreamIdentity,
-        Arc<BoxedStream>,
-        StreamStateContract,
-    )],
+    streams: &'a [StreamRegistration],
     step_name: &'a StepName,
     definition_digest: [u8; 32],
     size: ChunkSize,
+    completion_policy: Option<&'a dyn CompletionPolicy>,
 }
 
 /// Borrowed call state for one chunk attempt.
@@ -1223,6 +1437,7 @@ where
         writer,
         transactions,
         completion,
+        completion_policy,
         listeners,
         item_listeners,
         fault,
@@ -1240,6 +1455,7 @@ where
         step_name: name,
         definition_digest: *definition_digest,
         size: *size,
+        completion_policy: completion_policy.as_deref(),
     };
 
     let (inherited, opened) = match inherited_progress(
@@ -1393,8 +1609,13 @@ where
                 ChunkTransactionError::NotCommitted
                 | ChunkTransactionError::ComponentStateUnsupported,
             ) => {
+                // No transaction ever began this attempt, so its
+                // `begin_chunk` never ran either -- `not_begun` reports this
+                // truthfully rather than invoking `end_chunk` for a `begin`
+                // that never happened.
                 return finish_failed_attempt(
                     listeners,
+                    CompletionPolicyAttempt::not_begun(components.completion_policy),
                     listener_context,
                     ChunkAttemptOutcome::RolledBack,
                     ChunkExecutionOutcome::Failed(ChunkFailure::TransactionBegin),
@@ -1405,6 +1626,7 @@ where
             Err(ChunkTransactionError::CommitOutcomeUnknown) => {
                 return finish_failed_attempt(
                     listeners,
+                    CompletionPolicyAttempt::not_begun(components.completion_policy),
                     listener_context,
                     ChunkAttemptOutcome::Unknown,
                     ChunkExecutionOutcome::Unknown,
@@ -1437,7 +1659,7 @@ where
             sequence,
         };
 
-        let result = run_attempt(
+        let (result, policy_attempt) = run_attempt(
             components,
             reader,
             scope,
@@ -1454,6 +1676,7 @@ where
                 let Ok(next_counts) = state.committed_counts.checked_add(counts) else {
                     return finish_failed_attempt(
                         listeners,
+                        policy_attempt,
                         listener_context,
                         ChunkAttemptOutcome::Committed,
                         ChunkExecutionOutcome::Failed(ChunkFailure::Count),
@@ -1464,6 +1687,7 @@ where
                 let Ok(next_chunks) = state.committed_chunks.checked_increment() else {
                     return finish_failed_attempt(
                         listeners,
+                        policy_attempt,
                         listener_context,
                         ChunkAttemptOutcome::Committed,
                         ChunkExecutionOutcome::Failed(ChunkFailure::Count),
@@ -1483,6 +1707,7 @@ where
                 else {
                     return finish_failed_attempt(
                         listeners,
+                        policy_attempt,
                         listener_context,
                         ChunkAttemptOutcome::Committed,
                         ChunkExecutionOutcome::Failed(ChunkFailure::Count),
@@ -1520,19 +1745,42 @@ where
                 let after_failures =
                     run_after_listeners(listeners, after_context, ChunkAttemptOutcome::Committed)
                         .await;
+                // `end_chunk` observes this attempt's transaction outcome
+                // (already committed by this point), never a listener's
+                // outcome, so it always runs here -- even when an
+                // `after_chunk` listener below fails -- or an
+                // AdaptiveCompletionPolicy's pending candidate would never
+                // promote to confirmed for a chunk that in fact committed,
+                // leaving durable and in-memory state disagreeing about the
+                // authoritative target for the rest of this process.
+                let completion_policy_panicked = policy_attempt
+                    .finish(ChunkAttemptOutcome::Committed)
+                    .is_err();
                 if let Some(first) = after_failures.first().copied() {
                     state.listener_failures.extend(after_failures);
                     let original = terminal_outcome.or(Some(ChunkExecutionOutcome::Completed));
                     return state.report(listener_failure_outcome(first.kind()), original);
+                }
+                if completion_policy_panicked {
+                    let original = terminal_outcome.or(Some(ChunkExecutionOutcome::Completed));
+                    return state.report(
+                        ChunkExecutionOutcome::Failed(ChunkFailure::CompletionPolicyPanic),
+                        original,
+                    );
                 }
                 if let Some(outcome) = terminal_outcome {
                     return state.report(outcome, None);
                 }
             }
             AttemptResult::Replay => {
-                if let Err(report) =
-                    record_rolled_back_attempt(listeners, listener_context, &mut state, &mut emit)
-                        .await
+                if let Err(report) = record_rolled_back_attempt(
+                    listeners,
+                    policy_attempt,
+                    listener_context,
+                    &mut state,
+                    &mut emit,
+                )
+                .await
                 {
                     return report;
                 }
@@ -1547,11 +1795,20 @@ where
                     ChunkAttemptOutcome::RolledBack,
                 )
                 .await;
+                let completion_policy_panicked = policy_attempt
+                    .finish(ChunkAttemptOutcome::RolledBack)
+                    .is_err();
                 if let Some(first) = failures.first().copied() {
                     state.listener_failures.extend(failures);
                     return state
                         .drain()
                         .report(listener_failure_outcome(first.kind()), None);
+                }
+                if completion_policy_panicked {
+                    return state.drain().report(
+                        ChunkExecutionOutcome::Failed(ChunkFailure::CompletionPolicyPanic),
+                        None,
+                    );
                 }
                 return state.report(ChunkExecutionOutcome::Completed, None);
             }
@@ -1574,6 +1831,7 @@ where
                 };
                 return finish_failed_attempt(
                     listeners,
+                    policy_attempt,
                     listener_context,
                     attempt_outcome,
                     outcome,
@@ -1582,6 +1840,20 @@ where
                 .await;
             }
             AttemptResult::RollbackFailed(original) => {
+                // Rollback failure must never suppress a policy lifecycle
+                // this attempt already began: the transaction's fate is no
+                // longer knowable, so `end_chunk` observes `Unknown` rather
+                // than being skipped -- see `CompletionPolicy::end_chunk`.
+                let completion_policy_panicked =
+                    policy_attempt.finish(ChunkAttemptOutcome::Unknown).is_err();
+                if completion_policy_panicked {
+                    return state.drain().report(
+                        ChunkExecutionOutcome::Failed(ChunkFailure::CompletionPolicyPanic),
+                        Some(ChunkExecutionOutcome::Failed(
+                            ChunkFailure::TransactionRollback,
+                        )),
+                    );
+                }
                 return state.drain().report(
                     ChunkExecutionOutcome::Failed(ChunkFailure::TransactionRollback),
                     original,
@@ -1591,6 +1863,7 @@ where
                 emit(ChunkRuntimeEvent::Unknown(sequence));
                 return finish_failed_attempt(
                     listeners,
+                    policy_attempt,
                     listener_context,
                     ChunkAttemptOutcome::Unknown,
                     ChunkExecutionOutcome::Unknown,
@@ -1622,11 +1895,7 @@ async fn inherited_progress(
     transactions: &dyn ChunkTransactionManager,
     fault: Option<&FaultRuntime>,
     context: Option<ChunkTransactionContext>,
-    streams: &[(
-        ComponentStreamIdentity,
-        Arc<BoxedStream>,
-        StreamStateContract,
-    )],
+    streams: &[StreamRegistration],
     stop: &StopToken,
 ) -> StreamOpenPhaseResult {
     let inherited_state = match context {
@@ -1676,7 +1945,7 @@ async fn inherited_progress(
     };
 
     let mut opened: Vec<Arc<BoxedStream>> = Vec::with_capacity(streams.len());
-    for (identity, stream, contract) in streams {
+    for (identity, stream, contract, _owner) in streams {
         let envelope = inherited_state
             .iter()
             .find(|envelope| envelope.namespace() == identity);
@@ -1718,6 +1987,7 @@ async fn inherited_progress(
 /// Counts one rolled-back attempt and runs its after-chunk listeners.
 async fn record_rolled_back_attempt<E>(
     listeners: &[Arc<dyn ChunkListener>],
+    policy_attempt: CompletionPolicyAttempt<'_>,
     context: ChunkListenerContext<'_>,
     state: &mut ExecutionState,
     emit: &mut E,
@@ -1735,24 +2005,33 @@ where
     };
     emit(ChunkRuntimeEvent::RolledBack(context.sequence()));
     let failures = run_after_listeners(listeners, context, ChunkAttemptOutcome::RolledBack).await;
+    let completion_policy_panicked = policy_attempt
+        .finish(ChunkAttemptOutcome::RolledBack)
+        .is_err();
     if let Some(first) = failures.first().copied() {
         state.listener_failures.extend(failures);
         return Err(state
             .drain()
             .report(listener_failure_outcome(first.kind()), None));
     }
+    if completion_policy_panicked {
+        return Err(state.drain().report(
+            ChunkExecutionOutcome::Failed(ChunkFailure::CompletionPolicyPanic),
+            None,
+        ));
+    }
     Ok(())
 }
 
-async fn run_attempt<I, O, E, P, W, R>(
-    components: &Components<'_, I, O, P, W>,
+async fn run_attempt<'c, I, O, E, P, W, R>(
+    components: &Components<'c, I, O, P, W>,
     reader: &mut R,
     scope: AttemptScope<'_>,
     buffer: &mut ChunkBuffer<I, O>,
     state: &mut ExecutionState,
     transaction: &mut dyn ChunkTransaction,
     emit: &mut E,
-) -> AttemptResult
+) -> (AttemptResult, CompletionPolicyAttempt<'c>)
 where
     I: Send + Sync,
     O: Send + Sync,
@@ -1763,8 +2042,19 @@ where
 {
     let mut outputs = AttemptOutputs::new();
     let mut component_state = Vec::new();
+    // Constructed first, before any other phase of this attempt: every
+    // attempt whose transaction has already begun (this function only runs
+    // once one has) owes exactly one `begin_chunk`/`end_chunk` pair,
+    // regardless of what happens afterward in this attempt -- see the
+    // lifecycle contract on `CompletionPolicy::begin_chunk`.
+    let policy_attempt = CompletionPolicyAttempt::begin(components.completion_policy);
 
     let verdict = 'body: {
+        if policy_attempt.begin_panicked() {
+            break 'body Verdict::Terminal(ChunkExecutionOutcome::Failed(
+                ChunkFailure::CompletionPolicyPanic,
+            ));
+        }
         if let Some(fault) = components.fault
             && fault.policy().requires_commit_safe_skip()
             && transaction.business_transaction().is_none()
@@ -1801,7 +2091,7 @@ where
         .await
     };
 
-    match verdict {
+    let result = match verdict {
         Verdict::Commit => {
             commit_attempt(
                 components,
@@ -1819,18 +2109,21 @@ where
         }
         Verdict::Replay => {
             if transaction.rollback().await.is_err() {
-                return AttemptResult::RollbackFailed(None);
+                AttemptResult::RollbackFailed(None)
+            } else {
+                AttemptResult::Replay
             }
-            AttemptResult::Replay
         }
         Verdict::Terminal(ChunkExecutionOutcome::Unknown) => AttemptResult::Unknown,
         Verdict::Terminal(outcome) => {
             if transaction.rollback().await.is_err() {
-                return AttemptResult::RollbackFailed(Some(outcome));
+                AttemptResult::RollbackFailed(Some(outcome))
+            } else {
+                AttemptResult::RolledBack(outcome)
             }
-            AttemptResult::RolledBack(outcome)
         }
-    }
+    };
+    (result, policy_attempt)
 }
 
 /// Reads until the chunk is full or the input ends.
@@ -1855,7 +2148,33 @@ where
     E: FnMut(ChunkRuntimeEvent),
 {
     let listener_context = scope.listener_context();
-    while !buffer.end_of_input && buffer.slots.len() < components.size.get() as usize {
+    loop {
+        if buffer.end_of_input || buffer.slots.len() >= components.size.get() as usize {
+            break;
+        }
+        // Forward-progress invariant (`REPEAT-POLICY-001` livelock guard):
+        // consult the completion policy only once this attempt has actually
+        // accepted at least one item. A policy that reports
+        // `is_complete(0) == true` can therefore never stop this attempt
+        // before it has read (or exhausted) at least one input, so the step
+        // can never repeatedly commit an all-empty chunk purely on the
+        // policy's say-so -- see `CompletionPolicy::is_complete`.
+        if !buffer.slots.is_empty()
+            && let Some(policy) = components.completion_policy
+        {
+            match invoke_completion_policy_is_complete(
+                policy,
+                ChunkCount::new(buffer.slots.len() as u64),
+            ) {
+                Ok(true) => break,
+                Ok(false) => {}
+                Err(()) => {
+                    return Verdict::Terminal(ChunkExecutionOutcome::Failed(
+                        ChunkFailure::CompletionPolicyPanic,
+                    ));
+                }
+            }
+        }
         if scope.stop.is_stop_requested() {
             return Verdict::Terminal(ChunkExecutionOutcome::Stopped);
         }
@@ -2407,7 +2726,7 @@ async fn update_streams<I, O, P, W>(
 ) -> Verdict {
     component_state.clear();
     let context = StreamUpdateContext::new(scope.stop);
-    for (identity, stream, _) in components.streams {
+    for (identity, stream, _, _owner) in components.streams {
         match stream.update(context).await {
             Ok(envelope) if envelope.namespace() == identity => component_state.push(envelope),
             Ok(_) | Err(_) => {
@@ -2866,12 +3185,20 @@ const fn item_listener_outcome(kind: ListenerFailureKind) -> ChunkExecutionOutco
 
 async fn finish_failed_attempt(
     listeners: &[Arc<dyn ChunkListener>],
+    policy_attempt: CompletionPolicyAttempt<'_>,
     context: ChunkListenerContext<'_>,
     attempt_outcome: ChunkAttemptOutcome,
     outcome: ChunkExecutionOutcome,
     state: &mut ExecutionState,
 ) -> ChunkExecutionReport {
     let failures = run_after_listeners(listeners, context, attempt_outcome).await;
+    // Always observed, regardless of listener outcome: `attempt_outcome` may
+    // be `Committed` (for example this attempt's transaction committed but
+    // bookkeeping afterward overflowed a counter), and `end_chunk` must see
+    // that commit exactly once to keep a policy's durable and in-memory
+    // state from disagreeing. A no-op when this attempt's `begin_chunk`
+    // never ran (for example its transaction never began).
+    let completion_policy_panicked = policy_attempt.finish(attempt_outcome).is_err();
     if let Some(first) = failures.first().copied() {
         state.listener_failures.extend(failures);
         if outcome == ChunkExecutionOutcome::Unknown {
@@ -2880,6 +3207,15 @@ async fn finish_failed_attempt(
         return state
             .drain()
             .report(listener_failure_outcome(first.kind()), Some(outcome));
+    }
+    if completion_policy_panicked {
+        if outcome == ChunkExecutionOutcome::Unknown {
+            return state.drain().report(outcome, None);
+        }
+        return state.drain().report(
+            ChunkExecutionOutcome::Failed(ChunkFailure::CompletionPolicyPanic),
+            Some(outcome),
+        );
     }
     state.drain().report(outcome, None)
 }
@@ -3027,5 +3363,119 @@ async fn invoke_completion(
         Ok(Ok(outcome)) => Ok(outcome),
         Ok(Err(_)) => Err(ChunkFailure::Completion),
         Err(_) => Err(ChunkFailure::CompletionPanic),
+    }
+}
+
+/// Calls a completion policy's synchronous `begin_chunk` inside the same
+/// panic-containment boundary every other user-supplied component call in
+/// this module already uses. A public [`CompletionPolicy`] implementation
+/// panicking must fail this attempt through the ordinary typed-failure path,
+/// never unwind through the chunk runtime.
+fn invoke_completion_policy_begin(policy: &dyn CompletionPolicy) -> Result<(), ()> {
+    catch_unwind(AssertUnwindSafe(|| policy.begin_chunk())).map_err(|_| ())
+}
+
+/// Calls a completion policy's synchronous `is_complete` under the same
+/// panic containment as [`invoke_completion_policy_begin`].
+fn invoke_completion_policy_is_complete(
+    policy: &dyn CompletionPolicy,
+    items_read: ChunkCount,
+) -> Result<bool, ()> {
+    catch_unwind(AssertUnwindSafe(|| policy.is_complete(items_read))).map_err(|_| ())
+}
+
+/// Calls a completion policy's synchronous `end_chunk` under the same panic
+/// containment as [`invoke_completion_policy_begin`]. Called for every
+/// terminal chunk-attempt outcome (committed, rolled back, stopped, or
+/// unknown) so an [`AdaptiveCompletionPolicy`] can promote or discard its
+/// speculative candidate; a no-op default for every other policy.
+fn invoke_completion_policy_end(
+    policy: Option<&dyn CompletionPolicy>,
+    outcome: ChunkAttemptOutcome,
+) -> Result<(), ()> {
+    let Some(policy) = policy else {
+        return Ok(());
+    };
+    catch_unwind(AssertUnwindSafe(|| policy.end_chunk(outcome))).map_err(|_| ())
+}
+
+/// Structurally enforces the [`CompletionPolicy`] begin/end lifecycle
+/// contract documented on [`CompletionPolicy::begin_chunk`]:
+/// [`Self::begin`] performs an attempt's one `begin_chunk` call, and
+/// [`Self::finish`] performs its one matching `end_chunk` call -- so no call
+/// site in this module can invoke `end_chunk` without a preceding
+/// `begin_chunk` for the same attempt, and none can invoke `begin_chunk`
+/// without the runtime later owing a matching `end_chunk`.
+///
+/// Dropping an attempt that began successfully but was never explicitly
+/// [`finish`](Self::finish)ed -- reachable only by a future bug in this
+/// module, never by any call path today -- still invokes `end_chunk`, with
+/// [`ChunkAttemptOutcome::Unknown`] standing in for whatever outcome was
+/// never reported. A missed call site therefore fails safe (a possibly
+/// imprecise outcome) rather than silently leaking the lifecycle.
+struct CompletionPolicyAttempt<'a> {
+    policy: Option<&'a dyn CompletionPolicy>,
+    began: bool,
+    finished: bool,
+}
+
+impl<'a> CompletionPolicyAttempt<'a> {
+    /// Calls `begin_chunk` exactly once, if a policy is installed.
+    ///
+    /// [`Self::begin_panicked`] distinguishes a panic there from simply
+    /// having no policy installed; either way, [`Self::finish`] becomes a
+    /// deliberate no-op for this attempt.
+    fn begin(policy: Option<&'a dyn CompletionPolicy>) -> Self {
+        let began = match policy {
+            Some(policy) => invoke_completion_policy_begin(policy).is_ok(),
+            None => false,
+        };
+        Self {
+            policy,
+            began,
+            finished: false,
+        }
+    }
+
+    /// Represents an attempt whose transaction never began, so this
+    /// attempt's `begin_chunk` was never called at all -- never even
+    /// attempted. [`Self::finish`] on this value is always a no-op: no
+    /// `begin_chunk` ran, so no `end_chunk` is owed.
+    const fn not_begun(policy: Option<&'a dyn CompletionPolicy>) -> Self {
+        Self {
+            policy,
+            began: false,
+            finished: false,
+        }
+    }
+
+    /// Reports whether a policy is installed and its `begin_chunk` panicked
+    /// this attempt -- distinct from simply having no policy installed at
+    /// all, which also leaves nothing owed but is not a failure.
+    const fn begin_panicked(&self) -> bool {
+        self.policy.is_some() && !self.began
+    }
+
+    /// Calls `end_chunk` with `outcome`, exactly once, only when this
+    /// attempt's `begin_chunk` actually ran without panicking. A `begin`
+    /// that never ran (or panicked) owes no matching `end`, so this is a
+    /// deliberate no-op in that case (never an error): a panicked `begin` is
+    /// instead surfaced by the caller checking [`Self::begin_panicked`]
+    /// immediately after construction.
+    fn finish(mut self, outcome: ChunkAttemptOutcome) -> Result<(), ()> {
+        self.finished = true;
+        if !self.began {
+            return Ok(());
+        }
+        invoke_completion_policy_end(self.policy, outcome)
+    }
+}
+
+impl Drop for CompletionPolicyAttempt<'_> {
+    fn drop(&mut self) {
+        if self.finished || !self.began {
+            return;
+        }
+        let _ = invoke_completion_policy_end(self.policy, ChunkAttemptOutcome::Unknown);
     }
 }

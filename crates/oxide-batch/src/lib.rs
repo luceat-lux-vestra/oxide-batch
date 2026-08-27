@@ -393,6 +393,7 @@
 
 mod chunk;
 mod chunk_runtime;
+mod completion;
 mod diagnostics;
 mod fault;
 mod fault_state;
@@ -420,6 +421,12 @@ pub use chunk_runtime::{
     ChunkAttemptOutcome, ChunkExecutionOutcome, ChunkExecutionReport, ChunkFailure, ChunkJob,
     ChunkLaunchReport, ChunkListener, ChunkListenerContext, ChunkListenerError,
     ChunkListenerFailure, ChunkListenerFailureKind, ChunkListenerPhase, ChunkStep,
+    completion_policy_revision,
+};
+pub use completion::{
+    AdaptiveBounds, AdaptiveCompletionPolicy, ChunkTimeThreshold, CompletionPolicy,
+    CompletionPolicyError, CompositeCompletionPolicy, CompositeMode, ItemCountCompletionPolicy,
+    MAX_COMPOSITE_DEPTH, MAX_COMPOSITE_MEMBERS, TimeCompletionPolicy,
 };
 pub use diagnostics::{
     DiagnosticField, EventComponent, EventSeverity, ExecutionAttempt, ExecutionCorrelation,

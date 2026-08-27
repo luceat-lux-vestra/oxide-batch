@@ -72,12 +72,16 @@ use serde_json::Value;
 /// `ITEM-MULTI-001` and `IO-OBJECT-001` did the same (the latter for its M6
 /// provider-neutral object-store capability basics slice only; S3/Azure/GCS
 /// certification remains `Planned` for M9) in
-/// [#150](https://github.com/luceat-lux-vestra/oxide-batch/issues/150).
+/// [#150](https://github.com/luceat-lux-vestra/oxide-batch/issues/150);
+/// `REPEAT-POLICY-001` moved `Planned` to `Partial` (its M6 item/component-facing
+/// completion-policy slice only; the M7 flow-level repeat-context/interceptor
+/// architecture remains `Planned`) in
+/// [#151](https://github.com/luceat-lux-vestra/oxide-batch/issues/151).
 const CLOSED_DISPOSITION: &[(&str, usize)] = &[
     ("Verified", 28),
     ("Implemented", 13),
-    ("Partial", 13),
-    ("Planned", 27),
+    ("Partial", 14),
+    ("Planned", 26),
     ("Unknown", 2),
 ];
 
