@@ -2445,9 +2445,7 @@ mod adaptive_completion_policy_integration {
         let job = FlowJob::new(name, plan)
             .expect("format-2 flow is valid")
             .with_chunk_step(node, step, &revisions)
-            .expect(
-                "the declared completion-policy revision matches the step's live policy",
-            );
+            .expect("the declared completion-policy revision matches the step's live policy");
 
         let launch_clock = ManualClock::new(UNIX_EPOCH + Duration::from_secs(500));
         let ids = DeterministicIds::new(NonZeroU64::MIN);
