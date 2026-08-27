@@ -77,10 +77,15 @@ can never reflect work this process has not itself observed commit.
 
 `update` is now pure with respect to `confirmed`: it only reads the baseline
 and this attempt's freshly observed duration, so a replayed attempt (rolled
-back and retried without an intervening commit) recomputes the identical
-candidate from the same unmodified baseline -- deterministically, not merely
-by convention. See the `Restart safety` and `Same-process rollback safety`
-sections of `completion.rs`'s `AdaptiveCompletionPolicy` docs.
+back and retried without an intervening commit) always recomputes its
+candidate from the same unmodified baseline, never a corrupted or
+partially-applied one. The recomputed candidate itself is not guaranteed
+identical to the discarded one -- it is a function of this replay's freshly
+observed duration, which real timing can differ on; only a fully
+deterministic clock (as the unit test in `completion.rs` injects, advancing
+by the same fixed amount both attempts) makes the two identical. See the
+`Restart safety` and `Same-process rollback safety` sections of
+`completion.rs`'s `AdaptiveCompletionPolicy` docs.
 
 ### Completion-policy panics are contained
 
@@ -94,6 +99,63 @@ same `catch_unwind(AssertUnwindSafe(...))` discipline the reader/processor/
 writer/listener calls already use, fails the attempt through the existing
 typed path (`ChunkFailure::CompletionPolicyPanic`), and never suppresses an
 already-committed chunk's counts.
+
+### Corrective pass: livelock, begin/end pairing, and stream ownership
+
+A further independent strict merge-gate review of PR #179 found three more
+blockers, all fixed on top of the corrections above.
+
+**Zero-progress livelock.** The chunk read loop consulted
+`CompletionPolicy::is_complete` before this attempt had read anything, so a
+policy reporting `is_complete(0) == true` made the step repeatedly commit an
+all-empty chunk forever -- never reaching end-of-input, since the reader was
+never actually invoked. The read loop now consults the policy only once this
+attempt has accepted at least one item; see the forward-progress invariant
+documented on `CompletionPolicy::is_complete`.
+
+**Begin/end lifecycle pairing.** `end_chunk` could run without a matching
+`begin_chunk` (when the transaction itself failed to begin, and when
+`begin_chunk` itself panicked), and could be silently skipped after a
+successful `begin_chunk` when the transaction's own rollback subsequently
+failed. `chunk_runtime.rs` now threads a `CompletionPolicyAttempt` guard
+through each attempt: it performs the one `begin_chunk` call, and its
+`finish` method is the only path to the matching `end_chunk`, structurally
+preventing either half from running without the other (a `Drop` safety net
+covers any future call site that forgets to call `finish` explicitly). A
+transaction-begin failure never constructs a "began" attempt at all, and a
+rollback failure now reports `ChunkAttemptOutcome::Unknown` to `end_chunk`
+rather than skipping it, since the transaction's fate is no longer knowable
+but the policy still owes a matching `end` for the `begin` it already ran.
+
+This exactly-once contract also had to be pushed one level down into
+`CompositeCompletionPolicy` itself: its `begin_chunk`/`end_chunk` previously
+just iterated members with no panic containment of their own, so a middle
+member's panic could unwind past members that had already begun (or still
+needed their `end_chunk`), leaking their individual lifecycle even though
+the outer runtime's own containment correctly failed the attempt as a
+whole. `CompositeCompletionPolicy::begin_chunk` now contains each member's
+panic, and if one panics, calls `end_chunk(Unknown)` on every member
+positioned before it (each of which did begin) before re-panicking so the
+caller still observes this composite's `begin_chunk` as failed, exactly
+like a non-composite policy's panicking `begin_chunk` would. Symmetrically,
+`end_chunk` continues past a panicking member to give every remaining
+member its own `end_chunk` call before re-panicking. This composes
+correctly through nested composites without special-casing, since each
+level provides its parent the same per-call guarantee a leaf policy does.
+
+**Stream registration ownership.** `ChunkStep::with_completion_policy`'s
+replacement logic inferred which runtime `ItemStream` registrations belonged
+to the policy being replaced by comparing `ComponentStreamIdentity` values
+against the previous policy's own reported registrations. A manually
+registered stream (via `ChunkStep::with_item_stream`) that happened to share
+an identity with a policy's registration -- transiently, before the two are
+resolved into a single non-duplicate set at `ChunkJob::new`/
+`FlowJob::with_chunk_step` bind time -- could therefore be silently removed
+by an unrelated policy replacement, since removal matched on identity value
+alone with no way to tell which mechanism had registered which entry. Each
+runtime registration now carries an explicit `StreamOwner::Manual` or
+`StreamOwner::Policy` tag; a policy replacement removes only entries tagged
+`Policy`, regardless of identity overlap with a manually registered one.
 
 ### Completion-policy configuration is restart-relevant
 

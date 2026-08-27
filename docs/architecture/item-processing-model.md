@@ -380,10 +380,25 @@ additive. Four families are provided:
   clock (`oxide_batch_test::ManualClock`) instead of reading wall-clock time
   from runtime logic. The enclosing `ChunkSize` ceiling still bounds buffering
   while the threshold has not elapsed.
-- `CompositeCompletionPolicy` -- a bounded (`MAX_COMPOSITE_MEMBERS = 32`)
-  `Any` (OR) or `All` (AND) combination of other policies. Composition does
-  not recurse without bound: each level's member count is validated the same
-  way, so there is no unbounded or implicit recursive structure.
+- `CompositeCompletionPolicy` -- a bounded `Any` (OR) or `All` (AND)
+  combination of other policies, bounded two ways: `MAX_COMPOSITE_MEMBERS =
+  32` bounds one level's member count (its *width*), and
+  `MAX_COMPOSITE_DEPTH = 8` separately bounds the full nesting depth a
+  composite tree may reach -- direct and indirect, computed at construction
+  from `1 + ` the greatest `composite_depth()` among its own members, so a
+  too-deep tree (built by nesting composites inside composites) is rejected
+  before it exists rather than discovered by runtime recursion. Bounding
+  member count alone would not bound depth: a chain of single-member
+  composites nested inside each other satisfies any width bound while still
+  recursing arbitrarily deep, which is exactly what `MAX_COMPOSITE_DEPTH`
+  exists to reject. A composite's `begin_chunk`/`end_chunk` also contain a
+  panic from any one member so every member that already began still
+  receives its own matching `end_chunk` -- the pairing
+  [`CompletionPolicy::begin_chunk`]'s contract promises holds per member,
+  not only for the composite as a whole, and this containment recurses
+  correctly through nested composites for the same reason the depth bound
+  does: each level provides its parent the same guarantee a leaf policy
+  does.
 - `AdaptiveCompletionPolicy` -- a bounded (`AdaptiveBounds`) policy whose
   target chunk size adjusts toward an observed target duration. Its
   authoritative decision (the confirmed target) is persisted through the same
@@ -391,11 +406,14 @@ additive. Four families are provided:
   registered under the same namespace as both the step's completion policy and
   one of its `ItemStream`s -- never a second persistence path. A process crash
   before a chunk commits leaves the previously committed target authoritative;
-  `ItemStream::open` restores exactly that target. A rolled-back attempt that
-  gets replayed recomputes the identical candidate from the same confirmed
-  baseline and the same freshly observed metrics, so replaying is idempotent
-  even though `ItemStream::update` runs before the commit its result is
-  conditioned on.
+  `ItemStream::open` restores exactly that target. `ItemStream::update` never
+  mutates the confirmed baseline -- it only computes a candidate from that
+  unchanged baseline and this attempt's freshly observed duration, and only a
+  committed `end_chunk` promotes it -- so a rolled-back attempt that gets
+  replayed always recomputes its candidate from the same unmodified baseline,
+  never a corrupted or partially-applied one. The candidate itself is not
+  guaranteed identical across a replay: it is a function of the freshly
+  observed duration, which real timing can differ on a genuine retry.
 
 The item/chunk/skip/retry listener taxonomy audited against
 `LISTENER-ITEM-001` (`ReadListener`, `ProcessListener`, `WriteListener`,

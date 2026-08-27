@@ -42,6 +42,7 @@
 
 use std::error::Error;
 use std::fmt;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::{Duration, SystemTime};
 
@@ -422,9 +423,44 @@ impl CompositeCompletionPolicy {
 }
 
 impl CompletionPolicy for CompositeCompletionPolicy {
+    /// Begins every member in registration order, containing a panic from
+    /// any one of them so the lifecycle contract on
+    /// [`CompletionPolicy::begin_chunk`] still holds *per member*, not only
+    /// for this composite as a whole.
+    ///
+    /// The chunk runtime's own panic boundary treats a panicking
+    /// `begin_chunk` as never having begun -- correct for this composite as
+    /// a unit, but not sufficient on its own: a member positioned earlier
+    /// than the one that panics has already begun and is owed a matching
+    /// `end_chunk`, which nothing outside this composite can ever supply
+    /// once this call unwinds past it. So this method supplies it itself,
+    /// with [`ChunkAttemptOutcome::Unknown`] (this attempt's real outcome is
+    /// not yet known, and never will be, since it never validly began) --
+    /// then re-panics so the caller still observes exactly what a
+    /// non-composite policy's panicking `begin_chunk` would produce: this
+    /// composite, as a whole, never began.
     fn begin_chunk(&self) {
-        for member in &self.members {
-            member.begin_chunk();
+        let mut panicked = None;
+        for (index, member) in self.members.iter().enumerate() {
+            match catch_unwind(AssertUnwindSafe(|| member.begin_chunk())) {
+                Ok(()) => {}
+                Err(payload) => {
+                    panicked = Some((index, payload));
+                    break;
+                }
+            }
+        }
+        if let Some((panicked_at, payload)) = panicked {
+            for member in &self.members[..panicked_at] {
+                let _ = catch_unwind(AssertUnwindSafe(|| {
+                    member.end_chunk(ChunkAttemptOutcome::Unknown);
+                }));
+            }
+            // Resumes the member's own panic rather than raising a new one:
+            // this is a rethrow, not a fresh `panic!`, so the caller's
+            // `catch_unwind` still observes exactly what a non-composite
+            // policy's panicking `begin_chunk` would produce.
+            std::panic::resume_unwind(payload);
         }
     }
 
@@ -441,9 +477,26 @@ impl CompletionPolicy for CompositeCompletionPolicy {
         }
     }
 
+    /// Ends every member in registration order, continuing after any one
+    /// member's `end_chunk` panics so every member that began still
+    /// receives its own matching `end_chunk` call -- the same per-member
+    /// contract [`Self::begin_chunk`] preserves on the panicking path.
+    /// Re-panics once every member has been given the chance, so the caller
+    /// still observes this composite's own `end_chunk` as having panicked
+    /// (never silently succeeding when a member failed).
     fn end_chunk(&self, outcome: ChunkAttemptOutcome) {
+        let mut first_panic = None;
         for member in &self.members {
-            member.end_chunk(outcome);
+            if let Err(payload) = catch_unwind(AssertUnwindSafe(|| member.end_chunk(outcome))) {
+                first_panic.get_or_insert(payload);
+            }
+        }
+        if let Some(payload) = first_panic {
+            // Resumes the first member's own panic, once every member has
+            // had its own `end_chunk` attempted -- a rethrow, not a fresh
+            // `panic!`, so the caller's `catch_unwind` still observes this
+            // composite's `end_chunk` as having panicked.
+            std::panic::resume_unwind(payload);
         }
     }
 
@@ -689,11 +742,14 @@ struct AdaptiveInterior {
 /// visible to [`CompletionPolicy::is_complete`] -- only when
 /// [`CompletionPolicy::end_chunk`] observes
 /// [`ChunkAttemptOutcome::Committed`]; every other outcome discards it. A
-/// rolled-back attempt that gets replayed therefore recomputes the identical
-/// candidate from the same unmodified confirmed baseline and the same kind
-/// of freshly observed metrics, so replaying is idempotent even though
-/// `update` runs before the commit it is conditioned on, and a rollback can
-/// never leave a speculative target looking authoritative.
+/// rolled-back attempt that gets replayed therefore always recomputes its
+/// candidate from the same unmodified confirmed baseline, never a
+/// corrupted or partially-applied one, and a rollback can never leave a
+/// speculative target looking authoritative. The recomputed candidate
+/// itself is not guaranteed identical to the discarded one: it is a
+/// function of this replay's freshly observed duration, which genuinely
+/// can differ from the rolled-back attempt's (only a fully deterministic
+/// clock, as a test might inject, makes the two identical).
 pub struct AdaptiveCompletionPolicy {
     bounds: AdaptiveBounds,
     target_duration: ChunkTimeThreshold,
@@ -1490,6 +1546,164 @@ mod tests {
             "different member splits must never collide onto the same \
              composite fingerprint, even when a member's own fingerprint \
              contains the naive join delimiter"
+        );
+    }
+
+    /// Records every `begin_chunk`/`end_chunk` call it receives.
+    struct RecordingMember {
+        begins: Arc<std::sync::atomic::AtomicUsize>,
+        ends: Arc<Mutex<Vec<ChunkAttemptOutcome>>>,
+    }
+
+    impl RecordingMember {
+        fn new() -> (
+            Self,
+            Arc<std::sync::atomic::AtomicUsize>,
+            Arc<Mutex<Vec<ChunkAttemptOutcome>>>,
+        ) {
+            let begins = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let ends = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    begins: Arc::clone(&begins),
+                    ends: Arc::clone(&ends),
+                },
+                begins,
+                ends,
+            )
+        }
+    }
+
+    impl CompletionPolicy for RecordingMember {
+        fn begin_chunk(&self) {
+            self.begins
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        fn is_complete(&self, _items_read: ChunkCount) -> bool {
+            false
+        }
+
+        fn end_chunk(&self, outcome: ChunkAttemptOutcome) {
+            self.ends
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(outcome);
+        }
+    }
+
+    /// Panics in `begin_chunk` or `end_chunk`, per the chosen point.
+    struct PanickingMember {
+        panic_in_begin: bool,
+        panic_in_end: bool,
+    }
+
+    impl CompletionPolicy for PanickingMember {
+        fn begin_chunk(&self) {
+            assert!(!self.panic_in_begin, "member begin_chunk secret");
+        }
+
+        fn is_complete(&self, _items_read: ChunkCount) -> bool {
+            false
+        }
+
+        fn end_chunk(&self, _outcome: ChunkAttemptOutcome) {
+            assert!(!self.panic_in_end, "member end_chunk secret");
+        }
+    }
+
+    #[test]
+    #[allow(
+        clippy::unwrap_used,
+        reason = "test constructs a known-valid composite"
+    )]
+    fn composite_begin_panic_still_ends_every_member_that_already_began() {
+        let (before, before_begins, before_ends) = RecordingMember::new();
+        let (after, after_begins, _after_ends) = RecordingMember::new();
+        let panicking = PanickingMember {
+            panic_in_begin: true,
+            panic_in_end: false,
+        };
+        let composite = CompositeCompletionPolicy::new(
+            CompositeMode::All,
+            vec![
+                Arc::new(before) as Arc<dyn CompletionPolicy>,
+                Arc::new(panicking),
+                Arc::new(after),
+            ],
+        )
+        .unwrap();
+
+        let result = catch_unwind(AssertUnwindSafe(|| composite.begin_chunk()));
+
+        assert!(
+            result.is_err(),
+            "the composite's begin_chunk must still panic, matching a \
+             non-composite policy's panicking begin_chunk"
+        );
+        assert_eq!(
+            before_begins.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the member positioned before the panicking one must have begun"
+        );
+        assert_eq!(
+            *before_ends.lock().unwrap_or_else(PoisonError::into_inner),
+            vec![ChunkAttemptOutcome::Unknown],
+            "a member that already began before a sibling's begin_chunk \
+             panicked must still receive its own matching end_chunk -- with \
+             Unknown, since this attempt never validly began"
+        );
+        assert_eq!(
+            after_begins.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "a member positioned after the panicking one must never have \
+             begun at all"
+        );
+    }
+
+    #[test]
+    #[allow(
+        clippy::unwrap_used,
+        reason = "test constructs a known-valid composite"
+    )]
+    fn composite_end_panic_still_ends_every_remaining_member() {
+        let (before, _before_begins, before_ends) = RecordingMember::new();
+        let (after, _after_begins, after_ends) = RecordingMember::new();
+        let panicking = PanickingMember {
+            panic_in_begin: false,
+            panic_in_end: true,
+        };
+        let composite = CompositeCompletionPolicy::new(
+            CompositeMode::All,
+            vec![
+                Arc::new(before) as Arc<dyn CompletionPolicy>,
+                Arc::new(panicking),
+                Arc::new(after),
+            ],
+        )
+        .unwrap();
+        composite.begin_chunk();
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            composite.end_chunk(ChunkAttemptOutcome::Committed);
+        }));
+
+        assert!(
+            result.is_err(),
+            "the composite's end_chunk must still panic, matching a \
+             non-composite policy's panicking end_chunk"
+        );
+        assert_eq!(
+            *before_ends.lock().unwrap_or_else(PoisonError::into_inner),
+            vec![ChunkAttemptOutcome::Committed],
+            "a member before the panicking one must receive its end_chunk"
+        );
+        assert_eq!(
+            *after_ends.lock().unwrap_or_else(PoisonError::into_inner),
+            vec![ChunkAttemptOutcome::Committed],
+            "a member positioned *after* the panicking one must still \
+             receive its own end_chunk call -- one member's panic must \
+             never suppress a sibling's matching end"
         );
     }
 }

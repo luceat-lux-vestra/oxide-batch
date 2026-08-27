@@ -134,8 +134,8 @@ where
     ///
     /// Calling this again to replace a previously installed policy first
     /// removes exactly the previous policy's own registered streams --
-    /// every entry this method itself tagged [`StreamOwner::Policy`], never
-    /// a manually registered [`Self::with_item_stream`] entry that happens
+    /// every entry this method itself tagged as policy-owned, never a
+    /// manually registered [`Self::with_item_stream`] entry that happens
     /// to coexist, even under the identical [`ComponentStreamIdentity`]: a
     /// policy replacement is a full replacement of what *this method*
     /// installed, not an accumulation of every policy this step ever
