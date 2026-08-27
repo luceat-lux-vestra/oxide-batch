@@ -68,6 +68,22 @@ use crate::{
 pub trait CompletionPolicy: Send + Sync {
     /// Resets any per-attempt state at the start of a new chunk attempt.
     ///
+    /// # Lifecycle contract (`REPEAT-POLICY-001`)
+    ///
+    /// The chunk runtime calls [`begin_chunk`](Self::begin_chunk) exactly
+    /// once for every chunk attempt whose transaction successfully began --
+    /// including a replayed attempt of the same logical chunk, and
+    /// regardless of what happens later in that same attempt (a read,
+    /// process, or write failure; an unsupported-capability rejection; a
+    /// cooperative stop) -- and calls [`end_chunk`](Self::end_chunk) exactly
+    /// once in return, once that same attempt reaches a terminal outcome.
+    /// An attempt whose transaction never began receives *neither* call:
+    /// the pairing is exactly-once per begun attempt, never a bare
+    /// `end_chunk` with no matching `begin_chunk`, and never a `begin_chunk`
+    /// left without its matching `end_chunk` -- even when the attempt's own
+    /// rollback subsequently fails. This pairing is structurally enforced by
+    /// the chunk runtime, not left to per-call-site bookkeeping.
+    ///
     /// The default implementation does nothing, which is correct for a
     /// stateless policy such as [`ItemCountCompletionPolicy`].
     fn begin_chunk(&self) {}
@@ -76,17 +92,37 @@ pub trait CompletionPolicy: Send + Sync {
     ///
     /// `items_read` is the number of items already read into the current
     /// chunk attempt.
+    ///
+    /// # Forward-progress invariant
+    ///
+    /// Once an attempt has begun, the chunk runtime consults this once
+    /// before every item read *after* the first: an attempt always reads
+    /// (or observes end-of-input for) at least one item before this
+    /// policy's decision can end its read phase. A policy that reports
+    /// `is_complete(0) == true` therefore can never make the step
+    /// repeatedly commit an all-empty chunk purely because it was never
+    /// given the chance to read anything -- the runtime never repeats a
+    /// zero-item commit solely on this policy's say-so. The read phase
+    /// also always stops once the configured [`ChunkSize`] ceiling is
+    /// reached, independent of what this method returns.
     fn is_complete(&self, items_read: ChunkCount) -> bool;
 
     /// Observes the terminal outcome of the chunk attempt this policy's most
     /// recent [`begin_chunk`](Self::begin_chunk) started.
     ///
-    /// The chunk runtime calls this exactly once per chunk attempt, after the
-    /// attempt's transaction has committed, rolled back, stopped, or reached
-    /// an unknown commit result -- and always before the next attempt's
-    /// `begin_chunk`. The default implementation does nothing, which is
-    /// correct for any policy whose decisions depend only on the current
-    /// attempt (every policy in this module except
+    /// The chunk runtime calls this exactly once for every attempt whose
+    /// `begin_chunk` actually ran -- after that attempt's transaction has
+    /// committed, rolled back, stopped, or reached an unknown commit result,
+    /// and always before the next attempt's `begin_chunk`. A rollback whose
+    /// own call fails is reported as [`ChunkAttemptOutcome::Unknown`] rather
+    /// than suppressing this callback: the transaction's fate is no longer
+    /// knowable at that point, but the policy still owes a matching `end`
+    /// for the `begin` it already ran. This is never called for an attempt
+    /// whose transaction failed to begin in the first place, since that
+    /// attempt's `begin_chunk` never ran -- see the lifecycle contract on
+    /// [`begin_chunk`](Self::begin_chunk). The default implementation does
+    /// nothing, which is correct for any policy whose decisions depend only
+    /// on the current attempt (every policy in this module except
     /// [`AdaptiveCompletionPolicy`], which uses this callback to promote a
     /// speculative candidate into authoritative state only once its chunk is
     /// known to have committed, never before).
@@ -105,10 +141,22 @@ pub trait CompletionPolicy: Send + Sync {
     /// far, and a configuration change that changes completion behavior must
     /// change this string.
     ///
-    /// The default falls back to this policy's concrete type name, which
-    /// distinguishes different policy *kinds* but not different
-    /// *configurations* of the same kind; every policy in this module
-    /// overrides it with its actual configuration.
+    /// # Restart-safety guarantee is only as strong as this override
+    ///
+    /// The framework cannot itself detect a semantic change inside an
+    /// arbitrary application-supplied policy: it can only hash whatever this
+    /// method returns. The default falls back to this policy's concrete type
+    /// name, which distinguishes different policy *kinds* but not different
+    /// *configurations* of the same kind -- so a custom policy that changes
+    /// a configuration value (a threshold, a bound, anything that alters
+    /// which chunks it completes) without overriding this method keeps the
+    /// same fingerprint across that change, and the framework will treat the
+    /// two configurations as the same restart-compatible definition even
+    /// though their completion behavior differs. This is a deliberately
+    /// narrow guarantee (not a compatibility break enforced by the type
+    /// system): every policy in this module overrides it with its actual
+    /// configuration, and a custom policy is responsible for doing the same
+    /// whenever a configuration change must invalidate restart metadata.
     fn fingerprint(&self) -> String {
         std::any::type_name::<Self>().to_owned()
     }

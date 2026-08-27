@@ -102,14 +102,46 @@ concrete type name, overridden by every policy in this module with its
 actual configuration -- `CompositeCompletionPolicy` recurses into its
 members' fingerprints, so nested structure participates too).
 `ChunkComponentRevisions` gained an optional `completion_policy` revision
-slot (`with_completion_policy_revision`), populated automatically --
-`ChunkJob::new` and `FlowJob::with_chunk_step` hash whatever policy the
-`ChunkStep` actually has installed into a `ComponentRevision` and fold it in,
-so an application never has to remember to bump anything, and can never
-silently change completion semantics across a restart without the
-definition fingerprint changing too. A step with no completion policy
-installed folds in nothing, so its fingerprint is byte-for-byte identical to
-one built before this existed.
+slot (`with_completion_policy_revision`). Whether that slot is populated
+automatically depends on which constructor binds the step, and the two
+differ:
+
+- **`ChunkJob::new`** computes it automatically: it builds the compiled plan
+  and the runtime `ChunkStep` from the same call, so it can hash whatever
+  policy the step actually has installed into a `ComponentRevision` and fold
+  it in itself. An application using this path never has to remember to
+  bump anything.
+- **`FlowJob::with_chunk_step`** cannot do this for the caller: a flow
+  node's plan is compiled from bare `ChunkComponentRevisions` *before* the
+  concrete `ChunkStep` (or the completion policy it installs) exists, so
+  nothing at compile time can fold a not-yet-installed policy's fingerprint
+  in. The caller must compute it explicitly with the public
+  `completion_policy_revision` function and fold it into the same
+  `ChunkComponentRevisions` used for *both* `FlowGraph` compilation and the
+  later `with_chunk_step` call, via `with_completion_policy_revision` --
+  the same up-front-declaration pattern already used for a stream revision.
+  `with_chunk_step` then only *validates* that the live policy's fingerprint
+  still matches what was declared (`validate_completion_policy_revision`),
+  returning `FlowJobError::ComponentMismatch` when a declared revision is
+  missing, stale, or absent for an installed policy.
+
+Either way, a configuration change that alters completion semantics changes
+the resulting `ComponentRevision`, so it can never be mistaken for the same
+restart-compatible definition -- but on the `FlowJob` path this guarantee
+depends on the caller actually having declared the current revision before
+compiling the graph; an omitted or stale declaration is a build-time
+`ComponentMismatch`, not a silent fingerprint gap. A step with no completion
+policy installed folds in nothing on either path, so its fingerprint is
+byte-for-byte identical to one built before this existed.
+
+This is a deliberately narrow guarantee in one further respect: the
+framework can only hash whatever a policy's own `fingerprint()` returns.
+Every policy in this module overrides the type-name default with its actual
+configuration, but a custom, application-supplied `CompletionPolicy` that
+doesn't override `fingerprint()` keeps the same fingerprint across a
+configuration change, and the framework cannot detect that on its own --
+see `CompletionPolicy::fingerprint`'s doc comment for the restart-safety
+decision this leaves with the policy author.
 
 `crates/oxide-batch/tests/postgres_completion_policy_restart.rs` proves, with
 a real `PostgreSQL` transaction (`PostgresChunkTransactionManager`, not a

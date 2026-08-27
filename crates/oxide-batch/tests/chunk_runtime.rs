@@ -2775,3 +2775,852 @@ mod adaptive_completion_policy_integration {
         );
     }
 }
+
+/// Blocker #1 (`REPEAT-POLICY-001` livelock): a `CompletionPolicy` that
+/// reports `is_complete(0) == true` must never make the chunk loop commit an
+/// all-empty chunk purely on that say-so.
+mod completion_policy_forward_progress {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use oxide_batch::{
+        BoxFuture, BusinessTransaction, ChunkCommitReceipt, ChunkCount, ChunkCounts,
+        ChunkExecutionOutcome, ChunkFaultProgress, ChunkSize, ChunkStep, ChunkTransaction,
+        ChunkTransactionError, ChunkTransactionManager, CompletionPolicy, StepName, StopSource,
+    };
+
+    use super::{Boundary, Completion, Processor, Reader, Writer, correlation, receipt};
+
+    /// Reports completion unconditionally, including at zero items read --
+    /// the pathological input the forward-progress invariant must survive.
+    struct AlwaysCompletePolicy;
+
+    impl CompletionPolicy for AlwaysCompletePolicy {
+        fn is_complete(&self, _items_read: ChunkCount) -> bool {
+            true
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingEvidence {
+        commits: std::sync::Mutex<Vec<ChunkCounts>>,
+        rollbacks: AtomicUsize,
+    }
+
+    struct RecordingTransactions {
+        receipt: ChunkCommitReceipt,
+        evidence: Arc<RecordingEvidence>,
+    }
+
+    impl ChunkTransactionManager for RecordingTransactions {
+        fn begin(
+            &self,
+        ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>> {
+            let transaction = RecordingTransaction {
+                receipt: self.receipt.clone(),
+                evidence: Arc::clone(&self.evidence),
+            };
+            Box::pin(async move { Ok(Box::new(transaction) as Box<dyn ChunkTransaction>) })
+        }
+    }
+
+    struct RecordingTransaction {
+        receipt: ChunkCommitReceipt,
+        evidence: Arc<RecordingEvidence>,
+    }
+
+    impl ChunkTransaction for RecordingTransaction {
+        fn business_transaction(&mut self) -> Option<&mut dyn BusinessTransaction> {
+            None
+        }
+
+        fn commit(
+            &mut self,
+            counts: ChunkCounts,
+            _fault: ChunkFaultProgress,
+        ) -> BoxFuture<'_, Result<ChunkCommitReceipt, ChunkTransactionError>> {
+            self.evidence
+                .commits
+                .lock()
+                .expect("commits lock poisoned")
+                .push(counts);
+            let receipt = self.receipt.clone();
+            Box::pin(async move { Ok(receipt) })
+        }
+
+        fn rollback(&mut self) -> BoxFuture<'_, Result<(), ChunkTransactionError>> {
+            self.evidence.rollbacks.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn always_complete_policy_never_livelocks_on_repeated_empty_commits() {
+        let evidence = Arc::new(RecordingEvidence::default());
+        let transactions = RecordingTransactions {
+            receipt: receipt(),
+            evidence: Arc::clone(&evidence),
+        };
+        let (writer, batches) = Writer::new(Boundary::Normal);
+        let (completion, _calls) = Completion::new(Boundary::Normal);
+        let mut step = ChunkStep::new(
+            StepName::new("always_complete").expect("valid step name"),
+            // Large enough that only the policy -- never the `ChunkSize`
+            // ceiling -- can be responsible for each chunk stopping at one
+            // item.
+            ChunkSize::new(10).expect("valid chunk size"),
+            Reader::new([1, 2, 3, 4, 5]),
+            Processor::normal(),
+            writer,
+            Arc::new(transactions),
+            Arc::new(completion),
+        )
+        .with_completion_policy(Arc::new(AlwaysCompletePolicy));
+        let (_source, stop) = StopSource::new();
+
+        // If the forward-progress invariant regressed, this call never
+        // returns: the step would repeatedly commit an empty chunk forever
+        // instead of reaching `EndOfInput`. Its mere return proves no
+        // livelock occurred.
+        let report = step.execute(&correlation(), &stop).await;
+
+        assert_eq!(report.outcome(), ChunkExecutionOutcome::Completed);
+        let commits = evidence.commits.lock().expect("commits lock poisoned");
+        assert_eq!(
+            commits.len(),
+            5,
+            "each of the 5 items must reach its own committed chunk -- one \
+             item per attempt, since the policy reports complete immediately \
+             after the first item is accepted"
+        );
+        assert!(
+            commits.iter().all(|counts| counts.read().get() == 1),
+            "no committed chunk may be empty: `is_complete(0) == true` must \
+             never be honoured before this attempt has read at least one \
+             item, so every commit here reflects real forward progress, \
+             never a repeated zero-item transaction"
+        );
+        assert_eq!(
+            evidence.rollbacks.load(Ordering::SeqCst),
+            1,
+            "exactly one trailing attempt rolls back its unused transaction \
+             once end-of-input is reached with nothing left to commit"
+        );
+        assert_eq!(
+            *batches.lock().expect("writer batches lock poisoned"),
+            vec![vec![10], vec![20], vec![30], vec![40], vec![50]],
+            "every item must still reach the writer despite the pathological policy"
+        );
+    }
+}
+
+/// Blocker #2 (`CompletionPolicy` begin/end lifecycle contract): `end_chunk`
+/// must run exactly once for every attempt whose `begin_chunk` actually ran,
+/// and never for one whose `begin_chunk` never ran (or panicked).
+mod completion_policy_lifecycle {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use oxide_batch::{
+        BoxFuture, BusinessTransaction, ChunkAttemptOutcome, ChunkCommitReceipt, ChunkCount,
+        ChunkCounts, ChunkExecutionOutcome, ChunkFailure, ChunkFaultProgress, ChunkSize, ChunkStep,
+        ChunkTransaction, ChunkTransactionError, ChunkTransactionManager, CompletionPolicy,
+        StepName, StopSource,
+    };
+
+    use super::{Boundary, Completion, Processor, Reader, Writer, correlation, receipt};
+
+    #[derive(Default)]
+    struct CountingPolicyState {
+        begins: AtomicUsize,
+        ends: Mutex<Vec<ChunkAttemptOutcome>>,
+    }
+
+    struct CountingPolicy {
+        state: Arc<CountingPolicyState>,
+    }
+
+    impl CountingPolicy {
+        fn new() -> (Self, Arc<CountingPolicyState>) {
+            let state = Arc::new(CountingPolicyState::default());
+            (
+                Self {
+                    state: Arc::clone(&state),
+                },
+                state,
+            )
+        }
+    }
+
+    impl CompletionPolicy for CountingPolicy {
+        fn begin_chunk(&self) {
+            self.state.begins.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn is_complete(&self, _items_read: ChunkCount) -> bool {
+            false
+        }
+
+        fn end_chunk(&self, outcome: ChunkAttemptOutcome) {
+            self.state
+                .ends
+                .lock()
+                .expect("ends lock poisoned")
+                .push(outcome);
+        }
+    }
+
+    /// A policy whose `begin_chunk` always panics, so a call site that wrongly
+    /// invoked `end_chunk` for it would be directly observable via `ends`.
+    struct PanickingBeginPolicy {
+        ends: Arc<AtomicUsize>,
+    }
+
+    impl CompletionPolicy for PanickingBeginPolicy {
+        fn begin_chunk(&self) {
+            panic!("begin_chunk secret");
+        }
+
+        fn is_complete(&self, _items_read: ChunkCount) -> bool {
+            false
+        }
+
+        fn end_chunk(&self, _outcome: ChunkAttemptOutcome) {
+            self.ends.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[derive(Default)]
+    struct LifecycleEvidence {
+        commits: Mutex<Vec<ChunkCounts>>,
+        rollbacks: AtomicUsize,
+    }
+
+    struct LifecycleTransactions {
+        receipt: ChunkCommitReceipt,
+        evidence: Arc<LifecycleEvidence>,
+        begin_error: Option<ChunkTransactionError>,
+        rollback_error: bool,
+    }
+
+    impl ChunkTransactionManager for LifecycleTransactions {
+        fn begin(
+            &self,
+        ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>> {
+            if let Some(error) = self.begin_error {
+                return Box::pin(async move { Err(error) });
+            }
+            let transaction = LifecycleTransaction {
+                receipt: self.receipt.clone(),
+                evidence: Arc::clone(&self.evidence),
+                rollback_error: self.rollback_error,
+            };
+            Box::pin(async move { Ok(Box::new(transaction) as Box<dyn ChunkTransaction>) })
+        }
+    }
+
+    struct LifecycleTransaction {
+        receipt: ChunkCommitReceipt,
+        evidence: Arc<LifecycleEvidence>,
+        rollback_error: bool,
+    }
+
+    impl ChunkTransaction for LifecycleTransaction {
+        fn business_transaction(&mut self) -> Option<&mut dyn BusinessTransaction> {
+            None
+        }
+
+        fn commit(
+            &mut self,
+            counts: ChunkCounts,
+            _fault: ChunkFaultProgress,
+        ) -> BoxFuture<'_, Result<ChunkCommitReceipt, ChunkTransactionError>> {
+            self.evidence
+                .commits
+                .lock()
+                .expect("commits lock poisoned")
+                .push(counts);
+            let receipt = self.receipt.clone();
+            Box::pin(async move { Ok(receipt) })
+        }
+
+        fn rollback(&mut self) -> BoxFuture<'_, Result<(), ChunkTransactionError>> {
+            self.evidence.rollbacks.fetch_add(1, Ordering::SeqCst);
+            if self.rollback_error {
+                return Box::pin(async { Err(ChunkTransactionError::NotCommitted) });
+            }
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    fn transactions(
+        begin_error: Option<ChunkTransactionError>,
+        rollback_error: bool,
+    ) -> (LifecycleTransactions, Arc<LifecycleEvidence>) {
+        let evidence = Arc::new(LifecycleEvidence::default());
+        (
+            LifecycleTransactions {
+                receipt: receipt(),
+                evidence: Arc::clone(&evidence),
+                begin_error,
+                rollback_error,
+            },
+            evidence,
+        )
+    }
+
+    #[tokio::test]
+    async fn successful_chunks_pair_begin_and_end_exactly_once_each() {
+        let (policy, state) = CountingPolicy::new();
+        let (transactions, evidence) = transactions(None, false);
+        let (writer, _batches) = Writer::new(Boundary::Normal);
+        let (completion, _calls) = Completion::new(Boundary::Normal);
+        let mut step = ChunkStep::new(
+            StepName::new("lifecycle_success").expect("valid step name"),
+            ChunkSize::new(2).expect("valid chunk size"),
+            Reader::new([1, 2, 3, 4]),
+            Processor::normal(),
+            writer,
+            Arc::new(transactions),
+            Arc::new(completion),
+        )
+        .with_completion_policy(Arc::new(policy));
+        let (_source, stop) = StopSource::new();
+
+        let report = step.execute(&correlation(), &stop).await;
+
+        assert_eq!(report.outcome(), ChunkExecutionOutcome::Completed);
+        assert_eq!(
+            evidence
+                .commits
+                .lock()
+                .expect("commits lock poisoned")
+                .len(),
+            2,
+            "4 items at ChunkSize 2 must commit exactly 2 chunks"
+        );
+        assert_eq!(
+            state.begins.load(Ordering::SeqCst),
+            3,
+            "3 attempts total: 2 committing chunks plus the trailing \
+             all-empty attempt that observes end-of-input"
+        );
+        let ends = state.ends.lock().expect("ends lock poisoned");
+        assert_eq!(
+            ends.len(),
+            3,
+            "every attempt that began must receive exactly one matching end_chunk"
+        );
+        assert_eq!(
+            *ends,
+            vec![
+                ChunkAttemptOutcome::Committed,
+                ChunkAttemptOutcome::Committed,
+                ChunkAttemptOutcome::RolledBack,
+            ],
+            "end_chunk must observe each attempt's real transaction outcome, \
+             in attempt order"
+        );
+    }
+
+    #[tokio::test]
+    async fn transaction_begin_failure_never_invokes_begin_chunk_or_end_chunk() {
+        let (policy, state) = CountingPolicy::new();
+        let (transactions, _evidence) =
+            transactions(Some(ChunkTransactionError::NotCommitted), false);
+        let (writer, _batches) = Writer::new(Boundary::Normal);
+        let (completion, _calls) = Completion::new(Boundary::Normal);
+        let mut step = ChunkStep::new(
+            StepName::new("lifecycle_begin_failure").expect("valid step name"),
+            ChunkSize::new(2).expect("valid chunk size"),
+            Reader::new([1, 2]),
+            Processor::normal(),
+            writer,
+            Arc::new(transactions),
+            Arc::new(completion),
+        )
+        .with_completion_policy(Arc::new(policy));
+        let (_source, stop) = StopSource::new();
+
+        let report = step.execute(&correlation(), &stop).await;
+
+        assert_eq!(
+            report.outcome(),
+            ChunkExecutionOutcome::Failed(ChunkFailure::TransactionBegin)
+        );
+        assert_eq!(
+            state.begins.load(Ordering::SeqCst),
+            0,
+            "an attempt whose transaction never began must never call begin_chunk"
+        );
+        assert!(
+            state.ends.lock().expect("ends lock poisoned").is_empty(),
+            "an attempt whose begin_chunk never ran must never receive a \
+             matching end_chunk either -- a begin failure here must not leak \
+             a policy lifecycle call"
+        );
+    }
+
+    #[tokio::test]
+    async fn begin_chunk_panic_never_invokes_a_matching_end_chunk() {
+        let ends = Arc::new(AtomicUsize::new(0));
+        let policy = PanickingBeginPolicy {
+            ends: Arc::clone(&ends),
+        };
+        let (transactions, _evidence) = transactions(None, false);
+        let (writer, _batches) = Writer::new(Boundary::Normal);
+        let (completion, _calls) = Completion::new(Boundary::Normal);
+        let mut step = ChunkStep::new(
+            StepName::new("lifecycle_begin_panic").expect("valid step name"),
+            ChunkSize::new(2).expect("valid chunk size"),
+            Reader::new([1]),
+            Processor::normal(),
+            writer,
+            Arc::new(transactions),
+            Arc::new(completion),
+        )
+        .with_completion_policy(Arc::new(policy));
+        let (_source, stop) = StopSource::new();
+
+        let report = step.execute(&correlation(), &stop).await;
+
+        assert_eq!(
+            report.outcome(),
+            ChunkExecutionOutcome::Failed(ChunkFailure::CompletionPolicyPanic)
+        );
+        assert_eq!(
+            ends.load(Ordering::SeqCst),
+            0,
+            "a panicking begin_chunk must never receive a matching end_chunk call"
+        );
+    }
+
+    #[tokio::test]
+    async fn processing_failure_then_successful_rollback_pairs_lifecycle_once() {
+        let (policy, state) = CountingPolicy::new();
+        let (transactions, evidence) = transactions(None, false);
+        let (writer, _batches) = Writer::new(Boundary::Normal);
+        let (completion, _calls) = Completion::new(Boundary::Normal);
+        let mut step = ChunkStep::new(
+            StepName::new("lifecycle_processing_failure").expect("valid step name"),
+            ChunkSize::new(2).expect("valid chunk size"),
+            Reader::new([1]),
+            Processor {
+                boundary: Boundary::Error,
+                filter: None,
+            },
+            writer,
+            Arc::new(transactions),
+            Arc::new(completion),
+        )
+        .with_completion_policy(Arc::new(policy));
+        let (_source, stop) = StopSource::new();
+
+        let report = step.execute(&correlation(), &stop).await;
+
+        assert_eq!(
+            report.outcome(),
+            ChunkExecutionOutcome::Failed(ChunkFailure::Processor)
+        );
+        assert_eq!(evidence.rollbacks.load(Ordering::SeqCst), 1);
+        assert_eq!(state.begins.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            *state.ends.lock().expect("ends lock poisoned"),
+            vec![ChunkAttemptOutcome::RolledBack],
+            "a processing failure whose rollback succeeds must pair with \
+             exactly one end_chunk(RolledBack)"
+        );
+    }
+
+    #[tokio::test]
+    async fn processing_failure_then_rollback_failure_still_pairs_lifecycle_as_unknown() {
+        let (policy, state) = CountingPolicy::new();
+        let (transactions, evidence) = transactions(None, true);
+        let (writer, _batches) = Writer::new(Boundary::Normal);
+        let (completion, _calls) = Completion::new(Boundary::Normal);
+        let mut step = ChunkStep::new(
+            StepName::new("lifecycle_rollback_failure").expect("valid step name"),
+            ChunkSize::new(2).expect("valid chunk size"),
+            Reader::new([1]),
+            Processor {
+                boundary: Boundary::Error,
+                filter: None,
+            },
+            writer,
+            Arc::new(transactions),
+            Arc::new(completion),
+        )
+        .with_completion_policy(Arc::new(policy));
+        let (_source, stop) = StopSource::new();
+
+        let report = step.execute(&correlation(), &stop).await;
+
+        assert_eq!(
+            report.outcome(),
+            ChunkExecutionOutcome::Failed(ChunkFailure::TransactionRollback)
+        );
+        assert_eq!(evidence.rollbacks.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            state.begins.load(Ordering::SeqCst),
+            1,
+            "begin_chunk still ran once for this attempt"
+        );
+        assert_eq!(
+            *state.ends.lock().expect("ends lock poisoned"),
+            vec![ChunkAttemptOutcome::Unknown],
+            "rollback failure must never suppress the policy lifecycle this \
+             attempt already began: the transaction's fate is unknowable, so \
+             end_chunk must still run exactly once, observing Unknown"
+        );
+    }
+}
+
+/// Blocker #3 (stream ownership): a manually registered [`ItemStream`] must
+/// survive a completion-policy replacement or clear, even under an identity
+/// a policy's own registration also used.
+mod completion_policy_stream_ownership {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, OnceLock};
+
+    use oxide_batch::{
+        BoxFuture, BoxedStream, BusinessTransaction, ChunkCommitReceipt, ChunkCount, ChunkCounts,
+        ChunkExecutionOutcome, ChunkFaultProgress, ChunkJob, ChunkSize, ChunkStep,
+        ChunkTransaction, ChunkTransactionError, ChunkTransactionManager, CodecId, CodecVersion,
+        CompletionPolicy, ComponentRevision, ComponentStateEnvelope, ComponentStreamIdentity,
+        DefaultComponentCodec, DefinitionError, DefinitionRevision, ItemCountCompletionPolicy,
+        ItemStream, JobName, RestartabilityDeclaration, StateCodecError, StateLimits,
+        StateSchemaId, StateSchemaVersion, StepName, StopSource, StreamCloseContext,
+        StreamCloseError, StreamCloseOutcome, StreamOpenContext, StreamOpenError,
+        StreamOpenOutcome, StreamStateContract, StreamUpdateContext, StreamUpdateError,
+        VersionedStateCodec,
+    };
+
+    use super::{
+        Boundary, Completion, Processor, Reader, Writer, chunk_revisions, correlation, receipt,
+    };
+
+    struct UnitSchema;
+
+    impl VersionedStateCodec<()> for UnitSchema {
+        fn schema_id(&self) -> &StateSchemaId {
+            static SCHEMA: OnceLock<StateSchemaId> = OnceLock::new();
+            SCHEMA.get_or_init(|| StateSchemaId::new("test.stream.unit").expect("valid schema id"))
+        }
+
+        fn current_version(&self) -> StateSchemaVersion {
+            StateSchemaVersion::new(1).expect("nonzero")
+        }
+
+        fn encode(&self, _value: &()) -> Result<Vec<u8>, StateCodecError> {
+            serde_json::to_vec(&serde_json::json!({})).map_err(|_| StateCodecError::InvalidPayload)
+        }
+
+        fn decode(&self, _payload: &[u8]) -> Result<(), StateCodecError> {
+            Ok(())
+        }
+    }
+
+    fn unit_contract() -> StreamStateContract {
+        StreamStateContract::new(DefaultComponentCodec::new(
+            UnitSchema,
+            CodecId::new("test.stream.unit-codec").expect("valid codec id"),
+            CodecVersion::new(1).expect("nonzero"),
+            RestartabilityDeclaration::Restartable,
+        ))
+    }
+
+    /// Records exactly how many times each lifecycle call runs, so a test can
+    /// prove a stream is genuinely alive (or genuinely absent), not merely
+    /// that binding succeeded.
+    struct RecordingStream {
+        identity: ComponentStreamIdentity,
+        opens: Arc<AtomicUsize>,
+        updates: Arc<AtomicUsize>,
+        closes: Arc<AtomicUsize>,
+    }
+
+    impl RecordingStream {
+        fn new(
+            identity: ComponentStreamIdentity,
+        ) -> (Self, Arc<AtomicUsize>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+            let opens = Arc::new(AtomicUsize::new(0));
+            let updates = Arc::new(AtomicUsize::new(0));
+            let closes = Arc::new(AtomicUsize::new(0));
+            (
+                Self {
+                    identity,
+                    opens: Arc::clone(&opens),
+                    updates: Arc::clone(&updates),
+                    closes: Arc::clone(&closes),
+                },
+                opens,
+                updates,
+                closes,
+            )
+        }
+    }
+
+    impl ItemStream for RecordingStream {
+        async fn open(
+            &self,
+            _context: StreamOpenContext<'_>,
+        ) -> Result<StreamOpenOutcome, StreamOpenError> {
+            self.opens.fetch_add(1, Ordering::SeqCst);
+            Ok(StreamOpenOutcome::Initial)
+        }
+
+        async fn update(
+            &self,
+            _context: StreamUpdateContext<'_>,
+        ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+            self.updates.fetch_add(1, Ordering::SeqCst);
+            ComponentStateEnvelope::encode(
+                self.identity.clone(),
+                &(),
+                &unit_contract_codec(),
+                StateLimits::default(),
+            )
+            .map_err(|_| StreamUpdateError::new())
+        }
+
+        async fn close(
+            &self,
+            _context: StreamCloseContext<'_>,
+        ) -> Result<StreamCloseOutcome, StreamCloseError> {
+            self.closes.fetch_add(1, Ordering::SeqCst);
+            Ok(StreamCloseOutcome::Closed)
+        }
+    }
+
+    fn unit_contract_codec() -> DefaultComponentCodec<UnitSchema> {
+        DefaultComponentCodec::new(
+            UnitSchema,
+            CodecId::new("test.stream.unit-codec").expect("valid codec id"),
+            CodecVersion::new(1).expect("nonzero"),
+            RestartabilityDeclaration::Restartable,
+        )
+    }
+
+    /// A transaction manager whose commit accepts `ItemStream` candidate
+    /// state -- unlike `super::Transactions`, which rejects any nonempty
+    /// `component_state` by design (see `ChunkTransaction::commit_with_component_state`'s
+    /// default). Every test in this module registers at least one stream, so
+    /// it needs this rather than the shared root fixture.
+    struct StreamCapableTransactions {
+        receipt: ChunkCommitReceipt,
+    }
+
+    impl ChunkTransactionManager for StreamCapableTransactions {
+        fn begin(
+            &self,
+        ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>> {
+            let transaction = StreamCapableTransaction {
+                receipt: self.receipt.clone(),
+            };
+            Box::pin(async move { Ok(Box::new(transaction) as Box<dyn ChunkTransaction>) })
+        }
+    }
+
+    struct StreamCapableTransaction {
+        receipt: ChunkCommitReceipt,
+    }
+
+    impl ChunkTransaction for StreamCapableTransaction {
+        fn business_transaction(&mut self) -> Option<&mut dyn BusinessTransaction> {
+            None
+        }
+
+        fn commit(
+            &mut self,
+            _counts: ChunkCounts,
+            _fault: ChunkFaultProgress,
+        ) -> BoxFuture<'_, Result<ChunkCommitReceipt, ChunkTransactionError>> {
+            let receipt = self.receipt.clone();
+            Box::pin(async move { Ok(receipt) })
+        }
+
+        fn commit_with_component_state<'a>(
+            &'a mut self,
+            counts: ChunkCounts,
+            fault: ChunkFaultProgress,
+            _component_state: &'a [ComponentStateEnvelope],
+        ) -> BoxFuture<'a, Result<ChunkCommitReceipt, ChunkTransactionError>> {
+            self.commit(counts, fault)
+        }
+
+        fn rollback(&mut self) -> BoxFuture<'_, Result<(), ChunkTransactionError>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    /// A leaf `CompletionPolicy` that owns exactly one `ItemStream`
+    /// registration under a caller-chosen identity -- standing in for
+    /// `AdaptiveCompletionPolicy` without needing its full adaptive-target
+    /// machinery for this ownership-only test.
+    struct StreamOwningPolicy {
+        identity: ComponentStreamIdentity,
+        stream: Arc<BoxedStream>,
+    }
+
+    impl StreamOwningPolicy {
+        fn new(
+            identity: ComponentStreamIdentity,
+        ) -> (Self, Arc<AtomicUsize>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+            let (recording, opens, updates, closes) = RecordingStream::new(identity.clone());
+            (
+                Self {
+                    identity,
+                    stream: Arc::new(BoxedStream::new(recording)),
+                },
+                opens,
+                updates,
+                closes,
+            )
+        }
+    }
+
+    impl CompletionPolicy for StreamOwningPolicy {
+        fn is_complete(&self, _items_read: ChunkCount) -> bool {
+            false
+        }
+
+        fn stream_registrations(
+            &self,
+        ) -> Vec<(
+            ComponentStreamIdentity,
+            Arc<BoxedStream>,
+            StreamStateContract,
+        )> {
+            vec![(
+                self.identity.clone(),
+                Arc::clone(&self.stream),
+                unit_contract(),
+            )]
+        }
+    }
+
+    #[tokio::test]
+    async fn manual_only_registration_runs_its_full_lifecycle() {
+        let identity = ComponentStreamIdentity::new("manual.only").expect("valid identity");
+        let (manual_stream, opens, updates, closes) = RecordingStream::new(identity.clone());
+        let (writer, _batches) = Writer::new(Boundary::Normal);
+        let (completion, _calls) = Completion::new(Boundary::Normal);
+        let mut step = ChunkStep::new(
+            StepName::new("manual_only").expect("valid step name"),
+            ChunkSize::new(2).expect("valid chunk size"),
+            Reader::new([1]),
+            Processor::normal(),
+            writer,
+            Arc::new(StreamCapableTransactions { receipt: receipt() }),
+            Arc::new(completion),
+        )
+        .with_item_stream(identity, manual_stream, unit_contract());
+        let (_source, stop) = StopSource::new();
+
+        let report = step.execute(&correlation(), &stop).await;
+
+        assert_eq!(report.outcome(), ChunkExecutionOutcome::Completed);
+        assert_eq!(opens.load(Ordering::SeqCst), 1);
+        assert_eq!(updates.load(Ordering::SeqCst), 1);
+        assert_eq!(closes.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn same_identity_manual_and_policy_registration_is_rejected_as_duplicate() {
+        let shared_identity =
+            ComponentStreamIdentity::new("shared.duplicate").expect("valid identity");
+        let (manual_stream, _opens, _updates, _closes) =
+            RecordingStream::new(shared_identity.clone());
+        let (policy, _policy_opens, _policy_updates, _policy_closes) =
+            StreamOwningPolicy::new(shared_identity.clone());
+        let (step, _batches, _calls, _evidence) = super::step(
+            Reader::new([1]),
+            Processor::normal(),
+            Boundary::Normal,
+            Boundary::Normal,
+            None,
+        );
+        let step = step
+            .with_item_stream(shared_identity.clone(), manual_stream, unit_contract())
+            .with_completion_policy(Arc::new(policy));
+
+        let result = ChunkJob::new(
+            JobName::new("duplicate_stream_job").expect("valid job name"),
+            step,
+            DefinitionRevision::new("v1").expect("valid revision"),
+            &chunk_revisions().with_stream_revision(
+                shared_identity,
+                ComponentRevision::new("shared-v1").expect("valid revision"),
+            ),
+        );
+
+        assert!(
+            matches!(result, Err(DefinitionError::DuplicateRuntimeStream { .. })),
+            "two live runtime registrations must never coexist under one \
+             identity regardless of ownership -- explicit ownership tracking \
+             must not accidentally relax this into silently allowing two \
+             streams to both claim the same commit-time namespace"
+        );
+    }
+
+    #[tokio::test]
+    async fn manual_registration_survives_policy_replacement_under_a_colliding_identity() {
+        let shared_identity =
+            ComponentStreamIdentity::new("shared.namespace").expect("valid identity");
+
+        let (manual_stream, manual_opens, manual_updates, manual_closes) =
+            RecordingStream::new(shared_identity.clone());
+        let (policy, policy_opens, policy_updates, policy_closes) =
+            StreamOwningPolicy::new(shared_identity.clone());
+
+        let (writer, _batches) = Writer::new(Boundary::Normal);
+        let (completion, _calls) = Completion::new(Boundary::Normal);
+        let mut step = ChunkStep::new(
+            StepName::new("stream_ownership").expect("valid step name"),
+            ChunkSize::new(2).expect("valid chunk size"),
+            Reader::new([1]),
+            Processor::normal(),
+            writer,
+            Arc::new(StreamCapableTransactions { receipt: receipt() }),
+            Arc::new(completion),
+        );
+
+        // Register the manual stream under `shared_identity` first, then
+        // install a policy that happens to register its *own* stream under
+        // that exact same identity. Before Blocker #3's fix, ownership was
+        // inferred from identity alone, so replacing this policy with one
+        // that owns no streams would remove *both* entries sharing this
+        // identity -- silently deleting the manual registration too.
+        step = step
+            .with_item_stream(shared_identity.clone(), manual_stream, unit_contract())
+            .with_completion_policy(Arc::new(policy))
+            // Replace with a policy that owns no stream registrations at all
+            // -- the closest available operation to "clearing" the policy,
+            // since there is no separate API to uninstall a completion
+            // policy back to `None` once one is installed.
+            .with_completion_policy(Arc::new(ItemCountCompletionPolicy::new(
+                ChunkSize::new(2).expect("valid ChunkSize"),
+            )));
+
+        let (_source, stop) = StopSource::new();
+        let report = step.execute(&correlation(), &stop).await;
+
+        assert_eq!(report.outcome(), ChunkExecutionOutcome::Completed);
+        assert_eq!(
+            manual_opens.load(Ordering::SeqCst),
+            1,
+            "the manual stream must still be opened -- it must survive the \
+             policy replacement even though it shared the policy's identity"
+        );
+        assert_eq!(manual_updates.load(Ordering::SeqCst), 1);
+        assert_eq!(manual_closes.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            policy_opens.load(Ordering::SeqCst),
+            0,
+            "the replaced policy's own stream must not run at all -- it was \
+             correctly removed, not left behind as a ghost registration"
+        );
+        assert_eq!(policy_updates.load(Ordering::SeqCst), 0);
+        assert_eq!(policy_closes.load(Ordering::SeqCst), 0);
+    }
+}
