@@ -4,7 +4,7 @@
     "stages": [
       {
         "stage": "actual execution tree",
-        "what": "The tree the campaign really ran against, recorded by the run from inside its own checkout as an object manifest in the report. On a pull request this is the ephemeral merge commit, which no later clone can resolve \u2014 which is exactly why the manifest is recorded rather than the commit name being trusted to stand for it."
+        "what": "The tree the campaign really ran against, recorded by the run from inside its own checkout as an object manifest in the report. On a pull request this is the ephemeral merge commit, which no later clone can resolve — which is exactly why the manifest is recorded rather than the commit name being trusted to stand for it."
       },
       {
         "stage": "workflow run",
@@ -21,7 +21,7 @@
       "Presenting the retention commit as the producer.",
       "Editing a retained artifact so that a recorded hash or commit matches.",
       "Re-running the campaign on each new head to make the execution tree equal the retention commit.",
-      "Treating a summary the report wrote about itself \u2014 a verdict, a total, a pass \u2014 as evidence for the run it describes."
+      "Treating a summary the report wrote about itself — a verdict, a total, a pass — as evidence for the run it describes."
     ]
   },
   "retention_paths": {
@@ -33,7 +33,7 @@
   },
   "binding": {
     "derived_verdicts": "The report's correctness results, growth verdicts and campaign totals are not read as evidence. `cargo xtask soak` recomputes each of them from the raw per-cycle journal and the retained samples, after first requiring the chronology of those arrays to be a contiguous, ordered, correctly phased run of the declared length, and requires the report's own answers to match.",
-    "note": "Two verifications with different reach, and the difference is stated rather than blurred. `cargo xtask evidence` is repository-local: it resolves nothing over the network, so it keeps working long after GitHub has expired the artifacts it describes, and what it establishes is that the retained bytes are the bytes this repository recorded, over a tree whose campaign still means what it meant. It cannot say the retained bytes are the bytes the workflow uploaded. That stronger check needs the GitHub API, which is why it is performed once \u2014 at the moment evidence is promoted \u2014 and its result recorded per entry under remote_verification.",
+    "note": "Two verifications with different reach, and the difference is stated rather than blurred. `cargo xtask evidence` is repository-local: it resolves nothing over the network, so it keeps working long after GitHub has expired the artifacts it describes, and what it establishes is that the retained bytes are the bytes this repository recorded, over a tree whose campaign still means what it meant. It cannot say the retained bytes are the bytes the workflow uploaded. That stronger check needs the GitHub API, which is why it is performed once — at the moment evidence is promoted — and its result recorded per entry under remote_verification.",
     "remote_verification": "Performed once per retention, against the GitHub Actions API: the run, attempt and job exist and succeeded; the artifact's own sha256 digest is recorded; the artifact is downloaded and its extracted report compared byte-for-byte with the retained file. It is deliberately not a permanent CI dependency, because Actions artifacts expire and a verifier that stopped working on a retention boundary would be switched off rather than fixed.",
     "local_verification": "Enforced on every CI run. Artifact git blob identity, the three-way producer/recorded/HEAD binding over campaign-semantics paths, exactly-once matrix coverage, schema completeness, and the report contract.",
     "why_object_ids": "Git object identities for the local binding, because git is already required by this tooling, the values are verifiable by hand with `git rev-parse HEAD:<path>` and `git hash-object <file>`, and no dependency is added to compute them. The GitHub artifact digest is recorded separately and is a different thing: a sha256 over the uploaded archive, which is what the one-time remote check compares against.",
@@ -118,9 +118,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "cb5a93cd633ca93801df6323457feb0e81690dfd",
+        "execution_commit": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "d4488c7460c94580a8d83cff8596166ccdfba5dd",
+        "branch_head_sha": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -130,27 +130,27 @@
       "workflow_run": {
         "workflow": "M5 Soak",
         "workflow_file": ".github/workflows/m5-soak.yml",
-        "id": 32927129365,
+        "id": 33046896737,
         "attempt": 1,
-        "event": "pull_request",
+        "event": "workflow_dispatch",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-soak-campaign",
-        "id": 98052178769,
+        "id": 98432911604,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-15",
-        "id": 9592021518,
-        "digest": "sha256:73a96f198f4433cb62efcaf57a23a39fb812a345aa7c25fa34828fb6f4107844",
-        "size_bytes": 88078
+        "id": 9636118932,
+        "digest": "sha256:530c33f3f25e54774fc12cd57ab751c7838efb308d3b1e8564647682ff6a300f",
+        "size_bytes": 88953
       },
-      "retained_report_git_blob": "9f8711aa05c6c4f2d33906fea9a9d986fd870fc1",
+      "retained_report_git_blob": "488a7a6ea0ede40bd5b6edaeda7b81d1eb144f2a",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T12:46:55+09:00",
-        "run_id": 32927129365,
+        "verified_at": "2026-08-27T15:57:31+09:00",
+        "run_id": 33046896737,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -158,7 +158,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, six rounds): crates/oxide-batch/src changed again in this head to correct chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content, whose prior version never registered the paired ObjectItemWriterStream via ChunkStep::with_item_stream and asserted on a hand-driven `update` call's in-memory candidate instead of the durably committed checkpoint the runtime actually hands to ChunkTransaction::commit_with_component_state -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #151/#179 (independent strict merge-gate review, multiple rounds): crates/oxide-batch/src changed again in this head to fix five defects in the item-level completion-policy framework -- end_chunk(Committed) was skipped when a post-commit after_chunk listener failed, leaving an AdaptiveCompletionPolicy's in-memory confirmed target stuck behind a transaction that had actually committed; an AdaptiveCompletionPolicy nested inside a CompositeCompletionPolicy had no way to register its paired ItemStream on the same instance; CompositeCompletionPolicy::fingerprint joined member fingerprints with a bare comma, letting differently split member lists collide onto the same string; FlowJob::with_chunk_step tried to fold a completion policy's fingerprint into a plan already compiled without it, making every completion-policy-bearing flow step's binding fail; and ChunkStep::with_completion_policy left a replaced policy's ItemStream registration behind as an orphan -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of `workflow_dispatch`-triggered runs against this exact branch head and retained byte-for-byte."
       }
     },
     {
@@ -168,9 +168,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "cb5a93cd633ca93801df6323457feb0e81690dfd",
+        "execution_commit": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "d4488c7460c94580a8d83cff8596166ccdfba5dd",
+        "branch_head_sha": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -180,27 +180,27 @@
       "workflow_run": {
         "workflow": "M5 Soak",
         "workflow_file": ".github/workflows/m5-soak.yml",
-        "id": 32927129365,
+        "id": 33046896737,
         "attempt": 1,
-        "event": "pull_request",
+        "event": "workflow_dispatch",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-soak-campaign",
-        "id": 98052178663,
+        "id": 98432911783,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-18",
-        "id": 9592026791,
-        "digest": "sha256:09ffed96c17eca6a6127fb776a4008e69fbf1c30d1590702e2d12c641ca8ed9b",
-        "size_bytes": 89161
+        "id": 9636109098,
+        "digest": "sha256:6e3a5ed995b87851b6906c5e5343434b3094b91e933bbfc14868c3231e4ed68b",
+        "size_bytes": 87814
       },
-      "retained_report_git_blob": "a99b796a9162a699b107fdcdc622e59e40b545a8",
+      "retained_report_git_blob": "058f2a5ed31526fd5bd31d50a81aac2842544961",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T12:46:55+09:00",
-        "run_id": 32927129365,
+        "verified_at": "2026-08-27T15:57:31+09:00",
+        "run_id": 33046896737,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -208,7 +208,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, six rounds): crates/oxide-batch/src changed again in this head to correct chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content, whose prior version never registered the paired ObjectItemWriterStream via ChunkStep::with_item_stream and asserted on a hand-driven `update` call's in-memory candidate instead of the durably committed checkpoint the runtime actually hands to ChunkTransaction::commit_with_component_state -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #151/#179 (independent strict merge-gate review, multiple rounds): crates/oxide-batch/src changed again in this head to fix five defects in the item-level completion-policy framework -- end_chunk(Committed) was skipped when a post-commit after_chunk listener failed, leaving an AdaptiveCompletionPolicy's in-memory confirmed target stuck behind a transaction that had actually committed; an AdaptiveCompletionPolicy nested inside a CompositeCompletionPolicy had no way to register its paired ItemStream on the same instance; CompositeCompletionPolicy::fingerprint joined member fingerprints with a bare comma, letting differently split member lists collide onto the same string; FlowJob::with_chunk_step tried to fold a completion policy's fingerprint into a plan already compiled without it, making every completion-policy-bearing flow step's binding fail; and ChunkStep::with_completion_policy left a replaced policy's ItemStream registration behind as an orphan -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of `workflow_dispatch`-triggered runs against this exact branch head and retained byte-for-byte."
       }
     },
     {
@@ -218,9 +218,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "cb5a93cd633ca93801df6323457feb0e81690dfd",
+        "execution_commit": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "d4488c7460c94580a8d83cff8596166ccdfba5dd",
+        "branch_head_sha": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -230,27 +230,27 @@
       "workflow_run": {
         "workflow": "M5 Cancellation",
         "workflow_file": ".github/workflows/m5-cancellation.yml",
-        "id": 32927129331,
+        "id": 33046898737,
         "attempt": 1,
-        "event": "pull_request",
+        "event": "workflow_dispatch",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-cancellation-campaign",
-        "id": 98052178473,
+        "id": 98432916951,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-15",
-        "id": 9591956005,
-        "digest": "sha256:aa7697d28feb9d49684bd31d4302b2fd6491571cfb440c81838f91fcf1b03234",
-        "size_bytes": 5750
+        "id": 9636041210,
+        "digest": "sha256:8cca2806edda6184d64e81cb1e8e998b9362937e234a16c07ccc5bfdaf8aefab",
+        "size_bytes": 5743
       },
-      "retained_report_git_blob": "f08f48a7ddb103b60da09420ad6c83134a615b14",
+      "retained_report_git_blob": "7f7e3d3d69404595b3ce153e1683814ef91c47c1",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T12:46:55+09:00",
-        "run_id": 32927129331,
+        "verified_at": "2026-08-27T15:57:31+09:00",
+        "run_id": 33046898737,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -258,7 +258,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, six rounds): crates/oxide-batch/src changed again in this head to correct chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content, whose prior version never registered the paired ObjectItemWriterStream via ChunkStep::with_item_stream and asserted on a hand-driven `update` call's in-memory candidate instead of the durably committed checkpoint the runtime actually hands to ChunkTransaction::commit_with_component_state -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #151/#179 (independent strict merge-gate review, multiple rounds): crates/oxide-batch/src changed again in this head to fix five defects in the item-level completion-policy framework -- end_chunk(Committed) was skipped when a post-commit after_chunk listener failed, leaving an AdaptiveCompletionPolicy's in-memory confirmed target stuck behind a transaction that had actually committed; an AdaptiveCompletionPolicy nested inside a CompositeCompletionPolicy had no way to register its paired ItemStream on the same instance; CompositeCompletionPolicy::fingerprint joined member fingerprints with a bare comma, letting differently split member lists collide onto the same string; FlowJob::with_chunk_step tried to fold a completion policy's fingerprint into a plan already compiled without it, making every completion-policy-bearing flow step's binding fail; and ChunkStep::with_completion_policy left a replaced policy's ItemStream registration behind as an orphan -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of `workflow_dispatch`-triggered runs against this exact branch head and retained byte-for-byte."
       }
     },
     {
@@ -268,9 +268,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "cb5a93cd633ca93801df6323457feb0e81690dfd",
+        "execution_commit": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "d4488c7460c94580a8d83cff8596166ccdfba5dd",
+        "branch_head_sha": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -280,27 +280,27 @@
       "workflow_run": {
         "workflow": "M5 Cancellation",
         "workflow_file": ".github/workflows/m5-cancellation.yml",
-        "id": 32927129331,
+        "id": 33046898737,
         "attempt": 1,
-        "event": "pull_request",
+        "event": "workflow_dispatch",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-cancellation-campaign",
-        "id": 98052178728,
+        "id": 98432917078,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-18",
-        "id": 9591956498,
-        "digest": "sha256:69564741a1f39b545ea876b84cc2f7df49de9494dfb8046d3bc7678eada09ad7",
-        "size_bytes": 5754
+        "id": 9636036741,
+        "digest": "sha256:18ce59699f38a9546089e1bf8e7b6e355c14e335405617b592aa331fac8ad9e7",
+        "size_bytes": 5750
       },
-      "retained_report_git_blob": "9390ea3bfd321a6b6982d2d12d83892f3e56202c",
+      "retained_report_git_blob": "e938d64685e82a5805db1db09eeb1ca8e11039d2",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T12:46:55+09:00",
-        "run_id": 32927129331,
+        "verified_at": "2026-08-27T15:57:31+09:00",
+        "run_id": 33046898737,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -308,7 +308,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, six rounds): crates/oxide-batch/src changed again in this head to correct chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content, whose prior version never registered the paired ObjectItemWriterStream via ChunkStep::with_item_stream and asserted on a hand-driven `update` call's in-memory candidate instead of the durably committed checkpoint the runtime actually hands to ChunkTransaction::commit_with_component_state -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #151/#179 (independent strict merge-gate review, multiple rounds): crates/oxide-batch/src changed again in this head to fix five defects in the item-level completion-policy framework -- end_chunk(Committed) was skipped when a post-commit after_chunk listener failed, leaving an AdaptiveCompletionPolicy's in-memory confirmed target stuck behind a transaction that had actually committed; an AdaptiveCompletionPolicy nested inside a CompositeCompletionPolicy had no way to register its paired ItemStream on the same instance; CompositeCompletionPolicy::fingerprint joined member fingerprints with a bare comma, letting differently split member lists collide onto the same string; FlowJob::with_chunk_step tried to fold a completion policy's fingerprint into a plan already compiled without it, making every completion-policy-bearing flow step's binding fail; and ChunkStep::with_completion_policy left a replaced policy's ItemStream registration behind as an orphan -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of `workflow_dispatch`-triggered runs against this exact branch head and retained byte-for-byte."
       }
     },
     {
@@ -318,9 +318,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "cb5a93cd633ca93801df6323457feb0e81690dfd",
+        "execution_commit": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "d4488c7460c94580a8d83cff8596166ccdfba5dd",
+        "branch_head_sha": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -330,27 +330,27 @@
       "workflow_run": {
         "workflow": "M5 Performance",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 32927129407,
+        "id": 33046904684,
         "attempt": 1,
-        "event": "pull_request",
+        "event": "workflow_dispatch",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-performance-campaign",
-        "id": 98052178922,
+        "id": 98432946598,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-15",
-        "id": 9591957555,
-        "digest": "sha256:5be0474f225e5e29c1c20f8a436fca4881cef23e2a10427e3b3255a21dc7c633",
-        "size_bytes": 6614
+        "id": 9636047666,
+        "digest": "sha256:5c2d007bda1a89922c128d020aef08222b01a17fece804d8cd3d9cd360a67607",
+        "size_bytes": 6613
       },
-      "retained_report_git_blob": "2eabd55abd66d9c839d2b1861a7b246a3e30f71b",
+      "retained_report_git_blob": "958e2c53754e2ef6a545c8ae21cc0fd734290b2e",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T12:46:55+09:00",
-        "run_id": 32927129407,
+        "verified_at": "2026-08-27T15:57:31+09:00",
+        "run_id": 33046904684,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -358,7 +358,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, six rounds): crates/oxide-batch/src changed again in this head to correct chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content, whose prior version never registered the paired ObjectItemWriterStream via ChunkStep::with_item_stream and asserted on a hand-driven `update` call's in-memory candidate instead of the durably committed checkpoint the runtime actually hands to ChunkTransaction::commit_with_component_state -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #151/#179 (independent strict merge-gate review, multiple rounds): crates/oxide-batch/src changed again in this head to fix five defects in the item-level completion-policy framework -- end_chunk(Committed) was skipped when a post-commit after_chunk listener failed, leaving an AdaptiveCompletionPolicy's in-memory confirmed target stuck behind a transaction that had actually committed; an AdaptiveCompletionPolicy nested inside a CompositeCompletionPolicy had no way to register its paired ItemStream on the same instance; CompositeCompletionPolicy::fingerprint joined member fingerprints with a bare comma, letting differently split member lists collide onto the same string; FlowJob::with_chunk_step tried to fold a completion policy's fingerprint into a plan already compiled without it, making every completion-policy-bearing flow step's binding fail; and ChunkStep::with_completion_policy left a replaced policy's ItemStream registration behind as an orphan -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of `workflow_dispatch`-triggered runs against this exact branch head and retained byte-for-byte."
       }
     },
     {
@@ -368,9 +368,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "cb5a93cd633ca93801df6323457feb0e81690dfd",
+        "execution_commit": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "d4488c7460c94580a8d83cff8596166ccdfba5dd",
+        "branch_head_sha": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -380,27 +380,27 @@
       "workflow_run": {
         "workflow": "M5 Performance",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 32927129407,
+        "id": 33046904684,
         "attempt": 1,
-        "event": "pull_request",
+        "event": "workflow_dispatch",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-performance-campaign",
-        "id": 98052178777,
+        "id": 98432946398,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-18",
-        "id": 9591961242,
-        "digest": "sha256:1b14170edd2065cf5752e6c809a06d5fcb65c3d7fe7e3ea7da2051de115ed2d4",
+        "id": 9636046596,
+        "digest": "sha256:8f1ae9e1b54dc1b2b206715f23306d134d05a6feb9033b9947c3cc9fd62433ae",
         "size_bytes": 6611
       },
-      "retained_report_git_blob": "1d77b60effa229e5c573c654414f56f753d319f4",
+      "retained_report_git_blob": "b1d22315124341e62c3de469dc0fcfc8ef67e6cc",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T12:46:55+09:00",
-        "run_id": 32927129407,
+        "verified_at": "2026-08-27T15:57:31+09:00",
+        "run_id": 33046904684,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -408,7 +408,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, six rounds): crates/oxide-batch/src changed again in this head to correct chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content, whose prior version never registered the paired ObjectItemWriterStream via ChunkStep::with_item_stream and asserted on a hand-driven `update` call's in-memory candidate instead of the durably committed checkpoint the runtime actually hands to ChunkTransaction::commit_with_component_state -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #151/#179 (independent strict merge-gate review, multiple rounds): crates/oxide-batch/src changed again in this head to fix five defects in the item-level completion-policy framework -- end_chunk(Committed) was skipped when a post-commit after_chunk listener failed, leaving an AdaptiveCompletionPolicy's in-memory confirmed target stuck behind a transaction that had actually committed; an AdaptiveCompletionPolicy nested inside a CompositeCompletionPolicy had no way to register its paired ItemStream on the same instance; CompositeCompletionPolicy::fingerprint joined member fingerprints with a bare comma, letting differently split member lists collide onto the same string; FlowJob::with_chunk_step tried to fold a completion policy's fingerprint into a plan already compiled without it, making every completion-policy-bearing flow step's binding fail; and ChunkStep::with_completion_policy left a replaced policy's ItemStream registration behind as an orphan -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of `workflow_dispatch`-triggered runs against this exact branch head and retained byte-for-byte."
       }
     },
     {
@@ -418,9 +418,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "cb5a93cd633ca93801df6323457feb0e81690dfd",
+        "execution_commit": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "d4488c7460c94580a8d83cff8596166ccdfba5dd",
+        "branch_head_sha": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -430,27 +430,27 @@
       "workflow_run": {
         "workflow": "M5 Conformance",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 32927129346,
+        "id": 33046900750,
         "attempt": 1,
-        "event": "pull_request",
+        "event": "workflow_dispatch",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-conformance-campaign",
-        "id": 98052178497,
+        "id": 98432924275,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-15",
-        "id": 9591969044,
-        "digest": "sha256:881a8a8dcb665067953fd18cbe226ea9674183099da820c850cabc60584ba3d1",
-        "size_bytes": 7133
+        "id": 9636066725,
+        "digest": "sha256:c843604421ec656e5b1739a6f7ff4b2ab832374a4d291d17f28a03398747aa1b",
+        "size_bytes": 7124
       },
-      "retained_report_git_blob": "9722cc8998d38ec2461bf014484b1b2a75fae071",
+      "retained_report_git_blob": "95ff6ce6f8bff146454bac8b2fc6a2d89a6ad4f5",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T12:46:55+09:00",
-        "run_id": 32927129346,
+        "verified_at": "2026-08-27T15:57:31+09:00",
+        "run_id": 33046900750,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -458,7 +458,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, six rounds): crates/oxide-batch/src changed again in this head to correct chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content, whose prior version never registered the paired ObjectItemWriterStream via ChunkStep::with_item_stream and asserted on a hand-driven `update` call's in-memory candidate instead of the durably committed checkpoint the runtime actually hands to ChunkTransaction::commit_with_component_state -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #151/#179 (independent strict merge-gate review, multiple rounds): crates/oxide-batch/src changed again in this head to fix five defects in the item-level completion-policy framework -- end_chunk(Committed) was skipped when a post-commit after_chunk listener failed, leaving an AdaptiveCompletionPolicy's in-memory confirmed target stuck behind a transaction that had actually committed; an AdaptiveCompletionPolicy nested inside a CompositeCompletionPolicy had no way to register its paired ItemStream on the same instance; CompositeCompletionPolicy::fingerprint joined member fingerprints with a bare comma, letting differently split member lists collide onto the same string; FlowJob::with_chunk_step tried to fold a completion policy's fingerprint into a plan already compiled without it, making every completion-policy-bearing flow step's binding fail; and ChunkStep::with_completion_policy left a replaced policy's ItemStream registration behind as an orphan -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of `workflow_dispatch`-triggered runs against this exact branch head and retained byte-for-byte."
       }
     },
     {
@@ -468,9 +468,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "cb5a93cd633ca93801df6323457feb0e81690dfd",
+        "execution_commit": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "d4488c7460c94580a8d83cff8596166ccdfba5dd",
+        "branch_head_sha": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -480,27 +480,27 @@
       "workflow_run": {
         "workflow": "M5 Conformance",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 32927129346,
+        "id": 33046900750,
         "attempt": 1,
-        "event": "pull_request",
+        "event": "workflow_dispatch",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-conformance-campaign",
-        "id": 98052178632,
+        "id": 98432924393,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-18",
-        "id": 9591983657,
-        "digest": "sha256:eaf29cc437d9e781e7d0580183fa8855edcc49fa840b25f247a715f59926f121",
-        "size_bytes": 7133
+        "id": 9636068922,
+        "digest": "sha256:9f18e60fa7b153aa087877dc6783074234daae508dcf4dc40f61320d5ad33dc2",
+        "size_bytes": 7124
       },
-      "retained_report_git_blob": "3084d3c4eb64717ecdae023d8f31b4638c7faf11",
+      "retained_report_git_blob": "089935d451fe73d8efe440fb5ad135292977b9b3",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T12:46:55+09:00",
-        "run_id": 32927129346,
+        "verified_at": "2026-08-27T15:57:31+09:00",
+        "run_id": 33046900750,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -508,7 +508,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, six rounds): crates/oxide-batch/src changed again in this head to correct chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content, whose prior version never registered the paired ObjectItemWriterStream via ChunkStep::with_item_stream and asserted on a hand-driven `update` call's in-memory candidate instead of the durably committed checkpoint the runtime actually hands to ChunkTransaction::commit_with_component_state -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #151/#179 (independent strict merge-gate review, multiple rounds): crates/oxide-batch/src changed again in this head to fix five defects in the item-level completion-policy framework -- end_chunk(Committed) was skipped when a post-commit after_chunk listener failed, leaving an AdaptiveCompletionPolicy's in-memory confirmed target stuck behind a transaction that had actually committed; an AdaptiveCompletionPolicy nested inside a CompositeCompletionPolicy had no way to register its paired ItemStream on the same instance; CompositeCompletionPolicy::fingerprint joined member fingerprints with a bare comma, letting differently split member lists collide onto the same string; FlowJob::with_chunk_step tried to fold a completion policy's fingerprint into a plan already compiled without it, making every completion-policy-bearing flow step's binding fail; and ChunkStep::with_completion_policy left a replaced policy's ItemStream registration behind as an orphan -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of `workflow_dispatch`-triggered runs against this exact branch head and retained byte-for-byte."
       }
     },
     {
@@ -518,9 +518,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "cb5a93cd633ca93801df6323457feb0e81690dfd",
+        "execution_commit": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "d4488c7460c94580a8d83cff8596166ccdfba5dd",
+        "branch_head_sha": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -530,27 +530,27 @@
       "workflow_run": {
         "workflow": "M5 Crash and Restore",
         "workflow_file": ".github/workflows/m5-crash-restore.yml",
-        "id": 32927129532,
+        "id": 33046902593,
         "attempt": 1,
-        "event": "pull_request",
+        "event": "workflow_dispatch",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-crash-restore-campaign",
-        "id": 98052179126,
+        "id": 98432952773,
         "conclusion": "success"
       },
       "artifact": {
         "name": "crash-restore-campaign-postgres-15",
-        "id": 9591957337,
-        "digest": "sha256:f19bc11fdf1b5498a1ed7830d7a72aa481d0620e6765811232eaf54333e026a1",
-        "size_bytes": 6694
+        "id": 9636045399,
+        "digest": "sha256:c80da5bbf82ae8f8904eb739451e7f94d41f7f0fc3ed55b06faca021a3ba8bf9",
+        "size_bytes": 6692
       },
-      "retained_report_git_blob": "eea90f283659c8b6e91b2b9b399dafa801af89a6",
+      "retained_report_git_blob": "57e7034307fe824146d9f8c93d8a0b074b275458",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T12:46:55+09:00",
-        "run_id": 32927129532,
+        "verified_at": "2026-08-27T15:57:31+09:00",
+        "run_id": 33046902593,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -558,7 +558,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, six rounds): crates/oxide-batch/src changed again in this head to correct chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content, whose prior version never registered the paired ObjectItemWriterStream via ChunkStep::with_item_stream and asserted on a hand-driven `update` call's in-memory candidate instead of the durably committed checkpoint the runtime actually hands to ChunkTransaction::commit_with_component_state -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #151/#179 (independent strict merge-gate review, multiple rounds): crates/oxide-batch/src changed again in this head to fix five defects in the item-level completion-policy framework -- end_chunk(Committed) was skipped when a post-commit after_chunk listener failed, leaving an AdaptiveCompletionPolicy's in-memory confirmed target stuck behind a transaction that had actually committed; an AdaptiveCompletionPolicy nested inside a CompositeCompletionPolicy had no way to register its paired ItemStream on the same instance; CompositeCompletionPolicy::fingerprint joined member fingerprints with a bare comma, letting differently split member lists collide onto the same string; FlowJob::with_chunk_step tried to fold a completion policy's fingerprint into a plan already compiled without it, making every completion-policy-bearing flow step's binding fail; and ChunkStep::with_completion_policy left a replaced policy's ItemStream registration behind as an orphan -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of `workflow_dispatch`-triggered runs against this exact branch head and retained byte-for-byte."
       }
     },
     {
@@ -568,9 +568,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "cb5a93cd633ca93801df6323457feb0e81690dfd",
+        "execution_commit": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "d4488c7460c94580a8d83cff8596166ccdfba5dd",
+        "branch_head_sha": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -580,27 +580,27 @@
       "workflow_run": {
         "workflow": "M5 Crash and Restore",
         "workflow_file": ".github/workflows/m5-crash-restore.yml",
-        "id": 32927129532,
+        "id": 33046902593,
         "attempt": 1,
-        "event": "pull_request",
+        "event": "workflow_dispatch",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-crash-restore-campaign",
-        "id": 98052179368,
+        "id": 98432952877,
         "conclusion": "success"
       },
       "artifact": {
         "name": "crash-restore-campaign-postgres-18",
-        "id": 9591956216,
-        "digest": "sha256:d0940794f4291dfa83f6a4463da1e6e1f212a56d87701676b594ed4f84876873",
-        "size_bytes": 6691
+        "id": 9636042699,
+        "digest": "sha256:6af3b51ec42989b28f26ba39270d3630be196d6182bd176137ab4298208c8b1b",
+        "size_bytes": 6685
       },
-      "retained_report_git_blob": "c78fc23363cbb74c95db2aa1823224f42857360b",
+      "retained_report_git_blob": "b3ba544b8a3a35f7ddd66aadba79ed694af3a7d5",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T12:46:55+09:00",
-        "run_id": 32927129532,
+        "verified_at": "2026-08-27T15:57:31+09:00",
+        "run_id": 33046902593,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -608,7 +608,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, six rounds): crates/oxide-batch/src changed again in this head to correct chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content, whose prior version never registered the paired ObjectItemWriterStream via ChunkStep::with_item_stream and asserted on a hand-driven `update` call's in-memory candidate instead of the durably committed checkpoint the runtime actually hands to ChunkTransaction::commit_with_component_state -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #151/#179 (independent strict merge-gate review, multiple rounds): crates/oxide-batch/src changed again in this head to fix five defects in the item-level completion-policy framework -- end_chunk(Committed) was skipped when a post-commit after_chunk listener failed, leaving an AdaptiveCompletionPolicy's in-memory confirmed target stuck behind a transaction that had actually committed; an AdaptiveCompletionPolicy nested inside a CompositeCompletionPolicy had no way to register its paired ItemStream on the same instance; CompositeCompletionPolicy::fingerprint joined member fingerprints with a bare comma, letting differently split member lists collide onto the same string; FlowJob::with_chunk_step tried to fold a completion policy's fingerprint into a plan already compiled without it, making every completion-policy-bearing flow step's binding fail; and ChunkStep::with_completion_policy left a replaced policy's ItemStream registration behind as an orphan -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of `workflow_dispatch`-triggered runs against this exact branch head and retained byte-for-byte."
       }
     },
     {
@@ -618,9 +618,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "cb5a93cd633ca93801df6323457feb0e81690dfd",
+        "execution_commit": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "d4488c7460c94580a8d83cff8596166ccdfba5dd",
+        "branch_head_sha": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -630,27 +630,27 @@
       "workflow_run": {
         "workflow": "M5 Upgrade",
         "workflow_file": ".github/workflows/m5-upgrade.yml",
-        "id": 32927129391,
+        "id": 33046909860,
         "attempt": 1,
-        "event": "pull_request",
+        "event": "workflow_dispatch",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-upgrade-campaign",
-        "id": 98052178665,
+        "id": 98432951217,
         "conclusion": "success"
       },
       "artifact": {
         "name": "upgrade-campaign-postgres-15",
-        "id": 9591976152,
-        "digest": "sha256:42c46499bda3db9c7264042dc9cf44b4bea02e8fe55aac8b686c47650ec80186",
-        "size_bytes": 5761
+        "id": 9636054739,
+        "digest": "sha256:91e0e8b1f55f7af06fcface349acdece47ef25c71445b6b06229e4779d12432d",
+        "size_bytes": 5757
       },
-      "retained_report_git_blob": "1acbe1ffc4643b73bf8712878b9b1f3fd7bc5ac5",
+      "retained_report_git_blob": "f5089a33f3d1a7265b0e097de1b798af3241b933",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T12:46:55+09:00",
-        "run_id": 32927129391,
+        "verified_at": "2026-08-27T15:57:31+09:00",
+        "run_id": 33046909860,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -658,7 +658,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, six rounds): crates/oxide-batch/src changed again in this head to correct chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content, whose prior version never registered the paired ObjectItemWriterStream via ChunkStep::with_item_stream and asserted on a hand-driven `update` call's in-memory candidate instead of the durably committed checkpoint the runtime actually hands to ChunkTransaction::commit_with_component_state -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #151/#179 (independent strict merge-gate review, multiple rounds): crates/oxide-batch/src changed again in this head to fix five defects in the item-level completion-policy framework -- end_chunk(Committed) was skipped when a post-commit after_chunk listener failed, leaving an AdaptiveCompletionPolicy's in-memory confirmed target stuck behind a transaction that had actually committed; an AdaptiveCompletionPolicy nested inside a CompositeCompletionPolicy had no way to register its paired ItemStream on the same instance; CompositeCompletionPolicy::fingerprint joined member fingerprints with a bare comma, letting differently split member lists collide onto the same string; FlowJob::with_chunk_step tried to fold a completion policy's fingerprint into a plan already compiled without it, making every completion-policy-bearing flow step's binding fail; and ChunkStep::with_completion_policy left a replaced policy's ItemStream registration behind as an orphan -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of `workflow_dispatch`-triggered runs against this exact branch head and retained byte-for-byte."
       }
     },
     {
@@ -668,9 +668,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "cb5a93cd633ca93801df6323457feb0e81690dfd",
+        "execution_commit": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "d4488c7460c94580a8d83cff8596166ccdfba5dd",
+        "branch_head_sha": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -680,27 +680,27 @@
       "workflow_run": {
         "workflow": "M5 Upgrade",
         "workflow_file": ".github/workflows/m5-upgrade.yml",
-        "id": 32927129391,
+        "id": 33046909860,
         "attempt": 1,
-        "event": "pull_request",
+        "event": "workflow_dispatch",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-upgrade-campaign",
-        "id": 98052178510,
+        "id": 98432951290,
         "conclusion": "success"
       },
       "artifact": {
         "name": "upgrade-campaign-postgres-18",
-        "id": 9591968340,
-        "digest": "sha256:d3c72266f99b56b77e169df713528ce01f8a4fa3c05671cc6d6b1176f9a96e8e",
-        "size_bytes": 5761
+        "id": 9636066819,
+        "digest": "sha256:ed5559742dba41ff6ad1cee0b7b9e7499c6521ff666446ba6acf4aa0aa01ce27",
+        "size_bytes": 5758
       },
-      "retained_report_git_blob": "6c81228b234b29cf05a579bc3420b8783e557e75",
+      "retained_report_git_blob": "8845a4eaabec1215ba3448181e89677fbb7b1444",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T12:46:55+09:00",
-        "run_id": 32927129391,
+        "verified_at": "2026-08-27T15:57:31+09:00",
+        "run_id": 33046909860,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -708,7 +708,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, six rounds): crates/oxide-batch/src changed again in this head to correct chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content, whose prior version never registered the paired ObjectItemWriterStream via ChunkStep::with_item_stream and asserted on a hand-driven `update` call's in-memory candidate instead of the durably committed checkpoint the runtime actually hands to ChunkTransaction::commit_with_component_state -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #151/#179 (independent strict merge-gate review, multiple rounds): crates/oxide-batch/src changed again in this head to fix five defects in the item-level completion-policy framework -- end_chunk(Committed) was skipped when a post-commit after_chunk listener failed, leaving an AdaptiveCompletionPolicy's in-memory confirmed target stuck behind a transaction that had actually committed; an AdaptiveCompletionPolicy nested inside a CompositeCompletionPolicy had no way to register its paired ItemStream on the same instance; CompositeCompletionPolicy::fingerprint joined member fingerprints with a bare comma, letting differently split member lists collide onto the same string; FlowJob::with_chunk_step tried to fold a completion policy's fingerprint into a plan already compiled without it, making every completion-policy-bearing flow step's binding fail; and ChunkStep::with_completion_policy left a replaced policy's ItemStream registration behind as an orphan -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of `workflow_dispatch`-triggered runs against this exact branch head and retained byte-for-byte."
       }
     },
     {
@@ -718,9 +718,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "cb5a93cd633ca93801df6323457feb0e81690dfd",
+        "execution_commit": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "d4488c7460c94580a8d83cff8596166ccdfba5dd",
+        "branch_head_sha": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -730,27 +730,27 @@
       "workflow_run": {
         "workflow": "M5 Security",
         "workflow_file": ".github/workflows/m5-security.yml",
-        "id": 32927129384,
+        "id": 33046908151,
         "attempt": 1,
-        "event": "pull_request",
+        "event": "workflow_dispatch",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-security-campaign",
-        "id": 98052178408,
+        "id": 98432946820,
         "conclusion": "success"
       },
       "artifact": {
         "name": "security-campaign-postgres-15",
-        "id": 9591955644,
-        "digest": "sha256:8fa95acc9b8f884f8a37523e152f71f1a4a9456943a45f346dc5b95b32875757",
-        "size_bytes": 7081
+        "id": 9636034827,
+        "digest": "sha256:43ed6c5ff7dce418a2c9df8938b7b83de97d3dead0aac99019379161b77a118e",
+        "size_bytes": 7077
       },
-      "retained_report_git_blob": "3a3f9279086847495cbce51b43769292879ad0e9",
+      "retained_report_git_blob": "ca343f62c3ee2f3245a2bb27504469ae3c4c5b29",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T12:46:55+09:00",
-        "run_id": 32927129384,
+        "verified_at": "2026-08-27T15:57:31+09:00",
+        "run_id": 33046908151,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -758,7 +758,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, six rounds): crates/oxide-batch/src changed again in this head to correct chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content, whose prior version never registered the paired ObjectItemWriterStream via ChunkStep::with_item_stream and asserted on a hand-driven `update` call's in-memory candidate instead of the durably committed checkpoint the runtime actually hands to ChunkTransaction::commit_with_component_state -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #151/#179 (independent strict merge-gate review, multiple rounds): crates/oxide-batch/src changed again in this head to fix five defects in the item-level completion-policy framework -- end_chunk(Committed) was skipped when a post-commit after_chunk listener failed, leaving an AdaptiveCompletionPolicy's in-memory confirmed target stuck behind a transaction that had actually committed; an AdaptiveCompletionPolicy nested inside a CompositeCompletionPolicy had no way to register its paired ItemStream on the same instance; CompositeCompletionPolicy::fingerprint joined member fingerprints with a bare comma, letting differently split member lists collide onto the same string; FlowJob::with_chunk_step tried to fold a completion policy's fingerprint into a plan already compiled without it, making every completion-policy-bearing flow step's binding fail; and ChunkStep::with_completion_policy left a replaced policy's ItemStream registration behind as an orphan -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of `workflow_dispatch`-triggered runs against this exact branch head and retained byte-for-byte."
       }
     },
     {
@@ -768,9 +768,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "cb5a93cd633ca93801df6323457feb0e81690dfd",
+        "execution_commit": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "d4488c7460c94580a8d83cff8596166ccdfba5dd",
+        "branch_head_sha": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -780,27 +780,27 @@
       "workflow_run": {
         "workflow": "M5 Security",
         "workflow_file": ".github/workflows/m5-security.yml",
-        "id": 32927129384,
+        "id": 33046908151,
         "attempt": 1,
-        "event": "pull_request",
+        "event": "workflow_dispatch",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-security-campaign",
-        "id": 98052178520,
+        "id": 98432946804,
         "conclusion": "success"
       },
       "artifact": {
         "name": "security-campaign-postgres-18",
-        "id": 9591955145,
-        "digest": "sha256:1a5dcb77af095e596645183bd5377999153f127bae07ce0327e9e4e37c0cf546",
-        "size_bytes": 7080
+        "id": 9636038533,
+        "digest": "sha256:16721f8f48a2db5eec54114eccf717e15215773ca286d96d136e8f3ebce59611",
+        "size_bytes": 7076
       },
-      "retained_report_git_blob": "c4f71d0eb8fd8d75c60a07ade6b6255cdf34ff69",
+      "retained_report_git_blob": "69ea3b0fefe51e6464ff629a76192664af78f0c2",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T12:46:55+09:00",
-        "run_id": 32927129384,
+        "verified_at": "2026-08-27T15:57:31+09:00",
+        "run_id": 33046908151,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -808,7 +808,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, six rounds): crates/oxide-batch/src changed again in this head to correct chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content, whose prior version never registered the paired ObjectItemWriterStream via ChunkStep::with_item_stream and asserted on a hand-driven `update` call's in-memory candidate instead of the durably committed checkpoint the runtime actually hands to ChunkTransaction::commit_with_component_state -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #151/#179 (independent strict merge-gate review, multiple rounds): crates/oxide-batch/src changed again in this head to fix five defects in the item-level completion-policy framework -- end_chunk(Committed) was skipped when a post-commit after_chunk listener failed, leaving an AdaptiveCompletionPolicy's in-memory confirmed target stuck behind a transaction that had actually committed; an AdaptiveCompletionPolicy nested inside a CompositeCompletionPolicy had no way to register its paired ItemStream on the same instance; CompositeCompletionPolicy::fingerprint joined member fingerprints with a bare comma, letting differently split member lists collide onto the same string; FlowJob::with_chunk_step tried to fold a completion policy's fingerprint into a plan already compiled without it, making every completion-policy-bearing flow step's binding fail; and ChunkStep::with_completion_policy left a replaced policy's ItemStream registration behind as an orphan -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of `workflow_dispatch`-triggered runs against this exact branch head and retained byte-for-byte."
       }
     },
     {
@@ -818,9 +818,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "cb5a93cd633ca93801df6323457feb0e81690dfd",
+        "execution_commit": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "d4488c7460c94580a8d83cff8596166ccdfba5dd",
+        "branch_head_sha": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -830,27 +830,27 @@
       "workflow_run": {
         "workflow": "M5 Resource Bounds",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 32927129445,
+        "id": 33046906584,
         "attempt": 1,
-        "event": "pull_request",
+        "event": "workflow_dispatch",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-resource-bounds-campaign",
-        "id": 98052178742,
+        "id": 98432950782,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-15",
-        "id": 9591957729,
-        "digest": "sha256:52b6828d21ec0fc6382ebc8dc568eb97fb38923abc9a61c6073e43ab3bc7f6a4",
-        "size_bytes": 13489
+        "id": 9636043678,
+        "digest": "sha256:af4a78794c25901b5b5df615007ad87c3f37ac651a28656cdb49f8127bf98846",
+        "size_bytes": 13879
       },
-      "retained_report_git_blob": "12486e0447c6215123df53dd5c76b7dea37c6a36",
+      "retained_report_git_blob": "012b4adbab4826243537b049e994e720eeec54ad",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T12:46:55+09:00",
-        "run_id": 32927129445,
+        "verified_at": "2026-08-27T15:57:31+09:00",
+        "run_id": 33046906584,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -858,7 +858,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, six rounds): crates/oxide-batch/src changed again in this head to correct chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content, whose prior version never registered the paired ObjectItemWriterStream via ChunkStep::with_item_stream and asserted on a hand-driven `update` call's in-memory candidate instead of the durably committed checkpoint the runtime actually hands to ChunkTransaction::commit_with_component_state -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #151/#179 (independent strict merge-gate review, multiple rounds): crates/oxide-batch/src changed again in this head to fix five defects in the item-level completion-policy framework -- end_chunk(Committed) was skipped when a post-commit after_chunk listener failed, leaving an AdaptiveCompletionPolicy's in-memory confirmed target stuck behind a transaction that had actually committed; an AdaptiveCompletionPolicy nested inside a CompositeCompletionPolicy had no way to register its paired ItemStream on the same instance; CompositeCompletionPolicy::fingerprint joined member fingerprints with a bare comma, letting differently split member lists collide onto the same string; FlowJob::with_chunk_step tried to fold a completion policy's fingerprint into a plan already compiled without it, making every completion-policy-bearing flow step's binding fail; and ChunkStep::with_completion_policy left a replaced policy's ItemStream registration behind as an orphan -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of `workflow_dispatch`-triggered runs against this exact branch head and retained byte-for-byte."
       }
     },
     {
@@ -868,9 +868,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "cb5a93cd633ca93801df6323457feb0e81690dfd",
+        "execution_commit": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "d4488c7460c94580a8d83cff8596166ccdfba5dd",
+        "branch_head_sha": "fadfd2409c1aed7913129a320a8e6e97fd853c99",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -880,27 +880,27 @@
       "workflow_run": {
         "workflow": "M5 Resource Bounds",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 32927129445,
+        "id": 33046906584,
         "attempt": 1,
-        "event": "pull_request",
+        "event": "workflow_dispatch",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-resource-bounds-campaign",
-        "id": 98052178841,
+        "id": 98432950668,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-18",
-        "id": 9591954793,
-        "digest": "sha256:a30a63950039cce1f0d0109b51334510d7a755b7aa272e6bb79c09ddc106ec0d",
-        "size_bytes": 13488
+        "id": 9636045918,
+        "digest": "sha256:c8754a6d4498dc8f6bdf2152aabd6ff077e2fd8120ba96b2b2e923d897274571",
+        "size_bytes": 13879
       },
-      "retained_report_git_blob": "564467bc4c90e886709da78c6410b6ed443b5027",
+      "retained_report_git_blob": "90b0dfd49a90605270ffb25a50413889c5c17ddd",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-26T12:46:55+09:00",
-        "run_id": 32927129445,
+        "verified_at": "2026-08-27T15:57:31+09:00",
+        "run_id": 33046906584,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -908,7 +908,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #178 (#177 corrective pass, independent strict review, six rounds): crates/oxide-batch/src changed again in this head to correct chunk_runtime_retries_a_panicking_serializer_and_preserves_prior_committed_content, whose prior version never registered the paired ObjectItemWriterStream via ChunkStep::with_item_stream and asserted on a hand-driven `update` call's in-memory candidate instead of the durably committed checkpoint the runtime actually hands to ChunkTransaction::commit_with_component_state -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of the auto-triggered pull_request workflow run and retained byte-for-byte."
+        "note": "Retention for PR #151/#179 (independent strict merge-gate review, multiple rounds): crates/oxide-batch/src changed again in this head to fix five defects in the item-level completion-policy framework -- end_chunk(Committed) was skipped when a post-commit after_chunk listener failed, leaving an AdaptiveCompletionPolicy's in-memory confirmed target stuck behind a transaction that had actually committed; an AdaptiveCompletionPolicy nested inside a CompositeCompletionPolicy had no way to register its paired ItemStream on the same instance; CompositeCompletionPolicy::fingerprint joined member fingerprints with a bare comma, letting differently split member lists collide onto the same string; FlowJob::with_chunk_step tried to fold a completion policy's fingerprint into a plan already compiled without it, making every completion-policy-bearing flow step's binding fail; and ChunkStep::with_completion_policy left a replaced policy's ItemStream registration behind as an orphan -- invalidating prior retained evidence's tree-identity binding per the standard 'any src change stales M5 evidence' pattern. Campaign report bytes were downloaded via `gh run download` from the successful PostgreSQL 15/18 matrix artifacts of `workflow_dispatch`-triggered runs against this exact branch head and retained byte-for-byte."
       }
     }
   ],
