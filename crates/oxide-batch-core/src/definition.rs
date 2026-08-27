@@ -1058,6 +1058,16 @@ pub enum DefinitionError {
         /// The namespace whose stream cannot honestly claim restartability.
         namespace: ComponentStreamIdentity,
     },
+    /// An installed completion policy's `fingerprint()` panicked while its
+    /// configuration was being folded into the chunk definition's
+    /// restart-relevant revisions.
+    ///
+    /// `fingerprint()` is an application-supplied callback (every built-in
+    /// policy's own implementation cannot panic), so a definition cannot be
+    /// constructed from one that does -- this is reported the same way any
+    /// other definition-construction failure is, rather than unwinding out
+    /// of a constructor with a `Result` return type.
+    CompletionPolicyFingerprintPanic,
 }
 
 impl fmt::Display for DefinitionError {
@@ -1111,6 +1121,9 @@ impl fmt::Display for DefinitionError {
                 "ItemStream namespace {:?} declares NotRestartable, so this step cannot claim restartability",
                 namespace.as_str()
             ),
+            Self::CompletionPolicyFingerprintPanic => {
+                formatter.write_str("completion policy fingerprint() panicked")
+            }
         }
     }
 }

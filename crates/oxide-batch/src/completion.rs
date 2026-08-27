@@ -19,10 +19,13 @@
 //! - [`AdaptiveCompletionPolicy`] -- a bounded policy whose target chunk
 //!   size adapts toward an observed target duration. It is both a
 //!   [`CompletionPolicy`] and an [`crate::ItemStream`] over the *same*
-//!   instance state; [`crate::ChunkStep::with_adaptive_completion_policy`]
-//!   registers one `Arc<AdaptiveCompletionPolicy>` for both roles in a
-//!   single call, so the authoritative decision is persisted through the
-//!   same commit boundary as any other component state, with no second
+//!   instance state. [`CompletionPolicy::stream_registrations`] reports that
+//!   `ItemStream` registration bound to the exact instance it is called on,
+//!   so [`crate::ChunkStep::with_completion_policy`] (or the
+//!   [`crate::ChunkStep::with_adaptive_completion_policy`] alias) wires it up
+//!   automatically -- whether the policy is installed directly or nested at
+//!   any depth inside a [`CompositeCompletionPolicy`] -- through the same
+//!   commit boundary as any other component state, with no second
 //!   persistence path and no risk of the two registrations drifting onto
 //!   different instances.
 //!
@@ -39,11 +42,11 @@
 
 use std::error::Error;
 use std::fmt;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::{Duration, SystemTime};
 
 use crate::{
-    ChunkAttemptOutcome, ChunkCount, ChunkSize, Clock, CodecId, CodecVersion,
+    BoxedStream, ChunkAttemptOutcome, ChunkCount, ChunkSize, Clock, CodecId, CodecVersion,
     ComponentStateEnvelope, ComponentStreamIdentity, DefaultComponentCodec, ItemStream,
     RestartabilityDeclaration, StateCodecError, StateLimits, StateSchemaId, StateSchemaVersion,
     StreamCloseContext, StreamCloseError, StreamCloseOutcome, StreamOpenContext, StreamOpenError,
@@ -108,6 +111,36 @@ pub trait CompletionPolicy: Send + Sync {
     /// overrides it with its actual configuration.
     fn fingerprint(&self) -> String {
         std::any::type_name::<Self>().to_owned()
+    }
+
+    /// Returns this policy's own required [`ItemStream`] registration(s),
+    /// bound to the exact same instance this policy makes completion
+    /// decisions from -- never a second, independently constructed instance
+    /// that could drift out of sync with it.
+    ///
+    /// Every policy in this module except [`AdaptiveCompletionPolicy`]
+    /// returns an empty list: it has no persisted state of its own.
+    /// [`AdaptiveCompletionPolicy`] returns exactly one entry (itself, under
+    /// its own [`identity`](AdaptiveCompletionPolicy::identity)).
+    /// [`CompositeCompletionPolicy`] returns the concatenation of its
+    /// members' registrations, recursively -- so an adaptive policy nested
+    /// anywhere inside a composite tree, not only installed directly, still
+    /// gets its persisted decision wired to the same instance
+    /// [`crate::ChunkStep::with_completion_policy`] installs, with no
+    /// separate registration call for a caller to get wrong.
+    ///
+    /// A custom policy with its own restart-relevant state should override
+    /// this the same way it overrides [`fingerprint`](Self::fingerprint):
+    /// by returning its own registration(s) here rather than requiring a
+    /// caller to register a second, possibly different, instance.
+    fn stream_registrations(
+        &self,
+    ) -> Vec<(
+        ComponentStreamIdentity,
+        Arc<BoxedStream>,
+        StreamStateContract,
+    )> {
+        Vec::new()
     }
 
     /// Returns this policy's own composite nesting depth: `0` for a leaf
@@ -367,13 +400,32 @@ impl CompletionPolicy for CompositeCompletionPolicy {
     }
 
     fn fingerprint(&self) -> String {
-        let members = self
-            .members
-            .iter()
-            .map(|member| member.fingerprint())
-            .collect::<Vec<_>>()
-            .join(",");
+        // Length-prefixed (rather than delimiter-joined) so the encoding is
+        // injective: a delimiter appearing inside one member's own
+        // fingerprint (for example a nested composite's `[...]`) can never
+        // be misread as a boundary between members. Two composites whose
+        // members split their fingerprints differently -- `["a", "b,c"]`
+        // vs `["a,b", "c"]` -- therefore always produce different strings.
+        use std::fmt::Write as _;
+        let mut members = String::new();
+        for member in &self.members {
+            let fingerprint = member.fingerprint();
+            let _ = write!(members, "{}:{fingerprint}", fingerprint.len());
+        }
         format!("composite/{:?}/[{members}]", self.mode)
+    }
+
+    fn stream_registrations(
+        &self,
+    ) -> Vec<(
+        ComponentStreamIdentity,
+        Arc<BoxedStream>,
+        StreamStateContract,
+    )> {
+        self.members
+            .iter()
+            .flat_map(|member| member.stream_registrations())
+            .collect()
     }
 
     fn composite_depth(&self) -> usize {
@@ -561,13 +613,17 @@ struct AdaptiveInterior {
 ///
 /// The policy adjusts its target chunk size toward `target_duration`,
 /// clamped to `bounds`, based on the most recently *committed* chunk's
-/// observed duration. Register this policy as both the step's completion
-/// policy and as a namespaced [`ItemStream`] under the same identity
-/// returned by [`identity`](Self::identity) with a single call to
-/// [`crate::ChunkStep::with_adaptive_completion_policy`], so the confirmed
-/// target survives restart through the same commit-boundary mechanism as any
-/// other component state -- never a second persistence path, and never two
-/// registrations that could drift onto different instances.
+/// observed duration. Install it via
+/// [`crate::ChunkStep::with_completion_policy`] (directly, or nested inside
+/// a [`CompositeCompletionPolicy`] at any depth): [`stream_registrations`]
+/// reports its namespaced [`ItemStream`] registration under the same
+/// identity returned by [`identity`](Self::identity), bound to this exact
+/// instance, so the confirmed target survives restart through the same
+/// commit-boundary mechanism as any other component state -- never a second
+/// persistence path, and never two registrations that could drift onto
+/// different instances.
+///
+/// [`stream_registrations`]: CompletionPolicy::stream_registrations
 ///
 /// # Restart safety
 ///
@@ -597,18 +653,30 @@ pub struct AdaptiveCompletionPolicy {
     limits: StateLimits,
     identity: ComponentStreamIdentity,
     state: Mutex<AdaptiveInterior>,
+    /// A weak self-reference, populated at construction via
+    /// [`Arc::new_cyclic`], letting [`stream_registrations`](CompletionPolicy::stream_registrations)
+    /// hand out an `Arc` that shares this exact instance's state -- never a
+    /// second, independently constructed instance -- without requiring a
+    /// caller to already hold one.
+    self_weak: Weak<AdaptiveCompletionPolicy>,
 }
 
 impl AdaptiveCompletionPolicy {
     /// Constructs an adaptive policy starting at `bounds`'s minimum target.
+    ///
+    /// Returns `Arc<Self>` rather than `Self`: the policy holds a weak
+    /// self-reference so [`stream_registrations`](CompletionPolicy::stream_registrations)
+    /// can bind its persisted state to this exact instance regardless of
+    /// whether it ends up installed directly or nested inside a
+    /// [`CompositeCompletionPolicy`].
     #[must_use]
     pub fn new(
         identity: ComponentStreamIdentity,
         bounds: AdaptiveBounds,
         target_duration: ChunkTimeThreshold,
         clock: Arc<dyn Clock>,
-    ) -> Self {
-        Self {
+    ) -> Arc<Self> {
+        Arc::new_cyclic(|self_weak| Self {
             bounds,
             target_duration,
             clock,
@@ -619,7 +687,8 @@ impl AdaptiveCompletionPolicy {
                 pending: None,
                 chunk_started: None,
             }),
-        }
+            self_weak: self_weak.clone(),
+        })
     }
 
     /// Returns the namespace this policy's persisted decision is registered
@@ -634,7 +703,7 @@ impl AdaptiveCompletionPolicy {
     ///
     /// This policy's schema and codec identity are its own implementation
     /// detail: a caller has no way to reconstruct a matching contract
-    /// itself, so [`crate::ChunkStep::with_adaptive_completion_policy`]
+    /// itself, so [`stream_registrations`](CompletionPolicy::stream_registrations)
     /// calls this rather than accepting a contract parameter that could
     /// mismatch.
     pub(crate) fn stream_state_contract() -> StreamStateContract {
@@ -686,6 +755,54 @@ impl CompletionPolicy for AdaptiveCompletionPolicy {
             self.bounds.max().get(),
             self.target_duration.get().as_nanos()
         )
+    }
+
+    fn stream_registrations(
+        &self,
+    ) -> Vec<(
+        ComponentStreamIdentity,
+        Arc<BoxedStream>,
+        StreamStateContract,
+    )> {
+        let Some(strong) = self.self_weak.upgrade() else {
+            return Vec::new();
+        };
+        vec![(
+            self.identity.clone(),
+            Arc::new(BoxedStream::new(AdaptiveCompletionStream(strong))),
+            Self::stream_state_contract(),
+        )]
+    }
+}
+
+/// Delegates the [`ItemStream`] contract to a shared
+/// [`AdaptiveCompletionPolicy`], so [`CompletionPolicy::stream_registrations`]
+/// can register the same underlying instance for both roles without exposing
+/// a public `ItemStream` impl over `Arc<T>` (which would let any two
+/// unrelated `Arc` clones of *different* instances be registered instead,
+/// reopening the exact mistake this type exists to prevent).
+struct AdaptiveCompletionStream(Arc<AdaptiveCompletionPolicy>);
+
+impl ItemStream for AdaptiveCompletionStream {
+    async fn open(
+        &self,
+        context: StreamOpenContext<'_>,
+    ) -> Result<StreamOpenOutcome, StreamOpenError> {
+        self.0.open(context).await
+    }
+
+    async fn update(
+        &self,
+        context: StreamUpdateContext<'_>,
+    ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+        self.0.update(context).await
+    }
+
+    async fn close(
+        &self,
+        context: StreamCloseContext<'_>,
+    ) -> Result<StreamCloseOutcome, StreamCloseError> {
+        self.0.close(context).await
     }
 }
 
@@ -1285,6 +1402,46 @@ mod tests {
             outer_a.fingerprint(),
             outer_b.fingerprint(),
             "a mode change nested inside a composite must change the outer fingerprint"
+        );
+    }
+
+    /// A leaf policy whose `fingerprint()` is a fixed test literal, standing
+    /// in for a custom policy's own configuration string.
+    struct FixedFingerprint(&'static str);
+
+    impl CompletionPolicy for FixedFingerprint {
+        fn is_complete(&self, _items_read: ChunkCount) -> bool {
+            false
+        }
+
+        fn fingerprint(&self) -> String {
+            self.0.to_owned()
+        }
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used, reason = "test constructs known-valid composites")]
+    fn composite_fingerprint_encoding_is_injective_across_member_splits() {
+        // A naive `join(",")` encoding cannot distinguish a composite whose
+        // members are `["a", "b,c"]` from one whose members are `["a,b",
+        // "c"]": both join to the same `"a,b,c"` string. The length-prefixed
+        // encoding must keep them apart.
+        let split_a: Vec<Arc<dyn CompletionPolicy>> = vec![
+            Arc::new(FixedFingerprint("a")),
+            Arc::new(FixedFingerprint("b,c")),
+        ];
+        let split_b: Vec<Arc<dyn CompletionPolicy>> = vec![
+            Arc::new(FixedFingerprint("a,b")),
+            Arc::new(FixedFingerprint("c")),
+        ];
+        let composite_a = CompositeCompletionPolicy::new(CompositeMode::Any, split_a).unwrap();
+        let composite_b = CompositeCompletionPolicy::new(CompositeMode::Any, split_b).unwrap();
+        assert_ne!(
+            composite_a.fingerprint(),
+            composite_b.fingerprint(),
+            "different member splits must never collide onto the same \
+             composite fingerprint, even when a member's own fingerprint \
+             contains the naive join delimiter"
         );
     }
 }

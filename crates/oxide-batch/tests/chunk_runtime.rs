@@ -1961,13 +1961,14 @@ mod adaptive_completion_policy_integration {
         ChunkAttemptOutcome, ChunkCommitReceipt, ChunkCount, ChunkCounts, ChunkExecutionOutcome,
         ChunkFailure, ChunkFaultProgress, ChunkJob, ChunkSize, ChunkStep, ChunkTimeThreshold,
         ChunkTransaction, ChunkTransactionError, ChunkTransactionManager, CompletionPolicy,
-        ComponentStateEnvelope, ComponentStreamIdentity, CompositeCompletionPolicy, CompositeMode,
-        DefinitionRevision, ItemCountCompletionPolicy, JobName, StepName, StopSource,
+        ComponentRevision, ComponentStateEnvelope, ComponentStreamIdentity,
+        CompositeCompletionPolicy, CompositeMode, DefinitionError, DefinitionRevision,
+        ItemCountCompletionPolicy, JobName, StepName, StopSource,
     };
 
     use super::{
-        Boundary, Completion, ManualClock, Processor, Reader, Writer, chunk_revisions, correlation,
-        receipt,
+        Boundary, Completion, ManualClock, OrderedListener, Processor, Reader, Writer,
+        chunk_revisions, correlation, receipt,
     };
 
     fn identity() -> ComponentStreamIdentity {
@@ -1982,12 +1983,7 @@ mod adaptive_completion_policy_integration {
         .expect("valid bounds");
         let target_duration =
             ChunkTimeThreshold::new(Duration::from_secs(1)).expect("valid threshold");
-        Arc::new(AdaptiveCompletionPolicy::new(
-            identity(),
-            bounds,
-            target_duration,
-            clock,
-        ))
+        AdaptiveCompletionPolicy::new(identity(), bounds, target_duration, clock)
     }
 
     #[derive(Default)]
@@ -2174,6 +2170,115 @@ mod adaptive_completion_policy_integration {
         );
     }
 
+    #[tokio::test]
+    async fn after_chunk_listener_failure_still_promotes_committed_adaptive_target() {
+        let clock: Arc<dyn oxide_batch::Clock> = Arc::new(ManualClock::new(UNIX_EPOCH));
+        let policy = adaptive_policy(clock);
+        let (writer, _batches) = Writer::new(Boundary::Normal);
+        let (completion, _calls) = Completion::new(Boundary::Normal);
+        let transactions = ToggleTransactions {
+            receipt: receipt(),
+            attempt: Arc::new(AtomicUsize::new(0)),
+            fail_at: 0,
+            evidence: Arc::new(ToggleEvidence::default()),
+        };
+        let mut step = ChunkStep::new(
+            StepName::new("adaptive_listener_failure").expect("valid step name"),
+            ChunkSize::new(3).expect("valid chunk size"),
+            Reader::new([1]),
+            Processor::normal(),
+            writer,
+            Arc::new(transactions),
+            Arc::new(completion),
+        )
+        .with_adaptive_completion_policy(Arc::clone(&policy))
+        .with_chunk_listener(Arc::new(OrderedListener {
+            name: "failing",
+            events: Arc::new(Mutex::new(Vec::new())),
+            after_error: true,
+        }));
+        let (_source, stop) = StopSource::new();
+
+        let report = step.execute(&correlation(), &stop).await;
+
+        assert_eq!(
+            report.outcome(),
+            ChunkExecutionOutcome::Failed(ChunkFailure::Listener),
+            "the after_chunk listener failure is still the reported outcome"
+        );
+        assert_eq!(
+            report.committed_chunks(),
+            ChunkCount::new(1),
+            "the underlying transaction committed despite the listener failure"
+        );
+        assert_eq!(
+            policy.current_target().get(),
+            2,
+            "end_chunk(Committed) must promote the pending candidate to \
+             confirmed even when a later after_chunk listener fails -- \
+             otherwise the durable state (already committed) and this \
+             process's in-memory confirmed target would disagree for the \
+             rest of the run"
+        );
+    }
+
+    #[tokio::test]
+    async fn adaptive_policy_nested_in_composite_still_registers_its_stream() {
+        let clock: Arc<dyn oxide_batch::Clock> = Arc::new(ManualClock::new(UNIX_EPOCH));
+        let policy = adaptive_policy(clock);
+        let composite = Arc::new(
+            CompositeCompletionPolicy::new(
+                CompositeMode::Any,
+                vec![Arc::clone(&policy) as Arc<dyn CompletionPolicy>],
+            )
+            .expect("valid composite"),
+        );
+        let (writer, _batches) = Writer::new(Boundary::Normal);
+        let (completion, _calls) = Completion::new(Boundary::Normal);
+        let evidence = Arc::new(ToggleEvidence::default());
+        let transactions = ToggleTransactions {
+            receipt: receipt(),
+            attempt: Arc::new(AtomicUsize::new(0)),
+            fail_at: 0,
+            evidence: Arc::clone(&evidence),
+        };
+        let mut step = ChunkStep::new(
+            StepName::new("adaptive_in_composite").expect("valid step name"),
+            ChunkSize::new(3).expect("valid chunk size"),
+            Reader::new([1]),
+            Processor::normal(),
+            writer,
+            Arc::new(transactions),
+            Arc::new(completion),
+        )
+        .with_completion_policy(composite);
+        let (_source, stop) = StopSource::new();
+
+        let report = step.execute(&correlation(), &stop).await;
+
+        assert_eq!(report.outcome(), ChunkExecutionOutcome::Completed);
+        assert_eq!(
+            policy.current_target().get(),
+            2,
+            "the adaptive policy nested inside the composite still made and \
+             committed a completion decision through the same instance"
+        );
+        let commits = evidence
+            .commits
+            .lock()
+            .expect("commit evidence lock poisoned");
+        assert!(
+            commits[0]
+                .iter()
+                .any(|envelope| envelope.namespace() == &identity()),
+            "installing the adaptive policy only inside a \
+             CompositeCompletionPolicy must still register its ItemStream \
+             under the same instance -- otherwise its persisted decision \
+             would never reach the durable commit, and a restart would \
+             silently lose it"
+        );
+    }
+
     #[derive(Clone, Copy)]
     enum PanicPoint {
         BeginChunk,
@@ -2304,14 +2409,27 @@ mod adaptive_completion_policy_integration {
             Arc::new(transactions),
             Arc::new(completion),
         );
+        // `with_completion_policy` now auto-registers any `ItemStream` the
+        // policy (or, for a composite, any of its members) reports through
+        // `stream_registrations` -- an `AdaptiveCompletionPolicy` among
+        // them, at any nesting depth -- so the declared component revisions
+        // must include a matching entry or `ChunkJob::new` rejects the
+        // mismatch.
+        let mut components = chunk_revisions();
         if let Some(policy) = policy {
+            for (identity, _, _) in policy.stream_registrations() {
+                components = components.with_stream_revision(
+                    identity,
+                    ComponentRevision::new("adaptive-v1").expect("valid revision"),
+                );
+            }
             step = step.with_completion_policy(policy);
         }
         let job = ChunkJob::new(
             JobName::new("fingerprint_probe_job").expect("valid job name"),
             step,
             DefinitionRevision::new("v1").expect("valid revision"),
-            &chunk_revisions(),
+            &components,
         )
         .expect("valid definition");
         *job.definition_identity().manifest_digest()
@@ -2404,18 +2522,10 @@ mod adaptive_completion_policy_integration {
             ChunkSize::new(20).expect("valid"),
         )
         .expect("valid bounds");
-        let policy_a: Arc<dyn CompletionPolicy> = Arc::new(AdaptiveCompletionPolicy::new(
-            identity(),
-            bounds_a,
-            target_duration,
-            clock_a,
-        ));
-        let policy_b: Arc<dyn CompletionPolicy> = Arc::new(AdaptiveCompletionPolicy::new(
-            identity(),
-            bounds_b,
-            target_duration,
-            clock_b,
-        ));
+        let policy_a: Arc<dyn CompletionPolicy> =
+            AdaptiveCompletionPolicy::new(identity(), bounds_a, target_duration, clock_a);
+        let policy_b: Arc<dyn CompletionPolicy> =
+            AdaptiveCompletionPolicy::new(identity(), bounds_b, target_duration, clock_b);
 
         let digest_a = definition_digest_for(Some(policy_a));
         let digest_b = definition_digest_for(Some(policy_b));
@@ -2423,6 +2533,56 @@ mod adaptive_completion_policy_integration {
         assert_ne!(
             digest_a, digest_b,
             "an adaptive policy's bounds are restart-relevant configuration"
+        );
+    }
+
+    struct PanickingFingerprintPolicy;
+
+    impl CompletionPolicy for PanickingFingerprintPolicy {
+        fn is_complete(&self, _items_read: ChunkCount) -> bool {
+            false
+        }
+
+        fn fingerprint(&self) -> String {
+            panic!("fingerprint secret");
+        }
+    }
+
+    #[test]
+    fn completion_policy_fingerprint_panic_is_contained_at_definition_construction() {
+        let (writer, _batches) = Writer::new(Boundary::Normal);
+        let (completion, _calls) = Completion::new(Boundary::Normal);
+        let transactions = ToggleTransactions {
+            receipt: receipt(),
+            attempt: Arc::new(AtomicUsize::new(0)),
+            fail_at: 0,
+            evidence: Arc::new(ToggleEvidence::default()),
+        };
+        let step = ChunkStep::new(
+            StepName::new("fingerprint_panic").expect("valid step name"),
+            ChunkSize::new(2).expect("valid chunk size"),
+            Reader::new([1]),
+            Processor::normal(),
+            writer,
+            Arc::new(transactions),
+            Arc::new(completion),
+        )
+        .with_completion_policy(Arc::new(PanickingFingerprintPolicy));
+
+        let result = ChunkJob::new(
+            JobName::new("fingerprint_panic_job").expect("valid job name"),
+            step,
+            DefinitionRevision::new("v1").expect("valid revision"),
+            &chunk_revisions(),
+        );
+
+        assert!(
+            matches!(
+                result,
+                Err(DefinitionError::CompletionPolicyFingerprintPanic)
+            ),
+            "a panicking fingerprint() must be caught and typed, never unwind \
+             out of a Result-returning constructor"
         );
     }
 }

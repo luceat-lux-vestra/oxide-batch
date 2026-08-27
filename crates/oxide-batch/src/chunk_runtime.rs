@@ -2,7 +2,6 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
-use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -26,43 +25,10 @@ use crate::{
     LifecycleEventKind, ListenerFailureKind, ProcessContext, ProcessOutcome, ProcessorError,
     ReadContext, ReadOutcome, ReaderError, RestartabilityDeclaration, RetryCounts, RetryKey,
     RetryOrdinal, RetryOutcome, RetryReservation, RollbackDisposition, SkipCounts, StepComponents,
-    StepExecutionListener, StepName, StopToken, StreamCloseContext, StreamCloseError,
-    StreamCloseOutcome, StreamOpenContext, StreamOpenError, StreamOpenOutcome,
-    StreamRuntimeOutcome, StreamStateContract, StreamUpdateContext, StreamUpdateError, Tasklet,
-    TaskletContext, TaskletError, TaskletJob, TaskletOutcome, TaskletStep, WriteContext,
-    WriteOutcome, WriterError,
+    StepExecutionListener, StepName, StopToken, StreamCloseContext, StreamOpenContext,
+    StreamRuntimeOutcome, StreamStateContract, StreamUpdateContext, Tasklet, TaskletContext,
+    TaskletError, TaskletJob, TaskletOutcome, TaskletStep, WriteContext, WriteOutcome, WriterError,
 };
-
-/// Delegates the [`ItemStream`] contract to a shared
-/// [`AdaptiveCompletionPolicy`], so [`ChunkStep::with_adaptive_completion_policy`]
-/// can register the same underlying instance for both roles without exposing
-/// a public `ItemStream` impl over `Arc<T>` (which would let any two
-/// unrelated `Arc` clones of *different* instances be registered instead,
-/// reopening the exact mistake this API exists to prevent).
-struct AdaptiveCompletionStream(Arc<AdaptiveCompletionPolicy>);
-
-impl ItemStream for AdaptiveCompletionStream {
-    fn open<'a>(
-        &'a self,
-        context: StreamOpenContext<'a>,
-    ) -> impl Future<Output = Result<StreamOpenOutcome, StreamOpenError>> + Send + 'a {
-        self.0.open(context)
-    }
-
-    fn update<'a>(
-        &'a self,
-        context: StreamUpdateContext<'a>,
-    ) -> impl Future<Output = Result<ComponentStateEnvelope, StreamUpdateError>> + Send + 'a {
-        self.0.update(context)
-    }
-
-    fn close<'a>(
-        &'a self,
-        context: StreamCloseContext<'a>,
-    ) -> impl Future<Output = Result<StreamCloseOutcome, StreamCloseError>> + Send + 'a {
-        self.0.close(context)
-    }
-}
 
 /// A validated one-step chunk definition.
 pub struct ChunkStep<I, O, R, P, W> {
@@ -132,32 +98,36 @@ where
     /// policy here only allows a chunk to stop *earlier* than that ceiling,
     /// per `REPEAT-POLICY-001`. Without a policy, completion is exactly the
     /// pre-#151 `ChunkSize`-only behavior.
+    ///
+    /// Also registers every [`ItemStream`] that `policy` (or, for a
+    /// [`crate::CompositeCompletionPolicy`], any of its members at any
+    /// nesting depth) reports through
+    /// [`CompletionPolicy::stream_registrations`], bound to that exact
+    /// instance. This is the only place that registration happens, so an
+    /// [`AdaptiveCompletionPolicy`] gets its persisted decision wired
+    /// correctly whether it is installed directly here or nested anywhere
+    /// inside a composite -- there is no second, composite-blind path that
+    /// could silently drop it.
     #[must_use]
     pub fn with_completion_policy(mut self, policy: Arc<dyn CompletionPolicy>) -> Self {
+        for (identity, stream, contract) in policy.stream_registrations() {
+            self.streams.push((identity, stream, contract));
+        }
         self.completion_policy = Some(policy);
         self
     }
 
-    /// Registers one [`AdaptiveCompletionPolicy`] instance as both this
-    /// step's completion policy and its namespaced [`ItemStream`], under the
-    /// identity the policy itself reports.
+    /// Registers one [`AdaptiveCompletionPolicy`] instance as this step's
+    /// completion policy.
     ///
-    /// One `Arc` drives both trait registrations, so the completion decision
-    /// [`CompletionPolicy::is_complete`] makes and the state the
-    /// [`ItemStream`] contract persists can never drift onto two different
-    /// instances -- the mistake this method exists to make unrepresentable.
-    /// Equivalent to calling [`Self::with_completion_policy`] and
-    /// [`Self::with_item_stream`] separately with two clones of the same
-    /// `Arc` and this policy's own [`StreamStateContract`], without exposing
-    /// a second way to (mis)construct that wiring or requiring a caller to
-    /// reconstruct a contract matching this policy's private codec.
+    /// A thin, discoverable alias for [`Self::with_completion_policy`]:
+    /// [`CompletionPolicy::stream_registrations`] already binds this exact
+    /// instance's persisted decision to the step, so there is exactly one
+    /// registration mechanism regardless of which method installs it --
+    /// never a second path that could drift onto a different instance.
     #[must_use]
     pub fn with_adaptive_completion_policy(self, policy: Arc<AdaptiveCompletionPolicy>) -> Self {
-        let identity = policy.identity().clone();
-        let contract = AdaptiveCompletionPolicy::stream_state_contract();
-        let stream = AdaptiveCompletionStream(Arc::clone(&policy));
         self.with_completion_policy(policy)
-            .with_item_stream(identity, stream, contract)
     }
 
     /// Registers a chunk listener in deterministic before-order.
@@ -322,7 +292,9 @@ fn validate_stream_registrations<I, O, R, P, W>(
 ///
 /// # Errors
 ///
-/// Returns [`DefinitionError`] only if the computed digest somehow failed
+/// Returns [`DefinitionError::CompletionPolicyFingerprintPanic`] if the
+/// installed policy's application-supplied [`CompletionPolicy::fingerprint`]
+/// panics, and [`DefinitionError`] if the computed digest somehow failed
 /// [`ComponentRevision`]'s token validation, which cannot happen for a fixed
 /// hex-digest shape.
 fn completion_policy_component_revisions<I, O, R, P, W>(
@@ -332,7 +304,9 @@ fn completion_policy_component_revisions<I, O, R, P, W>(
     let Some(policy) = step.completion_policy.as_ref() else {
         return Ok(components.clone());
     };
-    let digest: [u8; 32] = Sha256::digest(policy.fingerprint().as_bytes()).into();
+    let fingerprint = catch_unwind(AssertUnwindSafe(|| policy.fingerprint()))
+        .map_err(|_| DefinitionError::CompletionPolicyFingerprintPanic)?;
+    let digest: [u8; 32] = Sha256::digest(fingerprint.as_bytes()).into();
     let hex = digest.iter().fold(String::new(), |mut hex, byte| {
         use std::fmt::Write as _;
         let _ = write!(hex, "{byte:02x}");
@@ -1647,17 +1621,25 @@ where
                 let after_failures =
                     run_after_listeners(listeners, after_context, ChunkAttemptOutcome::Committed)
                         .await;
+                // `end_chunk` observes this attempt's transaction outcome
+                // (already committed by this point), never a listener's
+                // outcome, so it always runs here -- even when an
+                // `after_chunk` listener below fails -- or an
+                // AdaptiveCompletionPolicy's pending candidate would never
+                // promote to confirmed for a chunk that in fact committed,
+                // leaving durable and in-memory state disagreeing about the
+                // authoritative target for the rest of this process.
+                let completion_policy_panicked = invoke_completion_policy_end(
+                    components.completion_policy,
+                    ChunkAttemptOutcome::Committed,
+                )
+                .is_err();
                 if let Some(first) = after_failures.first().copied() {
                     state.listener_failures.extend(after_failures);
                     let original = terminal_outcome.or(Some(ChunkExecutionOutcome::Completed));
                     return state.report(listener_failure_outcome(first.kind()), original);
                 }
-                if invoke_completion_policy_end(
-                    components.completion_policy,
-                    ChunkAttemptOutcome::Committed,
-                )
-                .is_err()
-                {
+                if completion_policy_panicked {
                     let original = terminal_outcome.or(Some(ChunkExecutionOutcome::Completed));
                     return state.report(
                         ChunkExecutionOutcome::Failed(ChunkFailure::CompletionPolicyPanic),
@@ -1691,18 +1673,18 @@ where
                     ChunkAttemptOutcome::RolledBack,
                 )
                 .await;
+                let completion_policy_panicked = invoke_completion_policy_end(
+                    components.completion_policy,
+                    ChunkAttemptOutcome::RolledBack,
+                )
+                .is_err();
                 if let Some(first) = failures.first().copied() {
                     state.listener_failures.extend(failures);
                     return state
                         .drain()
                         .report(listener_failure_outcome(first.kind()), None);
                 }
-                if invoke_completion_policy_end(
-                    components.completion_policy,
-                    ChunkAttemptOutcome::RolledBack,
-                )
-                .is_err()
-                {
+                if completion_policy_panicked {
                     return state.drain().report(
                         ChunkExecutionOutcome::Failed(ChunkFailure::CompletionPolicyPanic),
                         None,
@@ -1893,13 +1875,15 @@ where
     };
     emit(ChunkRuntimeEvent::RolledBack(context.sequence()));
     let failures = run_after_listeners(listeners, context, ChunkAttemptOutcome::RolledBack).await;
+    let completion_policy_panicked =
+        invoke_completion_policy_end(completion_policy, ChunkAttemptOutcome::RolledBack).is_err();
     if let Some(first) = failures.first().copied() {
         state.listener_failures.extend(failures);
         return Err(state
             .drain()
             .report(listener_failure_outcome(first.kind()), None));
     }
-    if invoke_completion_policy_end(completion_policy, ChunkAttemptOutcome::RolledBack).is_err() {
+    if completion_policy_panicked {
         return Err(state.drain().report(
             ChunkExecutionOutcome::Failed(ChunkFailure::CompletionPolicyPanic),
             None,
@@ -3061,6 +3045,13 @@ async fn finish_failed_attempt(
     state: &mut ExecutionState,
 ) -> ChunkExecutionReport {
     let failures = run_after_listeners(listeners, context, attempt_outcome).await;
+    // Always observed, regardless of listener outcome: `attempt_outcome` may
+    // be `Committed` (for example this attempt's transaction committed but
+    // bookkeeping afterward overflowed a counter), and `end_chunk` must see
+    // that commit exactly once to keep a policy's durable and in-memory
+    // state from disagreeing.
+    let completion_policy_panicked =
+        invoke_completion_policy_end(completion_policy, attempt_outcome).is_err();
     if let Some(first) = failures.first().copied() {
         state.listener_failures.extend(failures);
         if outcome == ChunkExecutionOutcome::Unknown {
@@ -3070,7 +3061,7 @@ async fn finish_failed_attempt(
             .drain()
             .report(listener_failure_outcome(first.kind()), Some(outcome));
     }
-    if invoke_completion_policy_end(completion_policy, attempt_outcome).is_err() {
+    if completion_policy_panicked {
         if outcome == ChunkExecutionOutcome::Unknown {
             return state.drain().report(outcome, None);
         }
