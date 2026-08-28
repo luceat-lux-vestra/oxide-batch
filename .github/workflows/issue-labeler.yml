@@ -64,13 +64,15 @@ jobs:
               const body = (issue.body || '').toLowerCase();
               const { data: labels } = await github.rest.issues.listLabelsOnIssue({ ...context.repo, issue_number: issue.number, per_page: 100 });
               const names = labels.map(x => x.name);
+              const knownTypes = ['type:bug', 'type:feature', 'type:security', 'type:docs', 'type:research', 'type:task'];
+              const existingTypes = names.filter(x => knownTypes.includes(x));
 
-              let type = names.find(x => ['type:bug', 'type:feature', 'type:security', 'type:docs', 'type:research', 'type:task'].includes(x)) || 'type:task';
-              if (/^(fix|bug)(\([^)]*\))?:/.test(title)) type = 'type:bug';
-              else if (/^(feat|feature)(\([^)]*\))?:/.test(title)) type = 'type:feature';
-              else if (/^security(\([^)]*\))?:/.test(title)) type = 'type:security';
-              else if (/^docs(\([^)]*\))?:|^documentation issue/.test(title)) type = 'type:docs';
-              else if (/^(research|rfc|audit|design)(\([^)]*\))?:|^rfc:/.test(title)) type = 'type:research';
+              let explicitType = null;
+              if (/^(fix|bug)(\([^)]*\))?:/.test(title)) explicitType = 'type:bug';
+              else if (/^(feat|feature)(\([^)]*\))?:/.test(title)) explicitType = 'type:feature';
+              else if (/^security(\([^)]*\))?:/.test(title)) explicitType = 'type:security';
+              else if (/^docs(\([^)]*\))?:|^documentation issue/.test(title)) explicitType = 'type:docs';
+              else if (/^(research|rfc|audit|design)(\([^)]*\))?:|^rfc:/.test(title)) explicitType = 'type:research';
 
               const areas = new Set();
               if (/\(core\)|core domain|facade|public api/.test(title) || /crates\/oxide-batch-core\//.test(body)) areas.add('area:core');
@@ -85,13 +87,25 @@ jobs:
               if (/^rfc[:(]|governance|policy|design gate/.test(title) || /docs\/(governance|rfcs)\//.test(body)) areas.add('area:governance');
               if (/^ci[:(]|github|workflow|ruleset|branch protection|dependabot|supply-chain/.test(title) || /\.github\//.test(body)) areas.add('area:ci');
 
-              const desired = new Set([type, ...areas]);
-              for (const name of names.filter(x => x.startsWith('type:') || x.startsWith('area:'))) {
-                if (!desired.has(name)) await github.rest.issues.removeLabel({ ...context.repo, issue_number: issue.number, name });
+              const add = [...areas].filter(x => !names.includes(x));
+
+              // Only strong, explicit title signals own type replacement. Otherwise
+              // preserve Issue Form/bot/manual types and default truly unlabeled Issues.
+              if (explicitType) {
+                for (const name of existingTypes) {
+                  if (name !== explicitType) {
+                    await github.rest.issues.removeLabel({ ...context.repo, issue_number: issue.number, name });
+                  }
+                }
+                if (!names.includes(explicitType)) add.push(explicitType);
+              } else if (existingTypes.length === 0) {
+                add.push('type:task');
               }
-              const add = [...desired].filter(x => !names.includes(x));
+
+              // Issue area inference is additive. Unlike PR changed paths, title/body
+              // heuristics are not authoritative enough to delete manual ownership labels.
               if (!names.some(x => x.startsWith('priority:'))) add.push('priority:p2');
-              if (add.length) await github.rest.issues.addLabels({ ...context.repo, issue_number: issue.number, labels: add });
+              if (add.length) await github.rest.issues.addLabels({ ...context.repo, issue_number: issue.number, labels: [...new Set(add)] });
             }
 
             if (context.eventName === 'workflow_dispatch') {
