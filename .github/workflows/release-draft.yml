@@ -177,18 +177,28 @@ jobs:
               "${CRATE_PATHS}" "${SBOM_PATHS}" "${CHECKSUM_PATH}" \
               | grep -v '^$'
           )
-          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+
+          set +e
+          release_response="$(gh api --include \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>&1)"
+          release_status=$?
+          set -e
+
+          if [ "${release_status}" -eq 0 ]; then
             is_draft="$(gh release view "${RELEASE_TAG}" \
               --json isDraft --jq .isDraft)"
             test "${is_draft}" = "true"
             gh release upload "${RELEASE_TAG}" \
               "${assets[@]}" \
               --clobber
-          else
+          elif printf '%s\n' "${release_response}" | grep -Eq '^HTTP/[0-9.]+ 404([[:space:]]|$)'; then
             gh release create "${RELEASE_TAG}" \
               "${assets[@]}" \
               --verify-tag \
               --draft \
               --generate-notes \
               --title "OxideBatch ${PACKAGE_VERSION}"
+          else
+            printf '%s\n' "${release_response}" >&2
+            exit "${release_status}"
           fi
