@@ -301,10 +301,14 @@ fn extract_sbom_attestation_crates(text: &str) -> Result<Vec<String>, String> {
 
         let mut subject_path = None;
         let mut sbom_path = None;
+        let mut uses = None;
         for following in text.lines().skip(index + 1) {
             let following_trimmed = following.trim_start();
             if following_trimmed.starts_with("- name:") {
                 break;
+            }
+            if let Some(action) = following_trimmed.strip_prefix("uses:") {
+                uses = Some(action.trim());
             }
             if let Some(path) = following_trimmed.strip_prefix("subject-path:") {
                 subject_path = Some(path.trim());
@@ -313,6 +317,11 @@ fn extract_sbom_attestation_crates(text: &str) -> Result<Vec<String>, String> {
                 sbom_path = Some(path.trim());
             }
         }
+
+        let uses = uses.ok_or_else(|| {
+            format!("{RELEASE_DRAFT_WORKFLOW} has an SBOM attestation without an action reference")
+        })?;
+        validate_sbom_attestation_action(uses)?;
 
         let subject_path = subject_path.ok_or_else(|| {
             format!("{RELEASE_DRAFT_WORKFLOW} has an SBOM attestation without subject-path")
@@ -341,6 +350,32 @@ fn extract_sbom_attestation_crates(text: &str) -> Result<Vec<String>, String> {
         ));
     }
     Ok(crates)
+}
+
+/// Requires the release-evidence action to be the reviewed attestation action
+/// at an immutable full commit SHA. Version tags and other action identities
+/// are not an acceptable release contract, even when their inputs are valid.
+fn validate_sbom_attestation_action(uses: &str) -> Result<(), String> {
+    let action_ref = uses
+        .split_once(" #")
+        .map_or(uses, |(action, _)| action)
+        .trim();
+    let (action, reference) = action_ref.split_once('@').ok_or_else(|| {
+        format!(
+            "{RELEASE_DRAFT_WORKFLOW} SBOM attestation must use actions/attest@<40-hex-SHA>; found {uses:?}"
+        )
+    })?;
+    if action != "actions/attest"
+        || reference.len() != 40
+        || !reference
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} SBOM attestation must use actions/attest@<40-hex-SHA>; found {uses:?}"
+        ));
+    }
+    Ok(())
 }
 
 /// Reports missing, extra, or duplicate entries when a source must match a
@@ -422,11 +457,51 @@ mod tests {
 
     #[test]
     fn extract_sbom_attestation_crates_requires_matching_archive_and_sbom() {
-        let text = "steps:\n  - name: Attest a SBOM\n    uses: actions/attest@sha\n    with:\n      subject-path: target/package/a-${{ steps.package.outputs.version }}.crate\n      sbom-path: target/package/a-${{ steps.package.outputs.version }}.cdx.json\n  - name: Attest b SBOM\n    uses: actions/attest@sha\n    with:\n      subject-path: target/package/b-${{ steps.package.outputs.version }}.crate\n      sbom-path: target/package/b-${{ steps.package.outputs.version }}.cdx.json\n";
+        let text = "steps:\n  - name: Attest a SBOM\n    uses: actions/attest@0123456789abcdef0123456789abcdef01234567 # v4\n    with:\n      subject-path: target/package/a-${{ steps.package.outputs.version }}.crate\n      sbom-path: target/package/a-${{ steps.package.outputs.version }}.cdx.json\n  - name: Attest b SBOM\n    uses: actions/attest@0123456789abcdef0123456789abcdef01234567\n    with:\n      subject-path: target/package/b-${{ steps.package.outputs.version }}.crate\n      sbom-path: target/package/b-${{ steps.package.outputs.version }}.cdx.json\n";
         assert_eq!(
             extract_sbom_attestation_crates(text).expect("attestation steps parse"),
             vec!["a".to_owned(), "b".to_owned()]
         );
+    }
+
+    fn one_sbom_attestation(uses: Option<&str>) -> String {
+        let uses_line = uses.map_or(String::new(), |value| format!("    uses: {value}\n"));
+        format!(
+            "steps:\n  - name: Attest a SBOM\n{uses_line}    with:\n      subject-path: target/package/a-${{ steps.package.outputs.version }}.crate\n      sbom-path: target/package/a-${{ steps.package.outputs.version }}.cdx.json\n"
+        )
+    }
+
+    #[test]
+    fn extract_sbom_attestation_crates_rejects_a_version_tag() {
+        let error =
+            extract_sbom_attestation_crates(&one_sbom_attestation(Some("actions/attest@v4")))
+                .expect_err("mutable action ref is rejected");
+        assert!(error.contains("actions/attest@<40-hex-SHA>"), "{error}");
+    }
+
+    #[test]
+    fn extract_sbom_attestation_crates_rejects_a_truncated_sha() {
+        let error = extract_sbom_attestation_crates(&one_sbom_attestation(Some(
+            "actions/attest@0123456789abcdef",
+        )))
+        .expect_err("truncated action ref is rejected");
+        assert!(error.contains("40-hex-SHA"), "{error}");
+    }
+
+    #[test]
+    fn extract_sbom_attestation_crates_rejects_a_different_action() {
+        let error = extract_sbom_attestation_crates(&one_sbom_attestation(Some(
+            "some-other/action@0123456789abcdef0123456789abcdef01234567",
+        )))
+        .expect_err("different action is rejected");
+        assert!(error.contains("actions/attest@<40-hex-SHA>"), "{error}");
+    }
+
+    #[test]
+    fn extract_sbom_attestation_crates_rejects_a_missing_action() {
+        let error = extract_sbom_attestation_crates(&one_sbom_attestation(None))
+            .expect_err("missing action is rejected");
+        assert!(error.contains("without an action reference"), "{error}");
     }
 
     #[test]
