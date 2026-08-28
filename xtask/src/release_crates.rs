@@ -308,6 +308,11 @@ fn extract_sbom_attestation_crates(text: &str) -> Result<Vec<String>, String> {
                 break;
             }
             if let Some(action) = following_trimmed.strip_prefix("uses:") {
+                if uses.is_some() {
+                    return Err(format!(
+                        "{RELEASE_DRAFT_WORKFLOW} has an SBOM attestation with multiple action references"
+                    ));
+                }
                 uses = Some(action.trim());
             }
             if let Some(path) = following_trimmed.strip_prefix("subject-path:") {
