@@ -871,7 +871,7 @@ fn postgres_cursor_reader_registers_consistently_through_with_stream() {
     let identity = ComponentStreamIdentity::new("orders.postgres_cursor").expect("valid identity");
     let (reader, stream, contract) = postgres_cursor_reader::<u64>(
         config,
-        "select id from orders order by id",
+        "select id from orders",
         vec![KeysetColumn::i64("id")],
         PostgresCursorFormat::new(),
         |_row: &PostgresRow<'_>| -> Result<u64, ReaderError> {
