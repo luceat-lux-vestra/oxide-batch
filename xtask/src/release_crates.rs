@@ -96,6 +96,13 @@ pub fn check() -> Result<Vec<String>, String> {
         ));
     }
 
+    let sbom_attestation_crates = extract_sbom_attestation_crates(&draft_text)?;
+    violations.extend(compare_exact_set(
+        &format!("{RELEASE_DRAFT_WORKFLOW} SBOM attestations"),
+        &sbom_attestation_crates,
+        &manifest_set,
+    ));
+
     let release_path = root.join(RELEASE_WORKFLOW);
     let release_text = fs::read_to_string(&release_path)
         .map_err(|error| format!("could not read {RELEASE_WORKFLOW}: {error}"))?;
@@ -271,6 +278,141 @@ fn extract_step_packages(text: &str, step_name: &str) -> Result<Vec<String>, Str
     Ok(packages)
 }
 
+/// Extracts the crate names from release-draft's explicit SBOM attestation
+/// steps and verifies that each step names the matching archive and SBOM.
+///
+/// actions/attest is intentionally kept as one explicit step per crate: the
+/// action's subject/SBOM inputs are security-sensitive release evidence, and a
+/// static contract makes a newly publishable crate fail in CI until its
+/// attestation is reviewed and added. The check compares the result with the
+/// publishable manifests rather than only with the accepted historical list,
+/// so a future manifest addition cannot silently omit release evidence.
+fn extract_sbom_attestation_crates(text: &str) -> Result<Vec<String>, String> {
+    const SUBJECT_PREFIX: &str = "target/package/";
+    const SUBJECT_SUFFIX: &str = "-${{ steps.package.outputs.version }}.crate";
+    const SBOM_SUFFIX: &str = "-${{ steps.package.outputs.version }}.cdx.json";
+
+    let mut crates = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with("- name: Attest ") || !trimmed.ends_with(" SBOM") {
+            continue;
+        }
+
+        let mut subject_path = None;
+        let mut sbom_path = None;
+        let mut uses = None;
+        for following in text.lines().skip(index + 1) {
+            let following_trimmed = following.trim_start();
+            if following_trimmed.starts_with("- name:") {
+                break;
+            }
+            if let Some(action) = following_trimmed.strip_prefix("uses:") {
+                if uses.is_some() {
+                    return Err(format!(
+                        "{RELEASE_DRAFT_WORKFLOW} has an SBOM attestation with multiple action references"
+                    ));
+                }
+                uses = Some(action.trim());
+            }
+            if let Some(path) = following_trimmed.strip_prefix("subject-path:") {
+                subject_path = Some(path.trim());
+            }
+            if let Some(path) = following_trimmed.strip_prefix("sbom-path:") {
+                sbom_path = Some(path.trim());
+            }
+        }
+
+        let uses = uses.ok_or_else(|| {
+            format!("{RELEASE_DRAFT_WORKFLOW} has an SBOM attestation without an action reference")
+        })?;
+        validate_sbom_attestation_action(uses)?;
+
+        let subject_path = subject_path.ok_or_else(|| {
+            format!("{RELEASE_DRAFT_WORKFLOW} has an SBOM attestation without subject-path")
+        })?;
+        let sbom_path = sbom_path.ok_or_else(|| {
+            format!("{RELEASE_DRAFT_WORKFLOW} has an SBOM attestation without sbom-path")
+        })?;
+        let crate_name = subject_path
+            .strip_prefix(SUBJECT_PREFIX)
+            .and_then(|path| path.strip_suffix(SUBJECT_SUFFIX))
+            .ok_or_else(|| {
+                format!("{RELEASE_DRAFT_WORKFLOW} has an SBOM attestation with an unexpected subject-path: {subject_path}")
+            })?;
+        let expected_sbom = format!("{SUBJECT_PREFIX}{crate_name}{SBOM_SUFFIX}");
+        if sbom_path != expected_sbom {
+            return Err(format!(
+                "{RELEASE_DRAFT_WORKFLOW} has an SBOM attestation for {crate_name} with sbom-path {sbom_path:?}; expected {expected_sbom:?}"
+            ));
+        }
+        crates.push(crate_name.to_owned());
+    }
+
+    if crates.is_empty() {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} has no explicit SBOM attestation steps"
+        ));
+    }
+    Ok(crates)
+}
+
+/// Requires the release-evidence action to be the reviewed attestation action
+/// at an immutable full commit SHA. Version tags and other action identities
+/// are not an acceptable release contract, even when their inputs are valid.
+fn validate_sbom_attestation_action(uses: &str) -> Result<(), String> {
+    let action_ref = uses
+        .split_once(" #")
+        .map_or(uses, |(action, _)| action)
+        .trim();
+    let (action, reference) = action_ref.split_once('@').ok_or_else(|| {
+        format!(
+            "{RELEASE_DRAFT_WORKFLOW} SBOM attestation must use actions/attest@<40-hex-SHA>; found {uses:?}"
+        )
+    })?;
+    if action != "actions/attest"
+        || reference.len() != 40
+        || !reference
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} SBOM attestation must use actions/attest@<40-hex-SHA>; found {uses:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// Reports missing, extra, or duplicate entries when a source must match a
+/// dynamically discovered set exactly.
+fn compare_exact_set(source: &str, found: &[String], expected: &[String]) -> Vec<String> {
+    let mut violations = Vec::new();
+    for expected_crate in expected {
+        if !found.iter().any(|crate_name| crate_name == expected_crate) {
+            violations.push(format!(
+                "{source} is missing publishable crate {expected_crate:?}"
+            ));
+        }
+    }
+    for found_crate in found {
+        if !expected.iter().any(|crate_name| crate_name == found_crate) {
+            violations.push(format!(
+                "{source} names {found_crate:?}, which is not publishable"
+            ));
+        }
+    }
+    if found.len() != expected.len()
+        || expected
+            .iter()
+            .any(|expected_crate| found.iter().filter(|c| *c == expected_crate).count() != 1)
+    {
+        violations.push(format!(
+            "{source} lists {found:?}, expected exactly {expected:?}"
+        ));
+    }
+    violations
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
@@ -316,6 +458,69 @@ mod tests {
         )
         .expect_err("missing step is an error");
         assert!(error.contains("Verify packages"));
+    }
+
+    #[test]
+    fn extract_sbom_attestation_crates_requires_matching_archive_and_sbom() {
+        let text = "steps:\n  - name: Attest a SBOM\n    uses: actions/attest@0123456789abcdef0123456789abcdef01234567 # v4\n    with:\n      subject-path: target/package/a-${{ steps.package.outputs.version }}.crate\n      sbom-path: target/package/a-${{ steps.package.outputs.version }}.cdx.json\n  - name: Attest b SBOM\n    uses: actions/attest@0123456789abcdef0123456789abcdef01234567\n    with:\n      subject-path: target/package/b-${{ steps.package.outputs.version }}.crate\n      sbom-path: target/package/b-${{ steps.package.outputs.version }}.cdx.json\n";
+        assert_eq!(
+            extract_sbom_attestation_crates(text).expect("attestation steps parse"),
+            vec!["a".to_owned(), "b".to_owned()]
+        );
+    }
+
+    fn one_sbom_attestation(uses: Option<&str>) -> String {
+        let uses_line = uses.map_or(String::new(), |value| format!("    uses: {value}\n"));
+        format!(
+            "steps:\n  - name: Attest a SBOM\n{uses_line}    with:\n      subject-path: target/package/a-${{ steps.package.outputs.version }}.crate\n      sbom-path: target/package/a-${{ steps.package.outputs.version }}.cdx.json\n"
+        )
+    }
+
+    #[test]
+    fn extract_sbom_attestation_crates_rejects_a_version_tag() {
+        let error =
+            extract_sbom_attestation_crates(&one_sbom_attestation(Some("actions/attest@v4")))
+                .expect_err("mutable action ref is rejected");
+        assert!(error.contains("actions/attest@<40-hex-SHA>"), "{error}");
+    }
+
+    #[test]
+    fn extract_sbom_attestation_crates_rejects_a_truncated_sha() {
+        let error = extract_sbom_attestation_crates(&one_sbom_attestation(Some(
+            "actions/attest@0123456789abcdef",
+        )))
+        .expect_err("truncated action ref is rejected");
+        assert!(error.contains("40-hex-SHA"), "{error}");
+    }
+
+    #[test]
+    fn extract_sbom_attestation_crates_rejects_a_different_action() {
+        let error = extract_sbom_attestation_crates(&one_sbom_attestation(Some(
+            "some-other/action@0123456789abcdef0123456789abcdef01234567",
+        )))
+        .expect_err("different action is rejected");
+        assert!(error.contains("actions/attest@<40-hex-SHA>"), "{error}");
+    }
+
+    #[test]
+    fn extract_sbom_attestation_crates_rejects_a_missing_action() {
+        let error = extract_sbom_attestation_crates(&one_sbom_attestation(None))
+            .expect_err("missing action is rejected");
+        assert!(error.contains("without an action reference"), "{error}");
+    }
+
+    #[test]
+    fn compare_exact_set_reports_a_missing_publishable_crate() {
+        let found = vec!["a".to_owned()];
+        let expected = vec!["a".to_owned(), "b".to_owned()];
+        let violations = compare_exact_set("test source", &found, &expected);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("missing publishable crate")
+                    && violation.contains('b')),
+            "{violations:#?}"
+        );
     }
 
     #[test]
