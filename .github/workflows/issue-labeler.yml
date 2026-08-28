@@ -62,30 +62,29 @@ jobs:
               if (issue.pull_request) return;
               const title = (issue.title || '').trim().toLowerCase();
               const body = (issue.body || '').toLowerCase();
-              const text = `${title}\n${body}`;
+              const { data: labels } = await github.rest.issues.listLabelsOnIssue({ ...context.repo, issue_number: issue.number, per_page: 100 });
+              const names = labels.map(x => x.name);
 
-              let type = 'type:task';
+              let type = names.find(x => ['type:bug', 'type:feature', 'type:security', 'type:docs', 'type:research', 'type:task'].includes(x)) || 'type:task';
               if (/^(fix|bug)(\([^)]*\))?:/.test(title)) type = 'type:bug';
               else if (/^(feat|feature)(\([^)]*\))?:/.test(title)) type = 'type:feature';
-              else if (/^security(\([^)]*\))?:|vulnerab|threat model/.test(title)) type = 'type:security';
-              else if (/^docs(\([^)]*\))?:|documentation issue/.test(title)) type = 'type:docs';
+              else if (/^security(\([^)]*\))?:/.test(title)) type = 'type:security';
+              else if (/^docs(\([^)]*\))?:|^documentation issue/.test(title)) type = 'type:docs';
               else if (/^(research|rfc|audit|design)(\([^)]*\))?:|^rfc:/.test(title)) type = 'type:research';
 
               const areas = new Set();
-              if (/oxide-batch-core|core domain|facade|public api/.test(text)) areas.add('area:core');
-              if (/oxide-batch-plan|\bruntime\b|chunk|job execution|step execution|lifecycle/.test(text)) areas.add('area:runtime');
-              if (/oxide-batch-repository|\brepository\b|persistence|metadata store/.test(text)) areas.add('area:repository');
-              if (/\bpostgres\b|postgresql|migration/.test(text)) areas.add('area:postgres');
-              if (/oxide-batch-cli|\bcli\b|command-line|operator command/.test(text)) areas.add('area:cli');
-              if (/observability|telemetry|metric|tracing|diagnostic|logging/.test(text)) areas.add('area:observability');
-              if (/oxide-batch-test|\btest kit\b|\bfixture\b|verification support/.test(text)) areas.add('area:test');
-              if (/compatibility|conformance|spring batch|docs\/compatibility|campaign/.test(text)) areas.add('area:compatibility');
-              if (/^docs[:(]|documentation|\bdocs\//.test(text)) areas.add('area:docs');
-              if (/governance|policy|rfc|adr|support policy|release policy/.test(text)) areas.add('area:governance');
-              if (/^ci[:(]|github actions|\.github\/|workflow|dependabot|ruleset|branch protection|supply-chain/.test(text)) areas.add('area:ci');
+              if (/\(core\)|core domain|facade|public api/.test(title) || /crates\/oxide-batch-core\//.test(body)) areas.add('area:core');
+              if (/\(runtime\)|\bchunk\b|\blifecycle\b|job execution|step execution/.test(title) || /crates\/oxide-batch-plan\/|crates\/oxide-batch\/src\/(chunk|runtime|listener)/.test(body)) areas.add('area:runtime');
+              if (/\(repository\)|\brepository\b|persistence/.test(title) || /crates\/oxide-batch-repository\//.test(body)) areas.add('area:repository');
+              if (/\(postgres\)|postgresql|\bpostgres\b|migration/.test(title) || /crates\/oxide-batch-repository\/[^\s`]*postgres|docs\/operations\/migrations\//.test(body)) areas.add('area:postgres');
+              if (/\(cli\)|\bcli\b|operator cli|command-line/.test(title) || /crates\/oxide-batch-cli\//.test(body)) areas.add('area:cli');
+              if (/\(observability\)|telemetry|metrics?|tracing|diagnostic/.test(title) || /observability-contract|crates\/[^\s`]*(observ|telemetry|diagnostic)/.test(body)) areas.add('area:observability');
+              if (/\btest\b|fixture|test kit/.test(title) || /crates\/oxide-batch-test\//.test(body)) areas.add('area:test');
+              if (/^compat[:(]|\bconformance\b|compatibility/.test(title) || /docs\/compatibility\/|docs\/engineering\/campaigns\//.test(body)) areas.add('area:compatibility');
+              if (/^docs[:(]|^documentation/.test(title) || /### documentation location/.test(body)) areas.add('area:docs');
+              if (/^rfc[:(]|governance|policy|design gate/.test(title) || /docs\/(governance|rfcs)\//.test(body)) areas.add('area:governance');
+              if (/^ci[:(]|github|workflow|ruleset|branch protection|dependabot|supply-chain/.test(title) || /\.github\//.test(body)) areas.add('area:ci');
 
-              const { data: labels } = await github.rest.issues.listLabelsOnIssue({ ...context.repo, issue_number: issue.number, per_page: 100 });
-              const names = labels.map(x => x.name);
               const desired = new Set([type, ...areas]);
               for (const name of names.filter(x => x.startsWith('type:') || x.startsWith('area:'))) {
                 if (!desired.has(name)) await github.rest.issues.removeLabel({ ...context.repo, issue_number: issue.number, name });
