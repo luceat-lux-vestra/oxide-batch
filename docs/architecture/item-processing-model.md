@@ -441,6 +441,78 @@ guarantee), and `crates/oxide-batch/tests/postgres_completion_policy_restart.rs`
 [the M6 #151 evidence record](../project/m6-151-completion-and-listener-evidence.md)
 for the full scenario inventory.
 
+### Implementation status (#152)
+
+Application-facing item-pipeline configuration ergonomics are implemented.
+`ChunkPipelineBuilder<I, O, R, P, W>` (`crates/oxide-batch/src/chunk_builder.rs`)
+assembles a `ChunkStep` and its matching `ChunkComponentRevisions` from one
+builder, lowering to the exact existing runtime types this document already
+specifies -- no second `ChunkStep`, chunk driver, or execution path is
+introduced, per this document's [accepted contract shape and erasure
+boundary](#accepted-contract-shape-and-erasure-boundary).
+
+Investigation against the actual construction call sites used throughout
+#144-#151 (`ChunkStep::new`, `ChunkComponentRevisions::new`, the PostgreSQL and
+multi-resource `(component, stream, contract)` tuple-opener functions, and
+`ChunkJob`/`FlowJob` binding) found the concrete ergonomic defect: a stateful
+component's `ComponentStreamIdentity` had to be typed once into
+`ChunkComponentRevisions::with_stream_revision` (the definition/fingerprint
+side) and again into `ChunkStep::with_item_stream` (the runtime side), with
+nothing at compile time proving the two independently typed values named the
+same namespace -- a mismatch surfaced only as a `DefinitionError` at
+`ChunkJob::new` or `FlowJob::with_chunk_step` time.
+`ChunkPipelineBuilder::with_stream` takes the identity once and applies it to
+both sides, eliminating the divergence by construction rather than adding a
+new validation. Every other builder method is a non-duplicating forward onto
+the identical `ChunkStep` method of the same name (`with_completion_policy`,
+`with_chunk_listener`, `with_item_listeners`, `with_fault_runtime`,
+`with_listener`); none of the underlying validation this document specifies
+(duplicate/undeclared stream detection, delivery-mode agreement, restart
+compatibility) is reimplemented.
+
+The builder preserves the `ChunkJob`-vs-`FlowJob` completion-policy asymmetry
+this document's [completion, retry, skip, and rollback](#completion-retry-skip-and-rollback)
+section and the #151 evidence record describe: `ChunkPipelineBuilder::revisions`
+computes the completion-policy revision automatically from whatever policy is
+currently installed (reusing `ChunkJob::new`'s own internal computation,
+`crate::chunk_runtime::completion_policy_component_revisions`, now `pub(crate)`
+rather than duplicated), but a `FlowJob`-bound step still requires the caller
+to call it (or `ChunkPipelineBuilder::flow_step_components`) before compiling
+the enclosing `FlowGraph` and reuse the same value for binding -- the ordering
+requirement is unchanged, only the hand-folding it previously required is
+removed.
+
+`BoxedReader<I>`/`BoxedProcessor<I, O>`/`BoxedWriter<O>` already implement the
+plain `ItemReader`/`ItemProcessor`/`ItemWriter` traits (ADR-0008), so the
+identical `ChunkPipelineBuilder<I, O, R, P, W>` accepts them with no
+special-casing: a typed and a `Boxed*` instantiation built from the same
+component revisions produce byte-identical restart fingerprints
+(`crates/oxide-batch/tests/chunk_builder.rs`'s
+`typed_and_boxed_pipelines_share_one_fingerprint`). No new configuration
+framework, scope/late-binding system, expression language, or general
+configuration DSL was introduced; that boundary remains explicit in the
+module's own rustdoc.
+
+`NoopChunkCompletion` (same module) is the safe, no-op
+`ChunkCompletion::after_commit` default `ChunkPipelineBuilder::new` installs,
+narrowing an existing gap: no first-party, non-test production
+`ChunkCompletion` implementation existed before this, so every pipeline that
+did not need post-commit notification still had to hand-write one to
+construct a `ChunkStep`. `ChunkStep::with_completion` (a small additive
+parity method alongside `ChunkStep`'s other post-construction `with_*`
+methods) lets a caller override the builder's default after the fact.
+
+Executable evidence: `crates/oxide-batch/src/chunk_builder.rs` (rustdoc
+doctests: typed and `Boxed*` construction, `ItemStream` registration against
+a real `DelimitedRecord` stream, completion-policy revision correctness) and
+`crates/oxide-batch/tests/chunk_builder.rs` (builder-vs-hand-assembled
+fingerprint equivalence, typed-vs-boxed fingerprint equivalence, a real
+first-party stateful component via `delimited_reader`, `FlowJob` binding with
+a builder-declared completion policy, delivery-mode-mismatch rejection, and
+duplicate-stream-identity rejection). See
+[the M6 #152 evidence record](../project/m6-152-pipeline-config-ergonomics-evidence.md)
+for the full scenario inventory.
+
 ## Standard-component requirements
 
 Closed by [M6 Gate D](../project/m6-design-gate-evidence.md#gate-d--standard-component-semantics).

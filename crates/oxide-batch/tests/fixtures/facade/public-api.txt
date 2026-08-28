@@ -48,6 +48,7 @@ oxide_batch::ChunkListenerError
 oxide_batch::ChunkListenerFailure
 oxide_batch::ChunkListenerFailureKind
 oxide_batch::ChunkListenerPhase
+oxide_batch::ChunkPipelineBuilder
 oxide_batch::ChunkProgress
 oxide_batch::ChunkRestartContract
 oxide_batch::ChunkSize
@@ -272,6 +273,7 @@ oxide_batch::MonotonicClock
 oxide_batch::MonotonicInstant
 oxide_batch::NameKind
 oxide_batch::NodeId
+oxide_batch::NoopChunkCompletion
 oxide_batch::OTHER_LABEL_VALUE
 oxide_batch::OperationId
 oxide_batch::OperatorAction
