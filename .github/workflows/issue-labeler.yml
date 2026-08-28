@@ -82,7 +82,7 @@ jobs:
               if (/\(cli\)|\bcli\b|operator cli|command-line/.test(title) || /crates\/oxide-batch-cli\//.test(body)) areas.add('area:cli');
               if (/\(observability\)|telemetry|metrics?|tracing|diagnostic/.test(title) || /observability-contract|crates\/[^\s`]*(observ|telemetry|diagnostic)/.test(body)) areas.add('area:observability');
               if (/\btest\b|fixture|test kit/.test(title) || /crates\/oxide-batch-test\//.test(body)) areas.add('area:test');
-              if (/^compat[:(]|\bconformance\b|compatibility/.test(title) || /docs\/compatibility\/|docs\/engineering\/campaigns\//.test(body)) areas.add('area:compatibility');
+              if (/^compat[:(]|\bconformance\b|compatibility/.test(title) || /docs\/compatibility\/|docs\/engineering\/campaigns\/[^\s`]*conformance/.test(body)) areas.add('area:compatibility');
               if (/^docs[:(]|^documentation/.test(title) || /### documentation location/.test(body)) areas.add('area:docs');
               if (/^rfc[:(]|governance|policy|design gate/.test(title) || /docs\/(governance|rfcs)\//.test(body)) areas.add('area:governance');
               if (/^ci[:(]|github|workflow|ruleset|branch protection|dependabot|supply-chain/.test(title) || /\.github\//.test(body)) areas.add('area:ci');
