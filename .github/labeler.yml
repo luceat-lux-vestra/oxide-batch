@@ -1,5 +1,8 @@
-changed-files-labels-limit: 10
-max-files-changed: 100
+# Oxide Batch automatic PR area classification.
+# Area labels are derived from the current workspace topology and synchronized on each PR update.
+
+changed-files-labels-limit: 30
+max-files-changed: 1000
 
 area:ci:
   - changed-files:
@@ -13,47 +16,61 @@ area:ci:
 area:core:
   - changed-files:
       - any-glob-to-any-file:
-          - "crates/oxide-batch/src/domain/**"
-          - "crates/oxide-batch/src/definition.rs"
-          - "crates/oxide-batch/src/lib.rs"
-          - "crates/oxide-batch/src/state.rs"
+          - "crates/oxide-batch-core/**"
+          - "crates/oxide-batch/**"
 
 area:runtime:
   - changed-files:
       - any-glob-to-any-file:
-          - "crates/oxide-batch/src/chunk.rs"
-          - "crates/oxide-batch/src/chunk_runtime.rs"
-          - "crates/oxide-batch/src/diagnostics.rs"
-          - "crates/oxide-batch/src/listener.rs"
-          - "crates/oxide-batch/src/runtime.rs"
+          - "crates/oxide-batch-plan/**"
+          - "crates/oxide-batch/src/chunk*.rs"
+          - "crates/oxide-batch/src/*runtime*.rs"
+          - "crates/oxide-batch/src/*listener*.rs"
 
 area:repository:
   - changed-files:
       - any-glob-to-any-file:
-          - "crates/oxide-batch/src/repository.rs"
-          - "crates/oxide-batch/src/repository/**"
-          - "crates/oxide-batch/tests/repository.rs"
-          - "crates/oxide-batch/tests/postgres_repository.rs"
+          - "crates/oxide-batch-repository/**"
           - "docs/architecture/*repository*"
-          - "docs/operations/persistence-and-migrations.md"
+          - "docs/operations/*persistence*"
+          - "docs/operations/*migration*"
 
 area:postgres:
   - changed-files:
       - any-glob-to-any-file:
-          - "crates/oxide-batch/migrations/**"
-          - "crates/oxide-batch/src/repository/postgres.rs"
-          - "crates/oxide-batch/tests/postgres_repository.rs"
-          - "docs/architecture/postgres-physical-metadata-model.md"
-          - "docs/operations/migrations/**"
+          - "crates/oxide-batch-repository/**/*postgres*"
+          - "crates/oxide-batch-repository/**/migrations/**"
           - "tests/fixtures/postgres/**"
+          - "docs/**/*postgres*"
+          - "docs/operations/migrations/**"
+
+area:cli:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/oxide-batch-cli/**"
+
+area:observability:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/**/*observ*"
+          - "crates/**/*telemetry*"
+          - "crates/**/*diagnostic*"
+          - "docs/operations/*observ*"
+          - "docs/operations/*telemetry*"
+
+area:test:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/oxide-batch-test/**"
+          - "**/tests/**"
+          - "tests/**"
 
 area:compatibility:
   - changed-files:
       - any-glob-to-any-file:
-          - "crates/oxide-batch/tests/conformance/**"
-          - "crates/oxide-batch/tests/lifecycle_conformance.rs"
-          - "crates/oxide-batch/tests/lifecycle_conformance/**"
+          - "**/tests/**/*conformance*"
           - "docs/compatibility/**"
+          - "docs/engineering/campaigns/**"
 
 area:docs:
   - changed-files:
