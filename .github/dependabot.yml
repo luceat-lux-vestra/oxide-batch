@@ -16,7 +16,6 @@ updates:
           - patch
     labels:
       - dependencies
-      - "area:ci"
 
   - package-ecosystem: github-actions
     directory: /

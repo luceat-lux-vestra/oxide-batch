@@ -1,0 +1,116 @@
+name: Issue labels
+
+on:
+  issues:
+    types:
+      - opened
+      - edited
+      - reopened
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: issue-labeler-${{ github.event.issue.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  classify:
+    name: classify
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    steps:
+      - name: Classify issues
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const defs = [
+              ['type:bug', 'B60205', 'A defect in existing functionality'],
+              ['type:feature', '1F6FEB', 'A new user-facing capability'],
+              ['type:security', 'B60205', 'Security hardening or vulnerability work'],
+              ['type:docs', 'D4F4DD', 'Documentation-only work'],
+              ['type:research', 'BFDADC', 'Research, RFC, or design work'],
+              ['type:task', '0E8A16', 'Implementation, maintenance, test, CI, or release task'],
+              ['area:ci', 'BFDADC', 'Continuous integration and automation'],
+              ['area:core', '0E8A16', 'Core domain model and facade contracts'],
+              ['area:runtime', '1D76DB', 'Job, step, and execution runtime'],
+              ['area:repository', '5319E7', 'Persistence interfaces and metadata'],
+              ['area:postgres', '006B75', 'PostgreSQL adapter and migrations'],
+              ['area:cli', '006B75', 'Command-line interface'],
+              ['area:observability', '0052CC', 'Logging, metrics, tracing, and diagnostics'],
+              ['area:test', 'C5DEF5', 'Test kit, fixtures, and verification support'],
+              ['area:compatibility', 'C5DEF5', 'Compatibility contracts and conformance evidence'],
+              ['area:docs', 'D4F4DD', 'Documentation system and content'],
+              ['area:governance', 'F2D600', 'Project policy and governance'],
+              ['priority:p2', 'FBCA04', 'Normal planned priority'],
+            ];
+            for (const [name, color, description] of defs) {
+              try {
+                const { data } = await github.rest.issues.getLabel({ ...context.repo, name });
+                if ((data.description || '') !== description) {
+                  await github.rest.issues.updateLabel({ ...context.repo, name, description });
+                }
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                await github.rest.issues.createLabel({ ...context.repo, name, color, description });
+              }
+            }
+
+            async function classify(issue) {
+              if (issue.pull_request) return;
+              const title = (issue.title || '').trim().toLowerCase();
+              const body = (issue.body || '').toLowerCase();
+              const { data: labels } = await github.rest.issues.listLabelsOnIssue({ ...context.repo, issue_number: issue.number, per_page: 100 });
+              const names = labels.map(x => x.name);
+              const knownTypes = ['type:bug', 'type:feature', 'type:security', 'type:docs', 'type:research', 'type:task'];
+              const existingTypes = names.filter(x => knownTypes.includes(x));
+
+              let explicitType = null;
+              if (/^(fix|bug)(\([^)]*\))?:/.test(title)) explicitType = 'type:bug';
+              else if (/^(feat|feature)(\([^)]*\))?:/.test(title)) explicitType = 'type:feature';
+              else if (/^security(\([^)]*\))?:/.test(title)) explicitType = 'type:security';
+              else if (/^docs(\([^)]*\))?:|^documentation issue/.test(title)) explicitType = 'type:docs';
+              else if (/^(research|rfc|audit|design)(\([^)]*\))?:|^rfc:/.test(title)) explicitType = 'type:research';
+
+              const areas = new Set();
+              if (/\(core\)|core domain|facade|public api/.test(title) || /crates\/oxide-batch-core\//.test(body)) areas.add('area:core');
+              if (/\(runtime\)|\bchunk\b|\blifecycle\b|job execution|step execution/.test(title) || /crates\/oxide-batch-plan\/|crates\/oxide-batch\/src\/(chunk|runtime|listener)/.test(body)) areas.add('area:runtime');
+              if (/\(repository\)|\brepository\b|persistence/.test(title) || /crates\/oxide-batch-repository\//.test(body)) areas.add('area:repository');
+              if (/\(postgres\)|postgresql|\bpostgres\b|migration/.test(title) || /crates\/oxide-batch-repository\/[^\s`]*postgres|docs\/operations\/migrations\//.test(body)) areas.add('area:postgres');
+              if (/\(cli\)|\bcli\b|operator cli|command-line/.test(title) || /crates\/oxide-batch-cli\//.test(body)) areas.add('area:cli');
+              if (/\(observability\)|telemetry|metrics?|tracing|diagnostic/.test(title) || /observability-contract|crates\/[^\s`]*(observ|telemetry|diagnostic)/.test(body)) areas.add('area:observability');
+              if (/\btest\b|fixture|test kit/.test(title) || /crates\/oxide-batch-test\//.test(body)) areas.add('area:test');
+              if (/^compat[:(]|\bconformance\b|compatibility/.test(title) || /docs\/compatibility\/|docs\/engineering\/campaigns\/[^\s`]*conformance/.test(body)) areas.add('area:compatibility');
+              if (/^docs[:(]|^documentation/.test(title) || /### documentation location/.test(body)) areas.add('area:docs');
+              if (/^rfc[:(]|governance|policy|design gate/.test(title) || /docs\/(governance|rfcs)\//.test(body)) areas.add('area:governance');
+              if (/^ci[:(]|github|workflow|ruleset|branch protection|dependabot|supply-chain/.test(title) || /\.github\//.test(body)) areas.add('area:ci');
+
+              const add = [...areas].filter(x => !names.includes(x));
+
+              // Only strong, explicit title signals own type replacement. Otherwise
+              // preserve Issue Form/bot/manual types and default truly unlabeled Issues.
+              if (explicitType) {
+                for (const name of existingTypes) {
+                  if (name !== explicitType) {
+                    await github.rest.issues.removeLabel({ ...context.repo, issue_number: issue.number, name });
+                  }
+                }
+                if (!names.includes(explicitType)) add.push(explicitType);
+              } else if (existingTypes.length === 0) {
+                add.push('type:task');
+              }
+
+              // Issue area inference is additive. Unlike PR changed paths, title/body
+              // heuristics are not authoritative enough to delete manual ownership labels.
+              if (!names.some(x => x.startsWith('priority:'))) add.push('priority:p2');
+              if (add.length) await github.rest.issues.addLabels({ ...context.repo, issue_number: issue.number, labels: [...new Set(add)] });
+            }
+
+            if (context.eventName === 'workflow_dispatch') {
+              const issues = await github.paginate(github.rest.issues.listForRepo, { ...context.repo, state: 'open', per_page: 100 });
+              for (const issue of issues) await classify(issue);
+            } else {
+              await classify(context.payload.issue);
+            }
