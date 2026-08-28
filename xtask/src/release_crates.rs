@@ -96,6 +96,13 @@ pub fn check() -> Result<Vec<String>, String> {
         ));
     }
 
+    let sbom_attestation_crates = extract_sbom_attestation_crates(&draft_text)?;
+    violations.extend(compare_exact_set(
+        &format!("{RELEASE_DRAFT_WORKFLOW} SBOM attestations"),
+        &sbom_attestation_crates,
+        &manifest_set,
+    ));
+
     let release_path = root.join(RELEASE_WORKFLOW);
     let release_text = fs::read_to_string(&release_path)
         .map_err(|error| format!("could not read {RELEASE_WORKFLOW}: {error}"))?;
@@ -271,6 +278,101 @@ fn extract_step_packages(text: &str, step_name: &str) -> Result<Vec<String>, Str
     Ok(packages)
 }
 
+/// Extracts the crate names from release-draft's explicit SBOM attestation
+/// steps and verifies that each step names the matching archive and SBOM.
+///
+/// actions/attest is intentionally kept as one explicit step per crate: the
+/// action's subject/SBOM inputs are security-sensitive release evidence, and a
+/// static contract makes a newly publishable crate fail in CI until its
+/// attestation is reviewed and added. The check compares the result with the
+/// publishable manifests rather than only with the accepted historical list,
+/// so a future manifest addition cannot silently omit release evidence.
+fn extract_sbom_attestation_crates(text: &str) -> Result<Vec<String>, String> {
+    const SUBJECT_PREFIX: &str = "target/package/";
+    const SUBJECT_SUFFIX: &str = "-${{ steps.package.outputs.version }}.crate";
+    const SBOM_SUFFIX: &str = "-${{ steps.package.outputs.version }}.cdx.json";
+
+    let mut crates = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with("- name: Attest ") || !trimmed.ends_with(" SBOM") {
+            continue;
+        }
+
+        let mut subject_path = None;
+        let mut sbom_path = None;
+        for following in text.lines().skip(index + 1) {
+            let following_trimmed = following.trim_start();
+            if following_trimmed.starts_with("- name:") {
+                break;
+            }
+            if let Some(path) = following_trimmed.strip_prefix("subject-path:") {
+                subject_path = Some(path.trim());
+            }
+            if let Some(path) = following_trimmed.strip_prefix("sbom-path:") {
+                sbom_path = Some(path.trim());
+            }
+        }
+
+        let subject_path = subject_path.ok_or_else(|| {
+            format!("{RELEASE_DRAFT_WORKFLOW} has an SBOM attestation without subject-path")
+        })?;
+        let sbom_path = sbom_path.ok_or_else(|| {
+            format!("{RELEASE_DRAFT_WORKFLOW} has an SBOM attestation without sbom-path")
+        })?;
+        let crate_name = subject_path
+            .strip_prefix(SUBJECT_PREFIX)
+            .and_then(|path| path.strip_suffix(SUBJECT_SUFFIX))
+            .ok_or_else(|| {
+                format!("{RELEASE_DRAFT_WORKFLOW} has an SBOM attestation with an unexpected subject-path: {subject_path}")
+            })?;
+        let expected_sbom = format!("{SUBJECT_PREFIX}{crate_name}{SBOM_SUFFIX}");
+        if sbom_path != expected_sbom {
+            return Err(format!(
+                "{RELEASE_DRAFT_WORKFLOW} has an SBOM attestation for {crate_name} with sbom-path {sbom_path:?}; expected {expected_sbom:?}"
+            ));
+        }
+        crates.push(crate_name.to_owned());
+    }
+
+    if crates.is_empty() {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} has no explicit SBOM attestation steps"
+        ));
+    }
+    Ok(crates)
+}
+
+/// Reports missing, extra, or duplicate entries when a source must match a
+/// dynamically discovered set exactly.
+fn compare_exact_set(source: &str, found: &[String], expected: &[String]) -> Vec<String> {
+    let mut violations = Vec::new();
+    for expected_crate in expected {
+        if !found.iter().any(|crate_name| crate_name == expected_crate) {
+            violations.push(format!(
+                "{source} is missing publishable crate {expected_crate:?}"
+            ));
+        }
+    }
+    for found_crate in found {
+        if !expected.iter().any(|crate_name| crate_name == found_crate) {
+            violations.push(format!(
+                "{source} names {found_crate:?}, which is not publishable"
+            ));
+        }
+    }
+    if found.len() != expected.len()
+        || expected
+            .iter()
+            .any(|expected_crate| found.iter().filter(|c| *c == expected_crate).count() != 1)
+    {
+        violations.push(format!(
+            "{source} lists {found:?}, expected exactly {expected:?}"
+        ));
+    }
+    violations
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
@@ -316,6 +418,29 @@ mod tests {
         )
         .expect_err("missing step is an error");
         assert!(error.contains("Verify packages"));
+    }
+
+    #[test]
+    fn extract_sbom_attestation_crates_requires_matching_archive_and_sbom() {
+        let text = "steps:\n  - name: Attest a SBOM\n    uses: actions/attest@sha\n    with:\n      subject-path: target/package/a-${{ steps.package.outputs.version }}.crate\n      sbom-path: target/package/a-${{ steps.package.outputs.version }}.cdx.json\n  - name: Attest b SBOM\n    uses: actions/attest@sha\n    with:\n      subject-path: target/package/b-${{ steps.package.outputs.version }}.crate\n      sbom-path: target/package/b-${{ steps.package.outputs.version }}.cdx.json\n";
+        assert_eq!(
+            extract_sbom_attestation_crates(text).expect("attestation steps parse"),
+            vec!["a".to_owned(), "b".to_owned()]
+        );
+    }
+
+    #[test]
+    fn compare_exact_set_reports_a_missing_publishable_crate() {
+        let found = vec!["a".to_owned()];
+        let expected = vec!["a".to_owned(), "b".to_owned()];
+        let violations = compare_exact_set("test source", &found, &expected);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("missing publishable crate")
+                    && violation.contains('b')),
+            "{violations:#?}"
+        );
     }
 
     #[test]

@@ -157,6 +157,12 @@ jobs:
           subject-path: target/package/oxide-batch-cli-${{ steps.package.outputs.version }}.crate
           sbom-path: target/package/oxide-batch-cli-${{ steps.package.outputs.version }}.cdx.json
 
+      - name: Attest oxide-batch-test SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: target/package/oxide-batch-test-${{ steps.package.outputs.version }}.crate
+          sbom-path: target/package/oxide-batch-test-${{ steps.package.outputs.version }}.cdx.json
+
       - name: Create or refresh draft release
         env:
           GH_TOKEN: ${{ github.token }}
