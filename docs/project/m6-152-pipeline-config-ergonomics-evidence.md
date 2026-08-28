@@ -288,16 +288,9 @@ were fixed before merge except one explicitly deferred cleanup.
   `InMemoryObjectStore` / `ObjectStoreReaderOpener`, the object-store
   catalog's own executable contract fixture -- assembled through the
   builder, covering the multi-resource requirement without a live
-  `PostgreSQL` connection). `PostgreSQL` itself remains untested through the
-  builder in this diff: `postgres_cursor_reader` and the PostgreSQL
-  multi-resource variant share the identical `(component, stream, contract)`
-  tuple-opener shape and the identical `MultiResourceReaderOpener` trait
-  already exercised above, so the construction *pattern* is proven, but a
-  live-database construction test is a materially larger testing
-  investment (feature-gating, a running instance) more naturally owned by
-  `oxide-batch-test`'s dedicated postgres-gated suite than by this issue's
-  diff; left as an explicit, reasoned scope boundary rather than a silent
-  omission.
+  `PostgreSQL` connection). At this point `PostgreSQL` itself remained
+  untested through the builder -- see Round 3 below, which closed that gap
+  without needing a live database either.
 - **Fixed -- a public `ChunkPipelineParts` type alias existed only to satisfy
   a clippy lint.** Round 1 introduced `pub type ChunkPipelineParts<I, O, R, P,
   W> = (ChunkStep<...>, ChunkComponentRevisions)` for `build()`'s return
@@ -309,6 +302,32 @@ were fixed before merge except one explicitly deferred cleanup.
   surface, `facade_surface.rs`'s snapshot, and `facade_review.rs`'s
   `REVIEWED_SURFACE` count (`chunk_builder` group: 3 → 2) were updated to
   match.
+
+### Round 3 (manual strict review against the Round 2 HEAD, `8563e4b`)
+
+- **Fixed -- issue #152's PostgreSQL requirement was still genuinely
+  missing.** Section 8 requires exercising the configuration surface
+  against representative format-specific M6 components, explicitly
+  including PostgreSQL, and Round 2's evidence doc had only *argued* the
+  gap was acceptable rather than closed it. The review correctly rejected
+  that argument and pointed out the actual fix does not need a live
+  database: `postgres_cursor_reader` (#149's representative shape) stores
+  its `PostgresConfig` and connects lazily on the first `read()`, never in
+  the synchronous, non-async constructor -- so a syntactically valid but
+  never-routable `PostgresConfig` (e.g.
+  `postgresql://user:pass@127.0.0.1:1/nonexistent`) lets the reader/stream/
+  contract be constructed and registered through `ChunkPipelineBuilder::with_stream`
+  at configuration time only, with no connection ever attempted. Added
+  `postgres_cursor_reader_registers_consistently_through_with_stream`
+  (`#[cfg(feature = "postgres")]`), proving the builder's generic bounds and
+  surface accept a real, first-party `PostgreSQL` reader.
+- **Fixed -- the evidence doc and PR body were stale relative to the actual
+  CI state.** By the time of this review, the Round 2 evidence-retention
+  commit (`631ae60`) had already made `cargo xtask evidence` and CI's
+  `evidence-provenance` check pass, but this document's Validation section
+  and the PR body still described the pre-retention gap as current. Fixed
+  by rewriting the Validation section to state the final, post-retention
+  evidence state (see below) and updating the PR body/comment to match.
 
 ## Tests
 
@@ -385,7 +404,13 @@ Integration tests (`crates/oxide-batch/tests/chunk_builder.rs`, `cargo test
   -- a real, first-party, non-test production multi-resource backend
   (`InMemoryObjectStore`/`ObjectStoreReaderOpener`) through `with_stream`,
   covering the multi-resource catalog without a live `PostgreSQL`
-  connection.
+  connection;
+- `postgres_cursor_reader_registers_consistently_through_with_stream`
+  (`#[cfg(feature = "postgres")]`) -- a real `PostgreSQL` reader
+  (`item_components::postgres_cursor_reader`) through `with_stream`, using a
+  syntactically valid but never-routable `PostgresConfig` (the constructor
+  stores config and connects lazily on the first `read()`, never at
+  construction), covering the `PostgreSQL` catalog without a live database.
 
 No new compile-fail/UI-test fixture was added: `ChunkPipelineBuilder`
 introduces no new generic bound shape beyond what `ChunkStep`'s existing
@@ -435,7 +460,9 @@ redesign, facade cleanup, or dependency change is included in this diff.
 
 ## Validation
 
-Run and passing locally at the commit this record describes:
+Run and passing locally, and in CI, at the final reviewed commit
+(`631ae60...`, evidence-retained; Round 3's PostgreSQL test and doc fixes
+land in the commit immediately after and were re-verified the same way):
 
 ```shell
 cargo fmt --all -- --check
@@ -449,42 +476,44 @@ cargo xtask surface
 cargo xtask deps
 cargo xtask reconciliation
 cargo xtask release-crates
+cargo xtask evidence
 ```
 
 `cargo test --workspace --all-features` includes the `postgres`-gated suites
 (`crates/oxide-batch-test`'s and `crates/oxide-batch`'s PostgreSQL-backed
-tests) against a local Homebrew PostgreSQL 18 instance; all pass.
-`restart_harness.rs`'s SIGKILL-based crash/restart tests take real wall time
-(actual OS process spawn/kill) but are not hung -- confirmed by isolating
-them from the earlier resource-contention false alarm below.
+tests) against a local Homebrew PostgreSQL 18 instance; all pass. (One
+transient false alarm during local iteration is worth recording for future
+sessions: `cargo test -p oxide-batch --test item_component_paths` appeared
+to hang for over ten minutes while several other `cargo doc`/`cargo check`/
+`cargo test` invocations ran concurrently against the same target
+directory; running it in isolation completed in 0.01s. It was local
+build-directory/CPU contention from stacking multiple heavy `cargo`
+invocations, not a defect.)
 
-`cargo xtask evidence` reports the expected gap: any PR touching
-`crates/oxide-batch/src` invalidates the retained M5/M6 campaign evidence's
-provenance (checked against a working tree that differs from the committed,
-retained execution), per the repository's evidence-provenance contract
-(`docs/engineering/campaigns/m5/evidence-provenance.json`). This is not a
-regression introduced here -- it is the same gap every prior `src`-touching
-M6 PR (#144/#146/#150/#151) reported, resolved by a dedicated post-merge CI
-evidence-retention pass, not a local fix, and not by hand-editing provenance
-metadata.
-
-One transient false alarm during local iteration is worth recording:
-`cargo test -p oxide-batch --test item_component_paths` appeared to hang for
-over ten minutes while several other `cargo doc`/`cargo check`/`cargo test`
-invocations ran concurrently against the same target directory. Running it
-in isolation completed in 0.01s. The full workspace suite was then re-run
-alone, start to finish, and passed cleanly (`EXIT_CODE=0`, 139 test-result
-groups, zero `FAILED` occurrences) -- the earlier appearance of a hang was
-local build-directory/CPU contention from stacking multiple heavy `cargo`
-invocations, not a defect.
+**`cargo xtask evidence` passes cleanly.** Touching `crates/oxide-batch/src`
+invalidates the retained M5 campaign evidence's tree-identity binding --
+the same gap every prior `src`-touching M6 PR (#144/#146/#150/#151)
+reported -- and, matching the precedent those PRs (concretely #151/#179)
+set, it was resolved **before merge**, not deferred: all 8 M5 campaign
+workflows (Soak, Cancellation, Performance, Conformance, Crash and Restore,
+Upgrade, Security, Resource Bounds) were dispatched via `workflow_dispatch`
+against the PR branch, succeeded on their PostgreSQL 15/18 matrix legs, and
+their 16 report artifacts were downloaded, retained byte-for-byte
+(`cmp -s` verified against the originals), and used to rebuild
+`docs/engineering/campaigns/m5/evidence-provenance.json`'s
+producer/workflow_run/producing_job/artifact/retained_report_git_blob/
+remote_verification fields from real GitHub API data -- never hand-authored.
+`cargo xtask evidence` and CI's `evidence-provenance` check both report
+green against this. Full procedure and commit:
+`ci(m5): retain evidence for #152 (PR #180)`.
 
 **Not run locally:** `cargo xtask crash-restore`, `cargo xtask soak`,
 `cargo xtask performance`, `cargo xtask security`, `cargo xtask
-resource-bounds`, `cargo xtask upgrade`, and `cargo xtask cancellation` --
-these are M5/M6 campaign commands unaffected by a pure configuration-builder
-addition with no new runtime type, no new failure mode, and no touched
-repository/persistence code; #152's scope explicitly excludes #153's final
-M6 campaigns.
+resource-bounds`, `cargo xtask upgrade`, and `cargo xtask cancellation` (the
+heavy, long-running local variants of the same campaigns) -- CI's
+`workflow_dispatch` runs above are the executed evidence for those
+campaigns against this change; #152's scope explicitly excludes #153's
+final M6 exit-gate campaigns.
 
 ## Executable evidence
 

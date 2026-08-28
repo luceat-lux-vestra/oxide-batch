@@ -848,6 +848,70 @@ fn multi_resource_object_store_reader_registers_consistently_through_with_stream
     );
 }
 
+/// A real `PostgreSQL` reader (`item_components::postgres_cursor_reader`,
+/// #149's representative shape) assembled through the builder at
+/// configuration time only, using a syntactically valid but never-routable
+/// `PostgresConfig` -- `postgres_cursor_reader` stores the config and lazily
+/// connects on its first `read()`, never at construction, so this proves
+/// the builder's generic bounds and surface accept a real `PostgreSQL`
+/// component without a live database, exactly like the JSON and
+/// multi-resource cases above. Covers issue #152 section 8's `PostgreSQL`
+/// requirement.
+#[cfg(feature = "postgres")]
+#[test]
+fn postgres_cursor_reader_registers_consistently_through_with_stream() {
+    use oxide_batch::item_components::{
+        KeysetColumn, PostgresCursorFormat, PostgresRow, postgres_cursor_reader,
+    };
+    use oxide_batch::{PostgresConfig, ReaderError, TlsMode};
+
+    let config = PostgresConfig::new("postgresql://user:pass@127.0.0.1:1/nonexistent")
+        .expect("syntactically valid configuration; never connected")
+        .with_tls_mode(TlsMode::Plaintext);
+    let identity = ComponentStreamIdentity::new("orders.postgres_cursor").expect("valid identity");
+    let (reader, stream, contract) = postgres_cursor_reader::<u64>(
+        config,
+        "select id from orders order by id",
+        vec![KeysetColumn::i64("id")],
+        PostgresCursorFormat::new(),
+        |_row: &PostgresRow<'_>| -> Result<u64, ReaderError> {
+            unimplemented!("never invoked at configuration time")
+        },
+        identity.clone(),
+    )
+    .expect("valid postgres cursor configuration");
+
+    let job = ChunkPipelineBuilder::<u64, u64, _, _, _>::new(
+        StepName::new("import_orders_postgres").expect("valid step name"),
+        ChunkSize::new(10).expect("valid chunk size"),
+        reader,
+        ComponentRevision::new("reader-v1").expect("valid revision"),
+        IdentityProcessor,
+        ComponentRevision::new("processor-v1").expect("valid revision"),
+        NoopWriter,
+        ComponentRevision::new("writer-v1").expect("valid revision"),
+        ComponentRevision::new("checkpoint-v1").expect("valid revision"),
+        restart(ChunkDeliveryMode::AtLeastOnce),
+        Arc::new(NoopTransactions),
+    )
+    .with_stream(
+        identity,
+        stream,
+        contract,
+        ComponentRevision::new("orders-postgres-v1").expect("valid revision"),
+    )
+    .build_chunk_job(
+        JobName::new("import_postgres_job").expect("valid job name"),
+        DefinitionRevision::new("v1").expect("valid revision"),
+    )
+    .expect("stream registration matches on both sides -- configuration-time only, no connection attempted");
+
+    assert_eq!(
+        job.step_name(),
+        &StepName::new("import_orders_postgres").expect("valid")
+    );
+}
+
 #[allow(dead_code)]
 fn touch_receipt() -> oxide_batch::ChunkCommitReceipt {
     receipt()
