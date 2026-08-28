@@ -1,0 +1,103 @@
+name: Issue labels
+
+on:
+  issues:
+    types:
+      - opened
+      - edited
+      - reopened
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: issue-labeler-${{ github.event.issue.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  classify:
+    name: classify
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    steps:
+      - name: Classify issues
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const defs = [
+              ['type:bug', 'B60205', 'A defect in existing functionality'],
+              ['type:feature', '1F6FEB', 'A new user-facing capability'],
+              ['type:security', 'B60205', 'Security hardening or vulnerability work'],
+              ['type:docs', 'D4F4DD', 'Documentation-only work'],
+              ['type:research', 'BFDADC', 'Research, RFC, or design work'],
+              ['type:task', '0E8A16', 'Implementation, maintenance, test, CI, or release task'],
+              ['area:ci', 'BFDADC', 'Continuous integration and automation'],
+              ['area:core', '0E8A16', 'Core domain model and facade contracts'],
+              ['area:runtime', '1D76DB', 'Job, step, and execution runtime'],
+              ['area:repository', '5319E7', 'Persistence interfaces and metadata'],
+              ['area:postgres', '006B75', 'PostgreSQL adapter and migrations'],
+              ['area:cli', '006B75', 'Command-line interface'],
+              ['area:observability', '0052CC', 'Logging, metrics, tracing, and diagnostics'],
+              ['area:test', 'C5DEF5', 'Test kit, fixtures, and verification support'],
+              ['area:compatibility', 'C5DEF5', 'Compatibility contracts and conformance evidence'],
+              ['area:docs', 'D4F4DD', 'Documentation system and content'],
+              ['area:governance', 'F2D600', 'Project policy and governance'],
+              ['priority:p2', 'FBCA04', 'Normal planned priority'],
+            ];
+            for (const [name, color, description] of defs) {
+              try {
+                const { data } = await github.rest.issues.getLabel({ ...context.repo, name });
+                if ((data.description || '') !== description) {
+                  await github.rest.issues.updateLabel({ ...context.repo, name, description });
+                }
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                await github.rest.issues.createLabel({ ...context.repo, name, color, description });
+              }
+            }
+
+            async function classify(issue) {
+              if (issue.pull_request) return;
+              const title = (issue.title || '').trim().toLowerCase();
+              const body = (issue.body || '').toLowerCase();
+              const text = `${title}\n${body}`;
+
+              let type = 'type:task';
+              if (/^(fix|bug)(\([^)]*\))?:/.test(title)) type = 'type:bug';
+              else if (/^(feat|feature)(\([^)]*\))?:/.test(title)) type = 'type:feature';
+              else if (/^security(\([^)]*\))?:|vulnerab|threat model/.test(title)) type = 'type:security';
+              else if (/^docs(\([^)]*\))?:|documentation issue/.test(title)) type = 'type:docs';
+              else if (/^(research|rfc|audit|design)(\([^)]*\))?:|^rfc:/.test(title)) type = 'type:research';
+
+              const areas = new Set();
+              if (/oxide-batch-core|core domain|facade|public api/.test(text)) areas.add('area:core');
+              if (/oxide-batch-plan|\bruntime\b|chunk|job execution|step execution|lifecycle/.test(text)) areas.add('area:runtime');
+              if (/oxide-batch-repository|\brepository\b|persistence|metadata store/.test(text)) areas.add('area:repository');
+              if (/\bpostgres\b|postgresql|migration/.test(text)) areas.add('area:postgres');
+              if (/oxide-batch-cli|\bcli\b|command-line|operator command/.test(text)) areas.add('area:cli');
+              if (/observability|telemetry|metric|tracing|diagnostic|logging/.test(text)) areas.add('area:observability');
+              if (/oxide-batch-test|\btest kit\b|\bfixture\b|verification support/.test(text)) areas.add('area:test');
+              if (/compatibility|conformance|spring batch|docs\/compatibility|campaign/.test(text)) areas.add('area:compatibility');
+              if (/^docs[:(]|documentation|\bdocs\//.test(text)) areas.add('area:docs');
+              if (/governance|policy|rfc|adr|support policy|release policy/.test(text)) areas.add('area:governance');
+              if (/^ci[:(]|github actions|\.github\/|workflow|dependabot|ruleset|branch protection|supply-chain/.test(text)) areas.add('area:ci');
+
+              const { data: labels } = await github.rest.issues.listLabelsOnIssue({ ...context.repo, issue_number: issue.number, per_page: 100 });
+              const names = labels.map(x => x.name);
+              const desired = new Set([type, ...areas]);
+              for (const name of names.filter(x => x.startsWith('type:') || x.startsWith('area:'))) {
+                if (!desired.has(name)) await github.rest.issues.removeLabel({ ...context.repo, issue_number: issue.number, name });
+              }
+              const add = [...desired].filter(x => !names.includes(x));
+              if (!names.some(x => x.startsWith('priority:'))) add.push('priority:p2');
+              if (add.length) await github.rest.issues.addLabels({ ...context.repo, issue_number: issue.number, labels: add });
+            }
+
+            if (context.eventName === 'workflow_dispatch') {
+              const issues = await github.paginate(github.rest.issues.listForRepo, { ...context.repo, state: 'open', per_page: 100 });
+              for (const issue of issues) await classify(issue);
+            } else {
+              await classify(context.payload.issue);
+            }
