@@ -181,8 +181,17 @@ faster number.
 
 ## Validation and definition of done
 
-Run the narrowest relevant checks while iterating, then the full affected gate.
-The ordinary local baseline is:
+### Local validation
+
+Run the narrowest relevant checks while iterating and collecting evidence.
+Expand validation in proportion to the changed contract and its risk. A
+workspace-wide full test, clippy, or documentation run is not a mandatory
+local baseline for every task.
+
+The following are examples of repository-wide CI or full validation. Run them
+locally when the affected risk requires them, or when reproducing the
+authoritative CI gate; do not treat them as the default command set for an
+unrelated narrow change:
 
 ```shell
 cargo fmt --all -- --check
@@ -192,8 +201,28 @@ cargo check -p oxide-batch --no-default-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
 ```
 
-Run affected PostgreSQL, migration, feature-matrix, conformance, crash,
-security, performance, or soak checks when the change touches those contracts.
+### Risk-triggered validation
+
+When a change touches one of these contracts, add the corresponding targeted
+checks and expand to the full affected gate as needed:
+
+- PostgreSQL or database behavior;
+- migrations;
+- restart, crash recovery, or durability;
+- conformance;
+- security or supply-chain controls;
+- performance;
+- soak or long-running lifecycle behavior; and
+- resource bounds.
+
+### GitHub CI
+
+Required GitHub CI is the repository-wide authoritative merge gate. Do not
+reduce CI scope or weaken a required check to save local execution time. A
+green CI result is necessary evidence, but it is not by itself a strict-review
+PASS; relevant targeted local evidence and the wider correctness review still
+apply.
+
 Do not claim a check passed unless it was run successfully; report skipped
 checks and the reason.
 
