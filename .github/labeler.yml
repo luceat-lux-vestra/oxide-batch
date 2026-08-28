@@ -58,12 +58,14 @@ area:observability:
           - "docs/operations/*observ*"
           - "docs/operations/*telemetry*"
 
+# Test ownership is for the reusable test kit / shared fixtures, not every
+# implementation PR that happens to include regression tests.
 area:test:
   - changed-files:
       - any-glob-to-any-file:
           - "crates/oxide-batch-test/**"
-          - "**/tests/**"
-          - "tests/**"
+          - "tests/fixtures/**"
+          - "tests/support/**"
 
 area:compatibility:
   - changed-files:
@@ -77,6 +79,8 @@ area:docs:
       - any-glob-to-any-file:
           - "**/*.md"
 
+# Governance is policy/decision/release-process ownership. Implementation
+# evidence under docs/project is intentionally excluded to avoid noisy labels.
 area:governance:
   - changed-files:
       - any-glob-to-any-file:
@@ -87,9 +91,9 @@ area:governance:
           - "SECURITY.md"
           - "SUPPORT.md"
           - "docs/governance/**"
-          - "docs/project/**"
           - "docs/release/**"
           - "docs/rfcs/**"
+          - "docs/architecture/decisions/**"
 
 dependencies:
   - changed-files:
