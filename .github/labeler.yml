@@ -70,7 +70,7 @@ area:compatibility:
       - any-glob-to-any-file:
           - "**/tests/**/*conformance*"
           - "docs/compatibility/**"
-          - "docs/engineering/campaigns/**"
+          - "docs/engineering/campaigns/**/*conformance*"
 
 area:docs:
   - changed-files:
