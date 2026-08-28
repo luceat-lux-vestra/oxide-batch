@@ -1,160 +1,7 @@
-//! An ergonomic single-step chunk pipeline builder (#152).
-//!
-//! [`ChunkPipelineBuilder`] assembles a [`ChunkStep`] and its matching
-//! [`ChunkComponentRevisions`] from one builder instead of two independently
-//! chained ones. It lowers to exactly the same [`ChunkStep`], [`ChunkJob`],
-//! and [`crate::FlowJob`] types every other construction path uses -- ADR-0008's
-//! one chunk driver, one set of transaction/checkpoint/restart/completion-policy/
-//! listener/fault-tolerance semantics -- so it is a configuration-time
-//! convenience, never a second execution path.
-//!
-//! # The problem this solves
-//!
-//! Before this builder, a stateful component's [`crate::ItemStream`]
-//! namespace had to be typed twice: once into
-//! [`ChunkComponentRevisions::with_stream_revision`] (the restart-relevant
-//! definition side) and once into [`ChunkStep::with_item_stream`] (the
-//! runtime side). Nothing at compile time proved the two independently typed
-//! [`ComponentStreamIdentity`] values were the same one; a typo surfaced only
-//! as a [`DefinitionError`] at [`ChunkJob::new`] or
-//! [`crate::FlowJob::with_chunk_step`] time. [`ChunkPipelineBuilder::with_stream`] takes the
-//! identity once and updates both sides from that single value, so the two
-//! sides cannot diverge.
-//!
-//! Similarly, installing a [`CompletionPolicy`] required a separate,
-//! easy-to-forget call to the free function [`crate::completion_policy_revision`]
-//! and folding its result into the revisions object by hand.
-//! [`ChunkPipelineBuilder::revisions`] computes it automatically from whatever policy is
-//! currently installed, using the exact same computation
-//! [`ChunkJob::new`] already performs internally -- never a second,
-//! independently maintained fingerprint.
-//!
-//! Every other builder method here is a thin, non-duplicating forward onto
-//! the identical [`ChunkStep`] method of the same name; none of the
-//! underlying validation (duplicate/undeclared stream detection, delivery-mode
-//! agreement, restart-compatibility checks) is reimplemented, so behavior is
-//! identical to assembling a [`ChunkStep`] and [`ChunkComponentRevisions`] by
-//! hand and passing them through the same [`ChunkJob::new`] or
-//! [`crate::FlowJob::with_chunk_step`] this builder still requires.
-//!
-//! # Typed vs. Boxed
-//!
-//! [`ChunkPipelineBuilder<I, O, R, P, W>`](ChunkPipelineBuilder) is generic
-//! over the reader, processor, and writer exactly like [`ChunkStep`] itself.
-//! Use concrete component types (the default) when they are known statically:
-//! the pipeline stays monomorphized, with no per-item allocation on the hot
-//! path (ADR-0008). Instantiate the same builder with
-//! [`crate::BoxedReader`], [`crate::BoxedProcessor`], and
-//! [`crate::BoxedWriter`] when a component is chosen at runtime, resolved by
-//! name, or stored heterogeneously -- erasure is a decision made once, where
-//! the handle is constructed, not a second builder or a second execution
-//! path. Prefer typed unless dynamic assembly is the actual requirement:
-//! `Boxed*` is not the default merely because its type signature is shorter.
-//!
-//! [`crate::BoxedReader`], [`crate::BoxedProcessor`], and
-//! [`crate::BoxedWriter`] already implement the plain [`ItemReader`],
-//! [`ItemProcessor`], and [`ItemWriter`] traits (ADR-0008: erasure is a
-//! concrete type, not a second trait), so the identical builder accepts them
-//! with no special-casing:
-//!
-//! ```
-//! use std::sync::Arc;
-//!
-//! use oxide_batch::item_components::{IdentityProcessor, IterReader, NoopWriter};
-//! use oxide_batch::{
-//!     BoxedProcessor, BoxedReader, BoxedWriter, ChunkComponentRevisions,
-//!     ChunkDeliveryMode, ChunkPipelineBuilder, ChunkRestartContract, ChunkSize,
-//!     ComponentRevision, StateSchemaId, StateSchemaVersion, StepName,
-//! };
-//! # use std::error::Error;
-//! # use oxide_batch::{
-//! #     BoxFuture, BusinessTransaction, ChunkCommitReceipt, ChunkCounts, ChunkFaultProgress,
-//! #     ChunkTransaction, ChunkTransactionError, ChunkTransactionManager,
-//! # };
-//! # struct NoTransaction;
-//! # impl ChunkTransaction for NoTransaction {
-//! #     fn business_transaction(&mut self) -> Option<&mut dyn BusinessTransaction> {
-//! #         None
-//! #     }
-//! #     fn commit(
-//! #         &mut self,
-//! #         _counts: ChunkCounts,
-//! #         _fault: ChunkFaultProgress,
-//! #     ) -> BoxFuture<'_, Result<ChunkCommitReceipt, ChunkTransactionError>> {
-//! #         Box::pin(async { Err(ChunkTransactionError::NotCommitted) })
-//! #     }
-//! #     fn rollback(&mut self) -> BoxFuture<'_, Result<(), ChunkTransactionError>> {
-//! #         Box::pin(async { Ok(()) })
-//! #     }
-//! # }
-//! # struct NoTransactions;
-//! # impl ChunkTransactionManager for NoTransactions {
-//! #     fn begin(
-//! #         &self,
-//! #     ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>> {
-//! #         Box::pin(async { Ok(Box::new(NoTransaction) as Box<dyn ChunkTransaction>) })
-//! #     }
-//! # }
-//!
-//! let restart = ChunkRestartContract::new(
-//!     StateSchemaId::new("example.checkpoint")?,
-//!     StateSchemaVersion::new(1)?,
-//!     StateSchemaId::new("example.context")?,
-//!     StateSchemaVersion::new(1)?,
-//!     ChunkDeliveryMode::AtLeastOnce,
-//! );
-//!
-//! // Same builder, same chunk driver -- only the component types changed.
-//! let (step, revisions) = ChunkPipelineBuilder::new(
-//!     StepName::new("import")?,
-//!     ChunkSize::new(10)?,
-//!     BoxedReader::new(IterReader::new([1u64, 2, 3])),
-//!     ComponentRevision::new("reader-v1")?,
-//!     BoxedProcessor::new(IdentityProcessor),
-//!     ComponentRevision::new("processor-v1")?,
-//!     BoxedWriter::new(NoopWriter),
-//!     ComponentRevision::new("writer-v1")?,
-//!     ComponentRevision::new("checkpoint-v1")?,
-//!     restart,
-//!     Arc::new(NoTransactions),
-//! )
-//! .build()?;
-//! assert_eq!(revisions.reader(), &ComponentRevision::new("reader-v1")?);
-//! assert_eq!(step.name(), &StepName::new("import")?);
-//! # Ok::<(), Box<dyn Error>>(())
-//! ```
-//!
-//! # Restart semantics stay explicit
-//!
-//! This builder never derives a reader, processor, writer, checkpoint, or
-//! stream revision on a caller's behalf: each is a required argument or an
-//! explicit [`ChunkPipelineBuilder::with_stream`] call, exactly as restart-relevant
-//! configuration must be (see
-//! `docs/architecture/decisions/0004-job-definition-restart-compatibility.md`).
-//! The only value this builder computes automatically is the
-//! completion-policy revision, and only because it is a pure, deterministic
-//! function of a policy the caller already installed -- never a value that
-//! could silently omit semantic configuration. [`ChunkPipelineBuilder::build`] and
-//! [`ChunkPipelineBuilder::revisions`] preserve the documented [`ChunkJob`]-vs-[`crate::FlowJob`]
-//! asymmetry: a [`crate::FlowJob`] step's plan is compiled from
-//! [`ChunkComponentRevisions`] before the bound [`ChunkStep`] (or the policy
-//! it installs) exists, so the caller must still call [`ChunkPipelineBuilder::revisions`] (or
-//! [`ChunkPipelineBuilder::flow_step_components`]) to compile the [`crate::FlowGraph`]
-//! *before* calling [`ChunkPipelineBuilder::build`] to obtain the matching step -- this
-//! builder makes that pattern computation-free and duplication-free, not
-//! optional.
-//!
-//! # Out of scope
-//!
-//! This builder is configuration ergonomics over the existing chunk
-//! architecture, not a new configuration framework. It does not add a
-//! scope/late-binding system, an expression language, or a general
-//! configuration DSL -- those remain out of scope through at least M7.
-//!
-//! See [`ChunkPipelineBuilder::new`] for a runnable typed-pipeline example,
-//! and its sibling methods for stream registration, completion-policy
-//! attachment, and `Boxed*` construction.
+//! An ergonomic single-step chunk pipeline builder (#152). See
+//! [`ChunkPipelineBuilder`]'s own documentation for the full design rationale.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -189,22 +36,176 @@ impl ChunkCompletion for NoopChunkCompletion {
     }
 }
 
-/// Assembles a [`ChunkStep`] and its matching [`ChunkComponentRevisions`]
-/// from one builder.
+/// An ergonomic single-step chunk pipeline builder (#152).
 ///
-/// See the [module documentation](self) for the ergonomic problem this
-/// solves, the typed-vs-boxed guidance, and the restart-semantics
-/// guarantees this builder preserves, and [`Self::new`] for a runnable
-/// example.
+/// [`ChunkPipelineBuilder`] assembles a [`ChunkStep`] and its matching
+/// [`ChunkComponentRevisions`] from one builder instead of two independently
+/// chained ones. It lowers to exactly the same [`ChunkStep`], [`ChunkJob`],
+/// and [`crate::FlowJob`] types every other construction path uses -- ADR-0008's
+/// one chunk driver, one set of transaction/checkpoint/restart/completion-policy/
+/// listener/fault-tolerance semantics -- so it is a configuration-time
+/// convenience, never a second execution path.
+///
+/// # The problem this solves
+///
+/// Before this builder, a stateful component's [`crate::ItemStream`]
+/// namespace had to be typed twice: once into
+/// [`ChunkComponentRevisions::with_stream_revision`] (the restart-relevant
+/// definition side) and once into [`ChunkStep::with_item_stream`] (the
+/// runtime side). Nothing at compile time proved the two independently typed
+/// [`ComponentStreamIdentity`] values were the same one; a typo surfaced only
+/// as a [`DefinitionError`] at [`ChunkJob::new`] or
+/// [`crate::FlowJob::with_chunk_step`] time. [`ChunkPipelineBuilder::with_stream`] takes the
+/// identity once and updates both sides from that single value, so the two
+/// sides cannot diverge.
+///
+/// Similarly, installing a [`CompletionPolicy`] required a separate,
+/// easy-to-forget call to the free function [`crate::completion_policy_revision`]
+/// and folding its result into the revisions object by hand.
+/// [`ChunkPipelineBuilder::revisions`] computes it automatically from whatever policy is
+/// currently installed, using the exact same computation
+/// [`ChunkJob::new`] already performs internally -- never a second,
+/// independently maintained fingerprint.
+///
+/// Every other builder method here is a thin, non-duplicating forward onto
+/// the identical [`ChunkStep`] method of the same name; none of the
+/// underlying validation (duplicate/undeclared stream detection, delivery-mode
+/// agreement, restart-compatibility checks) is reimplemented, so behavior is
+/// identical to assembling a [`ChunkStep`] and [`ChunkComponentRevisions`] by
+/// hand and passing them through the same [`ChunkJob::new`] or
+/// [`crate::FlowJob::with_chunk_step`] this builder still requires.
+///
+/// # Typed vs. Boxed
+///
+/// [`ChunkPipelineBuilder<I, O, R, P, W>`](ChunkPipelineBuilder) is generic
+/// over the reader, processor, and writer exactly like [`ChunkStep`] itself.
+/// Use concrete component types (the default) when they are known statically:
+/// the pipeline stays monomorphized, with no per-item allocation on the hot
+/// path (ADR-0008). Instantiate the same builder with
+/// [`crate::BoxedReader`], [`crate::BoxedProcessor`], and
+/// [`crate::BoxedWriter`] when a component is chosen at runtime, resolved by
+/// name, or stored heterogeneously -- erasure is a decision made once, where
+/// the handle is constructed, not a second builder or a second execution
+/// path. Prefer typed unless dynamic assembly is the actual requirement:
+/// `Boxed*` is not the default merely because its type signature is shorter.
+///
+/// [`crate::BoxedReader`], [`crate::BoxedProcessor`], and
+/// [`crate::BoxedWriter`] already implement the plain [`ItemReader`],
+/// [`ItemProcessor`], and [`ItemWriter`] traits (ADR-0008: erasure is a
+/// concrete type, not a second trait), so the identical builder accepts them
+/// with no special-casing:
+///
+/// ```
+/// use std::sync::Arc;
+///
+/// use oxide_batch::item_components::{IdentityProcessor, IterReader, NoopWriter};
+/// use oxide_batch::{
+///     BoxedProcessor, BoxedReader, BoxedWriter, ChunkComponentRevisions,
+///     ChunkDeliveryMode, ChunkPipelineBuilder, ChunkRestartContract, ChunkSize,
+///     ComponentRevision, StateSchemaId, StateSchemaVersion, StepName,
+/// };
+/// # use std::error::Error;
+/// # use oxide_batch::{
+/// #     BoxFuture, BusinessTransaction, ChunkCommitReceipt, ChunkCounts, ChunkFaultProgress,
+/// #     ChunkTransaction, ChunkTransactionError, ChunkTransactionManager,
+/// # };
+/// # struct NoTransaction;
+/// # impl ChunkTransaction for NoTransaction {
+/// #     fn business_transaction(&mut self) -> Option<&mut dyn BusinessTransaction> {
+/// #         None
+/// #     }
+/// #     fn commit(
+/// #         &mut self,
+/// #         _counts: ChunkCounts,
+/// #         _fault: ChunkFaultProgress,
+/// #     ) -> BoxFuture<'_, Result<ChunkCommitReceipt, ChunkTransactionError>> {
+/// #         Box::pin(async { Err(ChunkTransactionError::NotCommitted) })
+/// #     }
+/// #     fn rollback(&mut self) -> BoxFuture<'_, Result<(), ChunkTransactionError>> {
+/// #         Box::pin(async { Ok(()) })
+/// #     }
+/// # }
+/// # struct NoTransactions;
+/// # impl ChunkTransactionManager for NoTransactions {
+/// #     fn begin(
+/// #         &self,
+/// #     ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>> {
+/// #         Box::pin(async { Ok(Box::new(NoTransaction) as Box<dyn ChunkTransaction>) })
+/// #     }
+/// # }
+///
+/// let restart = ChunkRestartContract::new(
+///     StateSchemaId::new("example.checkpoint")?,
+///     StateSchemaVersion::new(1)?,
+///     StateSchemaId::new("example.context")?,
+///     StateSchemaVersion::new(1)?,
+///     ChunkDeliveryMode::AtLeastOnce,
+/// );
+///
+/// // Same builder, same chunk driver -- only the component types changed.
+/// let (step, revisions) = ChunkPipelineBuilder::new(
+///     StepName::new("import")?,
+///     ChunkSize::new(10)?,
+///     BoxedReader::new(IterReader::new([1u64, 2, 3])),
+///     ComponentRevision::new("reader-v1")?,
+///     BoxedProcessor::new(IdentityProcessor),
+///     ComponentRevision::new("processor-v1")?,
+///     BoxedWriter::new(NoopWriter),
+///     ComponentRevision::new("writer-v1")?,
+///     ComponentRevision::new("checkpoint-v1")?,
+///     restart,
+///     Arc::new(NoTransactions),
+/// )
+/// .build()?;
+/// assert_eq!(revisions.reader(), &ComponentRevision::new("reader-v1")?);
+/// assert_eq!(step.name(), &StepName::new("import")?);
+/// # Ok::<(), Box<dyn Error>>(())
+/// ```
+///
+/// # Restart semantics stay explicit
+///
+/// This builder never derives a reader, processor, writer, checkpoint, or
+/// stream revision on a caller's behalf: each is a required argument or an
+/// explicit [`ChunkPipelineBuilder::with_stream`] call, exactly as restart-relevant
+/// configuration must be (see
+/// `docs/architecture/decisions/0004-job-definition-restart-compatibility.md`).
+/// The only value this builder computes automatically is the
+/// completion-policy revision, and only because it is a pure, deterministic
+/// function of a policy the caller already installed -- never a value that
+/// could silently omit semantic configuration. [`ChunkPipelineBuilder::build`] and
+/// [`ChunkPipelineBuilder::revisions`] preserve the documented [`ChunkJob`]-vs-[`crate::FlowJob`]
+/// asymmetry: a [`crate::FlowJob`] step's plan is compiled from
+/// [`ChunkComponentRevisions`] before the bound [`ChunkStep`] (or the policy
+/// it installs) exists, so the caller must still call [`ChunkPipelineBuilder::revisions`] (or
+/// [`ChunkPipelineBuilder::flow_step_components`]) to compile the [`crate::FlowGraph`]
+/// *before* calling [`ChunkPipelineBuilder::build`] to obtain the matching step -- this
+/// builder makes that pattern computation-free and duplication-free, not
+/// optional.
+///
+/// # Out of scope
+///
+/// This builder is configuration ergonomics over the existing chunk
+/// architecture, not a new configuration framework. It does not add a
+/// scope/late-binding system, an expression language, or a general
+/// configuration DSL -- those remain out of scope through at least M7.
+///
+/// See [`ChunkPipelineBuilder::new`] for a runnable typed-pipeline example,
+/// and its sibling methods for stream registration, completion-policy
+/// attachment, and `Boxed*` construction.
 pub struct ChunkPipelineBuilder<I, O, R, P, W> {
-    size: ChunkSize,
     step: ChunkStep<I, O, R, P, W>,
     revisions: ChunkComponentRevisions,
+    /// Stream revisions declared for the *currently installed* completion
+    /// policy's own runtime registrations, kept separate from `revisions`
+    /// and replaced wholesale -- never merged in -- whenever
+    /// [`ChunkPipelineBuilder::with_completion_policy`] (or its adaptive
+    /// alias) installs a new policy, exactly mirroring how
+    /// [`ChunkStep::with_completion_policy`] replaces that same policy's
+    /// runtime registrations on the other side. A manually declared stream
+    /// revision (via [`ChunkPipelineBuilder::with_stream`]) lives in
+    /// `revisions` instead and is never touched by a policy replacement.
+    completion_policy_stream_revisions: BTreeMap<ComponentStreamIdentity, ComponentRevision>,
 }
-
-/// The [`ChunkStep`] and matching [`ChunkComponentRevisions`]
-/// [`ChunkPipelineBuilder::build`] produces.
-pub type ChunkPipelineParts<I, O, R, P, W> = (ChunkStep<I, O, R, P, W>, ChunkComponentRevisions);
 
 impl<I, O, R, P, W> ChunkPipelineBuilder<I, O, R, P, W>
 where
@@ -323,9 +324,9 @@ where
             restart,
         );
         Self {
-            size,
             step,
             revisions,
+            completion_policy_stream_revisions: BTreeMap::new(),
         }
     }
 
@@ -342,7 +343,22 @@ where
     /// its `ItemStream` auto-registration for the policy's own state (see
     /// [`CompletionPolicy::stream_registrations`]). [`Self::revisions`] and
     /// [`Self::build`] fold this policy's restart-relevant revision in
-    /// automatically -- see the [module documentation](self).
+    /// automatically.
+    ///
+    /// If `policy` reports any [`CompletionPolicy::stream_registrations`]
+    /// (for example, an installed [`AdaptiveCompletionPolicy`]), declare each
+    /// one's restart-relevant revision with
+    /// [`Self::with_completion_policy_stream_revision`], using the exact
+    /// identity the policy itself reports (its own `identity()` accessor,
+    /// where one exists). [`ChunkStep::with_completion_policy`] registers
+    /// that stream on the *runtime* side automatically, but the matching
+    /// *definition*-side revision is application-chosen versioning this
+    /// builder cannot derive from the identity alone, exactly like a stream
+    /// registered through [`Self::with_stream`] -- the difference here is
+    /// only that the runtime half is already handled, so declaring the
+    /// revision is the one remaining step. Omitting it surfaces as
+    /// [`DefinitionError::RuntimeStreamNotDeclared`] from [`Self::build`] or
+    /// [`Self::revisions`], not a silently dropped registration.
     ///
     /// # Examples
     ///
@@ -423,6 +439,7 @@ where
     /// ```
     #[must_use]
     pub fn with_completion_policy(mut self, policy: Arc<dyn CompletionPolicy>) -> Self {
+        self.completion_policy_stream_revisions.clear();
         self.step = self.step.with_completion_policy(policy);
         self
     }
@@ -437,7 +454,128 @@ where
         mut self,
         policy: Arc<AdaptiveCompletionPolicy>,
     ) -> Self {
+        self.completion_policy_stream_revisions.clear();
         self.step = self.step.with_adaptive_completion_policy(policy);
+        self
+    }
+
+    /// Declares the restart-relevant revision for one `ItemStream` namespace
+    /// a completion policy already registered on the runtime step through
+    /// [`Self::with_completion_policy`] (or
+    /// [`Self::with_adaptive_completion_policy`]).
+    ///
+    /// Unlike [`Self::with_stream`], this only updates the definition-side
+    /// revisions -- the runtime registration already happened automatically
+    /// when the policy was installed (see
+    /// [`CompletionPolicy::stream_registrations`]), so calling
+    /// [`Self::with_stream`] for the same identity would register it a
+    /// second time and fail with
+    /// [`DefinitionError::DuplicateRuntimeStream`].
+    ///
+    /// Every declaration made here is scoped to the *currently installed*
+    /// policy: calling [`Self::with_completion_policy`] (or
+    /// [`Self::with_adaptive_completion_policy`]) again to replace it
+    /// discards every revision declared by this method since the previous
+    /// installation -- mirroring [`ChunkStep::with_completion_policy`]'s own
+    /// replacement of that policy's runtime registrations -- while a stream
+    /// revision declared through [`Self::with_stream`] is never affected by
+    /// a policy replacement. This also composes correctly for a policy
+    /// nested inside a [`crate::CompositeCompletionPolicy`] at any depth, and
+    /// for any custom [`CompletionPolicy`] implementation: declare one
+    /// revision per identity the installed policy reports through
+    /// [`CompletionPolicy::stream_registrations`], regardless of how many or
+    /// how they are nested.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    ///
+    /// use oxide_batch::item_components::{IdentityProcessor, IterReader, NoopWriter};
+    /// use oxide_batch::{
+    ///     AdaptiveBounds, AdaptiveCompletionPolicy, ChunkDeliveryMode, ChunkPipelineBuilder,
+    ///     ChunkRestartContract, ChunkSize, ChunkTimeThreshold, ComponentRevision, JobName,
+    ///     StateSchemaId, StateSchemaVersion, StepName, SystemClock,
+    /// };
+    /// # use std::error::Error;
+    /// # use std::time::Duration;
+    /// # use oxide_batch::{
+    /// #     BoxFuture, BusinessTransaction, ChunkCommitReceipt, ChunkCounts, ChunkFaultProgress,
+    /// #     ChunkTransaction, ChunkTransactionError, ChunkTransactionManager, DefinitionRevision,
+    /// # };
+    /// # struct NoTransaction;
+    /// # impl ChunkTransaction for NoTransaction {
+    /// #     fn business_transaction(&mut self) -> Option<&mut dyn BusinessTransaction> {
+    /// #         None
+    /// #     }
+    /// #     fn commit(
+    /// #         &mut self,
+    /// #         _counts: ChunkCounts,
+    /// #         _fault: ChunkFaultProgress,
+    /// #     ) -> BoxFuture<'_, Result<ChunkCommitReceipt, ChunkTransactionError>> {
+    /// #         Box::pin(async { Err(ChunkTransactionError::NotCommitted) })
+    /// #     }
+    /// #     fn rollback(&mut self) -> BoxFuture<'_, Result<(), ChunkTransactionError>> {
+    /// #         Box::pin(async { Ok(()) })
+    /// #     }
+    /// # }
+    /// # struct NoTransactions;
+    /// # impl ChunkTransactionManager for NoTransactions {
+    /// #     fn begin(
+    /// #         &self,
+    /// #     ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>> {
+    /// #         Box::pin(async { Ok(Box::new(NoTransaction) as Box<dyn ChunkTransaction>) })
+    /// #     }
+    /// # }
+    ///
+    /// let restart = ChunkRestartContract::new(
+    ///     StateSchemaId::new("example.checkpoint")?,
+    ///     StateSchemaVersion::new(1)?,
+    ///     StateSchemaId::new("example.context")?,
+    ///     StateSchemaVersion::new(1)?,
+    ///     ChunkDeliveryMode::AtLeastOnce,
+    /// );
+    /// let policy = AdaptiveCompletionPolicy::new(
+    ///     oxide_batch::ComponentStreamIdentity::new("import.adaptive_size")?,
+    ///     AdaptiveBounds::new(ChunkSize::new(2)?, ChunkSize::new(50)?)?,
+    ///     ChunkTimeThreshold::new(Duration::from_millis(200))?,
+    ///     Arc::new(SystemClock),
+    /// );
+    ///
+    /// // Without the line below, `build_chunk_job` fails with
+    /// // `DefinitionError::RuntimeStreamNotDeclared`, because installing the
+    /// // policy above already registered its stream on the runtime step.
+    /// let job = ChunkPipelineBuilder::new(
+    ///     StepName::new("import")?,
+    ///     ChunkSize::new(10)?,
+    ///     IterReader::new([1u64, 2, 3]),
+    ///     ComponentRevision::new("reader-v1")?,
+    ///     IdentityProcessor,
+    ///     ComponentRevision::new("processor-v1")?,
+    ///     NoopWriter,
+    ///     ComponentRevision::new("writer-v1")?,
+    ///     ComponentRevision::new("checkpoint-v1")?,
+    ///     restart,
+    ///     Arc::new(NoTransactions),
+    /// )
+    /// .with_adaptive_completion_policy(Arc::clone(&policy))
+    /// .with_completion_policy_stream_revision(
+    ///     policy.identity().clone(),
+    ///     ComponentRevision::new("adaptive-v1")?,
+    /// )
+    /// .build_chunk_job(JobName::new("import_job")?, DefinitionRevision::new("v1")?)?;
+    ///
+    /// assert_eq!(job.step_name(), &StepName::new("import")?);
+    /// # Ok::<(), Box<dyn Error>>(())
+    /// ```
+    #[must_use]
+    pub fn with_completion_policy_stream_revision(
+        mut self,
+        identity: ComponentStreamIdentity,
+        revision: ComponentRevision,
+    ) -> Self {
+        self.completion_policy_stream_revisions
+            .insert(identity, revision);
         self
     }
 
@@ -649,12 +787,26 @@ where
     /// requirement [`crate::completion_policy_revision`]'s documentation
     /// describes, now computed for you instead of hand-folded.
     ///
+    /// Each call to this method, [`Self::flow_step_components`], or
+    /// [`Self::build`] recomputes the installed policy's live
+    /// [`CompletionPolicy::fingerprint`] fresh rather than caching one
+    /// computed value -- relying on the same purity contract
+    /// [`crate::completion_policy_revision`]'s documentation already requires
+    /// of every [`CompletionPolicy`] implementor. This mirrors
+    /// [`crate::FlowJob::with_chunk_step`]'s own existing declare-then-validate
+    /// pattern (one call when compiling the graph, a second, independent call
+    /// when binding), not a new assumption this builder introduces.
+    ///
     /// # Errors
     ///
     /// Returns [`DefinitionError::CompletionPolicyFingerprintPanic`] if an
     /// installed policy's [`CompletionPolicy::fingerprint`] panics.
     pub fn revisions(&self) -> Result<ChunkComponentRevisions, DefinitionError> {
-        completion_policy_component_revisions(&self.step, &self.revisions)
+        let mut revisions = completion_policy_component_revisions(&self.step, &self.revisions)?;
+        for (identity, revision) in &self.completion_policy_stream_revisions {
+            revisions = revisions.with_stream_revision(identity.clone(), revision.clone());
+        }
+        Ok(revisions)
     }
 
     /// Computes the [`StepComponents::Chunk`] value for a [`crate::FlowGraph`]
@@ -667,7 +819,7 @@ where
     /// See [`Self::revisions`].
     pub fn flow_step_components(&self) -> Result<StepComponents, DefinitionError> {
         Ok(StepComponents::Chunk {
-            size: self.size,
+            size: self.step.size(),
             revisions: Box::new(self.revisions()?),
         })
     }
@@ -679,7 +831,10 @@ where
     /// # Errors
     ///
     /// See [`Self::revisions`].
-    pub fn build(self) -> Result<ChunkPipelineParts<I, O, R, P, W>, DefinitionError> {
+    #[allow(clippy::type_complexity)]
+    pub fn build(
+        self,
+    ) -> Result<(ChunkStep<I, O, R, P, W>, ChunkComponentRevisions), DefinitionError> {
         let revisions = self.revisions()?;
         Ok((self.step, revisions))
     }
@@ -713,9 +868,12 @@ impl<I, O, R, P, W> fmt::Debug for ChunkPipelineBuilder<I, O, R, P, W> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ChunkPipelineBuilder")
-            .field("size", &self.size)
             .field("step", &self.step)
             .field("revisions", &self.revisions)
+            .field(
+                "completion_policy_stream_revisions",
+                &self.completion_policy_stream_revisions,
+            )
             .finish()
     }
 }

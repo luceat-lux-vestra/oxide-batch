@@ -49,7 +49,6 @@ oxide_batch::ChunkListenerFailure
 oxide_batch::ChunkListenerFailureKind
 oxide_batch::ChunkListenerPhase
 oxide_batch::ChunkPipelineBuilder
-oxide_batch::ChunkPipelineParts
 oxide_batch::ChunkProgress
 oxide_batch::ChunkRestartContract
 oxide_batch::ChunkSize

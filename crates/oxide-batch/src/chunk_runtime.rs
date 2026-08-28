@@ -256,6 +256,12 @@ where
         &self.name
     }
 
+    /// Returns the configured chunk size.
+    #[must_use]
+    pub const fn size(&self) -> ChunkSize {
+        self.size
+    }
+
     /// Executes this step deterministically on the caller's async runtime.
     ///
     /// The reader is stateful, so the definition is mutably borrowed for the

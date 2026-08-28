@@ -97,11 +97,14 @@ reimplemented.
   is a thin convenience returning the `StepComponents::Chunk` value a
   `FlowGraph` node needs from the same computation.
 - **`ChunkPipelineBuilder::build()`** returns `(ChunkStep<I, O, R, P, W>,
-  ChunkComponentRevisions)`, aliased as the public `ChunkPipelineParts` type
-  (introduced only because clippy's `type_complexity` lint requires it, not
-  as new domain vocabulary), ready for `ChunkJob::new` or
-  `FlowJob::with_chunk_step`. **`ChunkPipelineBuilder::build_chunk_job()`**
-  is a pure forward onto `Self::build` and `ChunkJob::new`.
+  ChunkComponentRevisions)` as a plain tuple (an initial draft introduced a
+  public `ChunkPipelineParts` alias for this return type solely to satisfy
+  clippy's `type_complexity` lint; an independent review correctly flagged
+  that as unmotivated new public vocabulary, so it was removed in favor of a
+  local `#[allow(clippy::type_complexity)]` on `build()` itself), ready for
+  `ChunkJob::new` or `FlowJob::with_chunk_step`.
+  **`ChunkPipelineBuilder::build_chunk_job()`** is a pure forward onto
+  `Self::build` and `ChunkJob::new`.
 - The `ChunkJob`-vs-`FlowJob` asymmetry is **preserved, not weakened**: a
   `FlowJob`-bound step still requires the caller to call
   `ChunkPipelineBuilder::revisions` (or `flow_step_components`) *before*
@@ -175,6 +178,138 @@ Holding a live `ChunkStep` and forwarding to it instead required exactly one
 small additive method (`ChunkStep::with_completion`) and reuses every other
 existing method unchanged.
 
+## Independent strict review findings and fixes
+
+Two independent strict review passes were run against the PR before merge:
+`/code-review --level xhigh` against PR #180, and a separate, manual
+strict-review pass. Both converged on the same core defect from different
+angles; the second pass additionally caught that the first fix was correct
+but incomplete, and raised an evidence-completeness gap. All findings below
+were fixed before merge except one explicitly deferred cleanup.
+
+### Round 1 (`/code-review --level xhigh`)
+
+- **Fixed (later found incomplete -- see Round 2) -- `AdaptiveCompletionPolicy`
+  was unusable through the builder.** `ChunkStep::with_completion_policy`
+  auto-registers a stream-registering policy's own `ItemStream` on the
+  *runtime* side, but `ChunkPipelineBuilder::with_completion_policy` had no
+  way to declare the matching *definition*-side revision, so installing
+  `AdaptiveCompletionPolicy` -- the one first-party policy whose
+  `stream_registrations()` is non-empty -- deterministically failed
+  `build`/`build_chunk_job` with `DefinitionError::RuntimeStreamNotDeclared`.
+  The existing integration test only exercised `ItemCountCompletionPolicy`,
+  whose `stream_registrations()` is the trait's empty default, so the gap
+  went unexercised. The first fix added
+  `ChunkPipelineBuilder::with_completion_policy_stream_revision(identity,
+  revision)`, letting a caller declare the policy's own stream revision.
+- **Fixed -- `pub mod chunk_builder` could let a future public item bypass
+  the facade's re-export gate.** Unlike `item_components` (a catalog module
+  whose contents are deliberately browsed via its own namespace),
+  `chunk_builder`'s intent was a narrow, root-gated surface. Making the
+  module itself `pub` meant a later contributor adding any other `pub` item
+  inside it would silently become public API without passing through
+  `lib.rs`'s explicit `pub use` gate the rest of the crate relies on. Fixed
+  by moving the module's extensive design-rationale prose onto
+  `ChunkPipelineBuilder`'s own doc comment (rustdoc inlines a private
+  module's re-exported item docs at the re-export site, so nothing is lost)
+  and reverting `chunk_builder` to a private module.
+- **Fixed -- a redundant `size: ChunkSize` field.** The builder kept its own
+  copy of the chunk size only because `ChunkStep` exposed no accessor,
+  creating a second source of truth that a future size-mutating builder
+  method could silently desync. Fixed by adding `ChunkStep::size()` (a small
+  additive accessor mirroring the existing `ChunkStep::name()`) and removing
+  the duplicate field.
+- **Documented, not changed -- repeated `CompletionPolicy::fingerprint()`
+  calls.** `revisions()`, `flow_step_components()`, and `build()` each
+  recompute a live policy's fingerprint fresh rather than caching one value.
+  This relies on the same purity contract `completion_policy_revision`'s
+  documentation already requires of every `CompletionPolicy` implementor,
+  and mirrors `FlowJob::with_chunk_step`'s own pre-existing declare-then-
+  validate pattern (one call at graph-compile time, an independent second
+  call at bind time) -- not a new assumption this builder introduces. Now
+  stated explicitly in `revisions()`'s rustdoc rather than left implicit.
+- **Deferred -- consolidating existing hand-rolled no-op `ChunkCompletion`
+  fixtures onto `NoopChunkCompletion`.** `oxide-batch-test`,
+  `tests/support/chunk_fixture.rs`, and `item_components/object_store.rs`'s
+  test module each already hand-roll a structurally identical no-op
+  `ChunkCompletion` predating this issue. Consolidating them is a genuine,
+  low-risk cleanup opportunity, but touches files outside #152's diff scope
+  (issue #152 section 16 excludes unrelated cleanup); left as a follow-up
+  rather than folded in here.
+
+### Round 2 (manual strict review against the Round 1 HEAD)
+
+- **Fixed -- Round 1's fix mutated `ChunkComponentRevisions` directly with no
+  way to remove a declaration on policy replacement.** Calling
+  `with_completion_policy_stream_revision` wrote straight into the builder's
+  `revisions` field. Replacing an installed policy (`with_completion_policy`
+  called again with a different policy) correctly removes the *previous*
+  policy's runtime stream registration on the `ChunkStep` side (via
+  `StreamOwner::Policy` tagging, from #151's corrective pass) but the
+  builder had no matching removal for the stale *declaration* on the
+  `ChunkComponentRevisions` side, since that type exposes no removal method.
+  A second, different policy installed afterward would then leave the first
+  policy's now-orphaned declaration in `revisions`, which
+  `validate_stream_registrations` would reject with
+  `DefinitionError::DeclaredStreamMissingRuntime` (a declared revision with
+  no matching runtime registration) -- unless the caller happened to
+  re-declare the exact same identity, which is not guaranteed and not
+  checked. The review additionally noted this generalizes: a
+  `CompletionPolicy` nested inside a `CompositeCompletionPolicy`, or any
+  custom stateful policy, hits the identical gap, since the original fix's
+  reasoning (and bug) was not specific to `AdaptiveCompletionPolicy`.
+  **Fix:** policy-owned stream revisions now live in their own builder field
+  (`completion_policy_stream_revisions: BTreeMap<ComponentStreamIdentity,
+  ComponentRevision>`), separate from the manually-declared streams in
+  `revisions`. `with_completion_policy`/`with_adaptive_completion_policy`
+  clear this map on every call -- mirroring `ChunkStep::with_completion_policy`'s
+  own replacement semantics exactly -- and `revisions()` folds the current
+  map's entries into a fresh `ChunkComponentRevisions` on every call, so a
+  stale entry can never persist past a policy replacement, and a manually
+  declared stream revision (via `with_stream`) is never touched by one. This
+  requires no removal method on `ChunkComponentRevisions` at all. Covered by
+  three new tests:
+  `completion_policy_replacement_discards_the_previous_policys_stream_revision`
+  (the exact reported scenario), `adaptive_completion_policy_nested_in_a_composite_builds`
+  (the composite generalization), and
+  `flow_job_binds_an_adaptive_completion_policy_declared_through_the_builder`
+  (the `FlowJob` path with a stateful policy, which Round 1's tests did not
+  cover).
+- **Fixed -- the evidence-completeness gap the review named directly.** Issue
+  #152 section 8 requires exercising the configuration surface against
+  "JSON/JSONL; PostgreSQL; multi-resource" alongside completion policies and
+  CSV/delimited; Round 1's suite covered only delimited/CSV among the
+  stateful-component catalog. Added
+  `json_array_reader_registers_consistently_through_with_stream` (a second
+  real stateful reader through `with_stream`, confirming the tuple-opener
+  pattern is not delimited-specific) and
+  `multi_resource_object_store_reader_registers_consistently_through_with_stream`
+  (a real, first-party, non-test production multi-resource backend --
+  `InMemoryObjectStore` / `ObjectStoreReaderOpener`, the object-store
+  catalog's own executable contract fixture -- assembled through the
+  builder, covering the multi-resource requirement without a live
+  `PostgreSQL` connection). `PostgreSQL` itself remains untested through the
+  builder in this diff: `postgres_cursor_reader` and the PostgreSQL
+  multi-resource variant share the identical `(component, stream, contract)`
+  tuple-opener shape and the identical `MultiResourceReaderOpener` trait
+  already exercised above, so the construction *pattern* is proven, but a
+  live-database construction test is a materially larger testing
+  investment (feature-gating, a running instance) more naturally owned by
+  `oxide-batch-test`'s dedicated postgres-gated suite than by this issue's
+  diff; left as an explicit, reasoned scope boundary rather than a silent
+  omission.
+- **Fixed -- a public `ChunkPipelineParts` type alias existed only to satisfy
+  a clippy lint.** Round 1 introduced `pub type ChunkPipelineParts<I, O, R, P,
+  W> = (ChunkStep<...>, ChunkComponentRevisions)` for `build()`'s return
+  type solely because clippy's `type_complexity` lint flagged the bare
+  tuple. The review correctly identified this as unmotivated new public
+  vocabulary -- a lint workaround is not a domain concept. Removed; `build()`
+  now returns the plain tuple directly, with a local
+  `#[allow(clippy::type_complexity)]` on the method instead. The facade
+  surface, `facade_surface.rs`'s snapshot, and `facade_review.rs`'s
+  `REVIEWED_SURFACE` count (`chunk_builder` group: 3 → 2) were updated to
+  match.
+
 ## Tests
 
 Doctests (`crates/oxide-batch/src/chunk_builder.rs`, run via
@@ -190,7 +325,10 @@ Doctests (`crates/oxide-batch/src/chunk_builder.rs`, run via
   by hand for the same policy instance -- the restart fingerprint is not
   hidden by the convenience;
 - `with_stream`, asserting `revisions().stream_revisions()` contains exactly
-  the one registered identity/revision pair.
+  the one registered identity/revision pair;
+- `with_completion_policy_stream_revision`, installing a real
+  `AdaptiveCompletionPolicy` and declaring its stream revision, through
+  `build_chunk_job`.
 
 Integration tests (`crates/oxide-batch/tests/chunk_builder.rs`, `cargo test
 -p oxide-batch --test chunk_builder`):
@@ -220,7 +358,34 @@ Integration tests (`crates/oxide-batch/tests/chunk_builder.rs`, `cargo test
   `build_chunk_job` with `DefinitionError::DeliveryModeMismatch`;
 - `duplicate_stream_identity_is_rejected` -- two `with_stream` calls
   reusing one `ComponentStreamIdentity` still fail with
-  `DefinitionError::DuplicateRuntimeStream`.
+  `DefinitionError::DuplicateRuntimeStream`;
+- `adaptive_completion_policy_without_a_declared_stream_revision_is_rejected`
+  / `_with_a_declared_stream_revision_builds` -- the strict-review fix above,
+  as a negative/positive pair: installing `AdaptiveCompletionPolicy` without
+  declaring its stream revision fails
+  `DefinitionError::RuntimeStreamNotDeclared`; declaring it through
+  `with_completion_policy_stream_revision` builds successfully;
+- `completion_policy_replacement_discards_the_previous_policys_stream_revision`
+  -- Round 2's fix: installing policy A, declaring its stream revision,
+  replacing it with policy B, and declaring B's revision builds
+  successfully with `revisions().stream_revisions()` containing *only* B's
+  entry -- proving A's declaration does not survive the replacement (it
+  would otherwise fail `DeclaredStreamMissingRuntime`);
+- `adaptive_completion_policy_nested_in_a_composite_builds` -- an
+  `AdaptiveCompletionPolicy` nested inside a `CompositeCompletionPolicy`
+  still registers and declares correctly, proving the fix is not
+  `AdaptiveCompletionPolicy`-specific;
+- `flow_job_binds_an_adaptive_completion_policy_declared_through_the_builder`
+  -- the stateful-policy analogue of the stateless `flow_job_binds_a_completion_policy...`
+  test above, through `flow_step_components` and `FlowJob::with_chunk_step`;
+- `json_array_reader_registers_consistently_through_with_stream` -- a second
+  real stateful reader (`item_components::json_array_reader`) through
+  `with_stream`, covering the JSON/JSONL catalog;
+- `multi_resource_object_store_reader_registers_consistently_through_with_stream`
+  -- a real, first-party, non-test production multi-resource backend
+  (`InMemoryObjectStore`/`ObjectStoreReaderOpener`) through `with_stream`,
+  covering the multi-resource catalog without a live `PostgreSQL`
+  connection.
 
 No new compile-fail/UI-test fixture was added: `ChunkPipelineBuilder`
 introduces no new generic bound shape beyond what `ChunkStep`'s existing
@@ -229,17 +394,27 @@ require, and those are already covered by the ADR-0008 compile-fail suite.
 
 ## Facade and evidence-gate updates
 
-- `crates/oxide-batch/src/lib.rs` re-exports `ChunkPipelineBuilder`,
-  `ChunkPipelineParts`, and `NoopChunkCompletion` at the facade root (mirroring
-  `ChunkStep`/`ChunkJob`), and additionally exposes `pub mod chunk_builder`
-  (mirroring `item_components`) so the module's own rustdoc renders.
+- `crates/oxide-batch/src/lib.rs` re-exports `ChunkPipelineBuilder` and
+  `NoopChunkCompletion` at the facade root (mirroring `ChunkStep`/`ChunkJob`).
+  `chunk_builder` itself is a private module (`mod chunk_builder;`, not
+  `pub mod`): its extensive design-rationale prose lives directly on
+  `ChunkPipelineBuilder`'s own doc comment, which rustdoc inlines at the
+  facade re-export regardless of the module's own visibility, so nothing is
+  lost by keeping the module private -- and keeping it private means a
+  future contributor cannot add another public item to the file that
+  bypasses `lib.rs`'s explicit re-export gate the rest of the crate relies
+  on (an independent review's finding; see above). This deliberately departs
+  from `item_components`'s `pub mod` precedent, because that module's intent
+  differs: `item_components` is a browsable catalog whose contents are meant
+  to be public via the module namespace itself, while `chunk_builder`'s
+  intent was always a narrow, root-gated surface.
 - `crates/oxide-batch/tests/facade_surface.rs`'s `resolves` module and its
   committed `crates/oxide-batch/tests/fixtures/facade/public-api.txt`
   snapshot were updated (`OXIDEBATCH_UPDATE_FACADE_SNAPSHOT=1`) to include
-  the three new public paths -- a deliberate, reviewed addition, not a
+  the two new public paths -- a deliberate, reviewed addition, not a
   rewrite to pass a stage.
 - `crates/oxide-batch/tests/facade_review.rs`'s `REVIEWED_SURFACE` gained a
-  `("chunk_builder", 3)` row, following the same precedent #144/#146/#150/#151
+  `("chunk_builder", 2)` row, following the same precedent #144/#146/#150/#151
   each used to extend the M5 preview-surface count (`git log -p` on this file
   shows each prior M6 issue bumping this array directly; the frozen M5 prose
   record it points readers toward,
