@@ -236,6 +236,20 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
+//! [`ChunkPipelineBuilder`] (#152) assembles a [`ChunkStep`] and its matching
+//! [`ChunkComponentRevisions`] from one builder, so a stateful component's
+//! [`ComponentStreamIdentity`] is typed once instead of separately into both
+//! [`ChunkStep::with_item_stream`] and
+//! [`ChunkComponentRevisions::with_stream_revision`], and an installed
+//! [`CompletionPolicy`]'s restart-relevant revision is derived automatically
+//! rather than hand-folded. It lowers to exactly the same [`ChunkStep`],
+//! [`ChunkJob`], and [`FlowJob`] types every other construction path uses --
+//! typed and [`BoxedReader`]/[`BoxedProcessor`]/[`BoxedWriter`] pipelines
+//! share the identical builder with no special-casing, since both are the
+//! same ADR-0008 chunk driver with different type arguments. See the
+//! [`chunk_builder`] module documentation for the typed-vs-boxed guidance and
+//! runnable examples.
+//!
 //! [`item_components`] is the standard composition catalog (#146): basic
 //! iterator/list-backed readers, composite/delegating readers, processors,
 //! and writers, classifier-selected delegates, a validator and a filter
@@ -392,6 +406,7 @@
 #![forbid(unsafe_code)]
 
 mod chunk;
+pub mod chunk_builder;
 mod chunk_runtime;
 mod completion;
 mod diagnostics;
@@ -417,6 +432,7 @@ pub use chunk::{
     ItemReader, ItemWriter, ProcessContext, ProcessOutcome, ProcessorError, ReadContext,
     ReadOutcome, ReaderError, WriteContext, WriteOutcome, WriterError,
 };
+pub use chunk_builder::{ChunkPipelineBuilder, ChunkPipelineParts, NoopChunkCompletion};
 pub use chunk_runtime::{
     ChunkAttemptOutcome, ChunkExecutionOutcome, ChunkExecutionReport, ChunkFailure, ChunkJob,
     ChunkLaunchReport, ChunkListener, ChunkListenerContext, ChunkListenerError,

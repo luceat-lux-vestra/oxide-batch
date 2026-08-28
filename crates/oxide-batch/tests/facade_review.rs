@@ -66,6 +66,7 @@ enum Withheld {
 /// without revisiting the review fails here, which is the point.
 const REVIEWED_SURFACE: &[(&str, usize)] = &[
     ("chunk", 32),
+    ("chunk_builder", 3),
     ("chunk_runtime", 14),
     ("completion", 11),
     ("diagnostics", 9),

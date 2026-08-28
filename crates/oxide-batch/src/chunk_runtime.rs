@@ -114,6 +114,21 @@ where
         }
     }
 
+    /// Replaces the post-commit completion observer installed by [`Self::new`].
+    ///
+    /// Additive parity with the other post-construction `with_*` methods:
+    /// [`Self::new`] requires a [`ChunkCompletion`] up front because it is a
+    /// required construction port, not because every caller has an opinion
+    /// about it. [`crate::ChunkPipelineBuilder`] installs a no-op default and
+    /// uses this method to let a caller override it without hand-rolling a
+    /// [`ChunkCompletion`] implementation for the common case that does not
+    /// need one.
+    #[must_use]
+    pub fn with_completion(mut self, completion: Arc<dyn ChunkCompletion>) -> Self {
+        self.completion = completion;
+        self
+    }
+
     /// Installs an additional early-completion policy.
     ///
     /// The configured [`ChunkSize`] passed to [`Self::new`] always remains
@@ -386,7 +401,7 @@ pub fn completion_policy_revision(
 /// panics, and [`DefinitionError`] if the computed digest somehow failed
 /// [`ComponentRevision`]'s token validation, which cannot happen for a fixed
 /// hex-digest shape.
-fn completion_policy_component_revisions<I, O, R, P, W>(
+pub(crate) fn completion_policy_component_revisions<I, O, R, P, W>(
     step: &ChunkStep<I, O, R, P, W>,
     components: &ChunkComponentRevisions,
 ) -> Result<ChunkComponentRevisions, DefinitionError> {
