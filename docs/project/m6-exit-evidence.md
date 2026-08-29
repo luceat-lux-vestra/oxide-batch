@@ -217,6 +217,8 @@ The PR `pull_request` workflows passed at candidate HEAD. Their merge-ref
 reports are the retained artifacts because the repository-local evidence
 verifier must evaluate the same merge-ref tree in the PR Evidence job after
 the base branch advanced.
+The final documentation-only retention commits changed no declared campaign
+semantic-closure path.
 
 ## P0/P1 review and limitations
 
