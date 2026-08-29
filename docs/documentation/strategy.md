@@ -39,6 +39,8 @@ chat, prompt, issue, pull-request description, or report.
 | Performance/capacity evidence | [Performance plan](../engineering/performance-plan.md) |
 | M6 first-party item-component reference | [Component reference](../guides/component-reference.md) |
 | M6 restart/state guide for component authors and operators | [Restart and state guide](../guides/restart-and-state.md) |
+| M6 custom-component extension contracts | [Extension guide](../guides/extension-guide.md) |
+| M6 `oxide-batch-test` usage | [Test-kit tutorial](../guides/test-kit-tutorial.md) |
 | Engineering design philosophy and general Rust implementation bar | [Engineering standards](../engineering/standards.md) |
 | Release and support behavior | [Release/support policy](../release/support-policy.md) |
 
