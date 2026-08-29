@@ -9,9 +9,11 @@ independent strict review passes on the final PR HEAD and the PR merges.
 
 - Starting canonical `main`: `e740790c9fd55b9f1f8095d30ee8897b3254c4c0`.
 - Candidate branch: `m6/153-exit-gate`.
-- Campaign producer branch HEAD: `93bb16c60f4d85c2208f51e8600371e058bf4b7a`;
-  the exact final PR HEAD is reported by PR #187 and each retained provenance
-  entry records the producer branch head separately.
+- Campaign producer branch HEAD: `cf65947eff30f634763136d15fdcea0df2bd5767`;
+  the retained reports execute merge ref
+  `98ccb88693262bbb24ba87a33349588e83b14292`. The exact final PR HEAD remains
+  the GitHub PR reference and must be rechecked after any retention commit;
+  each retained provenance entry records the producer branch head separately.
 - PR: #187, `M6: complete conformance, performance evidence, docs, and exit gate (#153)`.
 - #152 is `CLOSED (COMPLETED)` and PR #180 is `MERGED` at the starting
   canonical SHA. #153 and #140 remain `OPEN`.
@@ -47,9 +49,9 @@ ledger reconciliation, and exit record.
 Frozen protocol: `docs/project/m6-design-gate-evidence.md#gate-b--transactionrestart-equivalence-protocol`.
 The retained reports are `docs/engineering/campaigns/m6/gate-b-campaign-postgres-15.json`
 and `gate-b-campaign-postgres-18.json`, produced by the successful workflow run
-[33255995062](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33255995062)
-triggered by the exact candidate branch HEAD. Both PostgreSQL jobs passed with
-nine targets and zero violations.
+[33263122857](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33263122857)
+triggered by the recorded candidate branch HEAD. Both PostgreSQL jobs passed
+with nine targets and zero violations.
 
 | Scenario | PostgreSQL 15 | PostgreSQL 18 |
 |---|---:|---:|
@@ -76,7 +78,7 @@ The workload is the shipped `DelimitedReader`/`DelimitedWriter` around
 and release compiler profile for typed and `BoxedReader`/`BoxedProcessor`/
 `BoxedWriter`. Retained report:
 `docs/engineering/campaigns/m6/gate-h-campaign.json`, from workflow run
-[33255995079](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33255995079).
+[33263122819](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33263122819).
 
 Hard gates:
 
@@ -95,11 +97,11 @@ Raw disclosure values from the retained Linux `x86_64` release campaign:
 | allocator calls/item | 24.00141414141414 | 28.00141414141414 |
 | allocator calls/chunk | 475228 | 554428 |
 | allocated bytes, delta | 10301044 | 11409844 |
-| latency samples, ns | 67447589, 67641698, 68049653, 68278330, 68372555 | 67834561, 67874266, 68003697, 68458887, 68617563 |
-| min / mean / max latency, ns | 67447589 / 67957965 / 68372555 | 67834561 / 68157794 / 68617563 |
-| derived throughput, items/s | 735748.9295037014 | 733591.8178337757 |
-| release reference binary bytes | 1727984 | 1744440 |
-| release reference compile seconds | 23.426448253 | 2.972996066 |
+| latency samples, ns | 66131859, 201461846, 65671345, 66619066, 120843021 | 68098785, 69597966, 68833337, 67686219, 123467769 |
+| min / mean / max latency, ns | 65671345 / 104145427 / 201461846 | 67686219 / 79536815 / 123467769 |
+| derived throughput, items/s | 480097.89234432735 | 628639.706027957 |
+| release reference binary bytes | 1728000 | 1744392 |
+| release reference compile seconds | 23.177247687 | 3.102704736 |
 
 Copied bytes and internal buffer reuse are recorded as `null` with an explicit
 “not measurable/not exposed at this component boundary” note. Future boxing
@@ -122,7 +124,7 @@ violations. Reports:
 
 - `docs/engineering/campaigns/m6/m6-conformance-campaign-postgres-15.json`;
 - `docs/engineering/campaigns/m6/m6-conformance-campaign-postgres-18.json`;
-- workflow run [33255995119](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33255995119).
+- workflow run [33263122809](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33263122809).
 
 The catalog and normalized dispositions are in
 `docs/engineering/campaigns/m6/component-conformance-matrix.md`. It covers
@@ -190,28 +192,28 @@ recorded in:
 - `docs/engineering/campaigns/m5/evidence-provenance.json`;
 - `docs/engineering/campaigns/m6/evidence-provenance.json`.
 
-The M6 artifact set is retained by Gate B run 33255995062, Gate H run
-33255995079, and full conformance run 33255995119. The M5 candidate-triggered
-campaigns are runs 33255994988 (cancellation), 33255995027 (conformance),
-33255994992 (crash/restore), 33255995029 (performance), 33255995010
-(resource bounds), 33255995009 (security), 33255995117 (soak), and
-33255995016 (upgrade); the exact reports and provenance are retained from
+The M6 artifact set is retained by Gate B run 33263122857, Gate H run
+33263122819, and full conformance run 33263122809. The M5 candidate-triggered
+campaigns are runs 33263122825 (cancellation), 33263122798 (conformance),
+33263122817 (crash/restore), 33263122812 (performance), 33263122836
+(resource bounds), 33263122816 (security), 33263122794 (soak), and
+33263122814 (upgrade); the exact reports and provenance are retained from
 these successful runs. Branch-ref campaign runs were also executed to check
 checkout behavior, but are not substituted for these retained merge-ref
 artifacts. All completed successfully with PostgreSQL 15/18 where applicable.
 The provenance verifier checks both milestone directories.
 
 The retained M6 artifact identities are: Gate B PostgreSQL 15 artifact
-9715835955 with digest
-`sha256:829d654a18c063e55f1614e7b6abf6c3311e266b0c7ac4dc760ad181012f7d85`,
-Gate B PostgreSQL 18 artifact 9715835661 with digest
-`sha256:ecea51ca6d73238915bea2cb79c1333f7e4a851428f934ca188165c4cf7136a5`,
-Gate H artifact 9715843393 with digest
-`sha256:e4626d300e7e21b6ee808ef730b54742f2e154a3be85cf15affbad14b8b8b555`,
-and full-conformance PostgreSQL 15/18 artifacts 9715861503 and 9715855662
+9717851433 with digest
+`sha256:ff83f32f5d6d9f6330bf604dd27e679adae3711ea3a91780bcfec20fac917a2e`,
+Gate B PostgreSQL 18 artifact 9717850271 with digest
+`sha256:86a0de40460a2a58226588e74a1f08891bb8fb281c5374041457b08c00693979`,
+Gate H artifact 9717858251 with digest
+`sha256:35dd71ff563fba074194a79f7c78f489fcbbfbb8cc0fdac572c2b6e136021cf7`,
+and full-conformance PostgreSQL 15/18 artifacts 9717872761 and 9717872755
 with digests
-`sha256:a5ba16d6d34e0b5f6581ad3fe3c6a01313026510a15c172570d04f45ec3da311`
-and `sha256:82fe0fbfa03fe8f48fe3c4334962b3740202387789a452c5fb4ab1ccbf028ba7`.
+`sha256:4325d0a0cbcf7c8f9fd751eb9b3f55cc9a581322ad88a63b4e0a97fb20f2a478`
+and `sha256:e2cf4d74093bea5e6dda1c685a82e57c77f24780bb9a7dbb8d3f333e7515d523`.
 
 The PR `pull_request` workflows passed at candidate HEAD. Their merge-ref
 reports are the retained artifacts because the repository-local evidence
@@ -223,12 +225,14 @@ semantic-closure path.
 ## P0/P1 review and limitations
 
 Live GitHub issue review found no open `priority:p0`. Open `priority:p1`
-includes #188, #189, #153, and #140. #188 is the explicit adaptive
-completion-policy CI evidence gap; its required PostgreSQL 15/18 fixture is
-included in the fixed 45-target M6 conformance denominator and passes in both
-retained reports, but the issue remains open until this PR is independently
-reviewed and merged. #189 is a separate M7–M14 ledger audit and is outside
-the M6 exit scope. No correctness P0/P1 blocks the candidate evidence.
+includes #188, #189, #153, and #140. The #188 completion-policy CI criterion
+is satisfied by the explicitly named
+`postgres_completion_policy_restart` target in the M6 conformance campaign;
+it ran once and passed on both PostgreSQL 15 and 18 with zero ignored tests.
+The issue remains open for independent review and merge/closure, so it is a
+tracked closure dependency rather than an unaddressed evidence gap. #189 is a
+separate M7–M14 ledger audit and is outside the M6 exit scope. No correctness
+P0/P1 remains unaddressed in the candidate evidence.
 
 Known non-blocking follow-ups are the release-backed promotion of reviewed
 ledger rows, the closure of #188 after merge, and the future M7–M14 ledger
@@ -237,16 +241,15 @@ was invented by this campaign.
 
 ## Final M6 exit disposition
 
-The candidate evidence is complete from branch HEAD
-`93bb16c60f4d85c2208f51e8600371e058bf4b7a`: Gate B 8/8 on PostgreSQL 15/18,
+The candidate evidence is complete from producer branch HEAD
+`cf65947eff30f634763136d15fdcea0df2bd5767`: Gate B 8/8 on PostgreSQL 15/18,
 Gate H hard invariants and disclosure metrics, full 45-target component
 conformance on PostgreSQL 15/18, M5 re-retention, documentation, and ledger
-reconciliation are complete. `cargo xtask evidence` is required to pass on
-the PR merge-ref after this retention commit; the branch-local run remains
-expected to reject merge-ref reports while `origin/main` is one dependency
-commit ahead, because its semantic object identity differs at `Cargo.lock`.
-The PR Evidence workflow is the authoritative final check of that merge-ref
-state.
+reconciliation are complete. The latest retained reports use merge ref
+`98ccb88693262bbb24ba87a33349588e83b14292`, and `cargo xtask evidence` passes
+locally across all 21 retained reports. The PR Evidence workflow remains the
+authoritative check of the merge-ref state; any commit added after the
+producer head requires strict review against the new exact PR HEAD.
 
 **Final disposition: READY FOR STRICT REVIEW — DO NOT MERGE.** #140 closes
 only after this PR passes independent strict review and merges.

@@ -105,6 +105,7 @@ decisions own the normative detail.
 - [M5 exit evidence](project/m5-exit-evidence.md)
 - [M6 complete item processing and user test kit kickoff gate](project/m6-kickoff-gate.md)
 - [M6 #151 completion-policy and listener-taxonomy evidence](project/m6-151-completion-and-listener-evidence.md)
+- [M6 exit evidence](project/m6-exit-evidence.md)
 - [Historical M0 decision register](product/open-decisions.md)
 
 Historical gates are preserved as records of their date. Later decisions link
