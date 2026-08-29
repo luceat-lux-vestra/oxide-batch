@@ -7,6 +7,7 @@ mod deps;
 mod evidence;
 mod gate_b;
 mod gate_h;
+mod m6_conformance;
 mod performance;
 mod reconciliation;
 mod release_crates;
@@ -137,6 +138,7 @@ fn main() -> ExitCode {
         Some("evidence") => run_evidence_check(),
         Some("gate-b") => run_gate_b_campaign(),
         Some("gate-h") => run_gate_h_campaign(),
+        Some("m6-conformance") => run_m6_conformance_campaign(),
         Some("package") => run_all(PACKAGE),
         Some("performance") => run_performance_campaign(),
         Some("reconciliation") => run_reconciliation_check(),
@@ -367,6 +369,33 @@ fn run_gate_h_campaign() -> bool {
         }
         Err(error) => {
             eprintln!("could not run the Gate H campaign: {error}");
+            false
+        }
+    }
+}
+
+/// Reports whether the complete shipped M6 component denominator passed on the
+/// selected `PostgreSQL` matrix point.
+fn run_m6_conformance_campaign() -> bool {
+    eprintln!("==> M6 full component conformance campaign");
+
+    match m6_conformance::run() {
+        Ok(campaign) => {
+            eprintln!("campaign report: {}", campaign.report.display());
+            if campaign.violations.is_empty() {
+                eprintln!("every selected M6 component target ran without ignored tests");
+                return true;
+            }
+            for violation in &campaign.violations {
+                eprintln!("campaign gap: {violation}");
+            }
+            eprintln!(
+                "see the campaign semantics in tests/fixtures/m6-conformance/campaign-semantics.json"
+            );
+            false
+        }
+        Err(error) => {
+            eprintln!("could not run the M6 conformance campaign: {error}");
             false
         }
     }
@@ -674,6 +703,7 @@ fn usage() {
            evidence         verify retained campaign evidence against its provenance\n\
            gate-b           run the Gate B typed-vs-Boxed transaction/restart equivalence campaign\n\
            gate-h           run the Gate H P-002 real-component performance campaign\n\
+           m6-conformance   run the full shipped-component M6 conformance campaign\n\
            package          inspect and dry-run every publishable crate\n\
            performance      run P-001, P-003, and P-010 in release profile against PostgreSQL\n\
            reconciliation   verify the #102 reconciliation document against the repository\n\

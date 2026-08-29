@@ -72,7 +72,8 @@ use oxide_batch::{
     BoxedProcessor, BoxedReader, BoxedWriter, ChunkExecutionOutcome, ChunkExecutionReport,
     ChunkSize, ChunkStep, ComponentStreamIdentity, StepName, StopSource,
 };
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
+use serde_json::{Value, json};
+use stats_alloc::{INSTRUMENTED_SYSTEM, Region, Stats, StatsAlloc};
 
 #[global_allocator]
 static ALLOCATOR: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
@@ -99,15 +100,40 @@ fn write_csv_fixture(path: &std::path::Path, rows: u32) {
     file.sync_all().expect("flush fixture file");
 }
 
-fn allocator_calls(region: &Region<'_, System>) -> u64 {
-    let change = region.change();
-    let total = change.allocations + change.deallocations + change.reallocations;
+fn allocator_calls(stats: Stats) -> u64 {
+    let total = stats.allocations + stats.deallocations + stats.reallocations;
     u64::try_from(total).unwrap_or(u64::MAX)
+}
+
+fn stats_json(stats: Stats) -> Value {
+    json!({
+        "allocations": stats.allocations,
+        "deallocations": stats.deallocations,
+        "reallocations": stats.reallocations,
+        "bytes_allocated": stats.bytes_allocated,
+        "bytes_deallocated": stats.bytes_deallocated,
+        "bytes_reallocated": stats.bytes_reallocated,
+        "allocator_calls": allocator_calls(stats),
+    })
+}
+
+fn retain_observation(observation: &Value) {
+    let Ok(path) = std::env::var("OXIDEBATCH_GATE_H_OBSERVATION") else {
+        return;
+    };
+    std::fs::write(
+        path,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&observation).expect("observation is serializable")
+        ),
+    )
+    .expect("write Gate H observation");
 }
 
 /// Runs `items` CSV records through the monomorphized, typed `ChunkStep`
 /// path in one chunk and returns the allocator-call count.
-async fn run_typed(items: u32) -> u64 {
+async fn run_typed(items: u32) -> Stats {
     let input = temp_path("typed-in");
     let output = temp_path("typed-out");
     write_csv_fixture(&input, items);
@@ -138,17 +164,17 @@ async fn run_typed(items: u32) -> u64 {
     let (_source, stop) = StopSource::new();
     let region = Region::new(ALLOCATOR);
     let report: ChunkExecutionReport = step.execute(&correlation(), &stop).await;
-    let calls = allocator_calls(&region);
+    let stats = region.change();
     assert_eq!(report.outcome(), ChunkExecutionOutcome::Completed);
 
     let _ = std::fs::remove_file(&input);
     let _ = std::fs::remove_file(&output);
-    calls
+    stats
 }
 
 /// Runs the same reference pipeline through the explicit `Boxed*` erasure
 /// boundary and returns the allocator-call count.
-async fn run_erased(items: u32) -> u64 {
+async fn run_erased(items: u32) -> Stats {
     let input = temp_path("erased-in");
     let output = temp_path("erased-out");
     write_csv_fixture(&input, items);
@@ -179,12 +205,12 @@ async fn run_erased(items: u32) -> u64 {
     let (_source, stop) = StopSource::new();
     let region = Region::new(ALLOCATOR);
     let report: ChunkExecutionReport = step.execute(&correlation(), &stop).await;
-    let calls = allocator_calls(&region);
+    let stats = region.change();
     assert_eq!(report.outcome(), ChunkExecutionOutcome::Completed);
 
     let _ = std::fs::remove_file(&input);
     let _ = std::fs::remove_file(&output);
-    calls
+    stats
 }
 
 /// Gate H's required-metrics disclosure for the real-component reference
@@ -202,13 +228,15 @@ async fn typed_csv_pipeline_allocates_no_more_per_item_than_erased() {
     let erased_small = run_erased(SMALL).await;
     let erased_large = run_erased(LARGE).await;
 
-    let typed_delta = typed_large.saturating_sub(typed_small);
-    let erased_delta = erased_large.saturating_sub(erased_small);
+    let typed_delta = typed_large - typed_small;
+    let erased_delta = erased_large - erased_small;
+    let typed_calls_delta = allocator_calls(typed_delta);
+    let erased_calls_delta = allocator_calls(erased_delta);
     // u64 division truncates; reported to a few decimal places for
     // readability, not used in the assertion below (which compares the raw
     // deltas directly to avoid any rounding).
-    let typed_per_item = typed_delta as f64 / delta_items as f64;
-    let erased_per_item = erased_delta as f64 / delta_items as f64;
+    let typed_per_item = typed_calls_delta as f64 / delta_items as f64;
+    let erased_per_item = erased_calls_delta as f64 / delta_items as f64;
 
     // stderr, not stdout: the campaign runner (xtask/src/suite.rs) parses
     // only stdout to correlate each libtest "test <name> ... " prefix with
@@ -221,23 +249,70 @@ async fn typed_csv_pipeline_allocates_no_more_per_item_than_erased() {
     eprintln!(
         "gate-h allocation disclosure (real component: DelimitedReader/DelimitedWriter CSV \
          parsing/formatting + IdentityProcessor): \
-         typed small={typed_small} large={typed_large} delta={typed_delta} \
+         typed small={} large={} delta={} \
          ({typed_per_item:.3} allocator calls/item) | \
-         erased small={erased_small} large={erased_large} delta={erased_delta} \
+         erased small={} large={} delta={} \
          ({erased_per_item:.3} allocator calls/item) | \
-         items_delta={delta_items}"
+         items_delta={delta_items}",
+        allocator_calls(typed_small),
+        allocator_calls(typed_large),
+        typed_calls_delta,
+        allocator_calls(erased_small),
+        allocator_calls(erased_large),
+        erased_calls_delta,
     );
 
+    retain_observation(&json!({
+        "workload": {
+            "component": "DelimitedReader/DelimitedWriter",
+            "processor": "IdentityProcessor",
+            "items_small": SMALL,
+            "items_large": LARGE,
+            "items_delta": delta_items,
+            "chunk_size": LARGE,
+            "transaction_semantics": "NoopTransactions",
+        },
+        "typed": {
+            "small": stats_json(typed_small),
+            "large": stats_json(typed_large),
+            "delta": stats_json(typed_delta),
+            "allocator_calls_per_item": typed_per_item,
+            "allocator_calls_per_chunk": typed_calls_delta,
+        },
+        "boxed": {
+            "small": stats_json(erased_small),
+            "large": stats_json(erased_large),
+            "delta": stats_json(erased_delta),
+            "allocator_calls_per_item": erased_per_item,
+            "allocator_calls_per_chunk": erased_calls_delta,
+        },
+        "copied_bytes": {
+            "value": null,
+            "note": "Not measurable at this component boundary."
+        },
+        "buffer_reuse": {
+            "value": null,
+            "note": "Delimited component internal buffer reuse is not exposed as a counter."
+        },
+        "framework_controlled": {
+            "typed_per_item_future_allocations": 0,
+            "typed_dynamic_dispatch_per_item": 0,
+            "typed_future_boxing": 0,
+            "proof": "gate_h_dispatch target"
+        },
+        "correctness": "completed",
+    }));
+
     assert!(
-        erased_delta >= delta_items,
+        erased_calls_delta >= delta_items,
         "erased path allocator-call count did not scale with item count \
-         (erased_delta={erased_delta}, items_delta={delta_items}): the measurement would not \
+         (erased_delta={erased_calls_delta}, items_delta={delta_items}): the measurement would not \
          have caught a regression"
     );
     assert!(
-        typed_delta <= erased_delta,
+        typed_calls_delta <= erased_calls_delta,
         "typed real-component pipeline allocated more per item than the same component erased \
-         (typed_delta={typed_delta}, erased_delta={erased_delta}): since both paths run the \
+         (typed_delta={typed_calls_delta}, erased_delta={erased_calls_delta}): since both paths run the \
          identical component doing the identical per-item work, typed exceeding erased would \
          mean the typed path carries its own additional per-item allocation on top of that \
          shared cost, which the framework-future-allocation==0 invariant forbids"

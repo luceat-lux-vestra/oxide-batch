@@ -17,6 +17,7 @@
                 "crates/oxide-batch/tests/gate_h_allocation.rs",
                 "crates/oxide-batch/tests/gate_h_dispatch.rs",
                 "crates/oxide-batch/tests/gate_h_throughput.rs",
+                "crates/oxide-batch/tests/item_listener_allocation.rs",
                 "crates/oxide-batch/tests/support/chunk_fixture.rs",
                 "crates/oxide-batch/tests/performance",
                 "crates/oxide-batch/examples/gate_h_typed_reference.rs",
@@ -47,7 +48,7 @@
             ]
         },
         "campaign fixtures": {
-            "why": "This closure document itself. Gate H's declared target/test scope is the fixed constants xtask/src/gate_h.rs itself declares (see \"independent verifier\" below) -- Gate H's frozen three-target protocol does not evolve the way an M5 multi-report campaign's accepted scope does.",
+            "why": "This closure document itself. Gate H's declared target/test scope is the fixed constants xtask/src/gate_h.rs itself declares (see \"independent verifier\" below) -- Gate H's frozen four-target protocol does not evolve the way an M5 multi-report campaign's accepted scope does.",
             "paths": [
                 "tests/fixtures/gate-h/campaign-semantics.json"
             ]

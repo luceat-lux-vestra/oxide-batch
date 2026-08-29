@@ -60,16 +60,15 @@ from the implementing pass):
 | B-07 `multi_chunk_restart_selects_identically` | PASS (two real crash/restart cycles) | `gate_b_07_multi_chunk_restart.rs` |
 | B-08 `representation_does_not_change_definition_or_restart_identity` | PASS (fingerprint + cross-representation restart, both directions) | `gate_b_08_representation_transparent_identity.rs` |
 
-**PostgreSQL 15 result: PENDING.** All 8 scenarios are verified against
-PostgreSQL 18 locally; the 15 leg of the release-blocking matrix runs via
-CI in the evidence-retention pass described below, not locally (per this
-project's own convention: local PostgreSQL is for development, retained
-evidence comes from CI).
+**PostgreSQL 15 result: PENDING final retained run.** The release-blocking
+15 leg is executed by the dedicated Gate B CI matrix and will be named here
+with its final workflow/artifact identity after the candidate HEAD is fixed.
 
-**PostgreSQL 18 result: PASS.** All 8 scenarios, all 20 tests across the 9
-Gate B files (including the shared-harness foundation smoke test), verified
-locally against a real PostgreSQL 18 instance from a clean incremental
-build.
+**PostgreSQL 18 result: PASS locally; PENDING final retained run.** All 8
+scenarios, all 20 tests across the 9 Gate B files (including the shared-harness
+foundation smoke test), passed locally against a real PostgreSQL 18 instance.
+The final exit record will use the retained 15/18 reports from the same
+candidate merge ref rather than treating the local run as provenance.
 
 **Gate B PASS condition met** for the PostgreSQL 18 leg: every durable
 observation compared (business rows, checkpoint, component state, counters,
@@ -120,8 +119,8 @@ per-item call to resolve through.
 
 ### Listener-enabled companion measurement
 
-Already built by #151 under Gate F (`crates/oxide-batch/tests/item_listener_allocation.rs`),
-re-verified passing as part of this campaign: listener-enabled allocation
+Built by #151 under Gate F (`crates/oxide-batch/tests/item_listener_allocation.rs`),
+and now included as a separate target in the Gate H campaign: listener-enabled allocation
 delta scales with item count (the opposite of the typed-path zero
 guarantee), reported as a measurement fully separate from typed component
 allocation, per Gate F's own decision to keep boxed per-item-per-phase
@@ -130,20 +129,21 @@ listener-free hard guarantee above.
 
 ### Required metrics (disclosure, not gating)
 
-- **Allocations/item, allocations/chunk**: `gate_h_allocation.rs` — typed
-  ~24 allocator calls/item, erased ~28/item on the real CSV workload (both
-  dominated by CSV parsing/formatting, not framework overhead — see the
-  file's own doc comment for why a real allocating component cannot
-  isolate a near-zero framework claim the way the synthetic fixtures do).
-  Typed never exceeds erased per item (asserted and verified).
-- **Throughput/latency**: `gate_h_throughput.rs`. Local debug-profile run
-  (harness verification, not retained evidence): typed ~75.8k items/s,
-  erased ~75.7k items/s, materially identical — consistent with CSV cost
-  dominating over dispatch cost. **Release-profile retained run: PENDING**
-  (evidence-retention pass, per this project's convention that the M5
-  performance campaign runs release, not debug).
-- **Binary-size delta, compile-time delta**: **PENDING** — deferred to the
-  evidence-retention pass.
+- **Allocations/item, allocations/chunk**: `gate_h_allocation.rs` — the
+  campaign retains structured raw allocator statistics for both
+  representations, including calls/item and calls/chunk. The local release
+  run measured typed 24.001 calls/item and boxed 28.001 calls/item on the
+  real CSV workload; both are dominated by CSV parsing/formatting, not
+  framework overhead. Typed never exceeds boxed per item (asserted and
+  verified).
+- **Throughput/latency**: `gate_h_throughput.rs` retains raw nanosecond
+  samples, min/mean/max, and derived throughput for both representations.
+  The local release run measured typed mean 47.689 ms / 1,048,465 items/s and
+  boxed mean 48.548 ms / 1,029,908 items/s. Final retained CI values remain
+  pending until the candidate merge ref is fixed.
+- **Binary-size delta, compile-time delta**: the Gate H runner measures both
+  release reference examples and retains raw bytes and wall-clock build
+  seconds; final CI retention remains pending.
 - **Dynamic dispatch count, future boxing count**: proved as an
   architecture invariant (== 0 for typed), not counted at runtime — no such
   counter exists in this codebase and building one would be new,
@@ -157,8 +157,8 @@ listener-free hard guarantee above.
 
 **No invented threshold.** No throughput/latency/allocation number above is
 asserted as a pass/fail gate; the only hard PASS/FAIL criteria are the two
-invariants above (both PASS) and Gate B's semantic equivalence (PASS on
-PostgreSQL 18, PostgreSQL 15 pending CI).
+invariants above (both PASS) and Gate B's semantic equivalence (PASS locally
+on PostgreSQL 18, PostgreSQL 15 pending final CI retention).
 
 ## Full M6 conformance / malformed / failure / rollback / stop / panic / crash matrix
 
@@ -181,7 +181,10 @@ gap inventory for #153 checked only `crates/oxide-batch/tests/` and wrongly
 concluded several components (`aggregate`, `classify`, `composite`, `sync`)
 were untested; they are extensively covered in
 `crates/oxide-batch-test/tests/`, which the inventory had missed entirely.
-Corrected directly in the matrix document.
+Corrected directly in the matrix document. The new `m6-conformance` campaign
+now executes this fixed component/failure/restart denominator on PostgreSQL
+15 and 18 and retains per-target structured outcomes; final reports remain
+pending CI retention.
 
 ## Component catalog and documentation
 
@@ -201,29 +204,29 @@ and cited API name verified against real source:
 
 Support tier: every M6 component is **First-party** per the existing
 Integration Model tier system (`docs/architecture/integration-model.md`) —
-no new, parallel tier scheme was introduced.
+no new, parallel tier scheme was introduced. The pre-release/candidate
+limitation and release-promotion rule are also recorded in
+`docs/release/support-matrix.md`.
 
 ## Ledger reconciliation result
 
-Every M6-scoped row in `docs/compatibility/conformance-matrix.md` reviewed.
-No row required a disposition correction — the ledger was already accurate
-before this pass. 16 rows received new evidence-link citations for this
-campaign's own output (Gate B/H test files, the component conformance
-matrix, the test-kit tutorial). No row was promoted to `Verified`: that
+Every M6-scoped row in `docs/compatibility/conformance-matrix.md` reviewed
+(23 rows, including the four shared M2/M6 rows). Four shared rows received
+wording reconciliation so their released `0.5.0` `Verified` status is not
+misread as retroactive M6 verification; the M6-specific rows retain their
+implementation disposition and candidate-HEAD evidence links. No row was
+promoted to `Verified`: that
 requires a named released version carrying the evidence, which M6 does not
 yet have, per the ledger's own binding promotion rule — this campaign's
 evidence completeness does not bypass that rule.
 
 ## Retained artifact/provenance references
 
-**PENDING.** The `xtask gate-b`/`xtask gate-h` campaign runners, their CI
-workflows, and their retained-evidence provenance entries under
-`docs/engineering/campaigns/m6/` are being built as part of this same PR's
-evidence-retention pass, following the M5 campaign shape exactly
-(`cargo xtask evidence` already generalized to check an `m6/` directory
-alongside `m5/`, in addition to the `m5/` directory — see below). This
-section will be completed, with real CI run/artifact identities, before
-this PR is marked ready for strict review.
+**PENDING final retention.** The `xtask gate-b`, `xtask gate-h`, and
+`xtask m6-conformance` campaign runners and their dedicated CI workflows now
+exist, following the M5 campaign shape. The final section will name real CI
+run/artifact identities for both PostgreSQL majors, the Gate H report, and
+the refreshed M5 reports before this PR is marked ready for strict review.
 
 `cargo xtask evidence` itself was generalized early in this campaign
 (commit `958c762`) to check both `docs/engineering/campaigns/m5/` and a new
@@ -231,9 +234,9 @@ this PR is marked ready for strict review.
 exists — so `cargo xtask evidence` continues to pass checking only `m5/`
 until the M6 provenance lands, at which point it becomes mandatory for both.
 
-Editing the shared verifier files (`xtask/src/{evidence,main}.rs`) to add
-this, and the new Gate B/Gate H campaign runner wiring still to come,
-mechanically invalidates the *existing* M5 retained-evidence hash lineage
+Editing the shared verifier files (`xtask/src/{evidence,main}.rs`) and
+adding the M6 campaign wiring mechanically invalidates the *existing* M5
+retained-evidence hash lineage
 (every M5 campaign's `campaign-semantics.json` declares these shared files
 in its closure) — this is a known, previously-executed pattern in this
 repository (`631ae60 ci(m5): retain evidence for #152` did the same after

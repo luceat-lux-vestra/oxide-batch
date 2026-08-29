@@ -146,8 +146,7 @@ fn boxed_components_are_exactly_fat_pointer_sized() {
 /// inline -- their size cannot coincidentally match a bare fat pointer,
 /// corroborating that they are not themselves a trait-object wrapper in
 /// disguise.
-#[test]
-fn typed_components_are_not_fat_pointer_sized() {
+fn assert_typed_components_are_not_fat_pointer_sized() {
     let fat_pointer = fat_pointer_size();
     assert_ne!(
         size_of::<DelimitedReader<File>>(),
@@ -167,4 +166,14 @@ fn typed_components_are_not_fat_pointer_sized() {
         fat_pointer,
         "IdentityProcessor is a zero-sized unit struct, not a trait-object wrapper"
     );
+}
+
+#[test]
+fn typed_path_framework_controlled_per_item_allocation_is_zero() {
+    assert_typed_components_are_not_fat_pointer_sized();
+}
+
+#[test]
+fn typed_path_requires_no_framework_controlled_dynamic_dispatch_per_item() {
+    assert_typed_components_are_not_fat_pointer_sized();
 }

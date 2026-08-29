@@ -1,0 +1,22 @@
+{
+  "document": "How CI executes the M6 full component conformance campaign",
+  "workflow_path": ".github/workflows/m6-conformance.yml",
+  "workflow_name": "M6 Full Component Conformance",
+  "runner": "ubuntu-24.04",
+  "script": "./tests/fixtures/m6-conformance/run-ci-campaign.sh",
+  "script_path": "tests/fixtures/m6-conformance/run-ci-campaign.sh",
+  "command": ["cargo", "run", "--package", "oxide-batch-xtask", "--", "m6-conformance"],
+  "cargo_profile": "debug",
+  "environment": {
+    "OXIDEBATCH_CAMPAIGN_DIR": "target/m6-campaigns",
+    "OXIDEBATCH_CAMPAIGN_MATRIX": "postgres-${{ matrix.postgres }}",
+    "OXIDEBATCH_POSTGRES_ADMIN_TEST_URL": "postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_m6_conformance",
+    "OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL": "postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_m6_conformance",
+    "OXIDEBATCH_POSTGRES_TEST_URL": "postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_m6_conformance"
+  },
+  "report_path": "target/m6-campaigns/m6-conformance-campaign.json",
+  "artifact_name": "m6-conformance-campaign-postgres-${{ matrix.postgres }}",
+  "timeout_minutes": 40,
+  "artifact_retention": "on success and on failure alike",
+  "matrix": ["15", "18"]
+}

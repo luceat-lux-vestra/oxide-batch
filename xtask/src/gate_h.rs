@@ -5,7 +5,7 @@
 //! deliberately simpler than [`crate::crash_restore`]/[`crate::performance`]'s
 //! scope-document-driven design, and computes its execution manifest
 //! directly rather than hoisting it from an in-test observation: Gate H is a
-//! fixed, frozen set of three test targets, all built and run back-to-back
+//! fixed, frozen set of four test targets, all built and run back-to-back
 //! within this runner's own invocation.
 //!
 //! Unlike Gate B, no `PostgreSQL` fixture is required -- the M6 P-002
@@ -36,14 +36,29 @@ use crate::suite::{self, TargetCommand};
 const REPORT: &str = "gate-h-campaign.json";
 
 /// Every Gate H test target.
-const TARGETS: &[&str] = &["gate_h_allocation", "gate_h_dispatch", "gate_h_throughput"];
+const TARGETS: &[&str] = &[
+    "gate_h_allocation",
+    "gate_h_dispatch",
+    "gate_h_throughput",
+    "item_listener_allocation",
+];
+
+/// Targets that emit raw machine-readable measurements through the campaign
+/// runner's per-target observation path.
+const OBSERVATION_TARGETS: &[&str] = &[
+    "gate_h_allocation",
+    "gate_h_throughput",
+    "item_listener_allocation",
+];
 
 /// Every test name Gate H requires to report `ok`.
 const EXPECTED_TESTS: &[&str] = &[
     "typed_csv_pipeline_allocates_no_more_per_item_than_erased",
     "boxed_components_are_exactly_fat_pointer_sized",
-    "typed_components_are_not_fat_pointer_sized",
-    "typed_and_erased_throughput_disclosure",
+    "typed_path_framework_controlled_per_item_allocation_is_zero",
+    "typed_path_requires_no_framework_controlled_dynamic_dispatch_per_item",
+    "throughput_and_latency_recorded_without_an_invented_threshold",
+    "listener_enabled_allocation_is_reported_separately_from_typed_path",
 ];
 
 /// The declared semantic closure this campaign's evidence is bound to.
@@ -71,15 +86,33 @@ pub fn run() -> Result<Campaign, String> {
     let mut outcomes: std::collections::BTreeMap<String, String> =
         std::collections::BTreeMap::new();
     let mut target_reports = Vec::new();
+    let observation_directory = suite::directory(&root).join("gate-h-observations");
+    std::fs::create_dir_all(&observation_directory).map_err(|error| {
+        format!(
+            "could not create {}: {error}",
+            observation_directory.display()
+        )
+    })?;
     for target in TARGETS {
         eprintln!("==> gate-h {target} (release)");
+        let observation_path = observation_directory.join(format!("{target}.json"));
+        let _ = std::fs::remove_file(&observation_path);
+        let observation_path_string = observation_path.to_string_lossy().into_owned();
+        let environment = if OBSERVATION_TARGETS.contains(target) {
+            vec![(
+                "OXIDEBATCH_GATE_H_OBSERVATION",
+                observation_path_string.clone(),
+            )]
+        } else {
+            Vec::new()
+        };
         let run = suite::run_target(
             &root,
             &TargetCommand {
                 package: "oxide-batch",
                 selector: &["--test".to_owned(), (*target).to_owned()],
                 filters: &[],
-                environment: &[],
+                environment: &environment,
                 nocapture: true,
                 release: true,
             },
@@ -87,11 +120,30 @@ pub fn run() -> Result<Campaign, String> {
         if !run.succeeded {
             violations.push(format!("{target} exited unsuccessfully"));
         }
-        target_reports.push(json!({
+        let mut target_report = json!({
             "target": target,
             "succeeded": run.succeeded,
             "results": run.results,
-        }));
+        });
+        if OBSERVATION_TARGETS.contains(target) {
+            match std::fs::read_to_string(&observation_path) {
+                Ok(source) => match serde_json::from_str::<Value>(&source) {
+                    Ok(observation) => {
+                        violations.extend(validate_observation(target, &observation));
+                        target_report["observation"] = observation;
+                    }
+                    Err(error) => {
+                        violations
+                            .push(format!("{target} wrote invalid JSON observation: {error}"));
+                    }
+                },
+                Err(error) => violations.push(format!(
+                    "{target} did not write {}: {error}",
+                    observation_path.display()
+                )),
+            }
+        }
+        target_reports.push(target_report);
         outcomes.extend(run.results);
     }
 
@@ -111,6 +163,45 @@ pub fn run() -> Result<Campaign, String> {
 
     let report = write_report(&root, &target_reports, &violations, &manifest, &code_size)?;
     Ok(Campaign { violations, report })
+}
+
+fn validate_observation(target: &str, observation: &Value) -> Vec<String> {
+    let required = match target {
+        "gate_h_allocation" => [
+            "/workload",
+            "/typed/delta/allocator_calls",
+            "/typed/delta/bytes_allocated",
+            "/boxed/delta/allocator_calls",
+            "/boxed/delta/bytes_allocated",
+            "/copied_bytes",
+            "/buffer_reuse",
+            "/framework_controlled",
+        ]
+        .as_slice(),
+        "gate_h_throughput" => [
+            "/workload",
+            "/typed/raw_latency_nanoseconds",
+            "/boxed/raw_latency_nanoseconds",
+            "/typed/throughput_items_per_second",
+            "/boxed/throughput_items_per_second",
+            "/buffer_reuse",
+            "/framework_controlled",
+        ]
+        .as_slice(),
+        "item_listener_allocation" => [
+            "/workload",
+            "/listener_enabled/delta_allocator_calls",
+            "/listener_enabled/allocator_calls_per_item",
+            "/listener_representation",
+        ]
+        .as_slice(),
+        _ => &[],
+    };
+    required
+        .iter()
+        .filter(|pointer| observation.pointer(pointer).is_none())
+        .map(|pointer| format!("{target} observation is missing {pointer}"))
+        .collect()
 }
 
 /// The two binary-size/compile-time reference examples, isolating
@@ -261,12 +352,19 @@ fn write_report(
     let document = json!({
         "report": "gate-h",
         "campaign": "M6 Gate H P-002 real-component performance",
+        "postgresql_major_version": "not-applicable",
         "environment": suite::environment_with_profile("release"),
         "targets": target_reports,
         "observation": { "execution_manifest": manifest },
         "hard_invariants": {
-            "typed_per_item_future_allocation_is_zero": "proved structurally by gate_h_dispatch.rs",
-            "typed_dynamic_dispatch_per_item_is_zero": "proved structurally by gate_h_dispatch.rs",
+            "typed_per_item_future_allocation_is_zero": {
+                "value": 0,
+                "proof": "proved structurally by gate_h_dispatch.rs"
+            },
+            "typed_dynamic_dispatch_per_item_is_zero": {
+                "value": 0,
+                "proof": "proved structurally by gate_h_dispatch.rs"
+            },
         },
         "binary_size_and_compile_time": code_size,
         "no_invented_threshold_note": "Throughput, latency, allocation-delta, binary-size, and \

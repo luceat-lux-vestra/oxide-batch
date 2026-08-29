@@ -1,0 +1,65 @@
+name: M6 Full Component Conformance
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m6-conformance-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  m6-conformance:
+    name: postgres-${{ matrix.postgres }}-m6-conformance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["15", "18"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oxide_batch_m6_conformance
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username postgres --dbname oxide_batch_m6_conformance"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      OXIDEBATCH_CAMPAIGN_DIR: target/m6-campaigns
+      OXIDEBATCH_CAMPAIGN_MATRIX: postgres-${{ matrix.postgres }}
+      OXIDEBATCH_POSTGRES_ADMIN_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_m6_conformance
+      OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_m6_conformance
+      OXIDEBATCH_POSTGRES_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_m6_conformance
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Fail closed if the execution contract drifts
+        run: ./tests/fixtures/m6-conformance/verify-ci-contract.sh .github/workflows/m6-conformance.yml
+
+      - name: Run the M6 full component conformance campaign
+        run: ./tests/fixtures/m6-conformance/run-ci-campaign.sh
+
+      - name: Retain the campaign report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m6-conformance-campaign-postgres-${{ matrix.postgres }}
+          path: target/m6-campaigns/m6-conformance-campaign.json
+          if-no-files-found: error

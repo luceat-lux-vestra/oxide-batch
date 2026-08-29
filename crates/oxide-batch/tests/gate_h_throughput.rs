@@ -39,6 +39,7 @@ use oxide_batch::{
     BoxedProcessor, BoxedReader, BoxedWriter, ChunkExecutionOutcome, ChunkExecutionReport,
     ChunkSize, ChunkStep, ComponentStreamIdentity, StepName, StopSource,
 };
+use serde_json::{Value, json};
 
 /// Items per run. Large enough that per-item overhead dominates process
 /// startup noise, small enough that the whole warmup+repetition schedule
@@ -49,6 +50,20 @@ const ITEMS: u32 = 50_000;
 const WARMUP_REPETITIONS: u32 = 2;
 /// Timed, retained repetitions.
 const MEASURED_REPETITIONS: u32 = 5;
+
+fn retain_observation(observation: &Value) {
+    let Ok(path) = std::env::var("OXIDEBATCH_GATE_H_OBSERVATION") else {
+        return;
+    };
+    std::fs::write(
+        path,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&observation).expect("observation is serializable")
+        ),
+    )
+    .expect("write Gate H observation");
+}
 
 fn identity(name: &str) -> ComponentStreamIdentity {
     ComponentStreamIdentity::new(name).expect("static identity is valid")
@@ -159,12 +174,13 @@ struct Summary {
     mean: Duration,
 }
 
-fn summarize(mut samples: Vec<Duration>) -> Summary {
-    samples.sort();
-    let min = samples[0];
-    let max = samples[samples.len() - 1];
-    let total_nanos: u128 = samples.iter().map(Duration::as_nanos).sum();
-    let mean_nanos = total_nanos / samples.len() as u128;
+fn summarize(samples: &[Duration]) -> Summary {
+    let mut sorted = samples.to_vec();
+    sorted.sort();
+    let min = sorted[0];
+    let max = sorted[sorted.len() - 1];
+    let total_nanos: u128 = sorted.iter().map(Duration::as_nanos).sum();
+    let mean_nanos = total_nanos / sorted.len() as u128;
     let mean = Duration::from_nanos(u64::try_from(mean_nanos).unwrap_or(u64::MAX));
     Summary { min, max, mean }
 }
@@ -180,7 +196,7 @@ fn throughput_items_per_sec(items: u32, elapsed: Duration) -> f64 {
 /// for consistency with the rest of the Gate H suite and to keep each run's
 /// printed report self-contained.
 #[tokio::test(flavor = "current_thread")]
-async fn typed_and_erased_throughput_disclosure() {
+async fn throughput_and_latency_recorded_without_an_invented_threshold() {
     let mut nonce: u64 = 0;
     let mut next_nonce = || {
         nonce += 1;
@@ -199,8 +215,8 @@ async fn typed_and_erased_throughput_disclosure() {
         erased_samples.push(run_erased_once(next_nonce()).await);
     }
 
-    let typed = summarize(typed_samples);
-    let erased = summarize(erased_samples);
+    let typed = summarize(&typed_samples);
+    let erased = summarize(&erased_samples);
 
     // stderr, not stdout: see gate_h_allocation.rs's identical comment --
     // the campaign runner parses only stdout to correlate each libtest
@@ -223,6 +239,43 @@ async fn typed_and_erased_throughput_disclosure() {
         throughput_items_per_sec(ITEMS, erased.mean),
         performance::measurement_environment(1),
     );
+
+    retain_observation(&json!({
+        "workload": {
+            "component": "DelimitedReader/DelimitedWriter",
+            "processor": "IdentityProcessor",
+            "items": ITEMS,
+            "chunk_size": ITEMS,
+            "warmup_repetitions": WARMUP_REPETITIONS,
+            "measured_repetitions": MEASURED_REPETITIONS,
+            "transaction_semantics": "NoopTransactions",
+        },
+        "typed": {
+            "raw_latency_nanoseconds": typed_samples.iter().map(Duration::as_nanos).collect::<Vec<_>>(),
+            "min_nanoseconds": typed.min.as_nanos(),
+            "mean_nanoseconds": typed.mean.as_nanos(),
+            "max_nanoseconds": typed.max.as_nanos(),
+            "throughput_items_per_second": throughput_items_per_sec(ITEMS, typed.mean),
+        },
+        "boxed": {
+            "raw_latency_nanoseconds": erased_samples.iter().map(Duration::as_nanos).collect::<Vec<_>>(),
+            "min_nanoseconds": erased.min.as_nanos(),
+            "mean_nanoseconds": erased.mean.as_nanos(),
+            "max_nanoseconds": erased.max.as_nanos(),
+            "throughput_items_per_second": throughput_items_per_sec(ITEMS, erased.mean),
+        },
+        "buffer_reuse": {
+            "value": null,
+            "note": "Delimited component internal buffer reuse is not exposed as a counter."
+        },
+        "framework_controlled": {
+            "typed_per_item_future_allocations": 0,
+            "typed_dynamic_dispatch_per_item": 0,
+            "typed_future_boxing": 0,
+            "proof": "gate_h_dispatch target"
+        },
+        "correctness": "completed",
+    }));
 
     // No threshold assertion by design -- disclosure only, per the frozen
     // protocol's "no invented performance threshold" rule. The correctness
