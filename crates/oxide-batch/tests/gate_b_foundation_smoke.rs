@@ -130,8 +130,17 @@ fn parking_writer_reaches_its_announced_point_and_is_killed() -> Result<(), Box<
                 "expected the worker to be SIGKILLed rather than exit on its own"
             );
 
+            // The writer is enlisted in the chunk's transaction (support/gate_b.rs's
+            // BusinessWriter), and the worker is killed while parked *inside* that
+            // writer call, before the chunk ever reaches commit. So the rows it
+            // staged must not be durable -- proving the kill lands before any
+            // commit, not just before the process happened to exit.
             let rows = business_rows(&runtime_url, "gate_b_park_smoke").await?;
-            assert_eq!(rows, vec![0, 1, 2]);
+            assert_eq!(
+                rows,
+                Vec::<i64>::new(),
+                "a kill inside an uncommitted writer call must leave no durable business rows"
+            );
             Ok::<(), Box<dyn Error>>(())
         })
 }
@@ -161,7 +170,7 @@ fn park_smoke_worker_process() -> Result<(), Box<dyn Error>> {
             let transactions = Arc::new(transaction_manager(&repository));
 
             let writer = ParkingWriter::new(
-                gate_b::BusinessWriter::new(pool.clone(), "gate_b_park_smoke"),
+                gate_b::BusinessWriter::new("gate_b_park_smoke"),
                 ParkAt::BeforeCommit { ordinal: 1 },
                 handshake.join("reached"),
             );

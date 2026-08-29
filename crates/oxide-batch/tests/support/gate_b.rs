@@ -53,16 +53,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use oxide_batch::{
-    BoxFuture, BoxedProcessor, BoxedReader, BoxedWriter, Checkpoint, ChunkCommitReceipt,
-    ChunkCompletion, ChunkCompletionContext, ChunkCompletionError, ChunkCompletionOutcome,
-    ChunkComponentRevisions, ChunkCounts, ChunkDeliveryMode, ChunkJob, ChunkRestartContract,
-    ChunkSize, ChunkStep, ChunkTransactionManager, Clock, ComponentRevision, DefinitionRevision,
-    ExecutionContext, ExecutionCounts, FailureCategory, ItemProcessor, ItemReader, ItemWriter,
-    JobInstanceKey, JobName, JobParameters, JobRepository, PostgresChunkStateError,
-    PostgresChunkStateProvider, PostgresChunkTransactionManager, PostgresConfig,
-    PostgresJobRepository, ProcessContext, ProcessOutcome, ProcessorError, ReadContext,
-    ReadOutcome, ReaderError, StateLimits, StateSchemaId, StateSchemaVersion, StepName, TlsMode,
-    WriteContext, WriteOutcome, WriterError,
+    BoxFuture, BoxedProcessor, BoxedReader, BoxedWriter, BusinessStatement, BusinessValue,
+    Checkpoint, ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext, ChunkCompletionError,
+    ChunkCompletionOutcome, ChunkComponentRevisions, ChunkCounts, ChunkDeliveryMode, ChunkJob,
+    ChunkRestartContract, ChunkSize, ChunkStep, ChunkTransactionManager, Clock, ComponentRevision,
+    DefinitionRevision, ExecutionContext, ExecutionCounts, FailureCategory, ItemProcessor,
+    ItemReader, ItemWriter, JobInstanceKey, JobName, JobParameters, JobRepository,
+    PostgresChunkStateError, PostgresChunkStateProvider, PostgresChunkTransactionManager,
+    PostgresConfig, PostgresJobRepository, ProcessContext, ProcessOutcome, ProcessorError,
+    ReadContext, ReadOutcome, ReaderError, StateLimits, StateSchemaId, StateSchemaVersion,
+    StepName, TlsMode, WriteContext, WriteOutcome, WriterError,
 };
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
@@ -195,35 +195,52 @@ impl ItemProcessor<i64, i64> for IdentityProcessor {
 ///
 /// This is the evidence surface: whether these rows survive a crash exactly
 /// where the durable checkpoint says they should is what
-/// [`GateBObservation::business_rows`] checks.
+/// [`GateBObservation::business_rows`] checks. It writes through the
+/// [`WriteContext`]'s enlisted [`BusinessTransaction`] rather than a
+/// standalone connection -- a writer that used its own pool would durably
+/// commit independently of the chunk's checkpoint/counter commit regardless
+/// of the declared [`ChunkDeliveryMode::AtomicSameResource`], which would
+/// make every Gate B scenario compare a business write that was never
+/// actually part of the atomic boundary it claims to test. Confirmed the hard
+/// way: an earlier, non-enlisted version of this writer let B-03's forced
+/// checkpoint-provider failure roll back nothing, because the writer had
+/// already committed on its own connection before the provider ever ran.
 pub struct BusinessWriter {
-    pool: PgPool,
     job_name: &'static str,
 }
 
 impl BusinessWriter {
-    /// Builds a writer that enlists rows tagged `job_name` through `pool`.
+    /// Builds a writer that enlists rows tagged `job_name`.
     #[must_use]
-    pub const fn new(pool: PgPool, job_name: &'static str) -> Self {
-        Self { pool, job_name }
+    pub const fn new(job_name: &'static str) -> Self {
+        Self { job_name }
     }
 }
 
 impl ItemWriter<i64> for BusinessWriter {
-    async fn write(
-        &self,
-        items: &[i64],
-        _context: WriteContext<'_>,
+    async fn write<'a>(
+        &'a self,
+        items: &'a [i64],
+        mut context: WriteContext<'a>,
     ) -> Result<WriteOutcome, WriterError> {
+        let business = context
+            .transaction()
+            .ok_or_else(|| WriterError::with_category(FailureCategory::PermanentInfrastructure))?;
         for item in items {
-            sqlx::query(
-                "INSERT INTO oxide_batch_business.gate_b_output (job_name, value) VALUES ($1, $2)",
-            )
-            .bind(self.job_name)
-            .bind(item)
-            .execute(&self.pool)
-            .await
-            .map_err(|_| WriterError::with_category(FailureCategory::PermanentInfrastructure))?;
+            let values = [
+                BusinessValue::text(self.job_name),
+                BusinessValue::i64(*item),
+            ];
+            business
+                .execute(BusinessStatement::new(
+                    "INSERT INTO oxide_batch_business.gate_b_output (job_name, value) \
+                     VALUES ($1, $2)",
+                    &values,
+                ))
+                .await
+                .map_err(|_| {
+                    WriterError::with_category(FailureCategory::PermanentInfrastructure)
+                })?;
         }
         Ok(WriteOutcome::Written)
     }
@@ -454,10 +471,7 @@ pub fn typed_chunk_job<M: ChunkTransactionManager + 'static>(
         params,
         SequenceReader::new(params.items),
         IdentityProcessor,
-        BusinessWriter {
-            pool: params.pool.clone(),
-            job_name: params.job_name,
-        },
+        BusinessWriter::new(params.job_name),
     )
 }
 
@@ -522,10 +536,7 @@ pub fn boxed_chunk_job<M: ChunkTransactionManager + 'static>(
         params,
         BoxedReader::new(SequenceReader::new(params.items)),
         BoxedProcessor::new(IdentityProcessor),
-        BoxedWriter::new(BusinessWriter {
-            pool: params.pool.clone(),
-            job_name: params.job_name,
-        }),
+        BoxedWriter::new(BusinessWriter::new(params.job_name)),
     )
 }
 
@@ -646,7 +657,12 @@ pub async fn snapshot(
             let manager = transaction_manager(repository);
             let scope = oxide_batch::ChunkTransactionContext::new(execution.id(), step.id());
             if let Ok(durable) = manager.load_committed_state(scope).await {
-                checkpoint_position = Some(self::checkpoint_position(durable.checkpoint())?);
+                // The step-execution row exists (and so decodes) once a step
+                // starts, before its first chunk ever commits, carrying
+                // whatever placeholder checkpoint bytes it was created with
+                // -- not gate-b's `gate-b.position` schema. Decode failure
+                // here means "nothing has committed yet", not a real error.
+                checkpoint_position = self::checkpoint_position(durable.checkpoint()).ok();
             }
         }
     }
@@ -757,6 +773,75 @@ impl ChunkCompletion for ParkingCompletion {
             Ok(ChunkCompletionOutcome::Acknowledged)
         })
     }
+}
+
+/// A writer decorator that fails its `fail_at`-th call (1-based) with a
+/// `UserComponent` error instead of delegating to `inner`, for B-02's
+/// writer-failure-before-commit scenario.
+pub struct FailingWriter<W> {
+    inner: W,
+    ordinal: Arc<AtomicUsize>,
+    fail_at: usize,
+}
+
+impl<W> FailingWriter<W> {
+    /// Wraps `inner`, failing its `fail_at`-th call (1-based) rather than
+    /// delegating.
+    #[must_use]
+    pub fn new(inner: W, fail_at: usize) -> Self {
+        Self {
+            inner,
+            ordinal: Arc::new(AtomicUsize::new(0)),
+            fail_at,
+        }
+    }
+}
+
+impl<W: ItemWriter<i64>> ItemWriter<i64> for FailingWriter<W> {
+    async fn write<'a>(
+        &'a self,
+        items: &'a [i64],
+        context: WriteContext<'a>,
+    ) -> Result<WriteOutcome, WriterError> {
+        let ordinal = self.ordinal.fetch_add(1, Ordering::SeqCst) + 1;
+        if ordinal == self.fail_at {
+            return Err(WriterError::with_category(FailureCategory::UserComponent));
+        }
+        self.inner.write(items, context).await
+    }
+}
+
+/// Builds a transaction manager identical to [`transaction_manager`], except
+/// its checkpoint provider fails on the `fail_at`-th chunk attempt (1-based)
+/// instead of returning a receipt.
+///
+/// B-03 uses this to prove atomicity: the writer for that chunk can succeed
+/// (its rows staged inside the open transaction) while the provider that
+/// computes the checkpoint fails, and the scenario asserts that failure rolls
+/// the whole chunk back -- staged business rows included -- rather than
+/// leaving a commit split between "rows written" and "checkpoint advanced".
+#[must_use]
+pub fn transaction_manager_failing_at(
+    repository: &PostgresJobRepository,
+    fail_at: usize,
+) -> PostgresChunkTransactionManager {
+    let ordinal = Arc::new(AtomicUsize::new(0));
+    let provider: Arc<dyn PostgresChunkStateProvider> =
+        Arc::new(move |committed: ExecutionCounts, chunk: ChunkCounts| {
+            let attempt = ordinal.fetch_add(1, Ordering::SeqCst) + 1;
+            if attempt == fail_at {
+                return Err(PostgresChunkStateError::new());
+            }
+            let position = committed
+                .read()
+                .checked_add(chunk.read().get())
+                .ok_or_else(PostgresChunkStateError::new)?;
+            Ok(ChunkCommitReceipt::new(
+                checkpoint(position).map_err(|_| PostgresChunkStateError::new())?,
+                execution_context().map_err(|_| PostgresChunkStateError::new())?,
+            ))
+        });
+    PostgresChunkTransactionManager::new(repository.clone(), provider)
 }
 
 /// Names the directory a Gate B worker and its scenario hand off through,
