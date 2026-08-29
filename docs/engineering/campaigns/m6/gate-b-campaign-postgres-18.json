@@ -1,0 +1,134 @@
+{
+  "campaign": "M6 Gate B transaction/restart equivalence",
+  "environment": {
+    "arch": "x86_64",
+    "matrix": "postgres-18",
+    "os": "linux",
+    "profile": "debug",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "source_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
+    "source_tree_clean": true
+  },
+  "observation": {
+    "execution_manifest": {
+      "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
+      "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head.",
+      "objects": {
+        ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+        ".github/workflows/m6-gate-b.yml": "9454be887086260d57ce3e356958a52fea45e73a",
+        "Cargo.lock": "1f3bd785e48cb4ee2684a510d1f0c94a1e7e8b89",
+        "Cargo.toml": "37ad0088277e0638aa3cf3b6de4e64f590aed874",
+        "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+        "crates/oxide-batch-core/src": "2548d8ab187bc10e596042d9a45763dfffa2b624",
+        "crates/oxide-batch-plan/Cargo.toml": "527f06f60f63f7de9cf3892b4c5d106e49b4c0a7",
+        "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+        "crates/oxide-batch-repository/Cargo.toml": "1155ce8f4bf64d6b781758979c2fa1c54a03e748",
+        "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+        "crates/oxide-batch/Cargo.toml": "762ee1faab89b474e219bc1a97dc5e8bdb21a03a",
+        "crates/oxide-batch/migrations": "7923dcfb1ff0d152499466259107986cd8ae27e5",
+        "crates/oxide-batch/src": "28a905220a782bcc7854379d15c2d8efc9682229",
+        "crates/oxide-batch/tests/crash_restore": "3dd21590addc215dd316177a062ca34f51ee6351",
+        "crates/oxide-batch/tests/gate_b_01_normal_commit.rs": "0c79f1d76e9f9f4735c44aa1814e84a93e58b529",
+        "crates/oxide-batch/tests/gate_b_02_writer_failure_rollback.rs": "a5ca724f6a84db24af0ccabba6dcd9953aa2295c",
+        "crates/oxide-batch/tests/gate_b_03_atomic_boundary.rs": "cd259ffb41caaaa52e5c91833fd02551598d5789",
+        "crates/oxide-batch/tests/gate_b_04_unknown_outcome.rs": "07874679d35ce97601a42ff35fc228b1286f0604",
+        "crates/oxide-batch/tests/gate_b_05_kill_before_commit.rs": "e1615fcb373fd66ab16f2f8dd92cd4ae9298276e",
+        "crates/oxide-batch/tests/gate_b_06_kill_around_acknowledgement.rs": "7f98be3817449830aef100e6628f1d5aabf06520",
+        "crates/oxide-batch/tests/gate_b_07_multi_chunk_restart.rs": "58f73a31dd51cb943116cd5994a8a10e8ebc93f5",
+        "crates/oxide-batch/tests/gate_b_08_representation_transparent_identity.rs": "3817e84ab82d0c67663109fdeef866eb322a3256",
+        "crates/oxide-batch/tests/gate_b_foundation_smoke.rs": "5faad84fe9c10f71bb28e11e77fb80d122ce6cdc",
+        "crates/oxide-batch/tests/support/chunk_fixture.rs": "e8b203440b0e074c2f6155391cff79c012e4dc7f",
+        "crates/oxide-batch/tests/support/gate_b.rs": "79e2e69513069485994dd54ea16ad67ebe21b13f",
+        "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+        "tests/fixtures/gate-b/campaign-semantics.json": "d4e35ddbc1ae6265deee1973f1e8cea9f28f5475",
+        "tests/fixtures/gate-b/execution-contract.json": "df0d2824f82c3b400f516d8775c76c3ecd2d9548",
+        "tests/fixtures/gate-b/run-ci-campaign.sh": "fba2f2abe3afd9f65079ef1b09d41a9d47931e66",
+        "tests/fixtures/gate-b/verify-ci-contract.sh": "da370f20a9bff83563c08a4759d4e9379d33aa83",
+        "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+        "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
+        "xtask/src/gate_b.rs": "46218d04178483599b9e2be3d2dde9fcba304cc7",
+        "xtask/src/main.rs": "da7f6c26499226226ac7c289272efaa7c610c547",
+        "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
+      },
+      "tree_clean": true
+    }
+  },
+  "passed": true,
+  "postgresql_major_version": "18",
+  "report": "gate-b",
+  "targets": [
+    {
+      "results": {
+        "park_smoke_worker_process": "ok",
+        "parking_writer_reaches_its_announced_point_and_is_killed": "ok",
+        "typed_and_boxed_representations_produce_identical_durable_observations": "ok"
+      },
+      "succeeded": true,
+      "target": "gate_b_foundation_smoke"
+    },
+    {
+      "results": {
+        "normal_enlisted_commit_is_representation_identical": "ok"
+      },
+      "succeeded": true,
+      "target": "gate_b_01_normal_commit"
+    },
+    {
+      "results": {
+        "writer_failure_before_commit_rolls_back_identically": "ok"
+      },
+      "succeeded": true,
+      "target": "gate_b_02_writer_failure_rollback"
+    },
+    {
+      "results": {
+        "state_checkpoint_counter_share_one_atomic_boundary": "ok"
+      },
+      "succeeded": true,
+      "target": "gate_b_03_atomic_boundary"
+    },
+    {
+      "results": {
+        "unknown_commit_outcome_forces_recovery_not_inference": "ok",
+        "unknown_outcome_worker_process": "ok"
+      },
+      "succeeded": true,
+      "target": "gate_b_04_unknown_outcome"
+    },
+    {
+      "results": {
+        "kill_before_commit_worker_process": "ok",
+        "process_kill_before_commit_restart_is_identical": "ok"
+      },
+      "succeeded": true,
+      "target": "gate_b_05_kill_before_commit"
+    },
+    {
+      "results": {
+        "kill_around_acknowledgement_worker_process": "ok",
+        "process_kill_around_commit_acknowledgement_is_identical": "ok"
+      },
+      "succeeded": true,
+      "target": "gate_b_06_kill_around_acknowledgement"
+    },
+    {
+      "results": {
+        "multi_chunk_restart_first_worker_process": "ok",
+        "multi_chunk_restart_second_worker_process": "ok",
+        "multi_chunk_restart_selects_identically": "ok"
+      },
+      "succeeded": true,
+      "target": "gate_b_07_multi_chunk_restart"
+    },
+    {
+      "results": {
+        "cross_representation_worker_process": "ok",
+        "definition_fingerprint_is_representation_independent": "ok",
+        "representation_does_not_change_definition_or_restart_identity": "ok"
+      },
+      "succeeded": true,
+      "target": "gate_b_08_representation_transparent_identity"
+    }
+  ],
+  "violations": []
+}

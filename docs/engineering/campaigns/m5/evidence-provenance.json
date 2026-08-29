@@ -118,9 +118,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+        "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
+        "branch_head_sha": "93bb16c60f4d85c2208f51e8600371e058bf4b7a",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -128,29 +128,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": ".github/workflows/m5-cancellation.yml",
+        "workflow": "M5 Cancellation",
         "workflow_file": ".github/workflows/m5-cancellation.yml",
-        "id": 33215857723,
+        "id": 33255994988,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-cancellation-campaign",
-        "id": 98999189781,
+        "id": 99109684745,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-15",
-        "id": 9703372232,
-        "digest": "sha256:e0acaa06a171d71bdd2e24043dadcc7ec21f62dd3538bdbdd48e737fc3871e1b",
-        "size_bytes": 5751
+        "id": 9715839449,
+        "digest": "sha256:9d6c607d2b30d32acbc5b69a046fdc4a350dc79185d758387acc3c39e76aeeb8",
+        "size_bytes": 5749
       },
-      "retained_report_git_blob": "cb8f6fd53f6fa618172e3bf468a153ea3db0c8f3",
+      "retained_report_git_blob": "49c73a9353b08b79c6536ced871a50018b62f188",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-29T10:12:46.000000+09:00",
-        "run_id": 33215857723,
+        "verified_at": "2026-08-29T22:57:19+09:00",
+        "run_id": 33255994988,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -158,7 +158,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857723 was archive-digest verified, extracted, and matched byte-for-byte before retention."
+        "note": "Retention for the final M6 candidate HEAD in PR #187. M5 campaigns were rerun because M6 campaign tooling changed paths in the recorded semantic closures; the retained report is the exact extracted workflow artifact."
       }
     },
     {
@@ -168,9 +168,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+        "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
+        "branch_head_sha": "93bb16c60f4d85c2208f51e8600371e058bf4b7a",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -178,29 +178,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": ".github/workflows/m5-cancellation.yml",
+        "workflow": "M5 Cancellation",
         "workflow_file": ".github/workflows/m5-cancellation.yml",
-        "id": 33215857723,
+        "id": 33255994988,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-cancellation-campaign",
-        "id": 98999189631,
+        "id": 99109684638,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-18",
-        "id": 9703371743,
-        "digest": "sha256:0be44edb5cc4ce12faafad2a2818e96ce04366c91fedb3ed89ba4d05cb5bd4a4",
-        "size_bytes": 5745
+        "id": 9715839750,
+        "digest": "sha256:45e55e46327327c23e607743cb6f3448261f79f1f43c5e4193ea045392d12ca1",
+        "size_bytes": 5752
       },
-      "retained_report_git_blob": "463b2a3e9e69ba8e60a3df68d2478fe978acc30c",
+      "retained_report_git_blob": "47f80a72267dbb1db675fe1aa9d58739ceb8ce21",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-29T10:12:46.000000+09:00",
-        "run_id": 33215857723,
+        "verified_at": "2026-08-29T22:57:19+09:00",
+        "run_id": 33255994988,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -208,7 +208,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857723 was archive-digest verified, extracted, and matched byte-for-byte before retention."
+        "note": "Retention for the final M6 candidate HEAD in PR #187. M5 campaigns were rerun because M6 campaign tooling changed paths in the recorded semantic closures; the retained report is the exact extracted workflow artifact."
       }
     },
     {
@@ -218,9 +218,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+        "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
+        "branch_head_sha": "93bb16c60f4d85c2208f51e8600371e058bf4b7a",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -228,29 +228,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": ".github/workflows/m5-conformance.yml",
+        "workflow": "M5 Conformance",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 33215857611,
+        "id": 33255995027,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-conformance-campaign",
-        "id": 98999188848,
+        "id": 99109685072,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-15",
-        "id": 9703388238,
-        "digest": "sha256:050ee38fd04e784510a5efbf1729da43e52dc462984e7bf33b84ade2b4ef8c19",
-        "size_bytes": 7126
+        "id": 9715855359,
+        "digest": "sha256:7054164b7b70fac1266bb5127865c3fb161b26a558cd08cd0c95f780e7072688",
+        "size_bytes": 7127
       },
-      "retained_report_git_blob": "41b1d9cdcc3cd53c211418deedd5847189c0a834",
+      "retained_report_git_blob": "a20c47a4e58f9a9cb9bd89784d8dfeaef9e95535",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-29T10:12:46.000000+09:00",
-        "run_id": 33215857611,
+        "verified_at": "2026-08-29T22:57:19+09:00",
+        "run_id": 33255995027,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -258,7 +258,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857611 was archive-digest verified, extracted, and matched byte-for-byte before retention."
+        "note": "Retention for the final M6 candidate HEAD in PR #187. M5 campaigns were rerun because M6 campaign tooling changed paths in the recorded semantic closures; the retained report is the exact extracted workflow artifact."
       }
     },
     {
@@ -268,9 +268,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+        "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
+        "branch_head_sha": "93bb16c60f4d85c2208f51e8600371e058bf4b7a",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -278,29 +278,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": ".github/workflows/m5-conformance.yml",
+        "workflow": "M5 Conformance",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 33215857611,
+        "id": 33255995027,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-conformance-campaign",
-        "id": 98999189009,
+        "id": 99109685195,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-18",
-        "id": 9703390835,
-        "digest": "sha256:88d55d3341708e449f1bb09a55a4e108efbb9f5ea4a6c40b9731fce0552b127d",
-        "size_bytes": 7126
+        "id": 9715853964,
+        "digest": "sha256:5beea11f874a85d9648a7558a7ea90e2a8e89f7b5e39ded3184152e0c0d7bc2d",
+        "size_bytes": 7127
       },
-      "retained_report_git_blob": "887d82d279333a269ccb6e7d87be6344f188d26b",
+      "retained_report_git_blob": "45ae1f1cab70e79b79fddb83d9f25ed13f94266f",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-29T10:12:46.000000+09:00",
-        "run_id": 33215857611,
+        "verified_at": "2026-08-29T22:57:19+09:00",
+        "run_id": 33255995027,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -308,7 +308,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857611 was archive-digest verified, extracted, and matched byte-for-byte before retention."
+        "note": "Retention for the final M6 candidate HEAD in PR #187. M5 campaigns were rerun because M6 campaign tooling changed paths in the recorded semantic closures; the retained report is the exact extracted workflow artifact."
       }
     },
     {
@@ -318,9 +318,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+        "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
+        "branch_head_sha": "93bb16c60f4d85c2208f51e8600371e058bf4b7a",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -328,29 +328,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": ".github/workflows/m5-crash-restore.yml",
+        "workflow": "M5 Crash and Restore",
         "workflow_file": ".github/workflows/m5-crash-restore.yml",
-        "id": 33215857592,
+        "id": 33255994992,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-crash-restore-campaign",
-        "id": 98999188820,
+        "id": 99109684815,
         "conclusion": "success"
       },
       "artifact": {
         "name": "crash-restore-campaign-postgres-15",
-        "id": 9703359557,
-        "digest": "sha256:45f0d56b750019dc92a014bbe7e30f6b827a545da84fb97c011ab00bf036f2a3",
-        "size_bytes": 6681
+        "id": 9715840941,
+        "digest": "sha256:87aa0503dc989cb117aa60721fe51ba029014023c89b028fe4f2cc0540eed25d",
+        "size_bytes": 6686
       },
-      "retained_report_git_blob": "77ad5af045aa3220eab5d50b234a3163a43a100b",
+      "retained_report_git_blob": "23c21728bd96aa266f7a2603afce92d377862a91",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-29T10:12:46.000000+09:00",
-        "run_id": 33215857592,
+        "verified_at": "2026-08-29T22:57:19+09:00",
+        "run_id": 33255994992,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -358,7 +358,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857592 was archive-digest verified, extracted, and matched byte-for-byte before retention."
+        "note": "Retention for the final M6 candidate HEAD in PR #187. M5 campaigns were rerun because M6 campaign tooling changed paths in the recorded semantic closures; the retained report is the exact extracted workflow artifact."
       }
     },
     {
@@ -368,9 +368,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+        "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
+        "branch_head_sha": "93bb16c60f4d85c2208f51e8600371e058bf4b7a",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -378,29 +378,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": ".github/workflows/m5-crash-restore.yml",
+        "workflow": "M5 Crash and Restore",
         "workflow_file": ".github/workflows/m5-crash-restore.yml",
-        "id": 33215857592,
+        "id": 33255994992,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-crash-restore-campaign",
-        "id": 98999189075,
+        "id": 99109684626,
         "conclusion": "success"
       },
       "artifact": {
         "name": "crash-restore-campaign-postgres-18",
-        "id": 9703357626,
-        "digest": "sha256:df139208b96e80ec02f91dfd97f41b9d5e8b3634a2482d1791699451d8cc217c",
-        "size_bytes": 6683
+        "id": 9715837075,
+        "digest": "sha256:f521c7dcaae0e28a80f59c0f3ede8f06f4afda7eca3f085a6a7e284780ca2883",
+        "size_bytes": 6688
       },
-      "retained_report_git_blob": "f6880da366a2073aac699ad8c861f5432a8406b9",
+      "retained_report_git_blob": "75a7147875638fca8498f143b5c2057f9a7e43a1",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-29T10:12:46.000000+09:00",
-        "run_id": 33215857592,
+        "verified_at": "2026-08-29T22:57:19+09:00",
+        "run_id": 33255994992,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -408,7 +408,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857592 was archive-digest verified, extracted, and matched byte-for-byte before retention."
+        "note": "Retention for the final M6 candidate HEAD in PR #187. M5 campaigns were rerun because M6 campaign tooling changed paths in the recorded semantic closures; the retained report is the exact extracted workflow artifact."
       }
     },
     {
@@ -418,9 +418,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+        "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
+        "branch_head_sha": "93bb16c60f4d85c2208f51e8600371e058bf4b7a",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -428,29 +428,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": ".github/workflows/m5-performance.yml",
+        "workflow": "M5 Performance",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 33215857717,
+        "id": 33255995029,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-performance-campaign",
-        "id": 98999189706,
+        "id": 99109684908,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-15",
-        "id": 9703372992,
-        "digest": "sha256:056f8fd0e341149c691197a9ef718a143436dead36317d1d2347ec2e78aaf7ad",
-        "size_bytes": 6600
+        "id": 9715840738,
+        "digest": "sha256:f810fb7cbe2d913561a4f2e1ae18b3e99a478b62c58494ae6a30b2ced1adf4a3",
+        "size_bytes": 6609
       },
-      "retained_report_git_blob": "b1ad325b3731e706fca8ec8ff1e396cfdad90caf",
+      "retained_report_git_blob": "334c4c4854f7e6f7268ab73c34ff32e4fa459487",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-29T10:12:46.000000+09:00",
-        "run_id": 33215857717,
+        "verified_at": "2026-08-29T22:57:19+09:00",
+        "run_id": 33255995029,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -458,7 +458,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857717 was archive-digest verified, extracted, and matched byte-for-byte before retention."
+        "note": "Retention for the final M6 candidate HEAD in PR #187. M5 campaigns were rerun because M6 campaign tooling changed paths in the recorded semantic closures; the retained report is the exact extracted workflow artifact."
       }
     },
     {
@@ -468,9 +468,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+        "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
+        "branch_head_sha": "93bb16c60f4d85c2208f51e8600371e058bf4b7a",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -478,29 +478,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": ".github/workflows/m5-performance.yml",
+        "workflow": "M5 Performance",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 33215857717,
+        "id": 33255995029,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-performance-campaign",
-        "id": 98999189580,
+        "id": 99109685087,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-18",
-        "id": 9703368707,
-        "digest": "sha256:6e66bb85ace0c70ddcf28d9d1fa03fb7eef9e479d7f15890430fdbd959d360bd",
-        "size_bytes": 6595
+        "id": 9715835632,
+        "digest": "sha256:90d0dc7684118bce6743abbc980b086415e03c4d322eec463355305121e50e91",
+        "size_bytes": 6587
       },
-      "retained_report_git_blob": "62aba4e6bbb78e478e60ee2b63e3ff3389f1cf6c",
+      "retained_report_git_blob": "cef4144e3a13ffd0108886459d9b6a026d5607b0",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-29T10:12:46.000000+09:00",
-        "run_id": 33215857717,
+        "verified_at": "2026-08-29T22:57:19+09:00",
+        "run_id": 33255995029,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -508,7 +508,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857717 was archive-digest verified, extracted, and matched byte-for-byte before retention."
+        "note": "Retention for the final M6 candidate HEAD in PR #187. M5 campaigns were rerun because M6 campaign tooling changed paths in the recorded semantic closures; the retained report is the exact extracted workflow artifact."
       }
     },
     {
@@ -518,9 +518,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+        "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
+        "branch_head_sha": "93bb16c60f4d85c2208f51e8600371e058bf4b7a",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -528,29 +528,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": ".github/workflows/m5-resource-bounds.yml",
+        "workflow": "M5 Resource Bounds",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 33215857704,
+        "id": 33255995010,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-resource-bounds-campaign",
-        "id": 98999189462,
+        "id": 99109684758,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-15",
-        "id": 9703359538,
-        "digest": "sha256:624739e1e280a45f300e20652cb32aa7121494025d81a3bab68baf5cdcd326ce",
-        "size_bytes": 13879
+        "id": 9715839165,
+        "digest": "sha256:9569e92260415c59abd9a1c5b1e5165f2eace87aaaef5add2c7ffb8bfb49732e",
+        "size_bytes": 13878
       },
-      "retained_report_git_blob": "59bbd931a6efc2f51f4dad2842a16e4ca78556f9",
+      "retained_report_git_blob": "48c236279bdeae5652f8bffaaf1a0151874ce74c",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-29T10:12:46.000000+09:00",
-        "run_id": 33215857704,
+        "verified_at": "2026-08-29T22:57:19+09:00",
+        "run_id": 33255995010,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -558,7 +558,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857704 was archive-digest verified, extracted, and matched byte-for-byte before retention."
+        "note": "Retention for the final M6 candidate HEAD in PR #187. M5 campaigns were rerun because M6 campaign tooling changed paths in the recorded semantic closures; the retained report is the exact extracted workflow artifact."
       }
     },
     {
@@ -568,9 +568,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+        "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
+        "branch_head_sha": "93bb16c60f4d85c2208f51e8600371e058bf4b7a",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -578,29 +578,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": ".github/workflows/m5-resource-bounds.yml",
+        "workflow": "M5 Resource Bounds",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 33215857704,
+        "id": 33255995010,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-resource-bounds-campaign",
-        "id": 98999189290,
+        "id": 99109684911,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-18",
-        "id": 9703364613,
-        "digest": "sha256:06f41ebdc2b0b83d5ef7058a099b9c60b0a459a22dc00f205fdb953962e6c3f5",
-        "size_bytes": 13878
+        "id": 9715839532,
+        "digest": "sha256:b8c6af7d70c056951ab9e1cd56cba98ea28f18594f8460b833ab9a71413e8d0b",
+        "size_bytes": 13877
       },
-      "retained_report_git_blob": "77c50f97f895a5f17f7d3195d7512c6789f21ad2",
+      "retained_report_git_blob": "4b6787bf9ebdec5e8c223b5c6feee71f129bf2d1",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-29T10:12:46.000000+09:00",
-        "run_id": 33215857704,
+        "verified_at": "2026-08-29T22:57:19+09:00",
+        "run_id": 33255995010,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -608,7 +608,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857704 was archive-digest verified, extracted, and matched byte-for-byte before retention."
+        "note": "Retention for the final M6 candidate HEAD in PR #187. M5 campaigns were rerun because M6 campaign tooling changed paths in the recorded semantic closures; the retained report is the exact extracted workflow artifact."
       }
     },
     {
@@ -618,9 +618,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+        "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
+        "branch_head_sha": "93bb16c60f4d85c2208f51e8600371e058bf4b7a",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -628,29 +628,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": ".github/workflows/m5-security.yml",
+        "workflow": "M5 Security",
         "workflow_file": ".github/workflows/m5-security.yml",
-        "id": 33215857673,
+        "id": 33255995009,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-security-campaign",
-        "id": 98999189101,
+        "id": 99109684715,
         "conclusion": "success"
       },
       "artifact": {
         "name": "security-campaign-postgres-15",
-        "id": 9703354995,
-        "digest": "sha256:0e0fe2f6da5978fc8bb8820f05b23e75196948fdb2425873ca53ec0b21e0efac",
-        "size_bytes": 7076
+        "id": 9715833939,
+        "digest": "sha256:185c8a2c79e367b4ca4feaf2a3e88120bba7cd5fd554550bf1833d6dc97f385b",
+        "size_bytes": 7078
       },
-      "retained_report_git_blob": "e0b2a784b6cd3869e8922c1d69f4b88f612f4239",
+      "retained_report_git_blob": "49155299c1234fb82b5b891e06cbcd94ca353697",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-29T10:12:46.000000+09:00",
-        "run_id": 33215857673,
+        "verified_at": "2026-08-29T22:57:19+09:00",
+        "run_id": 33255995009,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -658,7 +658,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857673 was archive-digest verified, extracted, and matched byte-for-byte before retention."
+        "note": "Retention for the final M6 candidate HEAD in PR #187. M5 campaigns were rerun because M6 campaign tooling changed paths in the recorded semantic closures; the retained report is the exact extracted workflow artifact."
       }
     },
     {
@@ -668,9 +668,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+        "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
+        "branch_head_sha": "93bb16c60f4d85c2208f51e8600371e058bf4b7a",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -678,29 +678,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": ".github/workflows/m5-security.yml",
+        "workflow": "M5 Security",
         "workflow_file": ".github/workflows/m5-security.yml",
-        "id": 33215857673,
+        "id": 33255995009,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-security-campaign",
-        "id": 98999189285,
+        "id": 99109684842,
         "conclusion": "success"
       },
       "artifact": {
         "name": "security-campaign-postgres-18",
-        "id": 9703358233,
-        "digest": "sha256:d52afdfdba0f1b4a6f8193b0d018e061e6ff8d424c27f3526658dd2f85b6a332",
-        "size_bytes": 7075
+        "id": 9715837580,
+        "digest": "sha256:9b3b575002c12657373690858257251022ac94a57e825720f0a03e2407d9d9fb",
+        "size_bytes": 7077
       },
-      "retained_report_git_blob": "5894dbb21d411de0ce22e233fcedbd7bc5ee5b5f",
+      "retained_report_git_blob": "f493bc63b4608d73f2422351c266a8d86a39e9d0",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-29T10:12:46.000000+09:00",
-        "run_id": 33215857673,
+        "verified_at": "2026-08-29T22:57:19+09:00",
+        "run_id": 33255995009,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -708,7 +708,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857673 was archive-digest verified, extracted, and matched byte-for-byte before retention."
+        "note": "Retention for the final M6 candidate HEAD in PR #187. M5 campaigns were rerun because M6 campaign tooling changed paths in the recorded semantic closures; the retained report is the exact extracted workflow artifact."
       }
     },
     {
@@ -718,9 +718,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+        "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
+        "branch_head_sha": "93bb16c60f4d85c2208f51e8600371e058bf4b7a",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -728,29 +728,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": ".github/workflows/m5-soak.yml",
+        "workflow": "M5 Soak",
         "workflow_file": ".github/workflows/m5-soak.yml",
-        "id": 33215857698,
+        "id": 33255995117,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-soak-campaign",
-        "id": 98999189405,
+        "id": 99109685251,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-15",
-        "id": 9703419216,
-        "digest": "sha256:0f62c8fe3ade79eaf1b9522954ef903d9e9f5fc28fc0f207399c617264154aa2",
-        "size_bytes": 88679
+        "id": 9715879969,
+        "digest": "sha256:f065cf1895bceb273ad92b390c9408cb4b07973cf33e072e7599cdb80470a3c2",
+        "size_bytes": 89310
       },
-      "retained_report_git_blob": "3063c91684eae43ab73eb816b4a519dc865631aa",
+      "retained_report_git_blob": "53727926d06a499bcf7be352adf5b3282a45f627",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-29T10:12:46.000000+09:00",
-        "run_id": 33215857698,
+        "verified_at": "2026-08-29T22:57:19+09:00",
+        "run_id": 33255995117,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -758,7 +758,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857698 was archive-digest verified, extracted, and matched byte-for-byte before retention."
+        "note": "Retention for the final M6 candidate HEAD in PR #187. M5 campaigns were rerun because M6 campaign tooling changed paths in the recorded semantic closures; the retained report is the exact extracted workflow artifact."
       }
     },
     {
@@ -768,9 +768,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+        "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
+        "branch_head_sha": "93bb16c60f4d85c2208f51e8600371e058bf4b7a",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -778,29 +778,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": ".github/workflows/m5-soak.yml",
+        "workflow": "M5 Soak",
         "workflow_file": ".github/workflows/m5-soak.yml",
-        "id": 33215857698,
+        "id": 33255995117,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-soak-campaign",
-        "id": 98999189632,
+        "id": 99109685095,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-18",
-        "id": 9703439302,
-        "digest": "sha256:46a4dd9e0dacd1f3533dec4b75dcfccf605f997e855c92fae587c6eff3997c52",
-        "size_bytes": 87194
+        "id": 9715875384,
+        "digest": "sha256:46d38e886b0415c6720fffdcf5497d5e91d57977770b6fac1a733097015b0b93",
+        "size_bytes": 87939
       },
-      "retained_report_git_blob": "f7dbfbdb2d895bb6835cc37effe0fc1fc0ce332d",
+      "retained_report_git_blob": "11362bffc22f3a3dc6cea34dbce699816d85b772",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-29T10:12:46.000000+09:00",
-        "run_id": 33215857698,
+        "verified_at": "2026-08-29T22:57:19+09:00",
+        "run_id": 33255995117,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -808,7 +808,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857698 was archive-digest verified, extracted, and matched byte-for-byte before retention."
+        "note": "Retention for the final M6 candidate HEAD in PR #187. M5 campaigns were rerun because M6 campaign tooling changed paths in the recorded semantic closures; the retained report is the exact extracted workflow artifact."
       }
     },
     {
@@ -818,9 +818,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+        "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
+        "branch_head_sha": "93bb16c60f4d85c2208f51e8600371e058bf4b7a",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -828,29 +828,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": ".github/workflows/m5-upgrade.yml",
+        "workflow": "M5 Upgrade",
         "workflow_file": ".github/workflows/m5-upgrade.yml",
-        "id": 33215857699,
+        "id": 33255995016,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-upgrade-campaign",
-        "id": 98999189497,
+        "id": 99109685029,
         "conclusion": "success"
       },
       "artifact": {
         "name": "upgrade-campaign-postgres-15",
-        "id": 9703405166,
-        "digest": "sha256:0c065988caff1840be4588556b7b59208ea5d16eca5b72f4bdbe320a0fe80b52",
+        "id": 9715852433,
+        "digest": "sha256:e083de5832224d0f8d7061d94818cb0c4144023bfed2f131a90d932260bf5957",
         "size_bytes": 5763
       },
-      "retained_report_git_blob": "7ac58bfff6eebd12465cdd65a5c493d16d502b04",
+      "retained_report_git_blob": "da45d555f4eb0a4c8955c305f19828596e3d07ea",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-29T10:12:46.000000+09:00",
-        "run_id": 33215857699,
+        "verified_at": "2026-08-29T22:57:19+09:00",
+        "run_id": 33255995016,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -858,7 +858,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857699 was archive-digest verified, extracted, and matched byte-for-byte before retention."
+        "note": "Retention for the final M6 candidate HEAD in PR #187. M5 campaigns were rerun because M6 campaign tooling changed paths in the recorded semantic closures; the retained report is the exact extracted workflow artifact."
       }
     },
     {
@@ -868,9 +868,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+        "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
+        "branch_head_sha": "93bb16c60f4d85c2208f51e8600371e058bf4b7a",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -878,29 +878,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": ".github/workflows/m5-upgrade.yml",
+        "workflow": "M5 Upgrade",
         "workflow_file": ".github/workflows/m5-upgrade.yml",
-        "id": 33215857699,
+        "id": 33255995016,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-upgrade-campaign",
-        "id": 98999189294,
+        "id": 99109685229,
         "conclusion": "success"
       },
       "artifact": {
         "name": "upgrade-campaign-postgres-18",
-        "id": 9703387405,
-        "digest": "sha256:dd35f1885a6754557077effe7c5c0232e098de89c152d728408f5df2e4126673",
+        "id": 9715854307,
+        "digest": "sha256:0c9361bb978837dccac4b0491100ec460cdbf3232d3393a1f8a048adafab5a7c",
         "size_bytes": 5760
       },
-      "retained_report_git_blob": "113e9e79f7413b0a72a8b384bbf8ed06d7f25414",
+      "retained_report_git_blob": "88e8627ce22814cb16251f72fbf443b76116a75f",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-29T10:12:46.000000+09:00",
-        "run_id": 33215857699,
+        "verified_at": "2026-08-29T22:57:19+09:00",
+        "run_id": 33255995016,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -908,7 +908,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857699 was archive-digest verified, extracted, and matched byte-for-byte before retention."
+        "note": "Retention for the final M6 candidate HEAD in PR #187. M5 campaigns were rerun because M6 campaign tooling changed paths in the recorded semantic closures; the retained report is the exact extracted workflow artifact."
       }
     }
   ],

@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+    "source_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -20,7 +20,7 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+      "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -73,7 +73,7 @@
         "crates/oxide-batch/tests/postgres_repository.rs": "27994214dafea2d906b74ea506dac85cb8245931",
         "crates/oxide-batch/tests/repository.rs": "ad77f54947508083347ed518d482002221e0ffe5",
         "crates/oxide-batch/tests/services.rs": "6c7475a6cecb5cf6bbd6e0e07ed4ba843292897e",
-        "crates/oxide-batch/tests/support": "282e441016c3fa1ebee522331b1f7ddc3bf89911",
+        "crates/oxide-batch/tests/support": "de92596a0c6dc7361e3a0110cdc5613f9201e0cb",
         "crates/oxide-batch/tests/tasklet.rs": "c5f6cec02693a4bca49075c0464561a05fd3cf4f",
         "crates/oxide-batch/tests/telemetry.rs": "18ca6ab3b16d399b0820f5009262b39743b13bd2",
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
@@ -88,8 +88,8 @@
         "tests/fixtures/conformance/verify-ci-contract.sh": "da010daf359f5662aed8c30f5cd0c455c1ae5989",
         "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
         "xtask/src/conformance.rs": "6f3855b9d887d847df24747de995539c75767dee",
-        "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
-        "xtask/src/main.rs": "dc33b4fbadd4419d1e0b41410ab46e0a5ddffe5c",
+        "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
+        "xtask/src/main.rs": "da7f6c26499226226ac7c289272efaa7c610c547",
         "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
       },
       "tree_clean": true

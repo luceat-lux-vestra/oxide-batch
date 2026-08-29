@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+    "source_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -20,7 +20,7 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+      "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -55,8 +55,8 @@
         "tests/fixtures/crash-restore/verify-ci-contract.sh": "cfdc06ea559890ac1509dfc9cb547d271a0b6cec",
         "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
         "xtask/src/crash_restore.rs": "38edf0099c6354ab09afed54b7499ad425f53335",
-        "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
-        "xtask/src/main.rs": "dc33b4fbadd4419d1e0b41410ab46e0a5ddffe5c",
+        "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
+        "xtask/src/main.rs": "da7f6c26499226226ac7c289272efaa7c610c547",
         "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
       },
       "tree_clean": true
@@ -129,7 +129,7 @@
           "step_status": "COMPLETED"
         },
         "execution_manifest": {
-          "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+          "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -164,8 +164,8 @@
             "tests/fixtures/crash-restore/verify-ci-contract.sh": "cfdc06ea559890ac1509dfc9cb547d271a0b6cec",
             "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
             "xtask/src/crash_restore.rs": "38edf0099c6354ab09afed54b7499ad425f53335",
-            "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
-            "xtask/src/main.rs": "dc33b4fbadd4419d1e0b41410ab46e0a5ddffe5c",
+            "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
+            "xtask/src/main.rs": "da7f6c26499226226ac7c289272efaa7c610c547",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
           },
           "tree_clean": true
@@ -173,7 +173,7 @@
         "passed": true,
         "phases": [
           {
-            "child_pid": 8279,
+            "child_pid": 8199,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -190,7 +190,7 @@
             "durations_ms": {
               "discovery": 3,
               "reach_phase": 21,
-              "resume": 25
+              "resume": 420
             },
             "expected": "the enlisted rows were never committed, so the chunk replays whole",
             "fixture": "postgres",
@@ -297,7 +297,7 @@
             "violations": []
           },
           {
-            "child_pid": 8295,
+            "child_pid": 8258,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -312,9 +312,9 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 4,
+              "discovery": 2,
               "reach_phase": 21,
-              "resume": 25
+              "resume": 19
             },
             "expected": "durable state was produced inside the commit and never bound, so the chunk replays whole",
             "fixture": "postgres",
@@ -421,7 +421,7 @@
             "violations": []
           },
           {
-            "child_pid": 8332,
+            "child_pid": 8274,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -436,9 +436,9 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 4,
-              "reach_phase": 54,
-              "resume": 25
+              "discovery": 2,
+              "reach_phase": 43,
+              "resume": 20
             },
             "expected": "the progress write was issued and blocked, so neither it nor the enlisted rows are durable and the chunk replays whole",
             "fixture": "postgres",
@@ -545,7 +545,7 @@
             "violations": []
           },
           {
-            "child_pid": 8350,
+            "child_pid": 8292,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -560,9 +560,9 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 4,
-              "reach_phase": 53,
-              "resume": 21
+              "discovery": 3,
+              "reach_phase": 43,
+              "resume": 16
             },
             "expected": "the server completed the commit the killed process never saw acknowledged, so the chunk is durable and must not replay",
             "fixture": "postgres",
@@ -671,7 +671,7 @@
             "violations": []
           },
           {
-            "child_pid": 8368,
+            "child_pid": 8332,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -688,7 +688,7 @@
             "durations_ms": {
               "discovery": 3,
               "reach_phase": 21,
-              "resume": 21
+              "resume": 16
             },
             "expected": "the commit was acknowledged before the kill, so the chunk is durable and must not replay",
             "fixture": "postgres",
@@ -830,7 +830,7 @@
           "job_status": "COMPLETED",
           "step_status": "COMPLETED"
         },
-        "child_pid": 8709,
+        "child_pid": 8630,
         "decision": {
           "class": "APPLIED",
           "path": "operator recover",
@@ -846,13 +846,13 @@
           "unknown_commit": false
         },
         "durations_ms": {
-          "commit_chunks_before_kill": 633,
-          "discovery": 69,
-          "resume": 286,
-          "uninterrupted_run": 1081
+          "commit_chunks_before_kill": 485,
+          "discovery": 55,
+          "resume": 218,
+          "uninterrupted_run": 965
         },
         "execution_manifest": {
-          "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+          "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -887,8 +887,8 @@
             "tests/fixtures/crash-restore/verify-ci-contract.sh": "cfdc06ea559890ac1509dfc9cb547d271a0b6cec",
             "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
             "xtask/src/crash_restore.rs": "38edf0099c6354ab09afed54b7499ad425f53335",
-            "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
-            "xtask/src/main.rs": "dc33b4fbadd4419d1e0b41410ab46e0a5ddffe5c",
+            "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
+            "xtask/src/main.rs": "da7f6c26499226226ac7c289272efaa7c610c547",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
           },
           "tree_clean": true
@@ -1043,7 +1043,7 @@
           "restored_into": "oxide_batch_m5_restore"
         },
         "execution_manifest": {
-          "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
+          "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -1078,8 +1078,8 @@
             "tests/fixtures/crash-restore/verify-ci-contract.sh": "cfdc06ea559890ac1509dfc9cb547d271a0b6cec",
             "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
             "xtask/src/crash_restore.rs": "38edf0099c6354ab09afed54b7499ad425f53335",
-            "xtask/src/evidence.rs": "b104e55fe9c37cacdc97a0d097b2d8e94f8bd0a1",
-            "xtask/src/main.rs": "dc33b4fbadd4419d1e0b41410ab46e0a5ddffe5c",
+            "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
+            "xtask/src/main.rs": "da7f6c26499226226ac7c289272efaa7c610c547",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
           },
           "tree_clean": true
@@ -1088,7 +1088,7 @@
         "passed": true,
         "report": "logical backup and restore",
         "restart_on_restored": {
-          "duration_ms": 118,
+          "duration_ms": 89,
           "resumed_chunks": 2,
           "terminal": {
             "business_rows": 25,
@@ -1364,7 +1364,7 @@
           ]
         },
         "tooling": {
-          "archive_bytes": 84745,
+          "archive_bytes": 84710,
           "format": "custom",
           "pg_dump": "pg_dump (PostgreSQL) 18.6 (Ubuntu 18.6-1.pgdg24.04+2)",
           "pg_restore": "pg_restore (PostgreSQL) 18.6 (Ubuntu 18.6-1.pgdg24.04+2)",

@@ -1,0 +1,263 @@
+{
+  "binary_size_and_compile_time": {
+    "boxed": {
+      "binary_size_bytes": 1744392,
+      "compile_time_seconds": 2.9759636609999998
+    },
+    "typed": {
+      "binary_size_bytes": 1728000,
+      "compile_time_seconds": 22.923017133
+    }
+  },
+  "campaign": "M6 Gate H P-002 real-component performance",
+  "environment": {
+    "arch": "x86_64",
+    "matrix": "performance-linux-release",
+    "os": "linux",
+    "profile": "release",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "source_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
+    "source_tree_clean": true
+  },
+  "hard_invariants": {
+    "typed_dynamic_dispatch_per_item_is_zero": {
+      "proof": "proved structurally by gate_h_dispatch.rs",
+      "value": 0
+    },
+    "typed_per_item_future_allocation_is_zero": {
+      "proof": "proved structurally by gate_h_dispatch.rs",
+      "value": 0
+    }
+  },
+  "no_invented_threshold_note": "Throughput, latency, allocation-delta, binary-size, and compile-time numbers are retained as disclosure evidence per the frozen protocol; none is compared against an invented pass/fail threshold by this runner.",
+  "observation": {
+    "execution_manifest": {
+      "execution_commit": "6060432b3ddc952095f80acbba53102f51f04d0d",
+      "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head.",
+      "objects": {
+        ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
+        ".github/workflows/m6-gate-h.yml": "a9a007b8b8d7c7a0a00185edd4f3d7b99e323864",
+        "Cargo.lock": "1f3bd785e48cb4ee2684a510d1f0c94a1e7e8b89",
+        "Cargo.toml": "37ad0088277e0638aa3cf3b6de4e64f590aed874",
+        "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
+        "crates/oxide-batch-core/src": "2548d8ab187bc10e596042d9a45763dfffa2b624",
+        "crates/oxide-batch-plan/Cargo.toml": "527f06f60f63f7de9cf3892b4c5d106e49b4c0a7",
+        "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
+        "crates/oxide-batch/Cargo.toml": "762ee1faab89b474e219bc1a97dc5e8bdb21a03a",
+        "crates/oxide-batch/examples/gate_h_boxed_reference.rs": "8f574d70530b27964063c1d4eb4f0a55abc96b53",
+        "crates/oxide-batch/examples/gate_h_typed_reference.rs": "fe4e142d1159876291e609ec9654160d423f7d03",
+        "crates/oxide-batch/src": "28a905220a782bcc7854379d15c2d8efc9682229",
+        "crates/oxide-batch/tests/gate_h_allocation.rs": "7c39944fb14c2a01d0b7f861bbab3e550a92879b",
+        "crates/oxide-batch/tests/gate_h_dispatch.rs": "43864d2adf603de48e11a6d2c26c774b7e42461c",
+        "crates/oxide-batch/tests/gate_h_throughput.rs": "54e51ec7bfa119ab45373f4f4ec3cac03e0e6087",
+        "crates/oxide-batch/tests/item_listener_allocation.rs": "edd8dc77bcf86062aaba31672f3a4acc571bbc47",
+        "crates/oxide-batch/tests/performance": "4935ffae74f093a353c600cf36d6cf0ead674e40",
+        "crates/oxide-batch/tests/support/chunk_fixture.rs": "e8b203440b0e074c2f6155391cff79c012e4dc7f",
+        "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
+        "tests/fixtures/gate-h/campaign-semantics.json": "76e3e6cefe841a31fdb28a583e25fb2e1dc4ff77",
+        "tests/fixtures/gate-h/execution-contract.json": "3ba628a4ee09a23bd40a0bb533f3a86c5c968396",
+        "tests/fixtures/gate-h/run-ci-campaign.sh": "1d1fece72f6363461471a15a417113798a8e1f11",
+        "tests/fixtures/gate-h/verify-ci-contract.sh": "b2081b8ba3cb7953c6698b82fc3e6ae1e285b3eb",
+        "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
+        "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
+        "xtask/src/gate_h.rs": "0fbb79f0a92c2e247e51b2fea914045b749f1807",
+        "xtask/src/main.rs": "da7f6c26499226226ac7c289272efaa7c610c547",
+        "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
+      },
+      "tree_clean": true
+    }
+  },
+  "passed": true,
+  "postgresql_major_version": "not-applicable",
+  "report": "gate-h",
+  "targets": [
+    {
+      "observation": {
+        "boxed": {
+          "allocator_calls_per_chunk": 554428,
+          "allocator_calls_per_item": 28.00141414141414,
+          "delta": {
+            "allocations": 277200,
+            "allocator_calls": 554428,
+            "bytes_allocated": 11409844,
+            "bytes_deallocated": 11409844,
+            "bytes_reallocated": 4421632,
+            "deallocations": 277200,
+            "reallocations": 28
+          },
+          "large": {
+            "allocations": 280051,
+            "allocator_calls": 560146,
+            "bytes_allocated": 11522956,
+            "bytes_deallocated": 11522444,
+            "bytes_reallocated": 4447840,
+            "deallocations": 280049,
+            "reallocations": 46
+          },
+          "small": {
+            "allocations": 2851,
+            "allocator_calls": 5718,
+            "bytes_allocated": 113112,
+            "bytes_deallocated": 112600,
+            "bytes_reallocated": 26208,
+            "deallocations": 2849,
+            "reallocations": 18
+          }
+        },
+        "buffer_reuse": {
+          "note": "Delimited component internal buffer reuse is not exposed as a counter.",
+          "value": null
+        },
+        "copied_bytes": {
+          "note": "Not measurable at this component boundary.",
+          "value": null
+        },
+        "correctness": "completed",
+        "framework_controlled": {
+          "proof": "gate_h_dispatch target",
+          "typed_dynamic_dispatch_per_item": 0,
+          "typed_future_boxing": 0,
+          "typed_per_item_future_allocations": 0
+        },
+        "typed": {
+          "allocator_calls_per_chunk": 475228,
+          "allocator_calls_per_item": 24.00141414141414,
+          "delta": {
+            "allocations": 237600,
+            "allocator_calls": 475228,
+            "bytes_allocated": 10301044,
+            "bytes_deallocated": 10301044,
+            "bytes_reallocated": 4421632,
+            "deallocations": 237600,
+            "reallocations": 28
+          },
+          "large": {
+            "allocations": 240049,
+            "allocator_calls": 480142,
+            "bytes_allocated": 10402876,
+            "bytes_deallocated": 10402364,
+            "bytes_reallocated": 4447840,
+            "deallocations": 240047,
+            "reallocations": 46
+          },
+          "small": {
+            "allocations": 2449,
+            "allocator_calls": 4914,
+            "bytes_allocated": 101832,
+            "bytes_deallocated": 101320,
+            "bytes_reallocated": 26208,
+            "deallocations": 2447,
+            "reallocations": 18
+          }
+        },
+        "workload": {
+          "chunk_size": 20000,
+          "component": "DelimitedReader/DelimitedWriter",
+          "items_delta": 19800,
+          "items_large": 20000,
+          "items_small": 200,
+          "processor": "IdentityProcessor",
+          "transaction_semantics": "NoopTransactions"
+        }
+      },
+      "results": {
+        "typed_csv_pipeline_allocates_no_more_per_item_than_erased": "ok"
+      },
+      "succeeded": true,
+      "target": "gate_h_allocation"
+    },
+    {
+      "results": {
+        "boxed_components_are_exactly_fat_pointer_sized": "ok",
+        "typed_path_framework_controlled_per_item_allocation_is_zero": "ok",
+        "typed_path_requires_no_framework_controlled_dynamic_dispatch_per_item": "ok"
+      },
+      "succeeded": true,
+      "target": "gate_h_dispatch"
+    },
+    {
+      "observation": {
+        "boxed": {
+          "max_nanoseconds": 70642749,
+          "mean_nanoseconds": 69192020,
+          "min_nanoseconds": 68510453,
+          "raw_latency_nanoseconds": [
+            70642749,
+            68815561,
+            68510453,
+            68890364,
+            69100977
+          ],
+          "throughput_items_per_second": 722626.6844066699
+        },
+        "buffer_reuse": {
+          "note": "Delimited component internal buffer reuse is not exposed as a counter.",
+          "value": null
+        },
+        "correctness": "completed",
+        "framework_controlled": {
+          "proof": "gate_h_dispatch target",
+          "typed_dynamic_dispatch_per_item": 0,
+          "typed_future_boxing": 0,
+          "typed_per_item_future_allocations": 0
+        },
+        "typed": {
+          "max_nanoseconds": 68966232,
+          "mean_nanoseconds": 68238682,
+          "min_nanoseconds": 67694170,
+          "raw_latency_nanoseconds": [
+            68966232,
+            68371063,
+            67989541,
+            67694170,
+            68172405
+          ],
+          "throughput_items_per_second": 732722.241030388
+        },
+        "workload": {
+          "chunk_size": 50000,
+          "component": "DelimitedReader/DelimitedWriter",
+          "items": 50000,
+          "measured_repetitions": 5,
+          "processor": "IdentityProcessor",
+          "transaction_semantics": "NoopTransactions",
+          "warmup_repetitions": 2
+        }
+      },
+      "results": {
+        "throughput_and_latency_recorded_without_an_invented_threshold": "ok"
+      },
+      "succeeded": true,
+      "target": "gate_h_throughput"
+    },
+    {
+      "observation": {
+        "correctness": "completed",
+        "listener_enabled": {
+          "allocator_calls_per_item": 8.001060606060607,
+          "delta_allocator_calls": 158421,
+          "large_allocator_calls": 160134,
+          "small_allocator_calls": 1713
+        },
+        "listener_representation": "boxed future retained by Gate F decision",
+        "typed_listener_free_invariant": "measured separately; not included in this count",
+        "workload": {
+          "chunk_size": 20000,
+          "component": "Source/Double/Sink",
+          "items_delta": 19800,
+          "items_large": 20000,
+          "items_small": 200,
+          "listener": "NoopReadListener",
+          "transaction_semantics": "NoopTransactions"
+        }
+      },
+      "results": {
+        "listener_enabled_allocation_is_reported_separately_from_typed_path": "ok",
+        "registered_listener_cost_is_reported_separately_from_component_cost": "ok"
+      },
+      "succeeded": true,
+      "target": "item_listener_allocation"
+    }
+  ],
+  "violations": []
+}
