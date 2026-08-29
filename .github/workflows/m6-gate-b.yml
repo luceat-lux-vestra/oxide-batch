@@ -1,0 +1,66 @@
+name: M6 Gate B Transaction/Restart Equivalence
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m6-gate-b-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate-b-campaign:
+    name: postgres-${{ matrix.postgres }}-gate-b-campaign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["15", "18"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oxide_batch_gate_b
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username postgres --dbname oxide_batch_gate_b"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      OXIDEBATCH_POSTGRES_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_gate_b
+      OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_gate_b
+      OXIDEBATCH_CAMPAIGN_DIR: target/m6-campaigns
+      OXIDEBATCH_CAMPAIGN_MATRIX: postgres-${{ matrix.postgres }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Fail closed if the execution contract drifts
+        run: ./tests/fixtures/gate-b/verify-ci-contract.sh .github/workflows/m6-gate-b.yml
+
+      - name: Run the Gate B transaction/restart equivalence campaign
+        run: ./tests/fixtures/gate-b/run-ci-campaign.sh ${{ matrix.postgres }}
+
+      # Retained on failure as well as on success -- a failed Gate B campaign
+      # is mostly worth reading for which scenario diverged.
+      - name: Retain the campaign report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gate-b-campaign-postgres-${{ matrix.postgres }}
+          path: target/m6-campaigns/gate-b-campaign.json
+          if-no-files-found: error

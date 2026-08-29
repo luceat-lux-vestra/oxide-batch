@@ -10,6 +10,7 @@
 
 #![allow(clippy::expect_used, clippy::panic)]
 
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use oxide_batch::{
@@ -99,6 +100,7 @@ impl VersionedStateCodec<Counter> for CounterSchema {
 
 static SCHEMA_UPGRADES: AtomicUsize = AtomicUsize::new(0);
 static CODEC_UPGRADES: AtomicUsize = AtomicUsize::new(0);
+static UPGRADE_COUNTER_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 fn rename_count_to_total(payload: &[u8]) -> Result<Vec<u8>, StateCodecError> {
     SCHEMA_UPGRADES.fetch_add(1, Ordering::Relaxed);
@@ -212,6 +214,9 @@ fn recorded_by(
 
 #[test]
 fn equal_component_state_version_decodes_without_migration() {
+    let _guard = UPGRADE_COUNTER_TEST_LOCK
+        .lock()
+        .expect("upgrade counter test lock is not poisoned");
     SCHEMA_UPGRADES.store(0, Ordering::Relaxed);
     CODEC_UPGRADES.store(0, Ordering::Relaxed);
     let codec = current_codec();
@@ -230,6 +235,9 @@ fn equal_component_state_version_decodes_without_migration() {
 
 #[test]
 fn older_component_state_upgrades_through_one_directed_chain() {
+    let _guard = UPGRADE_COUNTER_TEST_LOCK
+        .lock()
+        .expect("upgrade counter test lock is not poisoned");
     SCHEMA_UPGRADES.store(0, Ordering::Relaxed);
     CODEC_UPGRADES.store(0, Ordering::Relaxed);
     let older = writer_codec(1, 1, RestartabilityDeclaration::Restartable);

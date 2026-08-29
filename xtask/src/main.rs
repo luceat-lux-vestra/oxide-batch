@@ -5,6 +5,9 @@ mod conformance;
 mod crash_restore;
 mod deps;
 mod evidence;
+mod gate_b;
+mod gate_h;
+mod m6_conformance;
 mod performance;
 mod reconciliation;
 mod release_crates;
@@ -133,6 +136,9 @@ fn main() -> ExitCode {
         Some("deps") => run_dependency_check(),
         Some("doctor") => run_all(DOCTOR),
         Some("evidence") => run_evidence_check(),
+        Some("gate-b") => run_gate_b_campaign(),
+        Some("gate-h") => run_gate_h_campaign(),
+        Some("m6-conformance") => run_m6_conformance_campaign(),
         Some("package") => run_all(PACKAGE),
         Some("performance") => run_performance_campaign(),
         Some("reconciliation") => run_reconciliation_check(),
@@ -305,6 +311,96 @@ fn run_crash_restore_campaign() -> bool {
     }
 }
 
+/// Reports whether the Gate B typed-vs-Boxed transaction/restart
+/// equivalence campaign proved what it requires.
+fn run_gate_b_campaign() -> bool {
+    eprintln!("==> Gate B transaction/restart equivalence campaign");
+
+    match gate_b::run() {
+        Ok(campaign) => {
+            eprintln!("campaign report: {}", campaign.report.display());
+            if campaign.violations.is_empty() {
+                eprintln!(
+                    "all eight Gate B scenarios passed with representation-independent durable \
+                     observations"
+                );
+                return true;
+            }
+            for violation in &campaign.violations {
+                eprintln!("campaign gap: {violation}");
+            }
+            eprintln!(
+                "see the campaign semantics in \
+                 tests/fixtures/gate-b/campaign-semantics.json"
+            );
+            false
+        }
+        Err(error) => {
+            eprintln!("could not run the Gate B campaign: {error}");
+            false
+        }
+    }
+}
+
+/// Reports whether the Gate H P-002 real-component performance campaign
+/// proved what it requires.
+fn run_gate_h_campaign() -> bool {
+    eprintln!("==> Gate H P-002 real-component performance campaign");
+
+    match gate_h::run() {
+        Ok(campaign) => {
+            eprintln!("campaign report: {}", campaign.report.display());
+            if campaign.violations.is_empty() {
+                eprintln!(
+                    "the typed path's zero-future-allocation and zero-dynamic-dispatch \
+                     invariants held, and throughput/latency/allocation disclosure evidence was \
+                     retained with no invented threshold"
+                );
+                return true;
+            }
+            for violation in &campaign.violations {
+                eprintln!("campaign gap: {violation}");
+            }
+            eprintln!(
+                "see the campaign semantics in \
+                 tests/fixtures/gate-h/campaign-semantics.json"
+            );
+            false
+        }
+        Err(error) => {
+            eprintln!("could not run the Gate H campaign: {error}");
+            false
+        }
+    }
+}
+
+/// Reports whether the complete shipped M6 component denominator passed on the
+/// selected `PostgreSQL` matrix point.
+fn run_m6_conformance_campaign() -> bool {
+    eprintln!("==> M6 full component conformance campaign");
+
+    match m6_conformance::run() {
+        Ok(campaign) => {
+            eprintln!("campaign report: {}", campaign.report.display());
+            if campaign.violations.is_empty() {
+                eprintln!("every selected M6 component target ran without ignored tests");
+                return true;
+            }
+            for violation in &campaign.violations {
+                eprintln!("campaign gap: {violation}");
+            }
+            eprintln!(
+                "see the campaign semantics in tests/fixtures/m6-conformance/campaign-semantics.json"
+            );
+            false
+        }
+        Err(error) => {
+            eprintln!("could not run the M6 conformance campaign: {error}");
+            false
+        }
+    }
+}
+
 /// Reports whether every declared ceiling held and was reached.
 fn run_resource_bound_campaign() -> bool {
     eprintln!("==> PostgreSQL resource-bound campaign");
@@ -376,13 +472,19 @@ fn run_evidence_check() -> bool {
 
     match evidence::run() {
         Ok(verification) => {
+            let directories = verification
+                .directories
+                .iter()
+                .map(|directory| directory.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
             if verification.violations.is_empty() {
                 eprintln!(
-                    "{} retained report(s) in {} are byte-identical to what was recorded, name \
-                     the run and the producer commit they came from, cover the required matrix, \
-                     passed with no violations, and describe the campaign this tree still runs",
+                    "{} retained report(s) across {directories} are byte-identical to what was \
+                     recorded, name the run and the producer commit they came from, cover the \
+                     required matrix, passed with no violations, and describe the campaign this \
+                     tree still runs",
                     verification.reports,
-                    evidence::directory().display(),
                 );
                 return true;
             }
@@ -390,8 +492,8 @@ fn run_evidence_check() -> bool {
                 eprintln!("evidence gap: {violation}");
             }
             eprintln!(
-                "see the provenance contract in \
-                 docs/engineering/campaigns/m5/evidence-provenance.json"
+                "see the provenance contract in each checked directory's \
+                 evidence-provenance.json: {directories}"
             );
             false
         }
@@ -599,6 +701,9 @@ fn usage() {
            deps             check extraction boundaries and workspace cycles\n\
            doctor           show required local tool versions\n\
            evidence         verify retained campaign evidence against its provenance\n\
+           gate-b           run the Gate B typed-vs-Boxed transaction/restart equivalence campaign\n\
+           gate-h           run the Gate H P-002 real-component performance campaign\n\
+           m6-conformance   run the full shipped-component M6 conformance campaign\n\
            package          inspect and dry-run every publishable crate\n\
            performance      run P-001, P-003, and P-010 in release profile against PostgreSQL\n\
            reconciliation   verify the #102 reconciliation document against the repository\n\

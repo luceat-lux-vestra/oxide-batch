@@ -105,6 +105,7 @@ decisions own the normative detail.
 - [M5 exit evidence](project/m5-exit-evidence.md)
 - [M6 complete item processing and user test kit kickoff gate](project/m6-kickoff-gate.md)
 - [M6 #151 completion-policy and listener-taxonomy evidence](project/m6-151-completion-and-listener-evidence.md)
+- [M6 exit evidence](project/m6-exit-evidence.md)
 - [Historical M0 decision register](product/open-decisions.md)
 
 Historical gates are preserved as records of their date. Later decisions link
@@ -117,6 +118,10 @@ to them and record supersession; they do not rewrite history.
 - [M5 developer guide](guides/developer-guide.md)
 - [M5 operator guide](guides/operator-guide.md)
 - [M5 upgrade and rollback guide](guides/upgrade-and-rollback.md)
+- [M6 component reference](guides/component-reference.md)
+- [M6 restart and state guide](guides/restart-and-state.md)
+- [M6 extension guide](guides/extension-guide.md)
+- [M6 test-kit tutorial](guides/test-kit-tutorial.md)
 
 ## Product
 

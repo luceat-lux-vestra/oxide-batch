@@ -1,0 +1,282 @@
+{
+  "note": "M6 retained reports are the exact extracted bytes of the successful GitHub Actions artifacts named below. The producer execution commit is the pull-request merge ref recorded inside each report; the branch head is recorded separately.",
+  "binding": {
+    "remote_verification": "The run, attempt, producing job, artifact digest, and extracted report bytes were checked against the GitHub Actions API at retention time.",
+    "local_verification": "cargo xtask evidence checks retained report blobs, producer commits, campaign semantic closures, matrix coverage, report pass status, and the recorded remote checks.",
+    "campaign_semantics": "Each campaign report records the object identities of the canonical semantic closure it executed; those identities must remain unchanged in this tree."
+  },
+  "campaigns": {
+    "declared": [
+      {
+        "campaign": "M6 Gate B transaction/restart equivalence",
+        "semantics": "tests/fixtures/gate-b/campaign-semantics.json",
+        "required_matrix": [
+          "postgres-15",
+          "postgres-18"
+        ]
+      },
+      {
+        "campaign": "M6 Gate H P-002 real-component performance",
+        "semantics": "tests/fixtures/gate-h/campaign-semantics.json",
+        "required_matrix": [
+          "performance-linux-release"
+        ]
+      },
+      {
+        "campaign": "M6 full component conformance, malformed/failure, lifecycle, and restart campaign",
+        "semantics": "tests/fixtures/m6-conformance/campaign-semantics.json",
+        "required_matrix": [
+          "postgres-15",
+          "postgres-18"
+        ]
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "report": "gate-b-campaign-postgres-15.json",
+      "campaign": "M6 Gate B transaction/restart equivalence",
+      "matrix_point": "postgres-15",
+      "postgres_major_version": "15",
+      "producer": {
+        "execution_commit": "51f8e8c64d2dfb43b091268a8ffa893b5b3252b2",
+        "execution_commit_note": "The pull-request merge ref recorded by the campaign report.",
+        "branch_head_sha": "ba73051eb74fc02d46dc4f9cfd81ec84d99a9cde",
+        "branch_head_note": "The branch head that triggered the pull-request workflow; it is not substituted for the merge-ref execution commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "M6 Gate B Transaction/Restart Equivalence",
+        "workflow_file": ".github/workflows/m6-gate-b.yml",
+        "id": 33272897882,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "postgres-15-gate-b-campaign",
+        "id": 99154478956,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "gate-b-campaign-postgres-15",
+        "id": 9720644091,
+        "digest": "sha256:caeea19cae9e8297c2fdfb71eb16ceffc61b9afcb02fbaa36631abfdfc9c16bc",
+        "size_bytes": 2337
+      },
+      "retained_report_git_blob": "f3ff2f4523eb42e19d64532a8f6dac5033cf099d",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-30T05:25:36+0900",
+        "run_id": 33272897882,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Exact extracted artifact from successful pull_request workflow run for PR #187; execution commit is the recorded merge ref and branch_head_sha is the triggering branch head."
+      }
+    },
+    {
+      "report": "gate-b-campaign-postgres-18.json",
+      "campaign": "M6 Gate B transaction/restart equivalence",
+      "matrix_point": "postgres-18",
+      "postgres_major_version": "18",
+      "producer": {
+        "execution_commit": "51f8e8c64d2dfb43b091268a8ffa893b5b3252b2",
+        "execution_commit_note": "The pull-request merge ref recorded by the campaign report.",
+        "branch_head_sha": "ba73051eb74fc02d46dc4f9cfd81ec84d99a9cde",
+        "branch_head_note": "The branch head that triggered the pull-request workflow; it is not substituted for the merge-ref execution commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "M6 Gate B Transaction/Restart Equivalence",
+        "workflow_file": ".github/workflows/m6-gate-b.yml",
+        "id": 33272897882,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "postgres-18-gate-b-campaign",
+        "id": 99154479033,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "gate-b-campaign-postgres-18",
+        "id": 9720646534,
+        "digest": "sha256:fd9dff082d9f552100feebe61c91829034a1725dba88ee9c342bdf84e09fd3c3",
+        "size_bytes": 2337
+      },
+      "retained_report_git_blob": "a65252b75744491b0a65f6ab566a55e8194402f8",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-30T05:25:36+0900",
+        "run_id": 33272897882,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Exact extracted artifact from successful pull_request workflow run for PR #187; execution commit is the recorded merge ref and branch_head_sha is the triggering branch head."
+      }
+    },
+    {
+      "report": "gate-h-campaign.json",
+      "campaign": "M6 Gate H P-002 real-component performance",
+      "matrix_point": "performance-linux-release",
+      "postgres_major_version": "not-applicable",
+      "producer": {
+        "execution_commit": "51f8e8c64d2dfb43b091268a8ffa893b5b3252b2",
+        "execution_commit_note": "The pull-request merge ref recorded by the campaign report.",
+        "branch_head_sha": "ba73051eb74fc02d46dc4f9cfd81ec84d99a9cde",
+        "branch_head_note": "The branch head that triggered the pull-request workflow; it is not substituted for the merge-ref execution commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "M6 Gate H P-002 Performance",
+        "workflow_file": ".github/workflows/m6-gate-h.yml",
+        "id": 33272897775,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "gate-h-campaign",
+        "id": 99154478272,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "gate-h-campaign",
+        "id": 9720661424,
+        "digest": "sha256:34fd91883996d596f08edcf78837c7ea1ea491632ddb010f48f2db001bb392fe",
+        "size_bytes": 3148
+      },
+      "retained_report_git_blob": "5dc514ea1d416979e7356e365bf9827591da1ee9",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-30T05:25:36+0900",
+        "run_id": 33272897775,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Exact extracted artifact from successful pull_request workflow run for PR #187; execution commit is the recorded merge ref and branch_head_sha is the triggering branch head."
+      }
+    },
+    {
+      "report": "m6-conformance-campaign-postgres-15.json",
+      "campaign": "M6 full component conformance, malformed/failure, lifecycle, and restart campaign",
+      "matrix_point": "postgres-15",
+      "postgres_major_version": "15",
+      "producer": {
+        "execution_commit": "51f8e8c64d2dfb43b091268a8ffa893b5b3252b2",
+        "execution_commit_note": "The pull-request merge ref recorded by the campaign report.",
+        "branch_head_sha": "ba73051eb74fc02d46dc4f9cfd81ec84d99a9cde",
+        "branch_head_note": "The branch head that triggered the pull-request workflow; it is not substituted for the merge-ref execution commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "M6 Full Component Conformance",
+        "workflow_file": ".github/workflows/m6-conformance.yml",
+        "id": 33272897778,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "postgres-15-m6-conformance",
+        "id": 99154478589,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "m6-conformance-campaign-postgres-15",
+        "id": 9720673305,
+        "digest": "sha256:c1f152542a41c03bee12e7346b7a2c561af5eaf5d922158bc9a212873f7a5b6e",
+        "size_bytes": 10406
+      },
+      "retained_report_git_blob": "b01c8a148a79d2aca166d1429fe833d061df7738",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-30T05:25:36+0900",
+        "run_id": 33272897778,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Exact extracted artifact from successful pull_request workflow run for PR #187; execution commit is the recorded merge ref and branch_head_sha is the triggering branch head."
+      }
+    },
+    {
+      "report": "m6-conformance-campaign-postgres-18.json",
+      "campaign": "M6 full component conformance, malformed/failure, lifecycle, and restart campaign",
+      "matrix_point": "postgres-18",
+      "postgres_major_version": "18",
+      "producer": {
+        "execution_commit": "51f8e8c64d2dfb43b091268a8ffa893b5b3252b2",
+        "execution_commit_note": "The pull-request merge ref recorded by the campaign report.",
+        "branch_head_sha": "ba73051eb74fc02d46dc4f9cfd81ec84d99a9cde",
+        "branch_head_note": "The branch head that triggered the pull-request workflow; it is not substituted for the merge-ref execution commit.",
+        "source_tree_clean": true,
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "os": "linux",
+        "arch": "x86_64"
+      },
+      "workflow_run": {
+        "workflow": "M6 Full Component Conformance",
+        "workflow_file": ".github/workflows/m6-conformance.yml",
+        "id": 33272897778,
+        "attempt": 1,
+        "event": "pull_request",
+        "conclusion": "success"
+      },
+      "producing_job": {
+        "name": "postgres-18-m6-conformance",
+        "id": 99154478433,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "name": "m6-conformance-campaign-postgres-18",
+        "id": 9720673595,
+        "digest": "sha256:7b1f52f88c49aa2a09cd16a69ab226cf84ac3916e381f7d19a5cca57b9891596",
+        "size_bytes": 10406
+      },
+      "retained_report_git_blob": "09dc2bc5dd8459effcf46ecd758e3e0ff2ece174",
+      "remote_verification": {
+        "verified": true,
+        "verified_at": "2026-08-30T05:25:36+0900",
+        "run_id": 33272897778,
+        "workflow_run_identity": true,
+        "workflow_run_conclusion": true,
+        "producing_job_identity": true,
+        "producing_job_conclusion": true,
+        "artifact_digest": true,
+        "artifact_bytes_match_retained_report": true,
+        "execution_commit_matches_report": true,
+        "note": "Exact extracted artifact from successful pull_request workflow run for PR #187; execution commit is the recorded merge ref and branch_head_sha is the triggering branch head."
+      }
+    }
+  ]
+}

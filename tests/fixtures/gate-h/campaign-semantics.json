@@ -1,0 +1,75 @@
+{
+    "document": "The executable closure of the M6 Gate H P-002 real-component performance campaign",
+    "note": "The single source of truth for what the Gate H campaign is made of. The runner reads it to record the object identity of every path at the tree it actually ran on; the permanent verifier reads it to require those identities to still hold. Neither restates the list, because a list kept in two places is a list that will disagree.",
+    "rule": "A change to anything here changes what the evidence is evidence of, so retained reports produced before the change may not be promoted after it: the campaign has to be run again. A change to anything not here — documentation, the changelog, or unrelated jobs in `.github/workflows/ci.yml` — leaves retained evidence valid. The dedicated `.github/workflows/m6-gate-h.yml` is bound as one object, so changes to Gate H's provisioning or call layer invalidate Gate H evidence without binding the rest of CI.",
+    "categories": {
+        "workspace framework and adapter source": {
+            "why": "Every Gate H scenario runs the typed and Boxed item-component/chunk-runtime code paths this declares, including the real DelimitedReader/DelimitedWriter/IdentityProcessor components the M6 P-002 reference workload uses.",
+            "paths": [
+                "crates/oxide-batch/src",
+                "crates/oxide-batch-core/src",
+                "crates/oxide-batch-plan/src"
+            ]
+        },
+        "campaign implementation": {
+            "why": "The exact test targets Gate H's frozen protocol names, the shared support modules they build on, and the two binary-size/compile-time reference examples the runner builds in release profile and measures directly (xtask/src/gate_h.rs's own REFERENCE_EXAMPLES). A workspace test or example file not listed here is outside the campaign: it is neither run/built nor able to affect the campaign's result.",
+            "paths": [
+                "crates/oxide-batch/tests/gate_h_allocation.rs",
+                "crates/oxide-batch/tests/gate_h_dispatch.rs",
+                "crates/oxide-batch/tests/gate_h_throughput.rs",
+                "crates/oxide-batch/tests/item_listener_allocation.rs",
+                "crates/oxide-batch/tests/support/chunk_fixture.rs",
+                "crates/oxide-batch/tests/performance",
+                "crates/oxide-batch/examples/gate_h_typed_reference.rs",
+                "crates/oxide-batch/examples/gate_h_boxed_reference.rs"
+            ]
+        },
+        "cargo manifests": {
+            "why": "Feature selection and dependency ranges for every crate the campaign builds and runs, including the release profile settings the frozen protocol requires this campaign to run under.",
+            "paths": [
+                "Cargo.toml",
+                "crates/oxide-batch/Cargo.toml",
+                "crates/oxide-batch-core/Cargo.toml",
+                "crates/oxide-batch-plan/Cargo.toml",
+                "xtask/Cargo.toml"
+            ]
+        },
+        "dependency resolution": {
+            "why": "The exact dependency graph every target the campaign runs was built from.",
+            "paths": [
+                "Cargo.lock"
+            ]
+        },
+        "toolchain and build configuration": {
+            "why": "The compiler the campaign is built with, and the cargo configuration it is built under -- part of the frozen protocol's own required environment metadata (Rust version, compiler profile).",
+            "paths": [
+                "rust-toolchain.toml",
+                ".cargo/config.toml"
+            ]
+        },
+        "campaign fixtures": {
+            "why": "This closure document itself. Gate H's declared target/test scope is the fixed constants xtask/src/gate_h.rs itself declares (see \"independent verifier\" below) -- Gate H's frozen four-target protocol does not evolve the way an M5 multi-report campaign's accepted scope does.",
+            "paths": [
+                "tests/fixtures/gate-h/campaign-semantics.json"
+            ]
+        },
+        "Gate H execution contract": {
+            "why": "How CI actually runs the campaign: the release-profile build command and the environment. The dedicated workflow is included with them, and its contract-check step fails closed if the workflow drifts from the contract. An unrelated CI job in ci.yml does not invalidate retained Gate H evidence, while any change to the dedicated Gate H workflow does.",
+            "paths": [
+                "tests/fixtures/gate-h/execution-contract.json",
+                "tests/fixtures/gate-h/run-ci-campaign.sh",
+                "tests/fixtures/gate-h/verify-ci-contract.sh",
+                ".github/workflows/m6-gate-h.yml"
+            ]
+        },
+        "independent verifier": {
+            "why": "The program that decides whether a run proved what it owed and whether retained evidence is still what it says. Its verdicts are part of the campaign result, so a report produced under a different verifier is a result under a different standard. Listed as the specific files that implement it, matching every M5 campaign's own closure: `main.rs` dispatches the command, `gate_h.rs` runs the fixed target/test scope and computes the execution manifest, `evidence.rs` is the permanent offline verifier, and `suite.rs` is the target-running and libtest-parsing mechanics every runner shares.",
+            "paths": [
+                "xtask/src/main.rs",
+                "xtask/src/gate_h.rs",
+                "xtask/src/evidence.rs",
+                "xtask/src/suite.rs"
+            ]
+        }
+    }
+}

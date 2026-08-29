@@ -1,0 +1,87 @@
+{
+    "document": "The executable closure of the M6 Gate B transaction/restart equivalence campaign",
+    "note": "The single source of truth for what the Gate B campaign is made of. The runner reads it to record the object identity of every path at the tree it actually ran on; the permanent verifier reads it to require those identities to still hold. Neither restates the list, because a list kept in two places is a list that will disagree.",
+    "rule": "A change to anything here changes what the evidence is evidence of, so retained reports produced before the change may not be promoted after it: the campaign has to be run again. A change to anything not here — documentation, the changelog, or unrelated jobs in `.github/workflows/ci.yml` — leaves retained evidence valid. The dedicated `.github/workflows/m6-gate-b.yml` is bound as one object, so changes to Gate B's provisioning or call layer invalidate Gate B evidence without binding the rest of CI.",
+    "categories": {
+        "workspace framework and adapter source": {
+            "why": "Every Gate B scenario runs the runtime and the PostgreSQL adapter this code declares, including the chunk transaction manager, the repository ports, and the recovery path B-04/B-05/B-06/B-07 drive directly.",
+            "paths": [
+                "crates/oxide-batch/src",
+                "crates/oxide-batch-core/src",
+                "crates/oxide-batch-plan/src",
+                "crates/oxide-batch-repository/src"
+            ]
+        },
+        "migrations": {
+            "why": "The durable schema every Gate B scenario migrates the fixture database to before it runs.",
+            "paths": [
+                "crates/oxide-batch/migrations"
+            ]
+        },
+        "campaign implementation": {
+            "why": "The exact test targets Gate B's frozen protocol names, plus the shared support module they all build on and the local crash-restore module that support reuses. A workspace test file not listed here is outside the campaign: it is not selected, so it is neither run nor able to affect the campaign's result.",
+            "paths": [
+                "crates/oxide-batch/tests/gate_b_foundation_smoke.rs",
+                "crates/oxide-batch/tests/gate_b_01_normal_commit.rs",
+                "crates/oxide-batch/tests/gate_b_02_writer_failure_rollback.rs",
+                "crates/oxide-batch/tests/gate_b_03_atomic_boundary.rs",
+                "crates/oxide-batch/tests/gate_b_04_unknown_outcome.rs",
+                "crates/oxide-batch/tests/gate_b_05_kill_before_commit.rs",
+                "crates/oxide-batch/tests/gate_b_06_kill_around_acknowledgement.rs",
+                "crates/oxide-batch/tests/gate_b_07_multi_chunk_restart.rs",
+                "crates/oxide-batch/tests/gate_b_08_representation_transparent_identity.rs",
+                "crates/oxide-batch/tests/support/gate_b.rs",
+                "crates/oxide-batch/tests/support/chunk_fixture.rs",
+                "crates/oxide-batch/tests/crash_restore"
+            ]
+        },
+        "cargo manifests": {
+            "why": "Feature selection and dependency ranges for every crate the campaign builds and runs. A campaign built with different features is a different campaign.",
+            "paths": [
+                "Cargo.toml",
+                "crates/oxide-batch/Cargo.toml",
+                "crates/oxide-batch-core/Cargo.toml",
+                "crates/oxide-batch-plan/Cargo.toml",
+                "crates/oxide-batch-repository/Cargo.toml",
+                "xtask/Cargo.toml"
+            ]
+        },
+        "dependency resolution": {
+            "why": "The exact dependency graph every target the campaign runs was built from.",
+            "paths": [
+                "Cargo.lock"
+            ]
+        },
+        "toolchain and build configuration": {
+            "why": "The compiler the campaign is built with, and the cargo configuration it is built under.",
+            "paths": [
+                "rust-toolchain.toml",
+                ".cargo/config.toml"
+            ]
+        },
+        "campaign fixtures": {
+            "why": "This closure document itself. Gate B's declared target/test scope is not a separate document (unlike the M5 crash-restore campaign's campaign-scope.json) -- it is the fixed constants xtask/src/gate_b.rs itself declares, already covered under \"independent verifier\" below, since Gate B's frozen eight-scenario protocol does not evolve the way an M5 multi-report campaign's accepted scope does.",
+            "paths": [
+                "tests/fixtures/gate-b/campaign-semantics.json"
+            ]
+        },
+        "Gate B execution contract": {
+            "why": "How CI actually runs the campaign: the supported PostgreSQL matrix, the database and maintenance connection it is given, the command, and the environment. The dedicated workflow is included with them, and its contract-check step fails closed if the workflow drifts from the contract. An unrelated CI job in ci.yml does not invalidate retained Gate B evidence, while any change to the dedicated Gate B workflow does.",
+            "paths": [
+                "tests/fixtures/gate-b/execution-contract.json",
+                "tests/fixtures/gate-b/run-ci-campaign.sh",
+                "tests/fixtures/gate-b/verify-ci-contract.sh",
+                ".github/workflows/m6-gate-b.yml"
+            ]
+        },
+        "independent verifier": {
+            "why": "The program that decides whether a run proved what it owed and whether retained evidence is still what it says. Its verdicts are part of the campaign result, so a report produced under a different verifier is a result under a different standard. Listed as the specific files that implement it, matching every M5 campaign's own closure: `main.rs` dispatches the command, `gate_b.rs` runs the fixed target/test scope and computes the execution manifest, `evidence.rs` is the permanent offline verifier, and `suite.rs` is the target-running and libtest-parsing mechanics every runner shares.",
+            "paths": [
+                "xtask/src/main.rs",
+                "xtask/src/gate_b.rs",
+                "xtask/src/evidence.rs",
+                "xtask/src/suite.rs"
+            ]
+        }
+    }
+}

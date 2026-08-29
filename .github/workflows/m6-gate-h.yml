@@ -1,0 +1,47 @@
+name: M6 Gate H P-002 Performance
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m6-gate-h-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate-h-campaign:
+    name: gate-h-campaign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      OXIDEBATCH_CAMPAIGN_DIR: target/m6-campaigns
+      OXIDEBATCH_CAMPAIGN_MATRIX: performance-linux-release
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Fail closed if the execution contract drifts
+        run: ./tests/fixtures/gate-h/verify-ci-contract.sh .github/workflows/m6-gate-h.yml
+
+      - name: Run the Gate H P-002 real-component performance campaign
+        run: ./tests/fixtures/gate-h/run-ci-campaign.sh
+
+      # Retained on failure as well as on success -- disclosure evidence is
+      # worth reading even from a run whose hard invariants failed.
+      - name: Retain the campaign report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gate-h-campaign
+          path: target/m6-campaigns/gate-h-campaign.json
+          if-no-files-found: error

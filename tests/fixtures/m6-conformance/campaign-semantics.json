@@ -1,0 +1,57 @@
+{
+  "document": "The executable closure of the M6 shipped-component conformance campaign",
+  "note": "The runner owns a fixed denominator of workspace library and integration targets covering the M6 component catalog, failure contracts, lifecycle, state, and PostgreSQL restart evidence. This document records the source and execution objects that make that result reproducible.",
+  "rule": "A change to anything listed here invalidates retained M6 conformance reports and requires both PostgreSQL matrix points to run again. Documentation-only changes outside this closure do not change the conformance result.",
+  "categories": {
+    "workspace source": {
+      "why": "The implementation and public test-kit source exercised by the selected M6 targets.",
+      "paths": [
+        "crates/oxide-batch/src",
+        "crates/oxide-batch-core/src",
+        "crates/oxide-batch-plan/src",
+        "crates/oxide-batch-repository/src",
+        "crates/oxide-batch-test/src"
+      ]
+    },
+    "M6 test targets": {
+      "why": "The full integration-test trees contain the fixed target denominator declared by xtask/src/m6_conformance.rs; each selected target runs in full and ignored or empty targets fail closed.",
+      "paths": [
+        "crates/oxide-batch/tests",
+        "crates/oxide-batch-test/tests"
+      ]
+    },
+    "cargo and toolchain": {
+      "why": "Feature selection, dependency resolution, compiler, and cargo configuration are part of the reproducible test environment.",
+      "paths": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "crates/oxide-batch/Cargo.toml",
+        "crates/oxide-batch-core/Cargo.toml",
+        "crates/oxide-batch-plan/Cargo.toml",
+        "crates/oxide-batch-repository/Cargo.toml",
+        "crates/oxide-batch-test/Cargo.toml",
+        "rust-toolchain.toml",
+        ".cargo/config.toml"
+      ]
+    },
+    "campaign execution": {
+      "why": "The matrix workflow, its contract, script, and scope document are the exact execution envelope used to produce retained reports.",
+      "paths": [
+        "tests/fixtures/m6-conformance/campaign-semantics.json",
+        "tests/fixtures/m6-conformance/execution-contract.json",
+        "tests/fixtures/m6-conformance/run-ci-campaign.sh",
+        "tests/fixtures/m6-conformance/verify-ci-contract.sh",
+        ".github/workflows/m6-conformance.yml"
+      ]
+    },
+    "independent verifier": {
+      "why": "These files dispatch the command, run and manifest the denominator, and verify retained provenance and report closure.",
+      "paths": [
+        "xtask/src/main.rs",
+        "xtask/src/m6_conformance.rs",
+        "xtask/src/evidence.rs",
+        "xtask/src/suite.rs"
+      ]
+    }
+  }
+}

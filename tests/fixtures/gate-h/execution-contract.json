@@ -1,0 +1,43 @@
+{
+  "document": "How CI executes the M6 Gate H campaign",
+  "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow is a thin provisioning and call layer, and its contract-check step fails closed when the workflow drifts from these values. Only the dedicated Gate H workflow is in this campaign's semantic closure, so unrelated quality or build changes in ci.yml do not invalidate retained Gate H evidence.",
+  "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script moves the identity and fails the contract check, whether or not every literal field below still happens to read true. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
+  "workflow_path": ".github/workflows/m6-gate-h.yml",
+  "workflow_git_blob": "a9a007b8b8d7c7a0a00185edd4f3d7b99e323864",
+  "workflow_name": "M6 Gate H P-002 Performance",
+  "triggers": {
+    "pull_request": ["main"],
+    "push": ["main"],
+    "workflow_dispatch": true
+  },
+  "permissions": {
+    "contents": "read"
+  },
+  "runner": "ubuntu-24.04",
+  "script": "./tests/fixtures/gate-h/run-ci-campaign.sh",
+  "script_path": "tests/fixtures/gate-h/run-ci-campaign.sh",
+  "script_git_blob": "1d1fece72f6363461471a15a417113798a8e1f11",
+  "command": ["cargo", "run", "--package", "oxide-batch-xtask", "--", "gate-h"],
+  "cargo_profile": "release",
+  "profile_note": "The frozen P-002 protocol requires release profile: a debug-build throughput/latency figure is not comparable to anything release planning could use. This is the second M6/M5 campaign (after the M5 performance campaign) to run release rather than the workspace default debug.",
+  "target_selection": {
+    "source": "the fixed list of four test targets xtask/src/gate_h.rs declares"
+  },
+  "pass_condition": {
+    "every_target_must_exit_successfully": true,
+    "every_declared_test_name_must_report_ok": true,
+    "hard_invariants_are_proved_by_gate_h_dispatch_rs": true,
+    "hard_invariants_note": "typed per-item future allocation == 0 and typed dynamic dispatch per item == 0 are gate_h_dispatch.rs's own assertions, required to report ok like every other named test -- this runner adds no separate numeric threshold.",
+    "no_invented_threshold": true,
+    "no_invented_threshold_note": "Throughput, latency, and allocation-delta numbers are retained as disclosure evidence; none is compared against an invented pass/fail threshold."
+  },
+  "environment": {
+    "OXIDEBATCH_CAMPAIGN_DIR": "target/m6-campaigns",
+    "OXIDEBATCH_CAMPAIGN_MATRIX": "performance-linux-release"
+  },
+  "report_path": "target/m6-campaigns/gate-h-campaign.json",
+  "artifact_name": "gate-h-campaign",
+  "artifact_retention": "on success and on failure alike",
+  "timeout_minutes": 30,
+  "timeout_note": "Three bounded test targets built in release profile, not a whole-workspace suite. Still a ceiling: a campaign that stopped making progress must fail rather than occupy a runner."
+}

@@ -112,6 +112,29 @@ This preview interpretation is accepted by
 [RFC-0001](../rfcs/0001-m5-preview-and-project-wide-1-0.md). It is not a
 project-wide 1.0 or enterprise-readiness matrix.
 
+## M6 component campaign disposition
+
+The M6 component catalog is first-party code, but this section is a candidate
+support disposition until a named release carries the retained M6 evidence.
+The campaign does not promote a pre-release implementation to `Verified` and
+does not expand the M5 preview's released support promise.
+
+| Surface | Candidate tier | Release-blocking evidence | Current disposition |
+| --- | --- | --- | --- |
+| Typed and `Boxed*` item components, `ItemStream`, policies, builders, jobs, and listeners | First-party | Full M6 conformance/failure campaign, Gate B representation equivalence, Gate H invariants, docs, and ledger review | Implemented and campaign-evidenced; release promotion pending |
+| Delimited/CSV, fixed-width, JSON/JSONL, and multi-resource components | First-party | Malformed, partial-write, rollback, stop, panic, close, state, resource-bound, and PostgreSQL-backed restart evidence | Implemented and campaign-evidenced; release promotion pending |
+| PostgreSQL cursor, paging, and batch writer components | First-party | PostgreSQL 15 and 18 release-blocking campaign legs, transaction/restart/crash evidence, TLS/role limits | Implemented and campaign-evidenced; release promotion pending |
+| `InMemoryObjectStore` and object-store capability bridge | First-party fixture/capability contract | Capability, version-token, bounds, diagnostics, and explicit non-durable limitation evidence | First-party contract fixture; no durable provider support claim |
+| `oxide-batch-test` public test-kit | First-party development/test support | Compile-checked tutorial, deterministic fixtures, failure/panic/stop/restart harness evidence, and Gate G limitations | Implemented and campaign-evidenced; release promotion pending |
+
+The exact M6 campaign denominator and scenario dispositions live in the
+[component conformance matrix](../engineering/campaigns/m6/component-conformance-matrix.md).
+The retained report/provenance records are named in
+[`docs/engineering/campaigns/m6/`](../engineering/campaigns/m6/) and summarized
+by the [M6 exit record](../project/m6-exit-evidence.md). A future release may
+promote only rows whose named release and required evidence satisfy the
+compatibility ledger's `Verified` rule.
+
 ## Project-wide 1.0 dimensions
 
 M14 support would additionally name:
