@@ -1,0 +1,55 @@
+{
+  "document": "How CI executes the M6 Gate B campaign",
+  "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow is a thin provisioning and call layer, and its contract-check step fails closed when the workflow drifts from these values. Only the dedicated Gate B workflow is in this campaign's semantic closure, so unrelated quality or build changes in ci.yml do not invalidate retained Gate B evidence.",
+  "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script moves the identity and fails the contract check, whether or not every literal field below still happens to read true. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
+  "workflow_path": ".github/workflows/m6-gate-b.yml",
+  "workflow_git_blob": "9454be887086260d57ce3e356958a52fea45e73a",
+  "workflow_name": "M6 Gate B Transaction/Restart Equivalence",
+  "triggers": {
+    "pull_request": ["main"],
+    "push": ["main"],
+    "workflow_dispatch": true
+  },
+  "permissions": {
+    "contents": "read"
+  },
+  "runner": "ubuntu-24.04",
+  "script": "./tests/fixtures/gate-b/run-ci-campaign.sh ${{ matrix.postgres }}",
+  "script_path": "tests/fixtures/gate-b/run-ci-campaign.sh",
+  "script_git_blob": "fba2f2abe3afd9f65079ef1b09d41a9d47931e66",
+  "supported_matrix": ["15", "18"],
+  "matrix_note": "The two ends of the supported PostgreSQL 15-18 release-blocking matrix. Evidence is required from both, exactly once each.",
+  "database": {
+    "image": "postgres:{major}",
+    "database_name": "oxide_batch_gate_b",
+    "user": "postgres",
+    "password": "postgres",
+    "port": 5432,
+    "health_check": "pg_isready --username postgres --dbname oxide_batch_gate_b"
+  },
+  "command": ["cargo", "run", "--package", "oxide-batch-xtask", "--", "gate-b"],
+  "cargo_profile": "debug",
+  "profile_note": "Gate B gates correctness -- durable observation equivalence between the typed and Boxed representations -- not a duration, so nothing here depends on profile.",
+  "target_selection": {
+    "source": "the fixed list of nine test targets xtask/src/gate_b.rs declares",
+    "note": "Every target is run unfiltered; each Gate B test file owns exactly the scenario(s) it names, unlike the M5 crash-restore campaign's shared M2-M4 targets."
+  },
+  "pass_condition": {
+    "every_target_must_exit_successfully": true,
+    "every_declared_test_name_must_report_ok": true,
+    "every_declared_test_name_must_report_ok_note": "A target that exited 0 having silently skipped its scenario (fixture absent) is not sufficient -- every named test in xtask/src/gate_b.rs's EXPECTED_TESTS must itself report ok.",
+    "required_fixture_variables_must_be_set_before_any_target_runs": true,
+    "required_fixture_variables_must_be_set_before_any_target_runs_note": "OXIDEBATCH_POSTGRES_TEST_URL and OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL absent fails the campaign before a single target starts, rather than letting every scenario silently skip and still exit 0."
+  },
+  "environment": {
+    "OXIDEBATCH_POSTGRES_TEST_URL": "postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_gate_b",
+    "OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL": "postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_gate_b",
+    "OXIDEBATCH_CAMPAIGN_DIR": "target/m6-campaigns",
+    "OXIDEBATCH_CAMPAIGN_MATRIX": "postgres-{major}"
+  },
+  "report_path": "target/m6-campaigns/gate-b-campaign.json",
+  "artifact_name": "gate-b-campaign-postgres-{major}",
+  "artifact_retention": "on success and on failure alike",
+  "timeout_minutes": 30,
+  "timeout_note": "Nine bounded test targets, not a whole-workspace suite. Still a ceiling: a campaign that stopped making progress must fail rather than occupy a runner."
+}
