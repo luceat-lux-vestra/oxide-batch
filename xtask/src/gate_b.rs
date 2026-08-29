@@ -19,7 +19,8 @@
 //! indistinguishable from real evidence, so this runner requires both
 //! variables to be set *before* running a single target
 //! (`resolve_fixture`), the same fail-closed shape
-//! [`crate::crash_restore::resolve_fixtures`] uses. It also requires every
+//! `crate::crash_restore`'s own private `resolve_fixtures` uses (not linked:
+//! it is a different module's private item). It also requires every
 //! named test in [`EXPECTED_TESTS`] to report `ok` by name, not just that
 //! each target process exited successfully -- a target could exit 0 having
 //! skipped every test inside it.

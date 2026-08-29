@@ -202,7 +202,11 @@ async fn typed_and_erased_throughput_disclosure() {
     let typed = summarize(typed_samples);
     let erased = summarize(erased_samples);
 
-    println!(
+    // stderr, not stdout: see gate_h_allocation.rs's identical comment --
+    // the campaign runner parses only stdout to correlate each libtest
+    // "test <name> ... " prefix with its outcome, and a multi-line stdout
+    // print here breaks that correlation under --nocapture.
+    eprintln!(
         "gate-h throughput disclosure (real component: DelimitedReader/DelimitedWriter CSV \
          parsing/formatting + IdentityProcessor, {ITEMS} items, {WARMUP_REPETITIONS} warmup + \
          {MEASURED_REPETITIONS} measured repetitions):\n\

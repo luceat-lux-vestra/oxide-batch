@@ -210,7 +210,15 @@ async fn typed_csv_pipeline_allocates_no_more_per_item_than_erased() {
     let typed_per_item = typed_delta as f64 / delta_items as f64;
     let erased_per_item = erased_delta as f64 / delta_items as f64;
 
-    println!(
+    // stderr, not stdout: the campaign runner (xtask/src/suite.rs) parses
+    // only stdout to correlate each libtest "test <name> ... " prefix with
+    // its outcome line. A multi-line stdout print here (needed to make these
+    // numbers visible under --nocapture) lands between the prefix and the
+    // outcome and breaks that correlation -- caught directly by a real CI
+    // run reporting this test as "did not run" despite passing. stderr is
+    // inherited straight through to the log without being parsed, so it
+    // stays visible without disturbing the parser.
+    eprintln!(
         "gate-h allocation disclosure (real component: DelimitedReader/DelimitedWriter CSV \
          parsing/formatting + IdentityProcessor): \
          typed small={typed_small} large={typed_large} delta={typed_delta} \
