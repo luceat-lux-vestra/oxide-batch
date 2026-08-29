@@ -6,12 +6,12 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "f98bbfd18b05b42f190688f1b90a50e8f0140e60",
+    "source_commit": "51f8e8c64d2dfb43b091268a8ffa893b5b3252b2",
     "source_tree_clean": true
   },
   "observation": {
     "execution_manifest": {
-      "execution_commit": "f98bbfd18b05b42f190688f1b90a50e8f0140e60",
+      "execution_commit": "51f8e8c64d2dfb43b091268a8ffa893b5b3252b2",
       "execution_commit_note": "The tree this run actually executed against; in CI this is the pull-request merge commit.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",

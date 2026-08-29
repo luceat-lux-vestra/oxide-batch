@@ -2,12 +2,12 @@
   "binary_size_and_compile_time": {
     "boxed": {
       "binary_size_bytes": 1744392,
-      "compile_time_seconds": 32.770142547,
+      "compile_time_seconds": 33.098316529,
       "target_directory_isolation": "clean-per-reference"
     },
     "typed": {
       "binary_size_bytes": 1728000,
-      "compile_time_seconds": 32.738738276,
+      "compile_time_seconds": 33.060027751,
       "target_directory_isolation": "clean-per-reference"
     }
   },
@@ -18,7 +18,7 @@
     "os": "linux",
     "profile": "release",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "f98bbfd18b05b42f190688f1b90a50e8f0140e60",
+    "source_commit": "51f8e8c64d2dfb43b091268a8ffa893b5b3252b2",
     "source_tree_clean": true
   },
   "hard_invariants": {
@@ -34,7 +34,7 @@
   "no_invented_threshold_note": "Throughput, latency, allocation-delta, binary-size, and compile-time numbers are retained as disclosure evidence per the frozen protocol; none is compared against an invented pass/fail threshold by this runner.",
   "observation": {
     "execution_manifest": {
-      "execution_commit": "f98bbfd18b05b42f190688f1b90a50e8f0140e60",
+      "execution_commit": "51f8e8c64d2dfb43b091268a8ffa893b5b3252b2",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -180,17 +180,17 @@
     {
       "observation": {
         "boxed": {
-          "max_nanoseconds": 70398614,
-          "mean_nanoseconds": 68637948,
-          "min_nanoseconds": 67910645,
+          "max_nanoseconds": 68053691,
+          "mean_nanoseconds": 67796066,
+          "min_nanoseconds": 67501003,
           "raw_latency_nanoseconds": [
-            70398614,
-            67910645,
-            68024689,
-            68727112,
-            68128683
+            67580652,
+            67501003,
+            67968142,
+            67876842,
+            68053691
           ],
-          "throughput_items_per_second": 728460.0058265144
+          "throughput_items_per_second": 737505.9195912636
         },
         "buffer_reuse": {
           "note": "Delimited component internal buffer reuse is not exposed as a counter.",
@@ -204,17 +204,17 @@
           "typed_per_item_future_allocations": 0
         },
         "typed": {
-          "max_nanoseconds": 68664044,
-          "mean_nanoseconds": 68374258,
-          "min_nanoseconds": 68126799,
+          "max_nanoseconds": 68441542,
+          "mean_nanoseconds": 67994685,
+          "min_nanoseconds": 67554583,
           "raw_latency_nanoseconds": [
-            68377649,
-            68479169,
-            68126799,
-            68223632,
-            68664044
+            68441542,
+            68154769,
+            67735559,
+            67554583,
+            68086973
           ],
-          "throughput_items_per_second": 731269.3616360708
+          "throughput_items_per_second": 735351.5940253271
         },
         "workload": {
           "chunk_size": 50000,

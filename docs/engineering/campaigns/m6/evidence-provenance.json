@@ -39,9 +39,9 @@
       "matrix_point": "postgres-15",
       "postgres_major_version": "15",
       "producer": {
-        "execution_commit": "f98bbfd18b05b42f190688f1b90a50e8f0140e60",
+        "execution_commit": "51f8e8c64d2dfb43b091268a8ffa893b5b3252b2",
         "execution_commit_note": "The pull-request merge ref recorded by the campaign report.",
-        "branch_head_sha": "cd546df7daf1cc80b9ae9d92a5ae4ca377993dc5",
+        "branch_head_sha": "ba73051eb74fc02d46dc4f9cfd81ec84d99a9cde",
         "branch_head_note": "The branch head that triggered the pull-request workflow; it is not substituted for the merge-ref execution commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -51,27 +51,27 @@
       "workflow_run": {
         "workflow": "M6 Gate B Transaction/Restart Equivalence",
         "workflow_file": ".github/workflows/m6-gate-b.yml",
-        "id": 33272170005,
+        "id": 33272897882,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-gate-b-campaign",
-        "id": 99152526033,
+        "id": 99154478956,
         "conclusion": "success"
       },
       "artifact": {
         "name": "gate-b-campaign-postgres-15",
-        "id": 9720443945,
-        "digest": "sha256:5d3ccf0c800af3b753c7cdde1fb3517cbdaeb530f1a0509bbd0b8eb5d1da182f",
+        "id": 9720644091,
+        "digest": "sha256:caeea19cae9e8297c2fdfb71eb16ceffc61b9afcb02fbaa36631abfdfc9c16bc",
         "size_bytes": 2337
       },
-      "retained_report_git_blob": "e384607891c98c4485eec6960b7ec9f4edb3558d",
+      "retained_report_git_blob": "f3ff2f4523eb42e19d64532a8f6dac5033cf099d",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-30T05:03:45+0900",
-        "run_id": 33272170005,
+        "verified_at": "2026-08-30T05:25:36+0900",
+        "run_id": 33272897882,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -88,9 +88,9 @@
       "matrix_point": "postgres-18",
       "postgres_major_version": "18",
       "producer": {
-        "execution_commit": "f98bbfd18b05b42f190688f1b90a50e8f0140e60",
+        "execution_commit": "51f8e8c64d2dfb43b091268a8ffa893b5b3252b2",
         "execution_commit_note": "The pull-request merge ref recorded by the campaign report.",
-        "branch_head_sha": "cd546df7daf1cc80b9ae9d92a5ae4ca377993dc5",
+        "branch_head_sha": "ba73051eb74fc02d46dc4f9cfd81ec84d99a9cde",
         "branch_head_note": "The branch head that triggered the pull-request workflow; it is not substituted for the merge-ref execution commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -100,27 +100,27 @@
       "workflow_run": {
         "workflow": "M6 Gate B Transaction/Restart Equivalence",
         "workflow_file": ".github/workflows/m6-gate-b.yml",
-        "id": 33272170005,
+        "id": 33272897882,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-gate-b-campaign",
-        "id": 99152526121,
+        "id": 99154479033,
         "conclusion": "success"
       },
       "artifact": {
         "name": "gate-b-campaign-postgres-18",
-        "id": 9720441368,
-        "digest": "sha256:beab860d6cafec148c4d63b305d423aad05494ff369fec13caee060adac67839",
+        "id": 9720646534,
+        "digest": "sha256:fd9dff082d9f552100feebe61c91829034a1725dba88ee9c342bdf84e09fd3c3",
         "size_bytes": 2337
       },
-        "retained_report_git_blob": "02eda55bf153b9577fe1aa46b1d3b26d2e1fdff0",
+      "retained_report_git_blob": "a65252b75744491b0a65f6ab566a55e8194402f8",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-30T05:03:45+0900",
-        "run_id": 33272170005,
+        "verified_at": "2026-08-30T05:25:36+0900",
+        "run_id": 33272897882,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -137,9 +137,9 @@
       "matrix_point": "performance-linux-release",
       "postgres_major_version": "not-applicable",
       "producer": {
-        "execution_commit": "f98bbfd18b05b42f190688f1b90a50e8f0140e60",
+        "execution_commit": "51f8e8c64d2dfb43b091268a8ffa893b5b3252b2",
         "execution_commit_note": "The pull-request merge ref recorded by the campaign report.",
-        "branch_head_sha": "cd546df7daf1cc80b9ae9d92a5ae4ca377993dc5",
+        "branch_head_sha": "ba73051eb74fc02d46dc4f9cfd81ec84d99a9cde",
         "branch_head_note": "The branch head that triggered the pull-request workflow; it is not substituted for the merge-ref execution commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -149,27 +149,27 @@
       "workflow_run": {
         "workflow": "M6 Gate H P-002 Performance",
         "workflow_file": ".github/workflows/m6-gate-h.yml",
-        "id": 33272170050,
+        "id": 33272897775,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "gate-h-campaign",
-        "id": 99152526140,
+        "id": 99154478272,
         "conclusion": "success"
       },
       "artifact": {
         "name": "gate-h-campaign",
-        "id": 9720455594,
-        "digest": "sha256:cd8ddc70e8f0af44f27db90eb744ce01b0913fe38ab573d62faa905ff27ffc7c",
-        "size_bytes": 3142
+        "id": 9720661424,
+        "digest": "sha256:34fd91883996d596f08edcf78837c7ea1ea491632ddb010f48f2db001bb392fe",
+        "size_bytes": 3148
       },
-      "retained_report_git_blob": "ba409e3680957990c1ad408903f11bf55dc2a40a",
+      "retained_report_git_blob": "5dc514ea1d416979e7356e365bf9827591da1ee9",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-30T05:03:45+0900",
-        "run_id": 33272170050,
+        "verified_at": "2026-08-30T05:25:36+0900",
+        "run_id": 33272897775,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -186,9 +186,9 @@
       "matrix_point": "postgres-15",
       "postgres_major_version": "15",
       "producer": {
-        "execution_commit": "f98bbfd18b05b42f190688f1b90a50e8f0140e60",
+        "execution_commit": "51f8e8c64d2dfb43b091268a8ffa893b5b3252b2",
         "execution_commit_note": "The pull-request merge ref recorded by the campaign report.",
-        "branch_head_sha": "cd546df7daf1cc80b9ae9d92a5ae4ca377993dc5",
+        "branch_head_sha": "ba73051eb74fc02d46dc4f9cfd81ec84d99a9cde",
         "branch_head_note": "The branch head that triggered the pull-request workflow; it is not substituted for the merge-ref execution commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -198,27 +198,27 @@
       "workflow_run": {
         "workflow": "M6 Full Component Conformance",
         "workflow_file": ".github/workflows/m6-conformance.yml",
-        "id": 33272170202,
+        "id": 33272897778,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-m6-conformance",
-        "id": 99152526560,
+        "id": 99154478589,
         "conclusion": "success"
       },
       "artifact": {
         "name": "m6-conformance-campaign-postgres-15",
-        "id": 9720466512,
-        "digest": "sha256:da9298508c239288615dc57bf89dfcaf774f2f0c951652ec938f14449ce8f0bb",
-        "size_bytes": 10408
+        "id": 9720673305,
+        "digest": "sha256:c1f152542a41c03bee12e7346b7a2c561af5eaf5d922158bc9a212873f7a5b6e",
+        "size_bytes": 10406
       },
-      "retained_report_git_blob": "efd05ac20d940c7dffe88d9136af776eefe071c3",
+      "retained_report_git_blob": "b01c8a148a79d2aca166d1429fe833d061df7738",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-30T05:03:45+0900",
-        "run_id": 33272170202,
+        "verified_at": "2026-08-30T05:25:36+0900",
+        "run_id": 33272897778,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -235,9 +235,9 @@
       "matrix_point": "postgres-18",
       "postgres_major_version": "18",
       "producer": {
-        "execution_commit": "f98bbfd18b05b42f190688f1b90a50e8f0140e60",
+        "execution_commit": "51f8e8c64d2dfb43b091268a8ffa893b5b3252b2",
         "execution_commit_note": "The pull-request merge ref recorded by the campaign report.",
-        "branch_head_sha": "cd546df7daf1cc80b9ae9d92a5ae4ca377993dc5",
+        "branch_head_sha": "ba73051eb74fc02d46dc4f9cfd81ec84d99a9cde",
         "branch_head_note": "The branch head that triggered the pull-request workflow; it is not substituted for the merge-ref execution commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -247,27 +247,27 @@
       "workflow_run": {
         "workflow": "M6 Full Component Conformance",
         "workflow_file": ".github/workflows/m6-conformance.yml",
-        "id": 33272170202,
+        "id": 33272897778,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-m6-conformance",
-        "id": 99152526733,
+        "id": 99154478433,
         "conclusion": "success"
       },
       "artifact": {
         "name": "m6-conformance-campaign-postgres-18",
-        "id": 9720463697,
-        "digest": "sha256:7aa3205e5c0f039c466b17beb1e08a1b69c3be370a31ede760bb241dd7212577",
-        "size_bytes": 10408
+        "id": 9720673595,
+        "digest": "sha256:7b1f52f88c49aa2a09cd16a69ab226cf84ac3916e381f7d19a5cca57b9891596",
+        "size_bytes": 10406
       },
-      "retained_report_git_blob": "206cc04fd4bd3078c182fa31a3367986f4a26868",
+      "retained_report_git_blob": "09dc2bc5dd8459effcf46ecd758e3e0ff2ece174",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-30T05:03:45+0900",
-        "run_id": 33272170202,
+        "verified_at": "2026-08-30T05:25:36+0900",
+        "run_id": 33272897778,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
