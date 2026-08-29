@@ -4,7 +4,7 @@
     "stages": [
       {
         "stage": "actual execution tree",
-        "what": "The tree the campaign really ran against, recorded by the run from inside its own checkout as an object manifest in the report. On a pull request this is the ephemeral merge commit, which no later clone can resolve \u2014 which is exactly why the manifest is recorded rather than the commit name being trusted to stand for it."
+        "what": "The tree the campaign really ran against, recorded by the run from inside its own checkout as an object manifest in the report. On a pull request this is the ephemeral merge commit, which no later clone can resolve — which is exactly why the manifest is recorded rather than the commit name being trusted to stand for it."
       },
       {
         "stage": "workflow run",
@@ -21,7 +21,7 @@
       "Presenting the retention commit as the producer.",
       "Editing a retained artifact so that a recorded hash or commit matches.",
       "Re-running the campaign on each new head to make the execution tree equal the retention commit.",
-      "Treating a summary the report wrote about itself \u2014 a verdict, a total, a pass \u2014 as evidence for the run it describes."
+      "Treating a summary the report wrote about itself — a verdict, a total, a pass — as evidence for the run it describes."
     ]
   },
   "retention_paths": {
@@ -33,7 +33,7 @@
   },
   "binding": {
     "derived_verdicts": "The report's correctness results, growth verdicts and campaign totals are not read as evidence. `cargo xtask soak` recomputes each of them from the raw per-cycle journal and the retained samples, after first requiring the chronology of those arrays to be a contiguous, ordered, correctly phased run of the declared length, and requires the report's own answers to match.",
-    "note": "Two verifications with different reach, and the difference is stated rather than blurred. `cargo xtask evidence` is repository-local: it resolves nothing over the network, so it keeps working long after GitHub has expired the artifacts it describes, and what it establishes is that the retained bytes are the bytes this repository recorded, over a tree whose campaign still means what it meant. It cannot say the retained bytes are the bytes the workflow uploaded. That stronger check needs the GitHub API, which is why it is performed once \u2014 at the moment evidence is promoted \u2014 and its result recorded per entry under remote_verification.",
+    "note": "Two verifications with different reach, and the difference is stated rather than blurred. `cargo xtask evidence` is repository-local: it resolves nothing over the network, so it keeps working long after GitHub has expired the artifacts it describes, and what it establishes is that the retained bytes are the bytes this repository recorded, over a tree whose campaign still means what it meant. It cannot say the retained bytes are the bytes the workflow uploaded. That stronger check needs the GitHub API, which is why it is performed once — at the moment evidence is promoted — and its result recorded per entry under remote_verification.",
     "remote_verification": "Performed once per retention, against the GitHub Actions API: the run, attempt and job exist and succeeded; the artifact's own sha256 digest is recorded; the artifact is downloaded and its extracted report compared byte-for-byte with the retained file. It is deliberately not a permanent CI dependency, because Actions artifacts expire and a verifier that stopped working on a retention boundary would be switched off rather than fixed.",
     "local_verification": "Enforced on every CI run. Artifact git blob identity, the three-way producer/recorded/HEAD binding over campaign-semantics paths, exactly-once matrix coverage, schema completeness, and the report contract.",
     "why_object_ids": "Git object identities for the local binding, because git is already required by this tooling, the values are verifiable by hand with `git rev-parse HEAD:<path>` and `git hash-object <file>`, and no dependency is added to compute them. The GitHub artifact digest is recorded separately and is a different thing: a sha256 over the uploaded archive, which is what the one-time remote check compares against.",
@@ -118,9 +118,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -128,29 +128,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": "M5 Cancellation",
+        "workflow": ".github/workflows/m5-cancellation.yml",
         "workflow_file": ".github/workflows/m5-cancellation.yml",
-        "id": 33145166859,
+        "id": 33215857723,
         "attempt": 1,
-        "event": "workflow_dispatch",
+        "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-cancellation-campaign",
-        "id": 98764460817,
+        "id": 98999189781,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-15",
-        "id": 9675498304,
-        "digest": "sha256:3a5b4ce36979ce8c73ebdc486454acb5633a581cc636515cdb4b871888a03200",
-        "size_bytes": 5747
+        "id": 9703372232,
+        "digest": "sha256:e0acaa06a171d71bdd2e24043dadcc7ec21f62dd3538bdbdd48e737fc3871e1b",
+        "size_bytes": 5751
       },
-      "retained_report_git_blob": "476f36c0f4f9cc58cd8fe20b929dfaf31eeb787a",
+      "retained_report_git_blob": "cb8f6fd53f6fa618172e3bf468a153ea3db0c8f3",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-28T14:44:58.262338+09:00",
-        "run_id": 33145166859,
+        "verified_at": "2026-08-29T10:12:46.000000+09:00",
+        "run_id": 33215857723,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -158,7 +158,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #180 (#152: M6 item pipeline configuration ergonomics). crates/oxide-batch/src changed (chunk_builder.rs added: ChunkPipelineBuilder, NoopChunkCompletion; chunk_runtime.rs gained ChunkStep::size() and widened completion_policy_component_revisions to pub(crate)), invalidating the prior retained evidence's tree binding. No M5 campaign runtime, transaction, checkpoint, or persistence semantics were touched by this change; it is a configuration-time builder over the existing chunk architecture."
+        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857723 was archive-digest verified, extracted, and matched byte-for-byte before retention."
       }
     },
     {
@@ -168,9 +168,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -178,29 +178,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": "M5 Cancellation",
+        "workflow": ".github/workflows/m5-cancellation.yml",
         "workflow_file": ".github/workflows/m5-cancellation.yml",
-        "id": 33145166859,
+        "id": 33215857723,
         "attempt": 1,
-        "event": "workflow_dispatch",
+        "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-cancellation-campaign",
-        "id": 98764460676,
+        "id": 98999189631,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-18",
-        "id": 9675501100,
-        "digest": "sha256:8426d1c439ac00223599f354e7f13cd31b147827b18abecc31a6e2882ecbb6b9",
-        "size_bytes": 5750
+        "id": 9703371743,
+        "digest": "sha256:0be44edb5cc4ce12faafad2a2818e96ce04366c91fedb3ed89ba4d05cb5bd4a4",
+        "size_bytes": 5745
       },
-      "retained_report_git_blob": "16faa5aedd10dd0855a9f52ef67778e1a4b7274c",
+      "retained_report_git_blob": "463b2a3e9e69ba8e60a3df68d2478fe978acc30c",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-28T14:44:58.262338+09:00",
-        "run_id": 33145166859,
+        "verified_at": "2026-08-29T10:12:46.000000+09:00",
+        "run_id": 33215857723,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -208,7 +208,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #180 (#152: M6 item pipeline configuration ergonomics). crates/oxide-batch/src changed (chunk_builder.rs added: ChunkPipelineBuilder, NoopChunkCompletion; chunk_runtime.rs gained ChunkStep::size() and widened completion_policy_component_revisions to pub(crate)), invalidating the prior retained evidence's tree binding. No M5 campaign runtime, transaction, checkpoint, or persistence semantics were touched by this change; it is a configuration-time builder over the existing chunk architecture."
+        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857723 was archive-digest verified, extracted, and matched byte-for-byte before retention."
       }
     },
     {
@@ -218,9 +218,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -228,29 +228,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": "M5 Conformance",
+        "workflow": ".github/workflows/m5-conformance.yml",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 33145169849,
+        "id": 33215857611,
         "attempt": 1,
-        "event": "workflow_dispatch",
+        "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-conformance-campaign",
-        "id": 98764468902,
+        "id": 98999188848,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-15",
-        "id": 9675523340,
-        "digest": "sha256:7b74bc6d7fdf58aa5d8ed91479cc86b0c4e6c3c68257766380bb0c2e32cd6dc3",
-        "size_bytes": 7127
+        "id": 9703388238,
+        "digest": "sha256:050ee38fd04e784510a5efbf1729da43e52dc462984e7bf33b84ade2b4ef8c19",
+        "size_bytes": 7126
       },
-      "retained_report_git_blob": "20a6eb50c15a0afa9cf9f5355d1804d627a515c9",
+      "retained_report_git_blob": "41b1d9cdcc3cd53c211418deedd5847189c0a834",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-28T14:44:58.262338+09:00",
-        "run_id": 33145169849,
+        "verified_at": "2026-08-29T10:12:46.000000+09:00",
+        "run_id": 33215857611,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -258,7 +258,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #180 (#152: M6 item pipeline configuration ergonomics). crates/oxide-batch/src changed (chunk_builder.rs added: ChunkPipelineBuilder, NoopChunkCompletion; chunk_runtime.rs gained ChunkStep::size() and widened completion_policy_component_revisions to pub(crate)), invalidating the prior retained evidence's tree binding. No M5 campaign runtime, transaction, checkpoint, or persistence semantics were touched by this change; it is a configuration-time builder over the existing chunk architecture."
+        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857611 was archive-digest verified, extracted, and matched byte-for-byte before retention."
       }
     },
     {
@@ -268,9 +268,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -278,29 +278,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": "M5 Conformance",
+        "workflow": ".github/workflows/m5-conformance.yml",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 33145169849,
+        "id": 33215857611,
         "attempt": 1,
-        "event": "workflow_dispatch",
+        "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-conformance-campaign",
-        "id": 98764469070,
+        "id": 98999189009,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-18",
-        "id": 9675522437,
-        "digest": "sha256:843dbfce83963f5d93b8f9c7610648aa552e6f1868d3e99d06f4eb42c463e01c",
-        "size_bytes": 7127
+        "id": 9703390835,
+        "digest": "sha256:88d55d3341708e449f1bb09a55a4e108efbb9f5ea4a6c40b9731fce0552b127d",
+        "size_bytes": 7126
       },
-      "retained_report_git_blob": "dc1a6d78ee0d3cea25454d0ed36c91dedd1c95a1",
+      "retained_report_git_blob": "887d82d279333a269ccb6e7d87be6344f188d26b",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-28T14:44:58.262338+09:00",
-        "run_id": 33145169849,
+        "verified_at": "2026-08-29T10:12:46.000000+09:00",
+        "run_id": 33215857611,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -308,7 +308,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #180 (#152: M6 item pipeline configuration ergonomics). crates/oxide-batch/src changed (chunk_builder.rs added: ChunkPipelineBuilder, NoopChunkCompletion; chunk_runtime.rs gained ChunkStep::size() and widened completion_policy_component_revisions to pub(crate)), invalidating the prior retained evidence's tree binding. No M5 campaign runtime, transaction, checkpoint, or persistence semantics were touched by this change; it is a configuration-time builder over the existing chunk architecture."
+        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857611 was archive-digest verified, extracted, and matched byte-for-byte before retention."
       }
     },
     {
@@ -318,9 +318,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -328,29 +328,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": "M5 Crash and Restore",
+        "workflow": ".github/workflows/m5-crash-restore.yml",
         "workflow_file": ".github/workflows/m5-crash-restore.yml",
-        "id": 33145172683,
+        "id": 33215857592,
         "attempt": 1,
-        "event": "workflow_dispatch",
+        "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-crash-restore-campaign",
-        "id": 98764478354,
+        "id": 98999188820,
         "conclusion": "success"
       },
       "artifact": {
         "name": "crash-restore-campaign-postgres-15",
-        "id": 9675501603,
-        "digest": "sha256:3c164ae0ab4f528bb25c18264b5f5b6ebbfda6c80b11de92812a0bfd65b5a779",
-        "size_bytes": 6696
+        "id": 9703359557,
+        "digest": "sha256:45f0d56b750019dc92a014bbe7e30f6b827a545da84fb97c011ab00bf036f2a3",
+        "size_bytes": 6681
       },
-      "retained_report_git_blob": "2b014ec21807a0c2bc056a94948d4aa8d9144ce3",
+      "retained_report_git_blob": "77ad5af045aa3220eab5d50b234a3163a43a100b",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-28T14:44:58.262338+09:00",
-        "run_id": 33145172683,
+        "verified_at": "2026-08-29T10:12:46.000000+09:00",
+        "run_id": 33215857592,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -358,7 +358,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #180 (#152: M6 item pipeline configuration ergonomics). crates/oxide-batch/src changed (chunk_builder.rs added: ChunkPipelineBuilder, NoopChunkCompletion; chunk_runtime.rs gained ChunkStep::size() and widened completion_policy_component_revisions to pub(crate)), invalidating the prior retained evidence's tree binding. No M5 campaign runtime, transaction, checkpoint, or persistence semantics were touched by this change; it is a configuration-time builder over the existing chunk architecture."
+        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857592 was archive-digest verified, extracted, and matched byte-for-byte before retention."
       }
     },
     {
@@ -368,9 +368,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -378,29 +378,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": "M5 Crash and Restore",
+        "workflow": ".github/workflows/m5-crash-restore.yml",
         "workflow_file": ".github/workflows/m5-crash-restore.yml",
-        "id": 33145172683,
+        "id": 33215857592,
         "attempt": 1,
-        "event": "workflow_dispatch",
+        "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-crash-restore-campaign",
-        "id": 98764478525,
+        "id": 98999189075,
         "conclusion": "success"
       },
       "artifact": {
         "name": "crash-restore-campaign-postgres-18",
-        "id": 9675499808,
-        "digest": "sha256:37c067dcebd049396ddf8ae82c8e70505fc7c224d693a7751565bb68b94d893a",
-        "size_bytes": 6685
+        "id": 9703357626,
+        "digest": "sha256:df139208b96e80ec02f91dfd97f41b9d5e8b3634a2482d1791699451d8cc217c",
+        "size_bytes": 6683
       },
-      "retained_report_git_blob": "5d0dde1ce0cf117a361dc4d3a8f7d127ea71c62f",
+      "retained_report_git_blob": "f6880da366a2073aac699ad8c861f5432a8406b9",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-28T14:44:58.262338+09:00",
-        "run_id": 33145172683,
+        "verified_at": "2026-08-29T10:12:46.000000+09:00",
+        "run_id": 33215857592,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -408,7 +408,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #180 (#152: M6 item pipeline configuration ergonomics). crates/oxide-batch/src changed (chunk_builder.rs added: ChunkPipelineBuilder, NoopChunkCompletion; chunk_runtime.rs gained ChunkStep::size() and widened completion_policy_component_revisions to pub(crate)), invalidating the prior retained evidence's tree binding. No M5 campaign runtime, transaction, checkpoint, or persistence semantics were touched by this change; it is a configuration-time builder over the existing chunk architecture."
+        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857592 was archive-digest verified, extracted, and matched byte-for-byte before retention."
       }
     },
     {
@@ -418,9 +418,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -428,29 +428,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": "M5 Performance",
+        "workflow": ".github/workflows/m5-performance.yml",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 33145176005,
+        "id": 33215857717,
         "attempt": 1,
-        "event": "workflow_dispatch",
+        "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-performance-campaign",
-        "id": 98764487920,
+        "id": 98999189706,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-15",
-        "id": 9675504172,
-        "digest": "sha256:757f5c110e496e3d87e3bd4c3035f9f22b0357186019842c302f65c3c4faf3cc",
-        "size_bytes": 6607
+        "id": 9703372992,
+        "digest": "sha256:056f8fd0e341149c691197a9ef718a143436dead36317d1d2347ec2e78aaf7ad",
+        "size_bytes": 6600
       },
-      "retained_report_git_blob": "91d1d1fbe752eb7ae7497163f4a2af831fa3a97f",
+      "retained_report_git_blob": "b1ad325b3731e706fca8ec8ff1e396cfdad90caf",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-28T14:44:58.262338+09:00",
-        "run_id": 33145176005,
+        "verified_at": "2026-08-29T10:12:46.000000+09:00",
+        "run_id": 33215857717,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -458,7 +458,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #180 (#152: M6 item pipeline configuration ergonomics). crates/oxide-batch/src changed (chunk_builder.rs added: ChunkPipelineBuilder, NoopChunkCompletion; chunk_runtime.rs gained ChunkStep::size() and widened completion_policy_component_revisions to pub(crate)), invalidating the prior retained evidence's tree binding. No M5 campaign runtime, transaction, checkpoint, or persistence semantics were touched by this change; it is a configuration-time builder over the existing chunk architecture."
+        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857717 was archive-digest verified, extracted, and matched byte-for-byte before retention."
       }
     },
     {
@@ -468,9 +468,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -478,29 +478,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": "M5 Performance",
+        "workflow": ".github/workflows/m5-performance.yml",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 33145176005,
+        "id": 33215857717,
         "attempt": 1,
-        "event": "workflow_dispatch",
+        "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-performance-campaign",
-        "id": 98764487775,
+        "id": 98999189580,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-18",
-        "id": 9675505026,
-        "digest": "sha256:4c565af66efdca02c01d45a5f27b8a389ee05cf984f9b82d6a58ee063eccf286",
-        "size_bytes": 6603
+        "id": 9703368707,
+        "digest": "sha256:6e66bb85ace0c70ddcf28d9d1fa03fb7eef9e479d7f15890430fdbd959d360bd",
+        "size_bytes": 6595
       },
-      "retained_report_git_blob": "b26c3e2349271fc2a505d5df0e046a188d684a1a",
+      "retained_report_git_blob": "62aba4e6bbb78e478e60ee2b63e3ff3389f1cf6c",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-28T14:44:58.262338+09:00",
-        "run_id": 33145176005,
+        "verified_at": "2026-08-29T10:12:46.000000+09:00",
+        "run_id": 33215857717,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -508,7 +508,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #180 (#152: M6 item pipeline configuration ergonomics). crates/oxide-batch/src changed (chunk_builder.rs added: ChunkPipelineBuilder, NoopChunkCompletion; chunk_runtime.rs gained ChunkStep::size() and widened completion_policy_component_revisions to pub(crate)), invalidating the prior retained evidence's tree binding. No M5 campaign runtime, transaction, checkpoint, or persistence semantics were touched by this change; it is a configuration-time builder over the existing chunk architecture."
+        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857717 was archive-digest verified, extracted, and matched byte-for-byte before retention."
       }
     },
     {
@@ -518,9 +518,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -528,29 +528,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": "M5 Resource Bounds",
+        "workflow": ".github/workflows/m5-resource-bounds.yml",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 33145179132,
+        "id": 33215857704,
         "attempt": 1,
-        "event": "workflow_dispatch",
+        "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-resource-bounds-campaign",
-        "id": 98764497012,
+        "id": 98999189462,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-15",
-        "id": 9675498024,
-        "digest": "sha256:e9f6dec2035f7dc46b45f9b3e5d2e9e13516801c095f613cfc74e1721941eff9",
-        "size_bytes": 13878
+        "id": 9703359538,
+        "digest": "sha256:624739e1e280a45f300e20652cb32aa7121494025d81a3bab68baf5cdcd326ce",
+        "size_bytes": 13879
       },
-      "retained_report_git_blob": "29dd4a704e8c349c02a171db50652a8a9ce80e59",
+      "retained_report_git_blob": "59bbd931a6efc2f51f4dad2842a16e4ca78556f9",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-28T14:44:58.262338+09:00",
-        "run_id": 33145179132,
+        "verified_at": "2026-08-29T10:12:46.000000+09:00",
+        "run_id": 33215857704,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -558,7 +558,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #180 (#152: M6 item pipeline configuration ergonomics). crates/oxide-batch/src changed (chunk_builder.rs added: ChunkPipelineBuilder, NoopChunkCompletion; chunk_runtime.rs gained ChunkStep::size() and widened completion_policy_component_revisions to pub(crate)), invalidating the prior retained evidence's tree binding. No M5 campaign runtime, transaction, checkpoint, or persistence semantics were touched by this change; it is a configuration-time builder over the existing chunk architecture."
+        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857704 was archive-digest verified, extracted, and matched byte-for-byte before retention."
       }
     },
     {
@@ -568,9 +568,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -578,29 +578,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": "M5 Resource Bounds",
+        "workflow": ".github/workflows/m5-resource-bounds.yml",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 33145179132,
+        "id": 33215857704,
         "attempt": 1,
-        "event": "workflow_dispatch",
+        "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-resource-bounds-campaign",
-        "id": 98764496886,
+        "id": 98999189290,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-18",
-        "id": 9675505153,
-        "digest": "sha256:a9655f4de46da0704db88c3737663b3fe670999f1b1d8e0f227255d9c405a241",
+        "id": 9703364613,
+        "digest": "sha256:06f41ebdc2b0b83d5ef7058a099b9c60b0a459a22dc00f205fdb953962e6c3f5",
         "size_bytes": 13878
       },
-      "retained_report_git_blob": "b2631557526f0b8b8ac4ca8fccb9e9b6cd7f5693",
+      "retained_report_git_blob": "77c50f97f895a5f17f7d3195d7512c6789f21ad2",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-28T14:44:58.262338+09:00",
-        "run_id": 33145179132,
+        "verified_at": "2026-08-29T10:12:46.000000+09:00",
+        "run_id": 33215857704,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -608,7 +608,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #180 (#152: M6 item pipeline configuration ergonomics). crates/oxide-batch/src changed (chunk_builder.rs added: ChunkPipelineBuilder, NoopChunkCompletion; chunk_runtime.rs gained ChunkStep::size() and widened completion_policy_component_revisions to pub(crate)), invalidating the prior retained evidence's tree binding. No M5 campaign runtime, transaction, checkpoint, or persistence semantics were touched by this change; it is a configuration-time builder over the existing chunk architecture."
+        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857704 was archive-digest verified, extracted, and matched byte-for-byte before retention."
       }
     },
     {
@@ -618,9 +618,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -628,29 +628,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": "M5 Security",
+        "workflow": ".github/workflows/m5-security.yml",
         "workflow_file": ".github/workflows/m5-security.yml",
-        "id": 33145182051,
+        "id": 33215857673,
         "attempt": 1,
-        "event": "workflow_dispatch",
+        "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-security-campaign",
-        "id": 98764506178,
+        "id": 98999189101,
         "conclusion": "success"
       },
       "artifact": {
         "name": "security-campaign-postgres-15",
-        "id": 9675503251,
-        "digest": "sha256:c44f11949b0dcf7a77f9f85640aaa3fe88c4f3cf33783794bab12da8ddcda78b",
+        "id": 9703354995,
+        "digest": "sha256:0e0fe2f6da5978fc8bb8820f05b23e75196948fdb2425873ca53ec0b21e0efac",
         "size_bytes": 7076
       },
-      "retained_report_git_blob": "06fef91a1c6f5587040421cebe720ac38bb0c9fe",
+      "retained_report_git_blob": "e0b2a784b6cd3869e8922c1d69f4b88f612f4239",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-28T14:44:58.262338+09:00",
-        "run_id": 33145182051,
+        "verified_at": "2026-08-29T10:12:46.000000+09:00",
+        "run_id": 33215857673,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -658,7 +658,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #180 (#152: M6 item pipeline configuration ergonomics). crates/oxide-batch/src changed (chunk_builder.rs added: ChunkPipelineBuilder, NoopChunkCompletion; chunk_runtime.rs gained ChunkStep::size() and widened completion_policy_component_revisions to pub(crate)), invalidating the prior retained evidence's tree binding. No M5 campaign runtime, transaction, checkpoint, or persistence semantics were touched by this change; it is a configuration-time builder over the existing chunk architecture."
+        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857673 was archive-digest verified, extracted, and matched byte-for-byte before retention."
       }
     },
     {
@@ -668,9 +668,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -678,29 +678,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": "M5 Security",
+        "workflow": ".github/workflows/m5-security.yml",
         "workflow_file": ".github/workflows/m5-security.yml",
-        "id": 33145182051,
+        "id": 33215857673,
         "attempt": 1,
-        "event": "workflow_dispatch",
+        "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-security-campaign",
-        "id": 98764506320,
+        "id": 98999189285,
         "conclusion": "success"
       },
       "artifact": {
         "name": "security-campaign-postgres-18",
-        "id": 9675498907,
-        "digest": "sha256:ce8b5cd879d54e5f70ca694df7914dd2da44e2b0b0f427b5e8d057d87869e7e9",
+        "id": 9703358233,
+        "digest": "sha256:d52afdfdba0f1b4a6f8193b0d018e061e6ff8d424c27f3526658dd2f85b6a332",
         "size_bytes": 7075
       },
-      "retained_report_git_blob": "2b7df13c11fbf9f8f1420351ba1f3612fb43b329",
+      "retained_report_git_blob": "5894dbb21d411de0ce22e233fcedbd7bc5ee5b5f",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-28T14:44:58.262338+09:00",
-        "run_id": 33145182051,
+        "verified_at": "2026-08-29T10:12:46.000000+09:00",
+        "run_id": 33215857673,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -708,7 +708,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #180 (#152: M6 item pipeline configuration ergonomics). crates/oxide-batch/src changed (chunk_builder.rs added: ChunkPipelineBuilder, NoopChunkCompletion; chunk_runtime.rs gained ChunkStep::size() and widened completion_policy_component_revisions to pub(crate)), invalidating the prior retained evidence's tree binding. No M5 campaign runtime, transaction, checkpoint, or persistence semantics were touched by this change; it is a configuration-time builder over the existing chunk architecture."
+        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857673 was archive-digest verified, extracted, and matched byte-for-byte before retention."
       }
     },
     {
@@ -718,9 +718,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -728,29 +728,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": "M5 Soak",
+        "workflow": ".github/workflows/m5-soak.yml",
         "workflow_file": ".github/workflows/m5-soak.yml",
-        "id": 33145184882,
+        "id": 33215857698,
         "attempt": 1,
-        "event": "workflow_dispatch",
+        "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-soak-campaign",
-        "id": 98764514686,
+        "id": 98999189405,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-15",
-        "id": 9675567124,
-        "digest": "sha256:0b07bcefe1a0d463a9eee4600b6ad889be7c1710e21df643472ef2d25182467a",
-        "size_bytes": 90142
+        "id": 9703419216,
+        "digest": "sha256:0f62c8fe3ade79eaf1b9522954ef903d9e9f5fc28fc0f207399c617264154aa2",
+        "size_bytes": 88679
       },
-      "retained_report_git_blob": "cd98d691443192e459fefb5757a1bc3f34ea5330",
+      "retained_report_git_blob": "3063c91684eae43ab73eb816b4a519dc865631aa",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-28T14:44:58.262338+09:00",
-        "run_id": 33145184882,
+        "verified_at": "2026-08-29T10:12:46.000000+09:00",
+        "run_id": 33215857698,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -758,7 +758,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #180 (#152: M6 item pipeline configuration ergonomics). crates/oxide-batch/src changed (chunk_builder.rs added: ChunkPipelineBuilder, NoopChunkCompletion; chunk_runtime.rs gained ChunkStep::size() and widened completion_policy_component_revisions to pub(crate)), invalidating the prior retained evidence's tree binding. No M5 campaign runtime, transaction, checkpoint, or persistence semantics were touched by this change; it is a configuration-time builder over the existing chunk architecture."
+        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857698 was archive-digest verified, extracted, and matched byte-for-byte before retention."
       }
     },
     {
@@ -768,9 +768,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -778,29 +778,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": "M5 Soak",
+        "workflow": ".github/workflows/m5-soak.yml",
         "workflow_file": ".github/workflows/m5-soak.yml",
-        "id": 33145184882,
+        "id": 33215857698,
         "attempt": 1,
-        "event": "workflow_dispatch",
+        "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-soak-campaign",
-        "id": 98764514533,
+        "id": 98999189632,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-18",
-        "id": 9675557308,
-        "digest": "sha256:3831b39a19c16d2270e26fe9a99c00c32dce1b707122a7d2a4fa4fe7bb859142",
-        "size_bytes": 87427
+        "id": 9703439302,
+        "digest": "sha256:46a4dd9e0dacd1f3533dec4b75dcfccf605f997e855c92fae587c6eff3997c52",
+        "size_bytes": 87194
       },
-      "retained_report_git_blob": "a62a203cc443d6fc48d0a606fa012a87efe891b2",
+      "retained_report_git_blob": "f7dbfbdb2d895bb6835cc37effe0fc1fc0ce332d",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-28T14:44:58.262338+09:00",
-        "run_id": 33145184882,
+        "verified_at": "2026-08-29T10:12:46.000000+09:00",
+        "run_id": 33215857698,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -808,7 +808,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #180 (#152: M6 item pipeline configuration ergonomics). crates/oxide-batch/src changed (chunk_builder.rs added: ChunkPipelineBuilder, NoopChunkCompletion; chunk_runtime.rs gained ChunkStep::size() and widened completion_policy_component_revisions to pub(crate)), invalidating the prior retained evidence's tree binding. No M5 campaign runtime, transaction, checkpoint, or persistence semantics were touched by this change; it is a configuration-time builder over the existing chunk architecture."
+        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857698 was archive-digest verified, extracted, and matched byte-for-byte before retention."
       }
     },
     {
@@ -818,9 +818,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -828,29 +828,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": "M5 Upgrade",
+        "workflow": ".github/workflows/m5-upgrade.yml",
         "workflow_file": ".github/workflows/m5-upgrade.yml",
-        "id": 33145187763,
+        "id": 33215857699,
         "attempt": 1,
-        "event": "workflow_dispatch",
+        "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-upgrade-campaign",
-        "id": 98764523502,
+        "id": 98999189497,
         "conclusion": "success"
       },
       "artifact": {
         "name": "upgrade-campaign-postgres-15",
-        "id": 9675527034,
-        "digest": "sha256:dbe4f0486f15514a2ad79113cb83ee2b1d57e574437541fa017242b2e7a539e7",
-        "size_bytes": 5755
+        "id": 9703405166,
+        "digest": "sha256:0c065988caff1840be4588556b7b59208ea5d16eca5b72f4bdbe320a0fe80b52",
+        "size_bytes": 5763
       },
-      "retained_report_git_blob": "b701514ae8c250480d85cb93c095b63b4cdb8cba",
+      "retained_report_git_blob": "7ac58bfff6eebd12465cdd65a5c493d16d502b04",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-28T14:44:58.262338+09:00",
-        "run_id": 33145187763,
+        "verified_at": "2026-08-29T10:12:46.000000+09:00",
+        "run_id": 33215857699,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -858,7 +858,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #180 (#152: M6 item pipeline configuration ergonomics). crates/oxide-batch/src changed (chunk_builder.rs added: ChunkPipelineBuilder, NoopChunkCompletion; chunk_runtime.rs gained ChunkStep::size() and widened completion_policy_component_revisions to pub(crate)), invalidating the prior retained evidence's tree binding. No M5 campaign runtime, transaction, checkpoint, or persistence semantics were touched by this change; it is a configuration-time builder over the existing chunk architecture."
+        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857699 was archive-digest verified, extracted, and matched byte-for-byte before retention."
       }
     },
     {
@@ -868,9 +868,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
         "execution_commit_note": "The tree the campaign actually executed against, as the run recorded it from inside its own checkout. This is the provenance root: the object identities the report carries are this tree's.",
-        "branch_head_sha": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+        "branch_head_sha": "7020faaade583bc291a54d1d6f914335eaea3afa",
         "branch_head_note": "The pull-request branch head the run was triggered from. Recorded as metadata and never used as a stand-in for the execution tree, which is a different commit.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -878,29 +878,29 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": "M5 Upgrade",
+        "workflow": ".github/workflows/m5-upgrade.yml",
         "workflow_file": ".github/workflows/m5-upgrade.yml",
-        "id": 33145187763,
+        "id": 33215857699,
         "attempt": 1,
-        "event": "workflow_dispatch",
+        "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-upgrade-campaign",
-        "id": 98764523393,
+        "id": 98999189294,
         "conclusion": "success"
       },
       "artifact": {
         "name": "upgrade-campaign-postgres-18",
-        "id": 9675519094,
-        "digest": "sha256:04c3be4dd6fa9b90891d27a9735770216d3064a80657cbec43261889389a4304",
-        "size_bytes": 5759
+        "id": 9703387405,
+        "digest": "sha256:dd35f1885a6754557077effe7c5c0232e098de89c152d728408f5df2e4126673",
+        "size_bytes": 5760
       },
-      "retained_report_git_blob": "c068b6d85d3fa6d76bb38244ca5c957d17184f3b",
+      "retained_report_git_blob": "113e9e79f7413b0a72a8b384bbf8ed06d7f25414",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-08-28T14:44:58.262338+09:00",
-        "run_id": 33145187763,
+        "verified_at": "2026-08-29T10:12:46.000000+09:00",
+        "run_id": 33215857699,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -908,7 +908,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "Retention for PR #180 (#152: M6 item pipeline configuration ergonomics). crates/oxide-batch/src changed (chunk_builder.rs added: ChunkPipelineBuilder, NoopChunkCompletion; chunk_runtime.rs gained ChunkStep::size() and widened completion_policy_component_revisions to pub(crate)), invalidating the prior retained evidence's tree binding. No M5 campaign runtime, transaction, checkpoint, or persistence semantics were touched by this change; it is a configuration-time builder over the existing chunk architecture."
+        "note": "Retention for PR #184 (Dependabot syn 3.0.3 to 3.0.4). Cargo.lock changed the dependency graph without changing M5 campaign implementation, workflows, execution contracts, fixtures, or verifier semantics. The successful pull-request campaign artifact for run 33215857699 was archive-digest verified, extracted, and matched byte-for-byte before retention."
       }
     }
   ],

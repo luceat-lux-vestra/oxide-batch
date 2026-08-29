@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+    "source_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -21,12 +21,12 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+      "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
         ".github/workflows/m5-security.yml": "2d3c8f6d16fc29e1476b172e3b2ba61e95fd11d6",
-        "Cargo.lock": "64022bd799864c872e714cbb7d43dc197a1ddcce",
+        "Cargo.lock": "1f3bd785e48cb4ee2684a510d1f0c94a1e7e8b89",
         "Cargo.toml": "37ad0088277e0638aa3cf3b6de4e64f590aed874",
         "crates/oxide-batch-cli/Cargo.toml": "7188ffd250361f0c045a8db59e067da09f9fdb19",
         "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
@@ -226,12 +226,12 @@
         ],
         "certificate_validation_result": "refused",
         "execution_manifest": {
-          "execution_commit": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+          "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-security.yml": "2d3c8f6d16fc29e1476b172e3b2ba61e95fd11d6",
-            "Cargo.lock": "64022bd799864c872e714cbb7d43dc197a1ddcce",
+            "Cargo.lock": "1f3bd785e48cb4ee2684a510d1f0c94a1e7e8b89",
             "Cargo.toml": "37ad0088277e0638aa3cf3b6de4e64f590aed874",
             "crates/oxide-batch-cli/Cargo.toml": "7188ffd250361f0c045a8db59e067da09f9fdb19",
             "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
@@ -368,12 +368,12 @@
           }
         ],
         "execution_manifest": {
-          "execution_commit": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+          "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-security.yml": "2d3c8f6d16fc29e1476b172e3b2ba61e95fd11d6",
-            "Cargo.lock": "64022bd799864c872e714cbb7d43dc197a1ddcce",
+            "Cargo.lock": "1f3bd785e48cb4ee2684a510d1f0c94a1e7e8b89",
             "Cargo.toml": "37ad0088277e0638aa3cf3b6de4e64f590aed874",
             "crates/oxide-batch-cli/Cargo.toml": "7188ffd250361f0c045a8db59e067da09f9fdb19",
             "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
@@ -971,12 +971,12 @@
           "parameter_types_preserved": true
         },
         "execution_manifest": {
-          "execution_commit": "8563e4bbf1f2a582e75d6f1a19ec7a245e91e9b5",
+          "execution_commit": "21cf87ceb21e998d3f4d6870e2886bcde75c8228",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-security.yml": "2d3c8f6d16fc29e1476b172e3b2ba61e95fd11d6",
-            "Cargo.lock": "64022bd799864c872e714cbb7d43dc197a1ddcce",
+            "Cargo.lock": "1f3bd785e48cb4ee2684a510d1f0c94a1e7e8b89",
             "Cargo.toml": "37ad0088277e0638aa3cf3b6de4e64f590aed874",
             "crates/oxide-batch-cli/Cargo.toml": "7188ffd250361f0c045a8db59e067da09f9fdb19",
             "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
