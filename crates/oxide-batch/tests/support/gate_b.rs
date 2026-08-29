@@ -228,7 +228,7 @@ impl SequenceReader {
     pub fn new(len: i64) -> Self {
         Self {
             next: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            len: len.max(0) as u64,
+            len: len.max(0).cast_unsigned(),
         }
     }
 
@@ -247,7 +247,7 @@ impl ItemReader<i64> for SequenceReader {
         if next >= self.len {
             return Ok(ReadOutcome::EndOfInput);
         }
-        let item = next as i64;
+        let item = next.cast_signed();
         self.next.store(next + 1, Ordering::Release);
         Ok(ReadOutcome::Item(item))
     }
@@ -710,7 +710,7 @@ pub fn transaction_manager(repository: &PostgresJobRepository) -> PostgresChunkT
     PostgresChunkTransactionManager::new(repository.clone(), provider)
 }
 
-/// A real PostgreSQL transaction manager whose successful commit is followed
+/// A real `PostgreSQL` transaction manager whose successful commit is followed
 /// by an intentionally untrusted acknowledgement. The database transaction
 /// has already committed; only the caller-visible acknowledgement is replaced
 /// with [`ChunkTransactionError::CommitOutcomeUnknown`]. This is the frozen

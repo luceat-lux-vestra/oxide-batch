@@ -193,7 +193,7 @@ async fn unknown_commit_outcome_forces_recovery_not_inference() -> Result<(), Bo
 }
 
 /// Proves the framework's own unknown-commit classification, not only the
-/// durable recovery that follows a killed client. The wrapped real PostgreSQL
+/// durable recovery that follows a killed client. The wrapped real `PostgreSQL`
 /// transaction commits business rows, checkpoint, component state, counters,
 /// and optimistic version, then deliberately withholds the acknowledgement as
 /// untrusted. Both the chunk and launcher reports must expose UNKNOWN, and no
