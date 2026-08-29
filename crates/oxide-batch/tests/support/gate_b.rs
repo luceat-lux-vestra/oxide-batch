@@ -64,6 +64,7 @@ use oxide_batch::{
     ReadContext, ReadOutcome, ReaderError, StateLimits, StateSchemaId, StateSchemaVersion,
     StepName, TlsMode, WriteContext, WriteOutcome, WriterError,
 };
+use sqlx::Connection as _;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
@@ -163,6 +164,18 @@ impl SequenceReader {
     #[must_use]
     pub const fn new(len: i64) -> Self {
         Self { next: 0, len }
+    }
+
+    /// Builds a reader that yields `start..len`, for a restart scenario that
+    /// has already read the durable checkpoint position and must not
+    /// re-deliver items a prior attempt already committed. `SequenceReader`
+    /// is not itself an `ItemStream`/restartable component, so a caller
+    /// resuming a job supplies the resume position explicitly, the same way
+    /// `crash_restore`'s manual `CHUNKS.iter().skip(committed)` does for its
+    /// own fixed dataset.
+    #[must_use]
+    pub const fn resuming_from(start: i64, len: i64) -> Self {
+        Self { next: start, len }
     }
 }
 
@@ -429,6 +442,7 @@ fn assemble<M, R, P, W>(
     reader: R,
     processor: P,
     writer: W,
+    completion: Arc<dyn ChunkCompletion>,
 ) -> Result<Job<R, P, W>, Box<dyn Error>>
 where
     M: ChunkTransactionManager + 'static,
@@ -443,7 +457,7 @@ where
         processor,
         writer,
         Arc::clone(&params.transactions) as Arc<dyn ChunkTransactionManager>,
-        Arc::new(Completion),
+        completion,
     );
     Ok(ChunkJob::new(
         JobName::new(params.job_name)?,
@@ -472,6 +486,7 @@ pub fn typed_chunk_job<M: ChunkTransactionManager + 'static>(
         SequenceReader::new(params.items),
         IdentityProcessor,
         BusinessWriter::new(params.job_name),
+        Arc::new(Completion),
     )
 }
 
@@ -496,6 +511,59 @@ where
         SequenceReader::new(params.items),
         IdentityProcessor,
         writer,
+        Arc::new(Completion),
+    )
+}
+
+/// Builds the typed representation with a caller-supplied reader and writer,
+/// for a scenario that restarts from a resume position (see
+/// [`SequenceReader::resuming_from`]) rather than reading `0..items`.
+///
+/// # Errors
+///
+/// Returns the domain failure when any declared identity is invalid.
+pub fn typed_chunk_job_with_reader_and_writer<M, R, W>(
+    params: &GateBParams<M>,
+    reader: R,
+    writer: W,
+) -> Result<Job<R, IdentityProcessor, W>, Box<dyn Error>>
+where
+    M: ChunkTransactionManager + 'static,
+    R: ItemReader<i64> + Send + 'static,
+    W: ItemWriter<i64> + Send + 'static,
+{
+    assemble(
+        params,
+        reader,
+        IdentityProcessor,
+        writer,
+        Arc::new(Completion),
+    )
+}
+
+/// Builds the typed representation with a caller-supplied writer and
+/// [`ChunkCompletion`], for a scenario that needs to observe or park at the
+/// post-commit-acknowledgement boundary (see [`ParkingCompletion`]) while
+/// keeping the reader and processor identical to [`typed_chunk_job`].
+///
+/// # Errors
+///
+/// Returns the domain failure when any declared identity is invalid.
+pub fn typed_chunk_job_with_writer_and_completion<M, W>(
+    params: &GateBParams<M>,
+    writer: W,
+    completion: Arc<dyn ChunkCompletion>,
+) -> Result<TypedJob<W>, Box<dyn Error>>
+where
+    M: ChunkTransactionManager + 'static,
+    W: ItemWriter<i64> + Send + 'static,
+{
+    assemble(
+        params,
+        SequenceReader::new(params.items),
+        IdentityProcessor,
+        writer,
+        completion,
     )
 }
 
@@ -520,6 +588,58 @@ where
         BoxedReader::new(SequenceReader::new(params.items)),
         BoxedProcessor::new(IdentityProcessor),
         BoxedWriter::new(writer),
+        Arc::new(Completion),
+    )
+}
+
+/// Builds the `Boxed` representation with a caller-supplied reader and
+/// writer, for a scenario that restarts from a resume position (see
+/// [`SequenceReader::resuming_from`]) rather than reading `0..items`.
+///
+/// # Errors
+///
+/// Returns the domain failure when any declared identity is invalid.
+pub fn boxed_chunk_job_with_reader_and_writer<M, W>(
+    params: &GateBParams<M>,
+    reader: SequenceReader,
+    writer: W,
+) -> Result<BoxedJob, Box<dyn Error>>
+where
+    M: ChunkTransactionManager + 'static,
+    W: ItemWriter<i64> + Send + 'static,
+{
+    assemble(
+        params,
+        BoxedReader::new(reader),
+        BoxedProcessor::new(IdentityProcessor),
+        BoxedWriter::new(writer),
+        Arc::new(Completion),
+    )
+}
+
+/// Builds the `Boxed` representation with a caller-supplied writer and
+/// [`ChunkCompletion`]. Pair with [`typed_chunk_job_with_writer_and_completion`]
+/// to compare the same [`ParkAt::AfterCommit`] boundary under both
+/// representations.
+///
+/// # Errors
+///
+/// Returns the domain failure when any declared identity is invalid.
+pub fn boxed_chunk_job_with_writer_and_completion<M, W>(
+    params: &GateBParams<M>,
+    writer: W,
+    completion: Arc<dyn ChunkCompletion>,
+) -> Result<BoxedJob, Box<dyn Error>>
+where
+    M: ChunkTransactionManager + 'static,
+    W: ItemWriter<i64> + Send + 'static,
+{
+    assemble(
+        params,
+        BoxedReader::new(SequenceReader::new(params.items)),
+        BoxedProcessor::new(IdentityProcessor),
+        BoxedWriter::new(writer),
+        completion,
     )
 }
 
@@ -537,6 +657,7 @@ pub fn boxed_chunk_job<M: ChunkTransactionManager + 'static>(
         BoxedReader::new(SequenceReader::new(params.items)),
         BoxedProcessor::new(IdentityProcessor),
         BoxedWriter::new(BusinessWriter::new(params.job_name)),
+        Arc::new(Completion),
     )
 }
 
@@ -871,4 +992,122 @@ pub fn spawn_worker_with_representation(
         .env(REPRESENTATION_ENV, representation.id())
         .env(HANDSHAKE_ENV, handshake)
         .spawn()
+}
+
+/// The session advisory-lock key [`install_commit_gate`] blocks on, distinct
+/// from `postgres_commit_phase_process_kill.rs`'s own `ADVISORY_KEY` so the
+/// two campaigns' locks can never collide if they ever ran concurrently
+/// against the same database.
+const COMMIT_GATE_KEY: i64 = 22_262_274;
+
+/// Statements that remove [`install_commit_gate`]'s trigger and function.
+const DROP_COMMIT_GATE: [&str; 2] = [
+    "DROP TRIGGER IF EXISTS gate_b_commit_gate ON oxide_batch_business.gate_b_output",
+    "DROP FUNCTION IF EXISTS oxide_batch_business.gate_b_commit_gate()",
+];
+
+/// Installs a deferred constraint trigger on `gate_b_output` that blocks on
+/// [`COMMIT_GATE_KEY`] when a chunk's `COMMIT` reaches it, and holds that
+/// lock itself -- so the next `INSERT`-then-`COMMIT` against this table
+/// blocks server-side until [`release_commit_gate`] runs, exactly
+/// reproducing B-04/B-06's window: a real `COMMIT` genuinely in flight on the
+/// server when the client that issued it dies, whose outcome the client can
+/// therefore never learn. Mirrors
+/// `postgres_commit_phase_process_kill.rs`'s `Block::arrange` for
+/// `Phase::CommitInFlight`, scoped to `gate_b_output` with its own
+/// [`COMMIT_GATE_KEY`] rather than reusing that file's `ADVISORY_KEY`.
+///
+/// # Errors
+///
+/// Returns the database failure when the gate cannot be installed.
+pub async fn install_commit_gate(url: &str) -> Result<sqlx::PgConnection, Box<dyn Error>> {
+    let mut connection = sqlx::PgConnection::connect(url).await?;
+    sqlx::query(
+        "CREATE OR REPLACE FUNCTION oxide_batch_business.gate_b_commit_gate() \
+         RETURNS trigger LANGUAGE plpgsql AS $gate$ BEGIN \
+         PERFORM pg_advisory_xact_lock(22262274); RETURN NULL; END; $gate$",
+    )
+    .execute(&mut connection)
+    .await?;
+    sqlx::query(
+        "CREATE CONSTRAINT TRIGGER gate_b_commit_gate \
+         AFTER INSERT ON oxide_batch_business.gate_b_output \
+         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW \
+         EXECUTE FUNCTION oxide_batch_business.gate_b_commit_gate()",
+    )
+    .execute(&mut connection)
+    .await?;
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(COMMIT_GATE_KEY)
+        .execute(&mut connection)
+        .await?;
+    Ok(connection)
+}
+
+/// Marks `job_name`'s latest execution `Failed` through the framework's own
+/// audited recovery request, so a subsequent [`JobLauncher::launch_chunk`]
+/// is allowed to start a new attempt.
+///
+/// A killed worker's execution is left at `Started`: nothing ever told the
+/// repository the attempt ended, so
+/// [`RepositoryError::ExecutionAlreadyActive`](oxide_batch::RepositoryError)
+/// correctly refuses a second concurrent attempt for the same instance --
+/// discovered directly while building B-05, whose first draft tried to
+/// restart by calling `launch_chunk` a second time without this step.
+/// Recovery is a distinct, explicit, audited decision in this framework
+/// (`RecoveryRequest::mark_failed`), never an automatic side effect of
+/// restarting, which is exactly the "never infer, never auto-replay" B-04
+/// invariant applied to the instance-liveness check itself. Mirrors
+/// `postgres_fault_crash_recovery.rs`'s `inspect_recover_and_restart`.
+///
+/// # Errors
+///
+/// Returns the repository failure when the instance, its latest execution,
+/// or the recovery request itself cannot be resolved or applied.
+pub async fn mark_crashed_execution_failed(
+    repository: &PostgresJobRepository,
+    job_name: &str,
+) -> Result<(), Box<dyn Error>> {
+    let key = JobInstanceKey::new(JobName::new(job_name)?, &JobParameters::new());
+    let mut unit = repository.begin().await?;
+    let instance = unit
+        .find_job_instance(&key)
+        .await?
+        .ok_or("no job instance to recover")?;
+    let execution = unit
+        .job_executions(instance.id())
+        .await?
+        .into_iter()
+        .next_back()
+        .ok_or("no execution to recover")?;
+    let request = oxide_batch::RecoveryRequest::mark_failed(
+        execution.version(),
+        "GATE_B_CRASH_RECOVERY",
+        "gate-b-harness",
+        [0; 32],
+        FailureCategory::PermanentInfrastructure,
+        oxide_batch::FailureId::new(1)?,
+    )?;
+    unit.recover_job_execution(execution.id(), &request).await?;
+    unit.commit().await?;
+    Ok(())
+}
+
+/// Releases [`install_commit_gate`]'s lock, letting a killed worker's
+/// already-blocked `COMMIT` finish server-side, then drops the trigger and
+/// function so a later scenario's writes are not gated.
+///
+/// # Errors
+///
+/// Returns the database failure when the gate cannot be released or removed.
+pub async fn release_commit_gate(mut connection: sqlx::PgConnection) -> Result<(), Box<dyn Error>> {
+    sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(COMMIT_GATE_KEY)
+        .execute(&mut connection)
+        .await?;
+    for statement in DROP_COMMIT_GATE {
+        sqlx::query(statement).execute(&mut connection).await?;
+    }
+    connection.close().await?;
+    Ok(())
 }
