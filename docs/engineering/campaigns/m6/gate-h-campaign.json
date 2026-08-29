@@ -2,11 +2,13 @@
   "binary_size_and_compile_time": {
     "boxed": {
       "binary_size_bytes": 1744392,
-      "compile_time_seconds": 3.102704736
+      "compile_time_seconds": 32.770142547,
+      "target_directory_isolation": "clean-per-reference"
     },
     "typed": {
       "binary_size_bytes": 1728000,
-      "compile_time_seconds": 23.177247687
+      "compile_time_seconds": 32.738738276,
+      "target_directory_isolation": "clean-per-reference"
     }
   },
   "campaign": "M6 Gate H P-002 real-component performance",
@@ -16,7 +18,7 @@
     "os": "linux",
     "profile": "release",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "98ccb88693262bbb24ba87a33349588e83b14292",
+    "source_commit": "f98bbfd18b05b42f190688f1b90a50e8f0140e60",
     "source_tree_clean": true
   },
   "hard_invariants": {
@@ -32,7 +34,7 @@
   "no_invented_threshold_note": "Throughput, latency, allocation-delta, binary-size, and compile-time numbers are retained as disclosure evidence per the frozen protocol; none is compared against an invented pass/fail threshold by this runner.",
   "observation": {
     "execution_manifest": {
-      "execution_commit": "98ccb88693262bbb24ba87a33349588e83b14292",
+      "execution_commit": "f98bbfd18b05b42f190688f1b90a50e8f0140e60",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -60,7 +62,7 @@
         "tests/fixtures/gate-h/verify-ci-contract.sh": "b2081b8ba3cb7953c6698b82fc3e6ae1e285b3eb",
         "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
         "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
-        "xtask/src/gate_h.rs": "0fbb79f0a92c2e247e51b2fea914045b749f1807",
+        "xtask/src/gate_h.rs": "594e5943d4b43a0f119aee23db8fd224faadf127",
         "xtask/src/main.rs": "da7f6c26499226226ac7c289272efaa7c610c547",
         "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
       },
@@ -178,17 +180,17 @@
     {
       "observation": {
         "boxed": {
-          "max_nanoseconds": 123467769,
-          "mean_nanoseconds": 79536815,
-          "min_nanoseconds": 67686219,
+          "max_nanoseconds": 70398614,
+          "mean_nanoseconds": 68637948,
+          "min_nanoseconds": 67910645,
           "raw_latency_nanoseconds": [
-            68098785,
-            69597966,
-            68833337,
-            67686219,
-            123467769
+            70398614,
+            67910645,
+            68024689,
+            68727112,
+            68128683
           ],
-          "throughput_items_per_second": 628639.706027957
+          "throughput_items_per_second": 728460.0058265144
         },
         "buffer_reuse": {
           "note": "Delimited component internal buffer reuse is not exposed as a counter.",
@@ -202,17 +204,17 @@
           "typed_per_item_future_allocations": 0
         },
         "typed": {
-          "max_nanoseconds": 201461846,
-          "mean_nanoseconds": 104145427,
-          "min_nanoseconds": 65671345,
+          "max_nanoseconds": 68664044,
+          "mean_nanoseconds": 68374258,
+          "min_nanoseconds": 68126799,
           "raw_latency_nanoseconds": [
-            66131859,
-            201461846,
-            65671345,
-            66619066,
-            120843021
+            68377649,
+            68479169,
+            68126799,
+            68223632,
+            68664044
           ],
-          "throughput_items_per_second": 480097.89234432735
+          "throughput_items_per_second": 731269.3616360708
         },
         "workload": {
           "chunk_size": 50000,

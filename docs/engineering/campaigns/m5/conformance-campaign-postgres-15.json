@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "98ccb88693262bbb24ba87a33349588e83b14292",
+    "source_commit": "f98bbfd18b05b42f190688f1b90a50e8f0140e60",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -20,7 +20,7 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "98ccb88693262bbb24ba87a33349588e83b14292",
+      "execution_commit": "f98bbfd18b05b42f190688f1b90a50e8f0140e60",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -73,7 +73,7 @@
         "crates/oxide-batch/tests/postgres_repository.rs": "27994214dafea2d906b74ea506dac85cb8245931",
         "crates/oxide-batch/tests/repository.rs": "ad77f54947508083347ed518d482002221e0ffe5",
         "crates/oxide-batch/tests/services.rs": "6c7475a6cecb5cf6bbd6e0e07ed4ba843292897e",
-        "crates/oxide-batch/tests/support": "de92596a0c6dc7361e3a0110cdc5613f9201e0cb",
+        "crates/oxide-batch/tests/support": "4529f4e3cdb1e598708980cd2e8a98e5d1f40474",
         "crates/oxide-batch/tests/tasklet.rs": "c5f6cec02693a4bca49075c0464561a05fd3cf4f",
         "crates/oxide-batch/tests/telemetry.rs": "18ca6ab3b16d399b0820f5009262b39743b13bd2",
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
