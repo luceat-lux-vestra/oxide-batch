@@ -199,6 +199,18 @@ checkout behavior, but are not substituted for these retained merge-ref
 artifacts. All completed successfully with PostgreSQL 15/18 where applicable.
 The provenance verifier checks both milestone directories.
 
+The retained M6 artifact identities are: Gate B PostgreSQL 15 artifact
+9715835955 with digest
+`sha256:829d654a18c063e55f1614e7b6abf6c3311e266b0c7ac4dc760ad181012f7d85`,
+Gate B PostgreSQL 18 artifact 9715835661 with digest
+`sha256:ecea51ca6d73238915bea2cb79c1333f7e4a851428f934ca188165c4cf7136a5`,
+Gate H artifact 9715843393 with digest
+`sha256:e4626d300e7e21b6ee808ef730b54742f2e154a3be85cf15affbad14b8b8b555`,
+and full-conformance PostgreSQL 15/18 artifacts 9715861503 and 9715855662
+with digests
+`sha256:a5ba16d6d34e0b5f6581ad3fe3c6a01313026510a15c172570d04f45ec3da311`
+and `sha256:82fe0fbfa03fe8f48fe3c4334962b3740202387789a452c5fb4ab1ccbf028ba7`.
+
 The PR `pull_request` workflows passed at candidate HEAD. Their merge-ref
 reports are the retained artifacts because the repository-local evidence
 verifier must evaluate the same merge-ref tree in the PR Evidence job after
