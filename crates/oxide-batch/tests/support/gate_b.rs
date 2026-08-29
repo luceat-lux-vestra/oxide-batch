@@ -56,16 +56,22 @@ use oxide_batch::{
     BoxFuture, BoxedProcessor, BoxedReader, BoxedWriter, BusinessStatement, BusinessValue,
     Checkpoint, ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext, ChunkCompletionError,
     ChunkCompletionOutcome, ChunkComponentRevisions, ChunkCounts, ChunkDeliveryMode, ChunkJob,
-    ChunkRestartContract, ChunkSize, ChunkStep, ChunkTransactionManager, Clock, ComponentRevision,
-    DefinitionRevision, ExecutionContext, ExecutionCounts, FailureCategory, ItemProcessor,
-    ItemReader, ItemWriter, JobInstanceKey, JobName, JobParameters, JobRepository,
-    PostgresChunkStateError, PostgresChunkStateProvider, PostgresChunkTransactionManager,
-    PostgresConfig, PostgresJobRepository, ProcessContext, ProcessOutcome, ProcessorError,
-    ReadContext, ReadOutcome, ReaderError, StateLimits, StateSchemaId, StateSchemaVersion,
-    StepName, TlsMode, WriteContext, WriteOutcome, WriterError,
+    ChunkRestartContract, ChunkSize, ChunkStep, ChunkTransaction, ChunkTransactionError,
+    ChunkTransactionManager, Clock, CodecId, CodecVersion, ComponentRevision,
+    ComponentStateEnvelope, ComponentStreamIdentity, DefaultComponentCodec, DefinitionRevision,
+    ExecutionContext, ExecutionCounts, FailureCategory, ItemProcessor, ItemReader, ItemStream,
+    ItemWriter, JobInstanceKey, JobName, JobParameters, JobRepository, PostgresChunkStateError,
+    PostgresChunkStateProvider, PostgresChunkTransactionManager, PostgresConfig,
+    PostgresJobRepository, ProcessContext, ProcessOutcome, ProcessorError, ReadContext,
+    ReadOutcome, ReaderError, RestartabilityDeclaration, StateCodecError, StateLimits,
+    StateSchemaId, StateSchemaVersion, StepName, StreamCloseContext, StreamCloseError,
+    StreamCloseOutcome, StreamOpenContext, StreamOpenError, StreamOpenOutcome, StreamStateContract,
+    StreamUpdateContext, StreamUpdateError, TlsMode, VersionedStateCodec, WriteContext,
+    WriteOutcome, WriterError,
 };
 use sqlx::Connection as _;
 use sqlx::PgPool;
+use sqlx::Row as _;
 use sqlx::postgres::PgPoolOptions;
 
 #[path = "../crash_restore/mod.rs"]
@@ -153,40 +159,142 @@ pub fn epoch(offset_seconds: u64) -> SystemTime {
     UNIX_EPOCH + Duration::from_secs(offset_seconds)
 }
 
-/// A deterministic `ItemReader<i64>` over `0..len`, read one item at a time.
+const SEQUENCE_NAMESPACE: &str = "gate-b.sequence-reader";
+const SEQUENCE_SCHEMA: &str = "gate-b.sequence-reader-position";
+const SEQUENCE_CODEC: &str = "gate-b.sequence-reader-position-codec";
+
+#[derive(Clone, Copy)]
+struct SequencePositionSchema;
+
+impl VersionedStateCodec<u64> for SequencePositionSchema {
+    fn schema_id(&self) -> &StateSchemaId {
+        static SCHEMA: std::sync::OnceLock<StateSchemaId> = std::sync::OnceLock::new();
+        #[allow(
+            clippy::expect_used,
+            reason = "the fixed campaign schema identity is a valid literal"
+        )]
+        SCHEMA.get_or_init(|| StateSchemaId::new(SEQUENCE_SCHEMA).expect("valid schema id"))
+    }
+
+    fn current_version(&self) -> StateSchemaVersion {
+        #[allow(
+            clippy::expect_used,
+            reason = "the fixed campaign schema version is nonzero"
+        )]
+        StateSchemaVersion::new(1).expect("nonzero schema version")
+    }
+
+    fn encode(&self, value: &u64) -> Result<Vec<u8>, StateCodecError> {
+        serde_json::to_vec(&serde_json::json!({ "position": value }))
+            .map_err(|_| StateCodecError::InvalidPayload)
+    }
+
+    fn decode(&self, payload: &[u8]) -> Result<u64, StateCodecError> {
+        serde_json::from_slice::<serde_json::Value>(payload)
+            .map_err(|_| StateCodecError::InvalidPayload)?
+            .get("position")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or(StateCodecError::InvalidPayload)
+    }
+}
+
+#[allow(
+    clippy::expect_used,
+    reason = "the fixed campaign codec identities are valid literals"
+)]
+fn sequence_codec() -> DefaultComponentCodec<SequencePositionSchema> {
+    DefaultComponentCodec::new(
+        SequencePositionSchema,
+        CodecId::new(SEQUENCE_CODEC).expect("valid codec id"),
+        CodecVersion::new(1).expect("nonzero codec version"),
+        RestartabilityDeclaration::Restartable,
+    )
+}
+
+fn sequence_identity() -> Result<ComponentStreamIdentity, Box<dyn Error>> {
+    Ok(ComponentStreamIdentity::new(SEQUENCE_NAMESPACE)?)
+}
+
+/// A deterministic `ItemReader<i64>` over `0..len`, read one item at a time,
+/// paired with a durable [`ItemStream`] carrying the next input position.
 pub struct SequenceReader {
-    next: i64,
-    len: i64,
+    next: Arc<std::sync::atomic::AtomicU64>,
+    len: u64,
 }
 
 impl SequenceReader {
     /// Builds a reader that yields `0..len`.
     #[must_use]
-    pub const fn new(len: i64) -> Self {
-        Self { next: 0, len }
+    pub fn new(len: i64) -> Self {
+        Self {
+            next: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            len: len.max(0) as u64,
+        }
     }
 
-    /// Builds a reader that yields `start..len`, for a restart scenario that
-    /// has already read the durable checkpoint position and must not
-    /// re-deliver items a prior attempt already committed. `SequenceReader`
-    /// is not itself an `ItemStream`/restartable component, so a caller
-    /// resuming a job supplies the resume position explicitly, the same way
-    /// `crash_restore`'s manual `CHUNKS.iter().skip(committed)` does for its
-    /// own fixed dataset.
-    #[must_use]
-    pub const fn resuming_from(start: i64, len: i64) -> Self {
-        Self { next: start, len }
+    /// Pairs this reader with its durable component-state participant.
+    pub fn stream(&self) -> Result<SequenceReaderStream, Box<dyn Error>> {
+        Ok(SequenceReaderStream {
+            next: Arc::clone(&self.next),
+            namespace: sequence_identity()?,
+        })
     }
 }
 
 impl ItemReader<i64> for SequenceReader {
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i64>, ReaderError> {
-        if self.next >= self.len {
+        let next = self.next.load(Ordering::Acquire);
+        if next >= self.len {
             return Ok(ReadOutcome::EndOfInput);
         }
-        let item = self.next;
-        self.next += 1;
+        let item = next as i64;
+        self.next.store(next + 1, Ordering::Release);
         Ok(ReadOutcome::Item(item))
+    }
+}
+
+/// The restartable component-state half of [`SequenceReader`].
+pub struct SequenceReaderStream {
+    next: Arc<std::sync::atomic::AtomicU64>,
+    namespace: ComponentStreamIdentity,
+}
+
+impl ItemStream for SequenceReaderStream {
+    async fn open(
+        &self,
+        context: StreamOpenContext<'_>,
+    ) -> Result<StreamOpenOutcome, StreamOpenError> {
+        if let Some(inherited) = context.inherited_state() {
+            let position = inherited
+                .decode::<u64>(&sequence_codec())
+                .map_err(|_| StreamOpenError::new())?;
+            self.next.store(position, Ordering::SeqCst);
+            Ok(StreamOpenOutcome::Restored)
+        } else {
+            self.next.store(0, Ordering::SeqCst);
+            Ok(StreamOpenOutcome::Initial)
+        }
+    }
+
+    async fn update(
+        &self,
+        _context: StreamUpdateContext<'_>,
+    ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+        let position = self.next.load(Ordering::Acquire);
+        ComponentStateEnvelope::encode(
+            self.namespace.clone(),
+            &position,
+            &sequence_codec(),
+            StateLimits::default(),
+        )
+        .map_err(|_| StreamUpdateError::new())
+    }
+
+    async fn close(
+        &self,
+        _context: StreamCloseContext<'_>,
+    ) -> Result<StreamCloseOutcome, StreamCloseError> {
+        Ok(StreamCloseOutcome::Closed)
     }
 }
 
@@ -333,6 +441,206 @@ pub async fn business_rows(url: &str, job_name: &str) -> Result<Vec<i64>, Box<dy
     Ok(rows)
 }
 
+/// Reads the durable metadata projections used by Gate B's structured
+/// observation. Database-generated IDs are deliberately excluded; stable
+/// logical attempt/order and persisted values remain.
+async fn durable_gate_observations(
+    url: &str,
+    job_name: &str,
+) -> Result<
+    (
+        Vec<ComponentStateSnapshot>,
+        Vec<OptimisticVersionSnapshot>,
+        Vec<RepositoryWriteSnapshot>,
+    ),
+    Box<dyn Error>,
+> {
+    let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
+    let mut repository_writes = Vec::new();
+
+    for row in sqlx::query(
+        "SELECT definition_revision \
+         FROM oxide_batch.ob_job_definition WHERE job_name = $1 ORDER BY id",
+    )
+    .bind(job_name)
+    .fetch_all(&pool)
+    .await?
+    {
+        repository_writes.push(RepositoryWriteSnapshot {
+            relation: "ob_job_definition".to_owned(),
+            operation: "registered".to_owned(),
+            values: serde_json::json!({
+                "definition_revision": row.try_get::<String, _>("definition_revision")?,
+            }),
+        });
+    }
+
+    for row in sqlx::query(
+        "SELECT identifying_parameters::text AS identifying_parameters \
+         FROM oxide_batch.ob_job_instance \
+         WHERE job_name = $1 ORDER BY id",
+    )
+    .bind(job_name)
+    .fetch_all(&pool)
+    .await?
+    {
+        let parameters = row.try_get::<String, _>("identifying_parameters")?;
+        repository_writes.push(RepositoryWriteSnapshot {
+            relation: "ob_job_instance".to_owned(),
+            operation: "created".to_owned(),
+            values: serde_json::json!({
+                "identifying_parameters": serde_json::from_str::<serde_json::Value>(&parameters)?,
+            }),
+        });
+    }
+
+    for row in sqlx::query(
+        "SELECT execution.attempt, execution.status, execution.exit_code, execution.version, \
+         execution.restart_of_execution_id IS NOT NULL AS restarted \
+         FROM oxide_batch.ob_job_execution execution \
+         JOIN oxide_batch.ob_job_instance instance ON instance.id = execution.job_instance_id \
+         WHERE instance.job_name = $1 ORDER BY execution.attempt",
+    )
+    .bind(job_name)
+    .fetch_all(&pool)
+    .await?
+    {
+        repository_writes.push(RepositoryWriteSnapshot {
+            relation: "ob_job_execution".to_owned(),
+            operation: "lifecycle".to_owned(),
+            values: serde_json::json!({
+                "attempt": row.try_get::<i32, _>("attempt")?,
+                "status": row.try_get::<String, _>("status")?,
+                "exit_code": row.try_get::<String, _>("exit_code")?,
+                "version": u64::try_from(row.try_get::<i64, _>("version")?)?,
+                "restarted": row.try_get::<bool, _>("restarted")?,
+            }),
+        });
+    }
+
+    for row in sqlx::query(
+        "SELECT execution.attempt, step.status, step.exit_code, step.read_count, \
+         step.processed_count, step.write_count, step.filter_count, step.commit_count, \
+         step.rollback_count, step.checkpoint_schema, step.checkpoint_schema_version, \
+         step.version FROM oxide_batch.ob_step_execution step \
+         JOIN oxide_batch.ob_job_execution execution ON execution.id = step.job_execution_id \
+         JOIN oxide_batch.ob_job_instance instance ON instance.id = execution.job_instance_id \
+         WHERE instance.job_name = $1 ORDER BY execution.attempt, step.step_name",
+    )
+    .bind(job_name)
+    .fetch_all(&pool)
+    .await?
+    {
+        repository_writes.push(RepositoryWriteSnapshot {
+            relation: "ob_step_execution".to_owned(),
+            operation: "progress".to_owned(),
+            values: serde_json::json!({
+                "attempt": row.try_get::<i32, _>("attempt")?,
+                "status": row.try_get::<String, _>("status")?,
+                "exit_code": row.try_get::<String, _>("exit_code")?,
+                "read_count": u64::try_from(row.try_get::<i64, _>("read_count")?)?,
+                "processed_count": u64::try_from(row.try_get::<i64, _>("processed_count")?)?,
+                "write_count": u64::try_from(row.try_get::<i64, _>("write_count")?)?,
+                "filter_count": u64::try_from(row.try_get::<i64, _>("filter_count")?)?,
+                "commit_count": u64::try_from(row.try_get::<i64, _>("commit_count")?)?,
+                "rollback_count": u64::try_from(row.try_get::<i64, _>("rollback_count")?)?,
+                "checkpoint_schema": row.try_get::<String, _>("checkpoint_schema")?,
+                "checkpoint_schema_version": u32::try_from(
+                    row.try_get::<i32, _>("checkpoint_schema_version")?,
+                )?,
+                "version": u64::try_from(row.try_get::<i64, _>("version")?)?,
+            }),
+        });
+    }
+
+    for row in sqlx::query(
+        "SELECT execution.attempt, decision.execution_version, decision.prior_status, \
+         decision.resulting_status, decision.reason_code, decision.operator_reference, \
+         encode(decision.evidence_digest, 'hex') AS evidence_digest \
+         FROM oxide_batch.ob_recovery_decision decision \
+         JOIN oxide_batch.ob_job_execution execution ON execution.id = decision.job_execution_id \
+         JOIN oxide_batch.ob_job_instance instance ON instance.id = execution.job_instance_id \
+         WHERE instance.job_name = $1 ORDER BY execution.attempt, decision.execution_version",
+    )
+    .bind(job_name)
+    .fetch_all(&pool)
+    .await?
+    {
+        repository_writes.push(RepositoryWriteSnapshot {
+            relation: "ob_recovery_decision".to_owned(),
+            operation: "recovery".to_owned(),
+            values: serde_json::json!({
+                "attempt": row.try_get::<i32, _>("attempt")?,
+                "execution_version": u64::try_from(
+                    row.try_get::<i64, _>("execution_version")?,
+                )?,
+                "prior_status": row.try_get::<String, _>("prior_status")?,
+                "resulting_status": row.try_get::<String, _>("resulting_status")?,
+                "reason_code": row.try_get::<String, _>("reason_code")?,
+                "operator_reference": row.try_get::<String, _>("operator_reference")?,
+                "evidence_digest": row.try_get::<String, _>("evidence_digest")?,
+            }),
+        });
+    }
+
+    let optimistic_versions = sqlx::query(
+        "SELECT execution.attempt, execution.version AS job_version, step.version AS step_version \
+         FROM oxide_batch.ob_step_execution step \
+         JOIN oxide_batch.ob_job_execution execution ON execution.id = step.job_execution_id \
+         JOIN oxide_batch.ob_job_instance instance ON instance.id = execution.job_instance_id \
+         WHERE instance.job_name = $1 ORDER BY execution.attempt, step.step_name",
+    )
+    .bind(job_name)
+    .fetch_all(&pool)
+    .await?
+    .into_iter()
+    .map(|row| {
+        Ok(OptimisticVersionSnapshot {
+            attempt: u32::try_from(row.try_get::<i32, _>("attempt")?)?,
+            job_execution: u64::try_from(row.try_get::<i64, _>("job_version")?)?,
+            step_execution: u64::try_from(row.try_get::<i64, _>("step_version")?)?,
+        })
+    })
+    .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+
+    let mut component_state = Vec::new();
+    for row in sqlx::query(
+        "SELECT execution.attempt, state.namespace, state.schema_id, state.schema_version, \
+         state.codec_id, state.codec_version, state.version, state.payload \
+         FROM oxide_batch.ob_component_state state \
+         JOIN oxide_batch.ob_step_execution step ON step.id = state.step_execution_id \
+         JOIN oxide_batch.ob_job_execution execution ON execution.id = step.job_execution_id \
+         JOIN oxide_batch.ob_job_instance instance ON instance.id = execution.job_instance_id \
+         WHERE instance.job_name = $1 ORDER BY execution.attempt, state.namespace",
+    )
+    .bind(job_name)
+    .fetch_all(&pool)
+    .await?
+    {
+        let payload = row
+            .try_get::<Option<Vec<u8>>, _>("payload")?
+            .ok_or("Gate B component state payload is unexpectedly external")?;
+        let payload = serde_json::from_slice::<serde_json::Value>(&payload)?;
+        let position = payload
+            .get("position")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or("Gate B component state has no position")?;
+        component_state.push(ComponentStateSnapshot {
+            attempt: u32::try_from(row.try_get::<i32, _>("attempt")?)?,
+            namespace: row.try_get("namespace")?,
+            schema_id: row.try_get("schema_id")?,
+            schema_version: u32::try_from(row.try_get::<i32, _>("schema_version")?)?,
+            codec_id: row.try_get("codec_id")?,
+            codec_version: u32::try_from(row.try_get::<i32, _>("codec_version")?)?,
+            version: u64::try_from(row.try_get::<i64, _>("version")?)?,
+            position,
+        });
+    }
+    pool.close().await;
+
+    Ok((component_state, optimistic_versions, repository_writes))
+}
+
 /// Encodes a reader position as the durable checkpoint every Gate B job uses.
 fn checkpoint(position: u64) -> Result<Checkpoint, Box<dyn Error>> {
     Ok(Checkpoint::from_json(
@@ -402,6 +710,102 @@ pub fn transaction_manager(repository: &PostgresJobRepository) -> PostgresChunkT
     PostgresChunkTransactionManager::new(repository.clone(), provider)
 }
 
+/// A real PostgreSQL transaction manager whose successful commit is followed
+/// by an intentionally untrusted acknowledgement. The database transaction
+/// has already committed; only the caller-visible acknowledgement is replaced
+/// with [`ChunkTransactionError::CommitOutcomeUnknown`]. This is the frozen
+/// B-04 runtime path, distinct from killing a process before it can observe
+/// the result of a real server-side commit.
+pub struct UnknownAfterCommitManager {
+    inner: PostgresChunkTransactionManager,
+}
+
+/// Builds the B-04 manager that converts a successful durable commit into an
+/// unknown caller-visible outcome.
+#[must_use]
+pub fn transaction_manager_unknown_after_commit(
+    repository: &PostgresJobRepository,
+) -> UnknownAfterCommitManager {
+    UnknownAfterCommitManager {
+        inner: transaction_manager(repository),
+    }
+}
+
+struct UnknownAfterCommitTransaction<'a> {
+    inner: Box<dyn ChunkTransaction + 'a>,
+}
+
+impl ChunkTransaction for UnknownAfterCommitTransaction<'_> {
+    fn business_transaction(&mut self) -> Option<&mut dyn oxide_batch::BusinessTransaction> {
+        self.inner.business_transaction()
+    }
+
+    fn commit(
+        &mut self,
+        counts: ChunkCounts,
+        fault: oxide_batch::ChunkFaultProgress,
+    ) -> BoxFuture<'_, Result<ChunkCommitReceipt, ChunkTransactionError>> {
+        Box::pin(async move {
+            let _receipt = self.inner.commit(counts, fault).await?;
+            Err(ChunkTransactionError::CommitOutcomeUnknown)
+        })
+    }
+
+    fn commit_with_component_state<'a>(
+        &'a mut self,
+        counts: ChunkCounts,
+        fault: oxide_batch::ChunkFaultProgress,
+        component_state: &'a [ComponentStateEnvelope],
+    ) -> BoxFuture<'a, Result<ChunkCommitReceipt, ChunkTransactionError>> {
+        Box::pin(async move {
+            let _receipt = self
+                .inner
+                .commit_with_component_state(counts, fault, component_state)
+                .await?;
+            Err(ChunkTransactionError::CommitOutcomeUnknown)
+        })
+    }
+
+    fn rollback(&mut self) -> BoxFuture<'_, Result<(), ChunkTransactionError>> {
+        self.inner.rollback()
+    }
+}
+
+impl ChunkTransactionManager for UnknownAfterCommitManager {
+    fn begin(
+        &self,
+    ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>> {
+        Box::pin(async move {
+            let inner = self.inner.begin().await?;
+            Ok(Box::new(UnknownAfterCommitTransaction { inner }) as Box<dyn ChunkTransaction>)
+        })
+    }
+
+    fn begin_for(
+        &self,
+        context: oxide_batch::ChunkTransactionContext,
+    ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>> {
+        Box::pin(async move {
+            let inner = self.inner.begin_for(context).await?;
+            Ok(Box::new(UnknownAfterCommitTransaction { inner }) as Box<dyn ChunkTransaction>)
+        })
+    }
+
+    fn inherited_progress(
+        &self,
+        context: oxide_batch::ChunkTransactionContext,
+    ) -> BoxFuture<'_, Result<oxide_batch::InheritedStepProgress, ChunkTransactionError>> {
+        self.inner.inherited_progress(context)
+    }
+
+    fn inherited_component_state(
+        &self,
+        context: oxide_batch::ChunkTransactionContext,
+    ) -> BoxFuture<'_, Result<Vec<ComponentStateEnvelope>, ChunkTransactionError>> {
+        self.inner.inherited_component_state(context)
+    }
+}
+
 /// Everything one representation's construction needs, shared by both
 /// [`typed_chunk_job`] and [`boxed_chunk_job`] so "the same pipeline" is one
 /// set of values rather than two call sites that must be kept in sync.
@@ -442,6 +846,7 @@ fn assemble<M, R, P, W>(
     reader: R,
     processor: P,
     writer: W,
+    stream: SequenceReaderStream,
     completion: Arc<dyn ChunkCompletion>,
 ) -> Result<Job<R, P, W>, Box<dyn Error>>
 where
@@ -450,6 +855,7 @@ where
     P: ItemProcessor<i64, i64> + Send + 'static,
     W: ItemWriter<i64> + Send + 'static,
 {
+    let stream_identity = sequence_identity()?;
     let step = ChunkStep::new(
         StepName::new(params.job_name)?,
         ChunkSize::new(params.chunk_size)?,
@@ -458,18 +864,25 @@ where
         writer,
         Arc::clone(&params.transactions) as Arc<dyn ChunkTransactionManager>,
         completion,
+    )
+    .with_item_stream(
+        stream_identity.clone(),
+        stream,
+        StreamStateContract::new(sequence_codec()),
     );
+    let components = ChunkComponentRevisions::new(
+        ComponentRevision::new("reader-v1")?,
+        ComponentRevision::new("processor-v1")?,
+        ComponentRevision::new("writer-v1")?,
+        ComponentRevision::new("checkpoint-v1")?,
+        restart_contract()?,
+    )
+    .with_stream_revision(stream_identity, ComponentRevision::new("reader-stream-v1")?);
     Ok(ChunkJob::new(
         JobName::new(params.job_name)?,
         step,
         DefinitionRevision::new("gate-b-v1")?,
-        &ChunkComponentRevisions::new(
-            ComponentRevision::new("reader-v1")?,
-            ComponentRevision::new("processor-v1")?,
-            ComponentRevision::new("writer-v1")?,
-            ComponentRevision::new("checkpoint-v1")?,
-            restart_contract()?,
-        ),
+        &components,
     )?)
 }
 
@@ -481,11 +894,14 @@ where
 pub fn typed_chunk_job<M: ChunkTransactionManager + 'static>(
     params: &GateBParams<M>,
 ) -> Result<TypedJob, Box<dyn Error>> {
+    let reader = SequenceReader::new(params.items);
+    let stream = reader.stream()?;
     assemble(
         params,
-        SequenceReader::new(params.items),
+        reader,
         IdentityProcessor,
         BusinessWriter::new(params.job_name),
+        stream,
         Arc::new(Completion),
     )
 }
@@ -506,37 +922,41 @@ where
     M: ChunkTransactionManager + 'static,
     W: ItemWriter<i64> + Send + 'static,
 {
-    assemble(
-        params,
-        SequenceReader::new(params.items),
-        IdentityProcessor,
-        writer,
-        Arc::new(Completion),
-    )
-}
-
-/// Builds the typed representation with a caller-supplied reader and writer,
-/// for a scenario that restarts from a resume position (see
-/// [`SequenceReader::resuming_from`]) rather than reading `0..items`.
-///
-/// # Errors
-///
-/// Returns the domain failure when any declared identity is invalid.
-pub fn typed_chunk_job_with_reader_and_writer<M, R, W>(
-    params: &GateBParams<M>,
-    reader: R,
-    writer: W,
-) -> Result<Job<R, IdentityProcessor, W>, Box<dyn Error>>
-where
-    M: ChunkTransactionManager + 'static,
-    R: ItemReader<i64> + Send + 'static,
-    W: ItemWriter<i64> + Send + 'static,
-{
+    let reader = SequenceReader::new(params.items);
+    let stream = reader.stream()?;
     assemble(
         params,
         reader,
         IdentityProcessor,
         writer,
+        stream,
+        Arc::new(Completion),
+    )
+}
+
+/// Builds the typed representation with a fresh reader and caller-supplied
+/// writer. On restart the paired `ItemStream` restores the reader position
+/// from durable component state before item work begins.
+///
+/// # Errors
+///
+/// Returns the domain failure when any declared identity is invalid.
+pub fn typed_chunk_job_with_reader_and_writer<M, W>(
+    params: &GateBParams<M>,
+    writer: W,
+) -> Result<TypedJob<W>, Box<dyn Error>>
+where
+    M: ChunkTransactionManager + 'static,
+    W: ItemWriter<i64> + Send + 'static,
+{
+    let reader = SequenceReader::new(params.items);
+    let stream = reader.stream()?;
+    assemble(
+        params,
+        reader,
+        IdentityProcessor,
+        writer,
+        stream,
         Arc::new(Completion),
     )
 }
@@ -558,11 +978,14 @@ where
     M: ChunkTransactionManager + 'static,
     W: ItemWriter<i64> + Send + 'static,
 {
+    let reader = SequenceReader::new(params.items);
+    let stream = reader.stream()?;
     assemble(
         params,
-        SequenceReader::new(params.items),
+        reader,
         IdentityProcessor,
         writer,
+        stream,
         completion,
     )
 }
@@ -583,36 +1006,41 @@ where
     M: ChunkTransactionManager + 'static,
     W: ItemWriter<i64> + Send + 'static,
 {
+    let reader = SequenceReader::new(params.items);
+    let stream = reader.stream()?;
     assemble(
         params,
-        BoxedReader::new(SequenceReader::new(params.items)),
+        BoxedReader::new(reader),
         BoxedProcessor::new(IdentityProcessor),
         BoxedWriter::new(writer),
+        stream,
         Arc::new(Completion),
     )
 }
 
-/// Builds the `Boxed` representation with a caller-supplied reader and
-/// writer, for a scenario that restarts from a resume position (see
-/// [`SequenceReader::resuming_from`]) rather than reading `0..items`.
+/// Builds the `Boxed` representation with a fresh reader and caller-supplied
+/// writer. On restart the paired `ItemStream` restores the reader position
+/// from durable component state before item work begins.
 ///
 /// # Errors
 ///
 /// Returns the domain failure when any declared identity is invalid.
 pub fn boxed_chunk_job_with_reader_and_writer<M, W>(
     params: &GateBParams<M>,
-    reader: SequenceReader,
     writer: W,
 ) -> Result<BoxedJob, Box<dyn Error>>
 where
     M: ChunkTransactionManager + 'static,
     W: ItemWriter<i64> + Send + 'static,
 {
+    let reader = SequenceReader::new(params.items);
+    let stream = reader.stream()?;
     assemble(
         params,
         BoxedReader::new(reader),
         BoxedProcessor::new(IdentityProcessor),
         BoxedWriter::new(writer),
+        stream,
         Arc::new(Completion),
     )
 }
@@ -634,11 +1062,14 @@ where
     M: ChunkTransactionManager + 'static,
     W: ItemWriter<i64> + Send + 'static,
 {
+    let reader = SequenceReader::new(params.items);
+    let stream = reader.stream()?;
     assemble(
         params,
-        BoxedReader::new(SequenceReader::new(params.items)),
+        BoxedReader::new(reader),
         BoxedProcessor::new(IdentityProcessor),
         BoxedWriter::new(writer),
+        stream,
         completion,
     )
 }
@@ -652,11 +1083,14 @@ where
 pub fn boxed_chunk_job<M: ChunkTransactionManager + 'static>(
     params: &GateBParams<M>,
 ) -> Result<BoxedJob, Box<dyn Error>> {
+    let reader = SequenceReader::new(params.items);
+    let stream = reader.stream()?;
     assemble(
         params,
-        BoxedReader::new(SequenceReader::new(params.items)),
+        BoxedReader::new(reader),
         BoxedProcessor::new(IdentityProcessor),
         BoxedWriter::new(BusinessWriter::new(params.job_name)),
+        stream,
         Arc::new(Completion),
     )
 }
@@ -676,6 +1110,14 @@ pub struct GateBObservation {
     pub checkpoint_position: Option<u64>,
     /// The durable counters as of the last committed chunk.
     pub counts: CountsSnapshot,
+    /// Every committed component-state envelope, normalized away from
+    /// database-generated row and execution IDs.
+    pub component_state: Vec<ComponentStateSnapshot>,
+    /// Job/step optimistic versions observed in durable repository rows.
+    pub optimistic_versions: Vec<OptimisticVersionSnapshot>,
+    /// The normalized durable repository-write projection. This is a
+    /// structured database observation, not a process-local log trace.
+    pub repository_writes: Vec<RepositoryWriteSnapshot>,
     /// The job instance's executions, oldest first, as
     /// `(status, step_status)` -- the normalized lifecycle trace.
     pub lifecycle_trace: Vec<(String, String)>,
@@ -689,7 +1131,100 @@ impl GateBObservation {
             "business_rows": self.business_rows,
             "checkpoint_position": self.checkpoint_position,
             "counts": self.counts.to_json(),
+            "component_state": self
+                .component_state
+                .iter()
+                .map(ComponentStateSnapshot::to_json)
+                .collect::<Vec<_>>(),
+            "optimistic_versions": self
+                .optimistic_versions
+                .iter()
+                .map(OptimisticVersionSnapshot::to_json)
+                .collect::<Vec<_>>(),
+            "repository_writes": self
+                .repository_writes
+                .iter()
+                .map(RepositoryWriteSnapshot::to_json)
+                .collect::<Vec<_>>(),
             "lifecycle_trace": self.lifecycle_trace,
+        })
+    }
+}
+
+/// A normalized durable `ItemStream` component-state row.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ComponentStateSnapshot {
+    /// The execution attempt owning the copied or newly committed state.
+    pub attempt: u32,
+    /// The stable stream namespace.
+    pub namespace: String,
+    /// The application state schema identity.
+    pub schema_id: String,
+    /// The application state schema version.
+    pub schema_version: u32,
+    /// The codec identity.
+    pub codec_id: String,
+    /// The codec version.
+    pub codec_version: u32,
+    /// The component-state row version.
+    pub version: u64,
+    /// The decoded, non-sensitive campaign position.
+    pub position: u64,
+}
+
+impl ComponentStateSnapshot {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "attempt": self.attempt,
+            "namespace": self.namespace,
+            "schema_id": self.schema_id,
+            "schema_version": self.schema_version,
+            "codec_id": self.codec_id,
+            "codec_version": self.codec_version,
+            "version": self.version,
+            "position": self.position,
+        })
+    }
+}
+
+/// Job/step optimistic versions that were durable for each attempt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OptimisticVersionSnapshot {
+    /// The logical attempt number.
+    pub attempt: u32,
+    /// The job-execution optimistic version.
+    pub job_execution: u64,
+    /// The step-execution optimistic version.
+    pub step_execution: u64,
+}
+
+impl OptimisticVersionSnapshot {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "attempt": self.attempt,
+            "job_execution": self.job_execution,
+            "step_execution": self.step_execution,
+        })
+    }
+}
+
+/// One normalized durable repository-write observation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RepositoryWriteSnapshot {
+    /// The durable repository relation observed.
+    pub relation: String,
+    /// The normalized operation represented by the row.
+    pub operation: String,
+    /// Value-redacted, ID-independent durable fields.
+    pub values: serde_json::Value,
+}
+
+impl RepositoryWriteSnapshot {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "relation": self.relation,
+            "operation": self.operation,
+            "values": self.values,
         })
     }
 }
@@ -788,11 +1323,16 @@ pub async fn snapshot(
         }
     }
     unit.rollback().await?;
+    let (component_state, optimistic_versions, repository_writes) =
+        durable_gate_observations(runtime_url, job_name).await?;
 
     Ok(GateBObservation {
         business_rows: business_rows(runtime_url, job_name).await?,
         checkpoint_position,
         counts,
+        component_state,
+        optimistic_versions,
+        repository_writes,
         lifecycle_trace,
     })
 }

@@ -28,11 +28,13 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use gate_b::{
-    GateBParams, HANDSHAKE_BOUND, REPRESENTATION_ENV, Representation, SequenceReader, config,
-    migrator_url, prepare_fixture, runtime_url, snapshot, transaction_manager,
+    GateBParams, HANDSHAKE_BOUND, REPRESENTATION_ENV, Representation, config, migrator_url,
+    prepare_fixture, runtime_url, snapshot, transaction_manager,
+    transaction_manager_unknown_after_commit,
 };
 use oxide_batch::{
-    JobLauncher, JobParameters, PostgresJobRepository, SequentialIdGenerator, StopSource,
+    ChunkExecutionOutcome, JobLauncher, JobParameters, PostgresJobRepository,
+    SequentialIdGenerator, StopSource, TaskletExecutionOutcome,
 };
 use sqlx::postgres::PgPoolOptions;
 
@@ -112,6 +114,15 @@ async fn unknown_commit_outcome_forces_recovery_not_inference() -> Result<(), Bo
             "{}: the checkpoint must reflect the completed commit",
             representation.id(),
         );
+        assert_eq!(
+            discovered
+                .component_state
+                .last()
+                .map(|state| state.position),
+            Some(ITEMS.unsigned_abs()),
+            "{}: the component state must be durable with the commit discovered after the kill",
+            representation.id(),
+        );
 
         // The killed execution is still Started -- the durable chunk commit
         // completed on the server, but the process that would have marked
@@ -131,7 +142,6 @@ async fn unknown_commit_outcome_forces_recovery_not_inference() -> Result<(), Bo
             pool,
             transactions,
         };
-        let resuming = SequenceReader::resuming_from(ITEMS, ITEMS);
         let ids = SequentialIdGenerator::new(std::num::NonZeroU64::MIN);
         let (_source, stop) = StopSource::new();
         let launcher = JobLauncher::new(&repository, &clock, &ids);
@@ -139,7 +149,6 @@ async fn unknown_commit_outcome_forces_recovery_not_inference() -> Result<(), Bo
             Representation::Typed => {
                 let mut job = gate_b::typed_chunk_job_with_reader_and_writer(
                     &params,
-                    resuming,
                     gate_b::BusinessWriter::new(job_name),
                 )?;
                 launcher
@@ -149,7 +158,6 @@ async fn unknown_commit_outcome_forces_recovery_not_inference() -> Result<(), Bo
             Representation::Boxed => {
                 let mut job = gate_b::boxed_chunk_job_with_reader_and_writer(
                     &params,
-                    resuming,
                     gate_b::BusinessWriter::new(job_name),
                 )?;
                 launcher
@@ -166,6 +174,12 @@ async fn unknown_commit_outcome_forces_recovery_not_inference() -> Result<(), Bo
              the already-durable rows",
             representation.id(),
         );
+        assert_eq!(
+            restarted.component_state.last().map(|state| state.position),
+            Some(ITEMS.unsigned_abs()),
+            "{}: restart must inherit the durable component state rather than reset it",
+            representation.id(),
+        );
         repository.close().await?;
         observations.push(restarted);
     }
@@ -174,6 +188,156 @@ async fn unknown_commit_outcome_forces_recovery_not_inference() -> Result<(), Bo
         observations[0], observations[1],
         "B-04: typed and boxed representations must reach the same durable outcome for a \
          commit whose result was genuinely unknown to the process that issued it"
+    );
+    Ok(())
+}
+
+/// Proves the framework's own unknown-commit classification, not only the
+/// durable recovery that follows a killed client. The wrapped real PostgreSQL
+/// transaction commits business rows, checkpoint, component state, counters,
+/// and optimistic version, then deliberately withholds the acknowledgement as
+/// untrusted. Both the chunk and launcher reports must expose UNKNOWN, and no
+/// replay is attempted before explicit recovery.
+#[tokio::test]
+async fn runtime_unknown_outcome_is_observed_for_each_representation() -> Result<(), Box<dyn Error>>
+{
+    let Some(runtime_url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let Some(migrator_url) = migrator_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL is not set");
+        return Ok(());
+    };
+
+    let mut final_observations = Vec::new();
+    for representation in Representation::ALL {
+        let job_name = format!("gate_b_04_runtime_unknown_{}", representation.id());
+        let job_name: &'static str = Box::leak(job_name.into_boxed_str());
+        prepare_fixture(&migrator_url, job_name).await?;
+
+        let pool = PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&runtime_url)
+            .await?;
+        let clock = gate_b::FixedClock(gate_b::epoch(1_000));
+        let repository =
+            PostgresJobRepository::connect(config(runtime_url.clone())?, Arc::new(clock)).await?;
+        let transactions = Arc::new(transaction_manager_unknown_after_commit(&repository));
+        let params = GateBParams {
+            job_name,
+            items: ITEMS,
+            chunk_size: CHUNK_SIZE,
+            pool,
+            transactions,
+        };
+        let ids = SequentialIdGenerator::new(std::num::NonZeroU64::MIN);
+        let (_source, stop) = StopSource::new();
+        let launcher = JobLauncher::new(&repository, &clock, &ids);
+        let report = match representation {
+            Representation::Typed => {
+                let mut job = gate_b::typed_chunk_job(&params)?;
+                launcher
+                    .launch_chunk(&mut job, &JobParameters::new(), &stop)
+                    .await?
+            }
+            Representation::Boxed => {
+                let mut job = gate_b::boxed_chunk_job(&params)?;
+                launcher
+                    .launch_chunk(&mut job, &JobParameters::new(), &stop)
+                    .await?
+            }
+        };
+        assert_eq!(
+            report
+                .chunk()
+                .ok_or("B-04 did not produce a chunk report")?
+                .outcome(),
+            ChunkExecutionOutcome::Unknown,
+            "{}: the chunk runtime must expose the unknown commit outcome",
+            representation.id(),
+        );
+        assert_eq!(
+            report.launch().outcome(),
+            TaskletExecutionOutcome::Unknown,
+            "{}: the launcher must route CommitOutcomeUnknown to its UNKNOWN path",
+            representation.id(),
+        );
+
+        let before_recovery = snapshot(&runtime_url, &repository, job_name).await?;
+        assert_eq!(
+            before_recovery.business_rows,
+            vec![0, 1, 2],
+            "{}: the committed business rows must remain observable while the acknowledgement is unknown",
+            representation.id(),
+        );
+        assert_eq!(
+            before_recovery
+                .component_state
+                .last()
+                .map(|state| state.position),
+            Some(ITEMS.unsigned_abs()),
+            "{}: component state must share the commit that became unknown to the caller",
+            representation.id(),
+        );
+        assert_eq!(
+            before_recovery.lifecycle_trace.last(),
+            Some(&("UNKNOWN".to_owned(), "UNKNOWN".to_owned())),
+            "{}: the durable lifecycle must record UNKNOWN, not inferred success or rollback",
+            representation.id(),
+        );
+
+        // Recovery is explicit. Only after the fresh durable observation above
+        // is a new representation-parameterized attempt allowed to resume.
+        gate_b::mark_crashed_execution_failed(&repository, job_name).await?;
+        let transactions = Arc::new(transaction_manager(&repository));
+        let params = GateBParams {
+            job_name,
+            items: ITEMS,
+            chunk_size: CHUNK_SIZE,
+            pool: PgPoolOptions::new()
+                .max_connections(2)
+                .connect(&runtime_url)
+                .await?,
+            transactions,
+        };
+        let ids = SequentialIdGenerator::new(std::num::NonZeroU64::MIN);
+        let (_source, stop) = StopSource::new();
+        let launcher = JobLauncher::new(&repository, &clock, &ids);
+        match representation {
+            Representation::Typed => {
+                let mut job = gate_b::typed_chunk_job_with_reader_and_writer(
+                    &params,
+                    gate_b::BusinessWriter::new(job_name),
+                )?;
+                launcher
+                    .launch_chunk(&mut job, &JobParameters::new(), &stop)
+                    .await?;
+            }
+            Representation::Boxed => {
+                let mut job = gate_b::boxed_chunk_job_with_reader_and_writer(
+                    &params,
+                    gate_b::BusinessWriter::new(job_name),
+                )?;
+                launcher
+                    .launch_chunk(&mut job, &JobParameters::new(), &stop)
+                    .await?;
+            }
+        }
+        let final_observation = snapshot(&runtime_url, &repository, job_name).await?;
+        assert_eq!(
+            final_observation.business_rows,
+            vec![0, 1, 2],
+            "{}: explicit recovery must not replay the already durable unknown commit",
+            representation.id(),
+        );
+        repository.close().await?;
+        final_observations.push(final_observation);
+    }
+
+    assert_eq!(
+        final_observations[0], final_observations[1],
+        "B-04 runtime UNKNOWN: typed and boxed paths must have identical durable recovery results",
     );
     Ok(())
 }

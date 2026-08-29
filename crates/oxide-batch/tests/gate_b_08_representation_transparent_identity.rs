@@ -38,7 +38,7 @@ use std::sync::Arc;
 use chunk_fixture::{Double, NoopCompletion, NoopTransactions, Sink, Source};
 use gate_b::{
     GateBParams, HANDSHAKE_BOUND, HANDSHAKE_ENV, ParkAt, ParkingWriter, REPRESENTATION_ENV,
-    Representation, SequenceReader, config, migrator_url, prepare_fixture, runtime_url, snapshot,
+    Representation, config, migrator_url, prepare_fixture, runtime_url, snapshot,
     transaction_manager,
 };
 use oxide_batch::{
@@ -208,6 +208,11 @@ async fn cross_representation_restart(
         "{job_name}: exactly the first chunk must be durable when the kill lands, regardless \
          of the killed representation",
     );
+    assert_eq!(
+        killed.component_state.last().map(|state| state.position),
+        Some(RESUME_POSITION.unsigned_abs()),
+        "{job_name}: restart selection must include the durable ItemStream state",
+    );
     gate_b::mark_crashed_execution_failed(&repository, job_name).await?;
 
     let transactions = Arc::new(transaction_manager(&repository));
@@ -218,7 +223,6 @@ async fn cross_representation_restart(
         pool,
         transactions,
     };
-    let resuming = SequenceReader::resuming_from(RESUME_POSITION, ITEMS);
     let ids = SequentialIdGenerator::new(std::num::NonZeroU64::MIN);
     let (_source, stop) = StopSource::new();
     let launcher = JobLauncher::new(&repository, &clock, &ids);
@@ -226,7 +230,6 @@ async fn cross_representation_restart(
         Representation::Typed => {
             let mut job = gate_b::typed_chunk_job_with_reader_and_writer(
                 &params,
-                resuming,
                 gate_b::BusinessWriter::new(job_name),
             )?;
             launcher
@@ -236,7 +239,6 @@ async fn cross_representation_restart(
         Representation::Boxed => {
             let mut job = gate_b::boxed_chunk_job_with_reader_and_writer(
                 &params,
-                resuming,
                 gate_b::BusinessWriter::new(job_name),
             )?;
             launcher
@@ -256,6 +258,16 @@ async fn cross_representation_restart(
         restarted.checkpoint_position,
         Some(ITEMS.unsigned_abs()),
         "{job_name}: the checkpoint must reflect every item read across both attempts",
+    );
+    assert_eq!(
+        restarted.component_state.last().map(|state| state.position),
+        Some(ITEMS.unsigned_abs()),
+        "{job_name}: the swapped representation must inherit and persist the same stream state",
+    );
+    assert_eq!(
+        restarted.component_state.len(),
+        2,
+        "{job_name}: both representation-swapped attempts must have durable stream state",
     );
     assert_eq!(
         restarted.lifecycle_trace.len(),

@@ -84,6 +84,7 @@ const EXPECTED_TESTS: &[&str] = &[
     "writer_failure_before_commit_rolls_back_identically",
     "state_checkpoint_counter_share_one_atomic_boundary",
     "unknown_commit_outcome_forces_recovery_not_inference",
+    "runtime_unknown_outcome_is_observed_for_each_representation",
     "unknown_outcome_worker_process",
     "kill_before_commit_worker_process",
     "process_kill_before_commit_restart_is_identical",

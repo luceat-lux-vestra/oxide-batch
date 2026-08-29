@@ -9,9 +9,8 @@
 //! then parks inside the *second* chunk's writer call -- after the writer
 //! has staged that chunk's rows in the open transaction, but before its
 //! commit is issued -- and is killed there with a real `SIGKILL`. The
-//! restart attempt resumes from the durable checkpoint (position 3, one
-//! chunk committed) using [`gate_b::SequenceReader::resuming_from`], since
-//! `SequenceReader` is not itself restart-aware.
+//! restart attempt restores the reader's durable `ItemStream` state before
+//! item work begins.
 
 #![cfg(feature = "postgres")]
 
@@ -24,7 +23,7 @@ use std::sync::Arc;
 
 use gate_b::{
     GateBParams, HANDSHAKE_BOUND, HANDSHAKE_ENV, ParkAt, ParkingWriter, REPRESENTATION_ENV,
-    Representation, SequenceReader, config, migrator_url, prepare_fixture, runtime_url, snapshot,
+    Representation, config, migrator_url, prepare_fixture, runtime_url, snapshot,
     transaction_manager,
 };
 use oxide_batch::{
@@ -97,6 +96,12 @@ async fn process_kill_before_commit_restart_is_identical() -> Result<(), Box<dyn
             "{}: the parked (uncommitted) second chunk's rows must not be durable",
             representation.id(),
         );
+        assert_eq!(
+            killed.component_state.last().map(|state| state.position),
+            Some(EXPECTED_RESUME_POSITION.unsigned_abs()),
+            "{}: only the first committed chunk's component state may be durable",
+            representation.id(),
+        );
 
         // The killed execution is still Started; recovery must explicitly
         // mark it Failed before a new attempt is allowed (see
@@ -113,7 +118,6 @@ async fn process_kill_before_commit_restart_is_identical() -> Result<(), Box<dyn
             pool,
             transactions,
         };
-        let resuming = SequenceReader::resuming_from(EXPECTED_RESUME_POSITION, ITEMS);
         let ids = SequentialIdGenerator::new(std::num::NonZeroU64::MIN);
         let (_source, stop) = StopSource::new();
         let launcher = JobLauncher::new(&repository, &clock, &ids);
@@ -121,7 +125,6 @@ async fn process_kill_before_commit_restart_is_identical() -> Result<(), Box<dyn
             Representation::Typed => {
                 let mut job = gate_b::typed_chunk_job_with_reader_and_writer(
                     &params,
-                    resuming,
                     gate_b::BusinessWriter::new(job_name),
                 )?;
                 launcher
@@ -131,7 +134,6 @@ async fn process_kill_before_commit_restart_is_identical() -> Result<(), Box<dyn
             Representation::Boxed => {
                 let mut job = gate_b::boxed_chunk_job_with_reader_and_writer(
                     &params,
-                    resuming,
                     gate_b::BusinessWriter::new(job_name),
                 )?;
                 launcher
@@ -152,6 +154,18 @@ async fn process_kill_before_commit_restart_is_identical() -> Result<(), Box<dyn
             restarted.checkpoint_position,
             Some(ITEMS.unsigned_abs()),
             "{}: the checkpoint must reflect every item read across both attempts",
+            representation.id(),
+        );
+        assert_eq!(
+            restarted.component_state.last().map(|state| state.position),
+            Some(ITEMS.unsigned_abs()),
+            "{}: the restarted ItemStream must restore and persist the final position",
+            representation.id(),
+        );
+        assert_eq!(
+            restarted.component_state.len(),
+            2,
+            "{}: component state must be present for both the killed and restarted attempts",
             representation.id(),
         );
         repository.close().await?;

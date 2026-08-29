@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use gate_b::{
     GateBParams, HANDSHAKE_BOUND, HANDSHAKE_ENV, ParkAt, ParkingCompletion, REPRESENTATION_ENV,
-    Representation, SequenceReader, config, migrator_url, prepare_fixture, runtime_url, snapshot,
+    Representation, config, migrator_url, prepare_fixture, runtime_url, snapshot,
     transaction_manager,
 };
 use oxide_batch::{
@@ -98,6 +98,12 @@ async fn process_kill_around_commit_acknowledgement_is_identical() -> Result<(),
             "{}: both committed chunks' rows must already be durable",
             representation.id(),
         );
+        assert_eq!(
+            killed.component_state.last().map(|state| state.position),
+            Some(EXPECTED_RESUME_POSITION.unsigned_abs()),
+            "{}: component state must be durable before the post-commit kill",
+            representation.id(),
+        );
 
         // The killed execution is still Started; recovery must explicitly
         // mark it Failed before a new attempt is allowed (see
@@ -116,7 +122,6 @@ async fn process_kill_around_commit_acknowledgement_is_identical() -> Result<(),
             pool,
             transactions,
         };
-        let resuming = SequenceReader::resuming_from(EXPECTED_RESUME_POSITION, ITEMS);
         let ids = SequentialIdGenerator::new(std::num::NonZeroU64::MIN);
         let (_source, stop) = StopSource::new();
         let launcher = JobLauncher::new(&repository, &clock, &ids);
@@ -124,7 +129,6 @@ async fn process_kill_around_commit_acknowledgement_is_identical() -> Result<(),
             Representation::Typed => {
                 let mut job = gate_b::typed_chunk_job_with_reader_and_writer(
                     &params,
-                    resuming,
                     gate_b::BusinessWriter::new(job_name),
                 )?;
                 launcher
@@ -134,7 +138,6 @@ async fn process_kill_around_commit_acknowledgement_is_identical() -> Result<(),
             Representation::Boxed => {
                 let mut job = gate_b::boxed_chunk_job_with_reader_and_writer(
                     &params,
-                    resuming,
                     gate_b::BusinessWriter::new(job_name),
                 )?;
                 launcher
@@ -155,6 +158,18 @@ async fn process_kill_around_commit_acknowledgement_is_identical() -> Result<(),
             restarted.checkpoint_position,
             Some(ITEMS.unsigned_abs()),
             "{}: the checkpoint must reflect every item read across both attempts",
+            representation.id(),
+        );
+        assert_eq!(
+            restarted.component_state.last().map(|state| state.position),
+            Some(ITEMS.unsigned_abs()),
+            "{}: the restarted ItemStream must inherit the committed post-ack position",
+            representation.id(),
+        );
+        assert_eq!(
+            restarted.component_state.len(),
+            2,
+            "{}: component state must be present for both crash and restart attempts",
             representation.id(),
         );
         repository.close().await?;

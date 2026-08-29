@@ -117,6 +117,24 @@ async fn state_checkpoint_counter_share_one_atomic_boundary() -> Result<(), Box<
              as a rollback, not silently dropped",
             representation.id(),
         );
+        assert_eq!(
+            observation.component_state.len(),
+            1,
+            "{}: only the first committed chunk may have component state",
+            representation.id(),
+        );
+        assert_eq!(
+            observation.component_state[0].position,
+            3,
+            "{}: component state must roll back with the failed second chunk",
+            representation.id(),
+        );
+        assert_eq!(
+            observation.optimistic_versions.len(),
+            1,
+            "{}: B-03 must observe the durable job/step optimistic versions",
+            representation.id(),
+        );
         repository.close().await?;
         observations.push(observation);
     }

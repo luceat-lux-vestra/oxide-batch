@@ -32,7 +32,7 @@ use std::sync::Arc;
 
 use gate_b::{
     GateBParams, HANDSHAKE_BOUND, HANDSHAKE_ENV, ParkAt, ParkingWriter, REPRESENTATION_ENV,
-    Representation, SequenceReader, config, migrator_url, prepare_fixture, runtime_url, snapshot,
+    Representation, config, migrator_url, prepare_fixture, runtime_url, snapshot,
     transaction_manager,
 };
 use oxide_batch::{
@@ -100,6 +100,15 @@ async fn multi_chunk_restart_selects_identically() -> Result<(), Box<dyn Error>>
             "{}: exactly the first two chunks must be durable when the first kill lands",
             representation.id(),
         );
+        assert_eq!(
+            after_first_kill
+                .component_state
+                .last()
+                .map(|state| state.position),
+            Some(FIRST_RESUME_POSITION.unsigned_abs()),
+            "{}: the first restart selection must come from durable component state",
+            representation.id(),
+        );
         gate_b::mark_crashed_execution_failed(&repository, job_name).await?;
 
         // --- Restart #1: resumes from 6, commits one chunk, parks inside the
@@ -131,6 +140,21 @@ async fn multi_chunk_restart_selects_identically() -> Result<(), Box<dyn Error>>
             "{}: no duplication across the first restart",
             representation.id(),
         );
+        assert_eq!(
+            after_second_kill
+                .component_state
+                .last()
+                .map(|state| state.position),
+            Some(SECOND_RESUME_POSITION.unsigned_abs()),
+            "{}: the second restart selection must come from the first restart's state",
+            representation.id(),
+        );
+        assert_eq!(
+            after_second_kill.component_state.len(),
+            2,
+            "{}: both crashed attempts must retain their committed stream state",
+            representation.id(),
+        );
         mid_restart_checkpoints.push(after_second_kill.checkpoint_position);
         gate_b::mark_crashed_execution_failed(&repository, job_name).await?;
 
@@ -143,7 +167,6 @@ async fn multi_chunk_restart_selects_identically() -> Result<(), Box<dyn Error>>
             pool,
             transactions,
         };
-        let resuming = SequenceReader::resuming_from(SECOND_RESUME_POSITION, ITEMS);
         let ids = SequentialIdGenerator::new(std::num::NonZeroU64::MIN);
         let (_source, stop) = StopSource::new();
         let launcher = JobLauncher::new(&repository, &clock, &ids);
@@ -151,7 +174,6 @@ async fn multi_chunk_restart_selects_identically() -> Result<(), Box<dyn Error>>
             Representation::Typed => {
                 let mut job = gate_b::typed_chunk_job_with_reader_and_writer(
                     &params,
-                    resuming,
                     gate_b::BusinessWriter::new(job_name),
                 )?;
                 launcher
@@ -161,7 +183,6 @@ async fn multi_chunk_restart_selects_identically() -> Result<(), Box<dyn Error>>
             Representation::Boxed => {
                 let mut job = gate_b::boxed_chunk_job_with_reader_and_writer(
                     &params,
-                    resuming,
                     gate_b::BusinessWriter::new(job_name),
                 )?;
                 launcher
@@ -181,6 +202,18 @@ async fn multi_chunk_restart_selects_identically() -> Result<(), Box<dyn Error>>
             restarted.checkpoint_position,
             Some(ITEMS.unsigned_abs()),
             "{}: the checkpoint must reflect every item read across all three attempts",
+            representation.id(),
+        );
+        assert_eq!(
+            restarted.component_state.last().map(|state| state.position),
+            Some(ITEMS.unsigned_abs()),
+            "{}: the final restart must persist the final ItemStream position",
+            representation.id(),
+        );
+        assert_eq!(
+            restarted.component_state.len(),
+            3,
+            "{}: each of the three attempts must have a durable stream-state row",
             representation.id(),
         );
         repository.close().await?;
@@ -305,21 +338,18 @@ fn multi_chunk_restart_second_worker_process() -> Result<(), Box<dyn Error>> {
                 pool,
                 transactions,
             };
-            let resuming = SequenceReader::resuming_from(FIRST_RESUME_POSITION, ITEMS);
             let ids = SequentialIdGenerator::new(std::num::NonZeroU64::MIN);
             let (_source, stop) = StopSource::new();
             let launcher = JobLauncher::new(&repository, &clock, &ids);
             match representation {
                 Representation::Typed => {
-                    let mut job =
-                        gate_b::typed_chunk_job_with_reader_and_writer(&params, resuming, writer)?;
+                    let mut job = gate_b::typed_chunk_job_with_reader_and_writer(&params, writer)?;
                     let _ = launcher
                         .launch_chunk(&mut job, &JobParameters::new(), &stop)
                         .await;
                 }
                 Representation::Boxed => {
-                    let mut job =
-                        gate_b::boxed_chunk_job_with_reader_and_writer(&params, resuming, writer)?;
+                    let mut job = gate_b::boxed_chunk_job_with_reader_and_writer(&params, writer)?;
                     let _ = launcher
                         .launch_chunk(&mut job, &JobParameters::new(), &stop)
                         .await;

@@ -25,6 +25,7 @@
 //! protocol's own "no invented performance threshold" rule -- this runner
 //! does not add one either.
 
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 
@@ -211,8 +212,8 @@ const REFERENCE_EXAMPLES: [(&str, &str); 2] = [
     ("boxed", "gate_h_boxed_reference"),
 ];
 
-/// Builds each reference example from a clean target directory in release
-/// profile, timing the build and measuring the resulting binary's size --
+/// Builds each reference example from its own clean target directory in
+/// release profile, timing the build and measuring the resulting binary's size --
 /// disclosure evidence, per the frozen protocol's required-metrics list, not
 /// a pass/fail threshold. A build failure is still recorded as a violation:
 /// not because a size or time number missed some invented target, but
@@ -237,6 +238,15 @@ fn binary_size_and_compile_time(root: &Path) -> (Value, Vec<String>) {
 /// Builds one reference example in release profile and measures its
 /// compiled size and build wall-clock time.
 fn build_and_measure(root: &Path, example: &str) -> Result<Value, String> {
+    let target_directory = std::env::temp_dir().join(format!(
+        "oxide-batch-gate-h-target-{}-{example}",
+        std::process::id()
+    ));
+    // A prior interrupted campaign may leave this exact per-process path
+    // behind. It is not a workspace or user-data path, and each reference is
+    // measured in this isolated directory rather than reusing the other
+    // representation's dependency artifacts.
+    let _ = fs::remove_dir_all(&target_directory);
     let started = std::time::Instant::now();
     let status = Command::new("cargo")
         .current_dir(root)
@@ -248,19 +258,24 @@ fn build_and_measure(root: &Path, example: &str) -> Result<Value, String> {
             example,
             "--release",
         ])
+        .env("CARGO_TARGET_DIR", &target_directory)
         .status()
         .map_err(|error| format!("could not run cargo build: {error}"))?;
     let elapsed = started.elapsed();
     if !status.success() {
+        let _ = fs::remove_dir_all(&target_directory);
         return Err("cargo build did not succeed".to_owned());
     }
-    let binary = root.join("target/release/examples").join(example);
-    let size_bytes = std::fs::metadata(&binary)
-        .map_err(|error| format!("could not read {}: {error}", binary.display()))?
-        .len();
+    let binary = target_directory.join("release/examples").join(example);
+    let size_bytes = fs::metadata(&binary)
+        .map(|metadata| metadata.len())
+        .map_err(|error| format!("could not read {}: {error}", binary.display()));
+    let _ = fs::remove_dir_all(&target_directory);
+    let size_bytes = size_bytes?;
     Ok(json!({
         "compile_time_seconds": elapsed.as_secs_f64(),
         "binary_size_bytes": size_bytes,
+        "target_directory_isolation": "clean-per-reference",
     }))
 }
 

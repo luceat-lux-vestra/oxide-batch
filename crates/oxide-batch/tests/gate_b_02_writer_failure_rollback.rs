@@ -105,6 +105,17 @@ async fn writer_failure_before_commit_rolls_back_identically() -> Result<(), Box
             "{}: a writer failure before commit must not advance the committed counter",
             representation.id(),
         );
+        assert!(
+            observation.component_state.is_empty(),
+            "{}: a pre-commit writer failure must not persist component state",
+            representation.id(),
+        );
+        assert_eq!(
+            observation.optimistic_versions.len(),
+            1,
+            "{}: the failed execution's durable optimistic versions must still be observed",
+            representation.id(),
+        );
         repository.close().await?;
         observations.push(observation);
     }

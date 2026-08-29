@@ -103,6 +103,32 @@ async fn normal_enlisted_commit_is_representation_identical() -> Result<(), Box<
             "{}: a normal run rolls nothing back",
             representation.id(),
         );
+        assert_eq!(
+            observation.component_state.len(),
+            1,
+            "{}: the restartable reader must persist one state row for this execution",
+            representation.id(),
+        );
+        assert_eq!(
+            observation.component_state[0].position,
+            ITEMS.unsigned_abs(),
+            "{}: component state must advance with the committed checkpoint",
+            representation.id(),
+        );
+        assert_eq!(
+            observation.optimistic_versions.len(),
+            1,
+            "{}: the durable job/step optimistic versions must be observed",
+            representation.id(),
+        );
+        assert!(
+            observation
+                .repository_writes
+                .iter()
+                .any(|write| write.relation == "ob_job_execution"),
+            "{}: the structured observation must include durable repository writes",
+            representation.id(),
+        );
         repository.close().await?;
         observations.push(observation);
     }
