@@ -12,13 +12,15 @@
             ]
         },
         "campaign implementation": {
-            "why": "The exact test targets Gate H's frozen protocol names, plus the shared support modules they build on. A workspace test file not listed here is outside the campaign: it is not selected, so it is neither run nor able to affect the campaign's result.",
+            "why": "The exact test targets Gate H's frozen protocol names, the shared support modules they build on, and the two binary-size/compile-time reference examples the runner builds in release profile and measures directly (xtask/src/gate_h.rs's own REFERENCE_EXAMPLES). A workspace test or example file not listed here is outside the campaign: it is neither run/built nor able to affect the campaign's result.",
             "paths": [
                 "crates/oxide-batch/tests/gate_h_allocation.rs",
                 "crates/oxide-batch/tests/gate_h_dispatch.rs",
                 "crates/oxide-batch/tests/gate_h_throughput.rs",
                 "crates/oxide-batch/tests/support/chunk_fixture.rs",
-                "crates/oxide-batch/tests/performance"
+                "crates/oxide-batch/tests/performance",
+                "crates/oxide-batch/examples/gate_h_typed_reference.rs",
+                "crates/oxide-batch/examples/gate_h_boxed_reference.rs"
             ]
         },
         "cargo manifests": {

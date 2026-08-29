@@ -106,8 +106,71 @@ pub fn run() -> Result<Campaign, String> {
     let (manifest, manifest_violations) = execution_manifest(&root);
     violations.extend(manifest_violations);
 
-    let report = write_report(&root, &target_reports, &violations, &manifest)?;
+    let (code_size, code_size_violations) = binary_size_and_compile_time(&root);
+    violations.extend(code_size_violations);
+
+    let report = write_report(&root, &target_reports, &violations, &manifest, &code_size)?;
     Ok(Campaign { violations, report })
+}
+
+/// The two binary-size/compile-time reference examples, isolating
+/// representation as their only variable (see their own doc comments).
+const REFERENCE_EXAMPLES: [(&str, &str); 2] = [
+    ("typed", "gate_h_typed_reference"),
+    ("boxed", "gate_h_boxed_reference"),
+];
+
+/// Builds each reference example from a clean target directory in release
+/// profile, timing the build and measuring the resulting binary's size --
+/// disclosure evidence, per the frozen protocol's required-metrics list, not
+/// a pass/fail threshold. A build failure is still recorded as a violation:
+/// not because a size or time number missed some invented target, but
+/// because the disclosure evidence this section owes could not be produced
+/// at all.
+fn binary_size_and_compile_time(root: &Path) -> (Value, Vec<String>) {
+    let mut violations = Vec::new();
+    let mut measurements = Map::new();
+    for (label, example) in REFERENCE_EXAMPLES {
+        match build_and_measure(root, example) {
+            Ok(measurement) => {
+                measurements.insert(label.to_owned(), measurement);
+            }
+            Err(error) => violations.push(format!(
+                "could not measure the {label} reference binary: {error}"
+            )),
+        }
+    }
+    (Value::Object(measurements), violations)
+}
+
+/// Builds one reference example in release profile and measures its
+/// compiled size and build wall-clock time.
+fn build_and_measure(root: &Path, example: &str) -> Result<Value, String> {
+    let started = std::time::Instant::now();
+    let status = Command::new("cargo")
+        .current_dir(root)
+        .args([
+            "build",
+            "--package",
+            "oxide-batch",
+            "--example",
+            example,
+            "--release",
+        ])
+        .status()
+        .map_err(|error| format!("could not run cargo build: {error}"))?;
+    let elapsed = started.elapsed();
+    if !status.success() {
+        return Err("cargo build did not succeed".to_owned());
+    }
+    let binary = root.join("target/release/examples").join(example);
+    let size_bytes = std::fs::metadata(&binary)
+        .map_err(|error| format!("could not read {}: {error}", binary.display()))?
+        .len();
+    Ok(json!({
+        "compile_time_seconds": elapsed.as_secs_f64(),
+        "binary_size_bytes": size_bytes,
+    }))
 }
 
 /// Computes the execution manifest over Gate H's declared semantic closure.
@@ -188,6 +251,7 @@ fn write_report(
     target_reports: &[Value],
     violations: &[String],
     manifest: &Value,
+    code_size: &Value,
 ) -> Result<std::path::PathBuf, String> {
     let directory = suite::directory(root);
     std::fs::create_dir_all(&directory)
@@ -204,10 +268,11 @@ fn write_report(
             "typed_per_item_future_allocation_is_zero": "proved structurally by gate_h_dispatch.rs",
             "typed_dynamic_dispatch_per_item_is_zero": "proved structurally by gate_h_dispatch.rs",
         },
-        "no_invented_threshold_note": "Throughput, latency, and allocation-delta numbers are \
-                                       retained as disclosure evidence per the frozen protocol; \
-                                       none is compared against an invented pass/fail threshold \
-                                       by this runner.",
+        "binary_size_and_compile_time": code_size,
+        "no_invented_threshold_note": "Throughput, latency, allocation-delta, binary-size, and \
+                                       compile-time numbers are retained as disclosure evidence \
+                                       per the frozen protocol; none is compared against an \
+                                       invented pass/fail threshold by this runner.",
         "violations": violations,
         "passed": violations.is_empty(),
     });
