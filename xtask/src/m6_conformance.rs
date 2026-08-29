@@ -253,6 +253,7 @@ fn write_report(
         "report": "m6-conformance",
         "campaign": "M6 full component conformance, malformed/failure, lifecycle, and restart campaign",
         "postgresql_major_version": std::env::var(suite::MATRIX).ok().and_then(|value| value.strip_prefix("postgres-").map(str::to_owned)),
+        "environment": suite::environment_with_profile("debug"),
         "target_denominator": TARGETS.len(),
         "targets": target_reports,
         "observation": { "execution_manifest": manifest },
