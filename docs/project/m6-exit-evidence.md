@@ -186,6 +186,12 @@ now executes this fixed component/failure/restart denominator on PostgreSQL
 15 and 18 and retains per-target structured outcomes; final reports remain
 pending CI retention.
 
+The local all-features quality run also exposed a pre-existing test-fixture
+isolation race: the equal-version and upgrade-path state tests shared global
+migration counters while libtest ran them in parallel. A test-only Mutex now
+serializes those two counter assertions; the focused 18-test state suite passes
+after the correction, with no production state semantics changed.
+
 ## Component catalog and documentation
 
 Four M6 documentation deliverables published, indexed in
@@ -246,18 +252,22 @@ included in the evidence-retention work below.
 ## Unresolved P0/P1 review
 
 Checked directly via `gh issue list --state open --label priority:p0`
-(empty) and `--label priority:p1` (only #153 itself and the #140 umbrella,
-both expected to remain open by design until this PR passes independent
-strict review and merges). No correctness P0/P1 blocks M6 exit.
+(empty) and `--label priority:p1`. The open P1 set is #188 (the explicit
+M6-blocking adaptive completion-policy CI evidence gap), #189 (a separate
+M7–M14 ledger reconciliation task), #153, and the #140 umbrella. #188 is
+addressed by this PR's fixed-denominator PostgreSQL 15/18 conformance
+workflow, but remains an open blocker until those exact candidate-HEAD
+artifacts are retained and verified; #189 is outside M6 and does not block
+this exit. No correctness P0/P1 was found.
 
 ## Known non-blocking limitations / follow-ups
 
-None identified requiring a new capability, API, or architecture follow-up
-issue. Every gap found during this campaign (the `MultiResourceWriter`
-restart gap, the flawed initial component-coverage assumption, the Gate B
-harness's non-enlisted-writer bug) was small, contained, and closed
-directly within #153's scope, per the work order's own scope-discipline
-rule.
+No new capability, API, or architecture follow-up was required. The
+`MultiResourceWriter` restart gap, the flawed initial component-coverage
+assumption, and the Gate B harness's non-enlisted-writer bug were small,
+contained, and closed directly within #153's scope. Existing #188 remains
+open only until this PR's retained PG15/18 conformance artifacts prove its CI
+ownership; #189 is explicitly deferred to its own M7–M14 ledger audit.
 
 ## Final M6 exit disposition
 
@@ -270,8 +280,8 @@ for strict review:
 - [ ] Gate B: PostgreSQL 15 leg (CI).
 - [x] Gate H: both hard invariants PASS (structural proof + empirical
       corroboration).
-- [x] Gate H: required disclosure metrics captured (debug-profile local
-      run for throughput/latency).
+- [x] Gate H: required disclosure metrics captured (release-profile local
+      run for throughput/latency; final retained values come from CI).
 - [ ] Gate H: release-profile retained throughput/latency run, binary-size
       delta, compile-time delta (CI).
 - [x] Full M6 component conformance/failure matrix published, one real gap
