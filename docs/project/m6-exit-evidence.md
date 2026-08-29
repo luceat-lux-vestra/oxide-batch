@@ -9,7 +9,9 @@ independent strict review passes on the final PR HEAD and the PR merges.
 
 - Starting canonical `main`: `e740790c9fd55b9f1f8095d30ee8897b3254c4c0`.
 - Candidate branch: `m6/153-exit-gate`.
-- Candidate final branch HEAD: `93bb16c60f4d85c2208f51e8600371e058bf4b7a`.
+- Campaign producer branch HEAD: `93bb16c60f4d85c2208f51e8600371e058bf4b7a`;
+  the exact final PR HEAD is reported by PR #187 and each retained provenance
+  entry records the producer branch head separately.
 - PR: #187, `M6: complete conformance, performance evidence, docs, and exit gate (#153)`.
 - #152 is `CLOSED (COMPLETED)` and PR #180 is `MERGED` at the starting
   canonical SHA. #153 and #140 remain `OPEN`.
@@ -233,7 +235,7 @@ was invented by this campaign.
 
 ## Final M6 exit disposition
 
-The candidate evidence is complete on branch HEAD
+The candidate evidence is complete from branch HEAD
 `93bb16c60f4d85c2208f51e8600371e058bf4b7a`: Gate B 8/8 on PostgreSQL 15/18,
 Gate H hard invariants and disclosure metrics, full 45-target component
 conformance on PostgreSQL 15/18, M5 re-retention, documentation, and ledger
