@@ -117,6 +117,8 @@ to them and record supersession; they do not rewrite history.
 - [M5 developer guide](guides/developer-guide.md)
 - [M5 operator guide](guides/operator-guide.md)
 - [M5 upgrade and rollback guide](guides/upgrade-and-rollback.md)
+- [M6 component reference](guides/component-reference.md)
+- [M6 restart and state guide](guides/restart-and-state.md)
 
 ## Product
 

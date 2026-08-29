@@ -37,6 +37,8 @@ chat, prompt, issue, pull-request description, or report.
 | Lifecycle hooks, interceptors, and component state | [Item-processing model](../architecture/item-processing-model.md) |
 | Extension modes and adapter support tiers | [Integration model](../architecture/integration-model.md) |
 | Performance/capacity evidence | [Performance plan](../engineering/performance-plan.md) |
+| M6 first-party item-component reference | [Component reference](../guides/component-reference.md) |
+| M6 restart/state guide for component authors and operators | [Restart and state guide](../guides/restart-and-state.md) |
 | Engineering design philosophy and general Rust implementation bar | [Engineering standards](../engineering/standards.md) |
 | Release and support behavior | [Release/support policy](../release/support-policy.md) |
 
