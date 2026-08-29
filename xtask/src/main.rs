@@ -376,13 +376,19 @@ fn run_evidence_check() -> bool {
 
     match evidence::run() {
         Ok(verification) => {
+            let directories = verification
+                .directories
+                .iter()
+                .map(|directory| directory.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
             if verification.violations.is_empty() {
                 eprintln!(
-                    "{} retained report(s) in {} are byte-identical to what was recorded, name \
-                     the run and the producer commit they came from, cover the required matrix, \
-                     passed with no violations, and describe the campaign this tree still runs",
+                    "{} retained report(s) across {directories} are byte-identical to what was \
+                     recorded, name the run and the producer commit they came from, cover the \
+                     required matrix, passed with no violations, and describe the campaign this \
+                     tree still runs",
                     verification.reports,
-                    evidence::directory().display(),
                 );
                 return true;
             }
@@ -390,8 +396,8 @@ fn run_evidence_check() -> bool {
                 eprintln!("evidence gap: {violation}");
             }
             eprintln!(
-                "see the provenance contract in \
-                 docs/engineering/campaigns/m5/evidence-provenance.json"
+                "see the provenance contract in each checked directory's \
+                 evidence-provenance.json: {directories}"
             );
             false
         }

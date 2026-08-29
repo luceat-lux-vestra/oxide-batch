@@ -49,8 +49,24 @@ use serde_json::Value;
 
 use crate::suite;
 
-/// Where the retained evidence and its provenance live.
-const DIRECTORY: &str = "docs/engineering/campaigns/m5";
+/// The M5 milestone's retained-evidence directory.
+///
+/// Exposed separately (not just as an entry of [`DIRECTORIES`]) because the
+/// #102 reconciliation check ([`crate::reconciliation`]) is specific to the M5
+/// milestone document and must keep naming this directory even as later
+/// milestones join [`DIRECTORIES`].
+const M5_DIRECTORY: &str = "docs/engineering/campaigns/m5";
+
+/// The M6 milestone's retained-evidence directory.
+const M6_DIRECTORY: &str = "docs/engineering/campaigns/m6";
+
+/// Every milestone directory this verifier checks, when present.
+///
+/// A milestone directory that does not exist yet contributes nothing rather
+/// than failing the run: the M6 directory is created once #153 retains its
+/// first M6 evidence, and this list is where a future milestone's directory
+/// joins the same rigor without disturbing an earlier one's.
+const DIRECTORIES: &[&str] = &[M5_DIRECTORY, M6_DIRECTORY];
 
 /// The provenance contract this verifier reads.
 const PROVENANCE: &str = "evidence-provenance.json";
@@ -61,17 +77,47 @@ pub struct Verification {
     pub violations: Vec<String>,
     /// How many retained reports were checked.
     pub reports: usize,
+    /// Every milestone directory that was actually checked.
+    pub directories: Vec<PathBuf>,
 }
 
-/// Verifies every retained report against its recorded provenance.
+/// Verifies every retained report against its recorded provenance, in every
+/// milestone directory that exists.
 ///
 /// # Errors
 ///
 /// Returns the failure that prevents verification from producing a result at
-/// all, such as an unreadable or malformed provenance document.
+/// all, such as no milestone directory existing, or one that exists holding
+/// an unreadable or malformed provenance document.
 pub fn run() -> Result<Verification, String> {
     let root = suite::workspace_root()?;
-    let directory = root.join(DIRECTORY);
+
+    let mut violations = Vec::new();
+    let mut reports = 0;
+    let mut directories = Vec::new();
+    for name in DIRECTORIES {
+        let directory = root.join(name);
+        if !directory.is_dir() {
+            continue;
+        }
+        let milestone = run_directory(&root, &directory)?;
+        violations.extend(milestone.violations);
+        reports += milestone.reports;
+        directories.push(PathBuf::from(name));
+    }
+    if directories.is_empty() {
+        return Err("no milestone retained-evidence directory exists".to_owned());
+    }
+
+    Ok(Verification {
+        violations,
+        reports,
+        directories,
+    })
+}
+
+/// Verifies every retained report in one milestone directory.
+fn run_directory(root: &Path, directory: &Path) -> Result<Verification, String> {
     let path = directory.join(PROVENANCE);
     let source = fs::read_to_string(&path)
         .map_err(|error| format!("could not read {}: {error}", path.display()))?;
@@ -83,7 +129,7 @@ pub fn run() -> Result<Verification, String> {
 
     let mut reports = Vec::new();
     for entry in entries {
-        violations.extend(verify_report(&root, &directory, entry));
+        violations.extend(verify_report(root, directory, entry));
         if let Some(name) = entry.get("report").and_then(Value::as_str)
             && let Ok(source) = fs::read_to_string(directory.join(name))
             && let Ok(report) = serde_json::from_str::<Value>(&source)
@@ -92,11 +138,12 @@ pub fn run() -> Result<Verification, String> {
         }
     }
     violations.extend(verify_matrix(&document, entries));
-    violations.extend(verify_semantics(&root, &document, &reports));
+    violations.extend(verify_semantics(root, &document, &reports));
 
     Ok(Verification {
         violations,
         reports: entries.len(),
+        directories: vec![directory.to_path_buf()],
     })
 }
 
@@ -110,7 +157,8 @@ fn verify_report(root: &Path, directory: &Path, entry: &Value) -> Vec<String> {
 
     let Ok(source) = fs::read_to_string(&file) else {
         return vec![format!(
-            "{name} is recorded as retained evidence and is not in {DIRECTORY}"
+            "{name} is recorded as retained evidence and is not in {}",
+            directory.display(),
         )];
     };
     let Ok(report): Result<Value, _> = serde_json::from_str(&source) else {
@@ -828,10 +876,14 @@ fn array<'a>(document: &'a Value, name: &str) -> Result<&'a Vec<Value>, String> 
         .ok_or_else(|| format!("the provenance document has no {name}"))
 }
 
-/// Returns the retained-evidence directory, for the runner's message.
+/// Returns the M5 milestone's retained-evidence directory.
+///
+/// Used only by [`crate::reconciliation`], which is specific to the M5
+/// milestone document and needs exactly this directory regardless of which
+/// other milestone directories [`run`] also checks.
 #[must_use]
 pub fn directory() -> PathBuf {
-    PathBuf::from(DIRECTORY)
+    PathBuf::from(M5_DIRECTORY)
 }
 
 #[cfg(test)]
@@ -858,7 +910,7 @@ mod tests {
     fn entry() -> Value {
         let root = crate::suite::workspace_root().expect("workspace root");
         let file = root
-            .join(super::DIRECTORY)
+            .join(super::M5_DIRECTORY)
             .join("soak-campaign-postgres-15.json");
         let report: Value =
             serde_json::from_str(&std::fs::read_to_string(&file).expect("retained report"))
@@ -911,7 +963,7 @@ mod tests {
     /// Verifies one entry against the real retained directory.
     fn verify(entry: &Value) -> Vec<String> {
         let root = crate::suite::workspace_root().expect("workspace root");
-        let directory = root.join(super::DIRECTORY);
+        let directory = root.join(super::M5_DIRECTORY);
         super::verify_report(&root, &directory, entry)
     }
 
@@ -1071,10 +1123,10 @@ mod tests {
         );
     }
 
-    /// The shipped provenance document, for tests that mutate it.
+    /// The shipped M5 provenance document, for tests that mutate it.
     fn provenance() -> Value {
         let root = crate::suite::workspace_root().expect("workspace root");
-        let path = root.join(super::DIRECTORY).join(super::PROVENANCE);
+        let path = root.join(super::M5_DIRECTORY).join(super::PROVENANCE);
         serde_json::from_str(&std::fs::read_to_string(path).expect("provenance document"))
             .expect("provenance json")
     }
