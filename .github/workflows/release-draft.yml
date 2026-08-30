@@ -90,10 +90,23 @@ jobs:
             echo "EOF"
           } >> "${GITHUB_OUTPUT}"
 
+      # #212 recovery review, round 2: `cargo-cyclonedx` embeds a random
+      # `serialNumber` (UUID) and a wall-clock `metadata.timestamp` in every
+      # SBOM it generates — confirmed against the real `v0.6.0` SBOM
+      # attestations — so re-running it on a recovery produces a different
+      # (non-reproducible) document even for the exact same dependency
+      # graph. Recovery's job is to add the one missing attestation for
+      # release evidence that already exists, not to regenerate that
+      # evidence, so SBOM/checksum generation runs only on the original tag
+      # `push`; a `workflow_dispatch` recovery downloads the already-
+      # published SBOM/checksum assets instead (see "Download existing
+      # release assets for recovery" below).
       - name: Install pinned SBOM generator
+        if: github.event_name == 'push'
         run: cargo install cargo-cyclonedx --version 0.5.9 --locked
 
       - name: Generate release SBOM and checksums
+        if: github.event_name == 'push'
         id: evidence
         env:
           PACKAGE_VERSION: ${{ steps.package.outputs.version }}
@@ -137,6 +150,47 @@ jobs:
             echo "EOF"
           } >> "${GITHUB_OUTPUT}"
           echo "checksum_path=${checksum_path}" >> "${GITHUB_OUTPUT}"
+
+      # #212 recovery review, round 2: the counterpart to gating SBOM/
+      # checksum generation to `push` above. Downloads the already-
+      # published SBOM JSON files and checksum manifest into the same
+      # `target/package/<crate>-<version>.cdx.json` paths the packaging
+      # step would otherwise have populated, so the unchanged "Attest ...
+      # SBOM" steps below attest the exact existing bytes instead of a
+      # freshly (and non-reproducibly) regenerated document. `--clobber`
+      # here is `gh release download`'s *local* overwrite flag for this
+      # ephemeral runner's own filesystem — unrelated to `gh release
+      # upload --clobber`, which this workflow never runs on
+      # `workflow_dispatch` (see "Create or refresh draft release" below).
+      #
+      # `sha256sum --check --strict` against the downloaded manifest, run
+      # from inside target/package, verifies every listed `.crate` archive
+      # (freshly rebuilt by "Verify tag and package" above, expected
+      # reproducible for the same locked deps/toolchain) still matches its
+      # original recorded digest, and every listed `.cdx.json` (just
+      # downloaded from that same release) trivially does — the recovery
+      # invariant that no archive digest may have changed, checked in one
+      # command rather than trusted.
+      - name: Download existing release assets for recovery
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          gh release download "${RELEASE_TAG}" \
+            --pattern '*.cdx.json' \
+            --pattern '*.sha256' \
+            --dir target/package \
+            --clobber
+
+          checksum_path="target/package/oxide-batch-${PACKAGE_VERSION}.sha256"
+          test -s "${checksum_path}"
+          (
+            cd target/package
+            sha256sum --check --strict "$(basename "${checksum_path}")"
+          )
 
       # #212 recovery review: `workflow_dispatch` sets this run's own
       # GITHUB_REF/GITHUB_SHA (and therefore the OIDC token and the SLSA
@@ -342,7 +396,65 @@ jobs:
 
           test "${failed}" -eq 0
 
+      # #212 recovery review, round 2: even with SBOM/checksum generation
+      # gated to `push` above, a recovery attests only the crates missing
+      # coverage (see "Check existing SBOM attestation coverage"), so this
+      # spot-checks that the resulting attestation's own recorded predicate
+      # is exactly the downloaded pre-existing asset, not something else —
+      # a direct check on the recorded evidence rather than trusting that
+      # every gate upstream worked as intended.
+      - name: Verify recovered SBOM attestation matches the existing release asset
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+          SBOM_PREDICATE_TYPE: https://cyclonedx.org/bom
+        run: |
+          set -euo pipefail
+
+          RELEASED_CRATES="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select((.publish // []) | length > 0) | .name')"
+
+          failed=0
+          for crate in ${RELEASED_CRATES}; do
+            sbom_path="target/package/${crate}-${PACKAGE_VERSION}.cdx.json"
+            test -s "${sbom_path}"
+            crate_path="target/package/${crate}-${PACKAGE_VERSION}.crate"
+            digest="$(sha256sum "${crate_path}" | cut -d' ' -f1)"
+
+            predicate_json="$(gh api --method GET \
+              "repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest}" \
+              -f "predicate_type=${SBOM_PREDICATE_TYPE}" \
+              2>/dev/null)" || predicate_json='{"attestations":[]}'
+
+            # jq's `==` on parsed JSON is a deep structural comparison, so
+            # this compares SBOM *content* rather than requiring identical
+            # key order or whitespace.
+            matches="$(printf '%s' "${predicate_json}" | jq \
+              --slurpfile local "${sbom_path}" '
+                [.attestations[]?
+                  | (.bundle.dsseEnvelope.payload | @base64d | fromjson | .predicate)
+                  | select(. == $local[0])
+                ] | length' 2>/dev/null)" || matches=0
+
+            if [ "${matches}" -lt 1 ]; then
+              echo "::error::${crate} ${PACKAGE_VERSION} has no SBOM attestation whose predicate content matches the existing release asset ${sbom_path}" >&2
+              failed=1
+            fi
+          done
+
+          test "${failed}" -eq 0
+
+      # #212 recovery review, round 2: `gh release upload --clobber` here
+      # would overwrite the already-published, already-attested SBOM and
+      # checksum assets with whatever happens to be in target/package at
+      # this point. On `workflow_dispatch` that is now always the
+      # downloaded pre-existing bytes (never regenerated, see above), so
+      # clobbering them would be a same-content no-op at best — but this
+      # step is gated to the original tag `push` anyway, so a recovery run
+      # never touches the draft release's assets at all.
       - name: Create or refresh draft release
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
           PACKAGE_VERSION: ${{ steps.package.outputs.version }}

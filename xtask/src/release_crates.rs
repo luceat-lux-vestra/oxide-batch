@@ -107,13 +107,14 @@ pub fn check() -> Result<Vec<String>, String> {
         ));
     }
     let draft_dynamic_occurrences = draft_text.matches(DYNAMIC_RELEASE_SET_FILTER).count();
-    if draft_dynamic_occurrences != 4 {
+    if draft_dynamic_occurrences != 5 {
         violations.push(format!(
             "{RELEASE_DRAFT_WORKFLOW} has {draft_dynamic_occurrences} dynamic release-set \
-             derivation(s) (expected 4: package/publish, SBOM generation, #212's existing-SBOM- \
-             coverage check, and #212's attestation-coverage verification); a hardcoded \
-             RELEASED_CRATES list there would break workflow_dispatch recovery against a tag \
-             that predates a later-added released crate"
+             derivation(s) (expected 5: package/publish, SBOM generation, #212's existing-SBOM- \
+             coverage check, #212's attestation-coverage verification, and #212 round 2's \
+             recovered-SBOM-content verification); a hardcoded RELEASED_CRATES list there would \
+             break workflow_dispatch recovery against a tag that predates a later-added \
+             released crate"
         ));
     }
     if extract_env_list(&draft_text, "RELEASED_CRATES")
@@ -153,6 +154,18 @@ pub fn check() -> Result<Vec<String>, String> {
         violations.push(violation);
     }
     if let Err(violation) = check_provenance_source_verification(&draft_text) {
+        violations.push(violation);
+    }
+    if let Err(violation) = check_evidence_generation_gated_to_tag_push(&draft_text) {
+        violations.push(violation);
+    }
+    if let Err(violation) = check_draft_release_upload_gated_to_tag_push(&draft_text) {
+        violations.push(violation);
+    }
+    if let Err(violation) = check_recovery_downloads_existing_assets(&draft_text) {
+        violations.push(violation);
+    }
+    if let Err(violation) = check_recovered_sbom_content_verification(&draft_text) {
         violations.push(violation);
     }
 
@@ -846,6 +859,142 @@ fn check_provenance_source_verification(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Checks the #212 round-2 recovery-review fix: SBOM/checksum generation
+/// (`cargo-cyclonedx`) is only ever run on the original tag `push`.
+///
+/// `cargo-cyclonedx` embeds a random `serialNumber` and a wall-clock
+/// `metadata.timestamp` in every SBOM it generates — confirmed against the
+/// real `v0.6.0` SBOM attestations — so re-running it on a
+/// `workflow_dispatch` recovery would produce a different, non-reproducible
+/// document even for the exact same dependency graph, silently replacing
+/// already-published, already-attested release evidence.
+fn check_evidence_generation_gated_to_tag_push(text: &str) -> Result<(), String> {
+    for step_name in [
+        "Install pinned SBOM generator",
+        "Generate release SBOM and checksums",
+    ] {
+        let block = extract_step_block(text, step_name)?;
+        if !block.contains("if: github.event_name == 'push'") {
+            return Err(format!(
+                "{RELEASE_DRAFT_WORKFLOW} \"{step_name}\" must run only on \
+                 `github.event_name == 'push'`: cargo-cyclonedx's random serialNumber and \
+                 wall-clock timestamp make its output non-reproducible, so re-running it on a \
+                 workflow_dispatch recovery would silently replace already-published,\
+                 already-attested SBOM/checksum evidence with different bytes"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Checks the #212 round-2 recovery-review fix: the draft-release asset
+/// upload (`gh release upload ... --clobber`) is only ever run on the
+/// original tag `push`.
+///
+/// A `workflow_dispatch` recovery adds one missing attestation to release
+/// evidence that already exists; it must never re-upload or overwrite the
+/// draft release's published assets, regardless of what happens to be in
+/// `target/package` at that point.
+fn check_draft_release_upload_gated_to_tag_push(text: &str) -> Result<(), String> {
+    let block = extract_step_block(text, "Create or refresh draft release")?;
+    if !block.contains("if: github.event_name == 'push'") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Create or refresh draft release\" must run only on \
+             `github.event_name == 'push'`: a workflow_dispatch recovery must never run `gh \
+             release upload ... --clobber` against the already-published draft release assets"
+        ));
+    }
+    if !block.contains("--clobber") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Create or refresh draft release\" no longer refreshes \
+             existing assets via `gh release upload ... --clobber`; update this check alongside \
+             whatever replaced it"
+        ));
+    }
+    Ok(())
+}
+
+/// Checks the #212 round-2 recovery-review fix: a `workflow_dispatch`
+/// recovery downloads the already-published SBOM/checksum assets instead
+/// of regenerating them, and verifies the downloaded checksum manifest
+/// against the locally rebuilt `.crate` archives.
+fn check_recovery_downloads_existing_assets(text: &str) -> Result<(), String> {
+    let block = extract_step_block(text, "Download existing release assets for recovery")?;
+    if !block.contains("if: github.event_name == 'workflow_dispatch'") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Download existing release assets for recovery\" must \
+             run only on `github.event_name == 'workflow_dispatch'`"
+        ));
+    }
+    if !block.contains("gh release download") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Download existing release assets for recovery\" must \
+             download the existing release's assets via `gh release download`, not regenerate \
+             them"
+        ));
+    }
+    if block.contains("gh release upload") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Download existing release assets for recovery\" must \
+             not upload to the release; it only downloads existing assets for local use"
+        ));
+    }
+    if !block.contains("sha256sum --check --strict") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Download existing release assets for recovery\" must \
+             verify the downloaded checksum manifest against the locally rebuilt archives \
+             (`sha256sum --check --strict`), not merely trust the download"
+        ));
+    }
+    Ok(())
+}
+
+/// Checks the #212 round-2 recovery-review fix: a recovery run verifies
+/// that whichever SBOM attestation it just recorded carries, byte for
+/// byte (content-wise), the same predicate as the pre-existing release
+/// asset it was supposed to attest — a direct check on the recorded
+/// evidence rather than trusting that every upstream gate worked.
+fn check_recovered_sbom_content_verification(text: &str) -> Result<(), String> {
+    let block = extract_step_block(
+        text,
+        "Verify recovered SBOM attestation matches the existing release asset",
+    )?;
+    if !block.contains("if: github.event_name == 'workflow_dispatch'") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify recovered SBOM attestation matches the existing \
+             release asset\" must run only on `github.event_name == 'workflow_dispatch'`"
+        ));
+    }
+    if !block.contains(DYNAMIC_RELEASE_SET_FILTER) {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify recovered SBOM attestation matches the existing \
+             release asset\" must derive its crate set the same dynamic way as the packaging \
+             steps, not a hardcoded list"
+        ));
+    }
+    if !block.contains(SBOM_PREDICATE_TYPE) {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify recovered SBOM attestation matches the existing \
+             release asset\" must inspect the SBOM predicate type ({SBOM_PREDICATE_TYPE:?})"
+        ));
+    }
+    if !block.contains("@base64d") || !block.contains(".predicate") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify recovered SBOM attestation matches the existing \
+             release asset\" must decode the attestation's own predicate rather than trusting \
+             predicate-type presence alone"
+        ));
+    }
+    if !block.contains(". == $local[0]") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify recovered SBOM attestation matches the existing \
+             release asset\" must compare the decoded predicate against the local downloaded \
+             SBOM file's own content"
+        ));
+    }
+    Ok(())
+}
+
 /// Requires the release-evidence action to be the reviewed attestation action
 /// at an immutable full commit SHA. Version tags and other action identities
 /// are not an acceptable release contract, even when their inputs are valid.
@@ -1276,6 +1425,205 @@ mod tests {
              stop matching for a workflow_dispatch recovery run targeting any other tag",
         );
         assert!(error.contains("must not hardcode"), "{error}");
+    }
+
+    fn simple_step(name: &str, condition: Option<&str>, body: &str) -> String {
+        use std::fmt::Write as _;
+
+        let mut text = format!("steps:\n      - name: {name}\n");
+        if let Some(condition) = condition {
+            let _ = writeln!(text, "        if: {condition}");
+        }
+        let _ = writeln!(text, "        run: |\n{body}");
+        text.push_str("      - name: Next step\n        run: echo hi\n");
+        text
+    }
+
+    #[test]
+    fn check_evidence_generation_gated_to_tag_push_accepts_both_gated_steps() {
+        let text = "steps:\n      - name: Install pinned SBOM generator\n        if: github.event_name == 'push'\n        run: echo hi\n      - name: Generate release SBOM and checksums\n        if: github.event_name == 'push'\n        run: echo hi\n";
+        check_evidence_generation_gated_to_tag_push(text).expect("both steps gated to push");
+    }
+
+    #[test]
+    fn check_evidence_generation_gated_to_tag_push_rejects_an_ungated_generator_install() {
+        let text = "steps:\n      - name: Install pinned SBOM generator\n        run: echo hi\n      - name: Generate release SBOM and checksums\n        if: github.event_name == 'push'\n        run: echo hi\n";
+        let error = check_evidence_generation_gated_to_tag_push(text).expect_err(
+            "an ungated cargo-cyclonedx install is rejected: it would run its non-reproducible \
+             SBOM generation on a workflow_dispatch recovery too",
+        );
+        assert!(error.contains("Install pinned SBOM generator"), "{error}");
+    }
+
+    #[test]
+    fn check_evidence_generation_gated_to_tag_push_rejects_an_ungated_sbom_generation() {
+        let text = "steps:\n      - name: Install pinned SBOM generator\n        if: github.event_name == 'push'\n        run: echo hi\n      - name: Generate release SBOM and checksums\n        run: echo hi\n";
+        let error = check_evidence_generation_gated_to_tag_push(text).expect_err(
+            "an ungated SBOM/checksum generation step is rejected: cargo-cyclonedx's random \
+             serialNumber and wall-clock timestamp make re-running it on recovery silently \
+             replace already-published, already-attested evidence with different bytes",
+        );
+        assert!(
+            error.contains("Generate release SBOM and checksums"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn check_draft_release_upload_gated_to_tag_push_accepts_the_gated_step() {
+        let text = simple_step(
+            "Create or refresh draft release",
+            Some("github.event_name == 'push'"),
+            "          gh release upload \"${RELEASE_TAG}\" \"${assets[@]}\" --clobber",
+        );
+        check_draft_release_upload_gated_to_tag_push(&text).expect("gated upload step accepted");
+    }
+
+    #[test]
+    fn check_draft_release_upload_gated_to_tag_push_rejects_an_ungated_clobber_upload() {
+        let text = simple_step(
+            "Create or refresh draft release",
+            None,
+            "          gh release upload \"${RELEASE_TAG}\" \"${assets[@]}\" --clobber",
+        );
+        let error = check_draft_release_upload_gated_to_tag_push(&text).expect_err(
+            "an ungated draft-release upload is rejected: a workflow_dispatch recovery must \
+             never run `gh release upload ... --clobber` against the published assets",
+        );
+        assert!(error.contains("github.event_name == 'push'"), "{error}");
+    }
+
+    #[test]
+    fn check_draft_release_upload_gated_to_tag_push_rejects_a_missing_step() {
+        let error = check_draft_release_upload_gated_to_tag_push(
+            "steps:\n  - name: Other\n    run: echo hi\n",
+        )
+        .expect_err("missing step is an error");
+        assert!(error.contains("Create or refresh draft release"), "{error}");
+    }
+
+    #[test]
+    fn check_recovery_downloads_existing_assets_accepts_a_complete_step() {
+        let text = simple_step(
+            "Download existing release assets for recovery",
+            Some("github.event_name == 'workflow_dispatch'"),
+            "          gh release download \"${RELEASE_TAG}\" --pattern '*.cdx.json' --pattern '*.sha256' --dir target/package --clobber\n          (cd target/package; sha256sum --check --strict \"$(basename \"${checksum_path}\")\")",
+        );
+        check_recovery_downloads_existing_assets(&text).expect("complete download step accepted");
+    }
+
+    #[test]
+    fn check_recovery_downloads_existing_assets_rejects_a_missing_step() {
+        let error =
+            check_recovery_downloads_existing_assets("steps:\n  - name: Other\n    run: echo hi\n")
+                .expect_err("missing step is an error");
+        assert!(
+            error.contains("Download existing release assets for recovery"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn check_recovery_downloads_existing_assets_rejects_regeneration_instead_of_download() {
+        let text = simple_step(
+            "Download existing release assets for recovery",
+            Some("github.event_name == 'workflow_dispatch'"),
+            "          cargo cyclonedx --format json > sbom.json",
+        );
+        let error = check_recovery_downloads_existing_assets(&text)
+            .expect_err("a step that regenerates instead of downloading is rejected");
+        assert!(error.contains("gh release download"), "{error}");
+    }
+
+    #[test]
+    fn check_recovery_downloads_existing_assets_rejects_an_unverified_download() {
+        let text = simple_step(
+            "Download existing release assets for recovery",
+            Some("github.event_name == 'workflow_dispatch'"),
+            "          gh release download \"${RELEASE_TAG}\" --pattern '*.cdx.json' --pattern '*.sha256' --dir target/package --clobber",
+        );
+        let error = check_recovery_downloads_existing_assets(&text).expect_err(
+            "a download with no checksum verification against the rebuilt archives is rejected",
+        );
+        assert!(error.contains("sha256sum --check --strict"), "{error}");
+    }
+
+    #[test]
+    fn check_recovery_downloads_existing_assets_rejects_an_upload_path() {
+        let text = simple_step(
+            "Download existing release assets for recovery",
+            Some("github.event_name == 'workflow_dispatch'"),
+            "          gh release download \"${RELEASE_TAG}\" --dir target/package\n          sha256sum --check --strict manifest.sha256\n          gh release upload \"${RELEASE_TAG}\" extra.txt",
+        );
+        let error = check_recovery_downloads_existing_assets(&text)
+            .expect_err("a step that also uploads to the release is rejected");
+        assert!(error.contains("must not upload"), "{error}");
+    }
+
+    fn complete_recovered_sbom_verification_fixture() -> String {
+        simple_step(
+            "Verify recovered SBOM attestation matches the existing release asset",
+            Some("github.event_name == 'workflow_dispatch'"),
+            "          RELEASED_CRATES=\"$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select((.publish // []) | length > 0) | .name')\"\n          predicate_json=\"$(gh api --method GET repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest} -f predicate_type=https://cyclonedx.org/bom)\"\n          matches=\"$(printf '%s' \"${predicate_json}\" | jq --slurpfile local \"${sbom_path}\" '[.attestations[]? | (.bundle.dsseEnvelope.payload | @base64d | fromjson | .predicate) | select(. == $local[0])] | length')\"",
+        )
+    }
+
+    #[test]
+    fn check_recovered_sbom_content_verification_accepts_a_complete_fixture() {
+        let text = complete_recovered_sbom_verification_fixture();
+        check_recovered_sbom_content_verification(&text).expect("complete fixture accepted");
+    }
+
+    #[test]
+    fn check_recovered_sbom_content_verification_rejects_a_missing_step() {
+        let error = check_recovered_sbom_content_verification(
+            "steps:\n  - name: Other\n    run: echo hi\n",
+        )
+        .expect_err("missing step is an error");
+        assert!(
+            error.contains("Verify recovered SBOM attestation"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn check_recovered_sbom_content_verification_rejects_a_missing_predicate_decode() {
+        let text = simple_step(
+            "Verify recovered SBOM attestation matches the existing release asset",
+            Some("github.event_name == 'workflow_dispatch'"),
+            "          RELEASED_CRATES=\"$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select((.publish // []) | length > 0) | .name')\"\n          count=\"$(gh api --method GET repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest} -f predicate_type=https://cyclonedx.org/bom --jq '.attestations | length')\"",
+        );
+        let error = check_recovered_sbom_content_verification(&text).expect_err(
+            "a step that only checks predicate-type presence, without decoding and comparing \
+             the actual predicate content, is rejected",
+        );
+        assert!(
+            error.contains("decode the attestation's own predicate"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn check_recovered_sbom_content_verification_rejects_a_missing_local_comparison() {
+        let text = simple_step(
+            "Verify recovered SBOM attestation matches the existing release asset",
+            Some("github.event_name == 'workflow_dispatch'"),
+            "          RELEASED_CRATES=\"$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select((.publish // []) | length > 0) | .name')\"\n          predicate_json=\"$(gh api --method GET repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest} -f predicate_type=https://cyclonedx.org/bom)\"\n          count=\"$(printf '%s' \"${predicate_json}\" | jq '[.attestations[]? | (.bundle.dsseEnvelope.payload | @base64d | fromjson | .predicate)] | length')\"",
+        );
+        let error = check_recovered_sbom_content_verification(&text).expect_err(
+            "a step that decodes the predicate but never compares it against the local \
+             downloaded asset is rejected",
+        );
+        assert!(error.contains("local downloaded SBOM file"), "{error}");
+    }
+
+    #[test]
+    fn check_recovered_sbom_content_verification_rejects_a_hardcoded_crate_set() {
+        let text = complete_recovered_sbom_verification_fixture()
+            .replace("$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select((.publish // []) | length > 0) | .name')", "oxide-batch-core oxide-batch-repository oxide-batch-plan oxide-batch oxide-batch-cli oxide-batch-test");
+        let error = check_recovered_sbom_content_verification(&text)
+            .expect_err("a hardcoded crate set is rejected");
+        assert!(error.contains("dynamic"), "{error}");
     }
 
     #[test]
