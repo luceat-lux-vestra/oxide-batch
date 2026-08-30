@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "51f8e8c64d2dfb43b091268a8ffa893b5b3252b2",
+    "source_commit": "1ac9cdc5f0337e361187eb0f6dcffacc1fdd49d1",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -20,20 +20,20 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "51f8e8c64d2dfb43b091268a8ffa893b5b3252b2",
+      "execution_commit": "1ac9cdc5f0337e361187eb0f6dcffacc1fdd49d1",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
         ".github/workflows/m5-upgrade.yml": "6c80543a0c280cf72711316c175c1046b6942688",
-        "Cargo.lock": "1f3bd785e48cb4ee2684a510d1f0c94a1e7e8b89",
-        "Cargo.toml": "37ad0088277e0638aa3cf3b6de4e64f590aed874",
+        "Cargo.lock": "25435ec89baa0ff85f1fbbd110c06ba58fd76c16",
+        "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
         "crates/oxide-batch-core/src": "2548d8ab187bc10e596042d9a45763dfffa2b624",
-        "crates/oxide-batch-plan/Cargo.toml": "527f06f60f63f7de9cf3892b4c5d106e49b4c0a7",
+        "crates/oxide-batch-plan/Cargo.toml": "6c327e26d3fb6cb0e5572432ea8e0e5b09b36c72",
         "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
-        "crates/oxide-batch-repository/Cargo.toml": "1155ce8f4bf64d6b781758979c2fa1c54a03e748",
+        "crates/oxide-batch-repository/Cargo.toml": "d6148373ea81b843d5bc2590bc6264ea5fc3e657",
         "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
-        "crates/oxide-batch/Cargo.toml": "762ee1faab89b474e219bc1a97dc5e8bdb21a03a",
+        "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
         "crates/oxide-batch/migrations": "7923dcfb1ff0d152499466259107986cd8ae27e5",
         "crates/oxide-batch/src": "28a905220a782bcc7854379d15c2d8efc9682229",
         "crates/oxide-batch/tests/postgres_schema_rejection.rs": "ae495d4d6694357c86889f681e7293feef8abe41",
@@ -53,7 +53,7 @@
         "tests/fixtures/upgrade/verify-ci-contract.sh": "4802f911995d97d4e5e73e5e9d16ed5fe66fdb75",
         "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
         "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
-        "xtask/src/main.rs": "da7f6c26499226226ac7c289272efaa7c610c547",
+        "xtask/src/main.rs": "72f3559415985647a8b1e3dbdb2d3f35a699cc77",
         "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6",
         "xtask/src/upgrade.rs": "973ec814e2d6ea70035db21c4d925f4ba0082ccb"
       },
@@ -162,20 +162,20 @@
       "name": "schema1_and_schema2_upgrade_directly_to_schema3",
       "observation": {
         "execution_manifest": {
-          "execution_commit": "51f8e8c64d2dfb43b091268a8ffa893b5b3252b2",
+          "execution_commit": "1ac9cdc5f0337e361187eb0f6dcffacc1fdd49d1",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-upgrade.yml": "6c80543a0c280cf72711316c175c1046b6942688",
-            "Cargo.lock": "1f3bd785e48cb4ee2684a510d1f0c94a1e7e8b89",
-            "Cargo.toml": "37ad0088277e0638aa3cf3b6de4e64f590aed874",
+            "Cargo.lock": "25435ec89baa0ff85f1fbbd110c06ba58fd76c16",
+            "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
             "crates/oxide-batch-core/src": "2548d8ab187bc10e596042d9a45763dfffa2b624",
-            "crates/oxide-batch-plan/Cargo.toml": "527f06f60f63f7de9cf3892b4c5d106e49b4c0a7",
+            "crates/oxide-batch-plan/Cargo.toml": "6c327e26d3fb6cb0e5572432ea8e0e5b09b36c72",
             "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
-            "crates/oxide-batch-repository/Cargo.toml": "1155ce8f4bf64d6b781758979c2fa1c54a03e748",
+            "crates/oxide-batch-repository/Cargo.toml": "d6148373ea81b843d5bc2590bc6264ea5fc3e657",
             "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
-            "crates/oxide-batch/Cargo.toml": "762ee1faab89b474e219bc1a97dc5e8bdb21a03a",
+            "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
             "crates/oxide-batch/migrations": "7923dcfb1ff0d152499466259107986cd8ae27e5",
             "crates/oxide-batch/src": "28a905220a782bcc7854379d15c2d8efc9682229",
             "crates/oxide-batch/tests/postgres_schema_rejection.rs": "ae495d4d6694357c86889f681e7293feef8abe41",
@@ -195,7 +195,7 @@
             "tests/fixtures/upgrade/verify-ci-contract.sh": "4802f911995d97d4e5e73e5e9d16ed5fe66fdb75",
             "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
             "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
-            "xtask/src/main.rs": "da7f6c26499226226ac7c289272efaa7c610c547",
+            "xtask/src/main.rs": "72f3559415985647a8b1e3dbdb2d3f35a699cc77",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6",
             "xtask/src/upgrade.rs": "973ec814e2d6ea70035db21c4d925f4ba0082ccb"
           },
@@ -492,20 +492,20 @@
         "current_schema_version": 4,
         "durable_state_unchanged": true,
         "execution_manifest": {
-          "execution_commit": "51f8e8c64d2dfb43b091268a8ffa893b5b3252b2",
+          "execution_commit": "1ac9cdc5f0337e361187eb0f6dcffacc1fdd49d1",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-upgrade.yml": "6c80543a0c280cf72711316c175c1046b6942688",
-            "Cargo.lock": "1f3bd785e48cb4ee2684a510d1f0c94a1e7e8b89",
-            "Cargo.toml": "37ad0088277e0638aa3cf3b6de4e64f590aed874",
+            "Cargo.lock": "25435ec89baa0ff85f1fbbd110c06ba58fd76c16",
+            "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
             "crates/oxide-batch-core/src": "2548d8ab187bc10e596042d9a45763dfffa2b624",
-            "crates/oxide-batch-plan/Cargo.toml": "527f06f60f63f7de9cf3892b4c5d106e49b4c0a7",
+            "crates/oxide-batch-plan/Cargo.toml": "6c327e26d3fb6cb0e5572432ea8e0e5b09b36c72",
             "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
-            "crates/oxide-batch-repository/Cargo.toml": "1155ce8f4bf64d6b781758979c2fa1c54a03e748",
+            "crates/oxide-batch-repository/Cargo.toml": "d6148373ea81b843d5bc2590bc6264ea5fc3e657",
             "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
-            "crates/oxide-batch/Cargo.toml": "762ee1faab89b474e219bc1a97dc5e8bdb21a03a",
+            "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
             "crates/oxide-batch/migrations": "7923dcfb1ff0d152499466259107986cd8ae27e5",
             "crates/oxide-batch/src": "28a905220a782bcc7854379d15c2d8efc9682229",
             "crates/oxide-batch/tests/postgres_schema_rejection.rs": "ae495d4d6694357c86889f681e7293feef8abe41",
@@ -525,7 +525,7 @@
             "tests/fixtures/upgrade/verify-ci-contract.sh": "4802f911995d97d4e5e73e5e9d16ed5fe66fdb75",
             "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
             "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
-            "xtask/src/main.rs": "da7f6c26499226226ac7c289272efaa7c610c547",
+            "xtask/src/main.rs": "72f3559415985647a8b1e3dbdb2d3f35a699cc77",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6",
             "xtask/src/upgrade.rs": "973ec814e2d6ea70035db21c4d925f4ba0082ccb"
           },
@@ -630,20 +630,20 @@
       "name": "every_source_backup_restores_its_prior_schema",
       "observation": {
         "execution_manifest": {
-          "execution_commit": "51f8e8c64d2dfb43b091268a8ffa893b5b3252b2",
+          "execution_commit": "1ac9cdc5f0337e361187eb0f6dcffacc1fdd49d1",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-upgrade.yml": "6c80543a0c280cf72711316c175c1046b6942688",
-            "Cargo.lock": "1f3bd785e48cb4ee2684a510d1f0c94a1e7e8b89",
-            "Cargo.toml": "37ad0088277e0638aa3cf3b6de4e64f590aed874",
+            "Cargo.lock": "25435ec89baa0ff85f1fbbd110c06ba58fd76c16",
+            "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
             "crates/oxide-batch-core/src": "2548d8ab187bc10e596042d9a45763dfffa2b624",
-            "crates/oxide-batch-plan/Cargo.toml": "527f06f60f63f7de9cf3892b4c5d106e49b4c0a7",
+            "crates/oxide-batch-plan/Cargo.toml": "6c327e26d3fb6cb0e5572432ea8e0e5b09b36c72",
             "crates/oxide-batch-plan/src": "5a10b3b85bc0437e639dfccaf9664c9da2044a63",
-            "crates/oxide-batch-repository/Cargo.toml": "1155ce8f4bf64d6b781758979c2fa1c54a03e748",
+            "crates/oxide-batch-repository/Cargo.toml": "d6148373ea81b843d5bc2590bc6264ea5fc3e657",
             "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
-            "crates/oxide-batch/Cargo.toml": "762ee1faab89b474e219bc1a97dc5e8bdb21a03a",
+            "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
             "crates/oxide-batch/migrations": "7923dcfb1ff0d152499466259107986cd8ae27e5",
             "crates/oxide-batch/src": "28a905220a782bcc7854379d15c2d8efc9682229",
             "crates/oxide-batch/tests/postgres_schema_rejection.rs": "ae495d4d6694357c86889f681e7293feef8abe41",
@@ -663,7 +663,7 @@
             "tests/fixtures/upgrade/verify-ci-contract.sh": "4802f911995d97d4e5e73e5e9d16ed5fe66fdb75",
             "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
             "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
-            "xtask/src/main.rs": "da7f6c26499226226ac7c289272efaa7c610c547",
+            "xtask/src/main.rs": "72f3559415985647a8b1e3dbdb2d3f35a699cc77",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6",
             "xtask/src/upgrade.rs": "973ec814e2d6ea70035db21c4d925f4ba0082ccb"
           },
@@ -676,7 +676,7 @@
         "paths": [
           {
             "backup": {
-              "archive_bytes": 36176,
+              "archive_bytes": 36177,
               "format": "custom",
               "rows_covered": {
                 "ob_definition_upgrade": 1,
@@ -724,7 +724,7 @@
           },
           {
             "backup": {
-              "archive_bytes": 46518,
+              "archive_bytes": 46519,
               "format": "custom",
               "rows_covered": {
                 "ob_definition_upgrade": 1,
@@ -773,7 +773,7 @@
           },
           {
             "backup": {
-              "archive_bytes": 70021,
+              "archive_bytes": 70019,
               "format": "custom",
               "rows_covered": {
                 "ob_definition_upgrade": 1,
