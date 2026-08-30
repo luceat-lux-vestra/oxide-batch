@@ -113,11 +113,11 @@ to them and record supersession; they do not rewrite history.
 
 ## Guides
 
-- [M5 Production Preview guide](guides/production-preview.md)
+- [M6 release candidate guide](guides/production-preview.md)
 - [M5 production preview limitations](guides/limitations.md)
 - [M5 developer guide](guides/developer-guide.md)
 - [M5 operator guide](guides/operator-guide.md)
-- [M5 upgrade and rollback guide](guides/upgrade-and-rollback.md)
+- [M6 upgrade and rollback guide](guides/upgrade-and-rollback.md)
 - [M6 component reference](guides/component-reference.md)
 - [M6 restart and state guide](guides/restart-and-state.md)
 - [M6 extension guide](guides/extension-guide.md)
@@ -188,6 +188,7 @@ to them and record supersession; they do not rewrite history.
 - [Schema-v1 initial metadata migration](operations/migrations/0001-initial-metadata.md)
 - [Schema-v2 fault-tolerance and flow migration](operations/migrations/0002-fault-tolerance-and-flow.md)
 - [Schema-v3 operations and local-scale migration](operations/migrations/0003-operations-and-local-scale.md)
+- [Schema-v4 item-stream component-state migration](operations/migrations/0005-item-stream-component-state.md)
 - [Observability contract](operations/observability-contract.md)
 - [Control-plane boundary](operations/control-plane-boundary.md)
 - [M4 operator CLI and configuration contract](operations/operator-cli.md)

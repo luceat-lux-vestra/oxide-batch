@@ -49,7 +49,7 @@ ledger reconciliation, and exit record.
 Frozen protocol: `docs/project/m6-design-gate-evidence.md#gate-b--transactionrestart-equivalence-protocol`.
 The retained reports are `docs/engineering/campaigns/m6/gate-b-campaign-postgres-15.json`
 and `gate-b-campaign-postgres-18.json`, produced by the successful workflow run
-[33272897882](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33272897882)
+[33298170899](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33298170899)
 triggered by the recorded candidate branch HEAD. Both PostgreSQL jobs passed
 with nine targets and zero violations.
 
@@ -83,7 +83,7 @@ The workload is the shipped `DelimitedReader`/`DelimitedWriter` around
 and release compiler profile for typed and `BoxedReader`/`BoxedProcessor`/
 `BoxedWriter`. Retained report:
 `docs/engineering/campaigns/m6/gate-h-campaign.json`, from workflow run
-[33272897775](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33272897775).
+[33298170870](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33298170870).
 
 Hard gates:
 
@@ -134,7 +134,7 @@ violations. Reports:
 
 - `docs/engineering/campaigns/m6/m6-conformance-campaign-postgres-15.json`;
 - `docs/engineering/campaigns/m6/m6-conformance-campaign-postgres-18.json`;
-- workflow run [33272897778](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33272897778).
+- workflow run [33298170825](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33298170825).
 
 The catalog and normalized dispositions are in
 `docs/engineering/campaigns/m6/component-conformance-matrix.md`. It covers
@@ -193,44 +193,57 @@ evidence, and campaign PASS alone does not bypass that rule.
 
 ## Retained evidence and provenance
 
-M5 was re-run and re-retained because the M6 campaign wiring changed shared
-semantic-closure paths. The 16 M5 reports and five M6 reports are byte-for-byte
-extracted workflow artifacts, with run IDs, attempts, producing jobs, artifact
-IDs/digests/sizes, report git blobs, execution commit, and remote verification
-recorded in:
+M5 and M6 were re-run and re-retained for the release candidate because the
+release preparation changed Cargo manifests, `Cargo.lock`, and verifier/release
+inputs in the campaigns' semantic closure. The 16 M5 reports and five M6 reports
+are byte-for-byte extracted artifacts from fresh successful PR #209 runs, with
+run IDs, attempts, producing jobs, artifact IDs/digests/sizes, report git blobs,
+execution commit, and remote verification recorded in:
 
 - `docs/engineering/campaigns/m5/evidence-provenance.json`;
 - `docs/engineering/campaigns/m6/evidence-provenance.json`.
 
-The M6 artifact set is retained by Gate B run 33272897882, Gate H run
-33272897775, and full conformance run 33272897778. The M5 candidate-triggered
-campaigns are runs 33272897735 (cancellation), 33272897725 (conformance),
-33272897750 (crash/restore), 33272897880 (performance), 33272897844
-(resource bounds), 33272897773 (security), 33272897811 (soak), and
-33272897782 (upgrade); the exact reports and provenance are retained from
-these successful runs. Branch-ref campaign runs were also executed to check
-checkout behavior, but are not substituted for these retained merge-ref
-artifacts. All completed successfully with PostgreSQL 15/18 where applicable.
+The M6 artifact set is retained by Gate B run
+[33298170899](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33298170899),
+Gate H run
+[33298170870](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33298170870),
+and full conformance run
+[33298170825](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33298170825).
+The fresh M5 campaign runs are
+[33298170868](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33298170868)
+(cancellation),
+[33298170865](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33298170865)
+(conformance),
+[33298170873](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33298170873)
+(crash/restore),
+[33298170821](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33298170821)
+(performance),
+[33298170845](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33298170845)
+(resource bounds),
+[33298170850](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33298170850)
+(security),
+[33298170886](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33298170886)
+(soak), and
+[33298170794](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33298170794)
+(upgrade). All completed successfully with PostgreSQL 15/18 where applicable.
+
+Every fresh report records execution tree
+`1ac9cdc5f0337e361187eb0f6dcffacc1fdd49d1`, triggered from PR #209 branch
+head `a233e12787cab06ce998d34e05a0ba703ac04474`. The final
+evidence-retention commit changes no declared campaign semantic-closure path.
 The provenance verifier checks both milestone directories.
 
 The retained M6 artifact identities are: Gate B PostgreSQL 15 artifact
-9720644091 with digest
-`sha256:caeea19cae9e8297c2fdfb71eb16ceffc61b9afcb02fbaa36631abfdfc9c16bc`,
-Gate B PostgreSQL 18 artifact 9720646534 with digest
-`sha256:fd9dff082d9f552100feebe61c91829034a1725dba88ee9c342bdf84e09fd3c3`,
-Gate H artifact 9720661424 with digest
-`sha256:34fd91883996d596f08edcf78837c7ea1ea491632ddb010f48f2db001bb392fe`,
-and full-conformance PostgreSQL 15/18 artifacts 9720673305 and 9720673595
+9728089273 with digest
+`sha256:d416ff38066e96b96fc4e46fdcfb3e0a577a2aea73c2211f73a516999061ee6e`,
+Gate B PostgreSQL 18 artifact 9728088920 with digest
+`sha256:c60aa41505746725aa258da235b5e10c3af13cac69dd1710c357772f737ca9cb`,
+Gate H artifact 9728101917 with digest
+`sha256:626cfb4b6a01e9f6823792cb1c766a3bbd08f47d71113647c9e577ea2f76180a`,
+and full-conformance PostgreSQL 15/18 artifacts 9728114048 and 9728112543
 with digests
-`sha256:c1f152542a41c03bee12e7346b7a2c561af5eaf5d922158bc9a212873f7a5b6e`
-and `sha256:7b1f52f88c49aa2a09cd16a69ab226cf84ac3916e381f7d19a5cca57b9891596`.
-
-The PR `pull_request` workflows passed at candidate HEAD. Their merge-ref
-reports are the retained artifacts because the repository-local evidence
-verifier must evaluate the same merge-ref tree in the PR Evidence job after
-the base branch advanced.
-The final evidence-retention commit changes no declared campaign
-semantic-closure path.
+`sha256:5c1be7ab68cef3151848dac04121107519fe6c185cc7397b3eeaaa13c8db29fe`
+and `sha256:77f3e9008bbce3d2a86fd94265f7b3ec0ab6f88f59e4bc0690f5afdd27cb678a`.
 
 ## P0/P1 review and limitations
 
@@ -264,3 +277,14 @@ producer head requires strict review against the new exact PR HEAD.
 **Final disposition: READY FOR STRICT REVIEW — DO NOT MERGE.** #188 remains
 open until this PR merges; #140 also remains open and is not closed by this
 PR. Both closure actions remain outside this agent's boundary.
+
+## Release-preparation handoff (2026-08-30)
+
+The closure statements above are retained historical observations from the M6
+exit record and are not the current issue state. The merged M6 exit tree is
+now `main` at `47eedc5b3a8e8f82f0a8c7386f9f49698ca82d2e`; #153, #188, and #140
+are closed, and #190 is open with `status:ready`. This release-preparation
+candidate selects package version `0.6.0` and prospective tag `v0.6.0`, but
+neither exists yet. The retained M6 campaign PASS remains candidate evidence:
+no M6 ledger row is promoted to released `Verified` until the named release,
+packaged artifacts, provenance, and post-publication consumers are verified.

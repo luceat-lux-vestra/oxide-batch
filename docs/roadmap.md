@@ -9,8 +9,9 @@ its specific architecture.
 **Last reviewed:** 2026-08-19
 
 Milestones are capability and evidence gates, not calendar promises. M0-M5
-record accepted history, closed by the release of `oxide-batch` `0.5.0`; M6 is
-active. The continuous M5-M14 program is
+record accepted history, closed by the release of `oxide-batch` `0.5.0`; M6
+implementation and exit evidence are complete, with its first `0.6.0` release
+candidate prepared but not yet published. The continuous M5-M14 program is
 accepted by [RFC-0001](rfcs/0001-m5-preview-and-project-wide-1-0.md) and the
 topic decisions linked below. Historical M0 decisions remain preserved with
 their supersession record.
@@ -248,21 +249,17 @@ governed by pre-1.0 policy.
 
 ## M6 — Complete Item Processing and User Test Kit
 
-**Status:** Active (design gates closed, 2026-08-20)
+**Status:** Implementation and exit evidence complete; `0.6.0` release
+candidate prepared, not yet published (2026-08-30)
 
 The decision gates, dependency-ordered delivery issues, architecture
 constraints, and kickoff exit criteria are recorded in the
-[M6 kickoff gate](project/m6-kickoff-gate.md). Gates A, C, D, E, F, and G are
-closed in canonical documentation by the
-[M6 design-gate evidence](project/m6-design-gate-evidence.md); Gates B and H
-have their executable protocol and acceptance criteria frozen by the same
-record but remain open until
-[#153](https://github.com/luceat-lux-vestra/oxide-batch/issues/153) executes
-their campaigns. Design closure authorizes tracked delivery work starting at
-[#143](https://github.com/luceat-lux-vestra/oxide-batch/issues/143); it does
-not itself implement any M6 capability, and the compatibility-ledger rows
-below stay at their current disposition until delivery evidence lands. M6
-itself is not complete and is not exited by this closure.
+[M6 kickoff gate](project/m6-kickoff-gate.md). Gates A-H and the implementation
+issues are closed by the retained
+[M6 exit evidence](project/m6-exit-evidence.md). The release-preparation PR
+does not add M6 capability or promote compatibility rows: campaign evidence
+remains candidate evidence until a named `0.6.0` release and its post-release
+checks exist.
 
 **Objective:** complete the Rust-native item/chunk/stream component model,
 standard local components, and application-facing test utilities.
@@ -285,7 +282,8 @@ hot path, erased adapters, versioned component state, typed capabilities, and
 
 **Ledger categories closed:** item model, item stream/checkpoint, standard
 components in scope, repeat/fault tolerance, listeners, and testing utilities
-are fully populated and classified; shipped claims are `Verified`.
+are fully populated and classified; M6 rows remain `Implemented` or `Partial`
+until release-backed verification.
 
 **Dependencies:** M5 boundary decisions and accepted
 [RFC-0005](rfcs/0005-static-and-erased-components.md), satisfied on 2026-08-03
@@ -304,8 +302,9 @@ panic, and process-kill matrices; user test-kit examples.
 **Documentation:** component reference, extension guide, restart/state guide,
 test-kit tutorial, support tiers, and ledger evidence links.
 
-**Release/compatibility implication:** pre-1.0 item APIs; category parity
-claims only for closed and verified rows.
+**Release/compatibility implication:** pre-1.0 item APIs; the prepared
+`0.6.0` candidate carries M6 campaign evidence but makes no released
+`Verified` claim until publication and post-publication checks.
 
 ## M7 — Advanced Flow, Repeat, Scope, and Composition
 

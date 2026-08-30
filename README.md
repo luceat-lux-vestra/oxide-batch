@@ -7,11 +7,11 @@ OxideBatch is an early-stage Rust-native framework for reliable, restartable
 batch processing, inspired by Spring Batch.
 
 > [!IMPORTANT]
-> OxideBatch `0.5.0` is the M5 Embedded Core Production Preview: a stabilized,
-> released embedded PostgreSQL batch kernel, not a GA, enterprise-ready, or
-> full Spring Batch-parity runtime. `28` compatibility-ledger rows are
-> `Verified` against this release; the rest remain `Partial`, `Planned`, or
-> `Unknown` and are visible in the [conformance matrix](docs/compatibility/conformance-matrix.md).
+> OxideBatch `0.6.0` is the prepared M6 release candidate and is not yet
+> published. It remains a `0.x` pre-1.0 release: M6 adds the item-processing
+> surface and public `oxide-batch-test`, but does not claim M7-M14 completion,
+> GA, enterprise readiness, or full Spring Batch parity. M6 campaign evidence
+> is not release-backed `Verified` evidence until the named version exists.
 
 ## Project goals
 
@@ -36,7 +36,8 @@ crates/
 ├── oxide-batch-core/       Internal: domain model and durable values
 ├── oxide-batch-plan/       Internal: flow graphs and the plan compiler
 ├── oxide-batch-repository/ Internal: metadata ports and their durable values
-└── oxide-batch-cli/        Operator CLI (not part of the library release)
+├── oxide-batch-cli/        Public operator CLI, released in lockstep
+└── oxide-batch-test/       Public application-facing test kit
 spikes/
 └── m0-architecture/ Reproducible, non-published architecture evidence
 xtask/              Repository development commands (not published)
@@ -81,10 +82,14 @@ application that embeds `oxide-batch-cli` and supplies its own compiled
 `DefinitionCatalog`. Run `oxide-batch --help` for that boundary and the command
 grammar entry point.
 
-**M6 — Complete Item Processing and User Test Kit** is authorized and active
-as a kickoff/tracking workstream; no M6 capability is implemented yet. Its
-decision gates, dependency-ordered delivery issues, and exit criteria are
-recorded in the [M6 kickoff gate](docs/project/m6-kickoff-gate.md).
+**M6 — Complete Item Processing and User Test Kit** is implementation-complete
+and prepared as the unreleased `0.6.0` candidate. Its component campaigns,
+test-kit boundary, and explicit non-parity limits are recorded in the
+[M6 exit evidence](docs/project/m6-exit-evidence.md). The candidate does not
+promote M6 ledger rows to released `Verified` and does not imply M7-M14 work.
+
+Release preparation, including the first-publication bootstrap boundary for
+`oxide-batch-test`, is tracked in the [release checklist](docs/release/release-checklist.md).
 
 Start with the [documentation index](docs/README.md) and
 [continuous delivery roadmap](docs/roadmap.md). The M5-M14 full-parity program

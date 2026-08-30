@@ -3,13 +3,11 @@
 The public facade crate for [OxideBatch](https://github.com/luceat-lux-vestra/oxide-batch),
 a restart-oriented batch processing framework for Rust inspired by Spring Batch.
 
-> This is the **M5 Embedded Core Production Preview**: a `0.x` pre-1.0
-> release stabilizing the delivered M0-M4 embedded scope (durable PostgreSQL
-> job/step/chunk execution, typed bounded fault tolerance, finite
-> sequential/conditional flow, a guarded operator CLI, bounded local
-> split/partitioning, and structured telemetry) rather than adding new batch
-> capability. It is not `1.0`, stable, GA, or enterprise-ready, and it does
-> not claim full Spring Batch parity. See the
+> This is the prepared **M6 `0.6.0` release candidate**: a `0.x` pre-1.0
+> candidate adding the delivered item-processing component catalog and public
+> `oxide-batch-test` kit to the M5 embedded PostgreSQL scope. It is not yet
+> published, is not `1.0`, stable, GA, or enterprise-ready, and does not claim
+> full Spring Batch parity or M7-M14 completion. See the
 > [Production Preview guide](https://github.com/luceat-lux-vestra/oxide-batch/blob/main/docs/guides/production-preview.md)
 > for what is and is not covered, and the
 > [M5 exit record](https://github.com/luceat-lux-vestra/oxide-batch/blob/main/docs/project/m5-exit-evidence.md)
@@ -37,8 +35,8 @@ is not durable across restarts.
 
 With the optional `postgres` feature, `PostgresJobRepository` implements the
 same repository contract over the immutable OxideBatch schema. Runtime startup
-verifies metadata schema version 3 (direct upgrade from schemas 1 and 2; a
-schema-2 runtime rejects schema 3) but never applies migrations; deployments
+verifies metadata schema version 4 (direct upgrade from schemas 1, 2, and 3;
+older runtimes reject schema 4) but never applies migrations; deployments
 call `PostgresMigrator` separately with a migrator identity. See the
 [upgrade and rollback guide](https://github.com/luceat-lux-vestra/oxide-batch/blob/main/docs/guides/upgrade-and-rollback.md)
 before a schema upgrade. Production defaults
@@ -48,7 +46,7 @@ contexts, SQL text, and bound values are excluded from facade diagnostics.
 
 ```toml
 [dependencies]
-oxide-batch = { version = "0.5.0", features = ["postgres"] }
+oxide-batch = { version = "0.6.0", features = ["postgres"] }
 ```
 
 ```rust,no_run

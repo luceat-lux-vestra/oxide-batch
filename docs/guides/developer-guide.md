@@ -1,8 +1,9 @@
-# M5 Developer Guide
+# M6 Developer Guide
 
 **State:** Accepted
 
-**Applies to:** OxideBatch `0.5.0`, the M5 Embedded Core Production Preview
+**Applies to:** the prepared OxideBatch `0.6.0` M6 release candidate; not yet
+published
 
 An executable path from a dependency declaration to a working embedded job.
 This guide links to canonical contracts rather than restating them; see
@@ -12,7 +13,7 @@ This guide links to canonical contracts rather than restating them; see
 
 ```toml
 [dependencies]
-oxide-batch = { version = "0.5.0", features = ["postgres"] }
+oxide-batch = { version = "0.6.0", features = ["postgres"] }
 tokio = { version = "1", features = ["rt", "macros"] }
 ```
 
@@ -73,7 +74,7 @@ counters through `ChunkTransaction`. See
 
 ## 4. Move to PostgreSQL
 
-Apply the schema-3 migrations with the migrator identity, then connect with
+Apply the schema-4 migrations with the migrator identity, then connect with
 the runtime identity:
 
 ```rust,no_run

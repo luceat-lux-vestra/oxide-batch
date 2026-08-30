@@ -143,6 +143,7 @@ fn main() -> ExitCode {
         Some("performance") => run_performance_campaign(),
         Some("reconciliation") => run_reconciliation_check(),
         Some("release-crates") => run_release_crates_check(),
+        Some("release-order") => run_release_order(),
         Some("resource-bounds") => run_resource_bound_campaign(),
         Some("security") => run_security_campaign(),
         Some("soak") => run_soak_campaign(),
@@ -226,7 +227,7 @@ fn run_dependency_check() -> bool {
 }
 
 /// Reports whether the published manifests and both release workflows agree
-/// on the accepted five-crate release set and its dependency order.
+/// on the accepted six-crate release set and its dependency order.
 fn run_release_crates_check() -> bool {
     eprintln!("==> release crate set");
 
@@ -234,7 +235,7 @@ fn run_release_crates_check() -> bool {
         Ok(violations) if violations.is_empty() => {
             eprintln!(
                 "published manifests, release-draft.yml, and release.yml all name the same \
-                 five crates in the accepted dependency order"
+                 six crates in the accepted dependency order"
             );
             true
         }
@@ -249,6 +250,20 @@ fn run_release_crates_check() -> bool {
         }
         Err(error) => {
             eprintln!("could not check the release crate set: {error}");
+            false
+        }
+    }
+}
+
+/// Prints the publication order derived from the current Cargo metadata.
+fn run_release_order() -> bool {
+    match release_crates::release_order() {
+        Ok(order) => {
+            println!("{}", order.join("\n"));
+            true
+        }
+        Err(error) => {
+            eprintln!("could not derive the release order: {error}");
             false
         }
     }
@@ -708,6 +723,7 @@ fn usage() {
            performance      run P-001, P-003, and P-010 in release profile against PostgreSQL\n\
            reconciliation   verify the #102 reconciliation document against the repository\n\
            release-crates   verify manifests and release workflows agree on the release set\n\
+           release-order    print the metadata-derived publication order\n\
            resource-bounds  prove every declared ceiling holds and is reached under stress\n\
            security         run the TLS, least-privilege, and redaction campaign\n\
            soak             run the declared P-015 soak window and judge its growth\n\

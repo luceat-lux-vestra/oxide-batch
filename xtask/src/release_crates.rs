@@ -14,6 +14,7 @@
 //! drift from that decision independently of any of the others, and nothing
 //! before this check compared them against each other: this closes that gap.
 
+use std::collections::HashMap;
 use std::fs;
 use std::process::Command;
 
@@ -37,7 +38,8 @@ const RELEASE_WORKFLOW: &str = ".github/workflows/release.yml";
 /// that recovery path the next time the accepted set grows. This constant
 /// lets the check below confirm the dynamic derivation is still present
 /// rather than having quietly reverted to a hardcoded list.
-const DYNAMIC_RELEASE_SET_FILTER: &str = r"select((.publish // []) | length > 0)";
+const DYNAMIC_RELEASE_SET_FILTER: &str =
+    r".packages[] | select((.publish // []) | length > 0) | .name";
 
 /// The accepted release order, per RFC-0011's "Version and release coupling".
 const EXPECTED_RELEASED_CRATES: &[&str] = &[
@@ -48,6 +50,10 @@ const EXPECTED_RELEASED_CRATES: &[&str] = &[
     "oxide-batch-cli",
     "oxide-batch-test",
 ];
+
+/// The release candidate prepared by this change. A stale lockstep update
+/// must fail before packaging or publication.
+const EXPECTED_RELEASE_VERSION: &str = "0.6.0";
 
 /// Runs the release crate-set regression check.
 ///
@@ -66,6 +72,14 @@ pub fn check() -> Result<Vec<String>, String> {
         &manifest_set,
         EnforceOrder::No,
     ));
+    match release_order() {
+        Ok(order) => violations.extend(compare(
+            "Cargo metadata dependency order",
+            &order,
+            EnforceOrder::Yes,
+        )),
+        Err(error) => violations.push(error),
+    }
 
     // release-draft.yml's two steps derive their crate list dynamically
     // (see DYNAMIC_RELEASE_SET_FILTER) rather than declaring it statically,
@@ -77,6 +91,11 @@ pub fn check() -> Result<Vec<String>, String> {
     let draft_path = root.join(RELEASE_DRAFT_WORKFLOW);
     let draft_text = fs::read_to_string(&draft_path)
         .map_err(|error| format!("could not read {RELEASE_DRAFT_WORKFLOW}: {error}"))?;
+    if !draft_text.contains("test \"$(git rev-parse HEAD)\" = \"${tag_commit}\"") {
+        violations.push(format!(
+            "{RELEASE_DRAFT_WORKFLOW} must verify that checkout HEAD is the immutable tag commit"
+        ));
+    }
     let draft_dynamic_occurrences = draft_text.matches(DYNAMIC_RELEASE_SET_FILTER).count();
     if draft_dynamic_occurrences != 2 {
         violations.push(format!(
@@ -102,22 +121,62 @@ pub fn check() -> Result<Vec<String>, String> {
         &sbom_attestation_crates,
         &manifest_set,
     ));
+    if !draft_text.contains("- name: Attest oxide-batch-test SBOM\n        if: steps.package.outputs.has_test == 'true'") {
+        violations.push(format!(
+            "{RELEASE_DRAFT_WORKFLOW} must skip the M6 test-kit attestation when recovering a pre-M6 tag"
+        ));
+    }
 
+    violations.extend(check_release_workflow(&root)?);
+
+    Ok(violations)
+}
+
+/// Checks the immutable-tag, bootstrap, and idempotent publication contract.
+fn check_release_workflow(root: &std::path::Path) -> Result<Vec<String>, String> {
     let release_path = root.join(RELEASE_WORKFLOW);
     let release_text = fs::read_to_string(&release_path)
         .map_err(|error| format!("could not read {RELEASE_WORKFLOW}: {error}"))?;
-    let verify_crates = extract_step_packages(&release_text, "Verify packages")?;
-    violations.extend(compare(
-        &format!("{RELEASE_WORKFLOW} \"Verify packages\" step"),
-        &verify_crates,
-        EnforceOrder::Yes,
-    ));
-    let publish_crates = extract_step_packages(&release_text, "Publish to crates.io")?;
-    violations.extend(compare(
-        &format!("{RELEASE_WORKFLOW} \"Publish to crates.io\" step"),
-        &publish_crates,
-        EnforceOrder::Yes,
-    ));
+    let mut violations = Vec::new();
+    if release_text.contains("\n  id-token: write")
+        || release_text.matches("id-token: write").count() != 1
+    {
+        violations.push(format!(
+            "{RELEASE_WORKFLOW} must grant id-token: write only to the OIDC publication job"
+        ));
+    }
+    if release_text
+        .matches("git rev-parse \"${RELEASE_TAG}^{commit}\"")
+        .count()
+        != 2
+    {
+        violations.push(format!(
+            "{RELEASE_WORKFLOW} must verify the checked-out immutable tag in both verification and publication jobs"
+        ));
+    }
+    let verify_block = extract_step_block(&release_text, "Verify packages")?;
+    if !verify_block.contains("cargo publish --workspace --locked --dry-run") {
+        violations.push(format!(
+            "{RELEASE_WORKFLOW} \"Verify packages\" must dry-run the metadata-derived workspace release set"
+        ));
+    }
+    let publish_block = extract_step_block(&release_text, "Publish to crates.io")?;
+    let rechecks_exact_versions = publish_block.contains("version_status")
+        && publish_block.contains("registry_sha")
+        && publish_block.contains("already published with matching checksum");
+    if publish_block.contains("PENDING_CRATES")
+        || !publish_block.contains("cargo publish -p")
+        || !rechecks_exact_versions
+    {
+        violations.push(format!(
+            "{RELEASE_WORKFLOW} \"Publish to crates.io\" must recheck each exact registry version/checksum immediately before publishing in metadata-derived order"
+        ));
+    }
+    if !release_text.contains("release-order") {
+        violations.push(format!(
+            "{RELEASE_WORKFLOW} must obtain publication order from cargo xtask release-order"
+        ));
+    }
     let bootstrap_dynamic_occurrences = release_text.matches(DYNAMIC_RELEASE_SET_FILTER).count();
     if bootstrap_dynamic_occurrences != 1 {
         violations.push(format!(
@@ -127,7 +186,18 @@ pub fn check() -> Result<Vec<String>, String> {
              against the v0.5.0 tag, which predates oxide-batch-test"
         ));
     }
-
+    for required in [
+        "publish-registered",
+        "PUBLISH_REGISTERED_ONLY",
+        "bootstrap_required",
+        "RECOVERY_MODE",
+    ] {
+        if !release_text.contains(required) {
+            violations.push(format!(
+                "{RELEASE_WORKFLOW} is missing the fail-closed registered-only bootstrap contract marker {required:?}"
+            ));
+        }
+    }
     Ok(violations)
 }
 
@@ -189,6 +259,27 @@ fn compare(source: &str, found: &[String], enforce_order: EnforceOrder) -> Vec<S
 /// `publish = false` (an empty list) and the default-but-unpublished spikes
 /// and `xtask` are excluded.
 fn published_crates_from_manifests() -> Result<Vec<String>, String> {
+    Ok(published_package_metadata()?
+        .into_iter()
+        .map(|package| package.name)
+        .collect())
+}
+
+#[derive(Debug)]
+struct WorkspaceDependency {
+    name: String,
+    requirement: String,
+}
+
+#[derive(Debug)]
+struct PublishedPackage {
+    name: String,
+    version: String,
+    path_dependencies: Vec<WorkspaceDependency>,
+}
+
+/// Loads the publishable workspace packages and their publishable path edges.
+fn published_package_metadata() -> Result<Vec<PublishedPackage>, String> {
     let output = Command::new("cargo")
         .args(["metadata", "--format-version", "1", "--no-deps", "--locked"])
         .output()
@@ -219,14 +310,152 @@ fn published_crates_from_manifests() -> Result<Vec<String>, String> {
             .and_then(Value::as_array)
             .is_some_and(|registries| !registries.is_empty());
         if is_published {
-            released.push(name.to_owned());
+            let version = package
+                .get("version")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("published package {name} has no version"))?;
+            let path_dependencies = package
+                .get("dependencies")
+                .and_then(Value::as_array)
+                .ok_or_else(|| format!("published package {name} has no dependencies"))?
+                .iter()
+                .filter(|dependency| dependency.get("path").is_some())
+                .map(|dependency| {
+                    let dependency_name = dependency
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            format!("package {name} has a path dependency without a name")
+                        })?;
+                    let requirement = dependency
+                        .get("req")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            format!(
+                                "package {name} path dependency {dependency_name} has no requirement"
+                            )
+                        })?;
+                    Ok(WorkspaceDependency {
+                        name: dependency_name.to_owned(),
+                        requirement: requirement.to_owned(),
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            released.push(PublishedPackage {
+                name: name.to_owned(),
+                version: version.to_owned(),
+                path_dependencies,
+            });
         }
     }
-    // `cargo metadata` does not order packages by workspace declaration
-    // order, so this list is compared as a set by `compare` rather than
-    // trusted for dependency order; the workflow files are the ordered
-    // sources.
     Ok(released)
+}
+
+/// Derives and validates the current publication DAG from Cargo metadata.
+///
+/// A published workspace edge must use the exact candidate version. The
+/// stable accepted order is only a tie-breaker for independent packages; it
+/// cannot override a real dependency edge.
+pub fn release_order() -> Result<Vec<String>, String> {
+    let packages = published_package_metadata()?;
+    let names: Vec<String> = packages
+        .iter()
+        .map(|package| package.name.clone())
+        .collect();
+    if names.len() != EXPECTED_RELEASED_CRATES.len()
+        || EXPECTED_RELEASED_CRATES
+            .iter()
+            .any(|expected| !names.iter().any(|name| name == expected))
+        || names
+            .iter()
+            .any(|name| !EXPECTED_RELEASED_CRATES.contains(&name.as_str()))
+    {
+        return Err(format!(
+            "Cargo metadata publishable set is {names:?}, expected exactly {EXPECTED_RELEASED_CRATES:?}"
+        ));
+    }
+
+    let by_name: HashMap<&str, &PublishedPackage> = packages
+        .iter()
+        .map(|package| (package.name.as_str(), package))
+        .collect();
+    for package in &packages {
+        if package.version != EXPECTED_RELEASE_VERSION {
+            return Err(format!(
+                "publishable package {} has version {}, expected lockstep {}",
+                package.name, package.version, EXPECTED_RELEASE_VERSION
+            ));
+        }
+    }
+
+    let mut indegree: HashMap<&str, usize> = names.iter().map(|name| (name.as_str(), 0)).collect();
+    let mut dependents: HashMap<&str, Vec<&str>> = names
+        .iter()
+        .map(|name| (name.as_str(), Vec::new()))
+        .collect();
+    for package in &packages {
+        for dependency in &package.path_dependencies {
+            let Some(target) = by_name.get(dependency.name.as_str()) else {
+                return Err(format!(
+                    "publishable package {} has a path dependency {:?} outside the accepted release set",
+                    package.name, dependency.name
+                ));
+            };
+            if target.version != EXPECTED_RELEASE_VERSION {
+                return Err(format!(
+                    "publishable package {} depends on {} at version {}, expected exact ={}",
+                    package.name, dependency.name, target.version, EXPECTED_RELEASE_VERSION
+                ));
+            }
+            let expected_requirement = format!("={EXPECTED_RELEASE_VERSION}");
+            if dependency.requirement != expected_requirement {
+                return Err(format!(
+                    "publishable package {} depends on {} with requirement {:?}, expected {:?}",
+                    package.name, dependency.name, dependency.requirement, expected_requirement
+                ));
+            }
+            *indegree
+                .get_mut(package.name.as_str())
+                .ok_or_else(|| format!("missing indegree for {}", package.name))? += 1;
+            dependents
+                .get_mut(dependency.name.as_str())
+                .ok_or_else(|| format!("missing dependent list for {}", dependency.name))?
+                .push(package.name.as_str());
+        }
+    }
+
+    let order_index = |name: &str| {
+        EXPECTED_RELEASED_CRATES
+            .iter()
+            .position(|expected| *expected == name)
+            .unwrap_or(usize::MAX)
+    };
+    let mut ready: Vec<&str> = indegree
+        .iter()
+        .filter_map(|(name, degree)| (*degree == 0).then_some(*name))
+        .collect();
+    let mut order = Vec::with_capacity(names.len());
+    while !ready.is_empty() {
+        ready.sort_by_key(|name| order_index(name));
+        let next = ready.remove(0);
+        order.push(next.to_owned());
+        for dependent in dependents
+            .get(next)
+            .ok_or_else(|| format!("missing dependents for {next}"))?
+        {
+            let degree = indegree
+                .get_mut(dependent)
+                .ok_or_else(|| format!("missing indegree for {dependent}"))?;
+            *degree -= 1;
+            if *degree == 0 {
+                ready.push(dependent);
+            }
+        }
+    }
+    if order.len() != names.len() {
+        return Err("published package dependency graph contains a cycle".to_owned());
+    }
+    Ok(order)
 }
 
 /// Extracts every `key: value` line's whitespace-separated tokens.
@@ -257,14 +486,9 @@ fn extract_env_list(text: &str, key: &str) -> Vec<Vec<String>> {
 /// YAML parse, matching this workspace's existing convention of comparing
 /// workflow values as text (see `tests/fixtures/*/verify-ci-contract.sh`)
 /// rather than adding a YAML-parsing dependency.
+#[cfg(test)]
 fn extract_step_packages(text: &str, step_name: &str) -> Result<Vec<String>, String> {
-    let marker = format!("- name: {step_name}");
-    let start = text
-        .find(&marker)
-        .ok_or_else(|| format!("no \"{marker}\" step found"))?;
-    let after = &text[start + marker.len()..];
-    let end = after.find("\n      - name:").unwrap_or(after.len());
-    let block = &after[..end];
+    let block = extract_step_block(text, step_name)?;
 
     let mut packages = Vec::new();
     let mut tokens = block.split_whitespace();
@@ -276,6 +500,17 @@ fn extract_step_packages(text: &str, step_name: &str) -> Result<Vec<String>, Str
         }
     }
     Ok(packages)
+}
+
+/// Returns the text belonging to one workflow step.
+fn extract_step_block<'a>(text: &'a str, step_name: &str) -> Result<&'a str, String> {
+    let marker = format!("- name: {step_name}");
+    let start = text
+        .find(&marker)
+        .ok_or_else(|| format!("no \"{marker}\" step found"))?;
+    let after = &text[start + marker.len()..];
+    let end = after.find("\n      - name:").unwrap_or(after.len());
+    Ok(&after[..end])
 }
 
 /// Extracts the crate names from release-draft's explicit SBOM attestation

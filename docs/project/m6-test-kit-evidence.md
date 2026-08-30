@@ -1,6 +1,7 @@
 # M6 `oxide-batch-test` Application Test-Kit Evidence
 
-**State:** Implementation complete; cross-consumer closure pending
+**State:** Implementation and cross-consumer closure complete; release
+promotion pending
 
 **Issue:** [#145](https://github.com/luceat-lux-vestra/oxide-batch/issues/145)
 
@@ -12,9 +13,10 @@ implements no CSV/JSON/PostgreSQL standard component (owned by #146-#150).
 
 Issue #145's own exit criteria require that at least one later M6 component
 issue consume the kit as its own test harness before #145 is marked done.
-No such issue has landed yet, so **#145 stays open** after this PR: the
-boundary, its four `TEST-*` facilities, and their evidence are complete, but
-cross-consumer closure is explicitly deferred to #146 (the first consumer).
+Issue #146 consumed the kit in its component tests, so that cross-consumer
+criterion is complete and #145 is closed. The boundary and its four `TEST-*`
+facilities remain release-candidate evidence; this record does not promote
+their ledger rows to released `Verified`.
 
 ## Package boundary
 
@@ -27,7 +29,7 @@ cross-consumer closure is explicitly deferred to #146 (the first consumer).
 | No `SQLx`/Tokio-runtime-handle/driver type in public API | `src/postgres.rs` exposes only `oxide_batch::PostgresJobRepository`/`PostgresChunkTransactionManager` and framework-owned `PostgresConfig`; no `sqlx::` type appears in any public signature (`cargo doc` surface inspected manually; no `sqlx` dependency in `[dependencies]` at all) |
 | MSRV/release cadence matches `oxide-batch` | `Cargo.toml` uses `rust-version.workspace = true`, `version.workspace = true` |
 | No-placeholder-crate rule | This PR creates the crate and its first usable utilities (clock/IDs, harnesses, injection, restart, process, repository fixtures) together, per Gate G |
-| Package/publication dry run | `cargo xtask package` (workspace `cargo package --list` + `cargo publish --workspace --locked --dry-run`) succeeds with `oxide-batch-test` included, resolving it against the co-verified local `oxide-batch` rather than the stale published `0.5.0` |
+| Package/publication dry run | `cargo xtask package` (workspace `cargo package --list` + `cargo publish --workspace --locked --dry-run`) succeeds with `oxide-batch-test` included at candidate `0.6.0`, resolving it against the co-verified local `oxide-batch` rather than a published release |
 
 ## Public contract
 
@@ -105,6 +107,5 @@ harness is unaffected and remains a separate thing, per
 
 - Implementation state: **complete**.
 - Later-component-consumer closure criterion (issue #145's own exit
-  criterion): **pending #146** (the first standard-component issue expected
-  to adopt this kit as its own test harness).
-- Issue closed: **no**, until that criterion is satisfied.
+  criterion): **satisfied by #146**, the first standard-component consumer.
+- Issue closed: **yes**, independently of this release-preparation PR.

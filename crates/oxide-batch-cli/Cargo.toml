@@ -7,6 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 readme = "README.md"
+exclude = ["tests/**"]
 keywords = ["batch", "cli", "operations", "job", "operator"]
 categories = ["command-line-utilities", "asynchronous"]
 publish = ["crates-io"]
@@ -31,7 +32,7 @@ doc = false
 
 [dependencies]
 futures-util = { version = "0.3.31", default-features = false, features = ["std"] }
-oxide-batch = { path = "../oxide-batch", version = "0.5.0" }
+oxide-batch = { path = "../oxide-batch", version = "=0.6.0" }
 serde_json = "1.0.151"
 sha2 = "0.11.0"
 tokio = { version = "1.53.1", features = ["macros", "rt"], optional = true }

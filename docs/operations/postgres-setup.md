@@ -1,7 +1,7 @@
 # PostgreSQL Setup
 
-**State:** Implemented for M2, the unreleased M4 schema-3 slice, and the
-unreleased M6 schema-4 slice (`#144`, additive `ItemStream` component state)
+**State:** Implemented for M2/M4 and M6 schema 4 (`#144`, additive
+`ItemStream` component state); included in the unreleased `0.6.0` candidate
 
 **Supported M2 matrix:** PostgreSQL 15 through 18 on Linux x86_64 GNU
 
@@ -50,11 +50,11 @@ Enable the adapter:
 
 ```toml
 [dependencies]
-oxide-batch = { version = "0.5.0", features = ["postgres"] }
+oxide-batch = { version = "0.6.0", features = ["postgres"] }
 ```
 
-Apply the released migrations with the migrator identity before starting any
-runtime. `PostgresMigrator::migrate` installs schema `1` through `4` on an
+Apply the candidate migrations with the migrator identity before starting any
+runtime. `PostgresMigrator::migrate` installs schema versions `1` through `4` on an
 empty database and applies only the pending migrations on an existing one.
 No installed schema past 1 is a rolling upgrade: quiesce every runtime that
 supports an older schema first, because it rejects the newer schema on
@@ -99,7 +99,7 @@ Runtime startup never applies migrations automatically.
 
 ## Verify the installation
 
-As migrator, the singleton query must return exactly `3`:
+As migrator, the singleton query must return exactly `4`:
 
 ```sql
 SELECT version
@@ -131,7 +131,9 @@ consequences, including the loss of executions created after the backup, are
 recorded in
 [the schema-2 migration guide](migrations/0002-fault-tolerance-and-flow.md), and
 the schema-2 to schema-3 consequences in
-[the schema-3 migration guide](migrations/0003-operations-and-local-scale.md).
+[the schema-3 migration guide](migrations/0003-operations-and-local-scale.md),
+and the schema-3 to schema-4 component-state consequences in
+[the schema-4 migration guide](migrations/0005-item-stream-component-state.md).
 Purge has no reverse operation, so an applied purge is recoverable only by
 restoring a verified backup.
 

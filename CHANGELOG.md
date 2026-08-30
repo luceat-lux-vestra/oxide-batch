@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+No changes yet.
+
+## [0.6.0] - 2026-08-30
+
+**M6 release candidate — not yet published.** This pre-1.0 candidate adds the
+complete delivered M6 item-processing surface and the public `oxide-batch-test`
+crate to the coordinated six-crate release set. M6 campaign evidence is
+retained, but no M6 compatibility row is promoted to released `Verified` until
+this named version exists and its release artifacts and clean consumers pass.
+M6 does not claim M7-M14 completion, `1.0`, GA, full Spring Batch parity, or
+distributed execution. See the [release checklist](docs/release/release-checklist.md),
+[support matrix](docs/release/support-matrix.md#0.6.0-m6-release-candidate),
+and [M6 exit evidence](docs/project/m6-exit-evidence.md).
+
+**Migration notes:** `0.6.0` uses metadata schema `4`, including the additive
+M6 `ItemStream` component-state migration. Upgrade from schemas `1`, `2`, or
+`3` only after quiescing older writers and taking a verified backup; rollback
+is restore-based. See the [upgrade and rollback guide](docs/guides/upgrade-and-rollback.md).
+
 ### Added
 
 - `oxide_batch::item_components`, the standard item composition catalog:
@@ -900,6 +919,7 @@ published as limitations rather than advertised capability; see the
 - Initial project governance, repository policy, and CI foundation.
 - Public `oxide-batch` facade crate metadata and pre-alpha documentation.
 
-[Unreleased]: https://github.com/luceat-lux-vestra/oxide-batch/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/luceat-lux-vestra/oxide-batch/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/luceat-lux-vestra/oxide-batch/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/luceat-lux-vestra/oxide-batch/compare/v0.1.0-alpha.1...v0.5.0
 [0.1.0-alpha.1]: https://github.com/luceat-lux-vestra/oxide-batch/releases/tag/v0.1.0-alpha.1

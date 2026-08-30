@@ -7,76 +7,103 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing published release tag to verify
+        description: Existing immutable release tag to verify or recover
         required: true
+        type: string
+      mode:
+        description: Verification only, or explicitly publish registered crates while bootstrapping a new crate name
+        required: true
+        default: verify
+        type: choice
+        options:
+          - verify
+          - publish-registered
+      confirmation:
+        description: Type PUBLISH_REGISTERED_ONLY only for the publish-registered mode
+        required: false
+        default: ""
         type: string
 
 permissions:
   contents: read
-  id-token: write
 
 env:
-  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.event.release.tag_name }}
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
+  RECOVERY_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'release' }}
 
 jobs:
-  publish:
-    name: publish
+  verify:
+    name: verify-release
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment: release
+    outputs:
+      bootstrap: ${{ steps.release.outputs.bootstrap }}
+      version: ${{ steps.release.outputs.version }}
+      pending: ${{ steps.registry.outputs.pending }}
+      bootstrap_required: ${{ steps.registry.outputs.bootstrap_required }}
     steps:
       - name: Check out release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.RELEASE_TAG }}
 
-      - name: Verify manual recovery targets a published release
+      - name: Verify manual recovery target and explicit mode
         if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
+          CONFIRMATION: ${{ inputs.confirmation }}
         run: |
           set -euo pipefail
           view="$(gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --json tagName,isDraft)"
           test "$(jq -r '.tagName' <<<"${view}")" = "${RELEASE_TAG}"
-          test "$(jq -r '.isDraft' <<<"${view}")" = "false"
+          if test "${RECOVERY_MODE}" = "publish-registered"; then
+            test "${CONFIRMATION}" = "PUBLISH_REGISTERED_ONLY"
+          else
+            test -z "${CONFIRMATION}"
+            test "$(jq -r '.isDraft' <<<"${view}")" = "false"
+          fi
 
       - name: Verify release tag and select publication mode
         id: release
         run: |
           set -euo pipefail
-          git rev-parse "${RELEASE_TAG}^{commit}" >/dev/null
-          package_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "oxide-batch") | .version')"
+          tag_commit="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+          test "$(git rev-parse HEAD)" = "${tag_commit}"
+          versions="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '[.packages[] | select((.publish // []) | length > 0) | .version] | unique | .[]')"
+          test "$(wc -l <<<"${versions}" | tr -d ' ')" = "1"
+          package_version="${versions}"
           test "v${package_version}" = "${RELEASE_TAG}"
           echo "version=${package_version}" >> "${GITHUB_OUTPUT}"
           if test "${package_version}" = "0.5.0"; then
             # crates.io Trusted Publishing cannot create a crate. v0.5.0 is
-            # the one-time workspace bootstrap that first publishes core,
-            # repository, plan, and cli alongside the already-owned facade.
+            # the original workspace bootstrap; recovery of that tag only
+            # verifies its own five-crate archives.
             echo "bootstrap=true" >> "${GITHUB_OUTPUT}"
           else
             echo "bootstrap=false" >> "${GITHUB_OUTPUT}"
           fi
 
       - name: Verify packages
-        if: github.event_name == 'release' && steps.release.outputs.bootstrap != 'true'
-        run: >-
-          cargo publish --package oxide-batch-core
-          --package oxide-batch-repository --package oxide-batch-plan
-          --package oxide-batch --package oxide-batch-cli
-          --package oxide-batch-test
-          --locked --dry-run
+        if: github.event_name == 'release' && steps.release.outputs.bootstrap != 'true' || github.event_name == 'workflow_dispatch' && inputs.mode == 'publish-registered'
+        run: |
+          set -euo pipefail
+          # release-order validates the accepted set, lockstep versions, and
+          # exact internal requirements from this immutable tag. Cargo then
+          # resolves and dry-runs that complete workspace release set.
+          cargo run --quiet --package oxide-batch-xtask -- release-order >/dev/null
+          cargo publish --workspace --locked --dry-run
 
       - name: Verify manually bootstrapped crates.io archives
-        if: steps.release.outputs.bootstrap == 'true' || github.event_name == 'workflow_dispatch'
+        if: steps.release.outputs.bootstrap == 'true' || github.event_name == 'workflow_dispatch' && inputs.mode == 'verify'
         env:
           PACKAGE_VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
 
           # Derived from the checked-out tag's own manifests rather than a
-          # hardcoded list, so recovery verification of an older tag (e.g.
-          # v0.5.0, which predates oxide-batch-test) names exactly the
-          # crates that tag actually released, not the current accepted set.
+          # hardcoded list, so recovery of an older tag (v0.5.0 predates
+          # oxide-batch-test) verifies exactly what that tag released.
           RELEASED_CRATES="$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[] | select((.publish // []) | length > 0) | .name' \
             | tr '\n' ' ')"
@@ -85,9 +112,8 @@ jobs:
           for crate in ${RELEASED_CRATES}; do
             published="${published} --package ${crate}"
           done
-          # Recreate the exact archives from the immutable release tag. The
-          # bootstrap is accepted only if crates.io records the same SHA-256
-          # checksum for every package in the release set.
+          # Recreate archives from the immutable release tag. The bootstrap is
+          # accepted only when every registry checksum matches the tag tree.
           # shellcheck disable=SC2086
           cargo package ${published} --locked
 
@@ -103,62 +129,159 @@ jobs:
             test "${local_sha}" = "${registry_sha}"
           done
 
-      # OIDC Trusted Publishing can publish a new version of an existing
-      # crate, but it cannot create a crate name (see
-      # docs/release/m5-0.5.0-bootstrap.md). A crate the accepted release set
-      # names but crates.io has never seen needs its own separately reviewed
-      # first-publication bootstrap first (see
-      # docs/release/m6-oxide-batch-test-bootstrap.md for oxide-batch-test
-      # specifically) -- this step fails loudly and by name instead of
-      # letting "Publish to crates.io" discover the same gap as an opaque
-      # OIDC/crates.io error.
-      - name: Verify every released crate already exists on crates.io
-        if: github.event_name == 'release' && steps.release.outputs.bootstrap != 'true'
+      - name: Classify exact registry versions
+        id: registry
+        if: github.event_name == 'release' && steps.release.outputs.bootstrap != 'true' || github.event_name == 'workflow_dispatch' && inputs.mode == 'publish-registered'
+        env:
+          PACKAGE_VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          missing=""
-          for crate in oxide-batch-core oxide-batch-repository oxide-batch-plan \
-            oxide-batch oxide-batch-cli oxide-batch-test; do
-            status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
-              --user-agent "oxide-batch-release-verifier" \
+          cargo package --workspace --locked
+          mapfile -t RELEASE_ORDER < <(
+            cargo run --quiet --package oxide-batch-xtask -- release-order
+          )
+          pending_crates=""
+          bootstrap_required=false
+          for crate in "${RELEASE_ORDER[@]}"; do
+            crate_status="$(curl --silent --show-error --location --retry 5 --retry-delay 2 \
+              --user-agent "oxide-batch-release-verifier/${PACKAGE_VERSION}" \
+              --output /dev/null --write-out '%{http_code}' \
               "https://crates.io/api/v1/crates/${crate}")"
-            if test "${status}" != "200"; then
-              missing="${missing} ${crate}"
+            if test "${crate_status}" != "200"; then
+              if test "${RECOVERY_MODE}" = "publish-registered" && test "${crate}" = "${RELEASE_ORDER[${#RELEASE_ORDER[@]}-1]}"; then
+                bootstrap_required=true
+                echo "${crate} is not registered; leaving it for the separately reviewed first-publication bootstrap"
+                continue
+              fi
+              echo "::error::${crate} is not registered on crates.io; complete its separately reviewed first-publication bootstrap before using OIDC"
+              exit 1
             fi
+
+            archive="target/package/${crate}-${PACKAGE_VERSION}.crate"
+            test -s "${archive}"
+            response="$(mktemp)"
+            version_status="$(curl --silent --show-error --location --retry 5 --retry-delay 2 \
+              --user-agent "oxide-batch-release-verifier/${PACKAGE_VERSION}" \
+              --output "${response}" --write-out '%{http_code}' \
+              "https://crates.io/api/v1/crates/${crate}/${PACKAGE_VERSION}")"
+            case "${version_status}" in
+              200)
+                local_sha="$(sha256sum "${archive}" | awk '{print $1}')"
+                registry_sha="$(jq -er '.version.checksum' "${response}")"
+                test "${local_sha}" = "${registry_sha}"
+                echo "${crate} ${PACKAGE_VERSION}: already published with matching checksum ${local_sha}"
+                ;;
+              404)
+                if test "${RECOVERY_MODE}" = "publish-registered" && test "${crate}" = "${RELEASE_ORDER[${#RELEASE_ORDER[@]}-1]}"; then
+                  bootstrap_required=true
+                  echo "${crate} ${PACKAGE_VERSION}: registered name has no exact version; leaving it for the separately reviewed bootstrap"
+                else
+                  pending_crates="${pending_crates}${crate}"$'\n'
+                  echo "${crate} ${PACKAGE_VERSION}: pending publication"
+                fi
+                ;;
+              *)
+                echo "::error::unexpected crates.io status ${version_status} for ${crate} ${PACKAGE_VERSION}"
+                cat "${response}"
+                exit 1
+                ;;
+            esac
+            rm -f "${response}"
           done
-          if test -n "${missing}"; then
-            echo "::error::the following crates have never been published and need a" \
-              "separately reviewed first-publication bootstrap before this release can" \
-              "use OIDC Trusted Publishing for them (see docs/release/):${missing}"
-            exit 1
+          if test -n "${pending_crates}"; then
+            echo "pending=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "pending=false" >> "${GITHUB_OUTPUT}"
           fi
+          echo "bootstrap_required=${bootstrap_required}" >> "${GITHUB_OUTPUT}"
+
+  publish:
+    name: publish-pending-versions
+    needs: verify
+    if: (github.event_name == 'release' && needs.verify.outputs.bootstrap != 'true' || github.event_name == 'workflow_dispatch' && inputs.mode == 'publish-registered') && needs.verify.outputs.pending == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Verify exact tag tree and publication order
+        run: |
+          set -euo pipefail
+          tag_commit="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+          test "$(git rev-parse HEAD)" = "${tag_commit}"
+          cargo run --quiet --package oxide-batch-xtask -- release-order >/dev/null
 
       - name: Authenticate to crates.io
-        if: github.event_name == 'release' && steps.release.outputs.bootstrap != 'true'
         id: crates-io-auth
         uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
 
-      # RFC-0011 and ADR-0010 publish the internal crates the facade
-      # requires, plus the operator CLI, in dependency order and at the
-      # facade version: core, repository, plan, oxide-batch, oxide-batch-cli.
-      # #145 added oxide-batch-test as a sixth crate at the same version and
-      # cadence, per the M6 Gate G decision; the pre-flight existence check
-      # above guarantees it (and every other crate here) is already
-      # registered on crates.io by the time this step runs, so OIDC Trusted
-      # Publishing only ever publishes a new version of an existing crate,
-      # never attempts to create one. Cargo resolves this order from the
-      # dependency graph of the selected packages regardless of --package
-      # argument order. v0.5.0 is the sole first-publication bootstrap
-      # exception (docs/release/m5-0.5.0-bootstrap.md); later releases use
-      # OIDC Trusted Publishing exclusively. Gated to the release.published
-      # event only: workflow_dispatch manual recovery never authenticates to
-      # or publishes on crates.io, verification only.
+      # Each crate is classified again immediately before its publish attempt.
+      # The verify-job result is only a scheduling hint: a publish can make an
+      # earlier snapshot stale, and immutable registry versions must never be
+      # blindly uploaded a second time after a partial failure.
       - name: Publish to crates.io
-        if: github.event_name == 'release' && steps.release.outputs.bootstrap != 'true'
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
-        run: >-
-          cargo publish --package oxide-batch-core
-          --package oxide-batch-repository --package oxide-batch-plan
-          --package oxide-batch --package oxide-batch-cli
-          --package oxide-batch-test --locked
+          PACKAGE_VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          cargo package --workspace --locked
+          mapfile -t release_order < <(
+            cargo run --quiet --package oxide-batch-xtask -- release-order
+          )
+          for crate in "${release_order[@]}"; do
+            archive="target/package/${crate}-${PACKAGE_VERSION}.crate"
+            test -s "${archive}"
+            local_sha="$(sha256sum "${archive}" | awk '{print $1}')"
+            crate_status="$(curl --silent --show-error --location --retry 5 --retry-delay 2 \
+              --user-agent "oxide-batch-release-publisher/${PACKAGE_VERSION}" \
+              --output /dev/null --write-out '%{http_code}' \
+              "https://crates.io/api/v1/crates/${crate}")"
+            if test "${crate_status}" != "200"; then
+              if test "${RECOVERY_MODE}" = "publish-registered" && test "${crate}" = "${release_order[${#release_order[@]}-1]}"; then
+                echo "${crate} is not registered; leaving it for the separately reviewed first-publication bootstrap"
+                continue
+              fi
+              echo "::error::${crate} is not registered immediately before publication; refusing to create a crate name"
+              exit 1
+            fi
+
+            response="$(mktemp)"
+            version_status="$(curl --silent --show-error --location --retry 5 --retry-delay 2 \
+              --user-agent "oxide-batch-release-publisher/${PACKAGE_VERSION}" \
+              --output "${response}" --write-out '%{http_code}' \
+              "https://crates.io/api/v1/crates/${crate}/${PACKAGE_VERSION}")"
+            case "${version_status}" in
+              200)
+                registry_sha="$(jq -er '.version.checksum' "${response}")"
+                rm -f "${response}"
+                if test "${local_sha}" != "${registry_sha}"; then
+                  echo "::error::${crate} ${PACKAGE_VERSION} exists with checksum ${registry_sha}, but the tag archive is ${local_sha}"
+                  exit 1
+                fi
+                echo "${crate} ${PACKAGE_VERSION}: already published with matching checksum ${local_sha}; skipping"
+                ;;
+              404)
+                rm -f "${response}"
+                if test "${RECOVERY_MODE}" = "publish-registered" && test "${crate}" = "${release_order[${#release_order[@]}-1]}"; then
+                  echo "${crate} ${PACKAGE_VERSION} is not yet bootstrapped; leaving it unpublished"
+                  continue
+                fi
+                echo "publishing ${crate} ${PACKAGE_VERSION} after immediate registry recheck"
+                cargo publish -p "${crate}" --locked
+                ;;
+              *)
+                echo "::error::unexpected crates.io status ${version_status} for ${crate} ${PACKAGE_VERSION} immediately before publication"
+                cat "${response}"
+                rm -f "${response}"
+                exit 1
+                ;;
+            esac
+          done

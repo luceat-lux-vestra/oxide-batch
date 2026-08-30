@@ -48,9 +48,11 @@ boundary still does not authorize publication.
   --dry-run --locked` before publication. The workspace dry run resolves
   unpublished members through a temporary local registry, so it succeeds
   before the first upload.
-- Publish workspace crates in dependency order: `oxide-batch-core`,
+- Publish the six-crate release set in the dependency order derived by
+  `cargo xtask release-order`: `oxide-batch-core`,
   `oxide-batch-repository`, `oxide-batch-plan`, `oxide-batch`,
-  `oxide-batch-cli`.
+  `oxide-batch-cli`, `oxide-batch-test`. The release check fails closed if the
+  Cargo graph, lockstep version, or workflow diverges from this contract.
 - Use exact version requirements for workspace dependencies in published
   manifests while retaining local `path` dependencies.
 - Create a reviewed changelog entry and immutable Git tag for every release.
@@ -114,6 +116,22 @@ exact procedure is [`m5-0.5.0-bootstrap.md`](../release/m5-0.5.0-bootstrap.md).
 The `0.5.0` release workflow verifies the manually published registry archives
 against packages rebuilt from the immutable tag instead of attempting to
 publish the same versions twice.
+
+The first M6 release is a separate bootstrap boundary for
+`oxide-batch-test`. It is not published by a name-creation shortcut in the
+workflow. After the reviewed `0.6.0` tree is merged, tagged, and its draft
+artifacts are reviewed, the maintainer explicitly dispatches `release.yml` in
+its `publish-registered` mode (with the required
+`PUBLISH_REGISTERED_ONLY` confirmation). OIDC then publishes only the five
+already-registered names in the derived dependency order and leaves the new
+name untouched. The maintainer next manually publishes only
+`oxide-batch-test 0.6.0` from the immutable tag, configures its Trusted
+Publisher, removes the short-lived local token, and only then publishes the
+reviewed GitHub Release. The normal release path rejects any unregistered name;
+every publication attempt rechecks exact registry version/checksum state, skips
+matching immutable versions, and fails closed on mismatches or unexpected
+responses. The exact sequence is
+[`m6-oxide-batch-test-bootstrap.md`](../release/m6-oxide-batch-test-bootstrap.md).
 
 A protected version tag first creates a draft GitHub Release containing the
 exact `.crate`, SHA-256 checksums, a package-scoped CycloneDX SBOM, and GitHub
