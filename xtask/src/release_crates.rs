@@ -107,13 +107,13 @@ pub fn check() -> Result<Vec<String>, String> {
         ));
     }
     let draft_dynamic_occurrences = draft_text.matches(DYNAMIC_RELEASE_SET_FILTER).count();
-    if draft_dynamic_occurrences != 3 {
+    if draft_dynamic_occurrences != 4 {
         violations.push(format!(
             "{RELEASE_DRAFT_WORKFLOW} has {draft_dynamic_occurrences} dynamic release-set \
-             derivation(s) (expected 3: package/publish, SBOM generation, and #212's \
-             attestation-coverage verification); a hardcoded RELEASED_CRATES list there would \
-             break workflow_dispatch recovery against a tag that predates a later-added \
-             released crate"
+             derivation(s) (expected 4: package/publish, SBOM generation, #212's existing-SBOM- \
+             coverage check, and #212's attestation-coverage verification); a hardcoded \
+             RELEASED_CRATES list there would break workflow_dispatch recovery against a tag \
+             that predates a later-added released crate"
         ));
     }
     if extract_env_list(&draft_text, "RELEASED_CRATES")
@@ -132,15 +132,27 @@ pub fn check() -> Result<Vec<String>, String> {
         &sbom_attestation_crates,
         &manifest_set,
     ));
-    if !draft_text.contains("- name: Attest oxide-batch-test SBOM\n        if: steps.package.outputs.has_test == 'true'") {
+    if !draft_text.contains(
+        "- name: Attest oxide-batch-test SBOM\n        if: steps.package.outputs.has_test == 'true' && steps.sbom_coverage.outputs.oxide_batch_test_sbom_missing == 'true'",
+    ) {
         violations.push(format!(
-            "{RELEASE_DRAFT_WORKFLOW} must skip the M6 test-kit attestation when recovering a pre-M6 tag"
+            "{RELEASE_DRAFT_WORKFLOW} must skip the M6 test-kit attestation both when recovering \
+             a pre-M6 tag and when its SBOM attestation already exists"
         ));
     }
     if let Err(violation) = check_verify_tag_and_package_not_flattened(&draft_text) {
         violations.push(violation);
     }
     if let Err(violation) = check_attestation_coverage_verification(&draft_text) {
+        violations.push(violation);
+    }
+    if let Err(violation) = check_provenance_gated_to_tag_push(&draft_text) {
+        violations.push(violation);
+    }
+    if let Err(violation) = check_sbom_coverage_gating(&draft_text) {
+        violations.push(violation);
+    }
+    if let Err(violation) = check_provenance_source_verification(&draft_text) {
         violations.push(violation);
     }
 
@@ -722,6 +734,118 @@ fn check_attestation_coverage_verification(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Checks the #212 recovery-review fix: provenance is only ever generated
+/// on the original tag `push`.
+///
+/// `workflow_dispatch` sets the run's own `GITHUB_REF`/`GITHUB_SHA` (and
+/// therefore the OIDC claims `actions/attest` derives SLSA provenance from)
+/// from whatever ref *dispatched* the run, not from the tag checked out via
+/// `${{ env.RELEASE_TAG }}`. A recovery dispatched from a branch to pick up
+/// a workflow fix would otherwise record new provenance whose source is
+/// that branch, not the immutable release tag, even though the packaged
+/// bytes are correct. So "Attest package provenance" must run only when
+/// this run's own ref/sha *is* the tag by construction — the `push` event.
+fn check_provenance_gated_to_tag_push(text: &str) -> Result<(), String> {
+    let block = extract_step_block(text, "Attest package provenance")?;
+    if !block.contains("if: github.event_name == 'push'") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Attest package provenance\" must run only on \
+             `github.event_name == 'push'`: a `workflow_dispatch` recovery run's own ref/sha is \
+             whatever ref dispatched it, not the checked-out release tag, so generating \
+             provenance there would record a misleading source commit"
+        ));
+    }
+    Ok(())
+}
+
+/// Checks the #212 recovery-review fix: a `workflow_dispatch` recovery
+/// narrowly attests only the crates actually missing an SBOM attestation,
+/// rather than unconditionally re-attesting every already-covered crate
+/// under the dispatching run's own (possibly non-tag) identity.
+fn check_sbom_coverage_gating(text: &str) -> Result<(), String> {
+    let coverage_block = extract_step_block(text, "Check existing SBOM attestation coverage")?;
+    if !coverage_block.contains(DYNAMIC_RELEASE_SET_FILTER) {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Check existing SBOM attestation coverage\" must derive \
+             its crate set the same dynamic way as the packaging steps, not a hardcoded list"
+        ));
+    }
+    if !coverage_block.contains("predicate_type=") || !coverage_block.contains(SBOM_PREDICATE_TYPE)
+    {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Check existing SBOM attestation coverage\" must query \
+             the attestations API filtered by the SBOM predicate type ({SBOM_PREDICATE_TYPE:?})"
+        ));
+    }
+    if !coverage_block.contains("_sbom_missing=") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Check existing SBOM attestation coverage\" must emit a \
+             per-crate *_sbom_missing output that the individual Attest ... SBOM steps gate on"
+        ));
+    }
+
+    for crate_name in published_crates_from_manifests()? {
+        let slug = crate_name.replace('-', "_");
+        let attest_block = extract_step_block(text, &format!("Attest {crate_name} SBOM"))?;
+        let expected_condition =
+            format!("steps.sbom_coverage.outputs.{slug}_sbom_missing == 'true'");
+        if !attest_block.contains(&expected_condition) {
+            return Err(format!(
+                "{RELEASE_DRAFT_WORKFLOW} \"Attest {crate_name} SBOM\" must gate on \
+                 {expected_condition:?} so a recovery run does not re-attest a crate whose SBOM \
+                 attestation already exists"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Checks the #212 recovery-review fix: the final guard verifies SLSA
+/// provenance against this run's own tag identity, not merely predicate
+/// presence, and derives that identity dynamically rather than a
+/// hardcoded tag/commit that would silently stop matching for any other
+/// release tag.
+fn check_provenance_source_verification(text: &str) -> Result<(), String> {
+    let block = extract_step_block(text, "Verify attestation coverage for every released crate")?;
+    if !block.contains("externalParameters.workflow.ref")
+        || !block.contains("resolvedDependencies")
+        || !block.contains("digest.gitCommit")
+    {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify attestation coverage for every released crate\" \
+             must check the SLSA provenance predicate's own source ref and commit \
+             (buildDefinition.externalParameters.workflow.ref and \
+             buildDefinition.resolvedDependencies[].digest.gitCommit), not merely that a \
+             provenance predicate exists"
+        ));
+    }
+    if !block.contains("refs/tags/${RELEASE_TAG}") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify attestation coverage for every released crate\" \
+             must compare the provenance source ref against refs/tags/${{RELEASE_TAG}}, derived \
+             from this run's own release tag rather than a hardcoded one"
+        ));
+    }
+    if !block.contains("git rev-parse \"${RELEASE_TAG}^{commit}\"") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify attestation coverage for every released crate\" \
+             must independently re-derive the expected commit via \
+             `git rev-parse \"${{RELEASE_TAG}}^{{commit}}\"` rather than trusting a value \
+             computed earlier in the job"
+        ));
+    }
+    for hardcoded in [EXPECTED_RELEASE_VERSION, "v0.6.0"] {
+        if block.contains(hardcoded) {
+            return Err(format!(
+                "{RELEASE_DRAFT_WORKFLOW} \"Verify attestation coverage for every released \
+                 crate\" must not hardcode {hardcoded:?}: that would silently stop matching for \
+                 a workflow_dispatch recovery run targeting any other release tag"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Requires the release-evidence action to be the reviewed attestation action
 /// at an immutable full commit SHA. Version tags and other action identities
 /// are not an acceptable release contract, even when their inputs are valid.
@@ -1003,6 +1127,155 @@ mod tests {
         let error = check_attestation_coverage_verification(&text)
             .expect_err("checking only the provenance predicate is rejected");
         assert!(error.contains("SBOM predicate"), "{error}");
+    }
+
+    #[test]
+    fn check_provenance_gated_to_tag_push_accepts_the_push_only_gate() {
+        let text = "steps:\n      - name: Attest package provenance\n        if: github.event_name == 'push'\n        uses: actions/attest@x\n      - name: Next step\n        run: echo hi\n";
+        check_provenance_gated_to_tag_push(text).expect("push-only gate accepted");
+    }
+
+    #[test]
+    fn check_provenance_gated_to_tag_push_rejects_an_unconditional_step() {
+        let text = "steps:\n      - name: Attest package provenance\n        uses: actions/attest@x\n      - name: Next step\n        run: echo hi\n";
+        let error = check_provenance_gated_to_tag_push(text).expect_err(
+            "an unconditional provenance step is rejected: a workflow_dispatch \
+                         recovery run would then record misleading provenance",
+        );
+        assert!(error.contains("github.event_name == 'push'"), "{error}");
+    }
+
+    #[test]
+    fn check_provenance_gated_to_tag_push_rejects_a_missing_step() {
+        let error =
+            check_provenance_gated_to_tag_push("steps:\n  - name: Other\n    run: echo hi\n")
+                .expect_err("missing step is an error");
+        assert!(error.contains("Attest package provenance"), "{error}");
+    }
+
+    /// Every published crate name gated on its own `sbom_coverage` output,
+    /// matching what `check_sbom_coverage_gating` requires. `published_
+    /// crates_from_manifests` reads this workspace's real manifests, so the
+    /// crate list here must track the six real published crates, not a
+    /// value independent of them.
+    fn complete_sbom_coverage_fixture() -> String {
+        use std::fmt::Write as _;
+
+        let mut text = String::from(
+            "steps:\n      - name: Check existing SBOM attestation coverage\n        run: |\n          RELEASED_CRATES=\"$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select((.publish // []) | length > 0) | .name')\"\n          count=\"$(gh api --method GET repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest} -f predicate_type=https://cyclonedx.org/bom --jq '.attestations | length')\" || count=0\n          echo \"${slug}_sbom_missing=${missing}\" >> \"${GITHUB_OUTPUT}\"\n",
+        );
+        for crate_name in [
+            "oxide-batch-core",
+            "oxide-batch-repository",
+            "oxide-batch-plan",
+            "oxide-batch",
+            "oxide-batch-cli",
+            "oxide-batch-test",
+        ] {
+            let slug = crate_name.replace('-', "_");
+            let _ = write!(
+                text,
+                "      - name: Attest {crate_name} SBOM\n        if: steps.sbom_coverage.outputs.{slug}_sbom_missing == 'true'\n        uses: actions/attest@x\n"
+            );
+        }
+        text
+    }
+
+    #[test]
+    fn check_sbom_coverage_gating_accepts_a_complete_fixture() {
+        let text = complete_sbom_coverage_fixture();
+        check_sbom_coverage_gating(&text).expect("complete gating fixture accepted");
+    }
+
+    #[test]
+    fn check_sbom_coverage_gating_rejects_a_missing_coverage_step() {
+        let error = check_sbom_coverage_gating("steps:\n  - name: Other\n    run: echo hi\n")
+            .expect_err("missing coverage step is an error");
+        assert!(
+            error.contains("Check existing SBOM attestation coverage"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn check_sbom_coverage_gating_rejects_a_static_crate_set_in_the_coverage_step() {
+        let text = complete_sbom_coverage_fixture().replacen(
+            "RELEASED_CRATES=\"$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select((.publish // []) | length > 0) | .name')\"",
+            "RELEASED_CRATES=\"oxide-batch-core oxide-batch-repository oxide-batch-plan oxide-batch oxide-batch-cli oxide-batch-test\"",
+            1,
+        );
+        let error = check_sbom_coverage_gating(&text)
+            .expect_err("a hardcoded crate set in the coverage step is rejected");
+        assert!(error.contains("dynamic"), "{error}");
+    }
+
+    #[test]
+    fn check_sbom_coverage_gating_rejects_an_ungated_attest_step() {
+        let text = complete_sbom_coverage_fixture().replace(
+            "      - name: Attest oxide-batch-cli SBOM\n        if: steps.sbom_coverage.outputs.oxide_batch_cli_sbom_missing == 'true'\n        uses: actions/attest@x\n",
+            "      - name: Attest oxide-batch-cli SBOM\n        uses: actions/attest@x\n",
+        );
+        let error = check_sbom_coverage_gating(&text).expect_err(
+            "an attest step not gated on its own missing-coverage output is rejected: a \
+             recovery run would then re-attest a crate whose SBOM attestation already exists, \
+             under the dispatching run's own (possibly non-tag) identity",
+        );
+        assert!(error.contains("oxide-batch-cli"), "{error}");
+    }
+
+    fn complete_provenance_source_fixture() -> String {
+        "steps:\n      - name: Verify attestation coverage for every released crate\n        run: |\n          tag_commit=\"$(git rev-parse \"${RELEASE_TAG}^{commit}\")\"\n          expected_source_ref=\"refs/tags/${RELEASE_TAG}\"\n          jq '.predicate.buildDefinition.externalParameters.workflow.ref == $ref and (.predicate.buildDefinition.resolvedDependencies[0].digest.gitCommit // \"\") == $sha'\n      - name: Create or refresh draft release\n        run: echo hi\n".to_owned()
+    }
+
+    #[test]
+    fn check_provenance_source_verification_accepts_a_complete_fixture() {
+        let text = complete_provenance_source_fixture();
+        check_provenance_source_verification(&text).expect("complete fixture accepted");
+    }
+
+    #[test]
+    fn check_provenance_source_verification_rejects_missing_field_checks() {
+        let text = "steps:\n      - name: Verify attestation coverage for every released crate\n        run: |\n          echo skip\n      - name: Create or refresh draft release\n        run: echo hi\n";
+        let error = check_provenance_source_verification(text).expect_err(
+            "a guard that never inspects the provenance predicate's own source ref/commit is \
+             rejected: presence of a provenance predicate alone does not prove it names the \
+             right source",
+        );
+        assert!(error.contains("resolvedDependencies"), "{error}");
+    }
+
+    #[test]
+    fn check_provenance_source_verification_rejects_a_missing_dynamic_ref_comparison() {
+        let text = "steps:\n      - name: Verify attestation coverage for every released crate\n        run: |\n          tag_commit=\"$(git rev-parse \"${RELEASE_TAG}^{commit}\")\"\n          jq '.predicate.buildDefinition.externalParameters.workflow.ref == $ref and (.predicate.buildDefinition.resolvedDependencies[0].digest.gitCommit // \"\") == $sha'\n      - name: Create or refresh draft release\n        run: echo hi\n";
+        let error = check_provenance_source_verification(text)
+            .expect_err("a guard missing the refs/tags/${RELEASE_TAG} comparison is rejected");
+        assert!(error.contains("refs/tags/${RELEASE_TAG}"), "{error}");
+    }
+
+    #[test]
+    fn check_provenance_source_verification_rejects_a_missing_tag_commit_rederivation() {
+        let text = "steps:\n      - name: Verify attestation coverage for every released crate\n        run: |\n          expected_source_ref=\"refs/tags/${RELEASE_TAG}\"\n          jq '.predicate.buildDefinition.externalParameters.workflow.ref == $ref and (.predicate.buildDefinition.resolvedDependencies[0].digest.gitCommit // \"\") == $sha'\n      - name: Create or refresh draft release\n        run: echo hi\n";
+        let error = check_provenance_source_verification(text).expect_err(
+            "a guard that trusts an earlier-computed commit instead of \
+                         independently re-deriving it is rejected",
+        );
+        assert!(error.contains("git rev-parse"), "{error}");
+    }
+
+    #[test]
+    fn check_provenance_source_verification_rejects_a_hardcoded_tag() {
+        // Inserted before the step boundary (the next "- name:" line), so
+        // it lands inside the extracted block rather than after it.
+        let text = complete_provenance_source_fixture().replacen(
+            "      - name: Create or refresh draft release",
+            "          # v0.6.0\n      - name: Create or refresh draft release",
+            1,
+        );
+        let error = check_provenance_source_verification(&text).expect_err(
+            "a guard that hardcodes the current tag/version is rejected: it would silently \
+             stop matching for a workflow_dispatch recovery run targeting any other tag",
+        );
+        assert!(error.contains("must not hardcode"), "{error}");
     }
 
     #[test]
