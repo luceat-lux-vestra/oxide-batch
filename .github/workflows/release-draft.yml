@@ -29,6 +29,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      # #212 recovery review, round 4: `workflow_dispatch` runs whichever
+      # ref's own copy of this workflow file was selected at dispatch time
+      # (the dispatch `ref`, not `inputs.tag`, decides which workflow
+      # definition executes) — so dispatching from an unreviewed branch
+      # would run that branch's own version of every check in this file,
+      # including ones a PR could have quietly removed. A recovery run is
+      # therefore only valid when dispatched from the reviewed, merged
+      # `refs/heads/main`, checked first and before any checkout so an
+      # illegitimate dispatch fails immediately.
+      - name: Verify workflow_dispatch originated from main
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error::workflow_dispatch recovery must be dispatched from refs/heads/main, not ${GITHUB_REF}: dispatching from any other ref would execute that ref's own (possibly unreviewed) copy of this workflow file" >&2
+            exit 1
+          fi
+
       - name: Check out release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -90,10 +108,23 @@ jobs:
             echo "EOF"
           } >> "${GITHUB_OUTPUT}"
 
+      # #212 recovery review, round 2: `cargo-cyclonedx` embeds a random
+      # `serialNumber` (UUID) and a wall-clock `metadata.timestamp` in every
+      # SBOM it generates — confirmed against the real `v0.6.0` SBOM
+      # attestations — so re-running it on a recovery produces a different
+      # (non-reproducible) document even for the exact same dependency
+      # graph. Recovery's job is to add the one missing attestation for
+      # release evidence that already exists, not to regenerate that
+      # evidence, so SBOM/checksum generation runs only on the original tag
+      # `push`; a `workflow_dispatch` recovery downloads the already-
+      # published SBOM/checksum assets instead (see "Download existing
+      # release assets for recovery" below).
       - name: Install pinned SBOM generator
+        if: github.event_name == 'push'
         run: cargo install cargo-cyclonedx --version 0.5.9 --locked
 
       - name: Generate release SBOM and checksums
+        if: github.event_name == 'push'
         id: evidence
         env:
           PACKAGE_VERSION: ${{ steps.package.outputs.version }}
@@ -138,43 +169,251 @@ jobs:
           } >> "${GITHUB_OUTPUT}"
           echo "checksum_path=${checksum_path}" >> "${GITHUB_OUTPUT}"
 
+      # #212 recovery review, round 2: the counterpart to gating SBOM/
+      # checksum generation to `push` above. Downloads the already-
+      # published SBOM JSON files and checksum manifest into the same
+      # `target/package/<crate>-<version>.cdx.json` paths the packaging
+      # step would otherwise have populated, so the unchanged "Attest ...
+      # SBOM" steps below attest the exact existing bytes instead of a
+      # freshly (and non-reproducibly) regenerated document. `--clobber`
+      # here is `gh release download`'s *local* overwrite flag for this
+      # ephemeral runner's own filesystem — unrelated to `gh release
+      # upload --clobber`, which this workflow never runs on
+      # `workflow_dispatch` (see "Create or refresh draft release" below).
+      #
+      # `sha256sum --check --strict` against the downloaded manifest, run
+      # from inside target/package, verifies every listed `.crate` archive
+      # (freshly rebuilt by "Verify tag and package" above, expected
+      # reproducible for the same locked deps/toolchain) still matches its
+      # original recorded digest, and every listed `.cdx.json` (just
+      # downloaded from that same release) trivially does — the recovery
+      # invariant that no archive digest may have changed, checked in one
+      # command rather than trusted.
+      # #212 recovery review, round 3: recovery must target a draft, not a
+      # published release — the gate this workflow otherwise relies on (a
+      # `workflow_dispatch` recovery only ever adds a missing attestation,
+      # never uploads assets) is not itself a proof that the release is
+      # still a draft. Checked explicitly here rather than only inside the
+      # push-only "Create or refresh draft release" step, which does not
+      # run on a recovery at all.
+      - name: Download existing release assets for recovery
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          is_draft="$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft)"
+          test "${is_draft}" = "true"
+
+          gh release download "${RELEASE_TAG}" \
+            --pattern '*.cdx.json' \
+            --pattern '*.sha256' \
+            --dir target/package \
+            --clobber
+
+          checksum_path="target/package/oxide-batch-${PACKAGE_VERSION}.sha256"
+          test -s "${checksum_path}"
+          (
+            cd target/package
+            sha256sum --check --strict "$(basename "${checksum_path}")"
+          )
+
+      # #212 recovery review, round 3: internal consistency between the
+      # downloaded SBOM and the downloaded checksum manifest proves nothing
+      # on its own — both live in the same mutable draft Release, so
+      # tampering with them together still passes that cross-check. This
+      # checks out the reviewed, merged-to-main evidence manifest for this
+      # exact tag as an independent trust anchor in a separate directory,
+      # leaving the primary checkout pinned to the immutable release tag.
+      # #212 recovery review, round 4: `ref: main` is a moving target — by
+      # the time this step runs (or on a later re-run of the same
+      # workflow_dispatch run), `main` may have advanced past the commit
+      # that was actually reviewed and dispatched. Pinned to `github.sha`
+      # instead, which is fixed to the commit that triggered this run (and,
+      # given the check above, is guaranteed to be a commit that was on
+      # `refs/heads/main` at dispatch time) and does not move on a re-run.
+      - name: Check out reviewed release evidence manifest
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: release-evidence-manifest
+          sparse-checkout: |
+            docs/release/evidence
+          sparse-checkout-cone-mode: false
+
+      - name: Verify reviewed evidence manifest checkout is pinned to the dispatched commit
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          actual_head="$(git -C release-evidence-manifest rev-parse HEAD)"
+          if [ "${actual_head}" != "${GITHUB_SHA}" ]; then
+            echo "::error::release-evidence-manifest checkout HEAD is ${actual_head}, expected the dispatched commit ${GITHUB_SHA}" >&2
+            exit 1
+          fi
+
+      - name: Verify downloaded evidence against the reviewed manifest
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          manifest_path="release-evidence-manifest/docs/release/evidence/${RELEASE_TAG}.json"
+          if [ ! -s "${manifest_path}" ]; then
+            echo "::error::no reviewed evidence manifest at ${manifest_path} on main; a workflow_dispatch recovery requires one merged before it can safely trust anything from the mutable draft Release" >&2
+            exit 1
+          fi
+
+          tag_object="$(git rev-parse "${RELEASE_TAG}")"
+          tag_commit="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+          tag_tree="$(git rev-parse "${RELEASE_TAG}^{tree}")"
+          checksum_path="target/package/oxide-batch-${PACKAGE_VERSION}.sha256"
+          checksum_sha="$(sha256sum "${checksum_path}" | cut -d' ' -f1)"
+
+          RELEASED_CRATES="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select((.publish // []) | length > 0) | .name')"
+
+          failed=0
+
+          for field in tagObject:"${tag_object}" commit:"${tag_commit}" tree:"${tag_tree}"; do
+            key="${field%%:*}"
+            expected="${field#*:}"
+            actual="$(jq -r --arg k "${key}" '.[$k]' "${manifest_path}")"
+            if [ "${actual}" != "${expected}" ]; then
+              echo "::error::reviewed evidence manifest ${key} is ${actual}, expected ${expected} (the checked-out release tag's own identity)" >&2
+              failed=1
+            fi
+          done
+
+          manifest_checksum_sha="$(jq -r '.checksumManifestSha256' "${manifest_path}")"
+          if [ "${checksum_sha}" != "${manifest_checksum_sha}" ]; then
+            echo "::error::downloaded checksum manifest ${checksum_path} has sha256 ${checksum_sha}, expected ${manifest_checksum_sha} per the reviewed evidence manifest" >&2
+            failed=1
+          fi
+
+          for crate in ${RELEASED_CRATES}; do
+            crate_path="target/package/${crate}-${PACKAGE_VERSION}.crate"
+            sbom_path="target/package/${crate}-${PACKAGE_VERSION}.cdx.json"
+            test -s "${crate_path}"
+            test -s "${sbom_path}"
+
+            actual_crate_sha="$(sha256sum "${crate_path}" | cut -d' ' -f1)"
+            actual_sbom_sha="$(sha256sum "${sbom_path}" | cut -d' ' -f1)"
+            expected_crate_sha="$(jq -r --arg c "${crate}" '.crates[$c].crateSha256' "${manifest_path}")"
+            expected_sbom_sha="$(jq -r --arg c "${crate}" '.crates[$c].sbomSha256' "${manifest_path}")"
+
+            if [ "${expected_crate_sha}" = "null" ] || [ "${expected_sbom_sha}" = "null" ]; then
+              echo "::error::reviewed evidence manifest has no entry for ${crate}" >&2
+              failed=1
+              continue
+            fi
+            if [ "${actual_crate_sha}" != "${expected_crate_sha}" ]; then
+              echo "::error::${crate_path} has sha256 ${actual_crate_sha}, expected ${expected_crate_sha} per the reviewed evidence manifest" >&2
+              failed=1
+            fi
+            if [ "${actual_sbom_sha}" != "${expected_sbom_sha}" ]; then
+              echo "::error::${sbom_path} has sha256 ${actual_sbom_sha}, expected ${expected_sbom_sha} per the reviewed evidence manifest" >&2
+              failed=1
+            fi
+          done
+
+          test "${failed}" -eq 0
+
+      # #212 recovery review: `workflow_dispatch` sets this run's own
+      # GITHUB_REF/GITHUB_SHA (and therefore the OIDC token and the SLSA
+      # provenance `actions/attest` derives from it) from whatever ref
+      # *dispatched* this run, not from `${{ env.RELEASE_TAG }}` checked out
+      # above. A recovery dispatched from `main` to pick up a workflow fix
+      # would therefore stamp brand-new provenance whose source ref/commit
+      # is `main`, not the immutable release tag — misleading evidence even
+      # though the packaged bytes are unaffected. Provenance is therefore
+      # only ever generated on the original tag `push`, whose ref/sha is the
+      # tag itself by construction; a `workflow_dispatch` recovery run always
+      # relies on the provenance already recorded by that original run.
       - name: Attest package provenance
+        if: github.event_name == 'push'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: ${{ steps.package.outputs.crate_paths }}
 
+      # #212 recovery review: narrows what a `workflow_dispatch` recovery
+      # run actually attests to just the crates missing a CycloneDX SBOM
+      # attestation, rather than unconditionally re-attesting every
+      # already-covered crate under the dispatching run's own (possibly
+      # `main`) identity. On the original tag `push`, nothing has been
+      # attested yet, so every released crate reports missing and this has
+      # no effect on that path.
+      - name: Check existing SBOM attestation coverage
+        id: sbom_coverage
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+          SBOM_PREDICATE_TYPE: https://cyclonedx.org/bom
+        run: |
+          set -euo pipefail
+
+          RELEASED_CRATES="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select((.publish // []) | length > 0) | .name')"
+
+          for crate in oxide-batch-core oxide-batch-repository oxide-batch-plan \
+            oxide-batch oxide-batch-cli oxide-batch-test; do
+            missing=false
+            if printf '%s\n' "${RELEASED_CRATES}" | grep -Fxq "${crate}"; then
+              crate_path="target/package/${crate}-${PACKAGE_VERSION}.crate"
+              test -s "${crate_path}"
+              digest="$(sha256sum "${crate_path}" | cut -d' ' -f1)"
+              count="$(gh api --method GET \
+                "repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest}" \
+                -f "predicate_type=${SBOM_PREDICATE_TYPE}" \
+                --jq '.attestations | length' 2>/dev/null)" || count=0
+              if [ "${count}" -lt 1 ]; then
+                missing=true
+              fi
+            fi
+            slug="$(printf '%s' "${crate}" | tr '-' '_')"
+            echo "${slug}_sbom_missing=${missing}" >> "${GITHUB_OUTPUT}"
+          done
+
       - name: Attest oxide-batch-core SBOM
+        if: steps.sbom_coverage.outputs.oxide_batch_core_sbom_missing == 'true'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: target/package/oxide-batch-core-${{ steps.package.outputs.version }}.crate
           sbom-path: target/package/oxide-batch-core-${{ steps.package.outputs.version }}.cdx.json
 
       - name: Attest oxide-batch-repository SBOM
+        if: steps.sbom_coverage.outputs.oxide_batch_repository_sbom_missing == 'true'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: target/package/oxide-batch-repository-${{ steps.package.outputs.version }}.crate
           sbom-path: target/package/oxide-batch-repository-${{ steps.package.outputs.version }}.cdx.json
 
       - name: Attest oxide-batch-plan SBOM
+        if: steps.sbom_coverage.outputs.oxide_batch_plan_sbom_missing == 'true'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: target/package/oxide-batch-plan-${{ steps.package.outputs.version }}.crate
           sbom-path: target/package/oxide-batch-plan-${{ steps.package.outputs.version }}.cdx.json
 
       - name: Attest oxide-batch SBOM
+        if: steps.sbom_coverage.outputs.oxide_batch_sbom_missing == 'true'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: target/package/oxide-batch-${{ steps.package.outputs.version }}.crate
           sbom-path: target/package/oxide-batch-${{ steps.package.outputs.version }}.cdx.json
 
       - name: Attest oxide-batch-cli SBOM
+        if: steps.sbom_coverage.outputs.oxide_batch_cli_sbom_missing == 'true'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: target/package/oxide-batch-cli-${{ steps.package.outputs.version }}.crate
           sbom-path: target/package/oxide-batch-cli-${{ steps.package.outputs.version }}.cdx.json
 
       - name: Attest oxide-batch-test SBOM
-        if: steps.package.outputs.has_test == 'true'
+        if: steps.package.outputs.has_test == 'true' && steps.sbom_coverage.outputs.oxide_batch_test_sbom_missing == 'true'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: target/package/oxide-batch-test-${{ steps.package.outputs.version }}.crate
@@ -195,6 +434,19 @@ jobs:
       # bare `count >= 2` would still pass. Provenance and SBOM evidence are
       # therefore verified separately, by predicate type, each required at
       # least once.
+      # #212 recovery review: a bare predicate-type-present check is not
+      # sufficient either. A `workflow_dispatch` recovery dispatched from a
+      # branch could (if "Attest package provenance" above were ever
+      # re-enabled, by accident or by a future edit) record new SLSA
+      # provenance whose source ref/commit is that branch, not the
+      # immutable release tag; a predicate-presence check alone would still
+      # pass. The provenance predicate is therefore additionally required
+      # to name this exact release tag and its exact commit as its source
+      # (derived the same dynamic way as elsewhere: `${RELEASE_TAG}` and a
+      # freshly re-verified `tag_commit`, so this generalizes to whatever
+      # tag a recovery run targets rather than a hardcoded v0.6.0). The
+      # CycloneDX SBOM predicate carries no equivalent source-material
+      # claim, so it is required only by presence.
       - name: Verify attestation coverage for every released crate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -206,6 +458,8 @@ jobs:
 
           RELEASED_CRATES="$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[] | select((.publish // []) | length > 0) | .name')"
+          tag_commit="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+          expected_source_ref="refs/tags/${RELEASE_TAG}"
 
           failed=0
           for crate in ${RELEASED_CRATES}; do
@@ -213,40 +467,124 @@ jobs:
             test -s "${crate_path}"
             digest="$(sha256sum "${crate_path}" | cut -d' ' -f1)"
 
-            for predicate_type in "${PROVENANCE_PREDICATE_TYPE}" "${SBOM_PREDICATE_TYPE}"; do
-              count=0
-              attempt=0
-              while [ "${attempt}" -lt 5 ]; do
-                # A no-match `predicate_type` filter 404s, and `gh api`
-                # writes that error body to *stdout* before exiting
-                # non-zero. `|| echo 0` inside the substitution would
-                # concatenate that JSON body with a literal "0" into
-                # `count`, breaking the numeric comparisons below and
-                # silently never reaching the failure branch — exactly the
-                # kind of silent pass #212 was about. The fallback must run
-                # outside the substitution so it replaces, not appends to,
-                # whatever partial output the failed call produced.
-                count="$(gh api --method GET \
-                  "repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest}" \
-                  -f "predicate_type=${predicate_type}" \
-                  --jq '.attestations | length' 2>/dev/null)" || count=0
-                if [ "${count}" -ge 1 ]; then
-                  break
-                fi
-                attempt=$((attempt + 1))
-                sleep 5
-              done
-
-              if [ "${count}" -lt 1 ]; then
-                echo "::error::${crate} ${PACKAGE_VERSION} (${crate_path}, sha256:${digest}) has ${count} attestation(s) of predicate type ${predicate_type} after ${attempt} check(s); expected at least 1" >&2
-                failed=1
+            # SBOM: presence of the crate-specific predicate is sufficient.
+            count=0
+            attempt=0
+            while [ "${attempt}" -lt 5 ]; do
+              # A no-match `predicate_type` filter 404s, and `gh api` writes
+              # that error body to *stdout* before exiting non-zero. The
+              # fallback runs outside the substitution so it replaces,
+              # rather than appends to, whatever partial output the failed
+              # call produced (appending would corrupt the numeric
+              # comparison below and silently never reach the failure
+              # branch — exactly the kind of silent pass #212 was about).
+              count="$(gh api --method GET \
+                "repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest}" \
+                -f "predicate_type=${SBOM_PREDICATE_TYPE}" \
+                --jq '.attestations | length' 2>/dev/null)" || count=0
+              if [ "${count}" -ge 1 ]; then
+                break
               fi
+              attempt=$((attempt + 1))
+              sleep 5
             done
+            if [ "${count}" -lt 1 ]; then
+              echo "::error::${crate} ${PACKAGE_VERSION} (${crate_path}, sha256:${digest}) has ${count} attestation(s) of predicate type ${SBOM_PREDICATE_TYPE} after ${attempt} check(s); expected at least 1" >&2
+              failed=1
+            fi
+
+            # Provenance: presence alone is not enough; at least one
+            # matching attestation must also name this tag's exact ref and
+            # commit as its source.
+            matches=0
+            attempt=0
+            while [ "${attempt}" -lt 5 ]; do
+              provenance_json="$(gh api --method GET \
+                "repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest}" \
+                -f "predicate_type=${PROVENANCE_PREDICATE_TYPE}" \
+                2>/dev/null)" || provenance_json='{"attestations":[]}'
+              matches="$(printf '%s' "${provenance_json}" | jq \
+                --arg ref "${expected_source_ref}" --arg sha "${tag_commit}" '
+                  [.attestations[]?
+                    | (.bundle.dsseEnvelope.payload | @base64d | fromjson)
+                    | select(
+                        .predicate.buildDefinition.externalParameters.workflow.ref == $ref
+                        and (.predicate.buildDefinition.resolvedDependencies[0].digest.gitCommit // "") == $sha
+                      )
+                  ] | length' 2>/dev/null)" || matches=0
+              if [ "${matches}" -ge 1 ]; then
+                break
+              fi
+              attempt=$((attempt + 1))
+              sleep 5
+            done
+            if [ "${matches}" -lt 1 ]; then
+              echo "::error::${crate} ${PACKAGE_VERSION} (${crate_path}, sha256:${digest}) has no ${PROVENANCE_PREDICATE_TYPE} attestation with source ref ${expected_source_ref} and commit ${tag_commit} after ${attempt} check(s)" >&2
+              failed=1
+            fi
           done
 
           test "${failed}" -eq 0
 
+      # #212 recovery review, round 2: even with SBOM/checksum generation
+      # gated to `push` above, a recovery attests only the crates missing
+      # coverage (see "Check existing SBOM attestation coverage"), so this
+      # spot-checks that the resulting attestation's own recorded predicate
+      # is exactly the downloaded pre-existing asset, not something else —
+      # a direct check on the recorded evidence rather than trusting that
+      # every gate upstream worked as intended.
+      - name: Verify recovered SBOM attestation matches the existing release asset
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+          SBOM_PREDICATE_TYPE: https://cyclonedx.org/bom
+        run: |
+          set -euo pipefail
+
+          RELEASED_CRATES="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select((.publish // []) | length > 0) | .name')"
+
+          failed=0
+          for crate in ${RELEASED_CRATES}; do
+            sbom_path="target/package/${crate}-${PACKAGE_VERSION}.cdx.json"
+            test -s "${sbom_path}"
+            crate_path="target/package/${crate}-${PACKAGE_VERSION}.crate"
+            digest="$(sha256sum "${crate_path}" | cut -d' ' -f1)"
+
+            predicate_json="$(gh api --method GET \
+              "repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest}" \
+              -f "predicate_type=${SBOM_PREDICATE_TYPE}" \
+              2>/dev/null)" || predicate_json='{"attestations":[]}'
+
+            # jq's `==` on parsed JSON is a deep structural comparison, so
+            # this compares SBOM *content* rather than requiring identical
+            # key order or whitespace.
+            matches="$(printf '%s' "${predicate_json}" | jq \
+              --slurpfile local "${sbom_path}" '
+                [.attestations[]?
+                  | (.bundle.dsseEnvelope.payload | @base64d | fromjson | .predicate)
+                  | select(. == $local[0])
+                ] | length' 2>/dev/null)" || matches=0
+
+            if [ "${matches}" -lt 1 ]; then
+              echo "::error::${crate} ${PACKAGE_VERSION} has no SBOM attestation whose predicate content matches the existing release asset ${sbom_path}" >&2
+              failed=1
+            fi
+          done
+
+          test "${failed}" -eq 0
+
+      # #212 recovery review, round 2: `gh release upload --clobber` here
+      # would overwrite the already-published, already-attested SBOM and
+      # checksum assets with whatever happens to be in target/package at
+      # this point. On `workflow_dispatch` that is now always the
+      # downloaded pre-existing bytes (never regenerated, see above), so
+      # clobbering them would be a same-content no-op at best — but this
+      # step is gated to the original tag `push` anyway, so a recovery run
+      # never touches the draft release's assets at all.
       - name: Create or refresh draft release
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
           PACKAGE_VERSION: ${{ steps.package.outputs.version }}
