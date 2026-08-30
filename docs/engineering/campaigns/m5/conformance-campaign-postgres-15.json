@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "1ac9cdc5f0337e361187eb0f6dcffacc1fdd49d1",
+    "source_commit": "f1d899a1fe5fd180b0e2f6d07b508c2f50879762",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -20,12 +20,12 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "1ac9cdc5f0337e361187eb0f6dcffacc1fdd49d1",
+      "execution_commit": "f1d899a1fe5fd180b0e2f6d07b508c2f50879762",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
         ".github/workflows/m5-conformance.yml": "39e3e1fefaf2ac8284847c1f86995e109cca335c",
-        "Cargo.lock": "25435ec89baa0ff85f1fbbd110c06ba58fd76c16",
+        "Cargo.lock": "3ad914b2f114c567734059bf73f770a8748ea2e0",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-cli/Cargo.toml": "7a3b0f3e1540d0091a4d34b020a578ac70b16195",
         "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
