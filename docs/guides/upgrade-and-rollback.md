@@ -1,34 +1,37 @@
-# M5 Upgrade and Rollback Guide
+# M6 Upgrade and Rollback Guide
 
 **State:** Accepted
 
-**Applies to:** OxideBatch `0.5.0`, the M5 Embedded Core Production Preview
+**Applies to:** the prepared OxideBatch `0.6.0` M6 release candidate; not yet
+published
 
 How to move a deployment onto this release's schema and how to get back off
 it if that goes wrong. The normative rules live in
 [persistence and migration operations](../operations/persistence-and-migrations.md#backup-restore-and-rollback)
-and the [schema-3 migration guide](../operations/migrations/0003-operations-and-local-scale.md);
+and the [schema-4 migration guide](../operations/migrations/0005-item-stream-component-state.md);
 this page sequences them for an operator planning an upgrade window. See
 [documentation strategy](../documentation/strategy.md) for that ownership
 split.
 
 ## Supported source schema versions
 
-This release runs against **metadata schema 3 only**. It upgrades directly
-from schema `1` or schema `2` — there is no requirement to pass through every
-intermediate version — and refuses to start against a schema newer than `3`.
-A schema-2 runtime, in turn, refuses to open a schema-3 database at all
-(`NewerSchema`), so schema 3 is **not** a rolling upgrade: every schema-2
-writer must be quiesced first. See
-[PostgreSQL setup](../operations/postgres-setup.md#initialize-schema-version-3)
+This release runs against **metadata schema 4 only**. It upgrades directly
+from schema `1`, `2`, or `3` — there is no requirement to pass through every
+intermediate version — and refuses to start against a schema newer than `4`.
+Any older runtime refuses to open a schema-4 database (`NewerSchema`), so
+schema 4 is **not** a rolling upgrade: every older writer must be quiesced
+first. See
+[PostgreSQL setup](../operations/postgres-setup.md#initialize-the-current-schema-4)
 for the exact fail-closed table (`SchemaUninitialized`, `MigrationRequired`,
 accepted, `NewerSchema`).
 
 Migrations are forward-only and immutable once released; `PostgresMigrator::migrate`
-applies only the pending migrations on an existing database and installs `1`,
-`2`, and `3` in sequence on an empty one. Existing format-1 and format-2
-definition manifests keep their exact bytes and digests under schema 3 — the
-schema upgrade does not rewrite or reinterpret them.
+applies only the pending migrations on an existing database and installs the
+complete sequence through schema `4` on an empty one. The `0004` corrective
+patch preserves the schema-3 checksum and does not itself advance the version;
+`0005` adds component state and advances the singleton to `4`. Existing
+definition manifests, checkpoints, and contexts keep their exact bytes and
+digests; the schema upgrade does not rewrite or reinterpret them.
 
 ## Upgrade procedure
 
@@ -62,19 +65,21 @@ schema upgrade does not rewrite or reinterpret them.
    # }
    ```
 
-8. **Verify**: exactly one schema-version row reads `3`; every pre-existing
+8. **Verify**: exactly one schema-version row reads `4`; every pre-existing
    execution keeps a null owner token and stop request and unchanged counters,
    statuses, and payload bytes; every pre-existing instance keeps all three
    hold columns null; runtime DML succeeds while runtime DDL and
-   operator-reader writes fail. The complete verification list migration `3`
+   operator-reader writes fail. The complete verification list for migration
+   `0005`
    must satisfy is in
-   [verification and canary](../operations/migrations/0003-operations-and-local-scale.md#verification-and-canary).
+   [verification and canary](../operations/migrations/0005-item-stream-component-state.md#upgrade-procedure),
+   including component-state constraints and restart/checksum behavior.
 9. **Run canary work** — representative reads and a small live job — before
    resuming full traffic.
 
-Reapplying migration `0003` against an already-migrated database fails
-closed with a `schema version 2 is required` guard rather than silently
-no-op'ing or corrupting state.
+Reapplying migration `0005` against an already-migrated database fails closed
+with a `schema version 3 is required` guard rather than silently no-op'ing or
+corrupting state.
 
 ## Backup and rollback
 
@@ -95,20 +100,20 @@ substitute.
 **Downgrade means restoring that backup — there is no reverse migration.**
 Reverse SQL is supplied only when it is tested and cannot discard data the
 prior version needs, and no released schema version currently ships one.
-Rollback from schema 3:
+Rollback from schema 4:
 
-1. stop every schema-3 writer;
+1. stop every schema-4 writer;
 2. preserve migration and canary diagnostics for later investigation;
-3. discard the schema-3 database or schema;
-4. restore the verified pre-migration schema-2 backup;
-5. verify schema-2 constraints and representative reads with the *old*
+3. discard the schema-4 database or schema;
+4. restore the verified pre-migration schema-3 backup;
+5. verify schema-3 constraints and representative reads with the *old*
    runtime;
-6. resume through a schema-2 canary.
+6. resume through a schema-3 canary.
 
-**What you lose on rollback:** every execution, partition, operator request,
-retention action, and definition created after the backup was taken —
+**What you lose on rollback:** every execution, partition, component state,
+operator request, retention action, and definition created after the backup was taken —
 including the effects of any purge applied after that point. Reconcile any
-associated business effects before resuming. Dropping only the new schema-3
+associated business effects before resuming. Dropping only the new schema-4
 tables and columns instead of restoring is **not** a supported downgrade: it
 would erase restart-relevant partition state and destructive-action audit
 that later reads depend on.
@@ -138,5 +143,5 @@ purge, the only path is restoring a verified backup — see the
 Before `1.0`, only the latest preview line receives fixes; see the
 [release and support policy](../release/support-policy.md#support-window) for
 the complete pre-1.0 support rule and the
-[support matrix](../release/support-matrix.md#m5-production-preview-support-bounds)
+[support matrix](../release/support-matrix.md#0.6.0-m6-release-candidate)
 for this release's exact upgrade/downgrade expectations.

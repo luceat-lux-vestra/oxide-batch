@@ -1,8 +1,9 @@
-# M5 Operator Guide
+# M6 Operator Guide
 
 **State:** Accepted
 
-**Applies to:** OxideBatch `0.5.0`, the M5 Embedded Core Production Preview
+**Applies to:** the prepared OxideBatch `0.6.0` M6 release candidate; not yet
+published
 
 A narrative walkthrough of the `oxide-batch` operator CLI for someone running
 this release in production. The normative contract lives in

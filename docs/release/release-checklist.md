@@ -2,12 +2,15 @@
 
 **State:** Accepted
 
-This checklist supplements the automated release workflow. Multi-crate steps
-apply only after additional public crates are approved.
+This checklist supplements the automated release workflow. The accepted M6
+release set is six crates; the first `oxide-batch-test` publication remains a
+one-time manual bootstrap and is never generalized by the workflow.
 
 ## Prepare
 
 - [ ] Confirm target version/channel and milestone exit criteria.
+- [ ] For the M6 candidate, confirm package version `0.6.0` and prospective
+      tag `v0.6.0`; neither exists until the later publication phase.
 - [ ] Resolve release blockers and review open security/data-integrity issues.
 - [ ] Update changelog, support matrix, compatibility matrix, and migration guide.
 - [ ] Confirm every advertised compatibility claim names released `Verified`
@@ -31,6 +34,8 @@ apply only after additional public crates are approved.
       dry run by dependency and resolves unpublished members locally.
 - [ ] Install/test from generated package archives, not workspace paths.
 - [ ] Verify no credential, private fixture, or unrelated file is packaged.
+- [ ] Run `cargo xtask release-crates`; it must derive exactly the six
+      publishable crates and their dependency order from Cargo metadata.
 
 ## Publish
 
@@ -43,13 +48,18 @@ apply only after additional public crates are approved.
       exact release tag and configure its Trusted Publisher before publishing
       the GitHub Release. For M5 `0.5.0`, follow
       [`m5-0.5.0-bootstrap.md`](m5-0.5.0-bootstrap.md).
+- [ ] For M6, manually publish only `oxide-batch-test 0.6.0` from the exact
+      immutable tag, configure its Trusted Publisher immediately, remove the
+      local token, and only then publish the reviewed GitHub Release. Follow
+      [`m6-oxide-batch-test-bootstrap.md`](m6-oxide-batch-test-bootstrap.md).
 - [ ] Publish the GitHub Release with notes and migration warnings.
 - [ ] Let Trusted Publishing release crates in dependency order:
       `oxide-batch-core`, `oxide-batch-repository`, `oxide-batch-plan`,
-      `oxide-batch`, then `oxide-batch-cli`. Internal crates carry the facade
-      version and are never released on their own. A reviewed first-publication
-      bootstrap is the only exception; the release workflow must verify rather
-      than re-publish an already bootstrapped exact version.
+      `oxide-batch`, `oxide-batch-cli`, `oxide-batch-test`, as derived by
+      `cargo xtask release-order`. Internal crates carry the facade version and
+      are never released on their own. A reviewed first-publication bootstrap
+      is the only exception; the release workflow must verify rather than
+      re-publish an already bootstrapped exact version.
 - [ ] Do not retry a partially successful multi-crate publish blindly; inspect
       registry state and prepare compatible remaining versions.
 
@@ -61,6 +71,9 @@ apply only after additional public crates are approved.
 - [ ] Run the release smoke job against a supported PostgreSQL version.
 - [ ] Confirm GitHub artifacts, SBOM, provenance, and release notes.
 - [ ] Announce known limitations and support window.
+- [ ] Promote candidate compatibility rows only after the named released
+      version and post-publication evidence exist; campaign PASS alone is not
+      release-backed `Verified` evidence.
 
 ## Close
 

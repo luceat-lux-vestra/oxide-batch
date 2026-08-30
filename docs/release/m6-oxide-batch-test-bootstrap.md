@@ -18,14 +18,13 @@ newly published crates needed at `0.5.0`.
 
 ## Why this cannot be silently automatic
 
-`.github/workflows/release.yml`'s "Publish to crates.io" step uses OIDC
-Trusted Publishing and runs unconditionally for every non-bootstrap release
-(every release after `0.5.0`). A "Verify every released crate already exists
-on crates.io" pre-flight step fails that workflow, loudly and by name, if any
-crate in the accepted release set is not yet registered on crates.io --
-`oxide-batch-test` included, until this bootstrap runs. That failure is the
-intended, fail-closed signal to complete this document's steps before
-retrying the release, not a defect to silence.
+`.github/workflows/release.yml`'s publication job uses OIDC Trusted Publishing
+only after a verification job confirms that every crate name is registered and
+that any already-published exact version has the matching checksum. The
+verification job fails loudly and by name if any accepted crate is not yet
+registered on crates.io -- `oxide-batch-test` included, until this bootstrap
+runs. That failure is the intended, fail-closed signal to complete this
+document's steps before retrying the release, not a defect to silence.
 
 ## Preconditions
 
@@ -44,43 +43,49 @@ Do not begin until all of the following are true:
 
 Do not store that token in the repository or as a long-lived GitHub secret.
 
-## Bootstrap publish
+## Required later sequence
 
-Check out the immutable release tag and authenticate locally:
+This sequence is Phase B and must not be performed as part of release
+preparation:
+
+1. Independently review the release-preparation PR.
+2. Merge the reviewed release-preparation PR.
+3. Independently confirm that the merge commit is the intended release tree.
+4. Confirm the required exact-tree CI and evidence are green.
+5. Create the protected immutable `v0.6.0` tag from that exact commit.
+6. Let the tag workflow produce the draft release artifacts.
+7. Review every `.crate`, checksum, package-scoped SBOM, attestation, and
+   provenance link.
+8. From the immutable tag, manually publish only `oxide-batch-test 0.6.0`
+   with a short-lived local crates.io token.
+9. Immediately configure its Trusted Publisher: owner
+   `luceat-lux-vestra`, repository `oxide-batch`, workflow `release.yml`,
+   environment `release`.
+10. Remove/logout/delete the local token and any temporary copy.
+11. Only then publish or re-run the reviewed GitHub Release so OIDC Trusted
+    Publishing handles the release set under the accepted recovery contract.
+12. Perform post-publish crates.io, docs.rs, clean-consumer, checksum, SBOM,
+    provenance, and PostgreSQL release-smoke verification.
+
+The manual bootstrap command, shown for the later phase only, is:
 
 ```console
-git checkout <the release tag>
+git checkout v0.6.0
 cargo login
-```
-
-Publish just the one new crate:
-
-```console
 cargo publish -p oxide-batch-test --locked
+cargo logout
 ```
 
-A crate version already present on crates.io must not be blindly retried;
-crates.io versions are immutable.
+Never store the token in the repository or as a long-lived GitHub secret.
 
-## Configure Trusted Publishing
+## Later-release workflow behavior
 
-Immediately after `oxide-batch-test` exists on crates.io, configure its
-Trusted Publisher to the same identity the other five released crates use:
-
-- GitHub owner: `luceat-lux-vestra`
-- repository: `oxide-batch`
-- workflow: `release.yml`
-- environment: `release`
-
-After the crate is present and its publisher is configured, remove the local
-API token with `cargo logout` and delete any temporary copy of the token.
-
-## Publish the GitHub Release
-
-Only after this manual bootstrap is complete, publish (or re-run) the
-reviewed draft GitHub Release. `release.yml`'s pre-flight existence check
-then passes, and every crate -- `oxide-batch-test` included -- publishes
-through the normal OIDC `release.yml` path from this point forward.
+`release.yml` checks the immutable tag tree, verifies the complete current
+release order, rejects an unregistered crate before OIDC, and compares local
+archives with existing crates.io checksums. A partial publication is resumed
+only for exact versions still absent from crates.io; already-published
+versions are never blindly retried. `workflow_dispatch` remains verification
+only and never authenticates to or publishes on crates.io.
 
 ## Later releases
 

@@ -1,33 +1,32 @@
-# M5 Production Preview Limitations
+# M6 Release Candidate Limitations
 
 **State:** Accepted
 
-**Applies to:** OxideBatch `0.5.0`, the M5 Embedded Core Production Preview
+**Applies to:** the prepared OxideBatch `0.6.0` M6 release candidate; not yet
+published
 
 This is the explicit limitations record the
 [production preview guide](production-preview.md) and the
-[M5 support matrix](../release/support-matrix.md#m5-production-preview-support-bounds)
+[M6 candidate support matrix](../release/support-matrix.md#0.6.0-m6-release-candidate)
 promise. It names every compatibility-ledger row that is not advertised as
-verified embedded-kernel capability in this release. The
+verified capability in this candidate. The
 [feature ledger](../compatibility/conformance-matrix.md) is the canonical,
 machine-cross-checked source; this page is a readable summary of it and never
 overrides it. No row is hidden: `Partial`, `Planned`, and `Unknown` rows are
 all listed or counted below.
 
-## Advertised capability
+## Released M5 foundation and M6 candidate
 
-`29` ledger rows form the advertised embedded-kernel set this release
-delivers, each with its evidence campaign already complete (see the
-[#102 reconciliation](../project/m5-102-reconciliation.md)). With `0.5.0`
-published and its release artifacts independently verified, `28` of the `29`
-are `Verified`; `META-CONTEXT-001` remains `Implemented` pending codec
-migration tests. See the
-[ledger's M5 disposition set](../compatibility/conformance-matrix.md#m5-disposition-and-promotion-set)
-for the exact list and the
-[M5 exit record](../project/m5-exit-evidence.md) for the promoted disposition
-and evidence trail. Everything below this line is **not** part of that set.
+The released M5 foundation has `28` of its `29` advertised rows `Verified`
+against `0.5.0`; `META-CONTEXT-001` remains `Implemented`. M6 adds the item
+component catalog, schema-4 component state, and public `oxide-batch-test`.
+Those M6 rows have retained campaign evidence but are not release-backed
+`Verified` evidence while `0.6.0` remains unpublished. See the
+[M6 candidate disposition](../release/support-matrix.md#0.6.0-m6-release-candidate)
+and [M6 exit record](../project/m6-exit-evidence.md). Everything below this
+line is **not** advertised as fully verified by the candidate.
 
-## Partial: implemented at a bounded M0-M4 boundary, expands in M6-M11
+## Partial: implemented at a bounded M0-M5 boundary, expands in M7-M11
 
 These `13` rows work within the boundary described, and that boundary is
 narrower than full Spring Batch parity for the same feature. Each expands in a
@@ -41,7 +40,7 @@ later milestone; none is silently dropped.
 | [`FT-RETRY-001`](../compatibility/conformance-matrix.md#fault-tolerance-repeat-listeners-flow-and-scope) | Typed bounded retry policy, `65,535`-attempt and `256`-key caps | A crash can replay the pre-decision initial call or consume an uninvoked reservation |
 | [`FT-SKIP-001`](../compatibility/conformance-matrix.md#fault-tolerance-repeat-listeners-flow-and-scope) | Classified, counted read/process/write skips; shared limit across attempts | A crash during a pre-commit skip callback may replay the callback |
 | [`FT-ROLLBACK-001`](../compatibility/conformance-matrix.md#fault-tolerance-repeat-listeners-flow-and-scope) | Typed rollback-capability classifier | No-rollback is capability-scoped and still records a skip |
-| [`LISTENER-ITEM-001`](../compatibility/conformance-matrix.md#fault-tolerance-repeat-listeners-flow-and-scope) | M3 read/process/write/retry/skip listener callbacks and crash scenarios | Complete listener taxonomy is M6 |
+| [`LISTENER-ITEM-001`](../compatibility/conformance-matrix.md#fault-tolerance-repeat-listeners-flow-and-scope) | M3 callbacks plus the M6 component listener boundary | Complete flow/listener taxonomy remains later M7 scope |
 | [`FLOW-SEQUENCE-001`](../compatibility/conformance-matrix.md#fault-tolerance-repeat-listeners-flow-and-scope) | Finite acyclic sequential/conditional flow with process-kill reuse | Nested/split flow and complete M7 coverage remain |
 | [`FLOW-DECIDER-001`](../compatibility/conformance-matrix.md#fault-tolerance-repeat-listeners-flow-and-scope) | Basic decider node, restart reuse, decision-commit crash boundary | Complete M7 coverage remains |
 | [`REPO-COMMAND-001`](../compatibility/conformance-matrix.md#repository-operator-testing-and-observability) | Authoritative identity/lifecycle writes over OxideBatch's own schema and ports | Service split and pagination remain accepted targets |
@@ -51,18 +50,16 @@ later milestone; none is silently dropped.
 
 ## Planned and Unknown: not yet implemented
 
-`39` rows are `Planned` for a named later milestone (M6-M14), and `2` rows —
+The remaining rows are `Planned` for a named later milestone (M7-M14), and `2` rows —
 `DB-MONGO-001` and `IO-MAILLDAP-001` — are `Unknown` (reviewed disposition not
 yet decided). None of these is implemented in this release. The complete list
 with target milestones is the
 [feature ledger](../compatibility/conformance-matrix.md); notable absences a
 new user is likely to look for:
 
-- standard reusable item components — CSV, fixed-width, JSON/JSONL, database
-  cursor/paging readers and writers (`IO-FLAT-001`, `IO-STRUCTURED-001`,
-  `IO-DB-001`) — M6;
-- item composites, decorators, and multi-resource input/output
-  (`ITEM-COMPOSITE-001`, `ITEM-DECORATOR-001`, `ITEM-MULTI-001`) — M6;
+- M6 standard reusable item components, composites, decorators, multi-resource
+  input/output, and test-kit rows remain candidate-only until the named
+  release and required artifact/consumer evidence exist;
 - nested/split job flow, job/step scope and late binding, the definition
   registry (`FLOW-SPLIT-001`, `FLOW-NESTED-001`, `SCOPE-JOB-001`,
   `SCOPE-STEP-001`, `REPO-REGISTRY-001`) — M7;
@@ -80,4 +77,4 @@ new user is likely to look for:
 
 The visibility of every row above prevents any full Spring Batch parity,
 enterprise-readiness, or project-wide production-readiness claim for this
-release. See [what M5 explicitly is not](production-preview.md#what-m5-explicitly-is-not).
+release. See [what M6 explicitly is not](production-preview.md#what-m6-explicitly-is-not).

@@ -1,10 +1,11 @@
-# M5 Embedded Core Production Preview Guide
+# M6 Embedded Core Release Candidate Guide
 
 **State:** Accepted
 
-**Applies to:** OxideBatch `0.5.0`, the M5 Embedded Core Production Preview
+**Applies to:** the prepared OxideBatch `0.6.0` M6 release candidate; not yet
+published
 
-This is the entry point for the M5 preview. It orients a new user and links to
+This is the entry point for the M6 candidate. It orients a new user and links to
 the canonical document that owns each topic in depth; it does not restate
 normative detail that already has an owner. See
 [documentation strategy](../documentation/strategy.md) for that ownership
@@ -19,32 +20,34 @@ boundaries and auditable restart, not a hosted scheduler or a standalone job
 runner. See [target users](../product/vision-and-scope.md#target-users) for
 the complete audience statement.
 
-## What M5 delivers
+## What M6 delivers
 
-M5 stabilizes the M0-M4 embedded scope for a named release rather than adding
-capability. It delivers:
+M6 carries the released M5 embedded scope forward and adds the complete
+delivered item-processing and application test-kit surface. The `0.6.0`
+candidate is not yet published, so its campaign evidence remains pending
+release-backed ledger promotion. It delivers:
 
 - the complete accepted M0-M4 embedded kernel: typed job/step/chunk lifecycle,
   durable PostgreSQL metadata, restart from the last committed checkpoint,
   bounded retry/skip/rollback, finite sequential/conditional flow, bounded
   local split and partitioned steps, a guarded operator CLI, and structured
   telemetry;
+- the M6 item-processing catalog: typed and explicitly erased readers,
+  processors, writers, streams, completion policies, listeners, standard
+  file/JSON/database/multi-resource components, and the public
+  `oxide-batch-test` harness;
 - a definition fingerprint that fails closed on drift instead of silently
   restarting a changed definition
   ([restart semantics](#restart-and-definition-drift) below);
 - a reviewed, curated public facade (`oxide-batch`) with a closed disclosure
   boundary ([M5 preview surface gate](../api/design-guidelines.md#m5-preview-surface-and-disclosure-gate));
-- the `29`-row advertised embedded-kernel set with its evidence campaigns
-  already complete (see [#102 reconciliation](../project/m5-102-reconciliation.md)),
-  eligible for `Verified` promotion once this version is published and its
-  release artifacts are verified — with every other ledger row left visibly
-  `Implemented`, `Partial`, `Planned`, or `Unknown` — see
-  [limitations](limitations.md), the
-  [ledger's M5 disposition set](../compatibility/conformance-matrix.md#m5-disposition-and-promotion-set),
-  and the [M5 exit record](../project/m5-exit-evidence.md) for the final
-  promoted disposition.
+- retained M5 release evidence plus M6 campaign evidence. The M6 rows remain
+  `Implemented` or `Partial` until a named release exists and its required
+  artifacts and consumers pass; see [limitations](limitations.md), the
+  [M6 candidate support disposition](../release/support-matrix.md#0.6.0-m6-release-candidate),
+  and the [M6 exit record](../project/m6-exit-evidence.md).
 
-## What M5 explicitly is not
+## What M6 explicitly is not
 
 - **Not `1.0` or GA.** `0.x` SemVer applies: an incompatible change may land
   in a minor release. Project-wide `1.0`/GA is M14 scope
@@ -64,7 +67,7 @@ capability. It delivers:
 
 ```toml
 [dependencies]
-oxide-batch = { version = "0.5.0", features = ["postgres"] }
+oxide-batch = { version = "0.6.0", features = ["postgres"] }
 ```
 
 Omit `features = ["postgres"]` to use only the in-memory reference repository
@@ -95,8 +98,8 @@ declaration to a PostgreSQL-backed chunk job.
 
 ## PostgreSQL setup
 
-Schema `3` is the only schema this release runs against; a schema-2 runtime
-refuses schema 3 on startup, and this release refuses a schema newer than 3.
+Schema `4` is the only schema this candidate runs against; older runtimes
+refuse schema 4 on startup, and this candidate refuses a schema newer than 4.
 Migration, role separation (migrator/runtime/operator-reader/operator-writer),
 and TLS (`verify-full` only in production) are owned by
 [PostgreSQL setup](../operations/postgres-setup.md). PostgreSQL `15` and `18`
@@ -173,7 +176,7 @@ Linux x86_64 GNU is the only supported preview runtime target; macOS is
 development-only, and Linux aarch64/Windows are not yet supported. The
 complete dimension table — Rust, OS/architecture, PostgreSQL majors, TLS,
 metadata schema, deployment shape — is the
-[M5 support matrix](../release/support-matrix.md#m5-production-preview-support-bounds).
+[M6 candidate support matrix](../release/support-matrix.md#0.6.0-m6-release-candidate).
 
 ## Limitations
 

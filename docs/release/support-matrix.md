@@ -112,6 +112,25 @@ This preview interpretation is accepted by
 [RFC-0001](../rfcs/0001-m5-preview-and-project-wide-1-0.md). It is not a
 project-wide 1.0 or enterprise-readiness matrix.
 
+## 0.6.0 M6 release candidate
+
+`0.6.0` is the prepared first M6 release candidate; it is not yet published.
+Until a protected `v0.6.0` tag exists and post-publication verification passes,
+the latest released support line remains M5 `0.5.0`. The candidate inherits
+the M5 Rust, Linux x86_64, PostgreSQL 15-18, TLS, and single-host bounds and
+adds metadata schema `4` plus the M6 component/test-kit surface below.
+M6 campaign PASS is retained evidence, not release-backed `Verified` status.
+
+| Dimension | `0.6.0` candidate disposition | Required release evidence |
+| --- | --- | --- |
+| Rust | MSRV 1.95; development, CI, and release toolchain 1.97.1 | Candidate CI and packaged-artifact verification |
+| Linux x86_64 GNU | Candidate supported runtime target, inherited from M5 | Release-blocking CI and clean consumer |
+| PostgreSQL 15 and 18 | Release-blocking candidate axes | M6 conformance, restart, migration, and release smoke |
+| PostgreSQL 16-17 | Candidate smoke axes | Connection, migration, and vertical-slice smoke |
+| Metadata schema | Schema 4; upgrade sources 1, 2, and 3 | Migration, rejection, backup/restore, and rollback evidence |
+| M6 components and `oxide-batch-test` | Implemented and campaign-evidenced; release promotion pending | Named release, package, consumer, and ledger evidence |
+| Deployment shape | Single host, embedded process; no distributed claim | Same inherited limitation as M5 |
+
 ## M6 component campaign disposition
 
 The M6 component catalog is first-party code, but this section is a candidate

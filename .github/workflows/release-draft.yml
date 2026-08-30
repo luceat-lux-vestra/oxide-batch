@@ -41,8 +41,12 @@ jobs:
         id: package
         run: |
           set -euo pipefail
-          package_version="$(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[] | select(.name == "oxide-batch") | .version')"
+          tag_commit="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+          test "$(git rev-parse HEAD)" = "${tag_commit}"
+          versions="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '[.packages[] | select((.publish // []) | length > 0) | .version] | unique | .[]')"
+          test "$(wc -l <<<"${versions}" | tr -d ' ')" = "1"
+          package_version="${versions}"
           test "v${package_version}" = "${RELEASE_TAG}"
 
           # Derived from the checked-out tag's own manifests rather than a
@@ -67,6 +71,11 @@ jobs:
             test -s "${crate_path}"
             crate_paths="${crate_paths}${crate_path}"$'\n'
           done
+          if printf '%s\n' "${RELEASED_CRATES}" | grep -Fxq "oxide-batch-test"; then
+            echo "has_test=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "has_test=false" >> "${GITHUB_OUTPUT}"
+          fi
           echo "version=${package_version}" >> "${GITHUB_OUTPUT}"
           {
             echo "crate_paths<<EOF"
@@ -158,6 +167,7 @@ jobs:
           sbom-path: target/package/oxide-batch-cli-${{ steps.package.outputs.version }}.cdx.json
 
       - name: Attest oxide-batch-test SBOM
+        if: steps.package.outputs.has_test == 'true'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: target/package/oxide-batch-test-${{ steps.package.outputs.version }}.crate

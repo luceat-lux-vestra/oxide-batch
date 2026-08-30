@@ -233,12 +233,22 @@ migration tests, so it does not promote in this release. The population is
 now `83` rows: `28` `Verified`, `1` `Implemented`, `13` `Partial`, `39`
 `Planned`, and `2` `Unknown`.
 
+## M6 `0.6.0` candidate disposition
+
+The 23 M6-scoped rows are implemented or retain their reviewed partial
+disposition with campaign evidence linked in the matrix and M6 exit record.
+This release-preparation candidate does not change any row to released
+`Verified`: that state requires the named released version, package and
+consumer checks, and all required release evidence. Campaign PASS alone is
+insufficient. M5's 28 released `Verified` rows remain verified against
+`0.5.0`; they are not retroactively reclassified as M6 evidence.
+
 **Rows that stay `Partial`.** `LIFE-STOP-001`, `LIFE-RECOVER-001`,
 `STEP-STARTLIMIT-001`, `FT-RETRY-001`, `FT-SKIP-001`, `FT-ROLLBACK-001`,
 `LISTENER-ITEM-001`, `FLOW-SEQUENCE-001`, `FLOW-DECIDER-001`,
 `REPO-COMMAND-001`, `REPO-RETENTION-001`, `SCALE-PARSTEP-001`,
 `SCALE-LOCALPART-001`, and `REPEAT-POLICY-001` are implemented at a bounded
-M0-M4 boundary and expand in M6-M11. They are not advertised as verified
+M0-M5 boundary and expand in M7-M11. They are not advertised as verified
 capability, and the preview limitations record names each one and its bound.
 
 **`ITEM-STREAM-001`** moved from `Planned` to `Implemented` when

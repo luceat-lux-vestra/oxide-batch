@@ -264,3 +264,14 @@ producer head requires strict review against the new exact PR HEAD.
 **Final disposition: READY FOR STRICT REVIEW — DO NOT MERGE.** #188 remains
 open until this PR merges; #140 also remains open and is not closed by this
 PR. Both closure actions remain outside this agent's boundary.
+
+## Release-preparation handoff (2026-08-30)
+
+The closure statements above are retained historical observations from the M6
+exit record and are not the current issue state. The merged M6 exit tree is
+now `main` at `47eedc5b3a8e8f82f0a8c7386f9f49698ca82d2e`; #153, #188, and #140
+are closed, and #190 is open with `status:ready`. This release-preparation
+candidate selects package version `0.6.0` and prospective tag `v0.6.0`, but
+neither exists yet. The retained M6 campaign PASS remains candidate evidence:
+no M6 ledger row is promoted to released `Verified` until the named release,
+packaged artifacts, provenance, and post-publication consumers are verified.
