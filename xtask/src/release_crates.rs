@@ -127,9 +127,17 @@ pub fn check() -> Result<Vec<String>, String> {
         ));
     }
 
+    violations.extend(check_release_workflow(&root)?);
+
+    Ok(violations)
+}
+
+/// Checks the immutable-tag, bootstrap, and idempotent publication contract.
+fn check_release_workflow(root: &std::path::Path) -> Result<Vec<String>, String> {
     let release_path = root.join(RELEASE_WORKFLOW);
     let release_text = fs::read_to_string(&release_path)
         .map_err(|error| format!("could not read {RELEASE_WORKFLOW}: {error}"))?;
+    let mut violations = Vec::new();
     if release_text.contains("\n  id-token: write")
         || release_text.matches("id-token: write").count() != 1
     {
@@ -153,11 +161,12 @@ pub fn check() -> Result<Vec<String>, String> {
         ));
     }
     let publish_block = extract_step_block(&release_text, "Publish to crates.io")?;
+    let rechecks_exact_versions = publish_block.contains("version_status")
+        && publish_block.contains("registry_sha")
+        && publish_block.contains("already published with matching checksum");
     if publish_block.contains("PENDING_CRATES")
         || !publish_block.contains("cargo publish -p")
-        || !publish_block.contains("version_status")
-        || !publish_block.contains("registry_sha")
-        || !publish_block.contains("already published with matching checksum")
+        || !rechecks_exact_versions
     {
         violations.push(format!(
             "{RELEASE_WORKFLOW} \"Publish to crates.io\" must recheck each exact registry version/checksum immediately before publishing in metadata-derived order"
@@ -189,7 +198,6 @@ pub fn check() -> Result<Vec<String>, String> {
             ));
         }
     }
-
     Ok(violations)
 }
 
