@@ -1,0 +1,33 @@
+{
+  "tag": "v0.6.0",
+  "tagObject": "d23955f56c48dcce089203330b5999a36ceb2029",
+  "commit": "e9ce3891a9c37959ad1022a62dbf723c9edd2d65",
+  "tree": "81746a7560a1465a5f8d79655e0282e60d7d3d12",
+  "checksumManifestSha256": "163c878b9a6ce21660a6257f435f5e05775f86d2e1bb9a7618553a5ee42b653a",
+  "crates": {
+    "oxide-batch-core": {
+      "crateSha256": "3b63311721adf30b20ef5293a2ee9fe1759211464a833295e6d490fda8d0c631",
+      "sbomSha256": "7dc67d5f9f5e91ede4a3b55ae18f97dc98d29eac76a99c597c195f13c94eb9b5"
+    },
+    "oxide-batch-repository": {
+      "crateSha256": "cb2e0f79a4387331f7a78a4a3d9ebfcd0e7eb02856ea3df4e7a11ae9d62dbe79",
+      "sbomSha256": "fe8c35c63fa2e7edd4b518d907a716ab0fcc4b1b112803b25af7be7a1968434f"
+    },
+    "oxide-batch-plan": {
+      "crateSha256": "8cbeeac623fdc091dd12ee81d1d2a5bb6b1edba3522f5cade85960179ebf1c49",
+      "sbomSha256": "91debc386ff552149ce7d3bbd458401faf346a144a86ca89bf81359ee82ef996"
+    },
+    "oxide-batch": {
+      "crateSha256": "eb44a43551fbf5c70d11cc54d4c14ec8a40ebaf917a1d5ff1a158556e1fe093b",
+      "sbomSha256": "c17f39c67eba56f3b6e418e08436831a2a9d1cb3da98948ba58f3ccb649f03ce"
+    },
+    "oxide-batch-cli": {
+      "crateSha256": "5a819b8c97926ed6b1c810f93ebe1985f0c2b4a94e253414b2c7ceec656ec2ef",
+      "sbomSha256": "e0c32a135aaac49d45defd8be21e2fc588c729962b4cd1523b5213edfd5609e2"
+    },
+    "oxide-batch-test": {
+      "crateSha256": "8bad1e49c191f276402c7092b441c2a38dc33ff57b49d5911c801eafa42cb49e",
+      "sbomSha256": "f36c41cbbb9655b74e5689e69167ecf27d6b5508d0b9dbdd5cb07d3e254a1446"
+    }
+  }
+}

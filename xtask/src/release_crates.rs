@@ -107,14 +107,14 @@ pub fn check() -> Result<Vec<String>, String> {
         ));
     }
     let draft_dynamic_occurrences = draft_text.matches(DYNAMIC_RELEASE_SET_FILTER).count();
-    if draft_dynamic_occurrences != 5 {
+    if draft_dynamic_occurrences != 6 {
         violations.push(format!(
             "{RELEASE_DRAFT_WORKFLOW} has {draft_dynamic_occurrences} dynamic release-set \
-             derivation(s) (expected 5: package/publish, SBOM generation, #212's existing-SBOM- \
-             coverage check, #212's attestation-coverage verification, and #212 round 2's \
-             recovered-SBOM-content verification); a hardcoded RELEASED_CRATES list there would \
-             break workflow_dispatch recovery against a tag that predates a later-added \
-             released crate"
+             derivation(s) (expected 6: package/publish, SBOM generation, #212's existing-SBOM- \
+             coverage check, #212's attestation-coverage verification, #212 round 2's \
+             recovered-SBOM-content verification, and #212 round 3's reviewed-evidence-manifest \
+             verification); a hardcoded RELEASED_CRATES list there would break workflow_dispatch \
+             recovery against a tag that predates a later-added released crate"
         ));
     }
     if extract_env_list(&draft_text, "RELEASED_CRATES")
@@ -168,6 +168,13 @@ pub fn check() -> Result<Vec<String>, String> {
     if let Err(violation) = check_recovered_sbom_content_verification(&draft_text) {
         violations.push(violation);
     }
+    if let Err(violation) = check_reviewed_evidence_manifest_checkout(&draft_text) {
+        violations.push(violation);
+    }
+    if let Err(violation) = check_reviewed_evidence_manifest_verification(&draft_text) {
+        violations.push(violation);
+    }
+    violations.extend(check_v0_6_0_evidence_manifest(&root)?);
 
     violations.extend(check_release_workflow(&root)?);
 
@@ -946,7 +953,223 @@ fn check_recovery_downloads_existing_assets(text: &str) -> Result<(), String> {
              (`sha256sum --check --strict`), not merely trust the download"
         ));
     }
+    if !block.contains("isDraft") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Download existing release assets for recovery\" must \
+             explicitly verify the target release is still a draft before downloading from it; \
+             the only other isDraft check lives in the push-only \"Create or refresh draft \
+             release\" step, which never runs on a recovery"
+        ));
+    }
     Ok(())
+}
+
+/// Checks the #212 round-3 recovery-review fix: a `workflow_dispatch`
+/// recovery checks out the reviewed, merged-to-`main` evidence manifest for
+/// this exact tag into a separate directory, leaving the primary checkout
+/// pinned to the immutable release tag.
+///
+/// Internal consistency between the downloaded SBOM and the downloaded
+/// checksum manifest proves nothing on its own: both live in the same
+/// mutable draft Release, so tampering with them together still passes
+/// that cross-check (confirmed by simulating the tamper before writing
+/// this check: `sha256sum --check --strict` passed against a forged SBOM
+/// once the checksum manifest was regenerated to match it). The reviewed
+/// manifest on `main` is a separate trust domain from that mutable draft.
+fn check_reviewed_evidence_manifest_checkout(text: &str) -> Result<(), String> {
+    let block = extract_step_block(text, "Check out reviewed release evidence manifest")?;
+    if !block.contains("if: github.event_name == 'workflow_dispatch'") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Check out reviewed release evidence manifest\" must run \
+             only on `github.event_name == 'workflow_dispatch'`"
+        ));
+    }
+    if !block.contains("ref: main") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Check out reviewed release evidence manifest\" must \
+             check out `main`, not the release tag, as the reviewed evidence manifest is a \
+             trust anchor independent of the immutable tag's own (pre-#212) tree"
+        ));
+    }
+    if !block.contains("path: release-evidence-manifest") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Check out reviewed release evidence manifest\" must \
+             check out into a separate path so it does not disturb the primary checkout, which \
+             stays pinned to the immutable release tag"
+        ));
+    }
+    if !block.contains("docs/release/evidence") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Check out reviewed release evidence manifest\" must \
+             sparse-checkout docs/release/evidence"
+        ));
+    }
+    Ok(())
+}
+
+/// Checks the #212 round-3 recovery-review fix: a `workflow_dispatch`
+/// recovery verifies the tag identity, the checksum manifest, and every
+/// released crate's `.crate`/SBOM digest against the reviewed evidence
+/// manifest on `main` — not merely against each other inside the mutable
+/// draft Release.
+fn check_reviewed_evidence_manifest_verification(text: &str) -> Result<(), String> {
+    let block = extract_step_block(
+        text,
+        "Verify downloaded evidence against the reviewed manifest",
+    )?;
+    if !block.contains("if: github.event_name == 'workflow_dispatch'") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify downloaded evidence against the reviewed \
+             manifest\" must run only on `github.event_name == 'workflow_dispatch'`"
+        ));
+    }
+    if !block.contains(DYNAMIC_RELEASE_SET_FILTER) {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify downloaded evidence against the reviewed \
+             manifest\" must derive its crate set the same dynamic way as the packaging steps, \
+             not a hardcoded list"
+        ));
+    }
+    if !block.contains("docs/release/evidence/${RELEASE_TAG}.json") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify downloaded evidence against the reviewed \
+             manifest\" must locate the manifest by this run's own release tag, not a hardcoded \
+             one, so this generalizes to a recovery run against any tag that has a manifest"
+        ));
+    }
+    for required in [
+        "tagObject",
+        "commit",
+        "tree",
+        "checksumManifestSha256",
+        ".crates[$c].crateSha256",
+        ".crates[$c].sbomSha256",
+    ] {
+        if !block.contains(required) {
+            return Err(format!(
+                "{RELEASE_DRAFT_WORKFLOW} \"Verify downloaded evidence against the reviewed \
+                 manifest\" must check {required:?} from the reviewed manifest"
+            ));
+        }
+    }
+    for hardcoded in [EXPECTED_RELEASE_VERSION, "v0.6.0"] {
+        if block.contains(hardcoded) {
+            return Err(format!(
+                "{RELEASE_DRAFT_WORKFLOW} \"Verify downloaded evidence against the reviewed \
+                 manifest\" must not hardcode {hardcoded:?}: that would silently stop matching \
+                 for a workflow_dispatch recovery run targeting any other release tag"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The path convention `check_reviewed_evidence_manifest_verification`
+/// assumes: one manifest file per release tag, named after that tag.
+const EVIDENCE_MANIFEST_DIR: &str = "docs/release/evidence";
+
+/// Checks that the committed `v0.6.0` evidence manifest itself still names
+/// exactly the real, independently-confirmed digests recorded from the
+/// tag-push run's own attestations and release assets — a data file is
+/// just as capable of silently drifting as workflow logic, and nothing
+/// else in this repository re-derives these values to catch that.
+fn check_v0_6_0_evidence_manifest(root: &std::path::Path) -> Result<Vec<String>, String> {
+    let path = root.join(EVIDENCE_MANIFEST_DIR).join("v0.6.0.json");
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let manifest: Value = serde_json::from_str(&text)
+        .map_err(|error| format!("could not parse {}: {error}", path.display()))?;
+
+    let mut violations = Vec::new();
+    let expect_field = |violations: &mut Vec<String>, field: &str, expected: &str| {
+        let actual = manifest.get(field).and_then(Value::as_str);
+        if actual != Some(expected) {
+            violations.push(format!(
+                "{} field {field:?} is {actual:?}, expected {expected:?}",
+                path.display()
+            ));
+        }
+    };
+    expect_field(&mut violations, "tag", "v0.6.0");
+    expect_field(
+        &mut violations,
+        "tagObject",
+        "d23955f56c48dcce089203330b5999a36ceb2029",
+    );
+    expect_field(
+        &mut violations,
+        "commit",
+        "e9ce3891a9c37959ad1022a62dbf723c9edd2d65",
+    );
+    expect_field(
+        &mut violations,
+        "tree",
+        "81746a7560a1465a5f8d79655e0282e60d7d3d12",
+    );
+    expect_field(
+        &mut violations,
+        "checksumManifestSha256",
+        "163c878b9a6ce21660a6257f435f5e05775f86d2e1bb9a7618553a5ee42b653a",
+    );
+
+    let expected_digests: &[(&str, &str, &str)] = &[
+        (
+            "oxide-batch-core",
+            "3b63311721adf30b20ef5293a2ee9fe1759211464a833295e6d490fda8d0c631",
+            "7dc67d5f9f5e91ede4a3b55ae18f97dc98d29eac76a99c597c195f13c94eb9b5",
+        ),
+        (
+            "oxide-batch-repository",
+            "cb2e0f79a4387331f7a78a4a3d9ebfcd0e7eb02856ea3df4e7a11ae9d62dbe79",
+            "fe8c35c63fa2e7edd4b518d907a716ab0fcc4b1b112803b25af7be7a1968434f",
+        ),
+        (
+            "oxide-batch-plan",
+            "8cbeeac623fdc091dd12ee81d1d2a5bb6b1edba3522f5cade85960179ebf1c49",
+            "91debc386ff552149ce7d3bbd458401faf346a144a86ca89bf81359ee82ef996",
+        ),
+        (
+            "oxide-batch",
+            "eb44a43551fbf5c70d11cc54d4c14ec8a40ebaf917a1d5ff1a158556e1fe093b",
+            "c17f39c67eba56f3b6e418e08436831a2a9d1cb3da98948ba58f3ccb649f03ce",
+        ),
+        (
+            "oxide-batch-cli",
+            "5a819b8c97926ed6b1c810f93ebe1985f0c2b4a94e253414b2c7ceec656ec2ef",
+            "e0c32a135aaac49d45defd8be21e2fc588c729962b4cd1523b5213edfd5609e2",
+        ),
+        (
+            "oxide-batch-test",
+            "8bad1e49c191f276402c7092b441c2a38dc33ff57b49d5911c801eafa42cb49e",
+            "f36c41cbbb9655b74e5689e69167ecf27d6b5508d0b9dbdd5cb07d3e254a1446",
+        ),
+    ];
+    let crates = manifest.get("crates").and_then(Value::as_object);
+    for (crate_name, crate_sha256, sbom_sha256) in expected_digests {
+        let Some(entry) = crates.and_then(|crates| crates.get(*crate_name)) else {
+            violations.push(format!(
+                "{} has no entry for crate {crate_name:?}",
+                path.display()
+            ));
+            continue;
+        };
+        let actual_crate_sha256 = entry.get("crateSha256").and_then(Value::as_str);
+        if actual_crate_sha256 != Some(*crate_sha256) {
+            violations.push(format!(
+                "{} crates.{crate_name}.crateSha256 is {actual_crate_sha256:?}, expected {crate_sha256:?}",
+                path.display()
+            ));
+        }
+        let actual_sbom_sha256 = entry.get("sbomSha256").and_then(Value::as_str);
+        if actual_sbom_sha256 != Some(*sbom_sha256) {
+            violations.push(format!(
+                "{} crates.{crate_name}.sbomSha256 is {actual_sbom_sha256:?}, expected {sbom_sha256:?}",
+                path.display()
+            ));
+        }
+    }
+
+    Ok(violations)
 }
 
 /// Checks the #212 round-2 recovery-review fix: a recovery run verifies
@@ -1507,9 +1730,24 @@ mod tests {
         let text = simple_step(
             "Download existing release assets for recovery",
             Some("github.event_name == 'workflow_dispatch'"),
-            "          gh release download \"${RELEASE_TAG}\" --pattern '*.cdx.json' --pattern '*.sha256' --dir target/package --clobber\n          (cd target/package; sha256sum --check --strict \"$(basename \"${checksum_path}\")\")",
+            "          is_draft=\"$(gh release view \"${RELEASE_TAG}\" --json isDraft --jq .isDraft)\"\n          test \"${is_draft}\" = \"true\"\n          gh release download \"${RELEASE_TAG}\" --pattern '*.cdx.json' --pattern '*.sha256' --dir target/package --clobber\n          (cd target/package; sha256sum --check --strict \"$(basename \"${checksum_path}\")\")",
         );
         check_recovery_downloads_existing_assets(&text).expect("complete download step accepted");
+    }
+
+    #[test]
+    fn check_recovery_downloads_existing_assets_rejects_a_missing_draft_check() {
+        let text = simple_step(
+            "Download existing release assets for recovery",
+            Some("github.event_name == 'workflow_dispatch'"),
+            "          gh release download \"${RELEASE_TAG}\" --pattern '*.cdx.json' --pattern '*.sha256' --dir target/package --clobber\n          (cd target/package; sha256sum --check --strict \"$(basename \"${checksum_path}\")\")",
+        );
+        let error = check_recovery_downloads_existing_assets(&text).expect_err(
+            "a download step that never checks isDraft is rejected: the only other isDraft \
+             check lives in the push-only \"Create or refresh draft release\" step, which never \
+             runs on a recovery",
+        );
+        assert!(error.contains("isDraft"), "{error}");
     }
 
     #[test]
@@ -1624,6 +1862,113 @@ mod tests {
         let error = check_recovered_sbom_content_verification(&text)
             .expect_err("a hardcoded crate set is rejected");
         assert!(error.contains("dynamic"), "{error}");
+    }
+
+    #[test]
+    fn check_reviewed_evidence_manifest_checkout_accepts_a_complete_step() {
+        let text = simple_step(
+            "Check out reviewed release evidence manifest",
+            Some("github.event_name == 'workflow_dispatch'"),
+            "          # uses: actions/checkout@x\n          # with: ref: main, path: release-evidence-manifest\n          # sparse-checkout: docs/release/evidence",
+        )
+        .replace(
+            "        run: |\n",
+            "        uses: actions/checkout@x\n        with:\n          ref: main\n          path: release-evidence-manifest\n          sparse-checkout: |\n            docs/release/evidence\n        run: |\n",
+        );
+        check_reviewed_evidence_manifest_checkout(&text).expect("complete checkout step accepted");
+    }
+
+    #[test]
+    fn check_reviewed_evidence_manifest_checkout_rejects_a_missing_step() {
+        let error = check_reviewed_evidence_manifest_checkout(
+            "steps:\n  - name: Other\n    run: echo hi\n",
+        )
+        .expect_err("missing step is an error");
+        assert!(
+            error.contains("Check out reviewed release evidence manifest"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn check_reviewed_evidence_manifest_checkout_rejects_checking_out_the_release_tag() {
+        let text = "steps:\n      - name: Check out reviewed release evidence manifest\n        if: github.event_name == 'workflow_dispatch'\n        uses: actions/checkout@x\n        with:\n          ref: ${{ env.RELEASE_TAG }}\n          path: release-evidence-manifest\n          sparse-checkout: |\n            docs/release/evidence\n      - name: Next step\n        run: echo hi\n";
+        let error = check_reviewed_evidence_manifest_checkout(text).expect_err(
+            "checking out the release tag instead of main defeats the point: the manifest must \
+             be an independent trust anchor, not part of the same tree being verified",
+        );
+        assert!(error.contains("must check out `main`"), "{error}");
+    }
+
+    fn complete_reviewed_evidence_manifest_verification_fixture() -> String {
+        simple_step(
+            "Verify downloaded evidence against the reviewed manifest",
+            Some("github.event_name == 'workflow_dispatch'"),
+            "          RELEASED_CRATES=\"$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select((.publish // []) | length > 0) | .name')\"\n          manifest_path=\"release-evidence-manifest/docs/release/evidence/${RELEASE_TAG}.json\"\n          tag_object=\"$(jq -r '.tagObject' \"${manifest_path}\")\"\n          commit=\"$(jq -r '.commit' \"${manifest_path}\")\"\n          tree=\"$(jq -r '.tree' \"${manifest_path}\")\"\n          checksumManifestSha256=\"$(jq -r '.checksumManifestSha256' \"${manifest_path}\")\"\n          expected_crate_sha=\"$(jq -r --arg c \"${crate}\" '.crates[$c].crateSha256' \"${manifest_path}\")\"\n          expected_sbom_sha=\"$(jq -r --arg c \"${crate}\" '.crates[$c].sbomSha256' \"${manifest_path}\")\"",
+        )
+    }
+
+    #[test]
+    fn check_reviewed_evidence_manifest_verification_accepts_a_complete_fixture() {
+        let text = complete_reviewed_evidence_manifest_verification_fixture();
+        check_reviewed_evidence_manifest_verification(&text).expect("complete fixture accepted");
+    }
+
+    #[test]
+    fn check_reviewed_evidence_manifest_verification_rejects_a_missing_step() {
+        let error = check_reviewed_evidence_manifest_verification(
+            "steps:\n  - name: Other\n    run: echo hi\n",
+        )
+        .expect_err("missing step is an error");
+        assert!(
+            error.contains("Verify downloaded evidence against the reviewed manifest"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn check_reviewed_evidence_manifest_verification_rejects_a_hardcoded_manifest_path() {
+        let text = complete_reviewed_evidence_manifest_verification_fixture().replace(
+            "release-evidence-manifest/docs/release/evidence/${RELEASE_TAG}.json",
+            "release-evidence-manifest/docs/release/evidence/v0.6.0.json",
+        );
+        let error = check_reviewed_evidence_manifest_verification(&text).expect_err(
+            "a manifest path hardcoded to the current tag is rejected: it would silently stop \
+             matching for a recovery run against any other release tag",
+        );
+        assert!(
+            error.contains("must not hardcode") || error.contains("own release tag"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn check_reviewed_evidence_manifest_verification_rejects_a_missing_crate_digest_check() {
+        let text = complete_reviewed_evidence_manifest_verification_fixture().replace(
+            "expected_sbom_sha=\"$(jq -r --arg c \"${crate}\" '.crates[$c].sbomSha256' \"${manifest_path}\")\"",
+            "",
+        );
+        let error = check_reviewed_evidence_manifest_verification(&text)
+            .expect_err("a fixture missing the per-crate SBOM digest check is rejected");
+        assert!(error.contains("sbomSha256"), "{error}");
+    }
+
+    #[test]
+    fn check_reviewed_evidence_manifest_verification_rejects_a_missing_checksum_check() {
+        let text = complete_reviewed_evidence_manifest_verification_fixture().replace(
+            "checksumManifestSha256=\"$(jq -r '.checksumManifestSha256' \"${manifest_path}\")\"",
+            "",
+        );
+        let error = check_reviewed_evidence_manifest_verification(&text)
+            .expect_err("a fixture missing the checksum-manifest digest check is rejected");
+        assert!(error.contains("checksumManifestSha256"), "{error}");
+    }
+
+    #[test]
+    fn check_v0_6_0_evidence_manifest_accepts_the_real_file() {
+        let root = suite::workspace_root().expect("workspace root resolves");
+        let violations = check_v0_6_0_evidence_manifest(&root).expect("manifest reads and parses");
+        assert!(violations.is_empty(), "{violations:#?}");
     }
 
     #[test]

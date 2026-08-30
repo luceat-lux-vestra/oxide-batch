@@ -43,6 +43,15 @@ one-time manual bootstrap and is never generalized by the workflow.
 - [ ] Create the protected, signed `v<version>` tag from the reviewed commit.
 - [ ] Review the tag-generated draft Release, `.crate`, checksum, SBOM, and
       package attestations.
+- [ ] Record the reviewed tag object/commit/tree and every published crate's
+      exact `.crate`/SBOM SHA-256 into `docs/release/evidence/<tag>.json` and
+      merge it to `main` before any `workflow_dispatch` recovery run against
+      this tag. This manifest is the recovery workflow's independent trust
+      anchor: the draft Release it recovers evidence into is mutable, so a
+      recovery that only cross-checks the draft's own SBOM against the
+      draft's own checksum manifest proves nothing if both were tampered
+      with together. A merged, reviewed manifest on `main` is a separate
+      trust domain from that mutable draft.
 - [ ] If this release introduces a crate name that does not yet exist on
       crates.io, follow a reviewed first-publication bootstrap from the exact
       release tag. For M5 `0.5.0`, follow
