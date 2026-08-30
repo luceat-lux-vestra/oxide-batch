@@ -168,7 +168,13 @@ pub fn check() -> Result<Vec<String>, String> {
     if let Err(violation) = check_recovered_sbom_content_verification(&draft_text) {
         violations.push(violation);
     }
+    if let Err(violation) = check_workflow_dispatch_originates_from_main(&draft_text) {
+        violations.push(violation);
+    }
     if let Err(violation) = check_reviewed_evidence_manifest_checkout(&draft_text) {
+        violations.push(violation);
+    }
+    if let Err(violation) = check_reviewed_evidence_manifest_head_verification(&draft_text) {
         violations.push(violation);
     }
     if let Err(violation) = check_reviewed_evidence_manifest_verification(&draft_text) {
@@ -964,6 +970,83 @@ fn check_recovery_downloads_existing_assets(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Checks the #212 round-4 recovery-review fix: a `workflow_dispatch`
+/// recovery is only valid when dispatched from `refs/heads/main`, checked
+/// before any checkout.
+///
+/// `workflow_dispatch` runs whichever ref's own copy of this workflow file
+/// was selected at dispatch time — the dispatch ref, not `inputs.tag`,
+/// decides which workflow *definition* executes. Dispatching from an
+/// unreviewed branch would therefore run that branch's own version of
+/// every check in this file, including ones a PR could have quietly
+/// removed, defeating every other #212 fix regardless of how carefully it
+/// is written.
+fn check_workflow_dispatch_originates_from_main(text: &str) -> Result<(), String> {
+    let block = extract_step_block(text, "Verify workflow_dispatch originated from main")?;
+    if !block.contains("if: github.event_name == 'workflow_dispatch'") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify workflow_dispatch originated from main\" must \
+             run only on `github.event_name == 'workflow_dispatch'`"
+        ));
+    }
+    if !block.contains("refs/heads/main") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify workflow_dispatch originated from main\" must \
+             reject any dispatch ref other than refs/heads/main"
+        ));
+    }
+    let checkout_position = text
+        .find("- name: Check out release tag")
+        .ok_or_else(|| format!("{RELEASE_DRAFT_WORKFLOW} has no \"Check out release tag\" step"))?;
+    let verify_position = text
+        .find("- name: Verify workflow_dispatch originated from main")
+        .ok_or_else(|| {
+            format!(
+                "{RELEASE_DRAFT_WORKFLOW} has no \"Verify workflow_dispatch originated from \
+                 main\" step"
+            )
+        })?;
+    if verify_position > checkout_position {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify workflow_dispatch originated from main\" must run \
+             before \"Check out release tag\", so an illegitimate dispatch fails before this \
+             workflow does any work with the checked-out tree"
+        ));
+    }
+    Ok(())
+}
+
+/// Checks the #212 round-4 recovery-review fix: a `workflow_dispatch`
+/// recovery verifies the reviewed evidence manifest checkout's own `HEAD`
+/// equals the dispatched commit, not merely trusting that `actions/
+/// checkout`'s `ref:` input did what it was asked.
+fn check_reviewed_evidence_manifest_head_verification(text: &str) -> Result<(), String> {
+    let block = extract_step_block(
+        text,
+        "Verify reviewed evidence manifest checkout is pinned to the dispatched commit",
+    )?;
+    if !block.contains("if: github.event_name == 'workflow_dispatch'") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify reviewed evidence manifest checkout is pinned to \
+             the dispatched commit\" must run only on `github.event_name == 'workflow_dispatch'`"
+        ));
+    }
+    if !block.contains("git -C release-evidence-manifest rev-parse HEAD") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify reviewed evidence manifest checkout is pinned to \
+             the dispatched commit\" must independently read the checked-out manifest \
+             directory's own HEAD rather than trusting the checkout step's `ref:` input"
+        ));
+    }
+    if !block.contains("${GITHUB_SHA}") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify reviewed evidence manifest checkout is pinned to \
+             the dispatched commit\" must compare against ${{GITHUB_SHA}}, the dispatched commit"
+        ));
+    }
+    Ok(())
+}
+
 /// Checks the #212 round-3 recovery-review fix: a `workflow_dispatch`
 /// recovery checks out the reviewed, merged-to-`main` evidence manifest for
 /// this exact tag into a separate directory, leaving the primary checkout
@@ -984,11 +1067,24 @@ fn check_reviewed_evidence_manifest_checkout(text: &str) -> Result<(), String> {
              only on `github.event_name == 'workflow_dispatch'`"
         ));
     }
-    if !block.contains("ref: main") {
+    // #212 round 4: `ref: main` is a moving target — by the time this step
+    // runs, or on a later re-run of the same workflow_dispatch run, `main`
+    // may have advanced past the commit that was actually reviewed and
+    // dispatched. `github.sha` is fixed to the commit that triggered the
+    // run and does not move on a re-run, so it must be used instead.
+    if block.contains("ref: main") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Check out reviewed release evidence manifest\" must not \
+             check out the moving `ref: main`; it must pin to `ref: ${{{{ github.sha }}}}`, the \
+             exact commit that triggered this run"
+        ));
+    }
+    if !block.contains("ref: ${{ github.sha }}") {
         return Err(format!(
             "{RELEASE_DRAFT_WORKFLOW} \"Check out reviewed release evidence manifest\" must \
-             check out `main`, not the release tag, as the reviewed evidence manifest is a \
-             trust anchor independent of the immutable tag's own (pre-#212) tree"
+             check out `ref: ${{{{ github.sha }}}}`, not the release tag, as the reviewed \
+             evidence manifest is a trust anchor independent of the immutable tag's own \
+             (pre-#212) tree"
         ));
     }
     if !block.contains("path: release-evidence-manifest") {
@@ -1865,17 +1961,106 @@ mod tests {
     }
 
     #[test]
+    fn check_workflow_dispatch_originates_from_main_accepts_a_correctly_ordered_gate() {
+        let text = "steps:\n      - name: Verify workflow_dispatch originated from main\n        if: github.event_name == 'workflow_dispatch'\n        run: |\n          test \"${GITHUB_REF}\" = \"refs/heads/main\"\n      - name: Check out release tag\n        uses: actions/checkout@x\n";
+        check_workflow_dispatch_originates_from_main(text)
+            .expect("a gate before checkout is accepted");
+    }
+
+    #[test]
+    fn check_workflow_dispatch_originates_from_main_rejects_a_missing_step() {
+        let error = check_workflow_dispatch_originates_from_main(
+            "steps:\n  - name: Check out release tag\n    uses: actions/checkout@x\n",
+        )
+        .expect_err("missing step is an error");
+        assert!(
+            error.contains("Verify workflow_dispatch originated from main"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn check_workflow_dispatch_originates_from_main_rejects_no_ref_check() {
+        let text = "steps:\n      - name: Verify workflow_dispatch originated from main\n        if: github.event_name == 'workflow_dispatch'\n        run: |\n          echo skip\n      - name: Check out release tag\n        uses: actions/checkout@x\n";
+        let error = check_workflow_dispatch_originates_from_main(text).expect_err(
+            "a gate that never checks the dispatch ref is rejected: dispatching from an \
+             unreviewed branch would run that branch's own copy of every other #212 check",
+        );
+        assert!(error.contains("refs/heads/main"), "{error}");
+    }
+
+    #[test]
+    fn check_workflow_dispatch_originates_from_main_rejects_running_after_checkout() {
+        let text = "steps:\n      - name: Check out release tag\n        uses: actions/checkout@x\n      - name: Verify workflow_dispatch originated from main\n        if: github.event_name == 'workflow_dispatch'\n        run: |\n          test \"${GITHUB_REF}\" = \"refs/heads/main\"\n";
+        let error = check_workflow_dispatch_originates_from_main(text).expect_err(
+            "a gate that runs after checkout is rejected: an illegitimate dispatch must fail \
+             before this workflow does any work with the checked-out tree",
+        );
+        assert!(error.contains("must run before"), "{error}");
+    }
+
+    #[test]
+    fn check_reviewed_evidence_manifest_head_verification_accepts_a_complete_step() {
+        let text = simple_step(
+            "Verify reviewed evidence manifest checkout is pinned to the dispatched commit",
+            Some("github.event_name == 'workflow_dispatch'"),
+            "          actual_head=\"$(git -C release-evidence-manifest rev-parse HEAD)\"\n          test \"${actual_head}\" = \"${GITHUB_SHA}\"",
+        );
+        check_reviewed_evidence_manifest_head_verification(&text)
+            .expect("complete HEAD verification step accepted");
+    }
+
+    #[test]
+    fn check_reviewed_evidence_manifest_head_verification_rejects_a_missing_step() {
+        let error = check_reviewed_evidence_manifest_head_verification(
+            "steps:\n  - name: Other\n    run: echo hi\n",
+        )
+        .expect_err("missing step is an error");
+        assert!(
+            error.contains("Verify reviewed evidence manifest checkout is pinned"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn check_reviewed_evidence_manifest_head_verification_rejects_trusting_the_checkout_input() {
+        let text = simple_step(
+            "Verify reviewed evidence manifest checkout is pinned to the dispatched commit",
+            Some("github.event_name == 'workflow_dispatch'"),
+            "          echo trusting the checkout step blindly",
+        );
+        let error = check_reviewed_evidence_manifest_head_verification(&text).expect_err(
+            "a step that never independently re-reads the checked-out manifest's own HEAD is \
+             rejected",
+        );
+        assert!(
+            error.contains("independently read the checked-out manifest directory's own HEAD"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn check_reviewed_evidence_manifest_checkout_accepts_a_complete_step() {
         let text = simple_step(
             "Check out reviewed release evidence manifest",
             Some("github.event_name == 'workflow_dispatch'"),
-            "          # uses: actions/checkout@x\n          # with: ref: main, path: release-evidence-manifest\n          # sparse-checkout: docs/release/evidence",
+            "          echo placeholder body",
         )
         .replace(
             "        run: |\n",
-            "        uses: actions/checkout@x\n        with:\n          ref: main\n          path: release-evidence-manifest\n          sparse-checkout: |\n            docs/release/evidence\n        run: |\n",
+            "        uses: actions/checkout@x\n        with:\n          ref: ${{ github.sha }}\n          path: release-evidence-manifest\n          sparse-checkout: |\n            docs/release/evidence\n        run: |\n",
         );
         check_reviewed_evidence_manifest_checkout(&text).expect("complete checkout step accepted");
+    }
+
+    #[test]
+    fn check_reviewed_evidence_manifest_checkout_rejects_a_moving_main_ref() {
+        let text = "steps:\n      - name: Check out reviewed release evidence manifest\n        if: github.event_name == 'workflow_dispatch'\n        uses: actions/checkout@x\n        with:\n          ref: main\n          path: release-evidence-manifest\n          sparse-checkout: |\n            docs/release/evidence\n      - name: Next step\n        run: echo hi\n";
+        let error = check_reviewed_evidence_manifest_checkout(text).expect_err(
+            "ref: main is a moving target: main may advance past the reviewed/dispatched commit \
+             before this step runs, or before a later re-run of the same workflow_dispatch run",
+        );
+        assert!(error.contains("moving `ref: main`"), "{error}");
     }
 
     #[test]
@@ -1894,10 +2079,11 @@ mod tests {
     fn check_reviewed_evidence_manifest_checkout_rejects_checking_out_the_release_tag() {
         let text = "steps:\n      - name: Check out reviewed release evidence manifest\n        if: github.event_name == 'workflow_dispatch'\n        uses: actions/checkout@x\n        with:\n          ref: ${{ env.RELEASE_TAG }}\n          path: release-evidence-manifest\n          sparse-checkout: |\n            docs/release/evidence\n      - name: Next step\n        run: echo hi\n";
         let error = check_reviewed_evidence_manifest_checkout(text).expect_err(
-            "checking out the release tag instead of main defeats the point: the manifest must \
-             be an independent trust anchor, not part of the same tree being verified",
+            "checking out the release tag instead of the dispatched commit defeats the point: \
+             the manifest must be an independent trust anchor, not part of the same tree being \
+             verified",
         );
-        assert!(error.contains("must check out `main`"), "{error}");
+        assert!(error.contains("ref: ${{ github.sha }}"), "{error}");
     }
 
     fn complete_reviewed_evidence_manifest_verification_fixture() -> String {
