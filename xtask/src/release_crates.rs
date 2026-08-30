@@ -55,6 +55,16 @@ const EXPECTED_RELEASED_CRATES: &[&str] = &[
 /// must fail before packaging or publication.
 const EXPECTED_RELEASE_VERSION: &str = "0.6.0";
 
+/// The in-toto predicate type GitHub's `actions/attest` records for a plain
+/// `subject-path`-only call (no `sbom-path`), confirmed against a real
+/// attestation from the `v0.6.0` tag run.
+const PROVENANCE_PREDICATE_TYPE: &str = "https://slsa.dev/provenance/v1";
+
+/// The in-toto predicate type GitHub's `actions/attest` records when called
+/// with `sbom-path` pointing at a `CycloneDX` JSON document, confirmed against
+/// a real attestation from the `v0.6.0` tag run.
+const SBOM_PREDICATE_TYPE: &str = "https://cyclonedx.org/bom";
+
 /// Runs the release crate-set regression check.
 ///
 /// Returns every violation as a human-readable line. An empty result means
@@ -97,12 +107,13 @@ pub fn check() -> Result<Vec<String>, String> {
         ));
     }
     let draft_dynamic_occurrences = draft_text.matches(DYNAMIC_RELEASE_SET_FILTER).count();
-    if draft_dynamic_occurrences != 2 {
+    if draft_dynamic_occurrences != 3 {
         violations.push(format!(
             "{RELEASE_DRAFT_WORKFLOW} has {draft_dynamic_occurrences} dynamic release-set \
-             derivation(s) (expected 2, one per step that packages/publishes the release set); \
-             a hardcoded RELEASED_CRATES list there would break workflow_dispatch recovery \
-             against a tag that predates a later-added released crate"
+             derivation(s) (expected 3: package/publish, SBOM generation, and #212's \
+             attestation-coverage verification); a hardcoded RELEASED_CRATES list there would \
+             break workflow_dispatch recovery against a tag that predates a later-added \
+             released crate"
         ));
     }
     if extract_env_list(&draft_text, "RELEASED_CRATES")
@@ -125,6 +136,12 @@ pub fn check() -> Result<Vec<String>, String> {
         violations.push(format!(
             "{RELEASE_DRAFT_WORKFLOW} must skip the M6 test-kit attestation when recovering a pre-M6 tag"
         ));
+    }
+    if let Err(violation) = check_verify_tag_and_package_not_flattened(&draft_text) {
+        violations.push(violation);
+    }
+    if let Err(violation) = check_attestation_coverage_verification(&draft_text) {
+        violations.push(violation);
     }
 
     violations.extend(check_release_workflow(&root)?);
@@ -592,6 +609,119 @@ fn extract_sbom_attestation_crates(text: &str) -> Result<Vec<String>, String> {
     Ok(crates)
 }
 
+/// Checks that `RELEASED_CRATES` is not flattened to one line before the
+/// exact-line `grep -Fxq` membership check in "Verify tag and package".
+///
+/// #212: `RELEASED_CRATES` was piped through `tr '\n' ' '`, collapsing every
+/// released crate name onto a single space-joined line. `grep -Fxq
+/// "oxide-batch-test"` requires an *entire line* to equal that one crate
+/// name, which a multi-crate joined line can never do, so `has_test` was
+/// always false and the crate's SBOM attestation step always silently
+/// skipped. The fix keeps the `jq` output newline-separated (`for crate in
+/// ${RELEASED_CRATES}` still splits correctly on embedded newlines via the
+/// default `IFS`), so this checks the flattening pipe has not crept back in
+/// on the derivation that feeds that exact-line match.
+fn check_verify_tag_and_package_not_flattened(text: &str) -> Result<(), String> {
+    let block = extract_step_block(text, "Verify tag and package")?;
+    let unflattened_derivation = format!("{DYNAMIC_RELEASE_SET_FILTER}')\"");
+    if !block.contains(&unflattened_derivation) {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify tag and package\" must not flatten \
+             RELEASED_CRATES to one line (e.g. via `tr '\\n' ' '`) before the exact-line \
+             `grep -Fxq` membership check (#212): a space-joined line can never equal a single \
+             crate name, so `has_test` would always be false"
+        ));
+    }
+    Ok(())
+}
+
+/// Checks the runtime fail-closed attestation-coverage step added for #212.
+///
+/// A crate's `Attest ... SBOM` step above can be skipped by a broken `if:`
+/// condition and still exit the job successfully — exactly what happened in
+/// #212 — so a step *running without error* is not evidence that its
+/// attestation exists. This checks that a step queries the recorded
+/// evidence itself, GitHub's attestations API keyed by each released
+/// crate's own archive digest, for every crate this run actually released
+/// (derived the same dynamic way as the packaging steps, so an older
+/// recovery run only requires coverage for what it actually released), and
+/// fails the job before the draft-release step if any crate's evidence is
+/// short.
+fn check_attestation_coverage_verification(text: &str) -> Result<(), String> {
+    let block = extract_step_block(text, "Verify attestation coverage for every released crate")?;
+    if !block.contains(DYNAMIC_RELEASE_SET_FILTER) {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify attestation coverage for every released crate\" \
+             must derive its crate set the same dynamic way as the packaging steps, not a \
+             hardcoded list, so a future publishable crate is checked automatically"
+        ));
+    }
+    if !block.contains("attestations/sha256:") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify attestation coverage for every released crate\" \
+             must query the GitHub attestations API for each released crate's own archive digest"
+        ));
+    }
+    // An undifferentiated total is not sufficient: a recovery rerun repeats
+    // "Attest package provenance" for every crate, so a digest can reach two
+    // provenance attestations while its crate-specific SBOM attestation is
+    // still entirely missing, and a bare `count >= 2` would still pass
+    // (exactly the gap independent review found in this check's first
+    // version). Provenance and SBOM evidence must be queried and required
+    // separately, by predicate type.
+    if !block.contains("predicate_type=") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify attestation coverage for every released crate\" \
+             must filter the attestations API query by predicate_type rather than accepting an \
+             undifferentiated total count: a recovery rerun can produce duplicate provenance \
+             attestations for a digest whose crate-specific SBOM attestation is still missing"
+        ));
+    }
+    if !block.contains(PROVENANCE_PREDICATE_TYPE) || !block.contains(SBOM_PREDICATE_TYPE) {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify attestation coverage for every released crate\" \
+             must verify both the provenance predicate ({PROVENANCE_PREDICATE_TYPE:?}) and the \
+             SBOM predicate ({SBOM_PREDICATE_TYPE:?}) exist for every released crate"
+        ));
+    }
+    if block.contains("-ge 2") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify attestation coverage for every released crate\" \
+             must not accept an undifferentiated total attestation count of 2; it must require \
+             at least 1 provenance attestation and, separately, at least 1 SBOM attestation"
+        ));
+    }
+    if !block.contains("-ge 1") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify attestation coverage for every released crate\" \
+             must require at least 1 attestation of each predicate type for every released crate"
+        ));
+    }
+    // A no-match `predicate_type` filter 404s, and `gh api` writes that
+    // error body to *stdout* before exiting non-zero. A fallback written
+    // *inside* the command substitution (`... || echo 0)"`) would
+    // concatenate that JSON error body with a literal "0" into `count`
+    // instead of replacing it, corrupting the numeric comparison this step
+    // depends on to ever reach its failure branch.
+    if block.contains("|| echo 0)\"") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify attestation coverage for every released crate\" \
+             must not fall back inside the command substitution (`... || echo 0)\"`): a 404 \
+             from an unmatched predicate_type writes its error body to stdout before `gh api` \
+             exits non-zero, so an inside-substitution fallback appends \"0\" to that body \
+             instead of replacing it"
+        ));
+    }
+    if !block.contains(")\" || count=0") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify attestation coverage for every released crate\" \
+             must fall back to count=0 outside the command substitution (`)\" || count=0`), so a \
+             failed query replaces the captured count rather than appending to it"
+        ));
+    }
+    Ok(())
+}
+
 /// Requires the release-evidence action to be the reviewed attestation action
 /// at an immutable full commit SHA. Version tags and other action identities
 /// are not an acceptable release contract, even when their inputs are valid.
@@ -742,6 +872,137 @@ mod tests {
         let error = extract_sbom_attestation_crates(&one_sbom_attestation(None))
             .expect_err("missing action is rejected");
         assert!(error.contains("without an action reference"), "{error}");
+    }
+
+    #[test]
+    fn check_verify_tag_and_package_not_flattened_accepts_the_unflattened_form() {
+        let text = "steps:\n  - name: Verify tag and package\n    run: |\n      RELEASED_CRATES=\"$(cargo metadata --no-deps --format-version 1 \\\n        | jq -r '.packages[] | select((.publish // []) | length > 0) | .name')\"\n  - name: Next step\n    run: echo hi\n";
+        check_verify_tag_and_package_not_flattened(text).expect("unflattened derivation accepted");
+    }
+
+    #[test]
+    fn check_verify_tag_and_package_not_flattened_rejects_the_212_regression() {
+        let text = "steps:\n  - name: Verify tag and package\n    run: |\n      RELEASED_CRATES=\"$(cargo metadata --no-deps --format-version 1 \\\n        | jq -r '.packages[] | select((.publish // []) | length > 0) | .name' \\\n        | tr '\\n' ' ')\"\n  - name: Next step\n    run: echo hi\n";
+        let error = check_verify_tag_and_package_not_flattened(text)
+            .expect_err("flattened derivation is rejected");
+        assert!(error.contains("must not flatten"), "{error}");
+    }
+
+    #[test]
+    fn check_verify_tag_and_package_not_flattened_rejects_a_missing_step() {
+        let error = check_verify_tag_and_package_not_flattened(
+            "steps:\n  - name: Other\n    run: echo hi\n",
+        )
+        .expect_err("missing step is an error");
+        assert!(error.contains("Verify tag and package"), "{error}");
+    }
+
+    fn attestation_coverage_step(body: &str) -> String {
+        format!(
+            "steps:\n  - name: Verify attestation coverage for every released crate\n    run: |\n{body}\n  - name: Create or refresh draft release\n    run: echo hi\n"
+        )
+    }
+
+    const DYNAMIC_CRATES_LINE: &str = "      RELEASED_CRATES=\"$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select((.publish // []) | length > 0) | .name')\"\n";
+    const HARDCODED_CRATES_LINE: &str = "      RELEASED_CRATES=\"oxide-batch-core oxide-batch-repository oxide-batch-plan oxide-batch oxide-batch-cli oxide-batch-test\"\n";
+    const PER_PREDICATE_QUERY_LINES: &str = "      for predicate_type in \"https://slsa.dev/provenance/v1\" \"https://cyclonedx.org/bom\"; do\n        count=\"$(gh api --method GET repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest} -f predicate_type=${predicate_type} --jq '.attestations | length')\" || count=0\n        if [ \"${count}\" -ge 1 ]; then break; fi\n      done\n";
+
+    #[test]
+    fn check_attestation_coverage_verification_accepts_a_complete_step() {
+        let text =
+            attestation_coverage_step(&format!("{DYNAMIC_CRATES_LINE}{PER_PREDICATE_QUERY_LINES}"));
+        check_attestation_coverage_verification(&text).expect("complete step accepted");
+    }
+
+    #[test]
+    fn check_attestation_coverage_verification_rejects_a_missing_step() {
+        let error =
+            check_attestation_coverage_verification("steps:\n  - name: Other\n    run: echo hi\n")
+                .expect_err("missing step is an error");
+        assert!(error.contains("Verify attestation coverage"), "{error}");
+    }
+
+    #[test]
+    fn check_attestation_coverage_verification_rejects_a_hardcoded_crate_set() {
+        let text = attestation_coverage_step(&format!(
+            "{HARDCODED_CRATES_LINE}{PER_PREDICATE_QUERY_LINES}"
+        ));
+        let error = check_attestation_coverage_verification(&text)
+            .expect_err("hardcoded crate set is rejected");
+        assert!(error.contains("dynamic"), "{error}");
+    }
+
+    #[test]
+    fn check_attestation_coverage_verification_rejects_a_missing_api_query() {
+        let text = attestation_coverage_step(&format!("{DYNAMIC_CRATES_LINE}      echo skip\n"));
+        let error = check_attestation_coverage_verification(&text)
+            .expect_err("missing API query is rejected");
+        assert!(error.contains("attestations API"), "{error}");
+    }
+
+    /// The exact gap independent review found: a digest can carry two
+    /// *provenance* attestations (a recovery rerun repeats "Attest package
+    /// provenance") while its crate-specific SBOM attestation is entirely
+    /// missing, and an undifferentiated `count >= 2` guard would still pass.
+    #[test]
+    fn check_attestation_coverage_verification_rejects_a_total_count_only_guard() {
+        let text = attestation_coverage_step(&format!(
+            "{DYNAMIC_CRATES_LINE}      count=\"$(gh api repos/${{GITHUB_REPOSITORY}}/attestations/sha256:${{digest}} --jq '.attestations | length')\"\n      if [ \"${{count}}\" -ge 2 ]; then break; fi\n",
+        ));
+        let error = check_attestation_coverage_verification(&text).expect_err(
+            "a total count without predicate_type filtering must be rejected: it would accept \
+             duplicate provenance attestations plus a missing SBOM attestation",
+        );
+        assert!(error.contains("predicate_type"), "{error}");
+    }
+
+    #[test]
+    fn check_attestation_coverage_verification_rejects_predicate_type_present_but_still_gated_on_a_total_of_two()
+     {
+        let text = attestation_coverage_step(&format!(
+            "{DYNAMIC_CRATES_LINE}      count=\"$(gh api --method GET repos/${{GITHUB_REPOSITORY}}/attestations/sha256:${{digest}} -f predicate_type=https://slsa.dev/provenance/v1 --jq '.attestations | length')\"\n      count=\"$((count + $(gh api --method GET repos/${{GITHUB_REPOSITORY}}/attestations/sha256:${{digest}} -f predicate_type=https://cyclonedx.org/bom --jq '.attestations | length')))\"\n      if [ \"${{count}}\" -ge 2 ]; then break; fi\n",
+        ));
+        let error = check_attestation_coverage_verification(&text).expect_err(
+            "summing per-predicate counts back into one -ge 2 gate reopens the duplicate-\
+             provenance-plus-missing-SBOM gap and must be rejected",
+        );
+        assert!(error.contains("undifferentiated total"), "{error}");
+    }
+
+    /// `gh api` writes a 404 error body to *stdout* before exiting
+    /// non-zero, so a fallback written *inside* the command substitution
+    /// concatenates that JSON body with a literal "0" instead of replacing
+    /// it, corrupting the numeric comparisons below it so the failure
+    /// branch is never reliably reached.
+    #[test]
+    fn check_attestation_coverage_verification_rejects_an_inside_substitution_fallback() {
+        let query_with_inside_fallback = "      for predicate_type in \"https://slsa.dev/provenance/v1\" \"https://cyclonedx.org/bom\"; do\n        count=\"$(gh api --method GET repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest} -f predicate_type=${predicate_type} --jq '.attestations | length' || echo 0)\"\n        if [ \"${count}\" -ge 1 ]; then break; fi\n      done\n";
+        let text = attestation_coverage_step(&format!(
+            "{DYNAMIC_CRATES_LINE}{query_with_inside_fallback}"
+        ));
+        let error = check_attestation_coverage_verification(&text)
+            .expect_err("an inside-substitution fallback is rejected");
+        assert!(error.contains("inside the command substitution"), "{error}");
+    }
+
+    #[test]
+    fn check_attestation_coverage_verification_rejects_a_missing_fallback() {
+        let query_without_fallback = "      for predicate_type in \"https://slsa.dev/provenance/v1\" \"https://cyclonedx.org/bom\"; do\n        count=\"$(gh api --method GET repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest} -f predicate_type=${predicate_type} --jq '.attestations | length')\"\n        if [ \"${count}\" -ge 1 ]; then break; fi\n      done\n";
+        let text =
+            attestation_coverage_step(&format!("{DYNAMIC_CRATES_LINE}{query_without_fallback}"));
+        let error = check_attestation_coverage_verification(&text)
+            .expect_err("a query with no 404 fallback at all is rejected");
+        assert!(error.contains("fall back to count=0"), "{error}");
+    }
+
+    #[test]
+    fn check_attestation_coverage_verification_rejects_provenance_only_coverage() {
+        let text = attestation_coverage_step(&format!(
+            "{DYNAMIC_CRATES_LINE}      count=\"$(gh api --method GET repos/${{GITHUB_REPOSITORY}}/attestations/sha256:${{digest}} -f predicate_type=https://slsa.dev/provenance/v1 --jq '.attestations | length')\"\n      if [ \"${{count}}\" -ge 1 ]; then break; fi\n",
+        ));
+        let error = check_attestation_coverage_verification(&text)
+            .expect_err("checking only the provenance predicate is rejected");
+        assert!(error.contains("SBOM predicate"), "{error}");
     }
 
     #[test]
