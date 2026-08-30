@@ -53,9 +53,16 @@ jobs:
           # hardcoded list, so this works unchanged for an older tag that
           # predates a later-added released crate (e.g. v0.5.0, which
           # predates oxide-batch-test) as well as the current tag.
+          #
+          # Kept newline-separated (one crate per line), not flattened with
+          # `tr '\n' ' '`: the exact-line match below (`grep -Fxq`) needs one
+          # crate per line to ever match, and a single space-joined line can
+          # never equal a lone crate name. #212 was exactly this: the
+          # flattened form made `has_test` always false. `for crate in
+          # ${RELEASED_CRATES}` still splits correctly on the embedded
+          # newlines (default IFS), so this changes no other behavior below.
           RELEASED_CRATES="$(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[] | select((.publish // []) | length > 0) | .name' \
-            | tr '\n' ' ')"
+            | jq -r '.packages[] | select((.publish // []) | length > 0) | .name')"
 
           published=""
           for crate in ${RELEASED_CRATES}; do
@@ -172,6 +179,49 @@ jobs:
         with:
           subject-path: target/package/oxide-batch-test-${{ steps.package.outputs.version }}.crate
           sbom-path: target/package/oxide-batch-test-${{ steps.package.outputs.version }}.cdx.json
+
+      # #212: a misconfigured or wrongly-skipped `Attest ... SBOM` step above
+      # still exits 0, so a static count of steps run cannot catch a silent
+      # coverage gap. This checks the recorded evidence itself, against
+      # whatever this run actually released (derived the same way as above,
+      # not a hardcoded list, so an older recovery run only requires
+      # coverage for the crates it actually released) and fails the job
+      # before any draft release is created or refreshed.
+      - name: Verify attestation coverage for every released crate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          RELEASED_CRATES="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select((.publish // []) | length > 0) | .name')"
+
+          failed=0
+          for crate in ${RELEASED_CRATES}; do
+            crate_path="target/package/${crate}-${PACKAGE_VERSION}.crate"
+            test -s "${crate_path}"
+            digest="$(sha256sum "${crate_path}" | cut -d' ' -f1)"
+
+            count=0
+            attempt=0
+            while [ "${attempt}" -lt 5 ]; do
+              count="$(gh api "repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest}" \
+                --jq '.attestations | length' 2>/dev/null || echo 0)"
+              if [ "${count}" -ge 2 ]; then
+                break
+              fi
+              attempt=$((attempt + 1))
+              sleep 5
+            done
+
+            if [ "${count}" -lt 2 ]; then
+              echo "::error::${crate} ${PACKAGE_VERSION} (${crate_path}, sha256:${digest}) has ${count} attestation(s) after ${attempt} check(s); expected at least 2 (package provenance + crate-specific SBOM)" >&2
+              failed=1
+            fi
+          done
+
+          test "${failed}" -eq 0
 
       - name: Create or refresh draft release
         env:

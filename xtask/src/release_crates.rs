@@ -97,12 +97,13 @@ pub fn check() -> Result<Vec<String>, String> {
         ));
     }
     let draft_dynamic_occurrences = draft_text.matches(DYNAMIC_RELEASE_SET_FILTER).count();
-    if draft_dynamic_occurrences != 2 {
+    if draft_dynamic_occurrences != 3 {
         violations.push(format!(
             "{RELEASE_DRAFT_WORKFLOW} has {draft_dynamic_occurrences} dynamic release-set \
-             derivation(s) (expected 2, one per step that packages/publishes the release set); \
-             a hardcoded RELEASED_CRATES list there would break workflow_dispatch recovery \
-             against a tag that predates a later-added released crate"
+             derivation(s) (expected 3: package/publish, SBOM generation, and #212's \
+             attestation-coverage verification); a hardcoded RELEASED_CRATES list there would \
+             break workflow_dispatch recovery against a tag that predates a later-added \
+             released crate"
         ));
     }
     if extract_env_list(&draft_text, "RELEASED_CRATES")
@@ -125,6 +126,12 @@ pub fn check() -> Result<Vec<String>, String> {
         violations.push(format!(
             "{RELEASE_DRAFT_WORKFLOW} must skip the M6 test-kit attestation when recovering a pre-M6 tag"
         ));
+    }
+    if let Err(violation) = check_verify_tag_and_package_not_flattened(&draft_text) {
+        violations.push(violation);
+    }
+    if let Err(violation) = check_attestation_coverage_verification(&draft_text) {
+        violations.push(violation);
     }
 
     violations.extend(check_release_workflow(&root)?);
@@ -592,6 +599,69 @@ fn extract_sbom_attestation_crates(text: &str) -> Result<Vec<String>, String> {
     Ok(crates)
 }
 
+/// Checks that `RELEASED_CRATES` is not flattened to one line before the
+/// exact-line `grep -Fxq` membership check in "Verify tag and package".
+///
+/// #212: `RELEASED_CRATES` was piped through `tr '\n' ' '`, collapsing every
+/// released crate name onto a single space-joined line. `grep -Fxq
+/// "oxide-batch-test"` requires an *entire line* to equal that one crate
+/// name, which a multi-crate joined line can never do, so `has_test` was
+/// always false and the crate's SBOM attestation step always silently
+/// skipped. The fix keeps the `jq` output newline-separated (`for crate in
+/// ${RELEASED_CRATES}` still splits correctly on embedded newlines via the
+/// default `IFS`), so this checks the flattening pipe has not crept back in
+/// on the derivation that feeds that exact-line match.
+fn check_verify_tag_and_package_not_flattened(text: &str) -> Result<(), String> {
+    let block = extract_step_block(text, "Verify tag and package")?;
+    let unflattened_derivation = format!("{DYNAMIC_RELEASE_SET_FILTER}')\"");
+    if !block.contains(&unflattened_derivation) {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify tag and package\" must not flatten \
+             RELEASED_CRATES to one line (e.g. via `tr '\\n' ' '`) before the exact-line \
+             `grep -Fxq` membership check (#212): a space-joined line can never equal a single \
+             crate name, so `has_test` would always be false"
+        ));
+    }
+    Ok(())
+}
+
+/// Checks the runtime fail-closed attestation-coverage step added for #212.
+///
+/// A crate's `Attest ... SBOM` step above can be skipped by a broken `if:`
+/// condition and still exit the job successfully — exactly what happened in
+/// #212 — so a step *running without error* is not evidence that its
+/// attestation exists. This checks that a step queries the recorded
+/// evidence itself, GitHub's attestations API keyed by each released
+/// crate's own archive digest, for every crate this run actually released
+/// (derived the same dynamic way as the packaging steps, so an older
+/// recovery run only requires coverage for what it actually released), and
+/// fails the job before the draft-release step if any crate's evidence is
+/// short.
+fn check_attestation_coverage_verification(text: &str) -> Result<(), String> {
+    let block = extract_step_block(text, "Verify attestation coverage for every released crate")?;
+    if !block.contains(DYNAMIC_RELEASE_SET_FILTER) {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify attestation coverage for every released crate\" \
+             must derive its crate set the same dynamic way as the packaging steps, not a \
+             hardcoded list, so a future publishable crate is checked automatically"
+        ));
+    }
+    if !block.contains("attestations/sha256:") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify attestation coverage for every released crate\" \
+             must query the GitHub attestations API for each released crate's own archive digest"
+        ));
+    }
+    if !block.contains("-ge 2") {
+        return Err(format!(
+            "{RELEASE_DRAFT_WORKFLOW} \"Verify attestation coverage for every released crate\" \
+             must require at least 2 attestations per released crate (package provenance plus \
+             its crate-specific SBOM attestation)"
+        ));
+    }
+    Ok(())
+}
+
 /// Requires the release-evidence action to be the reviewed attestation action
 /// at an immutable full commit SHA. Version tags and other action identities
 /// are not an acceptable release contract, even when their inputs are valid.
@@ -742,6 +812,81 @@ mod tests {
         let error = extract_sbom_attestation_crates(&one_sbom_attestation(None))
             .expect_err("missing action is rejected");
         assert!(error.contains("without an action reference"), "{error}");
+    }
+
+    #[test]
+    fn check_verify_tag_and_package_not_flattened_accepts_the_unflattened_form() {
+        let text = "steps:\n  - name: Verify tag and package\n    run: |\n      RELEASED_CRATES=\"$(cargo metadata --no-deps --format-version 1 \\\n        | jq -r '.packages[] | select((.publish // []) | length > 0) | .name')\"\n  - name: Next step\n    run: echo hi\n";
+        check_verify_tag_and_package_not_flattened(text).expect("unflattened derivation accepted");
+    }
+
+    #[test]
+    fn check_verify_tag_and_package_not_flattened_rejects_the_212_regression() {
+        let text = "steps:\n  - name: Verify tag and package\n    run: |\n      RELEASED_CRATES=\"$(cargo metadata --no-deps --format-version 1 \\\n        | jq -r '.packages[] | select((.publish // []) | length > 0) | .name' \\\n        | tr '\\n' ' ')\"\n  - name: Next step\n    run: echo hi\n";
+        let error = check_verify_tag_and_package_not_flattened(text)
+            .expect_err("flattened derivation is rejected");
+        assert!(error.contains("must not flatten"), "{error}");
+    }
+
+    #[test]
+    fn check_verify_tag_and_package_not_flattened_rejects_a_missing_step() {
+        let error = check_verify_tag_and_package_not_flattened(
+            "steps:\n  - name: Other\n    run: echo hi\n",
+        )
+        .expect_err("missing step is an error");
+        assert!(error.contains("Verify tag and package"), "{error}");
+    }
+
+    fn attestation_coverage_step(body: &str) -> String {
+        format!(
+            "steps:\n  - name: Verify attestation coverage for every released crate\n    run: |\n{body}\n  - name: Create or refresh draft release\n    run: echo hi\n"
+        )
+    }
+
+    #[test]
+    fn check_attestation_coverage_verification_accepts_a_complete_step() {
+        let text = attestation_coverage_step(
+            "      RELEASED_CRATES=\"$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select((.publish // []) | length > 0) | .name')\"\n      count=\"$(gh api repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest} --jq '.attestations | length')\"\n      if [ \"${count}\" -ge 2 ]; then break; fi\n",
+        );
+        check_attestation_coverage_verification(&text).expect("complete step accepted");
+    }
+
+    #[test]
+    fn check_attestation_coverage_verification_rejects_a_missing_step() {
+        let error =
+            check_attestation_coverage_verification("steps:\n  - name: Other\n    run: echo hi\n")
+                .expect_err("missing step is an error");
+        assert!(error.contains("Verify attestation coverage"), "{error}");
+    }
+
+    #[test]
+    fn check_attestation_coverage_verification_rejects_a_hardcoded_crate_set() {
+        let text = attestation_coverage_step(
+            "      RELEASED_CRATES=\"oxide-batch-core oxide-batch-repository oxide-batch-plan oxide-batch oxide-batch-cli oxide-batch-test\"\n      count=\"$(gh api repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest} --jq '.attestations | length')\"\n      if [ \"${count}\" -ge 2 ]; then break; fi\n",
+        );
+        let error = check_attestation_coverage_verification(&text)
+            .expect_err("hardcoded crate set is rejected");
+        assert!(error.contains("dynamic"), "{error}");
+    }
+
+    #[test]
+    fn check_attestation_coverage_verification_rejects_a_missing_api_query() {
+        let text = attestation_coverage_step(
+            "      RELEASED_CRATES=\"$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select((.publish // []) | length > 0) | .name')\"\n      echo skip\n",
+        );
+        let error = check_attestation_coverage_verification(&text)
+            .expect_err("missing API query is rejected");
+        assert!(error.contains("attestations API"), "{error}");
+    }
+
+    #[test]
+    fn check_attestation_coverage_verification_rejects_a_weak_threshold() {
+        let text = attestation_coverage_step(
+            "      RELEASED_CRATES=\"$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select((.publish // []) | length > 0) | .name')\"\n      count=\"$(gh api repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest} --jq '.attestations | length')\"\n      if [ \"${count}\" -ge 1 ]; then break; fi\n",
+        );
+        let error = check_attestation_coverage_verification(&text)
+            .expect_err("threshold below 2 is rejected");
+        assert!(error.contains("at least 2 attestations"), "{error}");
     }
 
     #[test]
