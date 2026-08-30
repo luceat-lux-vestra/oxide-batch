@@ -187,10 +187,20 @@ jobs:
       # not a hardcoded list, so an older recovery run only requires
       # coverage for the crates it actually released) and fails the job
       # before any draft release is created or refreshed.
+      #
+      # An undifferentiated total attestation count is not sufficient: a
+      # recovery rerun repeats "Attest package provenance" for every crate,
+      # so a digest can reach two provenance attestations while its
+      # crate-specific SBOM attestation is still entirely missing, and a
+      # bare `count >= 2` would still pass. Provenance and SBOM evidence are
+      # therefore verified separately, by predicate type, each required at
+      # least once.
       - name: Verify attestation coverage for every released crate
         env:
           GH_TOKEN: ${{ github.token }}
           PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+          PROVENANCE_PREDICATE_TYPE: https://slsa.dev/provenance/v1
+          SBOM_PREDICATE_TYPE: https://cyclonedx.org/bom
         run: |
           set -euo pipefail
 
@@ -203,22 +213,35 @@ jobs:
             test -s "${crate_path}"
             digest="$(sha256sum "${crate_path}" | cut -d' ' -f1)"
 
-            count=0
-            attempt=0
-            while [ "${attempt}" -lt 5 ]; do
-              count="$(gh api "repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest}" \
-                --jq '.attestations | length' 2>/dev/null || echo 0)"
-              if [ "${count}" -ge 2 ]; then
-                break
-              fi
-              attempt=$((attempt + 1))
-              sleep 5
-            done
+            for predicate_type in "${PROVENANCE_PREDICATE_TYPE}" "${SBOM_PREDICATE_TYPE}"; do
+              count=0
+              attempt=0
+              while [ "${attempt}" -lt 5 ]; do
+                # A no-match `predicate_type` filter 404s, and `gh api`
+                # writes that error body to *stdout* before exiting
+                # non-zero. `|| echo 0` inside the substitution would
+                # concatenate that JSON body with a literal "0" into
+                # `count`, breaking the numeric comparisons below and
+                # silently never reaching the failure branch — exactly the
+                # kind of silent pass #212 was about. The fallback must run
+                # outside the substitution so it replaces, not appends to,
+                # whatever partial output the failed call produced.
+                count="$(gh api --method GET \
+                  "repos/${GITHUB_REPOSITORY}/attestations/sha256:${digest}" \
+                  -f "predicate_type=${predicate_type}" \
+                  --jq '.attestations | length' 2>/dev/null)" || count=0
+                if [ "${count}" -ge 1 ]; then
+                  break
+                fi
+                attempt=$((attempt + 1))
+                sleep 5
+              done
 
-            if [ "${count}" -lt 2 ]; then
-              echo "::error::${crate} ${PACKAGE_VERSION} (${crate_path}, sha256:${digest}) has ${count} attestation(s) after ${attempt} check(s); expected at least 2 (package provenance + crate-specific SBOM)" >&2
-              failed=1
-            fi
+              if [ "${count}" -lt 1 ]; then
+                echo "::error::${crate} ${PACKAGE_VERSION} (${crate_path}, sha256:${digest}) has ${count} attestation(s) of predicate type ${predicate_type} after ${attempt} check(s); expected at least 1" >&2
+                failed=1
+              fi
+            done
           done
 
           test "${failed}" -eq 0
