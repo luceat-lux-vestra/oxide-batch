@@ -191,7 +191,7 @@ and retain their implementation disposition. No row was promoted to released
 `Verified`: the ledger requires a named released version carrying the required
 evidence, and campaign PASS alone does not bypass that rule.
 
-## Retained evidence and provenance
+## Historical retained evidence and provenance
 
 M5 and M6 were re-run and re-retained for the release candidate because the
 release preparation changed Cargo manifests, `Cargo.lock`, and verifier/release
@@ -244,6 +244,35 @@ and full-conformance PostgreSQL 15/18 artifacts 9728114048 and 9728112543
 with digests
 `sha256:5c1be7ab68cef3151848dac04121107519fe6c185cc7397b3eeaaa13c8db29fe`
 and `sha256:77f3e9008bbce3d2a86fd94265f7b3ec0ab6f88f59e4bc0690f5afdd27cb678a`.
+
+## Dependency-correction evidence reconciliation (#210)
+
+The current retained reports supersede the historical PR #209 identities above
+for the release candidate. PR #211 corrected only the locked transitive
+dependency, replacing `chacha20 0.10.1` with non-yanked `0.10.2`; no declared
+M6 behavior, compatibility disposition, support claim, or release version
+changed.
+
+- Starting canonical `main`: `269bed6b11f57c376005f9dd8587d5974b6d877a`.
+- Corrected PR #211 branch HEAD: `f98ce2f2ca5107090f9044042ec257676f22e6d9`.
+- Corrected candidate tree: `9b04ffcf86250b8076a55d969db4cd7097e83d06`.
+- Fresh campaign execution tree: `f1d899a1fe5fd180b0e2f6d07b508c2f50879762`.
+- Corrected `Cargo.lock` object: `3ad914b2f114c567734059bf73f770a8748ea2e0`.
+- Fresh retention: 16 M5 reports and five M6 reports, all passed with zero
+  violations; `cargo xtask evidence` verifies 21 reports, required matrix
+  coverage, byte identity, and zero violations.
+
+The fresh M5 runs are cancellation `33306954017`, conformance `33306954031`,
+crash/restore `33306954029`, performance `33306954018`, resource bounds
+`33306954050`, security `33306954043`, soak `33306954036`, and upgrade
+`33306954033`. The fresh M6 runs are Gate B `33306954042`, Gate H
+`33306954046`, and full component conformance `33306954022`. Each run was
+successful for PR #211; exact artifact IDs, archive digests, retained report
+blobs, producer jobs, and remote byte-verification results are recorded in the
+M5 and M6 provenance manifests.
+
+No tag, crate publication, GitHub Release, or Trusted Publisher/token change
+was performed by this correction.
 
 ## P0/P1 review and limitations
 
