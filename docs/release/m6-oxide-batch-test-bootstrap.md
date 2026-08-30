@@ -18,13 +18,14 @@ newly published crates needed at `0.5.0`.
 
 ## Why this cannot be silently automatic
 
-`.github/workflows/release.yml`'s publication job uses OIDC Trusted Publishing
-only after a verification job confirms that every crate name is registered and
-that any already-published exact version has the matching checksum. The
-verification job fails loudly and by name if any accepted crate is not yet
-registered on crates.io -- `oxide-batch-test` included, until this bootstrap
-runs. That failure is the intended, fail-closed signal to complete this
-document's steps before retrying the release, not a defect to silence.
+`.github/workflows/release.yml` derives the six-crate order from the immutable
+tag's Cargo metadata. Its normal release path fails loudly and by name before
+OIDC if any accepted crate name is unregistered. The one explicit
+`workflow_dispatch` mode used here is `publish-registered`, and it requires the
+operator to type `PUBLISH_REGISTERED_ONLY`. That mode publishes only pending
+versions of already-registered names, leaves the final unregistered crate for
+this document's manual bootstrap, and never creates a crate name. The default
+dispatch mode remains verification-only.
 
 ## Preconditions
 
@@ -56,15 +57,21 @@ preparation:
 6. Let the tag workflow produce the draft release artifacts.
 7. Review every `.crate`, checksum, package-scoped SBOM, attestation, and
    provenance link.
-8. From the immutable tag, manually publish only `oxide-batch-test 0.6.0`
-   with a short-lived local crates.io token.
-9. Immediately configure its Trusted Publisher: owner
+8. From the immutable tag, manually dispatch `release.yml` with `mode:
+   publish-registered`, `tag: v0.6.0`, and confirmation
+   `PUBLISH_REGISTERED_ONLY`. This uses OIDC Trusted Publishing to publish only
+   the already-registered crates in derived dependency order and leaves
+   `oxide-batch-test` unpublished.
+9. From the same immutable tag, manually publish only
+   `oxide-batch-test 0.6.0` with a short-lived local crates.io token. The
+   facade is already on crates.io, so this dependency order is valid.
+10. Immediately configure its Trusted Publisher: owner
    `luceat-lux-vestra`, repository `oxide-batch`, workflow `release.yml`,
    environment `release`.
-10. Remove/logout/delete the local token and any temporary copy.
-11. Only then publish or re-run the reviewed GitHub Release so OIDC Trusted
+11. Remove/logout/delete the local token and any temporary copy.
+12. Only then publish or re-run the reviewed GitHub Release so normal OIDC
     Publishing handles the release set under the accepted recovery contract.
-12. Perform post-publish crates.io, docs.rs, clean-consumer, checksum, SBOM,
+13. Perform post-publish crates.io, docs.rs, clean-consumer, checksum, SBOM,
     provenance, and PostgreSQL release-smoke verification.
 
 The manual bootstrap command, shown for the later phase only, is:
@@ -81,11 +88,16 @@ Never store the token in the repository or as a long-lived GitHub secret.
 ## Later-release workflow behavior
 
 `release.yml` checks the immutable tag tree, verifies the complete current
-release order, rejects an unregistered crate before OIDC, and compares local
-archives with existing crates.io checksums. A partial publication is resumed
-only for exact versions still absent from crates.io; already-published
-versions are never blindly retried. `workflow_dispatch` remains verification
-only and never authenticates to or publishes on crates.io.
+release order, rejects an unregistered crate on the normal release path, and
+compares local archives with existing crates.io checksums. The explicit
+`publish-registered` dispatch is restricted by its required confirmation and
+publishes only registered names; it exists solely to put the five existing
+names on the registry before the one-time test-kit bootstrap. Every crate is
+rechecked immediately before a publish attempt. A partial publication is
+therefore idempotent: an exact matching version is skipped, a checksum mismatch
+or unexpected registry response fails closed, and only an exact 404 can lead to
+an upload. The default `workflow_dispatch` mode remains verification-only and
+does not authenticate or publish.
 
 ## Later releases
 

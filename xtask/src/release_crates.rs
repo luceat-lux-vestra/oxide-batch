@@ -153,9 +153,14 @@ pub fn check() -> Result<Vec<String>, String> {
         ));
     }
     let publish_block = extract_step_block(&release_text, "Publish to crates.io")?;
-    if !publish_block.contains("PENDING_CRATES") || !publish_block.contains("cargo publish -p") {
+    if publish_block.contains("PENDING_CRATES")
+        || !publish_block.contains("cargo publish -p")
+        || !publish_block.contains("version_status")
+        || !publish_block.contains("registry_sha")
+        || !publish_block.contains("already published with matching checksum")
+    {
         violations.push(format!(
-            "{RELEASE_WORKFLOW} \"Publish to crates.io\" must publish only pending crates in metadata-derived order"
+            "{RELEASE_WORKFLOW} \"Publish to crates.io\" must recheck each exact registry version/checksum immediately before publishing in metadata-derived order"
         ));
     }
     if !release_text.contains("release-order") {
@@ -171,6 +176,18 @@ pub fn check() -> Result<Vec<String>, String> {
              hardcoded RELEASED_CRATES list there would break workflow_dispatch recovery \
              against the v0.5.0 tag, which predates oxide-batch-test"
         ));
+    }
+    for required in [
+        "publish-registered",
+        "PUBLISH_REGISTERED_ONLY",
+        "bootstrap_required",
+        "RECOVERY_MODE",
+    ] {
+        if !release_text.contains(required) {
+            violations.push(format!(
+                "{RELEASE_WORKFLOW} is missing the fail-closed registered-only bootstrap contract marker {required:?}"
+            ));
+        }
     }
 
     Ok(violations)

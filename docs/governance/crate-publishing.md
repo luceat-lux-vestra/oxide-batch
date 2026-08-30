@@ -120,13 +120,18 @@ publish the same versions twice.
 The first M6 release is a separate bootstrap boundary for
 `oxide-batch-test`. It is not published by a name-creation shortcut in the
 workflow. After the reviewed `0.6.0` tree is merged, tagged, and its draft
-artifacts are reviewed, the maintainer manually publishes only
+artifacts are reviewed, the maintainer explicitly dispatches `release.yml` in
+its `publish-registered` mode (with the required
+`PUBLISH_REGISTERED_ONLY` confirmation). OIDC then publishes only the five
+already-registered names in the derived dependency order and leaves the new
+name untouched. The maintainer next manually publishes only
 `oxide-batch-test 0.6.0` from the immutable tag, configures its Trusted
-Publisher, removes the short-lived local token, and then publishes the
-reviewed GitHub Release. The normal OIDC workflow verifies existing exact
-versions/checksums and publishes only pending versions in the derived order;
-it stops on any unregistered crate or unexpected registry response. The exact
-sequence is [`m6-oxide-batch-test-bootstrap.md`](../release/m6-oxide-batch-test-bootstrap.md).
+Publisher, removes the short-lived local token, and only then publishes the
+reviewed GitHub Release. The normal release path rejects any unregistered name;
+every publication attempt rechecks exact registry version/checksum state, skips
+matching immutable versions, and fails closed on mismatches or unexpected
+responses. The exact sequence is
+[`m6-oxide-batch-test-bootstrap.md`](../release/m6-oxide-batch-test-bootstrap.md).
 
 A protected version tag first creates a draft GitHub Release containing the
 exact `.crate`, SHA-256 checksums, a package-scoped CycloneDX SBOM, and GitHub

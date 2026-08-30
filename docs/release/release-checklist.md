@@ -44,13 +44,15 @@ one-time manual bootstrap and is never generalized by the workflow.
 - [ ] Review the tag-generated draft Release, `.crate`, checksum, SBOM, and
       package attestations.
 - [ ] If this release introduces a crate name that does not yet exist on
-      crates.io, perform its reviewed first-publication bootstrap from the
-      exact release tag and configure its Trusted Publisher before publishing
-      the GitHub Release. For M5 `0.5.0`, follow
+      crates.io, follow a reviewed first-publication bootstrap from the exact
+      release tag. For M5 `0.5.0`, follow
       [`m5-0.5.0-bootstrap.md`](m5-0.5.0-bootstrap.md).
-- [ ] For M6, manually publish only `oxide-batch-test 0.6.0` from the exact
-      immutable tag, configure its Trusted Publisher immediately, remove the
-      local token, and only then publish the reviewed GitHub Release. Follow
+- [ ] For M6, first use the explicitly confirmed `release.yml`
+      `publish-registered` dispatch to publish the five already-registered
+      crates in derived dependency order. Then manually publish only
+      `oxide-batch-test 0.6.0`, configure its Trusted Publisher immediately,
+      remove the local token, and only then publish the reviewed GitHub
+      Release. Follow
       [`m6-oxide-batch-test-bootstrap.md`](m6-oxide-batch-test-bootstrap.md).
 - [ ] Publish the GitHub Release with notes and migration warnings.
 - [ ] Let Trusted Publishing release crates in dependency order:
@@ -60,8 +62,9 @@ one-time manual bootstrap and is never generalized by the workflow.
       are never released on their own. A reviewed first-publication bootstrap
       is the only exception; the release workflow must verify rather than
       re-publish an already bootstrapped exact version.
-- [ ] Do not retry a partially successful multi-crate publish blindly; inspect
-      registry state and prepare compatible remaining versions.
+- [ ] Do not retry a partially successful multi-crate publish blindly; the
+      workflow must recheck each crate immediately before upload, skip only an
+      exact matching checksum, and fail closed on mismatch or unexpected state.
 
 ## Verify
 
