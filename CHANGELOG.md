@@ -11,15 +11,17 @@ No changes yet.
 
 ## [0.6.0] - 2026-08-30
 
-**M6 release candidate — not yet published.** This pre-1.0 candidate adds the
-complete delivered M6 item-processing surface and the public `oxide-batch-test`
-crate to the coordinated six-crate release set. M6 campaign evidence is
-retained, but no M6 compatibility row is promoted to released `Verified` until
-this named version exists and its release artifacts and clean consumers pass.
-M6 does not claim M7-M14 completion, `1.0`, GA, full Spring Batch parity, or
-distributed execution. See the [release checklist](docs/release/release-checklist.md),
+**M6 release — published 2026-08-31.** This pre-1.0 release adds the complete
+delivered M6 item-processing surface and the public `oxide-batch-test` crate
+to the coordinated six-crate release set. M6 campaign evidence is retained;
+promoting an M6 compatibility row to released `Verified` remains a separate
+governance decision even though the named version and post-publication
+verification now exist. M6 does not claim M7-M14 completion, `1.0`, GA, full
+Spring Batch parity, or distributed execution. See the
+[release checklist](docs/release/release-checklist.md),
 [support matrix](docs/release/support-matrix.md#0.6.0-m6-release-candidate),
-and [M6 exit evidence](docs/project/m6-exit-evidence.md).
+[M6 exit evidence](docs/project/m6-exit-evidence.md), and
+[post-publish verification](docs/release/evidence/v0.6.0-post-publish.md).
 
 **Migration notes:** `0.6.0` uses metadata schema `4`, including the additive
 M6 `ItemStream` component-state migration. Upgrade from schemas `1`, `2`, or

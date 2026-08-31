@@ -3,11 +3,11 @@
 The public facade crate for [OxideBatch](https://github.com/luceat-lux-vestra/oxide-batch),
 a restart-oriented batch processing framework for Rust inspired by Spring Batch.
 
-> This is the prepared **M6 `0.6.0` release candidate**: a `0.x` pre-1.0
-> candidate adding the delivered item-processing component catalog and public
-> `oxide-batch-test` kit to the M5 embedded PostgreSQL scope. It is not yet
-> published, is not `1.0`, stable, GA, or enterprise-ready, and does not claim
-> full Spring Batch parity or M7-M14 completion. See the
+> This is the published **M6 `0.6.0` release**: a `0.x` pre-1.0 release adding
+> the delivered item-processing component catalog and public
+> `oxide-batch-test` kit to the M5 embedded PostgreSQL scope. It is not `1.0`,
+> stable, GA, or enterprise-ready, and does not claim full Spring Batch parity
+> or M7-M14 completion. See the
 > [Production Preview guide](https://github.com/luceat-lux-vestra/oxide-batch/blob/main/docs/guides/production-preview.md)
 > for what is and is not covered, and the
 > [M5 exit record](https://github.com/luceat-lux-vestra/oxide-batch/blob/main/docs/project/m5-exit-evidence.md)

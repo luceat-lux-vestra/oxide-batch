@@ -1,7 +1,22 @@
 # M6 `oxide-batch-test` Publication Bootstrap
 
-**State:** Pending -- required before the first release that includes
-`oxide-batch-test`
+**State:** Complete for `v0.6.0`
+
+All phases below are done and independently re-verified; this record is kept
+as the design rationale and as the completion evidence for the first
+`oxide-batch-test` release, per
+[Issue #190](https://github.com/luceat-lux-vestra/oxide-batch/issues/190).
+A future newly-published crate needs its own separately reviewed bootstrap
+record (see "Later releases" below) rather than reopening this one.
+
+| Phase | State | Evidence |
+| --- | --- | --- |
+| Manual `oxide-batch-test` bootstrap | Done | version `0.6.0`, checksum `8bad1e49c191f276402c7092b441c2a38dc33ff57b49d5911c801eafa42cb49e`, not yanked, Rust `1.95`, published `2026-08-31T02:54:19Z`; PASS recorded in [issue comment 5473131482](https://github.com/luceat-lux-vestra/oxide-batch/issues/190#issuecomment-5473131482) |
+| Trusted Publisher prerequisite | Configured (owner-confirmed) | owner `luceat-lux-vestra`, repository `oxide-batch`, workflow `release.yml`, environment `release`; crates.io exposes no public readback for this admin setting, so it is recorded as user-confirmed, not independently API-verified |
+| Registered publication (five already-registered crates) | Done | run [`33348113358`](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33348113358), dispatched from the reviewed `main` copy of `release.yml` (PR [#216](https://github.com/luceat-lux-vestra/oxide-batch/pull/216), squash `7281c5245d558cc9df10e9f88513383acce0e36c`), conclusion `success` |
+| Public GitHub Release | Done | release id `379278864`, `draft:false`, published `2026-08-31T03:11:29Z`; pre-publication checkpoint in [issue comment 5473193240](https://github.com/luceat-lux-vestra/oxide-batch/issues/190#issuecomment-5473193240) |
+| Release-event verification | Done | run [`33353036930`](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/33353036930) (event `release`, exact tag `v0.6.0`, exact commit `e9ce3891a9c37959ad1022a62dbf723c9edd2d65`), conclusion `success`; PASS recorded in [issue comment 5473297562](https://github.com/luceat-lux-vestra/oxide-batch/issues/190#issuecomment-5473297562) |
+| Post-publish validation | Done | crates.io, docs.rs, clean external consumer, PostgreSQL release smoke, checksum manifest, SBOM, and attestation-subject verification, recorded in [`v0.6.0-post-publish.md`](evidence/v0.6.0-post-publish.md) |
 
 [`m5-0.5.0-bootstrap.md`](m5-0.5.0-bootstrap.md) already states the rule this
 record applies: "If a future milestone adds another newly published crate,

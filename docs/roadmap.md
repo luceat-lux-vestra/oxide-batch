@@ -11,7 +11,7 @@ its specific architecture.
 Milestones are capability and evidence gates, not calendar promises. M0-M5
 record accepted history, closed by the release of `oxide-batch` `0.5.0`; M6
 implementation and exit evidence are complete, with its first `0.6.0` release
-candidate prepared but not yet published. The continuous M5-M14 program is
+published on 2026-08-31 (tag `v0.6.0`). The continuous M5-M14 program is
 accepted by [RFC-0001](rfcs/0001-m5-preview-and-project-wide-1-0.md) and the
 topic decisions linked below. Historical M0 decisions remain preserved with
 their supersession record.
@@ -249,8 +249,8 @@ governed by pre-1.0 policy.
 
 ## M6 — Complete Item Processing and User Test Kit
 
-**Status:** Implementation and exit evidence complete; `0.6.0` release
-candidate prepared, not yet published (2026-08-30)
+**Status:** Implementation and exit evidence complete; `0.6.0` published
+2026-08-31 (tag `v0.6.0`)
 
 The decision gates, dependency-ordered delivery issues, architecture
 constraints, and kickoff exit criteria are recorded in the

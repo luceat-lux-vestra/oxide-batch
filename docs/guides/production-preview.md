@@ -2,8 +2,8 @@
 
 **State:** Accepted
 
-**Applies to:** the prepared OxideBatch `0.6.0` M6 release candidate; not yet
-published
+**Applies to:** the published OxideBatch `0.6.0` M6 release (tag `v0.6.0`,
+2026-08-31)
 
 This is the entry point for the M6 candidate. It orients a new user and links to
 the canonical document that owns each topic in depth; it does not restate
@@ -23,9 +23,11 @@ the complete audience statement.
 ## What M6 delivers
 
 M6 carries the released M5 embedded scope forward and adds the complete
-delivered item-processing and application test-kit surface. The `0.6.0`
-candidate is not yet published, so its campaign evidence remains pending
-release-backed ledger promotion. It delivers:
+delivered item-processing and application test-kit surface. `0.6.0` is now
+published; its campaign evidence being release-backed is a precondition for
+ledger promotion, not a substitute decision this guide makes on its own (see
+[`v0.6.0-post-publish.md`](../release/evidence/v0.6.0-post-publish.md)). It
+delivers:
 
 - the complete accepted M0-M4 embedded kernel: typed job/step/chunk lifecycle,
   durable PostgreSQL metadata, restart from the last committed checkpoint,

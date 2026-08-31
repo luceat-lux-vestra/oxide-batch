@@ -114,12 +114,14 @@ project-wide 1.0 or enterprise-readiness matrix.
 
 ## 0.6.0 M6 release candidate
 
-`0.6.0` is the prepared first M6 release candidate; it is not yet published.
-Until a protected `v0.6.0` tag exists and post-publication verification passes,
-the latest released support line remains M5 `0.5.0`. The candidate inherits
-the M5 Rust, Linux x86_64, PostgreSQL 15-18, TLS, and single-host bounds and
-adds metadata schema `4` plus the M6 component/test-kit surface below.
-M6 campaign PASS is retained evidence, not release-backed `Verified` status.
+`0.6.0` is the first published M6 release: the protected `v0.6.0` tag exists
+and post-publication verification has passed (see
+[`v0.6.0-post-publish.md`](evidence/v0.6.0-post-publish.md)). The release
+inherits the M5 Rust, Linux x86_64, PostgreSQL 15-18, TLS, and single-host
+bounds and adds metadata schema `4` plus the M6 component/test-kit surface
+below. M6 campaign PASS is retained evidence; whether a given row below is
+promoted to release-backed `Verified` status is a separate governance
+decision this document does not make automatically upon publication.
 
 | Dimension | `0.6.0` candidate disposition | Required release evidence |
 | --- | --- | --- |

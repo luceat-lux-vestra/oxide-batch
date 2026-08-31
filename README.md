@@ -7,11 +7,15 @@ OxideBatch is an early-stage Rust-native framework for reliable, restartable
 batch processing, inspired by Spring Batch.
 
 > [!IMPORTANT]
-> OxideBatch `0.6.0` is the prepared M6 release candidate and is not yet
-> published. It remains a `0.x` pre-1.0 release: M6 adds the item-processing
-> surface and public `oxide-batch-test`, but does not claim M7-M14 completion,
-> GA, enterprise readiness, or full Spring Batch parity. M6 campaign evidence
-> is not release-backed `Verified` evidence until the named version exists.
+> OxideBatch `0.6.0` is the published first M6 release (tag `v0.6.0`,
+> published 2026-08-31; see
+> [post-publish verification](docs/release/evidence/v0.6.0-post-publish.md)).
+> It remains a `0.x` pre-1.0 release: M6 adds the item-processing surface and
+> public `oxide-batch-test`, but does not claim M7-M14 completion, GA,
+> enterprise readiness, or full Spring Batch parity. M6 campaign evidence
+> alone is not release-backed `Verified` evidence; promoting a compatibility
+> row to `Verified` is a separate governance decision this release does not
+> make automatically.
 
 ## Project goals
 
