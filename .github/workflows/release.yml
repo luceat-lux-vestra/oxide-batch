@@ -36,16 +36,47 @@ jobs:
     name: verify-release
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # #215: GitHub's Releases API returns a draft release only to an actor
+    # with push access; the workflow-wide `contents: read` default (below)
+    # cannot see the still-draft v0.6.0 release this preflight must verify
+    # in publish-registered mode. Bounded to this job only —
+    # publish-pending-versions keeps its own narrower contents: read, and
+    # this job grants no OIDC permission at all (only the publish job's
+    # crates.io authentication step needs one).
+    permissions:
+      contents: write
     outputs:
       bootstrap: ${{ steps.release.outputs.bootstrap }}
       version: ${{ steps.release.outputs.version }}
       pending: ${{ steps.registry.outputs.pending }}
       bootstrap_required: ${{ steps.registry.outputs.bootstrap_required }}
     steps:
+      # #215: `workflow_dispatch` runs whichever ref's own copy of this
+      # workflow file was selected at dispatch time — the dispatch ref, not
+      # `inputs.tag`, decides which workflow *definition* executes.
+      # Dispatching the corrected version of this file from anywhere other
+      # than the reviewed, merged `refs/heads/main` would run that other
+      # ref's own (possibly unreviewed) copy instead, defeating every check
+      # below regardless of how carefully each is written. Checked before
+      # any checkout so an illegitimate dispatch fails immediately.
+      - name: Verify workflow_dispatch originated from main
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error::workflow_dispatch publish-registered bootstrap must be dispatched from refs/heads/main, not ${GITHUB_REF}: dispatching from any other ref would execute that ref's own (possibly unreviewed) copy of this workflow file" >&2
+            exit 1
+          fi
+
+      # #215: this job now holds `contents: write` for draft-release
+      # visibility; `persist-credentials: false` keeps the resulting
+      # git-config credential out of the runner entirely, since this
+      # checkout only ever needs to read the immutable release tag's tree.
       - name: Check out release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
 
       - name: Verify manual recovery target and explicit mode
         if: github.event_name == 'workflow_dispatch'
@@ -58,6 +89,12 @@ jobs:
           test "$(jq -r '.tagName' <<<"${view}")" = "${RELEASE_TAG}"
           if test "${RECOVERY_MODE}" = "publish-registered"; then
             test "${CONFIRMATION}" = "PUBLISH_REGISTERED_ONLY"
+            # #215: publish-registered must only ever run against a release
+            # still awaiting publication; verified explicitly rather than
+            # assumed, so a stale or accidental re-dispatch after the
+            # Release has already been published fails closed here instead
+            # of proceeding into package classification.
+            test "$(jq -r '.isDraft' <<<"${view}")" = "true"
           else
             test -z "${CONFIRMATION}"
             test "$(jq -r '.isDraft' <<<"${view}")" = "false"
