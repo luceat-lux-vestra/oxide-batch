@@ -260,10 +260,24 @@ fn check_release_workflow_text(release_text: &str) -> Result<Vec<String>, String
         }
     }
 
-    // #215: GitHub's Releases API returns a draft release only to an actor
-    // with push access, so verify-release needs contents: write to see the
-    // still-draft v0.6.0 release in publish-registered mode — but bounded
-    // to that job, not granted to the whole workflow.
+    violations.extend(check_release_permission_boundary(release_text)?);
+    violations.extend(check_release_dispatch_origin(release_text)?);
+    violations.extend(check_release_manual_target(release_text)?);
+
+    Ok(violations)
+}
+
+/// Checks the #215 fix: draft-release visibility (`contents: write`) is
+/// bounded to the `verify` job alone, that job holds no OIDC permission,
+/// and its checkout does not persist credentials.
+///
+/// GitHub's Releases API returns a draft release only to an actor with
+/// push access, so `verify-release` needs `contents: write` to see the
+/// still-draft `v0.6.0` release in `publish-registered` mode — but only
+/// that job, never the whole workflow, and only past what that visibility
+/// requires.
+fn check_release_permission_boundary(release_text: &str) -> Result<Vec<String>, String> {
+    let mut violations = Vec::new();
     if release_text.contains("\n  contents: write") {
         violations.push(format!(
             "{RELEASE_WORKFLOW} must not grant contents: write at the workflow level; draft- \
@@ -297,6 +311,21 @@ fn check_release_workflow_text(release_text: &str) -> Result<Vec<String>, String
              checkout only ever needs to read the immutable release tag's tree"
         ));
     }
+    Ok(violations)
+}
+
+/// Checks the #215 fix: a `workflow_dispatch` recovery/bootstrap run is
+/// only valid when dispatched from `refs/heads/main`, checked before any
+/// checkout.
+///
+/// `workflow_dispatch` runs whichever ref's own copy of this workflow file
+/// was selected at dispatch time — the dispatch ref, not `inputs.tag`,
+/// decides which workflow *definition* executes. Dispatching from an
+/// unreviewed branch would therefore run that branch's own version of
+/// every check in this file, defeating every other fix here regardless of
+/// how carefully each is written.
+fn check_release_dispatch_origin(release_text: &str) -> Result<Vec<String>, String> {
+    let mut violations = Vec::new();
     let dispatch_guard_block = extract_step_block(
         release_text,
         "Verify workflow_dispatch originated from main",
@@ -332,6 +361,18 @@ fn check_release_workflow_text(release_text: &str) -> Result<Vec<String>, String
              workflow does any work"
         ));
     }
+    Ok(violations)
+}
+
+/// Checks the #215 fix: the manual-dispatch preflight verifies `isDraft`
+/// in both directions — `true` before `publish-registered` may proceed,
+/// `false` before treating a `release`-event dispatch as already public.
+///
+/// Previously only `tagName` was checked in `publish-registered` mode, so
+/// nothing stopped a stale or accidental re-dispatch after the Release had
+/// already been published from proceeding into package classification.
+fn check_release_manual_target(release_text: &str) -> Result<Vec<String>, String> {
+    let mut violations = Vec::new();
     let recovery_target_block = extract_step_block(
         release_text,
         "Verify manual recovery target and explicit mode",
@@ -349,7 +390,6 @@ fn check_release_workflow_text(release_text: &str) -> Result<Vec<String>, String
              continue to verify isDraft == false in verify mode"
         ));
     }
-
     Ok(violations)
 }
 
