@@ -11,7 +11,7 @@ its specific architecture.
 Milestones are capability and evidence gates, not calendar promises. M0-M5
 record accepted history, closed by the release of `oxide-batch` `0.5.0`; M6
 implementation and exit evidence are complete, with its first `0.6.0` release
-candidate prepared but not yet published. The continuous M5-M14 program is
+published on 2026-08-31 (tag `v0.6.0`). The continuous M5-M14 program is
 accepted by [RFC-0001](rfcs/0001-m5-preview-and-project-wide-1-0.md) and the
 topic decisions linked below. Historical M0 decisions remain preserved with
 their supersession record.
@@ -249,17 +249,19 @@ governed by pre-1.0 policy.
 
 ## M6 — Complete Item Processing and User Test Kit
 
-**Status:** Implementation and exit evidence complete; `0.6.0` release
-candidate prepared, not yet published (2026-08-30)
+**Status:** Implementation and exit evidence complete; `0.6.0` published
+2026-08-31 (tag `v0.6.0`)
 
 The decision gates, dependency-ordered delivery issues, architecture
 constraints, and kickoff exit criteria are recorded in the
 [M6 kickoff gate](project/m6-kickoff-gate.md). Gates A-H and the implementation
 issues are closed by the retained
 [M6 exit evidence](project/m6-exit-evidence.md). The release-preparation PR
-does not add M6 capability or promote compatibility rows: campaign evidence
-remains candidate evidence until a named `0.6.0` release and its post-release
-checks exist.
+did not add M6 capability or promote compatibility rows: campaign evidence
+is retained for the published `0.6.0` release, and the post-release checks
+now exist (see
+[`v0.6.0-post-publish.md`](release/evidence/v0.6.0-post-publish.md)), but
+ledger `Verified` promotion remains a separate governance decision.
 
 **Objective:** complete the Rust-native item/chunk/stream component model,
 standard local components, and application-facing test utilities.
@@ -302,9 +304,12 @@ panic, and process-kill matrices; user test-kit examples.
 **Documentation:** component reference, extension guide, restart/state guide,
 test-kit tutorial, support tiers, and ledger evidence links.
 
-**Release/compatibility implication:** pre-1.0 item APIs; the prepared
-`0.6.0` candidate carries M6 campaign evidence but makes no released
-`Verified` claim until publication and post-publication checks.
+**Release/compatibility implication:** pre-1.0 item APIs; the published
+`0.6.0` release carries M6 campaign evidence and passed post-publication
+checks (see
+[`v0.6.0-post-publish.md`](release/evidence/v0.6.0-post-publish.md)), but
+that alone makes no released `Verified` claim — ledger promotion is a
+separate governance decision.
 
 ## M7 — Advanced Flow, Repeat, Scope, and Composition
 

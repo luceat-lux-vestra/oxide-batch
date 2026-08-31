@@ -1,30 +1,32 @@
-# M6 Release Candidate Limitations
+# M6 Release Limitations
 
 **State:** Accepted
 
-**Applies to:** the prepared OxideBatch `0.6.0` M6 release candidate; not yet
-published
+**Applies to:** the published OxideBatch `0.6.0` M6 release (tag `v0.6.0`,
+2026-08-31)
 
 This is the explicit limitations record the
 [production preview guide](production-preview.md) and the
-[M6 candidate support matrix](../release/support-matrix.md#0.6.0-m6-release-candidate)
+[M6 support matrix](../release/support-matrix.md#0.6.0-m6-release)
 promise. It names every compatibility-ledger row that is not advertised as
-verified capability in this candidate. The
+verified capability in this release. The
 [feature ledger](../compatibility/conformance-matrix.md) is the canonical,
 machine-cross-checked source; this page is a readable summary of it and never
 overrides it. No row is hidden: `Partial`, `Planned`, and `Unknown` rows are
 all listed or counted below.
 
-## Released M5 foundation and M6 candidate
+## Released M5 foundation and M6
 
 The released M5 foundation has `28` of its `29` advertised rows `Verified`
 against `0.5.0`; `META-CONTEXT-001` remains `Implemented`. M6 adds the item
 component catalog, schema-4 component state, and public `oxide-batch-test`.
-Those M6 rows have retained campaign evidence but are not release-backed
-`Verified` evidence while `0.6.0` remains unpublished. See the
-[M6 candidate disposition](../release/support-matrix.md#0.6.0-m6-release-candidate)
+Those M6 rows have retained campaign evidence; `0.6.0` is now published with
+post-publish verification passed, but promoting a row to release-backed
+`Verified` evidence is a separate governance decision this document does not
+make automatically upon publication. See the
+[M6 disposition](../release/support-matrix.md#0.6.0-m6-release)
 and [M6 exit record](../project/m6-exit-evidence.md). Everything below this
-line is **not** advertised as fully verified by the candidate.
+line is **not** advertised as fully verified by this release.
 
 ## Partial: implemented at a bounded M0-M5 boundary, expands in M7-M11
 
@@ -58,8 +60,9 @@ with target milestones is the
 new user is likely to look for:
 
 - M6 standard reusable item components, composites, decorators, multi-resource
-  input/output, and test-kit rows remain candidate-only until the named
-  release and required artifact/consumer evidence exist;
+  input/output, and test-kit rows are published in `0.6.0` with retained
+  campaign and post-publish evidence; promoting them to ledger `Verified`
+  status is a separate governance decision, not yet made;
 - nested/split job flow, job/step scope and late binding, the definition
   registry (`FLOW-SPLIT-001`, `FLOW-NESTED-001`, `SCOPE-JOB-001`,
   `SCOPE-STEP-001`, `REPO-REGISTRY-001`) — M7;

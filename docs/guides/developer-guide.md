@@ -2,8 +2,8 @@
 
 **State:** Accepted
 
-**Applies to:** the prepared OxideBatch `0.6.0` M6 release candidate; not yet
-published
+**Applies to:** the published OxideBatch `0.6.0` M6 release (tag `v0.6.0`,
+2026-08-31)
 
 An executable path from a dependency declaration to a working embedded job.
 This guide links to canonical contracts rather than restating them; see

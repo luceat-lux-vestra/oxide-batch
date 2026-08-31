@@ -1,7 +1,8 @@
 # M6 `oxide-batch-test` Application Test-Kit Evidence
 
-**State:** Implementation and cross-consumer closure complete; release
-promotion pending
+**State:** Implementation and cross-consumer closure complete; published in
+`0.6.0` (tag `v0.6.0`, 2026-08-31); ledger `Verified` promotion is a separate
+governance decision, not yet made
 
 **Issue:** [#145](https://github.com/luceat-lux-vestra/oxide-batch/issues/145)
 
@@ -15,8 +16,9 @@ Issue #145's own exit criteria require that at least one later M6 component
 issue consume the kit as its own test harness before #145 is marked done.
 Issue #146 consumed the kit in its component tests, so that cross-consumer
 criterion is complete and #145 is closed. The boundary and its four `TEST-*`
-facilities remain release-candidate evidence; this record does not promote
-their ledger rows to released `Verified`.
+facilities are published in `0.6.0` with retained campaign evidence; this
+record does not itself promote their ledger rows to released `Verified` —
+that promotion is a separate governance decision.
 
 ## Package boundary
 
