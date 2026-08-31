@@ -112,49 +112,55 @@ This preview interpretation is accepted by
 [RFC-0001](../rfcs/0001-m5-preview-and-project-wide-1-0.md). It is not a
 project-wide 1.0 or enterprise-readiness matrix.
 
-## 0.6.0 M6 release candidate
+## 0.6.0 M6 release
 
 `0.6.0` is the first published M6 release: the protected `v0.6.0` tag exists
 and post-publication verification has passed (see
 [`v0.6.0-post-publish.md`](evidence/v0.6.0-post-publish.md)). The release
 inherits the M5 Rust, Linux x86_64, PostgreSQL 15-18, TLS, and single-host
 bounds and adds metadata schema `4` plus the M6 component/test-kit surface
-below. M6 campaign PASS is retained evidence; whether a given row below is
-promoted to release-backed `Verified` status is a separate governance
-decision this document does not make automatically upon publication.
+below. Publication and post-publish verification are release facts and are
+now satisfied; whether a given row below is additionally promoted to
+release-backed `Verified` ledger status is a separate governance decision
+this document does not make automatically upon publication.
 
-| Dimension | `0.6.0` candidate disposition | Required release evidence |
+| Dimension | `0.6.0` release disposition | Release evidence |
 | --- | --- | --- |
-| Rust | MSRV 1.95; development, CI, and release toolchain 1.97.1 | Candidate CI and packaged-artifact verification |
-| Linux x86_64 GNU | Candidate supported runtime target, inherited from M5 | Release-blocking CI and clean consumer |
-| PostgreSQL 15 and 18 | Release-blocking candidate axes | M6 conformance, restart, migration, and release smoke |
-| PostgreSQL 16-17 | Candidate smoke axes | Connection, migration, and vertical-slice smoke |
-| Metadata schema | Schema 4; upgrade sources 1, 2, and 3 | Migration, rejection, backup/restore, and rollback evidence |
-| M6 components and `oxide-batch-test` | Implemented and campaign-evidenced; release promotion pending | Named release, package, consumer, and ledger evidence |
+| Rust | MSRV 1.95; development, CI, and release toolchain 1.97.1 | CI and packaged-artifact verification passed |
+| Linux x86_64 GNU | Supported runtime target, inherited from M5 | Release-blocking CI and clean external consumer passed |
+| PostgreSQL 15 and 18 | Release-blocking axes | M6 conformance, restart, and migration campaign retained; post-publish PostgreSQL release smoke passed |
+| PostgreSQL 16-17 | Smoke-covered axes | Connection, migration, and vertical-slice smoke retained |
+| Metadata schema | Schema 4; upgrade sources 1, 2, and 3 | Migration, rejection, backup/restore, and rollback evidence retained |
+| M6 components and `oxide-batch-test` | Published and packaged; ledger `Verified` promotion not yet decided | Named release, package, and clean-consumer evidence exist (see [`v0.6.0-post-publish.md`](evidence/v0.6.0-post-publish.md)); ledger promotion is a separate decision |
 | Deployment shape | Single host, embedded process; no distributed claim | Same inherited limitation as M5 |
 
 ## M6 component campaign disposition
 
-The M6 component catalog is first-party code, but this section is a candidate
-support disposition until a named release carries the retained M6 evidence.
-The campaign does not promote a pre-release implementation to `Verified` and
-does not expand the M5 preview's released support promise.
+The M6 component catalog is first-party code. `0.6.0`'s publication and
+post-publish verification satisfy this table's release precondition; this
+section states each surface's ledger-promotion disposition given that. The
+campaign alone does not promote an implementation to `Verified` — that
+promotion is a separate governance decision this document does not make
+automatically upon publication, and it does not expand the M5 preview's
+released support promise.
 
-| Surface | Candidate tier | Release-blocking evidence | Current disposition |
+| Surface | Tier | Release-blocking evidence | Current disposition |
 | --- | --- | --- | --- |
-| Typed and `Boxed*` item components, `ItemStream`, policies, builders, jobs, and listeners | First-party | Full M6 conformance/failure campaign, Gate B representation equivalence, Gate H invariants, docs, and ledger review | Implemented and campaign-evidenced; release promotion pending |
-| Delimited/CSV, fixed-width, JSON/JSONL, and multi-resource components | First-party | Malformed, partial-write, rollback, stop, panic, close, state, resource-bound, and PostgreSQL-backed restart evidence | Implemented and campaign-evidenced; release promotion pending |
-| PostgreSQL cursor, paging, and batch writer components | First-party | PostgreSQL 15 and 18 release-blocking campaign legs, transaction/restart/crash evidence, TLS/role limits | Implemented and campaign-evidenced; release promotion pending |
+| Typed and `Boxed*` item components, `ItemStream`, policies, builders, jobs, and listeners | First-party | Full M6 conformance/failure campaign, Gate B representation equivalence, Gate H invariants, docs, and ledger review | Implemented, campaign-evidenced, and published in `0.6.0`; ledger `Verified` promotion not yet decided |
+| Delimited/CSV, fixed-width, JSON/JSONL, and multi-resource components | First-party | Malformed, partial-write, rollback, stop, panic, close, state, resource-bound, and PostgreSQL-backed restart evidence | Implemented, campaign-evidenced, and published in `0.6.0`; ledger `Verified` promotion not yet decided |
+| PostgreSQL cursor, paging, and batch writer components | First-party | PostgreSQL 15 and 18 release-blocking campaign legs, transaction/restart/crash evidence, TLS/role limits | Implemented, campaign-evidenced, and published in `0.6.0`; ledger `Verified` promotion not yet decided |
 | `InMemoryObjectStore` and object-store capability bridge | First-party fixture/capability contract | Capability, version-token, bounds, diagnostics, and explicit non-durable limitation evidence | First-party contract fixture; no durable provider support claim |
-| `oxide-batch-test` public test-kit | First-party development/test support | Compile-checked tutorial, deterministic fixtures, failure/panic/stop/restart harness evidence, and Gate G limitations | Implemented and campaign-evidenced; release promotion pending |
+| `oxide-batch-test` public test-kit | First-party development/test support | Compile-checked tutorial, deterministic fixtures, failure/panic/stop/restart harness evidence, and Gate G limitations | Implemented, campaign-evidenced, and published in `0.6.0`; ledger `Verified` promotion not yet decided |
 
 The exact M6 campaign denominator and scenario dispositions live in the
 [component conformance matrix](../engineering/campaigns/m6/component-conformance-matrix.md).
 The retained report/provenance records are named in
 [`docs/engineering/campaigns/m6/`](../engineering/campaigns/m6/) and summarized
-by the [M6 exit record](../project/m6-exit-evidence.md). A future release may
-promote only rows whose named release and required evidence satisfy the
-compatibility ledger's `Verified` rule.
+by the [M6 exit record](../project/m6-exit-evidence.md). `0.6.0` is now the
+named release with the required evidence this table's rows need before a
+`Verified` promotion could be considered; making that promotion decision is
+left to a separate, explicit governance step, not this document. A future
+release follows the same rule for its own rows.
 
 ## Project-wide 1.0 dimensions
 

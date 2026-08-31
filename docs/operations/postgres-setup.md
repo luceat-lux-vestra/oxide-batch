@@ -1,7 +1,8 @@
 # PostgreSQL Setup
 
 **State:** Implemented for M2/M4 and M6 schema 4 (`#144`, additive
-`ItemStream` component state); included in the unreleased `0.6.0` candidate
+`ItemStream` component state); included in the published `0.6.0` release
+(tag `v0.6.0`, 2026-08-31)
 
 **Supported M2 matrix:** PostgreSQL 15 through 18 on Linux x86_64 GNU
 

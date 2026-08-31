@@ -2,8 +2,8 @@
 
 **State:** Accepted
 
-**Applies to:** the prepared OxideBatch `0.6.0` M6 release candidate; not yet
-published
+**Applies to:** the published OxideBatch `0.6.0` M6 release (tag `v0.6.0`,
+2026-08-31)
 
 How to move a deployment onto this release's schema and how to get back off
 it if that goes wrong. The normative rules live in
@@ -143,5 +143,5 @@ purge, the only path is restoring a verified backup — see the
 Before `1.0`, only the latest preview line receives fixes; see the
 [release and support policy](../release/support-policy.md#support-window) for
 the complete pre-1.0 support rule and the
-[support matrix](../release/support-matrix.md#0.6.0-m6-release-candidate)
+[support matrix](../release/support-matrix.md#0.6.0-m6-release)
 for this release's exact upgrade/downgrade expectations.

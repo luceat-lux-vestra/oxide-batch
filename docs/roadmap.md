@@ -257,9 +257,11 @@ constraints, and kickoff exit criteria are recorded in the
 [M6 kickoff gate](project/m6-kickoff-gate.md). Gates A-H and the implementation
 issues are closed by the retained
 [M6 exit evidence](project/m6-exit-evidence.md). The release-preparation PR
-does not add M6 capability or promote compatibility rows: campaign evidence
-remains candidate evidence until a named `0.6.0` release and its post-release
-checks exist.
+did not add M6 capability or promote compatibility rows: campaign evidence
+is retained for the published `0.6.0` release, and the post-release checks
+now exist (see
+[`v0.6.0-post-publish.md`](release/evidence/v0.6.0-post-publish.md)), but
+ledger `Verified` promotion remains a separate governance decision.
 
 **Objective:** complete the Rust-native item/chunk/stream component model,
 standard local components, and application-facing test utilities.
@@ -302,9 +304,12 @@ panic, and process-kill matrices; user test-kit examples.
 **Documentation:** component reference, extension guide, restart/state guide,
 test-kit tutorial, support tiers, and ledger evidence links.
 
-**Release/compatibility implication:** pre-1.0 item APIs; the prepared
-`0.6.0` candidate carries M6 campaign evidence but makes no released
-`Verified` claim until publication and post-publication checks.
+**Release/compatibility implication:** pre-1.0 item APIs; the published
+`0.6.0` release carries M6 campaign evidence and passed post-publication
+checks (see
+[`v0.6.0-post-publish.md`](release/evidence/v0.6.0-post-publish.md)), but
+that alone makes no released `Verified` claim — ledger promotion is a
+separate governance decision.
 
 ## M7 — Advanced Flow, Repeat, Scope, and Composition
 

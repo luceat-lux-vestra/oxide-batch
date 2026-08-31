@@ -87,10 +87,11 @@ application that embeds `oxide-batch-cli` and supplies its own compiled
 grammar entry point.
 
 **M6 — Complete Item Processing and User Test Kit** is implementation-complete
-and prepared as the unreleased `0.6.0` candidate. Its component campaigns,
+and published as `0.6.0` (tag `v0.6.0`, 2026-08-31). Its component campaigns,
 test-kit boundary, and explicit non-parity limits are recorded in the
-[M6 exit evidence](docs/project/m6-exit-evidence.md). The candidate does not
-promote M6 ledger rows to released `Verified` and does not imply M7-M14 work.
+[M6 exit evidence](docs/project/m6-exit-evidence.md). Publication does not by
+itself promote M6 ledger rows to released `Verified` and does not imply
+M7-M14 work.
 
 Release preparation, including the first-publication bootstrap boundary for
 `oxide-batch-test`, is tracked in the [release checklist](docs/release/release-checklist.md).

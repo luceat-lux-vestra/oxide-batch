@@ -1,11 +1,11 @@
-# M6 Embedded Core Release Candidate Guide
+# M6 Embedded Core Release Guide
 
 **State:** Accepted
 
 **Applies to:** the published OxideBatch `0.6.0` M6 release (tag `v0.6.0`,
 2026-08-31)
 
-This is the entry point for the M6 candidate. It orients a new user and links to
+This is the entry point for the M6 release. It orients a new user and links to
 the canonical document that owns each topic in depth; it does not restate
 normative detail that already has an owner. See
 [documentation strategy](../documentation/strategy.md) for that ownership
@@ -43,10 +43,12 @@ delivers:
   ([restart semantics](#restart-and-definition-drift) below);
 - a reviewed, curated public facade (`oxide-batch`) with a closed disclosure
   boundary ([M5 preview surface gate](../api/design-guidelines.md#m5-preview-surface-and-disclosure-gate));
-- retained M5 release evidence plus M6 campaign evidence. The M6 rows remain
-  `Implemented` or `Partial` until a named release exists and its required
-  artifacts and consumers pass; see [limitations](limitations.md), the
-  [M6 candidate support disposition](../release/support-matrix.md#0.6.0-m6-release-candidate),
+- retained M5 release evidence plus M6 campaign evidence. `0.6.0` is now the
+  named release with the required artifacts and clean-consumer evidence, but
+  the ledger status of the M6 rows (`Implemented` or `Partial`) does not
+  change to released `Verified` automatically on publication — that is a
+  separate governance decision; see [limitations](limitations.md), the
+  [M6 support disposition](../release/support-matrix.md#0.6.0-m6-release),
   and the [M6 exit record](../project/m6-exit-evidence.md).
 
 ## What M6 explicitly is not
@@ -100,8 +102,8 @@ declaration to a PostgreSQL-backed chunk job.
 
 ## PostgreSQL setup
 
-Schema `4` is the only schema this candidate runs against; older runtimes
-refuse schema 4 on startup, and this candidate refuses a schema newer than 4.
+Schema `4` is the only schema this release runs against; older runtimes
+refuse schema 4 on startup, and this release refuses a schema newer than 4.
 Migration, role separation (migrator/runtime/operator-reader/operator-writer),
 and TLS (`verify-full` only in production) are owned by
 [PostgreSQL setup](../operations/postgres-setup.md). PostgreSQL `15` and `18`
@@ -178,7 +180,7 @@ Linux x86_64 GNU is the only supported preview runtime target; macOS is
 development-only, and Linux aarch64/Windows are not yet supported. The
 complete dimension table — Rust, OS/architecture, PostgreSQL majors, TLS,
 metadata schema, deployment shape — is the
-[M6 candidate support matrix](../release/support-matrix.md#0.6.0-m6-release-candidate).
+[M6 support matrix](../release/support-matrix.md#0.6.0-m6-release).
 
 ## Limitations
 

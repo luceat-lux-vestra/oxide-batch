@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 No changes yet.
 
-## [0.6.0] - 2026-08-30
+## [0.6.0] - 2026-08-31
 
 **M6 release — published 2026-08-31.** This pre-1.0 release adds the complete
 delivered M6 item-processing surface and the public `oxide-batch-test` crate
@@ -19,7 +19,7 @@ governance decision even though the named version and post-publication
 verification now exist. M6 does not claim M7-M14 completion, `1.0`, GA, full
 Spring Batch parity, or distributed execution. See the
 [release checklist](docs/release/release-checklist.md),
-[support matrix](docs/release/support-matrix.md#0.6.0-m6-release-candidate),
+[support matrix](docs/release/support-matrix.md#0.6.0-m6-release),
 [M6 exit evidence](docs/project/m6-exit-evidence.md), and
 [post-publish verification](docs/release/evidence/v0.6.0-post-publish.md).
 

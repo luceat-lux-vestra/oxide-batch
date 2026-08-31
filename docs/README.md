@@ -113,7 +113,7 @@ to them and record supersession; they do not rewrite history.
 
 ## Guides
 
-- [M6 release candidate guide](guides/production-preview.md)
+- [M6 release guide](guides/production-preview.md)
 - [M5 production preview limitations](guides/limitations.md)
 - [M5 developer guide](guides/developer-guide.md)
 - [M5 operator guide](guides/operator-guide.md)

@@ -233,14 +233,18 @@ migration tests, so it does not promote in this release. The population is
 now `83` rows: `28` `Verified`, `1` `Implemented`, `13` `Partial`, `39`
 `Planned`, and `2` `Unknown`.
 
-## M6 `0.6.0` candidate disposition
+## M6 `0.6.0` disposition
 
 The 23 M6-scoped rows are implemented or retain their reviewed partial
 disposition with campaign evidence linked in the matrix and M6 exit record.
-This release-preparation candidate does not change any row to released
-`Verified`: that state requires the named released version, package and
-consumer checks, and all required release evidence. Campaign PASS alone is
-insufficient. M5's 28 released `Verified` rows remain verified against
+`0.6.0` is now the named released version, and its package, consumer, and
+required release evidence are satisfied (see
+[`v0.6.0-post-publish.md`](../release/evidence/v0.6.0-post-publish.md)). This
+document does not itself change any row to released `Verified` on that
+basis: promotion is a separate, explicit governance decision this ledger
+does not make automatically upon publication, and campaign PASS plus
+satisfied release preconditions are necessary but not sufficient by
+themselves. M5's 28 released `Verified` rows remain verified against
 `0.5.0`; they are not retroactively reclassified as M6 evidence.
 
 **Rows that stay `Partial`.** `LIFE-STOP-001`, `LIFE-RECOVER-001`,
