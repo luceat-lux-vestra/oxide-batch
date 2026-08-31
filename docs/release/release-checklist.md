@@ -9,8 +9,12 @@ one-time manual bootstrap and is never generalized by the workflow.
 ## Prepare
 
 - [ ] Confirm target version/channel and milestone exit criteria.
-- [ ] For the M6 candidate, confirm package version `0.6.0` and prospective
-      tag `v0.6.0`; neither exists until the later publication phase.
+- [ ] Before tagging, confirm the target package version and prospective tag
+      name; neither exists yet at this point in the checklist, regardless of
+      milestone. (This step is pre-publication guidance: for the completed
+      M6 `0.6.0` release, it was satisfied before the `v0.6.0` tag and
+      GitHub Release existed; both now exist — see
+      [`v0.6.0-post-publish.md`](evidence/v0.6.0-post-publish.md).)
 - [ ] Resolve release blockers and review open security/data-integrity issues.
 - [ ] Update changelog, support matrix, compatibility matrix, and migration guide.
 - [ ] Confirm every advertised compatibility claim names released `Verified`
