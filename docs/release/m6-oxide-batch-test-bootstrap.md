@@ -57,10 +57,17 @@ preparation:
 6. Let the tag workflow produce the draft release artifacts.
 7. Review every `.crate`, checksum, package-scoped SBOM, attestation, and
    provenance link.
-8. From the immutable tag, manually dispatch `release.yml` with `mode:
-   publish-registered`, `tag: v0.6.0`, and confirmation
-   `PUBLISH_REGISTERED_ONLY`. This uses OIDC Trusted Publishing to publish only
-   the already-registered crates in derived dependency order and leaves
+8. Dispatch `release.yml` from the reviewed, merged `refs/heads/main` — not
+   from the immutable tag's own copy of the workflow file, which is frozen at
+   whatever `release.yml` looked like when `v0.6.0` was tagged and cannot
+   carry any later-reviewed fix (`#215` fixed exactly this: dispatching the
+   tag's stale copy could not even see the still-draft Release to verify it,
+   because that copy predates the job-scoped `contents: write` fix). Use
+   `mode: publish-registered`, `tag: v0.6.0`, and confirmation
+   `PUBLISH_REGISTERED_ONLY`. `verify-release` itself still checks out the
+   product from the immutable `v0.6.0` tag; only the workflow *definition*
+   being run comes from `main`. This uses OIDC Trusted Publishing to publish
+   only the already-registered crates in derived dependency order and leaves
    `oxide-batch-test` unpublished.
 9. From the same immutable tag, manually publish only
    `oxide-batch-test 0.6.0` with a short-lived local crates.io token. The

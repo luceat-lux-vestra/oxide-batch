@@ -192,6 +192,12 @@ fn check_release_workflow(root: &std::path::Path) -> Result<Vec<String>, String>
     let release_path = root.join(RELEASE_WORKFLOW);
     let release_text = fs::read_to_string(&release_path)
         .map_err(|error| format!("could not read {RELEASE_WORKFLOW}: {error}"))?;
+    check_release_workflow_text(&release_text)
+}
+
+/// The text-based half of [`check_release_workflow`], split out so fixture
+/// text can be checked directly in tests without touching the filesystem.
+fn check_release_workflow_text(release_text: &str) -> Result<Vec<String>, String> {
     let mut violations = Vec::new();
     if release_text.contains("\n  id-token: write")
         || release_text.matches("id-token: write").count() != 1
@@ -209,13 +215,13 @@ fn check_release_workflow(root: &std::path::Path) -> Result<Vec<String>, String>
             "{RELEASE_WORKFLOW} must verify the checked-out immutable tag in both verification and publication jobs"
         ));
     }
-    let verify_block = extract_step_block(&release_text, "Verify packages")?;
+    let verify_block = extract_step_block(release_text, "Verify packages")?;
     if !verify_block.contains("cargo publish --workspace --locked --dry-run") {
         violations.push(format!(
             "{RELEASE_WORKFLOW} \"Verify packages\" must dry-run the metadata-derived workspace release set"
         ));
     }
-    let publish_block = extract_step_block(&release_text, "Publish to crates.io")?;
+    let publish_block = extract_step_block(release_text, "Publish to crates.io")?;
     let rechecks_exact_versions = publish_block.contains("version_status")
         && publish_block.contains("registry_sha")
         && publish_block.contains("already published with matching checksum");
@@ -253,6 +259,97 @@ fn check_release_workflow(root: &std::path::Path) -> Result<Vec<String>, String>
             ));
         }
     }
+
+    // #215: GitHub's Releases API returns a draft release only to an actor
+    // with push access, so verify-release needs contents: write to see the
+    // still-draft v0.6.0 release in publish-registered mode — but bounded
+    // to that job, not granted to the whole workflow.
+    if release_text.contains("\n  contents: write") {
+        violations.push(format!(
+            "{RELEASE_WORKFLOW} must not grant contents: write at the workflow level; draft- \
+             release visibility is needed only by verify-release, which must set its own \
+             job-scoped permissions"
+        ));
+    }
+    // Anchored to the exact 6-space job-level `permissions:` indentation
+    // (matching the existing "publish" job's own contents/id-token lines),
+    // not a bare substring search: a bare search would also match either
+    // phrase appearing in this job's own explanatory comments.
+    let verify_job = extract_job_block(release_text, "verify", RELEASE_WORKFLOW)?;
+    if !verify_job.contains("\n      contents: write") {
+        violations.push(format!(
+            "{RELEASE_WORKFLOW} job \"verify\" must set its own job-scoped `permissions: \
+             contents: write`: GitHub's Releases API returns a draft release only to an actor \
+             with push access, and the workflow-level default is contents: read"
+        ));
+    }
+    if verify_job.contains("\n      id-token: write") {
+        violations.push(format!(
+            "{RELEASE_WORKFLOW} job \"verify\" must not hold id-token: write; only the OIDC \
+             publication job needs it"
+        ));
+    }
+    let verify_checkout = extract_step_block(release_text, "Check out release tag")?;
+    if !verify_checkout.contains("persist-credentials: false") {
+        violations.push(format!(
+            "{RELEASE_WORKFLOW} \"verify\" job's \"Check out release tag\" must set \
+             persist-credentials: false, since that job now holds contents: write and this \
+             checkout only ever needs to read the immutable release tag's tree"
+        ));
+    }
+    let dispatch_guard_block = extract_step_block(
+        release_text,
+        "Verify workflow_dispatch originated from main",
+    )?;
+    if !dispatch_guard_block.contains("if: github.event_name == 'workflow_dispatch'") {
+        violations.push(format!(
+            "{RELEASE_WORKFLOW} \"Verify workflow_dispatch originated from main\" must run only \
+             on `github.event_name == 'workflow_dispatch'`"
+        ));
+    }
+    if !dispatch_guard_block.contains("refs/heads/main") {
+        violations.push(format!(
+            "{RELEASE_WORKFLOW} \"Verify workflow_dispatch originated from main\" must reject \
+             any dispatch ref other than refs/heads/main: workflow_dispatch runs whichever \
+             ref's own copy of this file was selected at dispatch time, so dispatching from an \
+             unreviewed branch would run that branch's own version of every check here"
+        ));
+    }
+    let dispatch_guard_position = release_text
+        .find("- name: Verify workflow_dispatch originated from main")
+        .ok_or_else(|| {
+            format!(
+                "{RELEASE_WORKFLOW} has no \"Verify workflow_dispatch originated from main\" step"
+            )
+        })?;
+    let checkout_position = release_text
+        .find("- name: Check out release tag")
+        .ok_or_else(|| format!("{RELEASE_WORKFLOW} has no \"Check out release tag\" step"))?;
+    if dispatch_guard_position > checkout_position {
+        violations.push(format!(
+            "{RELEASE_WORKFLOW} \"Verify workflow_dispatch originated from main\" must run \
+             before \"Check out release tag\", so an illegitimate dispatch fails before this \
+             workflow does any work"
+        ));
+    }
+    let recovery_target_block = extract_step_block(
+        release_text,
+        "Verify manual recovery target and explicit mode",
+    )?;
+    if !recovery_target_block.contains("<<<\"${view}\")\" = \"true\"") {
+        violations.push(format!(
+            "{RELEASE_WORKFLOW} \"Verify manual recovery target and explicit mode\" must verify \
+             isDraft == true in publish-registered mode, not only tagName: publish-registered \
+             must only ever run against a release still awaiting publication"
+        ));
+    }
+    if !recovery_target_block.contains("<<<\"${view}\")\" = \"false\"") {
+        violations.push(format!(
+            "{RELEASE_WORKFLOW} \"Verify manual recovery target and explicit mode\" must \
+             continue to verify isDraft == false in verify mode"
+        ));
+    }
+
     Ok(violations)
 }
 
@@ -565,6 +662,33 @@ fn extract_step_block<'a>(text: &'a str, step_name: &str) -> Result<&'a str, Str
         .ok_or_else(|| format!("no \"{marker}\" step found"))?;
     let after = &text[start + marker.len()..];
     let end = after.find("\n      - name:").unwrap_or(after.len());
+    Ok(&after[..end])
+}
+
+/// Returns the text belonging to one top-level workflow job (a 2-space-
+/// indented key directly under `jobs:`), up to the next such job or end of
+/// file.
+fn extract_job_block<'a>(text: &'a str, job_name: &str, workflow: &str) -> Result<&'a str, String> {
+    let marker = format!("\n  {job_name}:\n");
+    let start = text
+        .find(&marker)
+        .ok_or_else(|| format!("no job {job_name:?} found in {workflow}"))?;
+    let after = &text[start + marker.len()..];
+
+    let mut end = after.len();
+    let mut pos = 0;
+    for line in after.split_inclusive('\n') {
+        let content = line.trim_end_matches('\n');
+        let is_new_job = !content.is_empty()
+            && content.starts_with("  ")
+            && !content.starts_with("   ")
+            && content.trim_end().ends_with(':');
+        if is_new_job {
+            end = pos;
+            break;
+        }
+        pos += line.len();
+    }
     Ok(&after[..end])
 }
 
@@ -2155,6 +2279,160 @@ mod tests {
         let root = suite::workspace_root().expect("workspace root resolves");
         let violations = check_v0_6_0_evidence_manifest(&root).expect("manifest reads and parses");
         assert!(violations.is_empty(), "{violations:#?}");
+    }
+
+    /// The real, committed `release.yml`, used as a known-good baseline for
+    /// `#215` regression tests: each test mutates one specific piece of it
+    /// via `.replace()` and asserts `check_release_workflow_text` catches
+    /// exactly that regression, rather than hand-maintaining a separate
+    /// synthetic fixture that could drift from the real file's structure.
+    const REAL_RELEASE_WORKFLOW: &str = include_str!("../../.github/workflows/release.yml");
+
+    #[test]
+    fn check_release_workflow_text_accepts_the_real_file() {
+        let violations =
+            check_release_workflow_text(REAL_RELEASE_WORKFLOW).expect("release.yml checks run");
+        assert!(violations.is_empty(), "{violations:#?}");
+    }
+
+    #[test]
+    fn check_release_workflow_text_rejects_workflow_wide_contents_write() {
+        let text = REAL_RELEASE_WORKFLOW.replacen(
+            "permissions:\n  contents: read\n",
+            "permissions:\n  contents: write\n",
+            1,
+        );
+        let violations = check_release_workflow_text(&text).expect("checks run");
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("must not grant contents: write at the workflow level")),
+            "{violations:#?}"
+        );
+    }
+
+    #[test]
+    fn check_release_workflow_text_rejects_verify_job_missing_contents_write() {
+        let text = REAL_RELEASE_WORKFLOW.replacen("      contents: write\n", "", 1);
+        let violations = check_release_workflow_text(&text).expect("checks run");
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("job \"verify\" must set its own job-scoped")),
+            "{violations:#?}"
+        );
+    }
+
+    #[test]
+    fn check_release_workflow_text_rejects_verify_job_id_token_write() {
+        let text = REAL_RELEASE_WORKFLOW.replacen(
+            "    permissions:\n      contents: write\n",
+            "    permissions:\n      contents: write\n      id-token: write\n",
+            1,
+        );
+        let violations = check_release_workflow_text(&text).expect("checks run");
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("job \"verify\" must not hold id-token: write")),
+            "{violations:#?}"
+        );
+    }
+
+    #[test]
+    fn check_release_workflow_text_rejects_missing_persist_credentials_false() {
+        let text = REAL_RELEASE_WORKFLOW.replacen("\n          persist-credentials: false", "", 1);
+        let violations = check_release_workflow_text(&text).expect("checks run");
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("must set persist-credentials: false")),
+            "{violations:#?}"
+        );
+    }
+
+    #[test]
+    fn check_release_workflow_text_rejects_a_missing_dispatch_origin_guard() {
+        let text = REAL_RELEASE_WORKFLOW.replacen(
+            "- name: Verify workflow_dispatch originated from main",
+            "- name: Renamed step",
+            1,
+        );
+        let error = check_release_workflow_text(&text).expect_err(
+            "a missing dispatch-origin guard step is a hard error, matching how \
+                         every other extract_step_block call in this function propagates a \
+                         missing step via `?`",
+        );
+        assert!(
+            error.contains("Verify workflow_dispatch originated from main"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn check_release_workflow_text_rejects_a_dispatch_origin_guard_not_checking_main() {
+        let text = REAL_RELEASE_WORKFLOW.replace("refs/heads/main", "refs/heads/anywhere");
+        let violations = check_release_workflow_text(&text).expect("checks run");
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("must reject any dispatch ref other than refs/heads/main")),
+            "{violations:#?}"
+        );
+    }
+
+    #[test]
+    fn check_release_workflow_text_rejects_a_dispatch_origin_guard_running_after_checkout() {
+        let guard_step = "      - name: Verify workflow_dispatch originated from main\n        if: github.event_name == 'workflow_dispatch'\n        run: |\n          set -euo pipefail\n          if [ \"${GITHUB_REF}\" != \"refs/heads/main\" ]; then\n            echo \"::error::workflow_dispatch publish-registered bootstrap must be dispatched from refs/heads/main, not ${GITHUB_REF}: dispatching from any other ref would execute that ref's own (possibly unreviewed) copy of this workflow file\" >&2\n            exit 1\n          fi\n\n";
+        let without_guard = REAL_RELEASE_WORKFLOW.replacen(guard_step, "", 1);
+        assert_ne!(
+            without_guard, REAL_RELEASE_WORKFLOW,
+            "fixture's guard_step text must exactly match the real file"
+        );
+        let text = without_guard.replacen(
+            "      - name: Verify manual recovery target and explicit mode",
+            &format!("{guard_step}      - name: Verify manual recovery target and explicit mode"),
+            1,
+        );
+        let violations = check_release_workflow_text(&text).expect("checks run");
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("must run before \"Check out release tag\"")),
+            "{violations:#?}"
+        );
+    }
+
+    #[test]
+    fn check_release_workflow_text_rejects_missing_publish_registered_draft_check() {
+        let text = REAL_RELEASE_WORKFLOW.replacen(
+            "            test \"$(jq -r '.isDraft' <<<\"${view}\")\" = \"true\"\n",
+            "",
+            1,
+        );
+        let violations = check_release_workflow_text(&text).expect("checks run");
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("must verify isDraft == true in publish-registered mode")),
+            "{violations:#?}"
+        );
+    }
+
+    #[test]
+    fn check_release_workflow_text_rejects_missing_verify_mode_draft_check() {
+        let text = REAL_RELEASE_WORKFLOW.replacen(
+            "            test \"$(jq -r '.isDraft' <<<\"${view}\")\" = \"false\"\n",
+            "",
+            1,
+        );
+        let violations = check_release_workflow_text(&text).expect("checks run");
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("must continue to verify isDraft == false in verify mode")),
+            "{violations:#?}"
+        );
     }
 
     #[test]
