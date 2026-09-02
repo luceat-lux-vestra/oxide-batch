@@ -72,7 +72,7 @@ project hosts those contracts but does not become the correctness authority.
 
 ## Current near-term scope
 
-The accepted M0-M4 program remains the active delivery commitment:
+M0-M6 are completed delivery milestones. The released boundary now includes:
 
 - job/step/instance/execution domain model and typed parameters;
 - tasklet and chunk-oriented single-host execution;
@@ -80,25 +80,32 @@ The accepted M0-M4 program remains the active delivery commitment:
 - restart, stop, abandon, explicit recovery, and transaction boundaries;
 - retry, skip, backoff, listeners, conditional flow, local bounded
   concurrency and partitioning;
-- operator CLI, vendor-neutral telemetry, and failure/conformance evidence.
+- operator CLI, vendor-neutral telemetry, and failure/conformance evidence;
+- the M6 item-processing/component surface and public `oxide-batch-test` test
+  kit released in `0.6.0`.
 
-M2, M3, M4, and M5 are complete milestones; M5 closed its compiled-plan/
-fingerprint, component-boundary, crate-extraction, context-codec,
-transaction-capability, facade/API, ledger-promotion, and evidence design
-gates, and released as `oxide-batch` `0.5.0` (see the
-[M5 exit evidence](../project/m5-exit-evidence.md)). Historical M0-M5 gates
-remain authoritative evidence for completed work, while further release and
-production-readiness claims beyond the M5 Production Preview boundary remain
-gated by their separate evidence.
+M5 established the Embedded Core Production Preview and released as
+`oxide-batch` `0.5.0` (see the
+[M5 exit evidence](../project/m5-exit-evidence.md)). M6 then completed its
+item-processing and user-test-kit scope and published `0.6.0` (see the
+[M6 exit evidence](../project/m6-exit-evidence.md) and
+[post-publish verification](../release/evidence/v0.6.0-post-publish.md)).
+Historical M0-M6 gates remain authoritative evidence for completed work.
+Compatibility rows are promoted only by their ledger governance; completion
+or publication of M6 does not automatically make every M6 row `Verified`.
+
+The next delivery work is M7-M13. Those milestones close the remaining flow,
+repository, integration, scale, distributed-execution, migration, ecosystem,
+and certification gaps before the separate M14 project-wide 1.0/GA gate.
 
 ## Release interpretation
 
 [RFC-0001](../rfcs/0001-m5-preview-and-project-wide-1-0.md) establishes:
 
-- M5 becomes an Embedded Core Production Preview/stabilization boundary rather
-  than project-wide 1.0;
-- M6-M13 close item, flow, repository, integration, scale, distributed,
-  migration, ecosystem, and certification gaps;
+- M5 is an Embedded Core Production Preview/stabilization boundary rather than
+  project-wide 1.0;
+- M6 completed the item-processing/test-kit portion of the accepted M6-M13
+  program; M7-M13 remain the active gap-closing milestones;
 - M14 is the project-wide 1.0/GA evidence and support gate.
 
 ## Permanent non-goals
