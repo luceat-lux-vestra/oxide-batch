@@ -43,12 +43,13 @@ crates/
 ├── oxide-batch-cli/        Public operator CLI, released in lockstep
 └── oxide-batch-test/       Public application-facing test kit
 spikes/
-└── m0-architecture/ Reproducible, non-published architecture evidence
+├── m0-architecture/ Reproducible, non-published architecture evidence
+└── m6-item-hot-path/ Reproducible, non-published M6 hot-path evidence
 xtask/              Repository development commands (not published)
 ```
 
 See [crate publishing policy](docs/governance/crate-publishing.md) for the
-planned multi-crate strategy.
+current multi-crate publishing contract.
 
 ## Status
 
@@ -68,8 +69,9 @@ diagnostic bundles, and the tasklet-only bounded parallel-split and
 local-partition runtime, with the PostgreSQL process-kill, resource-bound,
 cancellation-latency, telemetry-overhead, and soak evidence recorded in the
 [M4 exit record](docs/project/m4-exit-evidence.md) and the derived
-[capacity guidance](docs/operations/capacity-and-resource-budgets.md). Every M4
-row remains implemented or partial rather than released and verified.
+[capacity guidance](docs/operations/capacity-and-resource-budgets.md). At the
+M4 exit, those rows remained `Implemented` or `Partial`; M5 subsequently
+promoted the released advertised embedded-kernel subset to `Verified`.
 
 **M5 — Embedded Core Production Preview** is complete and released as
 `oxide-batch` `0.5.0`. It stabilizes the delivered M0-M4 embedded scope rather
@@ -98,9 +100,9 @@ Release preparation, including the first-publication bootstrap boundary for
 
 Start with the [documentation index](docs/README.md) and
 [continuous delivery roadmap](docs/roadmap.md). The M5-M14 full-parity program
-is accepted; the static/erased component architecture is accepted
-(RFC-0005/ADR-0008) and its implementation is M6 scope, while the distributed
-worker protocol remains gated by RFC-0009.
+is accepted; the static/erased component architecture accepted by
+RFC-0005/ADR-0008 was implemented in M6, while the distributed worker protocol
+remains gated by RFC-0009.
 
 ## Contributing
 
