@@ -126,6 +126,7 @@ pub fn check() -> Result<Vec<String>, String> {
              it must derive the release set dynamically instead (see DYNAMIC_RELEASE_SET_FILTER)"
         ));
     }
+    violations.extend(check_release_draft_permission_boundary(&draft_text)?);
 
     let sbom_attestation_crates = extract_sbom_attestation_crates(&draft_text)?;
     violations.extend(compare_exact_set(
@@ -206,6 +207,7 @@ fn check_release_workflow_text(release_text: &str) -> Result<Vec<String>, String
             "{RELEASE_WORKFLOW} must grant id-token: write only to the OIDC publication job"
         ));
     }
+
     if release_text
         .matches("git rev-parse \"${RELEASE_TAG}^{commit}\"")
         .count()
@@ -263,6 +265,31 @@ fn check_release_workflow_text(release_text: &str) -> Result<Vec<String>, String
     violations.extend(check_release_permission_boundary(release_text)?);
     violations.extend(check_release_dispatch_origin(release_text)?);
     violations.extend(check_release_manual_target(release_text)?);
+
+    Ok(violations)
+}
+
+/// Checks that release-draft write authorities are job-scoped, not workflow-
+/// scoped, so a future added job does not silently inherit release mutation and
+/// attestation authority.
+fn check_release_draft_permission_boundary(draft_text: &str) -> Result<Vec<String>, String> {
+    let mut violations = Vec::new();
+    for permission in ["contents", "id-token", "attestations"] {
+        if draft_text.contains(&format!("\n  {permission}: write")) {
+            violations.push(format!(
+                "{RELEASE_DRAFT_WORKFLOW} must not grant {permission}: write at the workflow level; scope write authority to jobs to avoid automatic inheritance by future jobs"
+            ));
+        }
+    }
+
+    let prepare_job = extract_job_block(draft_text, "prepare", RELEASE_DRAFT_WORKFLOW)?;
+    for permission in ["contents", "id-token", "attestations"] {
+        if !prepare_job.contains(&format!("\n      {permission}: write")) {
+            violations.push(format!(
+                "{RELEASE_DRAFT_WORKFLOW} job \"prepare\" must set job-scoped {permission}: write because this workflow's draft-release mutation, OIDC signing, and attestation steps depend on those authorities"
+            ));
+        }
+    }
 
     Ok(violations)
 }
@@ -2327,12 +2354,66 @@ mod tests {
     /// exactly that regression, rather than hand-maintaining a separate
     /// synthetic fixture that could drift from the real file's structure.
     const REAL_RELEASE_WORKFLOW: &str = include_str!("../../.github/workflows/release.yml");
+    const REAL_RELEASE_DRAFT_WORKFLOW: &str =
+        include_str!("../../.github/workflows/release-draft.yml");
 
     #[test]
     fn check_release_workflow_text_accepts_the_real_file() {
         let violations =
             check_release_workflow_text(REAL_RELEASE_WORKFLOW).expect("release.yml checks run");
         assert!(violations.is_empty(), "{violations:#?}");
+    }
+
+    #[test]
+    fn check_release_draft_permission_boundary_accepts_the_real_file() {
+        let violations = check_release_draft_permission_boundary(REAL_RELEASE_DRAFT_WORKFLOW)
+            .expect("release-draft.yml checks run");
+        assert!(violations.is_empty(), "{violations:#?}");
+    }
+
+    #[test]
+    fn check_release_draft_permission_boundary_rejects_workflow_wide_write_permissions() {
+        let text = REAL_RELEASE_DRAFT_WORKFLOW.replacen(
+            "    permissions:\n      contents: write\n      id-token: write\n      attestations: write\n",
+            "",
+            1,
+        );
+        let text = text.replacen(
+            "concurrency:\n",
+            "permissions:\n  contents: write\n  id-token: write\n  attestations: write\n\nconcurrency:\n",
+            1,
+        );
+        let violations = check_release_draft_permission_boundary(&text).expect("checks run");
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("must not grant contents: write at the workflow level")),
+            "{violations:#?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("must not grant id-token: write at the workflow level")),
+            "{violations:#?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("must not grant attestations: write at the workflow level")),
+            "{violations:#?}"
+        );
+    }
+
+    #[test]
+    fn check_release_draft_permission_boundary_rejects_missing_prepare_job_permissions() {
+        let text = REAL_RELEASE_DRAFT_WORKFLOW.replacen("      id-token: write\n", "", 1);
+        let violations = check_release_draft_permission_boundary(&text).expect("checks run");
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("job \"prepare\" must set job-scoped id-token: write")),
+            "{violations:#?}"
+        );
     }
 
     #[test]
