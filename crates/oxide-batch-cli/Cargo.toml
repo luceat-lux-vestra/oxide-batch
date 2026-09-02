@@ -10,7 +10,7 @@ readme = "README.md"
 exclude = ["tests/**"]
 keywords = ["batch", "cli", "operations", "job", "operator"]
 categories = ["command-line-utilities", "asynchronous"]
-publish = ["crates-io"]
+publish = false
 
 [lints]
 workspace = true
