@@ -116,6 +116,9 @@ jobs:
       - name: Inspect the facade surface for disclosed dependencies
         run: cargo run --package oxide-batch-xtask -- surface
 
+      - name: Check canonical publishable crate inventory
+        run: cargo run --package oxide-batch-xtask -- release-crates
+
   packaging:
     name: packaging
     runs-on: ubuntu-latest
