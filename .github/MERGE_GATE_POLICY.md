@@ -20,41 +20,50 @@ Matrix jobs are expanded from their literal matrix axes and their checked-in `na
 
 ## Stable aggregate gates
 
-#223 adopts one stable aggregate context, `postgresql`, for the eleven PostgreSQL implementation/version-specific required contexts. It deliberately does **not** aggregate `dependency-review`, `supply-chain`, `msrv`, `packaging`, `quality`, `evidence-provenance`, or CodeQL because those controls have distinct dependency, security, compatibility, release, repository-quality, evidence-integrity, or static-analysis authority.
+#223 adopts two stable native GitHub Actions aggregate contexts for the eleven PostgreSQL-specific required contexts:
 
-Aggregate membership lives only in `merge-gate-policy.json`. The trusted evaluator does not maintain a second child list. The verifier requires every aggregate member to resolve to an actual policy-`required` checked-in workflow job, and requires the evaluator's `workflow_run` trigger to cover exactly those source workflows. A renamed/removed child, matrix drift, or source-workflow trigger drift therefore fails closed before the topology can be accepted.
+- `postgresql` aggregates the nine PostgreSQL jobs emitted by `.github/workflows/ci.yml`.
+- `postgresql-conformance` aggregates the two PostgreSQL conformance jobs emitted by `.github/workflows/m5-conformance.yml`.
 
-The aggregate context name is reserved for the trusted status publisher. The verifier rejects a PR workflow with a literal job context named `postgresql`, preventing a checked-in job from ambiguously satisfying the same required status context.
+The split is intentional. GitHub Actions `needs` is workflow-local, so keeping each aggregate inside the workflow that owns its member jobs preserves native dependency semantics without cross-workflow polling, commit-status publishing, elevated `statuses: write` permission, or a long-lived polling runner.
 
-The `postgresql` status is published by `.github/workflows/postgres-merge-gate.yml`. That workflow uses `pull_request_target` and `workflow_run`, checks out the implementation from trusted `main`, and has exactly `contents: read`, `actions: read`, and `statuses: write`. For the exact PR head SHA, it resolves each canonical member to its source workflow, finds pull-request workflow runs for that SHA, and evaluates jobs from the latest execution attempt of the selected run. A member that fails, is cancelled, is skipped, completes without a success conclusion, or disappears from a completed source workflow run makes the aggregate fail. A source workflow that has not started or is still active keeps the aggregate pending.
+The aggregate jobs are ordinary pull-request jobs. GitHub therefore owns their lifecycle, cancellation, rerun, and current check state for the PR HEAD. Each aggregate uses `if: ${{ always() }}` so it still executes after a failed/cancelled/skipped dependency, then fails unless every canonical dependency job result is exactly `success`.
 
-Same-SHA reruns are fail-closed. If any exact-head source workflow run is active, that source remains pending even if an older successful execution exists. Once all source runs are completed, the evaluator uses the most recently started execution and the Actions API's `filter=latest` jobs, so jobs from an older attempt cannot satisfy the aggregate. Before any policy or API reconciliation, the evaluator first resets `postgresql` to pending; a later evaluator error therefore cannot leave an old success merge-authoritative.
+Aggregate membership lives only in `merge-gate-policy.json`. The verifier maps each member context back to its checked-in required producer and requires all members of an aggregate to belong to the aggregate producer's workflow. It also requires the aggregate job's `needs` set to match those member job ids exactly, its context name to match policy exactly, and its script to match the canonical fail-closed dependency-result check. A removed/renamed member, matrix drift, dependency omission, altered success criterion, duplicate context, or producer reclassification therefore fails closed in required `quality` CI.
 
-This trusted-main design is intentional: an untrusted pull request must not be able to edit its own aggregate evaluator and manufacture a false-green merge status.
+The two aggregates share migration group `postgresql`. Migration-group state must move together; mixed `candidate`/`cutover`/`active` states are rejected.
 
-## Staged ruleset migration
+The design deliberately does **not** aggregate `dependency-review`, `supply-chain`, `msrv`, `packaging`, `quality`, `evidence-provenance`, or CodeQL because those controls have distinct dependency, security, compatibility, release, repository-quality, evidence-integrity, or static-analysis authority.
 
-`pending_ruleset_contexts` is a temporary migration mechanism, not a weaker classification. A pending context must still be a canonical producer/aggregate. Candidate aggregate gates must remain pending until their trusted producer has been deployed and proven.
+## Aggregate lifecycle and atomic cutover
 
-The PostgreSQL migration is therefore two-phase:
+`pending_ruleset_contexts` is a temporary migration mechanism, not a weaker classification. A pending aggregate must still be backed by its canonical checked-in producer.
 
-1. **Bootstrap PR:** merge the trusted evaluator and candidate policy while all eleven existing PostgreSQL child contexts remain independently required.
-2. On a subsequent PR, observe `postgresql` against the exact PR HEAD and verify it agrees with all eleven child checks.
-3. Add `postgresql` to the live `Protect main` ruleset while the eleven children are still required.
-4. Read the live ruleset back and verify the aggregate is required and green.
-5. Remove the eleven child contexts from the live ruleset in one Settings edit, leaving `postgresql` required.
-6. Read the live ruleset back again.
-7. Change the policy aggregate state from `candidate` to `active`, remove `postgresql` from `pending_ruleset_contexts`, and rerun the exact final migration PR HEAD.
+Aggregate states have these meanings:
 
-There is no interval in which a required status is impossible to produce. The bootstrap PR cannot itself prove the trusted aggregate because `pull_request_target` and `workflow_run` execute workflow definitions from the base/default branch; proof begins only after the evaluator exists on `main`.
+- `candidate`: the native aggregate jobs exist and run, but the live ruleset must still use the legacy child-context topology. The aggregate contexts remain in `pending_ruleset_contexts`.
+- `cutover`: the aggregate contexts remain pending in policy while the live ruleset may be exactly either the legacy topology or the full replacement topology for the migration group. Partial/hybrid replacement is rejected.
+- `active`: the live ruleset must use the aggregate replacement topology and the aggregate contexts must no longer be pending.
+
+The PostgreSQL migration is:
+
+1. **Bootstrap PR:** merge the two native aggregate jobs and `candidate` policy while all eleven PostgreSQL child contexts remain independently required.
+2. Open a migration PR that moves both aggregates together to `cutover`, leaving both in `pending_ruleset_contexts`.
+3. On the exact migration PR HEAD, verify both `postgresql` and `postgresql-conformance` are green while all eleven legacy child contexts are still directly required.
+4. Perform **one** GitHub Settings save that simultaneously removes all eleven PostgreSQL child contexts and adds both aggregate contexts.
+5. Fresh-read the live ruleset and require the exact final topology. A hybrid topology is not accepted by the verifier.
+6. On the same migration PR, move both aggregates to `active`, remove both from `pending_ruleset_contexts`, and rerun strict review/CI on that new exact HEAD.
+7. Squash-merge only after all final required contexts are green and the live ruleset/policy topology matches exactly.
+
+There is no policy-approved intermediate topology containing only one aggregate replacement. The single Settings save changes the migration group atomically from the legacy eleven-context surface to the two-context aggregate surface.
 
 ## Enforcement
 
 The repository's required `quality` job runs `cargo test --workspace --all-features`. `xtask/tests/merge_gate_policy.rs` uses that established merge gate to run:
 
 - negative contract tests for canonical producer/ruleset drift;
-- aggregate policy migration, source-workflow lifecycle, reserved-context, and least-privilege negative tests;
-- aggregate runtime semantics tests for failure, cancellation, skip, missing source/member jobs, active-run blocking, and rerun selection; and
+- aggregate membership, producer-name, `needs`, `always()`, canonical fail-closed script, collision, and classification tests;
+- atomic migration-group tests covering legacy, final, and rejected partial/hybrid topologies; and
 - a read-only live ruleset comparison on GitHub Actions.
 
 Local `cargo test` does not perform the external GitHub API readback. This keeps ordinary local tests offline while preserving live drift enforcement in required CI.
@@ -63,7 +72,7 @@ Local `cargo test` does not perform the external GitHub API readback. This keeps
 
 ## Accepted stable topology
 
-After #223 migration completes, the expected required contexts are:
+After #223 migration completes, the expected required contexts are exactly:
 
 - `Analyze (actions)`
 - `dependency-review`
@@ -73,7 +82,8 @@ After #223 migration completes, the expected required contexts are:
 - `supply-chain`
 - `evidence-provenance`
 - `postgresql`
+- `postgresql-conformance`
 
-The eleven PostgreSQL child checks continue to run and remain canonical aggregate members; only their direct ruleset surface is replaced by `postgresql`.
+The eleven PostgreSQL child jobs continue to run as aggregate members; only their direct ruleset surface is replaced by the two native aggregate contexts.
 
 #233 may compose this verifier later for scheduled hardening drift auditing.
