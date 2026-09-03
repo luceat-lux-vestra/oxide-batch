@@ -175,6 +175,7 @@ module MergeGateVerifier
     violations = []
     required_contexts = producer_summary.fetch('required_contexts')
     workflow_docs = producer_summary.fetch('workflow_docs')
+    context_sources = producer_summary.fetch('context_sources')
     aggregates = []
     member_owners = {}
 
@@ -195,6 +196,10 @@ module MergeGateVerifier
 
       unknown = members - required_contexts
       violations << "aggregate #{context} members are not required producers: #{unknown.sort.join(', ')}" unless unknown.empty?
+      non_job_members = members.select { |member| context_sources.dig(member, 'kind') != 'job' }
+      unless non_job_members.empty?
+        violations << "aggregate #{context} members must be checked-in workflow jobs: #{non_job_members.sort.join(', ')}"
+      end
       members.each do |member|
         if member_owners.key?(member)
           violations << "aggregate member #{member} belongs to both #{member_owners[member]} and #{context}"
@@ -219,6 +224,26 @@ module MergeGateVerifier
         unless events.is_a?(Hash) && events.key?('pull_request_target') && events.key?('workflow_run')
           violations << "aggregate #{context} producer must be triggered by pull_request_target and workflow_run"
         end
+
+        workflow_run = event_config(doc, 'workflow_run')
+        expected_workflows = members.filter_map do |member|
+          source = context_sources[member]
+          next unless source && source['kind'] == 'job'
+          source_doc = workflow_docs[source['workflow']]
+          source_doc && (source_doc['name'] || source['workflow'])
+        end.uniq.sort
+        if workflow_run.is_a?(Hash)
+          actual_workflows = Array(workflow_run['workflows']).map(&:to_s).sort
+          unless actual_workflows == expected_workflows
+            violations << "aggregate #{context} workflow_run workflows mismatch: expected #{expected_workflows.join(', ')}, got #{actual_workflows.join(', ')}"
+          end
+          actual_types = Array(workflow_run['types']).map(&:to_s).sort
+          expected_types = %w[completed in_progress]
+          unless actual_types == expected_types
+            violations << "aggregate #{context} workflow_run types mismatch: expected #{expected_types.join(', ')}, got #{actual_types.join(', ')}"
+          end
+        end
+
         target = event_config(doc, 'pull_request_target')
         if target.is_a?(Hash) && (target.key?('paths') || target.key?('paths-ignore'))
           violations << "aggregate #{context} producer can suppress pull_request_target via path filters"
