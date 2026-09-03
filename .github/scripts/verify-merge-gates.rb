@@ -101,6 +101,7 @@ module MergeGateVerifier
     sources = contexts.to_h { |context| [context, {'kind' => 'managed'}] }
     classified_jobs = []
     seen_jobs = []
+    static_job_contexts = []
 
     workflow_dir = Pathname(root).join('.github/workflows')
     workflow_paths = Dir[workflow_dir.join('*.{yml,yaml}').to_s].sort
@@ -122,6 +123,8 @@ module MergeGateVerifier
       jobs.each do |job_id, job|
         job_id = job_id.to_s
         seen_jobs << [workflow, job_id]
+        job_name = (job.is_a?(Hash) && job['name']) || job_id
+        static_job_contexts << job_name unless job_name.include?('${{')
         classification, = job_policy(policy, workflow, job_id)
         unless VALID_CLASSIFICATIONS.include?(classification)
           violations << "#{workflow} job #{job_id} is unclassified"
@@ -167,6 +170,7 @@ module MergeGateVerifier
       'required_contexts' => contexts.sort,
       'context_sources' => sources,
       'classified_jobs' => classified_jobs.sort,
+      'static_job_contexts' => static_job_contexts.sort,
       'workflow_docs' => workflow_docs
     }]
   end
@@ -263,6 +267,8 @@ module MergeGateVerifier
     violations << "aggregate contexts are duplicated: #{duplicate_contexts.sort.join(', ')}" unless duplicate_contexts.empty?
     collisions = aggregate_contexts & required_contexts
     violations << "aggregate contexts collide with required child/managed producers: #{collisions.sort.join(', ')}" unless collisions.empty?
+    job_collisions = aggregate_contexts & producer_summary.fetch('static_job_contexts')
+    violations << "aggregate contexts collide with PR job contexts: #{job_collisions.sort.join(', ')}" unless job_collisions.empty?
 
     [violations, aggregates]
   end
