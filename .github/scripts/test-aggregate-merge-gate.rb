@@ -19,10 +19,11 @@ class AggregateStatusTest < Minitest::Test
     {'id' => id, 'name' => name, 'status' => status, 'conclusion' => conclusion, 'app' => {'slug' => 'github-actions'}}
   end
 
-  def evaluate(checks, completed_workflow: nil)
+  def evaluate(checks, running_workflow: nil, completed_workflow: nil)
     AggregateStatus.evaluate(
       gate: GATE,
       check_runs: checks,
+      running_workflow: running_workflow,
       completed_workflow: completed_workflow,
       context_sources: SOURCES,
       workflow_names: NAMES
@@ -91,6 +92,15 @@ class AggregateStatusTest < Minitest::Test
       check_run('postgres-18-repository', id: 2)
     ])
     assert_equal 'success', state
+  end
+
+  def test_source_rerun_forces_members_pending_before_new_checks_materialize
+    state, details = evaluate([
+      check_run('postgres-15-repository', conclusion: 'success', id: 1),
+      check_run('postgres-18-repository', conclusion: 'success', id: 2)
+    ], running_workflow: 'Rust')
+    assert_equal 'pending', state
+    assert_includes details['pending'].join('\n'), 'source workflow Rust in progress'
   end
 
   def test_non_github_actions_check_cannot_spoof_member
