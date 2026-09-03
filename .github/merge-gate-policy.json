@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "ruleset": {
+    "id": 19905142,
+    "name": "Protect main"
+  },
+  "workflow_defaults": [
+    {"pattern": ".github/workflows/ci.yml", "classification": "required"},
+    {"pattern": ".github/workflows/evidence.yml", "classification": "required"},
+    {"pattern": ".github/workflows/dependency-review.yml", "classification": "required"},
+    {"pattern": ".github/workflows/supply-chain.yml", "classification": "advisory"},
+    {"pattern": ".github/workflows/m5-*.yml", "classification": "advisory"},
+    {"pattern": ".github/workflows/m6-*.yml", "classification": "advisory"},
+    {"pattern": ".github/workflows/ai-review.yml", "classification": "advisory"},
+    {"pattern": ".github/workflows/pr-labeler.yml", "classification": "advisory"}
+  ],
+  "job_overrides": [
+    {
+      "workflow": ".github/workflows/m5-conformance.yml",
+      "job": "conformance-campaign",
+      "classification": "required"
+    },
+    {
+      "workflow": ".github/workflows/supply-chain.yml",
+      "job": "supply-chain",
+      "classification": "required"
+    }
+  ],
+  "managed_required_contexts": [
+    "Analyze (actions)"
+  ],
+  "pending_ruleset_contexts": []
+}
