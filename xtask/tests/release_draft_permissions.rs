@@ -1,13 +1,17 @@
+//! Regression coverage for the release-draft authority boundary.
+
+use std::error::Error;
 use std::fs;
+use std::io;
 use std::path::Path;
 
 const WORKFLOW: &str = ".github/workflows/release-draft.yml";
 
-fn workflow_text() -> String {
+fn workflow_text() -> Result<String, Box<dyn Error>> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("xtask has a workspace parent");
-    fs::read_to_string(root.join(WORKFLOW)).expect("release-draft workflow is readable")
+        .ok_or_else(|| io::Error::other("xtask has no workspace parent"))?;
+    Ok(fs::read_to_string(root.join(WORKFLOW))?)
 }
 
 fn top_level_permissions_block(text: &str) -> Option<&str> {
@@ -22,9 +26,12 @@ fn top_level_permissions_block(text: &str) -> Option<&str> {
     Some(&after[..end])
 }
 
-fn job_block<'a>(text: &'a str, job: &str) -> &'a str {
+fn job_block<'a>(text: &'a str, job: &str) -> Result<&'a str, io::Error> {
     let marker = format!("\n  {job}:\n");
-    let start = text.find(&marker).expect("job exists") + marker.len();
+    let start = text
+        .find(&marker)
+        .ok_or_else(|| io::Error::other(format!("job {job:?} does not exist")))?
+        + marker.len();
     let after = &text[start..];
 
     let mut end = after.len();
@@ -41,12 +48,12 @@ fn job_block<'a>(text: &'a str, job: &str) -> &'a str {
         }
         position += line.len();
     }
-    &after[..end]
+    Ok(&after[..end])
 }
 
 #[test]
-fn release_draft_write_authority_is_prepare_job_scoped() {
-    let text = workflow_text();
+fn release_draft_write_authority_is_prepare_job_scoped() -> Result<(), Box<dyn Error>> {
+    let text = workflow_text()?;
 
     if let Some(permissions) = top_level_permissions_block(&text) {
         assert!(
@@ -58,11 +65,13 @@ fn release_draft_write_authority_is_prepare_job_scoped() {
         );
     }
 
-    let prepare = job_block(&text, "prepare");
+    let prepare = job_block(&text, "prepare")?;
     for permission in ["contents", "id-token", "attestations"] {
         assert!(
             prepare.contains(&format!("\n      {permission}: write")),
             "{WORKFLOW} prepare job must retain job-scoped {permission}: write"
         );
     }
+
+    Ok(())
 }
