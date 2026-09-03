@@ -9,7 +9,7 @@ module MergeGateVerifier
   module_function
 
   VALID_CLASSIFICATIONS = %w[required advisory optional].freeze
-  AGGREGATE_STATES = %w[candidate active].freeze
+  AGGREGATE_STATES = %w[candidate cutover active].freeze
   MATRIX_EXPR = /\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}/
 
   def load_yaml(path)
@@ -273,6 +273,26 @@ module MergeGateVerifier
     [violations, aggregates]
   end
 
+  def accepted_live_context_sets(required_contexts:, aggregates:, pending:)
+    accepted = [(required_contexts - pending).uniq.sort]
+
+    aggregates.each do |gate|
+      case gate['state']
+      when 'active'
+        accepted = accepted.map do |contexts|
+          ((contexts - gate['members']) + [gate['context']]).uniq.sort
+        end
+      when 'cutover'
+        replacements = accepted.map do |contexts|
+          ((contexts - gate['members']) + [gate['context']]).uniq.sort
+        end
+        accepted = (accepted + replacements).uniq
+      end
+    end
+
+    accepted
+  end
+
   def verify(root:, policy_path:, ruleset_path:)
     policy = JSON.parse(File.read(policy_path))
     ruleset = JSON.parse(File.read(ruleset_path))
@@ -296,28 +316,34 @@ module MergeGateVerifier
     aggregates.each do |gate|
       context = gate['context']
       case gate['state']
-      when 'candidate'
-        violations << "candidate aggregate #{context} must be pending ruleset promotion" unless pending.include?(context)
+      when 'candidate', 'cutover'
+        violations << "#{gate['state']} aggregate #{context} must be pending ruleset promotion" unless pending.include?(context)
       when 'active'
         violations << "active aggregate #{context} cannot remain pending ruleset promotion" if pending.include?(context)
       end
     end
 
-    expected_live = required_contexts.dup
-    aggregates.select { |gate| gate['state'] == 'active' }.each do |gate|
-      expected_live -= gate['members']
-    end
-    expected_live = (expected_live - pending).sort
+    accepted_live = accepted_live_context_sets(
+      required_contexts: required_contexts,
+      aggregates: aggregates,
+      pending: pending
+    )
     actual_live = live_required_contexts(ruleset).sort
-    missing = expected_live - actual_live
-    stale = actual_live - expected_live
-    violations << "policy-required contexts missing from live ruleset: #{missing.join(', ')}" unless missing.empty?
-    violations << "live ruleset requires stale/unaccepted contexts: #{stale.join(', ')}" unless stale.empty?
+    unless accepted_live.include?(actual_live)
+      closest = accepted_live.min_by do |expected|
+        (expected - actual_live).length + (actual_live - expected).length
+      end || []
+      missing = closest - actual_live
+      stale = actual_live - closest
+      violations << "policy-required contexts missing from live ruleset: #{missing.join(', ')}" unless missing.empty?
+      violations << "live ruleset requires stale/unaccepted contexts: #{stale.join(', ')}" unless stale.empty?
+    end
 
     [violations, {
       'required_contexts' => required_contexts.sort,
       'aggregate_gates' => aggregates,
       'pending_ruleset_contexts' => pending.sort,
+      'accepted_live_required_contexts' => accepted_live,
       'live_required_contexts' => actual_live,
       'classified_jobs' => producer_summary.fetch('classified_jobs')
     }]
