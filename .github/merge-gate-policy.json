@@ -16,6 +16,11 @@
   ],
   "job_overrides": [
     {
+      "workflow": ".github/workflows/m5-conformance.yml",
+      "job": "conformance-campaign",
+      "classification": "required"
+    },
+    {
       "workflow": ".github/workflows/supply-chain.yml",
       "job": "supply-chain",
       "classification": "required"
