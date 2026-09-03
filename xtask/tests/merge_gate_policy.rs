@@ -47,8 +47,10 @@ fn merge_gate_policy_matches_live_ruleset_in_github_actions() {
 
     let root = repo_root();
     let api = env::var("GITHUB_API_URL").unwrap_or_else(|_| "https://api.github.com".to_owned());
-    let repository = env::var("GITHUB_REPOSITORY").expect("GITHUB_REPOSITORY is set by GitHub Actions");
-    let ruleset_path = env::temp_dir().join(format!("oxide-batch-ruleset-{}.json", std::process::id()));
+    let repository =
+        env::var("GITHUB_REPOSITORY").expect("GITHUB_REPOSITORY is set by GitHub Actions");
+    let ruleset_path =
+        env::temp_dir().join(format!("oxide-batch-ruleset-{}.json", std::process::id()));
     let url = format!("{api}/repos/{repository}/rulesets/19905142");
 
     let output = Command::new("curl")
