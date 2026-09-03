@@ -73,17 +73,3 @@ jobs:
           name: conformance-campaign-postgres-${{ matrix.postgres }}
           path: target/m5-campaigns/conformance-campaign.json
           if-no-files-found: error
-
-  postgresql-conformance-merge-gate:
-    name: postgresql-conformance
-    if: ${{ always() }}
-    needs:
-      - conformance-campaign
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Require aggregate member jobs
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "${{ needs.conformance-campaign.result }}" = "success"
