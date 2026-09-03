@@ -3,7 +3,7 @@
   "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow is a thin provisioning and call layer, and its contract-check step fails closed when the workflow drifts from these values. Only the dedicated conformance workflow is in this campaign's semantic closure, so unrelated quality or build changes in ci.yml do not invalidate retained conformance evidence.",
   "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script — an added trigger, a job-level permission override, a widened matrix, a changed command, an appended line — moves the identity and fails the contract check, whether or not every literal field below still happens to read true. The literal fields exist for a readable diagnostic, not as the boundary. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
   "workflow_path": ".github/workflows/m5-conformance.yml",
-  "workflow_git_blob": "39e3e1fefaf2ac8284847c1f86995e109cca335c",
+  "workflow_git_blob": "c8f8cdfeca7926de6fa94836e3d18672a6970ca9",
   "workflow_name": "M5 Conformance",
   "triggers": {
     "pull_request": ["main"],
