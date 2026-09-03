@@ -421,3 +421,23 @@ jobs:
           cargo test -p oxide-batch-test --features postgres
           --test postgres_fixture
           -- --nocapture --test-threads=1
+
+  postgresql-merge-gate:
+    name: postgresql
+    if: ${{ always() }}
+    needs:
+      - postgres-design-gate
+      - postgres-item-components
+      - postgres-repository
+      - postgres-spike
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require aggregate member jobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ needs.postgres-design-gate.result }}" = "success"
+          test "${{ needs.postgres-item-components.result }}" = "success"
+          test "${{ needs.postgres-repository.result }}" = "success"
+          test "${{ needs.postgres-spike.result }}" = "success"
