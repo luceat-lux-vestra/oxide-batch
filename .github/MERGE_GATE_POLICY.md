@@ -22,9 +22,11 @@ Matrix jobs are expanded from their literal matrix axes and their checked-in `na
 
 #223 adopts one stable aggregate context, `postgresql`, for the eleven PostgreSQL implementation/version-specific required contexts. It deliberately does **not** aggregate `dependency-review`, `supply-chain`, `msrv`, `packaging`, `quality`, `evidence-provenance`, or CodeQL because those controls have distinct dependency, security, compatibility, release, repository-quality, evidence-integrity, or static-analysis authority.
 
-Aggregate membership lives only in `merge-gate-policy.json`. The trusted evaluator does not maintain a second child list. The verifier requires every aggregate member to resolve to an actual policy-`required` producer, so a renamed/removed child or matrix drift fails closed before the topology can be accepted.
+Aggregate membership lives only in `merge-gate-policy.json`. The trusted evaluator does not maintain a second child list. The verifier requires every aggregate member to resolve to an actual policy-`required` checked-in workflow job, and requires the evaluator's `workflow_run` trigger to cover exactly those source workflows. A renamed/removed child, matrix drift, or source-workflow trigger drift therefore fails closed before the topology can be accepted.
 
-The `postgresql` status is published by `.github/workflows/postgres-merge-gate.yml`. That workflow uses `pull_request_target` and `workflow_run`, checks out the implementation from trusted `main`, has only `contents: read` plus `statuses: write`, and evaluates check runs for the exact PR head SHA. It accepts only GitHub Actions child checks. A child that fails, is cancelled, is skipped, completes without a success conclusion, or disappears after its source workflow completes makes the aggregate fail. In-progress or not-yet-produced children keep it pending.
+The `postgresql` status is published by `.github/workflows/postgres-merge-gate.yml`. That workflow uses `pull_request_target` and `workflow_run`, checks out the implementation from trusted `main`, has exactly `contents: read`, `checks: read`, and `statuses: write`, and evaluates check runs for the exact PR head SHA. It accepts only GitHub Actions child checks. A child that fails, is cancelled, is skipped, completes without a success conclusion, or disappears after its source workflow completes makes the aggregate fail. In-progress or not-yet-produced children keep it pending.
+
+A source workflow rerun is also fail-closed. Its `workflow_run: in_progress` event immediately forces that source workflow's aggregate members back to pending even if the Check Runs API still exposes successful checks from the previous run. This prevents an old aggregate success from remaining merge-authoritative while a same-SHA rerun is underway.
 
 This trusted-main design is intentional: an untrusted pull request must not be able to edit its own aggregate evaluator and manufacture a false-green merge status.
 
@@ -49,8 +51,8 @@ There is no interval in which a required status is impossible to produce. The bo
 The repository's required `quality` job runs `cargo test --workspace --all-features`. `xtask/tests/merge_gate_policy.rs` uses that established merge gate to run:
 
 - negative contract tests for canonical producer/ruleset drift;
-- aggregate policy migration/inventory negative tests;
-- aggregate runtime semantics tests for failure, cancellation, skip, missing child, rerun selection, and non-GitHub-Actions spoofing; and
+- aggregate policy migration, source-workflow lifecycle, and least-privilege negative tests;
+- aggregate runtime semantics tests for failure, cancellation, skip, missing child, rerun selection/reset, and non-GitHub-Actions spoofing; and
 - a read-only live ruleset comparison on GitHub Actions.
 
 Local `cargo test` does not perform the external GitHub API readback. This keeps ordinary local tests offline while preserving live drift enforcement in required CI.
