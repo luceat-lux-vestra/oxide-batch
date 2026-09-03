@@ -348,6 +348,20 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
+  def test_aggregate_producer_workflow_path_filter_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/ci.yml')
+      original = File.read(path)
+      body = original.sub('branches: [main]', "branches: [main]\n    paths-ignore: ['docs/**']")
+      refute_equal original, body
+      write(root, '.github/workflows/ci.yml', body)
+      assert_includes(
+        verify(root).join('\n'),
+        'aggregate postgresql producer workflow .github/workflows/ci.yml can suppress pull_request via path filters'
+      )
+    end
+  end
+
   def test_aggregate_producer_must_use_always
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/ci.yml')
