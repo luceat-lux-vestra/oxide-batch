@@ -249,9 +249,9 @@ module MergeGateVerifier
           violations << "aggregate #{context} producer can suppress pull_request_target via path filters"
         end
         permissions = doc['permissions']
-        expected_permissions = {'contents' => 'read', 'checks' => 'read', 'statuses' => 'write'}
+        expected_permissions = {'contents' => 'read', 'actions' => 'read', 'statuses' => 'write'}
         unless permissions == expected_permissions
-          violations << "aggregate #{context} producer permissions must equal contents: read, checks: read, statuses: write"
+          violations << "aggregate #{context} producer permissions must equal contents: read, actions: read, statuses: write"
         end
       end
 
