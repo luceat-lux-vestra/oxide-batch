@@ -200,6 +200,47 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
+  def test_cutover_aggregate_must_be_pending
+    with_repo do |root, policy, _ruleset|
+      policy['aggregate_gates'][0]['state'] = 'cutover'
+      policy['pending_ruleset_contexts'] = ['evidence-provenance']
+      write_json(root, '.github/merge-gate-policy.json', policy)
+      assert_includes verify(root).join('\n'), 'cutover aggregate postgresql must be pending ruleset promotion'
+    end
+  end
+
+  def test_cutover_accepts_legacy_child_topology
+    with_repo do |root, policy, _ruleset|
+      policy['aggregate_gates'][0]['state'] = 'cutover'
+      write_json(root, '.github/merge-gate-policy.json', policy)
+      assert_empty verify(root)
+    end
+  end
+
+  def test_cutover_accepts_atomic_aggregate_replacement
+    with_repo do |root, policy, _ruleset|
+      policy['aggregate_gates'][0]['state'] = 'cutover'
+      write_json(root, '.github/merge-gate-policy.json', policy)
+      write_json(root, 'ruleset.json', ruleset_with('Analyze (actions)', 'quality', 'postgresql'))
+      assert_empty verify(root)
+    end
+  end
+
+  def test_cutover_rejects_hybrid_child_and_aggregate_topology
+    with_repo do |root, policy, _ruleset|
+      policy['aggregate_gates'][0]['state'] = 'cutover'
+      write_json(root, '.github/merge-gate-policy.json', policy)
+      write_json(root, 'ruleset.json', ruleset_with(
+        'Analyze (actions)',
+        'quality',
+        'postgres-15-repository',
+        'postgres-18-repository',
+        'postgresql'
+      ))
+      assert_includes verify(root).join('\n'), 'stale/unaccepted contexts: postgresql'
+    end
+  end
+
   def test_active_aggregate_replaces_member_contexts
     with_repo do |root, policy, _ruleset|
       policy['aggregate_gates'][0]['state'] = 'active'
