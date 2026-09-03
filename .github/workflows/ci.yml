@@ -421,3 +421,25 @@ jobs:
           cargo test -p oxide-batch-test --features postgres
           --test postgres_fixture
           -- --nocapture --test-threads=1
+
+  postgresql-merge-gate:
+    name: postgresql
+    if: ${{ always() }}
+    needs:
+      - postgres-design-gate
+      - postgres-item-components
+      - postgres-repository
+      - postgres-spike
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Evaluate selective-rerun-safe PostgreSQL aggregate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ruby .github/scripts/evaluate-aggregate-run.rb postgresql

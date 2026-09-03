@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "ruleset": {
     "id": 19905142,
     "name": "Protect main"
@@ -16,6 +16,11 @@
   ],
   "job_overrides": [
     {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "postgresql-merge-gate",
+      "classification": "advisory"
+    },
+    {
       "workflow": ".github/workflows/m5-conformance.yml",
       "job": "conformance-campaign",
       "classification": "required"
@@ -29,5 +34,29 @@
   "managed_required_contexts": [
     "Analyze (actions)"
   ],
-  "pending_ruleset_contexts": []
+  "aggregate_gates": [
+    {
+      "context": "postgresql",
+      "state": "candidate",
+      "migration_group": "postgresql",
+      "producer": {
+        "workflow": ".github/workflows/ci.yml",
+        "job": "postgresql-merge-gate"
+      },
+      "members": [
+        "postgres-15-design-gate",
+        "postgres-15-item-components",
+        "postgres-15-repository",
+        "postgres-16-design-gate",
+        "postgres-17-design-gate",
+        "postgres-18-design-gate",
+        "postgres-18-item-components",
+        "postgres-18-repository",
+        "postgres-spike"
+      ]
+    }
+  ],
+  "pending_ruleset_contexts": [
+    "postgresql"
+  ]
 }
