@@ -111,7 +111,9 @@ class MergeGateVerifierTest < Minitest::Test
   def test_required_workflow_path_filter_is_rejected
     with_repo do |root, _policy, _ruleset|
       path = File.join(root, '.github/workflows/ci.yml')
-      body = File.read(path).sub('branches: [main]', "branches: [main]\n    paths: ['src/**']")
+      original = File.read(path)
+      body = original.sub('branches: [main]', "branches: [main]\n    paths: ['src/**']")
+      refute_equal original, body, 'path-filter fixture must mutate the workflow'
       write(root, '.github/workflows/ci.yml', body)
       assert_includes verify(root).join('\n'), 'path filters'
     end
@@ -120,7 +122,12 @@ class MergeGateVerifierTest < Minitest::Test
   def test_required_job_condition_is_rejected
     with_repo do |root, _policy, _ruleset|
       path = File.join(root, '.github/workflows/ci.yml')
-      body = File.read(path).sub('name: quality\n    runs-on:', "name: quality\n    if: github.actor != 'nobody'\n    runs-on:")
+      original = File.read(path)
+      body = original.sub(
+        "name: quality\n    runs-on:",
+        "name: quality\n    if: github.actor != 'nobody'\n    runs-on:"
+      )
+      refute_equal original, body, 'job-condition fixture must mutate the workflow'
       write(root, '.github/workflows/ci.yml', body)
       assert_includes verify(root).join('\n'), 'not guaranteed to emit'
     end
@@ -129,7 +136,9 @@ class MergeGateVerifierTest < Minitest::Test
   def test_matrix_context_set_mismatch_is_rejected
     with_repo do |root, _policy, _ruleset|
       path = File.join(root, '.github/workflows/ci.yml')
-      body = File.read(path).sub('["15", "18"]', '["15", "17", "18"]')
+      original = File.read(path)
+      body = original.sub('["15", "18"]', '["15", "17", "18"]')
+      refute_equal original, body, 'matrix fixture must mutate the workflow'
       write(root, '.github/workflows/ci.yml', body)
       assert_includes verify(root).join('\n'), 'postgres-17-repository'
     end
