@@ -246,6 +246,21 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
+  def test_aggregate_context_is_reserved_from_pr_job_names
+    with_repo do |root, _policy, _ruleset|
+      write(root, '.github/workflows/deep-soak.yml', <<~YAML)
+        name: Deep
+        on:
+          pull_request:
+        jobs:
+          soak:
+            name: postgresql
+            runs-on: ubuntu-latest
+      YAML
+      assert_includes verify(root).join('\n'), 'aggregate contexts collide with PR job contexts: postgresql'
+    end
+  end
+
   def test_dangling_job_override_is_rejected
     with_repo do |root, policy, _ruleset|
       policy['job_overrides'] = [{
