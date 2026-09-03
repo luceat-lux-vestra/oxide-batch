@@ -69,7 +69,7 @@ class MergeGateVerifierTest < Minitest::Test
             types: [in_progress, completed]
         permissions:
           contents: read
-          checks: read
+          actions: read
           statuses: write
         jobs:
           publish:
