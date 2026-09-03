@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "ruleset": {
     "id": 19905142,
     "name": "Protect main"
@@ -12,7 +12,8 @@
     {"pattern": ".github/workflows/m5-*.yml", "classification": "advisory"},
     {"pattern": ".github/workflows/m6-*.yml", "classification": "advisory"},
     {"pattern": ".github/workflows/ai-review.yml", "classification": "advisory"},
-    {"pattern": ".github/workflows/pr-labeler.yml", "classification": "advisory"}
+    {"pattern": ".github/workflows/pr-labeler.yml", "classification": "advisory"},
+    {"pattern": ".github/workflows/postgres-merge-gate.yml", "classification": "advisory"}
   ],
   "job_overrides": [
     {
@@ -29,5 +30,30 @@
   "managed_required_contexts": [
     "Analyze (actions)"
   ],
-  "pending_ruleset_contexts": []
+  "aggregate_gates": [
+    {
+      "context": "postgresql",
+      "state": "candidate",
+      "producer": {
+        "workflow": ".github/workflows/postgres-merge-gate.yml",
+        "job": "publish"
+      },
+      "members": [
+        "postgres-15-conformance-campaign",
+        "postgres-15-design-gate",
+        "postgres-15-item-components",
+        "postgres-15-repository",
+        "postgres-16-design-gate",
+        "postgres-17-design-gate",
+        "postgres-18-conformance-campaign",
+        "postgres-18-design-gate",
+        "postgres-18-item-components",
+        "postgres-18-repository",
+        "postgres-spike"
+      ]
+    }
+  ],
+  "pending_ruleset_contexts": [
+    "postgresql"
+  ]
 }
