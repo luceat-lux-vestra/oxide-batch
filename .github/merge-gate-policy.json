@@ -12,10 +12,14 @@
     {"pattern": ".github/workflows/m5-*.yml", "classification": "advisory"},
     {"pattern": ".github/workflows/m6-*.yml", "classification": "advisory"},
     {"pattern": ".github/workflows/ai-review.yml", "classification": "advisory"},
-    {"pattern": ".github/workflows/pr-labeler.yml", "classification": "advisory"},
-    {"pattern": ".github/workflows/postgres-merge-gate.yml", "classification": "advisory"}
+    {"pattern": ".github/workflows/pr-labeler.yml", "classification": "advisory"}
   ],
   "job_overrides": [
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "postgresql-merge-gate",
+      "classification": "advisory"
+    },
     {
       "workflow": ".github/workflows/m5-conformance.yml",
       "job": "conformance-campaign",
@@ -34,26 +38,39 @@
     {
       "context": "postgresql",
       "state": "candidate",
+      "migration_group": "postgresql",
       "producer": {
-        "workflow": ".github/workflows/postgres-merge-gate.yml",
-        "job": "publish"
+        "workflow": ".github/workflows/ci.yml",
+        "job": "postgresql-merge-gate"
       },
       "members": [
-        "postgres-15-conformance-campaign",
         "postgres-15-design-gate",
         "postgres-15-item-components",
         "postgres-15-repository",
         "postgres-16-design-gate",
         "postgres-17-design-gate",
-        "postgres-18-conformance-campaign",
         "postgres-18-design-gate",
         "postgres-18-item-components",
         "postgres-18-repository",
         "postgres-spike"
       ]
+    },
+    {
+      "context": "postgresql-conformance",
+      "state": "candidate",
+      "migration_group": "postgresql",
+      "producer": {
+        "workflow": ".github/workflows/m5-conformance.yml",
+        "job": "postgresql-conformance-merge-gate"
+      },
+      "members": [
+        "postgres-15-conformance-campaign",
+        "postgres-18-conformance-campaign"
+      ]
     }
   ],
   "pending_ruleset_contexts": [
-    "postgresql"
+    "postgresql",
+    "postgresql-conformance"
   ]
 }
