@@ -9,7 +9,7 @@ require_relative 'verify-merge-gates'
 module AggregateStatus
   module_function
 
-  def evaluate(gate:, check_runs:, completed_workflow: nil, context_sources:, workflow_names:)
+  def evaluate(gate:, check_runs:, running_workflow: nil, completed_workflow: nil, context_sources:, workflow_names:)
     runs = check_runs.select { |run| run.dig('app', 'slug') == 'github-actions' }
     latest = runs.group_by { |run| run.fetch('name') }.transform_values do |items|
       items.max_by { |item| item.fetch('id', 0) }
@@ -18,10 +18,15 @@ module AggregateStatus
     pending = []
 
     gate.fetch('members').each do |member|
+      source = context_sources[member]
+      source_name = source && workflow_names[source['workflow']]
+      if running_workflow && source_name == running_workflow
+        pending << "#{member}: source workflow #{running_workflow} in progress"
+        next
+      end
+
       run = latest[member]
       if run.nil?
-        source = context_sources[member]
-        source_name = source && workflow_names[source['workflow']]
         if completed_workflow && source_name == completed_workflow
           failures << "#{member}: missing after #{completed_workflow} completed"
         else
@@ -52,14 +57,15 @@ module AggregateStatus
   def event_target(event_name, event)
     case event_name
     when 'pull_request_target'
-      [event.dig('pull_request', 'head', 'sha'), nil]
+      [event.dig('pull_request', 'head', 'sha'), nil, nil]
     when 'workflow_run'
       run = event['workflow_run'] || {}
-      return [nil, nil] unless run['event'] == 'pull_request'
+      return [nil, nil, nil] unless run['event'] == 'pull_request'
+      running = event['action'] == 'in_progress' ? run['name'] : nil
       completed = event['action'] == 'completed' ? run['name'] : nil
-      [run['head_sha'], completed]
+      [run['head_sha'], running, completed]
     else
-      [nil, nil]
+      [nil, nil, nil]
     end
   end
 
@@ -116,7 +122,7 @@ module AggregateStatus
     gate = gates.first
 
     event = JSON.parse(File.read(ENV.fetch('GITHUB_EVENT_PATH')))
-    sha, completed_workflow = event_target(ENV.fetch('GITHUB_EVENT_NAME'), event)
+    sha, running_workflow, completed_workflow = event_target(ENV.fetch('GITHUB_EVENT_NAME'), event)
     return if sha.nil?
 
     producer_violations, summary = MergeGateVerifier.producer_inventory(root: root, policy: policy)
@@ -134,6 +140,7 @@ module AggregateStatus
     state, details = evaluate(
       gate: gate,
       check_runs: checks,
+      running_workflow: running_workflow,
       completed_workflow: completed_workflow,
       context_sources: summary.fetch('context_sources'),
       workflow_names: names
