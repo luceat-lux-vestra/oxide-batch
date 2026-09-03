@@ -194,12 +194,29 @@ module MergeGateVerifier
     value.to_s.gsub(/\s+/, '') == '${{always()}}'
   end
 
-  def aggregate_run_script(needs)
-    lines = ['set -euo pipefail']
-    needs.sort.each do |need|
-      lines << %(test "${{ needs.#{need}.result }}" = "success")
+  EVALUATOR_SCRIPT = '.github/scripts/evaluate-aggregate-run.rb'
+  AGGREGATE_PRODUCER_PERMISSIONS = {'actions' => 'read', 'contents' => 'read'}.freeze
+  TOKEN_ENV_EXPR = /\A\$\{\{\s*github\.token\s*\}\}\z/
+
+  # The canonical checkout pin isn't duplicated here: it's read back from the
+  # other jobs already checked into the same workflow, so the aggregate
+  # producer is only required to reuse whatever SHA the workflow already
+  # pins rather than the verifier hard-coding a second copy of it.
+  def other_jobs_checkout_pins(doc, exclude_job_id)
+    pins = []
+    (doc['jobs'] || {}).each do |id, job|
+      next if id.to_s == exclude_job_id
+      next unless job.is_a?(Hash) && job['steps'].is_a?(Array)
+      job['steps'].each do |step|
+        uses = step.is_a?(Hash) ? step['uses'] : nil
+        pins << uses if uses.is_a?(String) && uses.start_with?('actions/checkout@')
+      end
     end
-    lines.join("\n")
+    pins.uniq
+  end
+
+  def evaluator_invocation_script(context)
+    "ruby #{EVALUATOR_SCRIPT} #{context}"
   end
 
   def aggregate_inventory(root:, policy:, producer_summary:)
@@ -284,6 +301,9 @@ module MergeGateVerifier
           violations << "aggregate #{context} producer must use ubuntu-latest with timeout-minutes: 5"
         end
         violations << "aggregate #{context} producer cannot continue on error" if job['continue-on-error']
+        unless job['permissions'] == AGGREGATE_PRODUCER_PERMISSIONS
+          violations << "aggregate #{context} producer must declare exact least-privilege permissions #{AGGREGATE_PRODUCER_PERMISSIONS.inspect}, got #{job['permissions'].inspect}"
+        end
 
         member_sources = members.filter_map { |member| context_sources[member] }
         source_workflows = member_sources.map { |source| source['workflow'] }.uniq
@@ -296,16 +316,30 @@ module MergeGateVerifier
           unless actual_needs == expected_needs
             violations << "aggregate #{context} needs mismatch: expected #{expected_needs.join(', ')}, got #{actual_needs.join(', ')}"
           end
+
           steps = job['steps']
-          expected_run = aggregate_run_script(expected_needs)
-          valid_step = steps.is_a?(Array) && steps.length == 1 &&
-                       steps[0].is_a?(Hash) &&
-                       steps[0]['name'] == 'Require aggregate member jobs' &&
-                       steps[0]['shell'] == 'bash' &&
-                       !steps[0]['continue-on-error'] &&
-                       steps[0]['run'].to_s.strip == expected_run
-          unless valid_step
-            violations << "aggregate #{context} producer step does not match the canonical fail-closed needs check"
+          unless steps.is_a?(Array) && steps.length == 2
+            violations << "aggregate #{context} producer must have exactly a checkout step and an evaluator step"
+          end
+
+          checkout_step = steps.is_a?(Array) ? steps[0] : nil
+          checkout_uses = checkout_step.is_a?(Hash) ? checkout_step['uses'] : nil
+          canonical_pins = other_jobs_checkout_pins(doc, job_id)
+          if canonical_pins.length != 1
+            violations << "aggregate #{context} producer cannot resolve a single already-pinned actions/checkout SHA from #{workflow}"
+          elsif checkout_uses != canonical_pins.first
+            violations << "aggregate #{context} producer checkout must reuse the pinned #{canonical_pins.first.inspect}, got #{checkout_uses.inspect}"
+          end
+
+          evaluator_step = steps.is_a?(Array) ? steps[1] : nil
+          expected_run = evaluator_invocation_script(context)
+          valid_evaluator_step = evaluator_step.is_a?(Hash) &&
+                                  !evaluator_step['continue-on-error'] &&
+                                  evaluator_step['run'].to_s.strip == expected_run &&
+                                  evaluator_step['env'].is_a?(Hash) &&
+                                  TOKEN_ENV_EXPR.match?(evaluator_step['env']['GITHUB_TOKEN'].to_s.strip)
+          unless valid_evaluator_step
+            violations << "aggregate #{context} producer step does not match the canonical evaluator invocation #{expected_run.inspect} with a GITHUB_TOKEN environment"
           end
         rescue StandardError => e
           violations << "aggregate #{context} producer #{workflow}##{job_id}: #{e.message}"

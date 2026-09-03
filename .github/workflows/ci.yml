@@ -432,12 +432,14 @@ jobs:
       - postgres-spike
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
     steps:
-      - name: Require aggregate member jobs
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "${{ needs.postgres-design-gate.result }}" = "success"
-          test "${{ needs.postgres-item-components.result }}" = "success"
-          test "${{ needs.postgres-repository.result }}" = "success"
-          test "${{ needs.postgres-spike.result }}" = "success"
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Evaluate selective-rerun-safe PostgreSQL aggregate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ruby .github/scripts/evaluate-aggregate-run.rb postgresql

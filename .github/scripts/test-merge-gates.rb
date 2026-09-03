@@ -85,6 +85,9 @@ class MergeGateVerifierTest < Minitest::Test
           quality:
             name: quality
             runs-on: ubuntu-latest
+            steps:
+              - name: Check out repository
+                uses: actions/checkout@0000000000000000000000000000000000000001
           postgres:
             name: postgres-${{ matrix.postgres }}-repository
             strategy:
@@ -97,12 +100,16 @@ class MergeGateVerifierTest < Minitest::Test
             needs: [postgres]
             runs-on: ubuntu-latest
             timeout-minutes: 5
+            permissions:
+              actions: read
+              contents: read
             steps:
-              - name: Require aggregate member jobs
-                shell: bash
-                run: |
-                  set -euo pipefail
-                  test "${{ needs.postgres.result }}" = "success"
+              - name: Check out repository
+                uses: actions/checkout@0000000000000000000000000000000000000001
+              - name: Evaluate selective-rerun-safe PostgreSQL aggregate
+                env:
+                  GITHUB_TOKEN: ${{ github.token }}
+                run: ruby .github/scripts/evaluate-aggregate-run.rb postgresql
       YAML
       write(root, '.github/workflows/m5-conformance.yml', <<~YAML)
         name: M5 Conformance
@@ -116,18 +123,25 @@ class MergeGateVerifierTest < Minitest::Test
               matrix:
                 postgres: ["15", "18"]
             runs-on: ubuntu-latest
+            steps:
+              - name: Check out repository
+                uses: actions/checkout@0000000000000000000000000000000000000002
           postgresql-conformance-merge-gate:
             name: postgresql-conformance
             if: ${{ always() }}
             needs: [conformance-campaign]
             runs-on: ubuntu-latest
             timeout-minutes: 5
+            permissions:
+              actions: read
+              contents: read
             steps:
-              - name: Require aggregate member jobs
-                shell: bash
-                run: |
-                  set -euo pipefail
-                  test "${{ needs.conformance-campaign.result }}" = "success"
+              - name: Check out repository
+                uses: actions/checkout@0000000000000000000000000000000000000002
+              - name: Evaluate selective-rerun-safe PostgreSQL aggregate
+                env:
+                  GITHUB_TOKEN: ${{ github.token }}
+                run: ruby .github/scripts/evaluate-aggregate-run.rb postgresql-conformance
       YAML
       write(root, '.github/workflows/deep-soak.yml', <<~YAML)
         name: Deep
@@ -167,7 +181,10 @@ class MergeGateVerifierTest < Minitest::Test
   def test_required_job_removal_makes_live_context_stale
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/ci.yml')
-      body = File.read(path).sub(/\n  quality:\n    name: quality\n    runs-on: ubuntu-latest\n/, "\n")
+      body = File.read(path).sub(
+        "\n  quality:\n    name: quality\n    runs-on: ubuntu-latest\n    steps:\n      - name: Check out repository\n        uses: actions/checkout@0000000000000000000000000000000000000001\n",
+        "\n"
+      )
       write(root, '.github/workflows/ci.yml', body)
       assert_includes verify(root).join('\n'), 'quality'
     end
@@ -380,12 +397,79 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
-  def test_aggregate_step_must_match_canonical_fail_closed_check
+  def test_aggregate_evaluator_invocation_must_match_canonical_script
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/ci.yml')
-      body = File.read(path).sub('= "success"', '= "failure"')
+      original = File.read(path)
+      body = original.sub(
+        'run: ruby .github/scripts/evaluate-aggregate-run.rb postgresql',
+        'run: ruby .github/scripts/evaluate-aggregate-run.rb postgresql-typo'
+      )
+      refute_equal original, body
       write(root, '.github/workflows/ci.yml', body)
-      assert_includes verify(root).join('\n'), 'canonical fail-closed needs check'
+      assert_includes verify(root).join('\n'), 'canonical evaluator invocation'
+    end
+  end
+
+  def test_aggregate_evaluator_step_requires_github_token_env
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/ci.yml')
+      original = File.read(path)
+      body = original.sub("        env:\n          GITHUB_TOKEN: ${{ github.token }}\n", '')
+      refute_equal original, body
+      refute_includes body, 'GITHUB_TOKEN'
+      write(root, '.github/workflows/ci.yml', body)
+      assert_includes verify(root).join('\n'), 'canonical evaluator invocation'
+    end
+  end
+
+  def test_aggregate_producer_must_declare_least_privilege_permissions
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/ci.yml')
+      original = File.read(path)
+      body = original.sub("    permissions:\n      actions: read\n      contents: read\n", '')
+      refute_equal original, body
+      write(root, '.github/workflows/ci.yml', body)
+      assert_includes verify(root).join('\n'), 'least-privilege permissions'
+    end
+  end
+
+  def test_aggregate_producer_permissions_cannot_grant_write
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/ci.yml')
+      original = File.read(path)
+      body = original.sub('actions: read', 'actions: write')
+      refute_equal original, body
+      write(root, '.github/workflows/ci.yml', body)
+      assert_includes verify(root).join('\n'), 'least-privilege permissions'
+    end
+  end
+
+  def test_aggregate_producer_checkout_must_reuse_pinned_sha
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/ci.yml')
+      original = File.read(path)
+      body = original.sub(
+        "      - name: Check out repository\n        uses: actions/checkout@0000000000000000000000000000000000000001\n      - name: Evaluate",
+        "      - name: Check out repository\n        uses: actions/checkout@1111111111111111111111111111111111111111\n      - name: Evaluate"
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/ci.yml', body)
+      assert_includes verify(root).join('\n'), 'must reuse the pinned'
+    end
+  end
+
+  def test_aggregate_producer_step_count_is_bounded
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/ci.yml')
+      original = File.read(path)
+      body = original.sub(
+        "        run: ruby .github/scripts/evaluate-aggregate-run.rb postgresql\n",
+        "        run: ruby .github/scripts/evaluate-aggregate-run.rb postgresql\n      - name: Extra step\n        run: echo hi\n"
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/ci.yml', body)
+      assert_includes verify(root).join('\n'), 'exactly a checkout step and an evaluator step'
     end
   end
 
