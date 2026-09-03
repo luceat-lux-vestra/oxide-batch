@@ -13,7 +13,7 @@ on:
 
 permissions:
   contents: read
-  checks: read
+  actions: read
   statuses: write
 
 concurrency:
@@ -31,7 +31,7 @@ jobs:
           ref: main
           persist-credentials: false
 
-      - name: Reconcile canonical PostgreSQL child checks
+      - name: Reconcile canonical PostgreSQL child jobs
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ruby .github/scripts/reconcile-aggregate-status.rb
