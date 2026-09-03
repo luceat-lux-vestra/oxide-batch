@@ -7,108 +7,93 @@ require_relative 'reconcile-aggregate-status'
 class AggregateStatusTest < Minitest::Test
   GATE = {
     'context' => 'postgresql',
-    'members' => ['postgres-15-repository', 'postgres-18-repository']
+    'members' => ['postgres-15-repository', 'postgres-18-conformance-campaign']
   }.freeze
   SOURCES = {
     'postgres-15-repository' => {'kind' => 'job', 'workflow' => '.github/workflows/ci.yml', 'job' => 'postgres'},
-    'postgres-18-repository' => {'kind' => 'job', 'workflow' => '.github/workflows/ci.yml', 'job' => 'postgres'}
+    'postgres-18-conformance-campaign' => {'kind' => 'job', 'workflow' => '.github/workflows/m5-conformance.yml', 'job' => 'conformance-campaign'}
   }.freeze
-  NAMES = {'.github/workflows/ci.yml' => 'Rust'}.freeze
 
-  def check_run(name, status: 'completed', conclusion: 'success', id: 1)
-    {'id' => id, 'name' => name, 'status' => status, 'conclusion' => conclusion, 'app' => {'slug' => 'github-actions'}}
+  def workflow_run(id:, status: 'completed', started: '2026-09-03T10:00:00Z', attempt: 1)
+    {'id' => id, 'status' => status, 'run_started_at' => started, 'run_attempt' => attempt}
   end
 
-  def evaluate(checks, running_workflow: nil, completed_workflow: nil)
-    AggregateStatus.evaluate(
-      gate: GATE,
-      check_runs: checks,
-      running_workflow: running_workflow,
-      completed_workflow: completed_workflow,
-      context_sources: SOURCES,
-      workflow_names: NAMES
-    )
+  def job(name, status: 'completed', conclusion: 'success', id: 1)
+    {'id' => id, 'name' => name, 'status' => status, 'conclusion' => conclusion}
+  end
+
+  def snapshots(ci_run: workflow_run(id: 1), ci_jobs: [job('postgres-15-repository')], conformance_run: workflow_run(id: 2), conformance_jobs: [job('postgres-18-conformance-campaign')])
+    {
+      '.github/workflows/ci.yml' => ci_run && {'run' => ci_run, 'jobs' => ci_jobs},
+      '.github/workflows/m5-conformance.yml' => conformance_run && {'run' => conformance_run, 'jobs' => conformance_jobs}
+    }
+  end
+
+  def evaluate(source_snapshots)
+    AggregateStatus.evaluate(gate: GATE, source_snapshots: source_snapshots, context_sources: SOURCES)
   end
 
   def test_all_members_success
-    state, details = evaluate([
-      check_run('postgres-15-repository', id: 1),
-      check_run('postgres-18-repository', id: 2)
-    ])
+    state, details = evaluate(snapshots)
     assert_equal 'success', state
     assert_empty details['failures']
     assert_empty details['pending']
   end
 
-  def test_failure_is_fail_closed
-    state, details = evaluate([
-      check_run('postgres-15-repository', conclusion: 'failure', id: 1),
-      check_run('postgres-18-repository', id: 2)
-    ])
+  def test_failed_member_is_fail_closed
+    state, details = evaluate(snapshots(ci_jobs: [job('postgres-15-repository', conclusion: 'failure')]))
     assert_equal 'failure', state
     assert_includes details['failures'].join('\n'), 'failure'
   end
 
-  def test_cancelled_is_fail_closed
-    state, = evaluate([
-      check_run('postgres-15-repository', conclusion: 'cancelled', id: 1),
-      check_run('postgres-18-repository', id: 2)
-    ])
+  def test_cancelled_member_is_fail_closed
+    state, = evaluate(snapshots(ci_jobs: [job('postgres-15-repository', conclusion: 'cancelled')]))
     assert_equal 'failure', state
   end
 
-  def test_skipped_is_fail_closed
-    state, = evaluate([
-      check_run('postgres-15-repository', conclusion: 'skipped', id: 1),
-      check_run('postgres-18-repository', id: 2)
-    ])
+  def test_skipped_member_is_fail_closed
+    state, = evaluate(snapshots(ci_jobs: [job('postgres-15-repository', conclusion: 'skipped')]))
     assert_equal 'failure', state
   end
 
-  def test_in_progress_member_keeps_aggregate_pending
-    state, details = evaluate([
-      check_run('postgres-15-repository', status: 'in_progress', conclusion: nil, id: 1),
-      check_run('postgres-18-repository', id: 2)
-    ])
+  def test_active_source_workflow_keeps_aggregate_pending_even_with_old_success_jobs
+    state, details = evaluate(snapshots(
+      ci_run: workflow_run(id: 1, status: 'in_progress'),
+      ci_jobs: [job('postgres-15-repository', conclusion: 'success')]
+    ))
     assert_equal 'pending', state
-    assert_includes details['pending'].join('\n'), 'in_progress'
+    assert_includes details['pending'].join('\n'), 'source workflow in_progress'
   end
 
-  def test_missing_member_is_pending_before_source_workflow_completes
-    state, = evaluate([check_run('postgres-15-repository')])
+  def test_missing_source_workflow_run_is_pending
+    state, = evaluate(snapshots(ci_run: nil, ci_jobs: []))
     assert_equal 'pending', state
   end
 
-  def test_missing_member_fails_after_source_workflow_completes
-    state, details = evaluate([check_run('postgres-15-repository')], completed_workflow: 'Rust')
+  def test_missing_member_from_completed_source_workflow_fails
+    state, details = evaluate(snapshots(ci_jobs: []))
     assert_equal 'failure', state
-    assert_includes details['failures'].join('\n'), 'missing after Rust completed'
+    assert_includes details['failures'].join('\n'), 'missing from completed source workflow run'
   end
 
-  def test_latest_check_run_wins_for_reruns
-    state, = evaluate([
-      check_run('postgres-15-repository', conclusion: 'failure', id: 1),
-      check_run('postgres-15-repository', conclusion: 'success', id: 3),
-      check_run('postgres-18-repository', id: 2)
-    ])
-    assert_equal 'success', state
-  end
-
-  def test_source_rerun_forces_members_pending_before_new_checks_materialize
-    state, details = evaluate([
-      check_run('postgres-15-repository', conclusion: 'success', id: 1),
-      check_run('postgres-18-repository', conclusion: 'success', id: 2)
-    ], running_workflow: 'Rust')
+  def test_incomplete_job_from_completed_source_is_pending
+    state, = evaluate(snapshots(ci_jobs: [job('postgres-15-repository', status: 'in_progress', conclusion: nil)]))
     assert_equal 'pending', state
-    assert_includes details['pending'].join('\n'), 'source workflow Rust in progress'
   end
 
-  def test_non_github_actions_check_cannot_spoof_member
-    checks = [
-      {'id' => 1, 'name' => 'postgres-15-repository', 'status' => 'completed', 'conclusion' => 'success', 'app' => {'slug' => 'other'}},
-      check_run('postgres-18-repository', id: 2)
-    ]
-    state, = evaluate(checks, completed_workflow: 'Rust')
-    assert_equal 'failure', state
+  def test_active_run_wins_over_completed_runs
+    selected = AggregateStatus.select_source_run([
+      workflow_run(id: 10, status: 'completed', started: '2026-09-03T11:00:00Z'),
+      workflow_run(id: 5, status: 'in_progress', started: '2026-09-03T09:00:00Z', attempt: 2)
+    ])
+    assert_equal 5, selected['id']
+  end
+
+  def test_most_recently_started_completed_run_wins_even_if_id_is_older
+    selected = AggregateStatus.select_source_run([
+      workflow_run(id: 10, started: '2026-09-03T10:00:00Z'),
+      workflow_run(id: 5, started: '2026-09-03T12:00:00Z', attempt: 2)
+    ])
+    assert_equal 5, selected['id']
   end
 end
