@@ -50,6 +50,12 @@ fn merge_gate_contract_negative_tests_pass_in_github_actions() -> Result<(), Box
             .current_dir(&root)
             .arg(".github/scripts/test-merge-gates.rb"),
         "merge-gate negative contract tests",
+    )?;
+    run(
+        Command::new("ruby")
+            .current_dir(&root)
+            .arg(".github/scripts/test-aggregate-merge-gate.rb"),
+        "aggregate merge-gate negative contract tests",
     )
 }
 
