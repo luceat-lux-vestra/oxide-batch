@@ -262,6 +262,16 @@ module MergeGateVerifier
       elsif job.nil?
         violations << "aggregate #{context} producer job #{workflow}##{job_id} does not exist"
       else
+        unless pr_trigger?(doc)
+          violations << "aggregate #{context} producer workflow #{workflow} must trigger on pull_request"
+        end
+        pr_event_configs(doc).each do |event_name, config|
+          next unless config.is_a?(Hash)
+          if config.key?('paths') || config.key?('paths-ignore')
+            violations << "aggregate #{context} producer workflow #{workflow} can suppress #{event_name} via path filters"
+          end
+        end
+
         producer_name = job['name'] || job_id
         unless producer_name == context
           violations << "aggregate #{context} producer must emit exact job context #{context.inspect}, got #{producer_name.inspect}"
