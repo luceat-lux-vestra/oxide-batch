@@ -22,12 +22,6 @@ module MergeGateVerifier
     doc['on'] || doc[true] || {}
   end
 
-  def event_config(doc, name)
-    events = event_map(doc)
-    return nil unless events.is_a?(Hash)
-    events[name]
-  end
-
   def pr_trigger?(doc)
     events = event_map(doc)
     return events.any? { |name| %w[pull_request pull_request_target].include?(name.to_s) } if events.is_a?(Array)
@@ -73,7 +67,9 @@ module MergeGateVerifier
       raise "required job #{job_id} uses matrix include/exclude; model it explicitly before requiring it"
     end
     values = axes.map do |key, raw|
-      valid = raw.is_a?(Array) && raw.all? { |value| value.is_a?(String) || value.is_a?(Numeric) || value == true || value == false }
+      valid = raw.is_a?(Array) && raw.all? do |value|
+        value.is_a?(String) || value.is_a?(Numeric) || value == true || value == false
+      end
       raise "required job #{job_id} matrix axis #{key} is not a literal array" unless valid
       [key.to_s, raw]
     end
@@ -124,7 +120,9 @@ module MergeGateVerifier
         job_id = job_id.to_s
         seen_jobs << [workflow, job_id]
         job_name = (job.is_a?(Hash) && job['name']) || job_id
-        static_job_contexts << job_name unless job_name.include?('${{')
+        unless job_name.include?('${{')
+          static_job_contexts << {'workflow' => workflow, 'job' => job_id, 'context' => job_name}
+        end
         classification, = job_policy(policy, workflow, job_id)
         unless VALID_CLASSIFICATIONS.include?(classification)
           violations << "#{workflow} job #{job_id} is unclassified"
@@ -153,7 +151,11 @@ module MergeGateVerifier
         end
       end
 
-      if default.nil? && jobs.keys.none? { |job_id| policy.fetch('job_overrides', []).any? { |entry| entry['workflow'] == workflow && entry['job'] == job_id.to_s } }
+      if default.nil? && jobs.keys.none? do |job_id|
+        policy.fetch('job_overrides', []).any? do |entry|
+          entry['workflow'] == workflow && entry['job'] == job_id.to_s
+        end
+      end
         violations << "PR workflow #{workflow} has no policy classification"
       end
     end
@@ -164,15 +166,40 @@ module MergeGateVerifier
     end
 
     duplicates = contexts.group_by(&:itself).select { |_context, entries| entries.length > 1 }.keys
-    violations << "required contexts are duplicated in policy/producer expansion: #{duplicates.sort.join(', ')}" unless duplicates.empty?
+    unless duplicates.empty?
+      violations << "required contexts are duplicated in policy/producer expansion: #{duplicates.sort.join(', ')}"
+    end
 
     [violations, {
       'required_contexts' => contexts.sort,
       'context_sources' => sources,
       'classified_jobs' => classified_jobs.sort,
-      'static_job_contexts' => static_job_contexts.sort,
+      'static_job_contexts' => static_job_contexts,
       'workflow_docs' => workflow_docs
     }]
+  end
+
+  def normalize_needs(job)
+    raw = job['needs']
+    case raw
+    when String then [raw]
+    when Array then raw.map(&:to_s)
+    when nil then []
+    else
+      raise 'needs must be a string or array of job ids'
+    end
+  end
+
+  def always_condition?(value)
+    value.to_s.gsub(/\s+/, '') == '${{always()}}'
+  end
+
+  def aggregate_run_script(needs)
+    lines = ['set -euo pipefail']
+    needs.sort.each do |need|
+      lines << %(test "${{ needs.#{need}.result }}" = "success")
+    end
+    lines.join("\n")
   end
 
   def aggregate_inventory(root:, policy:, producer_summary:)
@@ -180,6 +207,8 @@ module MergeGateVerifier
     required_contexts = producer_summary.fetch('required_contexts')
     workflow_docs = producer_summary.fetch('workflow_docs')
     context_sources = producer_summary.fetch('context_sources')
+    classified_jobs = producer_summary.fetch('classified_jobs')
+    static_job_contexts = producer_summary.fetch('static_job_contexts')
     aggregates = []
     member_owners = {}
 
@@ -188,9 +217,15 @@ module MergeGateVerifier
       state = gate['state']
       members = gate['members']
       producer = gate['producer']
+      migration_group = gate['migration_group'] || context
 
       violations << 'aggregate context must be a non-empty string' unless context.is_a?(String) && !context.empty?
-      violations << "aggregate #{context.inspect} has unsupported state #{state.inspect}" unless AGGREGATE_STATES.include?(state)
+      unless AGGREGATE_STATES.include?(state)
+        violations << "aggregate #{context.inspect} has unsupported state #{state.inspect}"
+      end
+      unless migration_group.is_a?(String) && !migration_group.empty?
+        violations << "aggregate #{context.inspect} must declare a non-empty migration_group"
+      end
       unless members.is_a?(Array) && !members.empty? && members.all? { |member| member.is_a?(String) && !member.empty? }
         violations << "aggregate #{context.inspect} must declare a non-empty string member inventory"
         members = []
@@ -199,7 +234,9 @@ module MergeGateVerifier
       violations << "aggregate #{context} duplicates members: #{duplicate_members.sort.join(', ')}" unless duplicate_members.empty?
 
       unknown = members - required_contexts
-      violations << "aggregate #{context} members are not required producers: #{unknown.sort.join(', ')}" unless unknown.empty?
+      unless unknown.empty?
+        violations << "aggregate #{context} members are not required producers: #{unknown.sort.join(', ')}"
+      end
       non_job_members = members.select { |member| context_sources.dig(member, 'kind') != 'job' }
       unless non_job_members.empty?
         violations << "aggregate #{context} members must be checked-in workflow jobs: #{non_job_members.sort.join(', ')}"
@@ -219,75 +256,112 @@ module MergeGateVerifier
       workflow = producer['workflow']
       job_id = producer['job']
       doc = workflow_docs[workflow]
+      job = doc.is_a?(Hash) && doc['jobs'].is_a?(Hash) ? doc['jobs'][job_id] : nil
       if doc.nil?
         violations << "aggregate #{context} producer workflow #{workflow.inspect} does not exist"
+      elsif job.nil?
+        violations << "aggregate #{context} producer job #{workflow}##{job_id} does not exist"
       else
-        jobs = doc['jobs']
-        violations << "aggregate #{context} producer job #{workflow}##{job_id} does not exist" unless jobs.is_a?(Hash) && jobs.key?(job_id)
-        events = event_map(doc)
-        unless events.is_a?(Hash) && events.key?('pull_request_target') && events.key?('workflow_run')
-          violations << "aggregate #{context} producer must be triggered by pull_request_target and workflow_run"
+        producer_name = job['name'] || job_id
+        unless producer_name == context
+          violations << "aggregate #{context} producer must emit exact job context #{context.inspect}, got #{producer_name.inspect}"
+        end
+        violations << "aggregate #{context} producer cannot use a matrix strategy" if job.key?('strategy')
+        unless always_condition?(job['if'])
+          violations << "aggregate #{context} producer must use if: \${{ always() }}"
+        end
+        unless job['runs-on'] == 'ubuntu-latest' && job['timeout-minutes'] == 5
+          violations << "aggregate #{context} producer must use ubuntu-latest with timeout-minutes: 5"
+        end
+        violations << "aggregate #{context} producer cannot continue on error" if job['continue-on-error']
+
+        member_sources = members.filter_map { |member| context_sources[member] }
+        source_workflows = member_sources.map { |source| source['workflow'] }.uniq
+        unless source_workflows == [workflow]
+          violations << "aggregate #{context} members must all be produced in #{workflow}; got #{source_workflows.sort.join(', ')}"
+        end
+        expected_needs = member_sources.map { |source| source['job'] }.uniq.sort
+        begin
+          actual_needs = normalize_needs(job).sort
+          unless actual_needs == expected_needs
+            violations << "aggregate #{context} needs mismatch: expected #{expected_needs.join(', ')}, got #{actual_needs.join(', ')}"
+          end
+          steps = job['steps']
+          expected_run = aggregate_run_script(expected_needs)
+          valid_step = steps.is_a?(Array) && steps.length == 1 &&
+                       steps[0].is_a?(Hash) &&
+                       steps[0]['name'] == 'Require aggregate member jobs' &&
+                       steps[0]['shell'] == 'bash' &&
+                       !steps[0]['continue-on-error'] &&
+                       steps[0]['run'].to_s.strip == expected_run
+          unless valid_step
+            violations << "aggregate #{context} producer step does not match the canonical fail-closed needs check"
+          end
+        rescue StandardError => e
+          violations << "aggregate #{context} producer #{workflow}##{job_id}: #{e.message}"
         end
 
-        workflow_run = event_config(doc, 'workflow_run')
-        expected_workflows = members.filter_map do |member|
-          source = context_sources[member]
-          next unless source && source['kind'] == 'job'
-          source_doc = workflow_docs[source['workflow']]
-          source_doc && (source_doc['name'] || source['workflow'])
-        end.uniq.sort
-        if workflow_run.is_a?(Hash)
-          actual_workflows = Array(workflow_run['workflows']).map(&:to_s).sort
-          unless actual_workflows == expected_workflows
-            violations << "aggregate #{context} workflow_run workflows mismatch: expected #{expected_workflows.join(', ')}, got #{actual_workflows.join(', ')}"
-          end
-          actual_types = Array(workflow_run['types']).map(&:to_s).sort
-          expected_types = %w[completed in_progress]
-          unless actual_types == expected_types
-            violations << "aggregate #{context} workflow_run types mismatch: expected #{expected_types.join(', ')}, got #{actual_types.join(', ')}"
-          end
-        end
-
-        target = event_config(doc, 'pull_request_target')
-        if target.is_a?(Hash) && (target.key?('paths') || target.key?('paths-ignore'))
-          violations << "aggregate #{context} producer can suppress pull_request_target via path filters"
-        end
-        permissions = doc['permissions']
-        expected_permissions = {'contents' => 'read', 'actions' => 'read', 'statuses' => 'write'}
-        unless permissions == expected_permissions
-          violations << "aggregate #{context} producer permissions must equal contents: read, actions: read, statuses: write"
+        producer_classification = classified_jobs.find do |candidate|
+          candidate[0] == workflow && candidate[1] == job_id
+        end&.[](2)
+        unless producer_classification == 'advisory'
+          violations << "aggregate #{context} producer must be classified advisory"
         end
       end
 
-      aggregates << {'context' => context, 'state' => state, 'members' => members, 'producer' => producer}
+      colliding_jobs = static_job_contexts.select { |entry| entry['context'] == context }
+      foreign_collisions = colliding_jobs.reject do |entry|
+        entry['workflow'] == workflow && entry['job'] == job_id
+      end
+      unless foreign_collisions.empty?
+        labels = foreign_collisions.map { |entry| "#{entry['workflow']}##{entry['job']}" }.sort
+        violations << "aggregate context #{context} collides with PR jobs: #{labels.join(', ')}"
+      end
+
+      aggregates << {
+        'context' => context,
+        'state' => state,
+        'migration_group' => migration_group,
+        'members' => members,
+        'producer' => producer
+      }
     end
 
     aggregate_contexts = aggregates.map { |gate| gate['context'] }
     duplicate_contexts = aggregate_contexts.group_by(&:itself).select { |_context, entries| entries.length > 1 }.keys
     violations << "aggregate contexts are duplicated: #{duplicate_contexts.sort.join(', ')}" unless duplicate_contexts.empty?
     collisions = aggregate_contexts & required_contexts
-    violations << "aggregate contexts collide with required child/managed producers: #{collisions.sort.join(', ')}" unless collisions.empty?
-    job_collisions = aggregate_contexts & producer_summary.fetch('static_job_contexts')
-    violations << "aggregate contexts collide with PR job contexts: #{job_collisions.sort.join(', ')}" unless job_collisions.empty?
+    unless collisions.empty?
+      violations << "aggregate contexts collide with required child/managed producers: #{collisions.sort.join(', ')}"
+    end
+
+    aggregates.group_by { |gate| gate['migration_group'] }.each do |group, gates|
+      states = gates.map { |gate| gate['state'] }.uniq
+      if states.length > 1
+        violations << "aggregate migration group #{group} has mixed states: #{states.sort.join(', ')}"
+      end
+    end
 
     [violations, aggregates]
   end
 
   def accepted_live_context_sets(required_contexts:, aggregates:, pending:)
-    accepted = [(required_contexts - pending).uniq.sort]
+    base = (required_contexts - pending).uniq.sort
 
-    aggregates.each do |gate|
-      case gate['state']
-      when 'active'
-        accepted = accepted.map do |contexts|
-          ((contexts - gate['members']) + [gate['context']]).uniq.sort
+    aggregates.select { |gate| gate['state'] == 'active' }.each do |gate|
+      base = ((base - gate['members']) + [gate['context']]).uniq.sort
+    end
+
+    accepted = [base]
+    cutover_groups = aggregates.select { |gate| gate['state'] == 'cutover' }
+                                .group_by { |gate| gate['migration_group'] }
+    cutover_groups.each_value do |gates|
+      replacements = accepted.map do |contexts|
+        gates.reduce(contexts) do |next_contexts, gate|
+          ((next_contexts - gate['members']) + [gate['context']]).uniq.sort
         end
-      when 'cutover'
-        replacements = accepted.map do |contexts|
-          ((contexts - gate['members']) + [gate['context']]).uniq.sort
-        end
-        accepted = (accepted + replacements).uniq
       end
+      accepted = (accepted + replacements).uniq
     end
 
     accepted
@@ -311,7 +385,9 @@ module MergeGateVerifier
     required_contexts = producer_summary.fetch('required_contexts') + aggregates.map { |gate| gate['context'] }
     pending = policy.fetch('pending_ruleset_contexts', [])
     unknown_pending = pending - required_contexts
-    violations << "pending ruleset contexts are not required producers: #{unknown_pending.sort.join(', ')}" unless unknown_pending.empty?
+    unless unknown_pending.empty?
+      violations << "pending ruleset contexts are not required producers: #{unknown_pending.sort.join(', ')}"
+    end
 
     aggregates.each do |gate|
       context = gate['context']
