@@ -8,6 +8,22 @@ require 'tmpdir'
 require_relative 'verify-merge-gates'
 
 class MergeGateVerifierTest < Minitest::Test
+  LEGACY = [
+    'Analyze (actions)',
+    'quality',
+    'postgres-15-repository',
+    'postgres-18-repository',
+    'postgres-15-conformance-campaign',
+    'postgres-18-conformance-campaign'
+  ].freeze
+
+  FINAL = [
+    'Analyze (actions)',
+    'quality',
+    'postgresql',
+    'postgresql-conformance'
+  ].freeze
+
   def with_repo
     Dir.mktmpdir do |root|
       FileUtils.mkdir_p(File.join(root, '.github/workflows'))
@@ -16,22 +32,48 @@ class MergeGateVerifierTest < Minitest::Test
         'ruleset' => {'id' => 7, 'name' => 'Protect main'},
         'workflow_defaults' => [
           {'pattern' => '.github/workflows/ci.yml', 'classification' => 'required'},
-          {'pattern' => '.github/workflows/evidence.yml', 'classification' => 'required'},
-          {'pattern' => '.github/workflows/postgres-merge-gate.yml', 'classification' => 'advisory'},
+          {'pattern' => '.github/workflows/m5-*.yml', 'classification' => 'advisory'},
           {'pattern' => '.github/workflows/deep-*.yml', 'classification' => 'advisory'}
         ],
-        'job_overrides' => [],
-        'managed_required_contexts' => ['Analyze (actions)'],
-        'aggregate_gates' => [{
-          'context' => 'postgresql',
-          'state' => 'candidate',
-          'producer' => {
-            'workflow' => '.github/workflows/postgres-merge-gate.yml',
-            'job' => 'publish'
+        'job_overrides' => [
+          {
+            'workflow' => '.github/workflows/ci.yml',
+            'job' => 'postgresql-merge-gate',
+            'classification' => 'advisory'
           },
-          'members' => ['postgres-15-repository', 'postgres-18-repository']
-        }],
-        'pending_ruleset_contexts' => ['evidence-provenance', 'postgresql']
+          {
+            'workflow' => '.github/workflows/m5-conformance.yml',
+            'job' => 'conformance-campaign',
+            'classification' => 'required'
+          }
+        ],
+        'managed_required_contexts' => ['Analyze (actions)'],
+        'aggregate_gates' => [
+          {
+            'context' => 'postgresql',
+            'state' => 'candidate',
+            'migration_group' => 'postgresql',
+            'producer' => {
+              'workflow' => '.github/workflows/ci.yml',
+              'job' => 'postgresql-merge-gate'
+            },
+            'members' => ['postgres-15-repository', 'postgres-18-repository']
+          },
+          {
+            'context' => 'postgresql-conformance',
+            'state' => 'candidate',
+            'migration_group' => 'postgresql',
+            'producer' => {
+              'workflow' => '.github/workflows/m5-conformance.yml',
+              'job' => 'postgresql-conformance-merge-gate'
+            },
+            'members' => [
+              'postgres-15-conformance-campaign',
+              'postgres-18-conformance-campaign'
+            ]
+          }
+        ],
+        'pending_ruleset_contexts' => ['postgresql', 'postgresql-conformance']
       }
       write_json(root, '.github/merge-gate-policy.json', policy)
       write(root, '.github/workflows/ci.yml', <<~YAML)
@@ -49,31 +91,43 @@ class MergeGateVerifierTest < Minitest::Test
               matrix:
                 postgres: ["15", "18"]
             runs-on: ubuntu-latest
+          postgresql-merge-gate:
+            name: postgresql
+            if: ${{ always() }}
+            needs: [postgres]
+            runs-on: ubuntu-latest
+            timeout-minutes: 5
+            steps:
+              - name: Require aggregate member jobs
+                shell: bash
+                run: |
+                  set -euo pipefail
+                  test "${{ needs.postgres.result }}" = "success"
       YAML
-      write(root, '.github/workflows/evidence.yml', <<~YAML)
-        name: Evidence
+      write(root, '.github/workflows/m5-conformance.yml', <<~YAML)
+        name: M5 Conformance
         on:
           pull_request:
-        jobs:
-          evidence-provenance:
-            name: evidence-provenance
-            runs-on: ubuntu-latest
-      YAML
-      write(root, '.github/workflows/postgres-merge-gate.yml', <<~YAML)
-        name: PostgreSQL Merge Gate
-        on:
-          pull_request_target:
             branches: [main]
-          workflow_run:
-            workflows: [Rust]
-            types: [in_progress, completed]
-        permissions:
-          contents: read
-          actions: read
-          statuses: write
         jobs:
-          publish:
+          conformance-campaign:
+            name: postgres-${{ matrix.postgres }}-conformance-campaign
+            strategy:
+              matrix:
+                postgres: ["15", "18"]
             runs-on: ubuntu-latest
+          postgresql-conformance-merge-gate:
+            name: postgresql-conformance
+            if: ${{ always() }}
+            needs: [conformance-campaign]
+            runs-on: ubuntu-latest
+            timeout-minutes: 5
+            steps:
+              - name: Require aggregate member jobs
+                shell: bash
+                run: |
+                  set -euo pipefail
+                  test "${{ needs.conformance-campaign.result }}" = "success"
       YAML
       write(root, '.github/workflows/deep-soak.yml', <<~YAML)
         name: Deep
@@ -85,9 +139,8 @@ class MergeGateVerifierTest < Minitest::Test
             if: github.repository_owner == 'example'
             runs-on: ubuntu-latest
       YAML
-      ruleset = ruleset_with('Analyze (actions)', 'quality', 'postgres-15-repository', 'postgres-18-repository')
-      write_json(root, 'ruleset.json', ruleset)
-      yield root, policy, ruleset
+      write_json(root, 'ruleset.json', ruleset_with(*LEGACY))
+      yield root, policy
     end
   end
 
@@ -99,12 +152,12 @@ class MergeGateVerifierTest < Minitest::Test
     ).first
   end
 
-  def test_clean_staged_policy
-    with_repo { |root, _policy, _ruleset| assert_empty verify(root) }
+  def test_clean_candidate_policy
+    with_repo { |root, _policy| assert_empty verify(root) }
   end
 
   def test_required_job_rename_is_detected_as_ruleset_drift
-    with_repo do |root, _policy, _ruleset|
+    with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/ci.yml')
       write(root, '.github/workflows/ci.yml', File.read(path).sub('name: quality', 'name: quality-renamed'))
       assert_includes verify(root).join('\n'), 'quality-renamed'
@@ -112,7 +165,7 @@ class MergeGateVerifierTest < Minitest::Test
   end
 
   def test_required_job_removal_makes_live_context_stale
-    with_repo do |root, _policy, _ruleset|
+    with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/ci.yml')
       body = File.read(path).sub(/\n  quality:\n    name: quality\n    runs-on: ubuntu-latest\n/, "\n")
       write(root, '.github/workflows/ci.yml', body)
@@ -121,21 +174,21 @@ class MergeGateVerifierTest < Minitest::Test
   end
 
   def test_policy_required_context_missing_from_ruleset
-    with_repo do |root, _policy, _ruleset|
-      write_json(root, 'ruleset.json', ruleset_with('Analyze (actions)', 'quality', 'postgres-15-repository'))
+    with_repo do |root, _policy|
+      write_json(root, 'ruleset.json', ruleset_with(*(LEGACY - ['postgres-18-repository'])))
       assert_includes verify(root).join('\n'), 'postgres-18-repository'
     end
   end
 
   def test_stale_live_context_is_rejected
-    with_repo do |root, _policy, _ruleset|
-      write_json(root, 'ruleset.json', ruleset_with('Analyze (actions)', 'quality', 'postgres-15-repository', 'postgres-18-repository', 'old-job'))
+    with_repo do |root, _policy|
+      write_json(root, 'ruleset.json', ruleset_with(*(LEGACY + ['old-job'])))
       assert_includes verify(root).join('\n'), 'old-job'
     end
   end
 
   def test_required_workflow_path_filter_is_rejected
-    with_repo do |root, _policy, _ruleset|
+    with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/ci.yml')
       original = File.read(path)
       body = original.sub('branches: [main]', "branches: [main]\n    paths: ['src/**']")
@@ -146,10 +199,13 @@ class MergeGateVerifierTest < Minitest::Test
   end
 
   def test_required_job_condition_is_rejected
-    with_repo do |root, _policy, _ruleset|
+    with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/ci.yml')
       original = File.read(path)
-      body = original.sub("name: quality\n    runs-on:", "name: quality\n    if: github.actor != 'nobody'\n    runs-on:")
+      body = original.sub(
+        "name: quality\n    runs-on:",
+        "name: quality\n    if: github.actor != 'nobody'\n    runs-on:"
+      )
       refute_equal original, body
       write(root, '.github/workflows/ci.yml', body)
       assert_includes verify(root).join('\n'), 'not guaranteed to emit'
@@ -157,7 +213,7 @@ class MergeGateVerifierTest < Minitest::Test
   end
 
   def test_matrix_context_set_mismatch_is_rejected
-    with_repo do |root, _policy, _ruleset|
+    with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/ci.yml')
       original = File.read(path)
       body = original.sub('["15", "18"]', '["15", "17", "18"]')
@@ -168,7 +224,7 @@ class MergeGateVerifierTest < Minitest::Test
   end
 
   def test_new_unclassified_pr_workflow_is_rejected
-    with_repo do |root, _policy, _ruleset|
+    with_repo do |root, _policy|
       write(root, '.github/workflows/new.yml', <<~YAML)
         name: New
         on: [pull_request]
@@ -181,78 +237,93 @@ class MergeGateVerifierTest < Minitest::Test
   end
 
   def test_managed_required_context_needs_no_checked_in_producer
-    with_repo { |root, _policy, _ruleset| refute_includes verify(root).join('\n'), 'Analyze (actions)' }
+    with_repo { |root, _policy| refute_includes verify(root).join('\n'), 'Analyze (actions)' }
   end
 
   def test_pending_context_must_still_be_required
-    with_repo do |root, policy, _ruleset|
+    with_repo do |root, policy|
       policy['pending_ruleset_contexts'] = ['does-not-exist']
       write_json(root, '.github/merge-gate-policy.json', policy)
       assert_includes verify(root).join('\n'), 'not required producers'
     end
   end
 
-  def test_candidate_aggregate_must_be_pending
-    with_repo do |root, policy, _ruleset|
-      policy['pending_ruleset_contexts'] = ['evidence-provenance']
+  def test_dangling_job_override_is_rejected
+    with_repo do |root, policy|
+      policy['job_overrides'] << {
+        'workflow' => '.github/workflows/ci.yml',
+        'job' => 'missing-job',
+        'classification' => 'required'
+      }
       write_json(root, '.github/merge-gate-policy.json', policy)
-      assert_includes verify(root).join('\n'), 'must be pending ruleset promotion'
+      assert_includes verify(root).join('\n'), 'job override references missing PR job'
+    end
+  end
+
+  def test_candidate_aggregate_must_be_pending
+    with_repo do |root, policy|
+      policy['pending_ruleset_contexts'].delete('postgresql')
+      write_json(root, '.github/merge-gate-policy.json', policy)
+      assert_includes verify(root).join('\n'), 'candidate aggregate postgresql must be pending'
     end
   end
 
   def test_cutover_aggregate_must_be_pending
-    with_repo do |root, policy, _ruleset|
-      policy['aggregate_gates'][0]['state'] = 'cutover'
-      policy['pending_ruleset_contexts'] = ['evidence-provenance']
+    with_repo do |root, policy|
+      policy['aggregate_gates'].each { |gate| gate['state'] = 'cutover' }
+      policy['pending_ruleset_contexts'].delete('postgresql')
       write_json(root, '.github/merge-gate-policy.json', policy)
-      assert_includes verify(root).join('\n'), 'cutover aggregate postgresql must be pending ruleset promotion'
+      assert_includes verify(root).join('\n'), 'cutover aggregate postgresql must be pending'
     end
   end
 
-  def test_cutover_accepts_legacy_child_topology
-    with_repo do |root, policy, _ruleset|
-      policy['aggregate_gates'][0]['state'] = 'cutover'
+  def test_atomic_cutover_accepts_legacy_and_final_topologies
+    with_repo do |root, policy|
+      policy['aggregate_gates'].each { |gate| gate['state'] = 'cutover' }
       write_json(root, '.github/merge-gate-policy.json', policy)
+      assert_empty verify(root)
+
+      write_json(root, 'ruleset.json', ruleset_with(*FINAL))
       assert_empty verify(root)
     end
   end
 
-  def test_cutover_accepts_atomic_aggregate_replacement
-    with_repo do |root, policy, _ruleset|
-      policy['aggregate_gates'][0]['state'] = 'cutover'
+  def test_atomic_cutover_rejects_partial_group_replacement
+    with_repo do |root, policy|
+      policy['aggregate_gates'].each { |gate| gate['state'] = 'cutover' }
       write_json(root, '.github/merge-gate-policy.json', policy)
-      write_json(root, 'ruleset.json', ruleset_with('Analyze (actions)', 'quality', 'postgresql'))
-      assert_empty verify(root)
-    end
-  end
-
-  def test_cutover_rejects_hybrid_child_and_aggregate_topology
-    with_repo do |root, policy, _ruleset|
-      policy['aggregate_gates'][0]['state'] = 'cutover'
-      write_json(root, '.github/merge-gate-policy.json', policy)
-      write_json(root, 'ruleset.json', ruleset_with(
+      partial = [
         'Analyze (actions)',
         'quality',
-        'postgres-15-repository',
-        'postgres-18-repository',
-        'postgresql'
-      ))
-      assert_includes verify(root).join('\n'), 'stale/unaccepted contexts: postgresql'
+        'postgresql',
+        'postgres-15-conformance-campaign',
+        'postgres-18-conformance-campaign'
+      ]
+      write_json(root, 'ruleset.json', ruleset_with(*partial))
+      refute_empty verify(root)
     end
   end
 
-  def test_active_aggregate_replaces_member_contexts
-    with_repo do |root, policy, _ruleset|
-      policy['aggregate_gates'][0]['state'] = 'active'
-      policy['pending_ruleset_contexts'] = ['evidence-provenance']
+  def test_migration_group_cannot_mix_states
+    with_repo do |root, policy|
+      policy['aggregate_gates'][0]['state'] = 'cutover'
       write_json(root, '.github/merge-gate-policy.json', policy)
-      write_json(root, 'ruleset.json', ruleset_with('Analyze (actions)', 'quality', 'postgresql'))
+      assert_includes verify(root).join('\n'), 'migration group postgresql has mixed states'
+    end
+  end
+
+  def test_active_aggregates_require_final_topology
+    with_repo do |root, policy|
+      policy['aggregate_gates'].each { |gate| gate['state'] = 'active' }
+      policy['pending_ruleset_contexts'] = []
+      write_json(root, '.github/merge-gate-policy.json', policy)
+      write_json(root, 'ruleset.json', ruleset_with(*FINAL))
       assert_empty verify(root)
     end
   end
 
   def test_aggregate_member_removal_is_fail_closed
-    with_repo do |root, _policy, _ruleset|
+    with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/ci.yml')
       body = File.read(path).sub('["15", "18"]', '["15"]')
       write(root, '.github/workflows/ci.yml', body)
@@ -260,35 +331,69 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
-  def test_aggregate_producer_must_be_trusted_and_status_capable
-    with_repo do |root, _policy, _ruleset|
-      path = File.join(root, '.github/workflows/postgres-merge-gate.yml')
-      body = File.read(path).sub('statuses: write', 'statuses: read')
-      write(root, '.github/workflows/postgres-merge-gate.yml', body)
-      assert_includes verify(root).join('\n'), 'permissions must equal'
+  def test_aggregate_members_must_share_producer_workflow
+    with_repo do |root, policy|
+      policy['aggregate_gates'][0]['members'] << 'postgres-15-conformance-campaign'
+      write_json(root, '.github/merge-gate-policy.json', policy)
+      assert_includes verify(root).join('\n'), 'members must all be produced'
     end
   end
 
-  def test_aggregate_workflow_run_must_cover_every_member_source_workflow
-    with_repo do |root, _policy, _ruleset|
-      path = File.join(root, '.github/workflows/postgres-merge-gate.yml')
-      body = File.read(path).sub('workflows: [Rust]', 'workflows: [Other]')
-      write(root, '.github/workflows/postgres-merge-gate.yml', body)
-      assert_includes verify(root).join('\n'), 'workflow_run workflows mismatch'
+  def test_aggregate_producer_must_emit_exact_context
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/ci.yml')
+      body = File.read(path).sub("name: postgresql\n", "name: postgresql-renamed\n")
+      write(root, '.github/workflows/ci.yml', body)
+      assert_includes verify(root).join('\n'), 'must emit exact job context'
     end
   end
 
-  def test_aggregate_workflow_run_must_reset_status_on_rerun_start
-    with_repo do |root, _policy, _ruleset|
-      path = File.join(root, '.github/workflows/postgres-merge-gate.yml')
-      body = File.read(path).sub('types: [in_progress, completed]', 'types: [completed]')
-      write(root, '.github/workflows/postgres-merge-gate.yml', body)
-      assert_includes verify(root).join('\n'), 'workflow_run types mismatch'
+  def test_aggregate_producer_must_use_always
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/ci.yml')
+      body = File.read(path).sub('if: ${{ always() }}', 'if: success()')
+      write(root, '.github/workflows/ci.yml', body)
+      assert_includes verify(root).join('\n'), 'must use if:'
     end
   end
 
-  def test_aggregate_context_is_reserved_from_pr_job_names
-    with_repo do |root, _policy, _ruleset|
+  def test_aggregate_needs_must_match_member_job_ids
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/ci.yml')
+      body = File.read(path).sub('needs: [postgres]', 'needs: [quality]')
+      write(root, '.github/workflows/ci.yml', body)
+      assert_includes verify(root).join('\n'), 'needs mismatch'
+    end
+  end
+
+  def test_aggregate_step_must_match_canonical_fail_closed_check
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/ci.yml')
+      body = File.read(path).sub('= "success"', '= "failure"')
+      write(root, '.github/workflows/ci.yml', body)
+      assert_includes verify(root).join('\n'), 'canonical fail-closed needs check'
+    end
+  end
+
+  def test_aggregate_producer_shape_is_bounded
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/ci.yml')
+      body = File.read(path).sub('timeout-minutes: 5', 'timeout-minutes: 30')
+      write(root, '.github/workflows/ci.yml', body)
+      assert_includes verify(root).join('\n'), 'ubuntu-latest with timeout-minutes: 5'
+    end
+  end
+
+  def test_aggregate_producer_must_be_advisory
+    with_repo do |root, policy|
+      policy['job_overrides'].reject! { |entry| entry['job'] == 'postgresql-merge-gate' }
+      write_json(root, '.github/merge-gate-policy.json', policy)
+      assert_includes verify(root).join('\n'), 'must be classified advisory'
+    end
+  end
+
+  def test_foreign_job_cannot_reuse_aggregate_context
+    with_repo do |root, _policy|
       write(root, '.github/workflows/deep-soak.yml', <<~YAML)
         name: Deep
         on:
@@ -298,19 +403,7 @@ class MergeGateVerifierTest < Minitest::Test
             name: postgresql
             runs-on: ubuntu-latest
       YAML
-      assert_includes verify(root).join('\n'), 'aggregate contexts collide with PR job contexts: postgresql'
-    end
-  end
-
-  def test_dangling_job_override_is_rejected
-    with_repo do |root, policy, _ruleset|
-      policy['job_overrides'] = [{
-        'workflow' => '.github/workflows/ci.yml',
-        'job' => 'missing-job',
-        'classification' => 'required'
-      }]
-      write_json(root, '.github/merge-gate-policy.json', policy)
-      assert_includes verify(root).join('\n'), 'job override references missing PR job'
+      assert_includes verify(root).join('\n'), 'aggregate context postgresql collides with PR jobs'
     end
   end
 
@@ -333,7 +426,9 @@ class MergeGateVerifierTest < Minitest::Test
       'enforcement' => 'active',
       'rules' => [{
         'type' => 'required_status_checks',
-        'parameters' => {'required_status_checks' => contexts.map { |context| {'context' => context} }}
+        'parameters' => {
+          'required_status_checks' => contexts.map { |context| {'context' => context} }
+        }
       }]
     }
   end
