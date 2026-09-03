@@ -34,6 +34,54 @@ An implementation issue is ready when:
 Spikes have a question, alternatives, time/effort bound, reproducible
 environment, expected evidence, and decision owner.
 
+## Milestone activation invariant
+
+A roadmap milestone title appearing in issue text (`M7`, `M8`, ...) is not by
+itself milestone assignment. The native GitHub milestone is the authoritative
+execution bucket. Before the first implementation PR of a product milestone,
+all of the following must hold, and every fresh-main/task-start governance
+audit must re-verify them:
+
+- the native GitHub milestone exists and is `open`;
+- the umbrella tracking issue is assigned to it;
+- every open, milestone-owned child issue is assigned to it;
+- cross-cutting/cross-program issues (roadmap-ledger reconciliation, repository
+  hardening, performance/scalability, governance programs, and similar) are
+  linked as prerequisites or context but are not assigned to the product
+  milestone unless their scope is explicitly bounded to that one milestone;
+- the umbrella issue's status/labels match its actual activation state
+  (`planning`/`blocked` before the gate passes, `ready`/`in progress` after).
+
+A missing native milestone, an unassigned milestone-owned issue, or a
+misclassified cross-cutting issue is a governance FAIL and blocks
+implementation start for that milestone, regardless of roadmap or umbrella
+issue prose. Milestone shells for not-yet-active milestones may exist in
+advance (see "Just-in-time milestone shells" below); shell existence alone is
+never authorization to begin implementation.
+
+### Just-in-time milestone shells
+
+Native milestone shells for upcoming product milestones may be created ahead
+of activation so umbrella trackers always have a milestone to attach to.
+Creating a shell early does not authorize implementation: an umbrella tracker
+assigned to a shell milestone still follows its own `planning`/`blocked`
+status and entry rule before any child implementation issue opens. Detailed
+child issues are assigned to the milestone only once they are actually
+created.
+
+## Milestone closure invariant
+
+A native product milestone may be closed only after:
+
+- its exit-gate issue is complete and post-merge validated;
+- the milestone-owned open issue count is zero, or every exception (an issue
+  explicitly deferred to a later milestone) carries a recorded rationale;
+- roadmap, documentation, the compatibility ledger, and evidence records agree
+  with the delivered state;
+- the umbrella issue is closed as completed;
+- only then is the native GitHub milestone closed, and the closure is
+  confirmed with a fresh read of the milestone and umbrella issue state.
+
 ## Definition of done
 
 A change is done when:
