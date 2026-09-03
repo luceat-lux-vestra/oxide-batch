@@ -24,6 +24,8 @@ Matrix jobs are expanded from their literal matrix axes and their checked-in `na
 
 Aggregate membership lives only in `merge-gate-policy.json`. The trusted evaluator does not maintain a second child list. The verifier requires every aggregate member to resolve to an actual policy-`required` checked-in workflow job, and requires the evaluator's `workflow_run` trigger to cover exactly those source workflows. A renamed/removed child, matrix drift, or source-workflow trigger drift therefore fails closed before the topology can be accepted.
 
+The aggregate context name is reserved for the trusted status publisher. The verifier rejects a PR workflow with a literal job context named `postgresql`, preventing a checked-in job from ambiguously satisfying the same required status context.
+
 The `postgresql` status is published by `.github/workflows/postgres-merge-gate.yml`. That workflow uses `pull_request_target` and `workflow_run`, checks out the implementation from trusted `main`, and has exactly `contents: read`, `actions: read`, and `statuses: write`. For the exact PR head SHA, it resolves each canonical member to its source workflow, finds pull-request workflow runs for that SHA, and evaluates jobs from the latest execution attempt of the selected run. A member that fails, is cancelled, is skipped, completes without a success conclusion, or disappears from a completed source workflow run makes the aggregate fail. A source workflow that has not started or is still active keeps the aggregate pending.
 
 Same-SHA reruns are fail-closed. If any exact-head source workflow run is active, that source remains pending even if an older successful execution exists. Once all source runs are completed, the evaluator uses the most recently started execution and the Actions API's `filter=latest` jobs, so jobs from an older attempt cannot satisfy the aggregate. Before any policy or API reconciliation, the evaluator first resets `postgresql` to pending; a later evaluator error therefore cannot leave an old success merge-authoritative.
@@ -51,7 +53,7 @@ There is no interval in which a required status is impossible to produce. The bo
 The repository's required `quality` job runs `cargo test --workspace --all-features`. `xtask/tests/merge_gate_policy.rs` uses that established merge gate to run:
 
 - negative contract tests for canonical producer/ruleset drift;
-- aggregate policy migration, source-workflow lifecycle, and least-privilege negative tests;
+- aggregate policy migration, source-workflow lifecycle, reserved-context, and least-privilege negative tests;
 - aggregate runtime semantics tests for failure, cancellation, skip, missing source/member jobs, active-run blocking, and rerun selection; and
 - a read-only live ruleset comparison on GitHub Actions.
 
