@@ -10,6 +10,18 @@ fn workflow_text() -> String {
     fs::read_to_string(root.join(WORKFLOW)).expect("release-draft workflow is readable")
 }
 
+fn top_level_permissions_block(text: &str) -> Option<&str> {
+    let marker = "\npermissions:";
+    let start = text.find(marker)? + marker.len();
+    let after = &text[start..];
+    let end = after
+        .find("\nconcurrency:")
+        .or_else(|| after.find("\nenv:"))
+        .or_else(|| after.find("\njobs:"))
+        .unwrap_or(after.len());
+    Some(&after[..end])
+}
+
 fn job_block<'a>(text: &'a str, job: &str) -> &'a str {
     let marker = format!("\n  {job}:\n");
     let start = text.find(&marker).expect("job exists") + marker.len();
@@ -36,10 +48,13 @@ fn job_block<'a>(text: &'a str, job: &str) -> &'a str {
 fn release_draft_write_authority_is_prepare_job_scoped() {
     let text = workflow_text();
 
-    for permission in ["contents", "id-token", "attestations"] {
+    if let Some(permissions) = top_level_permissions_block(&text) {
         assert!(
-            !text.contains(&format!("\n  {permission}: write")),
-            "{WORKFLOW} must not grant {permission}: write at workflow scope; future jobs would inherit that authority"
+            !permissions.contains("write-all")
+                && !permissions
+                    .lines()
+                    .any(|line| line.trim_end().ends_with(": write")),
+            "{WORKFLOW} must not grant write authority at workflow scope; future jobs would inherit it automatically"
         );
     }
 
