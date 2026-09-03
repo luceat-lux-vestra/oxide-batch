@@ -16,7 +16,7 @@ permissions:
   statuses: write
 
 concurrency:
-  group: postgres-merge-gate-${{ github.event.pull_request.number || github.event.workflow_run.head_sha }}
+  group: postgres-merge-gate-${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}
   cancel-in-progress: true
 
 jobs:
