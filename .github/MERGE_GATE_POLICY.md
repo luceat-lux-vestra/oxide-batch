@@ -10,7 +10,7 @@ The policy exists so merge authority is not inferred from workflow names or from
 - `advisory`: useful PR-time feedback that is intentionally outside merge authority.
 - `optional`: explicitly path/scenario-scoped PR work that is allowed to disappear. Use this only when absence is intentional and documented by the policy.
 
-A workflow-level default classifies every job in that workflow unless a `job_overrides` entry narrows one job. This keeps deep M5/M6 campaign workflows explicitly advisory without duplicating every job id. Any new PR-triggered workflow or job that cannot obtain a classification fails closed.
+A workflow-level default classifies every job in that workflow unless a `job_overrides` entry narrows one job. This keeps most deep M5/M6 campaign jobs advisory without duplicating every job id while allowing narrow existing merge-authoritative jobs such as the M5 PostgreSQL conformance campaign to remain explicitly required. Any new PR-triggered workflow or job that cannot obtain a classification fails closed.
 
 ## Required producer types
 
