@@ -54,23 +54,9 @@
         "postgres-18-repository",
         "postgres-spike"
       ]
-    },
-    {
-      "context": "postgresql-conformance",
-      "state": "candidate",
-      "migration_group": "postgresql",
-      "producer": {
-        "workflow": ".github/workflows/m5-conformance.yml",
-        "job": "postgresql-conformance-merge-gate"
-      },
-      "members": [
-        "postgres-15-conformance-campaign",
-        "postgres-18-conformance-campaign"
-      ]
     }
   ],
   "pending_ruleset_contexts": [
-    "postgresql",
-    "postgresql-conformance"
+    "postgresql"
   ]
 }
