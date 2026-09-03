@@ -69,6 +69,7 @@ class MergeGateVerifierTest < Minitest::Test
             types: [in_progress, completed]
         permissions:
           contents: read
+          checks: read
           statuses: write
         jobs:
           publish:
@@ -223,7 +224,7 @@ class MergeGateVerifierTest < Minitest::Test
       path = File.join(root, '.github/workflows/postgres-merge-gate.yml')
       body = File.read(path).sub('statuses: write', 'statuses: read')
       write(root, '.github/workflows/postgres-merge-gate.yml', body)
-      assert_includes verify(root).join('\n'), 'contents: read and statuses: write'
+      assert_includes verify(root).join('\n'), 'permissions must equal'
     end
   end
 
