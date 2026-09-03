@@ -227,6 +227,24 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
+  def test_aggregate_workflow_run_must_cover_every_member_source_workflow
+    with_repo do |root, _policy, _ruleset|
+      path = File.join(root, '.github/workflows/postgres-merge-gate.yml')
+      body = File.read(path).sub('workflows: [Rust]', 'workflows: [Other]')
+      write(root, '.github/workflows/postgres-merge-gate.yml', body)
+      assert_includes verify(root).join('\n'), 'workflow_run workflows mismatch'
+    end
+  end
+
+  def test_aggregate_workflow_run_must_reset_status_on_rerun_start
+    with_repo do |root, _policy, _ruleset|
+      path = File.join(root, '.github/workflows/postgres-merge-gate.yml')
+      body = File.read(path).sub('types: [in_progress, completed]', 'types: [completed]')
+      write(root, '.github/workflows/postgres-merge-gate.yml', body)
+      assert_includes verify(root).join('\n'), 'workflow_run types mismatch'
+    end
+  end
+
   def test_dangling_job_override_is_rejected
     with_repo do |root, policy, _ruleset|
       policy['job_overrides'] = [{
