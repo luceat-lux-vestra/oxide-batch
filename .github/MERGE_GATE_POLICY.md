@@ -22,7 +22,7 @@ Matrix jobs are expanded from their literal matrix axes and their checked-in `na
 
 `pending_ruleset_contexts` is a temporary migration mechanism, not a weaker classification. A context listed there must still be produced by a policy-`required` job. It is excluded only from the live-ruleset equality check while the new producer is being proven on a pull request.
 
-For #222, `evidence-provenance` is classified as required while its ruleset promotion is staged. The retained-evidence workflow remains separate from the Rust producer workflow intentionally: producer CI can succeed while retained evidence is temporarily stale, but a mergeable final PR HEAD must restore valid retained-evidence provenance.
+For #222, `evidence-provenance` is classified as required and its promotion to the live `Protect main` ruleset is complete. The retained-evidence workflow remains separate from the Rust producer workflow intentionally: producer CI can succeed while retained evidence is temporarily stale, but a mergeable final PR HEAD must restore valid retained-evidence provenance.
 
 The migration sequence is:
 
