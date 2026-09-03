@@ -29,7 +29,5 @@
   "managed_required_contexts": [
     "Analyze (actions)"
   ],
-  "pending_ruleset_contexts": [
-    "evidence-provenance"
-  ]
+  "pending_ruleset_contexts": []
 }
