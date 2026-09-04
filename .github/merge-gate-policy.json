@@ -37,7 +37,7 @@
   "aggregate_gates": [
     {
       "context": "postgresql",
-      "state": "candidate",
+      "state": "cutover",
       "migration_group": "postgresql",
       "producer": {
         "workflow": ".github/workflows/ci.yml",
