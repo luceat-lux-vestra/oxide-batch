@@ -3,112 +3,161 @@
 [![CI](https://github.com/luceat-lux-vestra/oxide-batch/actions/workflows/ci.yml/badge.svg)](https://github.com/luceat-lux-vestra/oxide-batch/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-OxideBatch is an early-stage Rust-native framework for reliable, restartable
-batch processing, inspired by Spring Batch.
+**Reliable, restartable batch processing for Rust.**
 
-> [!IMPORTANT]
-> OxideBatch `0.6.0` is the published first M6 release (tag `v0.6.0`,
-> published 2026-08-31; see
-> [post-publish verification](docs/release/evidence/v0.6.0-post-publish.md)).
-> It remains a `0.x` pre-1.0 release: M6 adds the item-processing surface and
-> public `oxide-batch-test`, but does not claim M7-M14 completion, GA,
-> enterprise readiness, or full Spring Batch parity. M6 campaign evidence
-> alone is not release-backed `Verified` evidence; promoting a compatibility
-> row to `Verified` is a separate governance decision this release does not
-> make automatically.
+OxideBatch is a Rust-native batch-processing framework inspired by Spring Batch. It focuses on durable execution state, explicit transaction boundaries, restartability, fault tolerance, and operational evidence rather than treating batch jobs as one-shot background functions.
 
-## Project goals
+> **Current release:** `0.6.0` (`v0.6.0`, published 2026-08-31). OxideBatch is still a pre-1.0 project. M6 completes the current item-processing and public test-kit scope, but the project does not claim GA, enterprise readiness, or full Spring Batch parity yet.
 
-- Predictable job and step execution semantics
-- Durable metadata and restartability
-- Chunk-oriented processing with explicit transaction boundaries
-- Typed retry, skip, and failure policies
-- Operational visibility through structured logs, metrics, and traces
-- A conformance suite for documented Spring Batch-compatible behavior
+## Why OxideBatch
+
+OxideBatch is designed around batch workloads that must answer questions such as:
+
+- What was committed before the process died?
+- Can the job restart without duplicating already committed work?
+- Which definition produced this execution?
+- Where are retry, skip, rollback, and stop boundaries?
+- Can operators inspect or recover durable execution state safely?
+- Can compatibility claims be backed by repeatable evidence rather than implementation alone?
+
+The project therefore treats job metadata, checkpoints, execution identity, restart semantics, and failure recovery as first-class framework concerns.
+
+## Quick start
+
+Add the public facade crate:
+
+```toml
+[dependencies]
+oxide-batch = "0.6.0"
+tokio = { version = "1", features = ["rt", "macros"] }
+```
+
+For PostgreSQL-backed durable metadata:
+
+```toml
+oxide-batch = { version = "0.6.0", features = ["postgres"] }
+```
+
+`oxide-batch` is the supported application entry point. The internal workspace crates are implementation details and carry no independent stability promise.
+
+### Run the smallest complete job
+
+The repository includes a tested single-tasklet example:
+
+```console
+cargo run -p oxide-batch --example first_job
+```
+
+A job follows the same basic shape whether it uses the in-memory reference repository or PostgreSQL:
+
+1. construct a clock, ID generator, and job repository;
+2. implement a `Tasklet`, or `ItemReader` / `ItemProcessor` / `ItemWriter` for chunk work;
+3. define the job and its explicit component/definition revisions;
+4. launch it through `JobLauncher`;
+5. inspect the resulting launch/execution outcome.
+
+See the [developer guide](docs/guides/developer-guide.md) for the complete path from dependency declaration to a working PostgreSQL-backed job.
+
+## Core capabilities
+
+- **Durable metadata and restartability** — job/step execution state, checkpoints, execution identity, and definition-drift protection.
+- **Chunk-oriented processing** — explicit item reader/processor/writer contracts with atomic chunk transaction boundaries.
+- **Fault tolerance** — typed retry, skip, rollback, backoff, and durable fault state.
+- **Flow execution** — compiled multi-step flow graphs, conditional transitions, decisions, and start controls.
+- **Operational recovery** — guarded inspection, stale-execution recovery, retention, diagnostics, and operator tooling.
+- **Observability** — bounded structured logs, metrics, traces, listeners, and diagnostic bundles.
+- **Local scale** — bounded tasklet parallel splits and local partition execution.
+- **Application test support** — public `oxide-batch-test` utilities for exercising supported application-facing contracts.
+
+## PostgreSQL
+
+OxideBatch separates migration and runtime identities and fails closed when repository schema expectations are not met.
+
+```rust,no_run
+use std::sync::Arc;
+use oxide_batch::{PostgresConfig, PostgresJobRepository, PostgresMigrator, SystemClock};
+
+# async fn setup() -> Result<(), Box<dyn std::error::Error>> {
+let migrator = PostgresConfig::new(std::env::var("MIGRATOR_DATABASE_URL")?)?;
+PostgresMigrator::migrate(&migrator).await?;
+
+let runtime = PostgresConfig::new(std::env::var("RUNTIME_DATABASE_URL")?)?;
+let repository = PostgresJobRepository::connect(runtime, Arc::new(SystemClock)).await?;
+# repository.close().await?;
+# Ok(())
+# }
+```
+
+Production role separation, TLS, pool/timeout configuration, migrations, and startup behavior are documented in [PostgreSQL setup](docs/operations/postgres-setup.md).
+
+## Execution model
+
+```text
+Job definition
+     │
+     ▼
+Compiled execution plan
+     │
+     ▼
+JobLauncher ──────► JobRepository
+     │                  │
+     ▼                  ▼
+step / chunk       durable metadata
+execution          checkpoints / state
+     │                  │
+     └──── restart / recovery ────┘
+```
+
+Multi-step jobs use a compiled `FlowGraph`. Chunk-oriented steps commit business work together with their framework checkpoint/context/counters through the framework transaction boundary.
+
+## Current status
+
+Completed implementation milestones:
+
+- **M0 — Foundation**
+- **M1 — Executable Kernel**
+- **M2 — Durable Chunk and Restart**
+- **M3 — Fault Tolerance and Flow**
+- **M4 — Operations and Local Scale**
+- **M5 — Embedded Core Production Preview** (`0.5.0`)
+- **M6 — Complete Item Processing and User Test Kit** (`0.6.0`)
+
+The detailed exit evidence, compatibility ledger, failure campaigns, and milestone records intentionally live under `docs/` rather than in this landing page.
+
+Start with:
+
+- [Documentation index](docs/README.md)
+- [Developer guide](docs/guides/developer-guide.md)
+- [Production preview guide](docs/guides/production-preview.md)
+- [Crash, restart, and recovery](docs/operations/crash-restart-and-recovery.md)
+- [Capacity and resource budgets](docs/operations/capacity-and-resource-budgets.md)
+- [Roadmap](docs/roadmap.md)
 
 ## Repository layout
-
-OxideBatch is a Cargo workspace. `oxide-batch` is the public facade crate and
-the only supported entry point. The three crates below it are implementation
-detail with no stability promise: they are published only because the facade
-depends on them, and every item the facade supports is re-exported from
-`oxide-batch` under a stable path.
 
 ```text
 crates/
 ├── oxide-batch/            Public facade crate
-├── oxide-batch-core/       Internal: domain model and durable values
-├── oxide-batch-plan/       Internal: flow graphs and the plan compiler
-├── oxide-batch-repository/ Internal: metadata ports and their durable values
-├── oxide-batch-cli/        Public operator CLI, released in lockstep
+├── oxide-batch-core/       Internal domain model and durable values
+├── oxide-batch-plan/       Internal flow graph / plan compiler
+├── oxide-batch-repository/ Internal metadata ports and durable values
+├── oxide-batch-cli/        Public operator CLI
 └── oxide-batch-test/       Public application-facing test kit
-spikes/
-├── m0-architecture/ Reproducible, non-published architecture evidence
-└── m6-item-hot-path/ Reproducible, non-published M6 hot-path evidence
-xtask/              Repository development commands (not published)
+spikes/                     Reproducible architecture/performance evidence
+xtask/                      Repository development commands
 ```
 
-See [crate publishing policy](docs/governance/crate-publishing.md) for the
-current multi-crate publishing contract.
+The shipped `oxide-batch` command is a guarded repository operator, not a standalone Rust job-definition loader. Launching or restarting application work requires a host application that supplies its compiled definition catalog.
 
-## Status
+## Compatibility and release claims
 
-**M0 — Foundation**, **M1 — Executable Kernel**, **M2 — Durable Chunk and
-Restart**, **M3 — Fault Tolerance and Flow**, and **M4 — Operations and Local
-Scale** are complete implementation milestones. M2 includes the PostgreSQL
-schema and repository, atomic enlisted chunks, definition-guarded restart,
-audited recovery, and separate-process pre/post-commit crash evidence recorded
-in the [M2 exit record](docs/project/m2-exit-evidence.md). M3 adds typed bounded
-retry/skip/rollback, deterministic listener boundaries, schema-2 durable fault
-state, finite compiled flow, durable decisions and start controls, and
-process-kill restart evidence recorded in the
-[M3 exit record](docs/project/m3-exit-evidence.md). M4 adds guarded
-operator/explorer and retention services, the operator CLI and configuration
-diagnostics, graceful shutdown and stale recovery, bounded telemetry and
-diagnostic bundles, and the tasklet-only bounded parallel-split and
-local-partition runtime, with the PostgreSQL process-kill, resource-bound,
-cancellation-latency, telemetry-overhead, and soak evidence recorded in the
-[M4 exit record](docs/project/m4-exit-evidence.md) and the derived
-[capacity guidance](docs/operations/capacity-and-resource-budgets.md). At the
-M4 exit, those rows remained `Implemented` or `Partial`; M5 subsequently
-promoted the released advertised embedded-kernel subset to `Verified`.
+OxideBatch separates **implemented** behavior from **verified** behavior. A feature is not promoted to a release-backed compatibility claim merely because code or a test exists; compatibility promotion is governed separately by the project's evidence ledger.
 
-**M5 — Embedded Core Production Preview** is complete and released as
-`oxide-batch` `0.5.0`. It stabilizes the delivered M0-M4 embedded scope rather
-than adding batch capability, and its decision gates, workstreams, and exit
-criteria are recorded in the [M5 kickoff gate](docs/project/m5-kickoff-gate.md)
-and [M5 exit evidence](docs/project/m5-exit-evidence.md). M5 is the first
-milestone that may promote advertised embedded-kernel ledger rows to
-`Verified`, and `0.5.0`'s release promoted `28` of the `29` advertised rows.
-
-The shipped `oxide-batch` command is a guarded repository operator, not a
-standalone Rust job-definition loader. It can inspect and recover durable
-partition metadata; launching or restarting application work requires a host
-application that embeds `oxide-batch-cli` and supplies its own compiled
-`DefinitionCatalog`. Run `oxide-batch --help` for that boundary and the command
-grammar entry point.
-
-**M6 — Complete Item Processing and User Test Kit** is implementation-complete
-and published as `0.6.0` (tag `v0.6.0`, 2026-08-31). Its component campaigns,
-test-kit boundary, and explicit non-parity limits are recorded in the
-[M6 exit evidence](docs/project/m6-exit-evidence.md). Publication does not by
-itself promote M6 ledger rows to released `Verified` and does not imply
-M7-M14 work.
-
-Release preparation, including the first-publication bootstrap boundary for
-`oxide-batch-test`, is tracked in the [release checklist](docs/release/release-checklist.md).
-
-Start with the [documentation index](docs/README.md) and
-[continuous delivery roadmap](docs/roadmap.md). The M5-M14 full-parity program
-is accepted; the static/erased component architecture accepted by
-RFC-0005/ADR-0008 was implemented in M6, while the distributed worker protocol
-remains gated by RFC-0009.
+`0.6.0` should therefore be read as a published M6 pre-1.0 release, not as a claim of full Spring Batch compatibility or production GA.
 
 ## Contributing
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request.
-Security vulnerabilities must be reported according to
-[SECURITY.md](SECURITY.md).
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request. Security vulnerabilities must be reported according to [SECURITY.md](SECURITY.md).
 
 ## License
 
