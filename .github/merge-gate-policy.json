@@ -37,7 +37,7 @@
   "aggregate_gates": [
     {
       "context": "postgresql",
-      "state": "cutover",
+      "state": "active",
       "migration_group": "postgresql",
       "producer": {
         "workflow": ".github/workflows/ci.yml",
@@ -56,7 +56,5 @@
       ]
     }
   ],
-  "pending_ruleset_contexts": [
-    "postgresql"
-  ]
+  "pending_ruleset_contexts": []
 }
