@@ -2,12 +2,15 @@
 
 ## Supported versions
 
-OxideBatch has not reached its first supported release. During the foundation
-and pre-alpha phases, security fixes are applied only to the latest code on
-`main`.
+OxideBatch is an early-alpha project with a published `0.6.0` release line.
+Security fixes are developed on the latest `main` and, when a vulnerability
+applies to a published release, the maintainer decides whether to issue a
+patched `0.6.x` release based on severity, exploitability, and compatibility
+risk. Older release lines are not maintained in parallel.
 
-The supported-version matrix will be published before the first release
-candidate.
+The published support matrix describes the runtime and database combinations
+covered by the current release. Publication of a release does not imply a
+production-readiness or full Spring Batch compatibility claim.
 
 ## Reporting a vulnerability
 
@@ -32,3 +35,11 @@ coordinate remediation and disclosure, and credit the reporter if requested.
 
 Never include production credentials, personal data, or third-party secrets in
 a report.
+
+## Conduct reports are separate
+
+Security vulnerability reports and Code of Conduct reports are different
+processes. The private security-advisory form above is only for vulnerabilities.
+For abusive, harassing, or otherwise unacceptable community behavior, follow
+the private reporting instructions in `CODE_OF_CONDUCT.md`; do not describe a
+conduct complaint as a security vulnerability.
