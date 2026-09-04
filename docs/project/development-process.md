@@ -34,6 +34,29 @@ An implementation issue is ready when:
 Spikes have a question, alternatives, time/effort bound, reproducible
 environment, expected evidence, and decision owner.
 
+## Native issue hierarchy and dependency invariant
+
+GitHub-native planning metadata is authoritative for work ownership and hard
+ordering. Prose references remain explanatory context, not the only source of
+truth.
+
+- use native **Sub-issues** for umbrella/track → owned-child decomposition;
+- every bounded child owned by an umbrella must be attached natively unless the
+  issue explicitly documents why it is cross-cutting or independently owned;
+- use native **Issue Dependencies** only for hard blockers whose completion is
+  required before the blocked issue may begin or complete;
+- do not encode soft sequencing, coordination preferences, or redundant
+  transitive edges as hard dependencies;
+- cross-cutting prerequisites may block a product milestone issue while
+  remaining outside that milestone's native milestone assignment;
+- completed prerequisites must not remain presented as live blockers in issue
+  prose/status once fresh-read verification proves completion.
+
+Fresh-main/task-start governance audits must verify native parent/child and
+hard-dependency metadata against the issue bodies and milestone model. Missing,
+stale, or contradictory native metadata is a governance FAIL for the affected
+work item.
+
 ## Milestone activation invariant
 
 A roadmap milestone title appearing in issue text (`M7`, `M8`, ...) is not by
