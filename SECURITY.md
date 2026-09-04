@@ -21,6 +21,7 @@ Use GitHub's private vulnerability reporting feature:
 1. Open the repository's **Security** tab.
 2. Select **Advisories**.
 3. Select **Report a vulnerability**.
+4. Prefix the report title with `[SECURITY]`.
 
 Include:
 
@@ -36,10 +37,11 @@ coordinate remediation and disclosure, and credit the reporter if requested.
 Never include production credentials, personal data, or third-party secrets in
 a report.
 
-## Conduct reports are separate
+## Conduct reports use the same private transport, not the same process
 
-Security vulnerability reports and Code of Conduct reports are different
-processes. The private security-advisory form above is only for vulnerabilities.
-For abusive, harassing, or otherwise unacceptable community behavior, follow
-the private reporting instructions in `CODE_OF_CONDUCT.md`; do not describe a
-conduct complaint as a security vulnerability.
+A Code of Conduct report is not a vulnerability report. The project currently
+uses GitHub's private advisory form as a shared confidential transport because
+it avoids publishing sensitive incident details. Conduct reports must be
+prefixed `[CONDUCT]` and are handled under `CODE_OF_CONDUCT.md`; they are not
+triaged as security vulnerabilities and do not imply a security advisory or
+CVE process.
