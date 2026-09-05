@@ -1,0 +1,36 @@
+# Narrow suppressions for zizmor's low-severity auditor gate.
+#
+# Every entry is line-scoped on purpose: workflow edits that move or reshape
+# the finding invalidate the suppression and force a fresh review. Security
+# invariants are independently enforced by validate_actions_security.py and,
+# for M5 campaign workflows, their exact-blob execution contracts.
+rules:
+  template-injection:
+    ignore:
+      # Static PostgreSQL 15/18 matrix only. The dedicated execution contract
+      # exact-binds the workflow and rejects a widened matrix.
+      - m5-crash-restore.yml:75
+      - m5-crash-restore.yml:76
+      - m5-upgrade.yml:81
+      - m5-upgrade.yml:82
+
+  undocumented-permissions:
+    ignore:
+      # These job-scoped permissions are least-privilege grants. The comments
+      # adjacent to the jobs explain their purpose; this pedantic rule only
+      # recognizes inline comments on each permission key.
+      - ci.yml:455
+      - issue-labeler.yml:24
+      - pr-labeler.yml:29
+      - release-draft.yml:27
+      - release.yml:55
+      - release.yml:254
+      - supply-chain.yml:52
+
+  excessive-permissions:
+    ignore:
+      # release-draft has one job and that job declares its complete explicit
+      # permission set. No job inherits GitHub's repository default token
+      # permissions; this workflow-level finding therefore has no effective
+      # permission surface to widen.
+      - release-draft.yml:1

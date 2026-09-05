@@ -1,6 +1,9 @@
 name: Dependency review
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
     branches:
       - main
@@ -8,9 +11,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: dependency-review-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   dependency-review:
     name: dependency-review
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -24,3 +32,104 @@ jobs:
           # manifest uses the legacy non-SPDX spelling `MIT/Apache-2.0`.
           # cargo-deny remains the authoritative full-graph license check.
           allow-dependencies-licenses: pkg:cargo/unicode-properties@0.1.4
+
+  actions-security:
+    name: actions-security
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test deterministic Actions security policy
+        id: policy-tests
+        continue-on-error: true
+        run: python3 .github/scripts/test_validate_actions_security.py
+
+      - name: Install pinned static-analysis binaries
+        id: install-scanners
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          tool_dir="${RUNNER_TEMP}/actions-security-tools"
+          mkdir -p "${tool_dir}"
+
+          # actionlint v1.7.12 Linux amd64 release artifact, verified before use.
+          actionlint_archive="actionlint_1.7.12_linux_amd64.tar.gz"
+          curl --fail --silent --show-error --location \
+            "https://github.com/rhysd/actionlint/releases/download/v1.7.12/${actionlint_archive}" \
+            --output "${tool_dir}/${actionlint_archive}"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  ${tool_dir}/${actionlint_archive}" \
+            | sha256sum --check --strict
+          tar -xzf "${tool_dir}/${actionlint_archive}" -C "${tool_dir}" actionlint
+          "${tool_dir}/actionlint" -version
+
+          # zizmor v1.29.0 Linux amd64 release artifact, verified before use.
+          zizmor_archive="zizmor-x86_64-unknown-linux-gnu.tar.gz"
+          curl --fail --silent --show-error --location \
+            "https://github.com/zizmorcore/zizmor/releases/download/v1.29.0/${zizmor_archive}" \
+            --output "${tool_dir}/${zizmor_archive}"
+          echo "dd96df044a6e8538d5f423790f453bdd03d49e5b2bcc38214acc41a2f1297839  ${tool_dir}/${zizmor_archive}" \
+            | sha256sum --check --strict
+          tar -xzf "${tool_dir}/${zizmor_archive}" -C "${tool_dir}" zizmor
+          "${tool_dir}/zizmor" --version
+
+          printf 'ACTIONLINT=%s\n' "${tool_dir}/actionlint" >> "${GITHUB_ENV}"
+          printf 'ZIZMOR=%s\n' "${tool_dir}/zizmor" >> "${GITHUB_ENV}"
+
+      - name: Run actionlint
+        id: actionlint
+        if: always() && steps.install-scanners.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          "${ACTIONLINT}" -color
+
+      - name: Run zizmor full audit
+        id: zizmor
+        if: always() && steps.install-scanners.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          # Low is deliberately binding: any scanner finding not explicitly
+          # and narrowly suppressed must fail this stable PR/main context.
+          # The checked-in config is the suppression inventory; repository-
+          # specific policy independently proves its static trust boundaries.
+          "${ZIZMOR}" --config .github/zizmor.yml --persona auditor --min-severity low .github/workflows
+
+      - name: Validate deterministic Actions security policy
+        id: policy
+        if: always()
+        continue-on-error: true
+        run: python3 .github/scripts/validate_actions_security.py
+
+      - name: Enforce complete static-audit result
+        if: always()
+        env:
+          ACTIONLINT_OUTCOME: ${{ steps.actionlint.outcome }}
+          INSTALL_SCANNERS_OUTCOME: ${{ steps.install-scanners.outcome }}
+          POLICY_TESTS_OUTCOME: ${{ steps.policy-tests.outcome }}
+          POLICY_OUTCOME: ${{ steps.policy.outcome }}
+          ZIZMOR_OUTCOME: ${{ steps.zizmor.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          failed=0
+          for result in \
+            "policy-tests:${POLICY_TESTS_OUTCOME}" \
+            "scanner-install:${INSTALL_SCANNERS_OUTCOME}" \
+            "actionlint:${ACTIONLINT_OUTCOME}" \
+            "zizmor:${ZIZMOR_OUTCOME}" \
+            "deterministic-policy:${POLICY_OUTCOME}"
+          do
+            name="${result%%:*}"
+            outcome="${result#*:}"
+            if [ "${outcome}" != "success" ]; then
+              echo "::error::${name} did not succeed (outcome=${outcome})" >&2
+              failed=1
+            fi
+          done
+          exit "${failed}"

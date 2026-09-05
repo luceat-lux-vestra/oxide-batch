@@ -8,9 +8,7 @@ on:
       - reopened
   workflow_dispatch:
 
-permissions:
-  contents: read
-  issues: write
+permissions: {}
 
 concurrency:
   group: issue-labeler-${{ github.event.issue.number || github.run_id }}
@@ -21,6 +19,9 @@ jobs:
     name: classify
     runs-on: ubuntu-slim
     timeout-minutes: 5
+    permissions:
+      # The job only creates/updates repository labels and issue labels.
+      issues: write
     steps:
       - name: Classify issues
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0

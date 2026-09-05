@@ -27,6 +27,13 @@ on:
 permissions:
   contents: read
 
+# Release runs mutate external registry state and must never be cancelled midway.
+# The event kind plus immutable target tag serializes duplicate invocations for
+# one release without making an unrelated release wait on it.
+concurrency:
+  group: release-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
+
 env:
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
   RECOVERY_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'release' }}
@@ -44,6 +51,7 @@ jobs:
     # this job grants no OIDC permission at all (only the publish job's
     # crates.io authentication step needs one).
     permissions:
+      # Draft-release visibility requires push-level Releases API access.
       contents: write
     outputs:
       bootstrap: ${{ steps.release.outputs.bootstrap }}
@@ -240,13 +248,16 @@ jobs:
     timeout-minutes: 20
     environment: release
     permissions:
+      # The release tag checkout only reads the immutable release tree.
       contents: read
+      # crates.io Trusted Publishing exchanges this job's OIDC identity for a token.
       id-token: write
     steps:
       - name: Check out release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
 
       - name: Verify exact tag tree and publication order
         run: |
