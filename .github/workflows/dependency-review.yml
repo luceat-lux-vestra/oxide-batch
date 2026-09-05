@@ -48,30 +48,39 @@ jobs:
         continue-on-error: true
         run: python3 .github/scripts/test_validate_actions_security.py
 
-      - name: Install verified actionlint
-        id: install-actionlint
+      - name: Install pinned static-analysis binaries
+        id: install-scanners
         continue-on-error: true
-        env:
-          ACTIONLINT_VERSION: "1.7.12"
-          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          tool_dir="${RUNNER_TEMP}/actionlint"
-          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          tool_dir="${RUNNER_TEMP}/actions-security-tools"
           mkdir -p "${tool_dir}"
-          gh release download "v${ACTIONLINT_VERSION}" \
-            --repo rhysd/actionlint \
-            --pattern "${archive}" \
-            --dir "${tool_dir}"
-          gh attestation verify "${tool_dir}/${archive}" --repo rhysd/actionlint
-          tar -xzf "${tool_dir}/${archive}" -C "${tool_dir}" actionlint
+
+          actionlint_archive="actionlint_1.7.12_linux_amd64.tar.gz"
+          curl --fail --silent --show-error --location \
+            "https://github.com/rhysd/actionlint/releases/download/v1.7.12/${actionlint_archive}" \
+            --output "${tool_dir}/${actionlint_archive}"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  ${tool_dir}/${actionlint_archive}" \
+            | sha256sum --check --strict
+          tar -xzf "${tool_dir}/${actionlint_archive}" -C "${tool_dir}" actionlint
           "${tool_dir}/actionlint" -version
+
+          zizmor_archive="zizmor-x86_64-unknown-linux-gnu.tar.gz"
+          curl --fail --silent --show-error --location \
+            "https://github.com/zizmorcore/zizmor/releases/download/v1.29.0/${zizmor_archive}" \
+            --output "${tool_dir}/${zizmor_archive}"
+          echo "dd96df044a6e8538d5f423790f453bdd03d49e5b2bcc38214acc41a2f1297839  ${tool_dir}/${zizmor_archive}" \
+            | sha256sum --check --strict
+          tar -xzf "${tool_dir}/${zizmor_archive}" -C "${tool_dir}" zizmor
+          "${tool_dir}/zizmor" --version
+
           printf 'ACTIONLINT=%s\n' "${tool_dir}/actionlint" >> "${GITHUB_ENV}"
+          printf 'ZIZMOR=%s\n' "${tool_dir}/zizmor" >> "${GITHUB_ENV}"
 
       - name: Run actionlint
         id: actionlint
-        if: always() && steps.install-actionlint.outcome == 'success'
+        if: always() && steps.install-scanners.outcome == 'success'
         continue-on-error: true
         shell: bash
         run: |
@@ -79,15 +88,11 @@ jobs:
 
       - name: Run zizmor
         id: zizmor
-        if: always()
+        if: always() && steps.install-scanners.outcome == 'success'
         continue-on-error: true
-        uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
-        with:
-          advanced-security: false
-          inputs: ./.github/workflows
-          min-severity: low
-          online-audits: false
-          persona: auditor
+        shell: bash
+        run: |
+          "${ZIZMOR}" --persona auditor --min-severity low .github/workflows
 
       - name: Validate deterministic Actions security policy
         id: policy
@@ -98,8 +103,8 @@ jobs:
       - name: Enforce complete static-audit result
         if: always()
         env:
-          ACTIONLINT_INSTALL_OUTCOME: ${{ steps.install-actionlint.outcome }}
           ACTIONLINT_OUTCOME: ${{ steps.actionlint.outcome }}
+          INSTALL_SCANNERS_OUTCOME: ${{ steps.install-scanners.outcome }}
           POLICY_TESTS_OUTCOME: ${{ steps.policy-tests.outcome }}
           POLICY_OUTCOME: ${{ steps.policy.outcome }}
           ZIZMOR_OUTCOME: ${{ steps.zizmor.outcome }}
@@ -109,7 +114,7 @@ jobs:
           failed=0
           for result in \
             "policy-tests:${POLICY_TESTS_OUTCOME}" \
-            "actionlint-install:${ACTIONLINT_INSTALL_OUTCOME}" \
+            "scanner-install:${INSTALL_SCANNERS_OUTCOME}" \
             "actionlint:${ACTIONLINT_OUTCOME}" \
             "zizmor:${ZIZMOR_OUTCOME}" \
             "deterministic-policy:${POLICY_OUTCOME}"
