@@ -96,10 +96,9 @@ jobs:
         run: |
           # Low is deliberately binding: any scanner finding not explicitly
           # and narrowly suppressed must fail this stable PR/main context.
-          # Repository-specific policy below independently proves the static
-          # matrix/image and trust-boundary exceptions that are suppressed at
-          # their exact YAML locations.
-          "${ZIZMOR}" --persona auditor --min-severity low .github/workflows
+          # The checked-in config is the suppression inventory; repository-
+          # specific policy independently proves its static trust boundaries.
+          "${ZIZMOR}" --config .github/zizmor.yml --persona auditor --min-severity low .github/workflows
 
       - name: Validate deterministic Actions security policy
         id: policy
