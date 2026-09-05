@@ -87,9 +87,10 @@ maintainer reviews unusual packaging or generated/native components.
   and ISO `expires` date. Expired entries fail CI.
 - The registry covers `advisories.ignore`, crate-specific
   `licenses.exceptions`, duplicate-version waivers in `bans.skip` and
-  `bans.skip-tree`, alternate registries, and Git source allowlisting. A
-  registry entry with no corresponding active waiver also fails CI so stale
-  exceptions cannot linger silently.
+  `bans.skip-tree`, build-scan waivers in `bans.build.bypass`, alternate
+  registries, explicit Git source allowlisting, and organization-wide source
+  allowlisting under `sources.allow-org`. A registry entry with no corresponding
+  active waiver also fails CI so stale exceptions cannot linger silently.
 - Restrictive policy entries are not temporary waivers. For example,
   `bans.deny` tightens policy and therefore does not require an expiry. Changes
   to the global accepted license baseline or other permanent policy belong in
