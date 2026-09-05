@@ -1,17 +1,17 @@
 name: Pull request labels
 
 on:
-  pull_request_target:
+  # This elevated trigger never checks out, builds, sources, or executes the PR
+  # head. It only treats title/body/changed-file metadata as API data and writes
+  # labels with the job-scoped token below.
+  pull_request_target: # zizmor: ignore[dangerous-triggers]
     types:
       - opened
       - edited
       - synchronize
       - reopened
 
-permissions:
-  contents: read
-  pull-requests: write
-  issues: write
+permissions: {}
 
 concurrency:
   group: pr-labeler-${{ github.event.pull_request.number }}
@@ -22,6 +22,12 @@ jobs:
     name: label
     runs-on: ubuntu-slim
     timeout-minutes: 5
+    permissions:
+      # actions/labeler reads the base repository to classify changed paths.
+      contents: read
+      # Both steps classify and mutate labels on the pull request/issue record.
+      pull-requests: write
+      issues: write
     steps:
       - name: Ensure managed labels and classify PR type
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0

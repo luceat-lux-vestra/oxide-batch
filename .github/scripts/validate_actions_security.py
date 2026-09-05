@@ -9,13 +9,24 @@ import sys
 from pathlib import Path
 
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
-IMAGE_DIGEST = re.compile(r"@sha256:[0-9a-f]{64}$")
+READABLE_DIGEST_IMAGE = re.compile(r"^[^@\s]+:[^@\s]+@sha256:[0-9a-f]{64}$")
 USES_LINE = re.compile(r"^(?P<indent>\s*)(?P<dash>-\s*)?uses:\s*(?P<value>[^\s#]+)")
-IMAGE_LINE = re.compile(r"^(?P<indent>\s*)image:\s*(?P<value>[^\s#]+)")
+IMAGE_LINE = re.compile(r"^(?P<indent>\s*)image:\s*(?P<value>.+)$")
 PROGRAM_LINE = re.compile(
     r"^(?P<indent>\s*)(?P<dash>-\s*)?(?P<key>run|script):\s*(?P<value>.*)$"
 )
 EXPRESSION = re.compile(r"\$\{\{\s*(.*?)\s*\}\}")
+POSTGRES_15_DIGEST = "926f8799aef36e00001cfe15fba7abbd37d3c5224ea57e4c858e4bb670f10561"
+POSTGRES_18_DIGEST = "4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280"
+POSTGRES_MATRIX_IMAGE = re.compile(
+    r"^postgres:\$\{\{\s*matrix\.postgres\s*\}\}@sha256:\$\{\{\s*"
+    r"matrix\.postgres\s*==\s*'15'\s*&&\s*'(?P<pg15>[0-9a-f]{64})'\s*\|\|\s*"
+    r"matrix\.postgres\s*==\s*'18'\s*&&\s*'(?P<pg18>[0-9a-f]{64})'\s*\|\|\s*"
+    r"'unsupported'\s*\}\}$"
+)
+POSTGRES_MATRIX = re.compile(
+    r'^\s*postgres:\s*\[\s*"15"\s*,\s*"18"\s*\]\s*(?:#.*)?$'
+)
 
 UNTRUSTED_PREFIXES = (
     "github.event.pull_request.",
@@ -98,6 +109,25 @@ def _checkout_step_has_persist_false(
     return False
 
 
+def _strip_yaml_comment(value: str) -> str:
+    return re.sub(r"\s+#.*$", "", value).strip()
+
+
+def _is_allowed_image(lines: list[str], value: str) -> bool:
+    if READABLE_DIGEST_IMAGE.fullmatch(value):
+        return True
+
+    matrix_image = POSTGRES_MATRIX_IMAGE.fullmatch(value)
+    if matrix_image is None:
+        return False
+    if not any(POSTGRES_MATRIX.fullmatch(line) for line in lines):
+        return False
+    return (
+        matrix_image.group("pg15") == POSTGRES_15_DIGEST
+        and matrix_image.group("pg18") == POSTGRES_18_DIGEST
+    )
+
+
 def check_workflow(path: Path, text: str) -> list[str]:
     lines = text.splitlines()
     violations: list[str] = []
@@ -116,9 +146,9 @@ def check_workflow(path: Path, text: str) -> list[str]:
                 pass
             elif value.startswith("docker://"):
                 image = value.removeprefix("docker://")
-                if not IMAGE_DIGEST.search(image):
+                if not READABLE_DIGEST_IMAGE.fullmatch(image):
                     violations.append(
-                        f"{path}:{index + 1}: docker action must be digest-pinned: {value}"
+                        f"{path}:{index + 1}: docker action must retain a readable tag and immutable sha256 digest: {value}"
                     )
             elif "@" not in value:
                 violations.append(
@@ -143,10 +173,10 @@ def check_workflow(path: Path, text: str) -> list[str]:
 
         image = IMAGE_LINE.match(line)
         if image:
-            value = image.group("value")
-            if not IMAGE_DIGEST.search(value):
+            value = _strip_yaml_comment(image.group("value"))
+            if not _is_allowed_image(lines, value):
                 violations.append(
-                    f"{path}:{index + 1}: service/container image must retain a readable tag and immutable sha256 digest: {value}"
+                    f"{path}:{index + 1}: service/container image must retain a readable tag and immutable sha256 digest, or use the exact checked-in PostgreSQL 15/18 digest mapping: {value}"
                 )
 
         if re.match(r"^\s*permissions:\s*write-all\s*(?:#.*)?$", line):

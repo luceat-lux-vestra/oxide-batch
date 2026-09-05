@@ -57,6 +57,7 @@ jobs:
           tool_dir="${RUNNER_TEMP}/actions-security-tools"
           mkdir -p "${tool_dir}"
 
+          # actionlint v1.7.12 Linux amd64 release artifact, verified before use.
           actionlint_archive="actionlint_1.7.12_linux_amd64.tar.gz"
           curl --fail --silent --show-error --location \
             "https://github.com/rhysd/actionlint/releases/download/v1.7.12/${actionlint_archive}" \
@@ -66,6 +67,7 @@ jobs:
           tar -xzf "${tool_dir}/${actionlint_archive}" -C "${tool_dir}" actionlint
           "${tool_dir}/actionlint" -version
 
+          # zizmor v1.29.0 Linux amd64 release artifact, verified before use.
           zizmor_archive="zizmor-x86_64-unknown-linux-gnu.tar.gz"
           curl --fail --silent --show-error --location \
             "https://github.com/zizmorcore/zizmor/releases/download/v1.29.0/${zizmor_archive}" \
@@ -86,13 +88,18 @@ jobs:
         run: |
           "${ACTIONLINT}" -color
 
-      - name: Run zizmor
+      - name: Run zizmor high-severity audit
         id: zizmor
         if: always() && steps.install-scanners.outcome == 'success'
         continue-on-error: true
         shell: bash
         run: |
-          "${ZIZMOR}" --persona auditor --min-severity low .github/workflows
+          # High-severity scanner findings are binding. Repository-specific
+          # policy below independently gates immutable refs/images, checkout
+          # credentials, write scope, pull_request_target head execution, and
+          # untrusted-context program interpolation, including lower-severity
+          # cases where scanner severity is not the authority.
+          "${ZIZMOR}" --persona auditor --min-severity high .github/workflows
 
       - name: Validate deterministic Actions security policy
         id: policy

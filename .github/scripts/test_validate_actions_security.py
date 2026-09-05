@@ -40,6 +40,9 @@ def require_pass(name: str, workflow: str) -> None:
 
 
 PINNED_CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+PG15 = "926f8799aef36e00001cfe15fba7abbd37d3c5224ea57e4c858e4bb670f10561"
+PG18 = "4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280"
+BAD_DIGEST = "0" * 64
 
 
 require_pass(
@@ -195,7 +198,7 @@ require_rejection(
 
 require_pass(
     "digest-pinned service image",
-    """
+    f"""
     name: image
     on: pull_request
     permissions:
@@ -205,10 +208,75 @@ require_pass(
         runs-on: ubuntu-latest
         services:
           postgres:
-            image: postgres:18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
+            image: postgres:18@sha256:{PG18}
         steps:
           - run: echo safe
     """,
+)
+
+require_pass(
+    "checked-in postgres matrix digest mapping",
+    f"""
+    name: image-matrix
+    on: pull_request
+    permissions:
+      contents: read
+    jobs:
+      test:
+        runs-on: ubuntu-latest
+        strategy:
+          matrix:
+            postgres: ["15", "18"]
+        services:
+          postgres:
+            image: postgres:${{{{ matrix.postgres }}}}@sha256:${{{{ matrix.postgres == '15' && '{PG15}' || matrix.postgres == '18' && '{PG18}' || 'unsupported' }}}} # zizmor: ignore[unpinned-images]
+        steps:
+          - run: echo safe
+    """,
+)
+
+require_rejection(
+    "postgres matrix digest drift",
+    f"""
+    name: image-matrix
+    on: pull_request
+    permissions:
+      contents: read
+    jobs:
+      test:
+        runs-on: ubuntu-latest
+        strategy:
+          matrix:
+            postgres: ["15", "18"]
+        services:
+          postgres:
+            image: postgres:${{{{ matrix.postgres }}}}@sha256:${{{{ matrix.postgres == '15' && '{BAD_DIGEST}' || matrix.postgres == '18' && '{PG18}' || 'unsupported' }}}}
+        steps:
+          - run: echo safe
+    """,
+    "exact checked-in PostgreSQL 15/18 digest mapping",
+)
+
+require_rejection(
+    "postgres matrix digest mapping without bounded matrix",
+    f"""
+    name: image-matrix
+    on: pull_request
+    permissions:
+      contents: read
+    jobs:
+      test:
+        runs-on: ubuntu-latest
+        strategy:
+          matrix:
+            postgres: ["15", "16", "18"]
+        services:
+          postgres:
+            image: postgres:${{{{ matrix.postgres }}}}@sha256:${{{{ matrix.postgres == '15' && '{PG15}' || matrix.postgres == '18' && '{PG18}' || 'unsupported' }}}}
+        steps:
+          - run: echo safe
+    """,
+    "exact checked-in PostgreSQL 15/18 digest mapping",
 )
 
 print("GitHub Actions security policy negative fixtures: PASS")

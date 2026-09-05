@@ -39,12 +39,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Fail closed if the execution contract drifts
         run: ./tests/fixtures/security/verify-ci-contract.sh .github/workflows/m5-security.yml
 
       - name: Run the TLS, least-privilege, and redaction campaign
-        run: ./tests/fixtures/security/provision.sh ${{ matrix.postgres }}
+        # matrix.postgres comes only from the checked-in 15/18 matrix above.
+        run: ./tests/fixtures/security/provision.sh ${{ matrix.postgres }} # zizmor: ignore[template-injection]
 
       # Retained on failure as well as on success. A failed security campaign is
       # mostly worth reading for which report, which TLS attempt, which
