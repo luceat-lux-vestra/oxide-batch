@@ -51,7 +51,6 @@ jobs:
     # this job grants no OIDC permission at all (only the publish job's
     # crates.io authentication step needs one).
     permissions:
-      # Draft-release visibility requires push-level Releases API access.
       contents: write
     outputs:
       bootstrap: ${{ steps.release.outputs.bootstrap }}
