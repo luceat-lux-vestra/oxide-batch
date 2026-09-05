@@ -50,6 +50,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
 
       # ADR-0010 releases the facade together with the internal crates it
       # requires, so every published crate carries its own archive, SBOM,
@@ -242,6 +243,7 @@ jobs:
           sparse-checkout: |
             docs/release/evidence
           sparse-checkout-cone-mode: false
+          persist-credentials: false
 
       - name: Verify reviewed evidence manifest checkout is pinned to the dispatched commit
         if: github.event_name == 'workflow_dispatch'

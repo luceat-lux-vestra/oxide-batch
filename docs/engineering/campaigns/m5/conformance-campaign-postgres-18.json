@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "f1d899a1fe5fd180b0e2f6d07b508c2f50879762",
+    "source_commit": "b1dd4f41f4eecc258e2da928c7374d67cbebbfc7",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -20,11 +20,11 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "f1d899a1fe5fd180b0e2f6d07b508c2f50879762",
+      "execution_commit": "b1dd4f41f4eecc258e2da928c7374d67cbebbfc7",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-        ".github/workflows/m5-conformance.yml": "39e3e1fefaf2ac8284847c1f86995e109cca335c",
+        ".github/workflows/m5-conformance.yml": "e888d7eca59c7756ec96b03d2bac3f3743853239",
         "Cargo.lock": "3ad914b2f114c567734059bf73f770a8748ea2e0",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-cli/Cargo.toml": "7a3b0f3e1540d0091a4d34b020a578ac70b16195",
@@ -83,7 +83,7 @@
         "spikes/m6-item-hot-path/src": "c0973696ed23ba1673fe26da12d25f18c06643a8",
         "tests/fixtures/conformance/accepted-scope.json": "2162beb5c91c125cb04b29d9936eefef8a662c66",
         "tests/fixtures/conformance/campaign-semantics.json": "b72f00eb7d7ce86783e16ba84995d2589b84849f",
-        "tests/fixtures/conformance/execution-contract.json": "1d9118f4fc3335a78a045fc9a8a9e293696bf470",
+        "tests/fixtures/conformance/execution-contract.json": "68648e9af22596f3b9e809d773b9477f91820f81",
         "tests/fixtures/conformance/run-ci-campaign.sh": "bb4adf4c7b3ee24c3395f6e9256a2533b489daa2",
         "tests/fixtures/conformance/verify-ci-contract.sh": "da010daf359f5662aed8c30f5cd0c455c1ae5989",
         "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",

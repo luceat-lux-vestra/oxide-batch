@@ -13,6 +13,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: supply-chain-${{ github.event_name }}-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   supply-chain:
     name: supply-chain
@@ -21,6 +25,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Test supply-chain exception policy
         run: python3 .github/scripts/test_validate_supply_chain_exceptions.py
@@ -41,6 +47,7 @@ jobs:
     runs-on: ubuntu-slim
     timeout-minutes: 5
     permissions:
+      # The reporting job reads repository metadata and writes only its owned issue.
       contents: read
       issues: write
     steps:

@@ -6,16 +6,16 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "f1d899a1fe5fd180b0e2f6d07b508c2f50879762",
+    "source_commit": "b1dd4f41f4eecc258e2da928c7374d67cbebbfc7",
     "source_tree_clean": true
   },
   "observation": {
     "execution_manifest": {
-      "execution_commit": "f1d899a1fe5fd180b0e2f6d07b508c2f50879762",
+      "execution_commit": "b1dd4f41f4eecc258e2da928c7374d67cbebbfc7",
       "execution_commit_note": "The tree this run actually executed against; in CI this is the pull-request merge commit.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-        ".github/workflows/m6-conformance.yml": "ca0bd7881bfd5ac0ae226e429a9d64bea57f91f9",
+        ".github/workflows/m6-conformance.yml": "545824f6837f9e842137d23f95c633a4d26b112a",
         "Cargo.lock": "3ad914b2f114c567734059bf73f770a8748ea2e0",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",

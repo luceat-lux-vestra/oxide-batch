@@ -2,12 +2,12 @@
   "binary_size_and_compile_time": {
     "boxed": {
       "binary_size_bytes": 1744400,
-      "compile_time_seconds": 35.255893113,
+      "compile_time_seconds": 32.786727543,
       "target_directory_isolation": "clean-per-reference"
     },
     "typed": {
       "binary_size_bytes": 1728016,
-      "compile_time_seconds": 35.259153647,
+      "compile_time_seconds": 32.75461139,
       "target_directory_isolation": "clean-per-reference"
     }
   },
@@ -18,7 +18,7 @@
     "os": "linux",
     "profile": "release",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "f1d899a1fe5fd180b0e2f6d07b508c2f50879762",
+    "source_commit": "b1dd4f41f4eecc258e2da928c7374d67cbebbfc7",
     "source_tree_clean": true
   },
   "hard_invariants": {
@@ -34,11 +34,11 @@
   "no_invented_threshold_note": "Throughput, latency, allocation-delta, binary-size, and compile-time numbers are retained as disclosure evidence per the frozen protocol; none is compared against an invented pass/fail threshold by this runner.",
   "observation": {
     "execution_manifest": {
-      "execution_commit": "f1d899a1fe5fd180b0e2f6d07b508c2f50879762",
+      "execution_commit": "b1dd4f41f4eecc258e2da928c7374d67cbebbfc7",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-        ".github/workflows/m6-gate-h.yml": "a9a007b8b8d7c7a0a00185edd4f3d7b99e323864",
+        ".github/workflows/m6-gate-h.yml": "d5541c086f15064ef30cce3c590d1d085b58c622",
         "Cargo.lock": "3ad914b2f114c567734059bf73f770a8748ea2e0",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
@@ -57,7 +57,7 @@
         "crates/oxide-batch/tests/support/chunk_fixture.rs": "e8b203440b0e074c2f6155391cff79c012e4dc7f",
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
         "tests/fixtures/gate-h/campaign-semantics.json": "76e3e6cefe841a31fdb28a583e25fb2e1dc4ff77",
-        "tests/fixtures/gate-h/execution-contract.json": "3ba628a4ee09a23bd40a0bb533f3a86c5c968396",
+        "tests/fixtures/gate-h/execution-contract.json": "2c7d3fc63399fa9f6da0c077c57df68fe20dc889",
         "tests/fixtures/gate-h/run-ci-campaign.sh": "1d1fece72f6363461471a15a417113798a8e1f11",
         "tests/fixtures/gate-h/verify-ci-contract.sh": "b2081b8ba3cb7953c6698b82fc3e6ae1e285b3eb",
         "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
@@ -180,17 +180,17 @@
     {
       "observation": {
         "boxed": {
-          "max_nanoseconds": 68526858,
-          "mean_nanoseconds": 68291448,
-          "min_nanoseconds": 67832645,
+          "max_nanoseconds": 68911253,
+          "mean_nanoseconds": 68139076,
+          "min_nanoseconds": 67484163,
           "raw_latency_nanoseconds": [
-            67832645,
-            68312748,
-            68269183,
-            68515806,
-            68526858
+            68911253,
+            67484163,
+            67755008,
+            68187484,
+            68357472
           ],
-          "throughput_items_per_second": 732156.0966169585
+          "throughput_items_per_second": 733793.3376143815
         },
         "buffer_reuse": {
           "note": "Delimited component internal buffer reuse is not exposed as a counter.",
@@ -204,17 +204,17 @@
           "typed_per_item_future_allocations": 0
         },
         "typed": {
-          "max_nanoseconds": 68819897,
-          "mean_nanoseconds": 68237023,
-          "min_nanoseconds": 67961807,
+          "max_nanoseconds": 68133434,
+          "mean_nanoseconds": 67840559,
+          "min_nanoseconds": 67390248,
           "raw_latency_nanoseconds": [
-            68314740,
-            68101739,
-            67986934,
-            67961807,
-            68819897
+            68114629,
+            68133434,
+            67630035,
+            67390248,
+            67934453
           ],
-          "throughput_items_per_second": 732740.0552043427
+          "throughput_items_per_second": 737022.2288410094
         },
         "workload": {
           "chunk_size": 50000,

@@ -3,7 +3,7 @@
   "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow is a thin provisioning and call layer, and its contract-check step fails closed when the workflow drifts from these values. Only the dedicated Gate H workflow is in this campaign's semantic closure, so unrelated quality or build changes in ci.yml do not invalidate retained Gate H evidence.",
   "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script moves the identity and fails the contract check, whether or not every literal field below still happens to read true. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
   "workflow_path": ".github/workflows/m6-gate-h.yml",
-  "workflow_git_blob": "a9a007b8b8d7c7a0a00185edd4f3d7b99e323864",
+  "workflow_git_blob": "d5541c086f15064ef30cce3c590d1d085b58c622",
   "workflow_name": "M6 Gate H P-002 Performance",
   "triggers": {
     "pull_request": ["main"],

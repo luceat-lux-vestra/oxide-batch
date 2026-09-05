@@ -32,7 +32,10 @@ jobs:
         postgres: ["15", "18"]
     services:
       postgres:
-        image: postgres:${{ matrix.postgres }}
+        # matrix.postgres is a checked-in 15/18 allowlist. The matching official
+        # multi-arch image digests are immutable; an unsupported value resolves
+        # to a deliberately invalid digest and fails before campaign execution.
+        image: postgres:${{ matrix.postgres }}@sha256:${{ matrix.postgres == '15' && '926f8799aef36e00001cfe15fba7abbd37d3c5224ea57e4c858e4bb670f10561' || matrix.postgres == '18' && '4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280' || 'unsupported' }} # zizmor: ignore[unpinned-images]
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: oxide_batch_cancellation
@@ -58,12 +61,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Fail closed if the execution contract drifts
         run: ./tests/fixtures/cancellation/verify-ci-contract.sh .github/workflows/m5-cancellation.yml
 
       - name: Measure P-014 stop, cancel, and drain
-        run: ./tests/fixtures/cancellation/run-ci-campaign.sh ${{ matrix.postgres }}
+        # matrix.postgres comes only from the checked-in 15/18 matrix above.
+        run: ./tests/fixtures/cancellation/run-ci-campaign.sh ${{ matrix.postgres }} # zizmor: ignore[template-injection]
 
       # Retained on failure as well as on success. A failed cancellation
       # campaign is mostly worth reading for its latency and unjoined-count

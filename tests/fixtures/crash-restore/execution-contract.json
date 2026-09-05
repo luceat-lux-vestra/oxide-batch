@@ -3,7 +3,7 @@
   "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow is a thin provisioning and call layer, and its contract-check step fails closed when the workflow drifts from these values. Only the dedicated crash-restore workflow is in this campaign's semantic closure, so unrelated quality or build changes in ci.yml do not invalidate retained crash-restore evidence.",
   "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script — an added trigger, a job-level permission override, a widened matrix, a changed command, an appended line — moves the identity and fails the contract check, whether or not every literal field below still happens to read true. The literal fields exist for a readable diagnostic, not as the boundary. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
   "workflow_path": ".github/workflows/m5-crash-restore.yml",
-  "workflow_git_blob": "560c0c40e6b5a8385ba07defcafb63caed840925",
+  "workflow_git_blob": "a31a128277664e811cab982ce8b61df3f112c7c4",
   "workflow_name": "M5 Crash and Restore",
   "triggers": {
     "pull_request": ["main"],
@@ -21,6 +21,7 @@
   "matrix_note": "The two ends of the supported PostgreSQL 15-18 range. Evidence is required from both, exactly once each.",
   "database": {
     "image": "postgres:{major}",
+    "image_digest_note": "The workflow appends an immutable Docker Hub multi-arch digest selected only from the checked-in PostgreSQL 15/18 matrix; 15 is 926f8799aef36e00001cfe15fba7abbd37d3c5224ea57e4c858e4bb670f10561 and 18 is 4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280. Unsupported matrix values resolve to an invalid digest and fail before execution.",
     "database_name": "oxide_batch_crash_restore",
     "user": "postgres",
     "password": "postgres",

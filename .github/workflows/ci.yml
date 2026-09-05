@@ -25,6 +25,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Check diff hygiene
         env:
@@ -126,6 +127,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Package and dry-run every publishable crate
         run: cargo run --package oxide-batch-xtask -- package
@@ -137,6 +140,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install minimum supported Rust
         run: rustup toolchain install 1.95.0 --profile minimal
@@ -150,7 +155,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: postgres:18
+        image: postgres:18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: oxide_batch_spike
@@ -166,6 +171,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Run real-PostgreSQL architecture spike
         run: cargo test -p oxide-batch-m0-spikes --test postgres -- --nocapture --test-threads=1
@@ -181,9 +188,12 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Run TLS, roles, schema, and restore fixture
-        run: ./tests/fixtures/postgres/run-design-gate.sh ${{ matrix.postgres }}
+        # matrix.postgres is the checked-in 15-18 allowlist above, not event input.
+        run: ./tests/fixtures/postgres/run-design-gate.sh ${{ matrix.postgres }} # zizmor: ignore[template-injection]
 
   postgres-repository:
     name: postgres-${{ matrix.postgres }}-repository
@@ -195,7 +205,9 @@ jobs:
         postgres: ["15", "18"]
     services:
       postgres:
-        image: postgres:${{ matrix.postgres }}
+        # matrix.postgres is the checked-in 15/18 allowlist. Both branches are
+        # immutable official image digests; unsupported values fail to resolve.
+        image: postgres:${{ matrix.postgres }}@sha256:${{ matrix.postgres == '15' && '926f8799aef36e00001cfe15fba7abbd37d3c5224ea57e4c858e4bb670f10561' || matrix.postgres == '18' && '4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280' || 'unsupported' }} # zizmor: ignore[unpinned-images]
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: oxide_batch_repository
@@ -213,6 +225,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Apply and reapply immutable migrations
         run: >-
@@ -327,7 +341,9 @@ jobs:
         postgres: ["15", "18"]
     services:
       postgres:
-        image: postgres:${{ matrix.postgres }}
+        # matrix.postgres is the checked-in 15/18 allowlist. Both branches are
+        # immutable official image digests; unsupported values fail to resolve.
+        image: postgres:${{ matrix.postgres }}@sha256:${{ matrix.postgres == '15' && '926f8799aef36e00001cfe15fba7abbd37d3c5224ea57e4c858e4bb670f10561' || matrix.postgres == '18' && '4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280' || 'unsupported' }} # zizmor: ignore[unpinned-images]
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: oxide_batch_item_components
@@ -345,6 +361,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Apply migrations
         run: >-
@@ -433,11 +451,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      # The aggregate reads sibling Actions job state; it never mutates Actions.
       actions: read
+      # Checkout only reads the verifier script from the reviewed tree.
       contents: read
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Evaluate selective-rerun-safe PostgreSQL aggregate
         env:
