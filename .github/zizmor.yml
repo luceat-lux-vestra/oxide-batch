@@ -23,8 +23,8 @@ rules:
       - issue-labeler.yml:24
       - pr-labeler.yml:29
       - release-draft.yml:27
-      - release.yml:55
-      - release.yml:254
+      - release.yml:54
+      - release.yml:253
       - supply-chain.yml:52
 
   excessive-permissions:
