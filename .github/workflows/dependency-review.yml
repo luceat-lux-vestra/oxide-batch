@@ -88,18 +88,18 @@ jobs:
         run: |
           "${ACTIONLINT}" -color
 
-      - name: Run zizmor high-severity audit
+      - name: Run zizmor full audit
         id: zizmor
         if: always() && steps.install-scanners.outcome == 'success'
         continue-on-error: true
         shell: bash
         run: |
-          # High-severity scanner findings are binding. Repository-specific
-          # policy below independently gates immutable refs/images, checkout
-          # credentials, write scope, pull_request_target head execution, and
-          # untrusted-context program interpolation, including lower-severity
-          # cases where scanner severity is not the authority.
-          "${ZIZMOR}" --persona auditor --min-severity high .github/workflows
+          # Low is deliberately binding: any scanner finding not explicitly
+          # and narrowly suppressed must fail this stable PR/main context.
+          # Repository-specific policy below independently proves the static
+          # matrix/image and trust-boundary exceptions that are suppressed at
+          # their exact YAML locations.
+          "${ZIZMOR}" --persona auditor --min-severity low .github/workflows
 
       - name: Validate deterministic Actions security policy
         id: policy

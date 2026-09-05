@@ -64,8 +64,8 @@ jobs:
         run: ./tests/fixtures/conformance/verify-ci-contract.sh .github/workflows/m5-conformance.yml
 
       - name: Run the full embedded conformance suite over the accepted scope
-        # matrix.postgres comes only from the checked-in 15/18 matrix above.
-        run: ./tests/fixtures/conformance/run-ci-campaign.sh ${{ matrix.postgres }} # zizmor: ignore[template-injection]
+        id: conformance-campaign # zizmor: ignore[template-injection] matrix.postgres is the checked-in 15/18 matrix above.
+        run: ./tests/fixtures/conformance/run-ci-campaign.sh ${{ matrix.postgres }}
 
       # Retained on failure as well as on success. A failed conformance
       # campaign is mostly worth reading for which accepted row or which
