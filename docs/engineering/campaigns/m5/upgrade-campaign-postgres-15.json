@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "f1d899a1fe5fd180b0e2f6d07b508c2f50879762",
+    "source_commit": "b1dd4f41f4eecc258e2da928c7374d67cbebbfc7",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -20,11 +20,11 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "f1d899a1fe5fd180b0e2f6d07b508c2f50879762",
+      "execution_commit": "b1dd4f41f4eecc258e2da928c7374d67cbebbfc7",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-        ".github/workflows/m5-upgrade.yml": "6c80543a0c280cf72711316c175c1046b6942688",
+        ".github/workflows/m5-upgrade.yml": "b0b2eccf3262758148ea92716166a9775069409c",
         "Cargo.lock": "3ad914b2f114c567734059bf73f770a8748ea2e0",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
@@ -43,7 +43,7 @@
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
         "tests/fixtures/upgrade/campaign-scope.json": "8e2fde228088ee9e9b3a57f42e09a39df779bee3",
         "tests/fixtures/upgrade/campaign-semantics.json": "f793661720e907fe88bee73e0287b4829fbaea4b",
-        "tests/fixtures/upgrade/execution-contract.json": "dea85766257581358fe7cfe2f9a9e7606e990b0c",
+        "tests/fixtures/upgrade/execution-contract.json": "00984581fecfd3e21df9957885846448ecb298a7",
         "tests/fixtures/upgrade/run-ci-campaign.sh": "f10774dc3a88644577159354cf44f79abbe3a62d",
         "tests/fixtures/upgrade/schema-1/seed.sql": "aaba54dd66ce9de0fff776c2b0881d42f49f6bc1",
         "tests/fixtures/upgrade/schema-2-runtime/probe.rs": "478f1edcd7d84ce595b08b9583917236720f1d60",
@@ -162,11 +162,11 @@
       "name": "schema1_and_schema2_upgrade_directly_to_schema3",
       "observation": {
         "execution_manifest": {
-          "execution_commit": "f1d899a1fe5fd180b0e2f6d07b508c2f50879762",
+          "execution_commit": "b1dd4f41f4eecc258e2da928c7374d67cbebbfc7",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-            ".github/workflows/m5-upgrade.yml": "6c80543a0c280cf72711316c175c1046b6942688",
+            ".github/workflows/m5-upgrade.yml": "b0b2eccf3262758148ea92716166a9775069409c",
             "Cargo.lock": "3ad914b2f114c567734059bf73f770a8748ea2e0",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
@@ -185,7 +185,7 @@
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
             "tests/fixtures/upgrade/campaign-scope.json": "8e2fde228088ee9e9b3a57f42e09a39df779bee3",
             "tests/fixtures/upgrade/campaign-semantics.json": "f793661720e907fe88bee73e0287b4829fbaea4b",
-            "tests/fixtures/upgrade/execution-contract.json": "dea85766257581358fe7cfe2f9a9e7606e990b0c",
+            "tests/fixtures/upgrade/execution-contract.json": "00984581fecfd3e21df9957885846448ecb298a7",
             "tests/fixtures/upgrade/run-ci-campaign.sh": "f10774dc3a88644577159354cf44f79abbe3a62d",
             "tests/fixtures/upgrade/schema-1/seed.sql": "aaba54dd66ce9de0fff776c2b0881d42f49f6bc1",
             "tests/fixtures/upgrade/schema-2-runtime/probe.rs": "478f1edcd7d84ce595b08b9583917236720f1d60",
@@ -492,11 +492,11 @@
         "current_schema_version": 4,
         "durable_state_unchanged": true,
         "execution_manifest": {
-          "execution_commit": "f1d899a1fe5fd180b0e2f6d07b508c2f50879762",
+          "execution_commit": "b1dd4f41f4eecc258e2da928c7374d67cbebbfc7",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-            ".github/workflows/m5-upgrade.yml": "6c80543a0c280cf72711316c175c1046b6942688",
+            ".github/workflows/m5-upgrade.yml": "b0b2eccf3262758148ea92716166a9775069409c",
             "Cargo.lock": "3ad914b2f114c567734059bf73f770a8748ea2e0",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
@@ -515,7 +515,7 @@
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
             "tests/fixtures/upgrade/campaign-scope.json": "8e2fde228088ee9e9b3a57f42e09a39df779bee3",
             "tests/fixtures/upgrade/campaign-semantics.json": "f793661720e907fe88bee73e0287b4829fbaea4b",
-            "tests/fixtures/upgrade/execution-contract.json": "dea85766257581358fe7cfe2f9a9e7606e990b0c",
+            "tests/fixtures/upgrade/execution-contract.json": "00984581fecfd3e21df9957885846448ecb298a7",
             "tests/fixtures/upgrade/run-ci-campaign.sh": "f10774dc3a88644577159354cf44f79abbe3a62d",
             "tests/fixtures/upgrade/schema-1/seed.sql": "aaba54dd66ce9de0fff776c2b0881d42f49f6bc1",
             "tests/fixtures/upgrade/schema-2-runtime/probe.rs": "478f1edcd7d84ce595b08b9583917236720f1d60",
@@ -630,11 +630,11 @@
       "name": "every_source_backup_restores_its_prior_schema",
       "observation": {
         "execution_manifest": {
-          "execution_commit": "f1d899a1fe5fd180b0e2f6d07b508c2f50879762",
+          "execution_commit": "b1dd4f41f4eecc258e2da928c7374d67cbebbfc7",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-            ".github/workflows/m5-upgrade.yml": "6c80543a0c280cf72711316c175c1046b6942688",
+            ".github/workflows/m5-upgrade.yml": "b0b2eccf3262758148ea92716166a9775069409c",
             "Cargo.lock": "3ad914b2f114c567734059bf73f770a8748ea2e0",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
@@ -653,7 +653,7 @@
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
             "tests/fixtures/upgrade/campaign-scope.json": "8e2fde228088ee9e9b3a57f42e09a39df779bee3",
             "tests/fixtures/upgrade/campaign-semantics.json": "f793661720e907fe88bee73e0287b4829fbaea4b",
-            "tests/fixtures/upgrade/execution-contract.json": "dea85766257581358fe7cfe2f9a9e7606e990b0c",
+            "tests/fixtures/upgrade/execution-contract.json": "00984581fecfd3e21df9957885846448ecb298a7",
             "tests/fixtures/upgrade/run-ci-campaign.sh": "f10774dc3a88644577159354cf44f79abbe3a62d",
             "tests/fixtures/upgrade/schema-1/seed.sql": "aaba54dd66ce9de0fff776c2b0881d42f49f6bc1",
             "tests/fixtures/upgrade/schema-2-runtime/probe.rs": "478f1edcd7d84ce595b08b9583917236720f1d60",
@@ -676,7 +676,7 @@
         "paths": [
           {
             "backup": {
-              "archive_bytes": 35888,
+              "archive_bytes": 35889,
               "format": "custom",
               "rows_covered": {
                 "ob_definition_upgrade": 1,
@@ -724,7 +724,7 @@
           },
           {
             "backup": {
-              "archive_bytes": 46171,
+              "archive_bytes": 46170,
               "format": "custom",
               "rows_covered": {
                 "ob_definition_upgrade": 1,

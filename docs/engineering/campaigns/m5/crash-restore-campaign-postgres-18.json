@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "f1d899a1fe5fd180b0e2f6d07b508c2f50879762",
+    "source_commit": "b1dd4f41f4eecc258e2da928c7374d67cbebbfc7",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -20,11 +20,11 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "f1d899a1fe5fd180b0e2f6d07b508c2f50879762",
+      "execution_commit": "b1dd4f41f4eecc258e2da928c7374d67cbebbfc7",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-        ".github/workflows/m5-crash-restore.yml": "560c0c40e6b5a8385ba07defcafb63caed840925",
+        ".github/workflows/m5-crash-restore.yml": "a31a128277664e811cab982ce8b61df3f112c7c4",
         "Cargo.lock": "3ad914b2f114c567734059bf73f770a8748ea2e0",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
@@ -50,7 +50,7 @@
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
         "tests/fixtures/crash-restore/campaign-scope.json": "a91affe2a69568978ef9343a69fd962a6774113b",
         "tests/fixtures/crash-restore/campaign-semantics.json": "b995b8d74f3efda9632b7b0308cae420a817b63e",
-        "tests/fixtures/crash-restore/execution-contract.json": "5aa1293fb5f9a0990e7a481491cbf6c94dbdcc96",
+        "tests/fixtures/crash-restore/execution-contract.json": "0b73460e03f3e488f394cb82cca48c1adceca16e",
         "tests/fixtures/crash-restore/run-ci-campaign.sh": "6537ee1543f50f9c0373049af13b192a3592f250",
         "tests/fixtures/crash-restore/verify-ci-contract.sh": "cfdc06ea559890ac1509dfc9cb547d271a0b6cec",
         "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
@@ -129,11 +129,11 @@
           "step_status": "COMPLETED"
         },
         "execution_manifest": {
-          "execution_commit": "f1d899a1fe5fd180b0e2f6d07b508c2f50879762",
+          "execution_commit": "b1dd4f41f4eecc258e2da928c7374d67cbebbfc7",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-            ".github/workflows/m5-crash-restore.yml": "560c0c40e6b5a8385ba07defcafb63caed840925",
+            ".github/workflows/m5-crash-restore.yml": "a31a128277664e811cab982ce8b61df3f112c7c4",
             "Cargo.lock": "3ad914b2f114c567734059bf73f770a8748ea2e0",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
@@ -159,7 +159,7 @@
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
             "tests/fixtures/crash-restore/campaign-scope.json": "a91affe2a69568978ef9343a69fd962a6774113b",
             "tests/fixtures/crash-restore/campaign-semantics.json": "b995b8d74f3efda9632b7b0308cae420a817b63e",
-            "tests/fixtures/crash-restore/execution-contract.json": "5aa1293fb5f9a0990e7a481491cbf6c94dbdcc96",
+            "tests/fixtures/crash-restore/execution-contract.json": "0b73460e03f3e488f394cb82cca48c1adceca16e",
             "tests/fixtures/crash-restore/run-ci-campaign.sh": "6537ee1543f50f9c0373049af13b192a3592f250",
             "tests/fixtures/crash-restore/verify-ci-contract.sh": "cfdc06ea559890ac1509dfc9cb547d271a0b6cec",
             "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
@@ -173,7 +173,7 @@
         "passed": true,
         "phases": [
           {
-            "child_pid": 8272,
+            "child_pid": 8277,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -188,9 +188,9 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 4,
+              "discovery": 3,
               "reach_phase": 21,
-              "resume": 28
+              "resume": 147
             },
             "expected": "the enlisted rows were never committed, so the chunk replays whole",
             "fixture": "postgres",
@@ -297,7 +297,7 @@
             "violations": []
           },
           {
-            "child_pid": 8288,
+            "child_pid": 8293,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -314,7 +314,7 @@
             "durations_ms": {
               "discovery": 3,
               "reach_phase": 21,
-              "resume": 26
+              "resume": 21
             },
             "expected": "durable state was produced inside the commit and never bound, so the chunk replays whole",
             "fixture": "postgres",
@@ -421,7 +421,7 @@
             "violations": []
           },
           {
-            "child_pid": 8325,
+            "child_pid": 8331,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -437,8 +437,8 @@
             },
             "durations_ms": {
               "discovery": 4,
-              "reach_phase": 53,
-              "resume": 26
+              "reach_phase": 44,
+              "resume": 73
             },
             "expected": "the progress write was issued and blocked, so neither it nor the enlisted rows are durable and the chunk replays whole",
             "fixture": "postgres",
@@ -545,7 +545,7 @@
             "violations": []
           },
           {
-            "child_pid": 8343,
+            "child_pid": 8349,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -560,9 +560,9 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 4,
-              "reach_phase": 52,
-              "resume": 23
+              "discovery": 3,
+              "reach_phase": 44,
+              "resume": 28
             },
             "expected": "the server completed the commit the killed process never saw acknowledged, so the chunk is durable and must not replay",
             "fixture": "postgres",
@@ -671,7 +671,7 @@
             "violations": []
           },
           {
-            "child_pid": 8362,
+            "child_pid": 8367,
             "decision": {
               "class": "APPLIED",
               "path": "operator recover",
@@ -686,9 +686,9 @@
               "unknown_commit": false
             },
             "durations_ms": {
-              "discovery": 4,
+              "discovery": 3,
               "reach_phase": 21,
-              "resume": 22
+              "resume": 17
             },
             "expected": "the commit was acknowledged before the kill, so the chunk is durable and must not replay",
             "fixture": "postgres",
@@ -830,7 +830,7 @@
           "job_status": "COMPLETED",
           "step_status": "COMPLETED"
         },
-        "child_pid": 8704,
+        "child_pid": 8687,
         "decision": {
           "class": "APPLIED",
           "path": "operator recover",
@@ -846,17 +846,17 @@
           "unknown_commit": false
         },
         "durations_ms": {
-          "commit_chunks_before_kill": 652,
-          "discovery": 69,
-          "resume": 292,
-          "uninterrupted_run": 1109
+          "commit_chunks_before_kill": 697,
+          "discovery": 56,
+          "resume": 223,
+          "uninterrupted_run": 1115
         },
         "execution_manifest": {
-          "execution_commit": "f1d899a1fe5fd180b0e2f6d07b508c2f50879762",
+          "execution_commit": "b1dd4f41f4eecc258e2da928c7374d67cbebbfc7",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-            ".github/workflows/m5-crash-restore.yml": "560c0c40e6b5a8385ba07defcafb63caed840925",
+            ".github/workflows/m5-crash-restore.yml": "a31a128277664e811cab982ce8b61df3f112c7c4",
             "Cargo.lock": "3ad914b2f114c567734059bf73f770a8748ea2e0",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
@@ -882,7 +882,7 @@
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
             "tests/fixtures/crash-restore/campaign-scope.json": "a91affe2a69568978ef9343a69fd962a6774113b",
             "tests/fixtures/crash-restore/campaign-semantics.json": "b995b8d74f3efda9632b7b0308cae420a817b63e",
-            "tests/fixtures/crash-restore/execution-contract.json": "5aa1293fb5f9a0990e7a481491cbf6c94dbdcc96",
+            "tests/fixtures/crash-restore/execution-contract.json": "0b73460e03f3e488f394cb82cca48c1adceca16e",
             "tests/fixtures/crash-restore/run-ci-campaign.sh": "6537ee1543f50f9c0373049af13b192a3592f250",
             "tests/fixtures/crash-restore/verify-ci-contract.sh": "cfdc06ea559890ac1509dfc9cb547d271a0b6cec",
             "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
@@ -1043,11 +1043,11 @@
           "restored_into": "oxide_batch_m5_restore"
         },
         "execution_manifest": {
-          "execution_commit": "f1d899a1fe5fd180b0e2f6d07b508c2f50879762",
+          "execution_commit": "b1dd4f41f4eecc258e2da928c7374d67cbebbfc7",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-            ".github/workflows/m5-crash-restore.yml": "560c0c40e6b5a8385ba07defcafb63caed840925",
+            ".github/workflows/m5-crash-restore.yml": "a31a128277664e811cab982ce8b61df3f112c7c4",
             "Cargo.lock": "3ad914b2f114c567734059bf73f770a8748ea2e0",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
@@ -1073,7 +1073,7 @@
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
             "tests/fixtures/crash-restore/campaign-scope.json": "a91affe2a69568978ef9343a69fd962a6774113b",
             "tests/fixtures/crash-restore/campaign-semantics.json": "b995b8d74f3efda9632b7b0308cae420a817b63e",
-            "tests/fixtures/crash-restore/execution-contract.json": "5aa1293fb5f9a0990e7a481491cbf6c94dbdcc96",
+            "tests/fixtures/crash-restore/execution-contract.json": "0b73460e03f3e488f394cb82cca48c1adceca16e",
             "tests/fixtures/crash-restore/run-ci-campaign.sh": "6537ee1543f50f9c0373049af13b192a3592f250",
             "tests/fixtures/crash-restore/verify-ci-contract.sh": "cfdc06ea559890ac1509dfc9cb547d271a0b6cec",
             "xtask/Cargo.toml": "90e366c2f9fab18a5dad01fa674b217ec5ab224d",
@@ -1088,7 +1088,7 @@
         "passed": true,
         "report": "logical backup and restore",
         "restart_on_restored": {
-          "duration_ms": 117,
+          "duration_ms": 90,
           "resumed_chunks": 2,
           "terminal": {
             "business_rows": 25,
@@ -1364,7 +1364,7 @@
           ]
         },
         "tooling": {
-          "archive_bytes": 84744,
+          "archive_bytes": 84707,
           "format": "custom",
           "pg_dump": "pg_dump (PostgreSQL) 18.6 (Ubuntu 18.6-1.pgdg24.04+2)",
           "pg_restore": "pg_restore (PostgreSQL) 18.6 (Ubuntu 18.6-1.pgdg24.04+2)",
