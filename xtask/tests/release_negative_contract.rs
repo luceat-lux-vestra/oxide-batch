@@ -150,8 +150,8 @@ fn rejects_a_cargo_version_that_does_not_match_the_release_version() {
     serial_fixture("version-mismatch", |fixture| {
         fixture.replace_once(
             "crates/oxide-batch-test/Cargo.toml",
-            "version.workspace = true",
-            "version = \"0.6.1\"",
+            "description = \"Application-facing test kit for OxideBatch: deterministic clocks/IDs, job/step/component harnesses, failure injection, and a restart harness\"\nversion.workspace = true",
+            "description = \"Application-facing test kit for OxideBatch: deterministic clocks/IDs, job/step/component harnesses, failure injection, and a restart harness\"\nversion = \"0.6.1\"",
         );
         rejected(
             &fixture.run_release_check(),
