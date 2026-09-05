@@ -16,10 +16,17 @@ def base_deny():
     return {
         "advisories": {"ignore": []},
         "licenses": {"allow": ["Apache-2.0", "MIT"], "exceptions": []},
-        "bans": {"allow": [], "deny": [], "skip": [], "skip-tree": []},
+        "bans": {
+            "allow": [],
+            "deny": [],
+            "skip": [],
+            "skip-tree": [],
+            "build": {"bypass": []},
+        },
         "sources": {
             "allow-registry": sorted(module.BASELINE_REGISTRIES),
             "allow-git": [],
+            "allow-org": {},
         },
     }
 
@@ -125,6 +132,14 @@ class SupplyChainExceptionPolicyTests(unittest.TestCase):
         violations = module.validate(deny, {"schema_version": 1, "exceptions": []}, TODAY)
         self.assertTrue(any("ban:skip-tree:" in v for v in violations))
 
+    def test_unregistered_build_bypass_is_rejected(self):
+        deny = base_deny()
+        deny["bans"]["build"]["bypass"] = [
+            {"name": "example", "build-script": "0" * 64}
+        ]
+        violations = module.validate(deny, {"schema_version": 1, "exceptions": []}, TODAY)
+        self.assertTrue(any("ban:build-bypass:" in v for v in violations))
+
     def test_restrictive_ban_deny_is_not_treated_as_temporary_exception(self):
         deny = base_deny()
         deny["bans"]["deny"] = ["openssl"]
@@ -144,6 +159,27 @@ class SupplyChainExceptionPolicyTests(unittest.TestCase):
         deny["sources"]["allow-registry"].append("https://example.invalid/index")
         violations = module.validate(deny, {"schema_version": 1, "exceptions": []}, TODAY)
         self.assertTrue(any("source:registry:" in v for v in violations))
+
+    def test_unregistered_allowed_source_org_is_rejected(self):
+        deny = base_deny()
+        deny["sources"]["allow-org"] = {"github": ["example-org"]}
+        violations = module.validate(deny, {"schema_version": 1, "exceptions": []}, TODAY)
+        self.assertTrue(any("source:org:github:example-org" in v for v in violations))
+
+    def test_registered_source_org_is_valid(self):
+        deny = base_deny()
+        deny["sources"]["allow-org"] = {"github": ["example-org"]}
+        registry = {
+            "schema_version": 1,
+            "exceptions": [{
+                "kind": "source",
+                "target": "org:github:example-org",
+                "owner": "maintainer",
+                "rationale": "temporary upstream source exception",
+                "expires": "2026-09-30",
+            }],
+        }
+        self.assertEqual(module.validate(deny, registry, TODAY), [])
 
     def test_stale_registry_entry_without_active_exception_is_rejected(self):
         registry = {
