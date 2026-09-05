@@ -149,13 +149,13 @@ fn rejects_a_duplicate_crate_attestation_entry() {
 fn rejects_a_cargo_version_that_does_not_match_the_release_version() {
     serial_fixture("version-mismatch", |fixture| {
         fixture.replace_once(
-            "crates/oxide-batch-test/Cargo.toml",
-            "description = \"Application-facing test kit for OxideBatch: deterministic clocks/IDs, job/step/component harnesses, failure injection, and a restart harness\"\nversion.workspace = true",
-            "description = \"Application-facing test kit for OxideBatch: deterministic clocks/IDs, job/step/component harnesses, failure injection, and a restart harness\"\nversion = \"0.6.1\"",
+            "Cargo.toml",
+            "[workspace.package]\nversion = \"0.6.0\"",
+            "[workspace.package]\nversion = \"0.6.1\"",
         );
         rejected(
             &fixture.run_release_check(),
-            &["oxide-batch-test", "expected lockstep 0.6.0"],
+            &["version 0.6.1", "expected lockstep 0.6.0"],
         );
     });
 }
