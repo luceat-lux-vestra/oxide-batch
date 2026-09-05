@@ -18,11 +18,11 @@ concurrency:
 jobs:
   dependency-review:
     name: dependency-review
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Review dependency changes
+        if: github.event_name == 'pull_request'
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: moderate
@@ -32,6 +32,16 @@ jobs:
           # manifest uses the legacy non-SPDX spelling `MIT/Apache-2.0`.
           # cargo-deny remains the authoritative full-graph license check.
           allow-dependencies-licenses: pkg:cargo/unicode-properties@0.1.4
+
+      - name: Emit stable dependency-review context on main push
+        if: github.event_name == 'push'
+        run: echo "dependency review is PR-diff-only; stable context emitted for main push"
+
+      - name: Reject unsupported trigger for dependency review
+        if: github.event_name != 'pull_request' && github.event_name != 'push'
+        run: |
+          echo "::error::unsupported dependency-review trigger" >&2
+          exit 1
 
   actions-security:
     name: actions-security
