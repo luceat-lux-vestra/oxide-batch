@@ -1,8 +1,10 @@
+//! End-to-end negative release-contract tests for the real `xtask release-crates` verifier.
+
 #![allow(clippy::expect_used)]
 
 use std::fs::{self, OpenOptions};
 use std::io::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::Mutex;
 
