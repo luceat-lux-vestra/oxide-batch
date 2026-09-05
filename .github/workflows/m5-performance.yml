@@ -73,8 +73,8 @@ jobs:
         run: ./tests/fixtures/performance/verify-ci-contract.sh .github/workflows/m5-performance.yml
 
       - name: Run the declared P-001, P-003, and P-010 reports in release profile
-        # matrix.postgres comes only from the checked-in 15/18 matrix above.
-        run: ./tests/fixtures/performance/run-ci-campaign.sh ${{ matrix.postgres }} # zizmor: ignore[template-injection]
+        id: performance-campaign # zizmor: ignore[template-injection] matrix.postgres is the checked-in 15/18 matrix above.
+        run: ./tests/fixtures/performance/run-ci-campaign.sh ${{ matrix.postgres }}
 
       # Retained on failure as well as on success. A failed performance
       # campaign is mostly worth reading for which correctness or resource
