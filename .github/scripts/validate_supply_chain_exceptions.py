@@ -34,12 +34,19 @@ def deny_exceptions(config: dict) -> set[tuple[str, str]]:
     for field in ("skip", "skip-tree"):
         for entry in bans.get(field, []):
             found.add(("ban", f"{field}:{_target(entry)}"))
+    for entry in bans.get("build", {}).get("bypass", []):
+        found.add(("ban", f"build-bypass:{_target(entry)}"))
 
     sources = config.get("sources", {})
     for registry in set(sources.get("allow-registry", [])) - BASELINE_REGISTRIES:
         found.add(("source", f"registry:{registry}"))
     for git_source in sources.get("allow-git", []):
         found.add(("source", f"git:{_target(git_source)}"))
+    allow_org = sources.get("allow-org", {})
+    if isinstance(allow_org, dict):
+        for provider, organizations in allow_org.items():
+            for organization in organizations or []:
+                found.add(("source", f"org:{provider}:{_target(organization)}"))
 
     return found
 
