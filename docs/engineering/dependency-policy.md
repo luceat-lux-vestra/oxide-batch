@@ -81,9 +81,46 @@ maintainer reviews unusual packaging or generated/native components.
 - Critical/high exploitable advisories block release.
 - Moderate advisories require triage of reachability and deployment exposure.
 - Unmaintained or yanked crates require replacement or a time-bounded exception.
-- An exception records advisory ID, affected package, risk, compensating
-  control, owner, expiry, and removal issue.
 - Ignoring an advisory without an expiry is prohibited.
+- Every active cargo-deny policy **waiver** must have one matching entry in
+  `.github/supply-chain-exceptions.json` with a non-empty `owner`, `rationale`,
+  and ISO `expires` date. Expired entries fail CI.
+- The registry covers `advisories.ignore`, crate-specific
+  `licenses.exceptions`, duplicate-version waivers in `bans.skip` and
+  `bans.skip-tree`, build-scan waivers in `bans.build.bypass`, alternate
+  registries, explicit Git source allowlisting, and organization-wide source
+  allowlisting under `sources.allow-org`. A registry entry with no corresponding
+  active waiver also fails CI so stale exceptions cannot linger silently.
+- Restrictive policy entries are not temporary waivers. For example,
+  `bans.deny` tightens policy and therefore does not require an expiry. Changes
+  to the global accepted license baseline or other permanent policy belong in
+  this document and `deny.toml` together and receive normal policy review;
+  they must not be disguised as expiring exceptions.
+- Exception targets use the canonical representation emitted by
+  `.github/scripts/validate_supply_chain_exceptions.py`; the implementing PR
+  must show the exact target string it is registering.
+- Exceptions are temporary risk decisions, not a substitute for changing the
+  accepted baseline. A permanent policy change belongs in this document and
+  `deny.toml` together and must not be disguised as an indefinitely renewed
+  exception.
+
+The current exception registry is empty. Introducing an exception therefore
+requires both the `deny.toml` policy change and its structured registry entry in
+the same reviewed pull request.
+
+## Supply-chain control roles
+
+The three dependency controls are intentionally different and none replaces the
+others:
+
+- **dependency-review** is PR-diff scoped. It examines dependency changes
+  introduced by the pull request and blocks newly introduced dependency risk.
+- **cargo-deny / supply-chain** is full-graph policy enforcement. It checks the
+  resolved dependency graph for advisories, licenses, bans, sources, and the
+  time-bounded exception registry on every PR/push and on its schedule.
+- **Dependabot** is update automation. It proposes dependency/security updates;
+  those pull requests still pass the normal review, dependency-review, and
+  cargo-deny gates before merge.
 
 ## Update policy
 

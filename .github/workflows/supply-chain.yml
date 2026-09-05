@@ -22,6 +22,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Test supply-chain exception policy
+        run: python3 .github/scripts/test_validate_supply_chain_exceptions.py
+
+      - name: Validate supply-chain exception registry
+        run: python3 .github/scripts/validate_supply_chain_exceptions.py
+
       - name: Check advisories, licenses, bans, and sources
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
 
@@ -58,9 +64,9 @@ jobs:
               '',
               `Run: ${runUrl}`,
               '',
-              'Triage advisories, licenses, bans, and sources according to',
-              '`docs/engineering/dependency-policy.md`. Do not dismiss an',
-              'advisory without an owner and expiry.',
+              'Triage advisories, licenses, bans, sources, and exception metadata according to',
+              '`docs/engineering/dependency-policy.md`. Every active exception requires an',
+              'owner, rationale, and unexpired date in `.github/supply-chain-exceptions.json`.',
             ].join('\n');
 
             const issues = await github.paginate(
