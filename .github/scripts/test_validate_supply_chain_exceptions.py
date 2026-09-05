@@ -1,6 +1,10 @@
 import datetime as dt
 import importlib.util
+import json
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 
 MODULE_PATH = Path(__file__).with_name("validate_supply_chain_exceptions.py")
@@ -55,6 +59,48 @@ class SupplyChainExceptionPolicyTests(unittest.TestCase):
         self.assertTrue(any("owner" in v for v in violations))
         self.assertTrue(any("rationale" in v for v in violations))
         self.assertTrue(any("expires" in v for v in violations))
+
+    def test_validator_cli_rejects_throwaway_exception_without_required_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            deny_path = root / "deny.toml"
+            registry_path = root / "supply-chain-exceptions.json"
+            deny_path.write_text(
+                '[advisories]\nignore = ["RUSTSEC-2099-0001"]\n',
+                encoding="utf-8",
+            )
+            registry_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "exceptions": [
+                            {"kind": "advisory", "target": "RUSTSEC-2099-0001"}
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(MODULE_PATH),
+                    "--deny",
+                    str(deny_path),
+                    "--registry",
+                    str(registry_path),
+                    "--today",
+                    TODAY.isoformat(),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("missing non-empty owner", result.stderr)
+        self.assertIn("missing non-empty rationale", result.stderr)
+        self.assertIn("missing non-empty expires", result.stderr)
 
     def test_expired_exception_is_rejected(self):
         deny = base_deny()
