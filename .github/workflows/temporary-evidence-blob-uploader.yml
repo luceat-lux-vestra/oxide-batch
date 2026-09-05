@@ -1,0 +1,100 @@
+name: Temporary retained-evidence blob uploader
+
+on:
+  push:
+    branches:
+      - security/227-actions-static-audit
+
+permissions:
+  contents: read
+
+concurrency:
+  group: temporary-evidence-blob-uploader-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  upload-soak-blobs:
+    name: upload-soak-blobs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # Needed only to create dangling Git blobs; this job never updates a ref.
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      SOAK15_ARTIFACT_ID: "9966502190"
+      SOAK15_SHA256: "ebef943eb9ea1a57cc35a384a6f55685bfdafa3516104161fbfc114058dea26e"
+      SOAK18_ARTIFACT_ID: "9966507849"
+      SOAK18_SHA256: "e2fc021803794223696f30ec2beb8fe33fce3ddb52bede60610bc6c45efd8817"
+    steps:
+      - name: Verify artifacts and create dangling report blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}"
+          auth_header="Authorization: Bearer ${GITHUB_TOKEN}"
+          accept_header="Accept: application/vnd.github+json"
+          version_header="X-GitHub-Api-Version: 2022-11-28"
+
+          upload_blob() {
+            label="$1"
+            artifact_id="$2"
+            expected_sha="$3"
+            work="${RUNNER_TEMP}/${label}"
+            mkdir -p "${work}"
+
+            curl --fail --silent --show-error --location \
+              --header "${auth_header}" \
+              --header "${accept_header}" \
+              --header "${version_header}" \
+              "${api}/actions/artifacts/${artifact_id}/zip" \
+              --output "${work}/artifact.zip"
+            printf '%s  %s\n' "${expected_sha}" "${work}/artifact.zip" | sha256sum --check --strict
+
+            python3 - "${work}/artifact.zip" "${work}/soak-campaign.json" <<'PY'
+          import json
+          import sys
+          import zipfile
+
+          archive, output = sys.argv[1:]
+          with zipfile.ZipFile(archive) as bundle:
+              names = bundle.namelist()
+              if names != ["soak-campaign.json"]:
+                  raise SystemExit(f"unexpected artifact members: {names!r}")
+              data = bundle.read(names[0])
+          report = json.loads(data)
+          if report.get("passed") is not True or report.get("violations") != []:
+              raise SystemExit("soak report is not a clean pass")
+          with open(output, "wb") as target:
+              target.write(data)
+          PY
+
+            python3 - "${work}/soak-campaign.json" "${work}/payload.json" <<'PY'
+          import base64
+          import json
+          import sys
+
+          source, target = sys.argv[1:]
+          with open(source, "rb") as handle:
+              encoded = base64.b64encode(handle.read()).decode("ascii")
+          with open(target, "w", encoding="utf-8") as handle:
+              json.dump({"content": encoded, "encoding": "base64"}, handle)
+          PY
+
+            response="$(curl --fail --silent --show-error \
+              --request POST \
+              --header "${auth_header}" \
+              --header "${accept_header}" \
+              --header "${version_header}" \
+              --header 'Content-Type: application/json' \
+              --data-binary "@${work}/payload.json" \
+              "${api}/git/blobs")"
+            sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])' <<<"${response}")"
+            if ! [[ "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::GitHub returned an invalid blob SHA for ${label}: ${sha}" >&2
+              exit 1
+            fi
+            printf '%s_BLOB=%s\n' "${label}" "${sha}"
+          }
+
+          upload_blob SOAK15 "${SOAK15_ARTIFACT_ID}" "${SOAK15_SHA256}"
+          upload_blob SOAK18 "${SOAK18_ARTIFACT_ID}" "${SOAK18_SHA256}"
