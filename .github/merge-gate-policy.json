@@ -18,6 +18,10 @@
       "classification": "required"
     },
     {
+      "pattern": ".github/workflows/hardening-drift-audit-policy.yml",
+      "classification": "advisory"
+    },
+    {
       "pattern": ".github/workflows/supply-chain.yml",
       "classification": "advisory"
     },

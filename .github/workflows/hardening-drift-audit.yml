@@ -1,0 +1,174 @@
+name: Repository hardening drift audit
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/**"
+      - "SECURITY.md"
+      - "CODE_OF_CONDUCT.md"
+      - "deny.toml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/*/Cargo.toml"
+      - "xtask/**"
+      - "docs/release/**"
+      - "docs/engineering/**"
+  schedule:
+    - cron: "37 18 * * 1"
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: Live audit or bounded synthetic lifecycle test
+        required: true
+        type: choice
+        default: live
+        options:
+          - live
+          - policy-drift
+          - infrastructure-failure
+          - clean
+
+concurrency:
+  group: hardening-drift-audit
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  detect:
+    name: detect
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read # Read only the trusted checked-out repository state.
+    outputs:
+      result: ${{ steps.publish-result.outputs.result }}
+    steps:
+      - name: Check out trusted repository state
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Run hardening drift audit
+        id: audit
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TEST_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.test_mode || 'live' }}
+          RESULT_PATH: ${{ runner.temp }}/hardening-drift-audit.json
+        run: |
+          python3 .github/scripts/run-hardening-drift-audit.py \
+            --test-mode "$TEST_MODE" \
+            --output "$RESULT_PATH"
+
+      - name: Publish bounded trusted audit result
+        id: publish-result
+        if: always()
+        env:
+          RESULT_PATH: ${{ runner.temp }}/hardening-drift-audit.json
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["RESULT_PATH"])
+          try:
+              audit = json.loads(path.read_text(encoding="utf-8"))
+          except (OSError, json.JSONDecodeError) as exc:
+              audit = {
+                  "schema_version": 1,
+                  "classification": "infrastructure-failure",
+                  "policy_findings": [],
+                  "infrastructure_failures": [
+                      {"control": "audit-runner", "details": f"audit result unavailable: {exc}"}
+                  ],
+                  "manual_readback": [],
+              }
+
+          def bounded_findings(value):
+              bounded = []
+              for entry in (value if isinstance(value, list) else [])[:24]:
+                  if not isinstance(entry, dict):
+                      continue
+                  details = str(entry.get("details", ""))
+                  if len(details) > 4000:
+                      details = details[:4000] + "... [truncated]"
+                  bounded.append({"control": str(entry.get("control", "unknown")), "details": details})
+              return bounded
+
+          def bounded_manual(value):
+              bounded = []
+              for entry in (value if isinstance(value, list) else [])[:64]:
+                  if not isinstance(entry, dict):
+                      continue
+                  item = {
+                      "id": entry.get("id"),
+                      "classification": entry.get("classification"),
+                      "expected": entry.get("expected"),
+                  }
+                  rationale = entry.get("rationale")
+                  if rationale is not None:
+                      item["rationale"] = str(rationale)[:1000]
+                  bounded.append(item)
+              return bounded
+
+          classification = audit.get("classification")
+          if classification not in {"clean", "policy-drift", "infrastructure-failure"}:
+              classification = "infrastructure-failure"
+              audit = {
+                  "policy_findings": [],
+                  "infrastructure_failures": [
+                      {"control": "audit-runner", "details": "audit emitted an invalid classification"}
+                  ],
+                  "manual_readback": audit.get("manual_readback", []),
+              }
+
+          payload = {
+              "schema_version": 1,
+              "classification": classification,
+              "policy_findings": bounded_findings(audit.get("policy_findings")),
+              "infrastructure_failures": bounded_findings(audit.get("infrastructure_failures")),
+              "manual_readback": bounded_manual(audit.get("manual_readback")),
+          }
+          compact = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+          if len(compact.encode("utf-8")) > 300000:
+              raise SystemExit("bounded hardening audit result unexpectedly exceeds 300000 bytes")
+
+          output = Path(os.environ["GITHUB_OUTPUT"])
+          with output.open("a", encoding="utf-8") as handle:
+              handle.write("result=" + compact + "\n")
+          PY
+
+      - name: Enforce audit result
+        if: steps.audit.outcome != 'success'
+        run: exit 1
+
+  report:
+    name: report
+    needs: detect
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # Read only the trusted reporter implementation.
+      issues: write # Mutate only the single owned hardening-drift issue.
+    steps:
+      - name: Check out trusted repository state
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Reconcile owned hardening issue
+        env:
+          AUDIT_RESULT: ${{ needs.detect.outputs.result }}
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 .github/scripts/report-hardening-drift-audit.py \
+            --result-json "$AUDIT_RESULT" \
+            --run-url "$RUN_URL"
