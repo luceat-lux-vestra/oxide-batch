@@ -103,3 +103,4 @@ jobs:
           name: upgrade-campaign-postgres-${{ matrix.postgres }}
           path: target/m5-campaigns/upgrade-campaign.json
           if-no-files-found: error
+          retention-days: 30

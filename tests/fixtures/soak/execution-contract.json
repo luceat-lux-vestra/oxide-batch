@@ -3,7 +3,7 @@
   "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow is a thin provisioning and call layer, and its contract-check step fails closed when the workflow drifts from these values. Only the dedicated soak workflow is in this campaign's semantic closure, so unrelated quality or build changes in ci.yml do not invalidate retained soak evidence.",
   "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script — an added trigger, a job-level permission override, a widened matrix, an appended command, even one changed comment byte — moves the identity and fails the contract check, whether or not every literal field below still happens to read true. The literal fields exist for a readable diagnostic, not as the boundary. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
   "workflow_path": ".github/workflows/m5-soak.yml",
-  "workflow_git_blob": "85a3c18bddd3b68f824869cec71b140beb8bcd2a",
+  "workflow_git_blob": "a68cfff21b108aff06966af487167323d33615a2",
   "workflow_name": "M5 Soak",
   "triggers": {
     "pull_request": ["main"],
@@ -40,7 +40,7 @@
   },
   "report_path": "target/m5-campaigns/soak-campaign.json",
   "artifact_name": "soak-campaign-postgres-{major}",
-  "artifact_retention": "on success and on failure alike, because what a failed soak needs is the resource trajectory that led to it",
+  "artifact_retention": "30 days, on success and on failure alike, because what a failed soak needs is the resource trajectory that led to it",
   "timeout_minutes": 60,
   "timeout_note": "Higher than the other campaigns because the declared window is 32 warmup and 600 measured cycles, which is minutes of work. Still a ceiling: a soak that stopped making progress must fail rather than occupy a runner."
 }

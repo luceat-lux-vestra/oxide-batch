@@ -35,13 +35,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      # The verifier is offline by construction: it resolves no commit and
-      # fetches nothing, comparing the execution manifest each retained report
-      # carries against the working tree. A plain checkout is all it needs.
+      # The verifiers are offline by construction: they resolve no commit and
+      # fetch nothing. The policy verifier binds the repository-wide inventory,
+      # canonical verdict contract, and bounded retention governance. It runs
+      # first so a deliberately stale campaign-provenance window cannot hide a
+      # compile or policy failure in the new repository-wide contract.
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Verify repository-wide retained evidence policy
+        run: cargo run --package oxide-batch-xtask --bin retained_evidence_policy
 
       - name: Verify retained campaign evidence against its provenance
         run: cargo run --package oxide-batch-xtask -- evidence

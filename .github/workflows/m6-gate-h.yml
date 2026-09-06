@@ -46,3 +46,4 @@ jobs:
           name: gate-h-campaign
           path: target/m6-campaigns/gate-h-campaign.json
           if-no-files-found: error
+          retention-days: 30

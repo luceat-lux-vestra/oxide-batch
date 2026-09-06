@@ -81,3 +81,4 @@ jobs:
           name: cancellation-campaign-postgres-${{ matrix.postgres }}
           path: target/m5-campaigns/cancellation-campaign.json
           if-no-files-found: error
+          retention-days: 30
