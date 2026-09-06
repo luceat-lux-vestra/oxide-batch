@@ -1,6 +1,6 @@
 # M7-M14 Roadmap and Feature-Ledger Reconciliation
 
-**State:** Active after merge of issue #189
+**State:** Active on merge of issue #189
 
 **Audit baseline:** `main` commit
 `819a7c1cb048373c932ec183be0a79b1030f4fb0`
@@ -60,19 +60,19 @@ population:
 | **Total** | **83** |
 
 The M5 historical population in the feature ledger correctly records 39
-`Planned` rows at that earlier gate. The later M6 disposition paragraph still
-says that “the `39` `Planned` rows keep their accepted milestone”. That number
-is stale after M6 moved 13 rows from the prior population into `Implemented`
-or `Partial` states. For current planning, the table above supersedes only that
-stale post-M6 count sentence; it does not rewrite the historical M5 count or
-promote any row.
+`Planned` rows at that earlier gate. At the audit baseline, the later M6
+disposition paragraph still said that “the `39` `Planned` rows keep their
+accepted milestone”. That was stale after M6 moved 13 rows from the prior
+population into `Implemented` or `Partial` states. #189 corrects the canonical
+ledger itself to the current population above; the historical M5 count remains
+unchanged and no row is promoted by this reconciliation.
 
-The M6 paragraph saying the retained `Partial` rows “expand in M7-M11” is also
-too broad when read as an implementation assignment. Some partial rows encode
-reviewed divergence with no accepted M7-M11 implementation gap. The ownership
-matrix below is authoritative for #189's future-work interpretation: those
-rows are handed to M12 parity closure unless a later reviewed gate proves a
-narrower product change is required.
+The audit-baseline M6 paragraph saying the retained `Partial` rows “expand in
+M7-M11” was also too broad when read as an implementation assignment. Some
+partial rows encode reviewed divergence with no accepted M7-M11 implementation
+gap. #189 corrects that canonical guidance and the ownership matrix below
+records the reviewed future semantic/disposition owner; feature status and
+evidence authority remain in the conformance matrix.
 
 ## M7-M14 capability-family traceability
 
