@@ -3,7 +3,7 @@
   "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow is a thin provisioning and call layer, and its contract-check step fails closed when the workflow drifts from these values. Only the dedicated performance workflow is in this campaign's semantic closure, so unrelated quality or build changes in ci.yml do not invalidate retained performance evidence.",
   "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script — an added trigger, a job-level permission override, a widened matrix, a lost --release, an appended command — moves the identity and fails the contract check, whether or not every literal field below still happens to read true. The literal fields exist for a readable diagnostic, not as the boundary. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
   "workflow_path": ".github/workflows/m5-performance.yml",
-  "workflow_git_blob": "9cb675047a1fcd952ed6ee3e89b7a5bbb816a5f8",
+  "workflow_git_blob": "d154e188cf01b05c93a934918bcd48f6ab1921df",
   "workflow_name": "M5 Performance",
   "triggers": {
     "pull_request": ["main"],
@@ -42,7 +42,7 @@
   },
   "report_path": "target/m5-campaigns/performance-campaign.json",
   "artifact_name": "performance-campaign-postgres-{major}",
-  "artifact_retention": "on success and on failure alike, because what a failed performance campaign is mostly worth reading for is which correctness or resource obligation it lost",
+  "artifact_retention": "30 days, on success and on failure alike, because what a failed performance campaign is mostly worth reading for is which correctness or resource obligation it lost",
   "timeout_minutes": 30,
   "timeout_note": "A release build of the whole crate dominates this ceiling, not the workload: P-001 is 272 in-memory launches, P-003 is 10,000 rows in 100 chunks, and P-010 is 100 partitions at three worker points plus one pool-ceiling proof, all of which complete in seconds once built. Thirty minutes leaves generous headroom for a release compile on a shared runner and is still a ceiling."
 }

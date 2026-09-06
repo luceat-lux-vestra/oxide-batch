@@ -17,6 +17,6 @@
   "report_path": "target/m6-campaigns/m6-conformance-campaign.json",
   "artifact_name": "m6-conformance-campaign-postgres-${{ matrix.postgres }}",
   "timeout_minutes": 40,
-  "artifact_retention": "on success and on failure alike",
+  "artifact_retention": "30 days, on success and on failure alike",
   "matrix": ["15", "18"]
 }

@@ -69,3 +69,4 @@ jobs:
           name: gate-b-campaign-postgres-${{ matrix.postgres }}
           path: target/m6-campaigns/gate-b-campaign.json
           if-no-files-found: error
+          retention-days: 30

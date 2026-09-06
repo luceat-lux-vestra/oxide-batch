@@ -1,0 +1,144 @@
+{
+  "schema_version": 1,
+  "contract": {
+    "canonical_verdict": "violations",
+    "producer_passed_is_authoritative": false,
+    "rendered_verdict_rule": "Top-level passed and result fields, when present, must agree with whether the canonical violations array is empty. Official retained evidence must have an empty canonical violations array regardless of producer passed=true.",
+    "execution_identity": "producer.execution_commit must agree with the report environment and execution manifest; the existing cargo xtask evidence verifier additionally binds every declared campaign-semantics path to its recorded git object identity.",
+    "toolchain_identity": "producer.rustc/os/arch must agree with report.environment and the execution manifest must bind rust-toolchain.toml.",
+    "lockfile_identity": "The execution manifest must bind Cargo.lock.",
+    "runtime_identity": "postgresql_major_version is required for every report and must match the report. Non-PostgreSQL campaigns use the explicit value not-applicable. PostgreSQL service/container configuration is bound through the recorded workflow-file object identity.",
+    "workload_identity": "Workload/scenario semantics are not duplicated into provenance. They are bound by the execution manifest over the declared tests/fixtures semantic closure and execution contract.",
+    "verifier_identity": "The execution manifest must bind xtask/src/evidence.rs and at least one campaign verifier under xtask/src/. The existing evidence verifier checks the declared closure exactly.",
+    "applicability_exceptions": [
+      "Exact PostgreSQL server patch text is not a common required field because some campaigns do not emit it; the required common runtime identity is the PostgreSQL major plus the bound workflow/service definition.",
+      "Gate H is not a PostgreSQL campaign and records postgresql_major_version=not-applicable rather than silently omitting the runtime axis.",
+      "Large raw evidence is not committed merely to satisfy schema uniformity; the external-storage rule below applies instead."
+    ]
+  },
+  "retention": {
+    "actions_artifact_days": 30,
+    "max_report_bytes": 6291456,
+    "max_committed_report_count": 64,
+    "expected_committed_report_count": 21,
+    "measured_committed_evidence_bytes_at_adoption": 12954637,
+    "expected_committed_evidence_bytes": 14680064,
+    "max_committed_evidence_bytes": 16777216,
+    "git_age_policy": "semantic-closure",
+    "git_age_policy_note": "Committed official evidence has no arbitrary wall-clock expiry. It becomes stale immediately when a bound campaign-semantics object changes, which cargo xtask evidence enforces on every required evidence-provenance check.",
+    "footprint_note": "The adoption baseline is the byte sum of the M5 and M6 retained-evidence directories at the first #229 producer tree: 12,954,637 bytes. The expected budget is 14 MiB and the hard policy ceiling is 16 MiB. A single Git-retained report is capped at 6 MiB; the two approximately 5.99 MB M5 soak reports are deliberately inside that bound rather than silently exempted.",
+    "oversize_rule": "Evidence that exceeds the 6 MiB per-report bound, the 14 MiB expected committed-evidence budget, or the 16 MiB hard ceiling must not be added as raw Git-retained bytes. Store the raw evidence in durable immutable release/object storage and retain only its immutable reference, sha256 digest, provenance, and canonical verdict metadata in Git. GitHub Actions artifacts are bounded 30-day diagnostic/promotion inputs, not the durable home for oversized official evidence."
+  },
+  "retained_sets": [
+    {
+      "id": "m5",
+      "directory": "docs/engineering/campaigns/m5",
+      "provenance": "evidence-provenance.json",
+      "storage": "git",
+      "classification": "merge-blocking",
+      "expected_reports": 16,
+      "campaigns": [
+        "M5 PostgreSQL soak",
+        "M5 PostgreSQL cancellation",
+        "M5 PostgreSQL performance",
+        "M5 PostgreSQL conformance",
+        "M5 crash and restore",
+        "M5 PostgreSQL upgrade",
+        "M5 PostgreSQL security",
+        "M5 PostgreSQL resource bounds"
+      ]
+    },
+    {
+      "id": "m6",
+      "directory": "docs/engineering/campaigns/m6",
+      "provenance": "evidence-provenance.json",
+      "storage": "git",
+      "classification": "merge-blocking",
+      "expected_reports": 5,
+      "campaigns": [
+        "M6 Gate B transaction/restart equivalence",
+        "M6 Gate H P-002 real-component performance",
+        "M6 full component conformance, malformed/failure, lifecycle, and restart campaign"
+      ]
+    }
+  ],
+  "artifact_producers": [
+    {
+      "workflow": ".github/workflows/m5-cancellation.yml",
+      "campaign": "M5 PostgreSQL cancellation",
+      "storage": "github-actions",
+      "classification": "informational",
+      "promotes_to": "m5"
+    },
+    {
+      "workflow": ".github/workflows/m5-conformance.yml",
+      "campaign": "M5 PostgreSQL conformance",
+      "storage": "github-actions",
+      "classification": "informational",
+      "promotes_to": "m5"
+    },
+    {
+      "workflow": ".github/workflows/m5-crash-restore.yml",
+      "campaign": "M5 crash and restore",
+      "storage": "github-actions",
+      "classification": "informational",
+      "promotes_to": "m5"
+    },
+    {
+      "workflow": ".github/workflows/m5-performance.yml",
+      "campaign": "M5 PostgreSQL performance",
+      "storage": "github-actions",
+      "classification": "informational",
+      "promotes_to": "m5"
+    },
+    {
+      "workflow": ".github/workflows/m5-resource-bounds.yml",
+      "campaign": "M5 PostgreSQL resource bounds",
+      "storage": "github-actions",
+      "classification": "informational",
+      "promotes_to": "m5"
+    },
+    {
+      "workflow": ".github/workflows/m5-security.yml",
+      "campaign": "M5 PostgreSQL security",
+      "storage": "github-actions",
+      "classification": "informational",
+      "promotes_to": "m5"
+    },
+    {
+      "workflow": ".github/workflows/m5-soak.yml",
+      "campaign": "M5 PostgreSQL soak",
+      "storage": "github-actions",
+      "classification": "informational",
+      "promotes_to": "m5"
+    },
+    {
+      "workflow": ".github/workflows/m5-upgrade.yml",
+      "campaign": "M5 PostgreSQL upgrade",
+      "storage": "github-actions",
+      "classification": "informational",
+      "promotes_to": "m5"
+    },
+    {
+      "workflow": ".github/workflows/m6-conformance.yml",
+      "campaign": "M6 full component conformance, malformed/failure, lifecycle, and restart campaign",
+      "storage": "github-actions",
+      "classification": "informational",
+      "promotes_to": "m6"
+    },
+    {
+      "workflow": ".github/workflows/m6-gate-b.yml",
+      "campaign": "M6 Gate B transaction/restart equivalence",
+      "storage": "github-actions",
+      "classification": "informational",
+      "promotes_to": "m6"
+    },
+    {
+      "workflow": ".github/workflows/m6-gate-h.yml",
+      "campaign": "M6 Gate H P-002 real-component performance",
+      "storage": "github-actions",
+      "classification": "informational",
+      "promotes_to": "m6"
+    }
+  ]
+}

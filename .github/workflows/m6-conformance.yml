@@ -67,3 +67,4 @@ jobs:
           name: m6-conformance-campaign-postgres-${{ matrix.postgres }}
           path: target/m6-campaigns/m6-conformance-campaign.json
           if-no-files-found: error
+          retention-days: 30

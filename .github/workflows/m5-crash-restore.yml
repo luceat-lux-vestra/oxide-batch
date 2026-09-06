@@ -98,3 +98,4 @@ jobs:
           name: crash-restore-campaign-postgres-${{ matrix.postgres }}
           path: target/m5-campaigns/crash-restore-campaign.json
           if-no-files-found: error
+          retention-days: 30

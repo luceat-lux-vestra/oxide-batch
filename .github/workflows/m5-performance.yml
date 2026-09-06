@@ -87,3 +87,4 @@ jobs:
           name: performance-campaign-postgres-${{ matrix.postgres }}
           path: target/m5-campaigns/performance-campaign.json
           if-no-files-found: error
+          retention-days: 30
