@@ -1,6 +1,6 @@
 # M7 Advanced Flow, Scope, Repeat, and Composition Kickoff Gate
 
-**State:** Active after issue #193
+**State:** Active on merge
 
 **Umbrella:** GitHub issue
 [#192](https://github.com/luceat-lux-vestra/oxide-batch/issues/192)
