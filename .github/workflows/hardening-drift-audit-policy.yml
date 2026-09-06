@@ -1,0 +1,33 @@
+name: Hardening drift audit policy
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hardening-drift-audit-policy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hardening-drift-audit-policy:
+    name: hardening-drift-audit-policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test hardening drift audit orchestration and issue lifecycle
+        run: python3 .github/scripts/test-hardening-drift-audit.py
+
+      - name: Validate repository settings policy JSON
+        run: python3 -m json.tool .github/repository-settings-policy.json >/dev/null
