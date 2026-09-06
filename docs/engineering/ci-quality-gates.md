@@ -17,7 +17,8 @@ expensive and probabilistic checks run on a schedule or release candidate.
 | Dependency review | New vulnerability/license risk | Now |
 | MSRV build/test | Enforce declared Rust support | Before M1 |
 | Dependency/license/source policy | RustSec, license, bans, source control | Before M1 |
-| CodeQL | GitHub Actions workflow security analysis | Now |
+| CodeQL Actions analysis | GitHub Actions workflow security analysis (`Analyze (actions)`) | Now; required |
+| CodeQL Rust analysis | Rust source security analysis (`Analyze (rust)`) | Now; advisory |
 | Feature matrix | Default/minimal/all and approved combinations | Active: facade-only and `postgres`/all |
 | Core platform matrix | Supported OS and architecture | Before first public runtime API |
 | PostgreSQL contracts | Real transaction and migration semantics | Before M2 |
@@ -50,9 +51,20 @@ The scheduled supply-chain workflow creates or updates one owned security issue
 when its advisory, license, ban, or source gate fails. The issue is an
 operational notification and never converts a failed gate into success.
 
-GitHub CodeQL default setup analyzes Actions workflows. CodeQL does not support
-Rust analysis for this repository; dependency review, `cargo deny`, Clippy,
-tests, and the documented security review process remain the Rust gates.
+GitHub CodeQL **default setup is the repository's single CodeQL authority**. It
+analyzes GitHub Actions and Rust with GitHub-managed `build-mode: none`; no
+checked-in advanced-setup CodeQL workflow may coexist with it. `Analyze
+(actions)` remains merge-required because it is an established always-present
+managed producer. `Analyze (rust)` is initially advisory: it must be present on
+pull requests and `main`, but it is not added to the live ruleset until repeated
+runs establish producer reliability. Issue #233's periodic hardening drift audit
+is the next review point for promotion to required status.
+
+Rust CodeQL is an additional static security signal, not a replacement for the
+existing controls. Clippy enforces Rust correctness/lint policy; `cargo deny`
+and RustSec cover dependency advisory/license/source policy; dependency review
+covers dependency changes; supply-chain and evidence gates retain their existing
+independent authority.
 
 The first optional adapter activates the concrete feature matrix. The ordinary
 quality job checks the facade with no default features and the workspace with

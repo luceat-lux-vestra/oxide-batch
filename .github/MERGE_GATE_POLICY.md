@@ -16,6 +16,16 @@ A workflow-level default classifies every job in that workflow unless a `job_ove
 
 Most required contexts are produced by checked-in workflow jobs. `managed_required_contexts` covers GitHub-managed controls whose producer is not a repository workflow, currently CodeQL default setup's `Analyze (actions)` context.
 
+CodeQL default setup remains the repository's single CodeQL authority. It also
+produces `Analyze (rust)` after the #248 capability correction, but that Rust
+context is intentionally **advisory** while producer presence and reliability
+are accumulated. `managed_required_contexts` records merge authority, not every
+managed diagnostic context, so `Analyze (rust)` is deliberately absent from the
+canonical required-context JSON and from the live ruleset. #233 is the next
+scheduled decision point for promoting it only if repeated PR/main evidence
+supports making it required. A checked-in advanced-setup CodeQL workflow must
+not be added while default setup is the accepted authority.
+
 Matrix jobs are expanded from their literal matrix axes and their checked-in `name`. A changed matrix therefore changes the required context set and must agree with the canonical policy and live topology.
 
 ## PostgreSQL aggregate decision
@@ -38,7 +48,7 @@ That is an intentional **decline** to aggregate the conformance campaign, not om
 
 Cross-workflow polling or custom commit-status publication was also evaluated and declined. It adds lifecycle/rerun races and elevated status-publishing machinery that a workflow-local native dependency graph does not need.
 
-The design also deliberately leaves `dependency-review`, `supply-chain`, `msrv`, `packaging`, `quality`, `evidence-provenance`, and CodeQL independently required because those controls have distinct dependency, security, compatibility, release, repository-quality, evidence-integrity, or static-analysis authority.
+The design also deliberately leaves `dependency-review`, `supply-chain`, `msrv`, `packaging`, `quality`, `evidence-provenance`, and required CodeQL Actions analysis independently required because those controls have distinct dependency, security, compatibility, release, repository-quality, evidence-integrity, or static-analysis authority. Advisory Rust CodeQL adds another static-security signal without replacing or weakening any of those controls.
 
 ## Native aggregate contract
 
@@ -139,6 +149,10 @@ After #223 migration completes, the expected required contexts are exactly:
 - `evidence-provenance`
 - `postgresql`
 
+`Analyze (rust)` is intentionally not in this required list while #248 treats it
+as advisory. Its absence from this list is not evidence that Rust is unsupported
+or unscanned.
+
 The nine Rust PostgreSQL child jobs continue to run as aggregate members; only their direct ruleset surface is replaced. The two conformance contexts continue to run and remain directly required as independent evidence authority.
 
-#233 may compose this verifier later for scheduled hardening drift auditing.
+#233 may compose this verifier later for scheduled hardening drift auditing and must also re-evaluate the advisory Rust CodeQL classification against observed managed-producer reliability.
