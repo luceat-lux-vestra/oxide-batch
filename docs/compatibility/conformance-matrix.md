@@ -131,7 +131,7 @@ the [compatibility contract](spring-batch.md).
 | TEST-REPO-001 | 6.0.4 [testing] | Repository cleanup | Test utility creates/removes isolated metadata safely | Bounded fixture and cleanup kit | Operational | Implemented | M6/M8 | Adapter-owned cleanup | R/R/R/R/R/J | [`repository_fixture_cleans_up_isolated_metadata`](../../crates/oxide-batch-test/tests/postgres_fixture.rs), [`EmbeddedRepository`](../../crates/oxide-batch-test/src/repository.rs), [`PostgresFixture`](../../crates/oxide-batch-test/src/postgres.rs), [test-kit tutorial](../guides/test-kit-tutorial.md#postgresql-fixture) | [Repository model](../architecture/repository-and-transaction-model.md) | Implements #145; the PostgreSQL fixture isolates by job name and cleans up through the real `RetentionService` purge path (never hand-written SQL), satisfying `MIN_PURGE_AGE` deterministically via its own injected clock; cross-consumer closure is satisfied by #146's composition catalog tests; #153 published the user-facing tutorial |
 | TEST-DIST-001 | 6.0.4 [scale] | Distributed harness | Remote behavior is testable independent of production fabric | In-memory/fault-injected protocol harness | Native equivalent | Planned | M11 | Stronger transport-neutral focus | R/R/R/R/R/R | — | [Distributed execution](../architecture/distributed-execution.md) | — |
 | OBS-EXEC-001 | 6.0.4 [metadata] | Execution observation | Job/step status, counts, context, and failure are inspectable | Explorer plus stable events | Operational | Verified | M1/M4 | Redaction stricter | R/R/R/R/J/R | [`telemetry_correlates_execution`](../../crates/oxide-batch/tests/listeners.rs), [M2 exit](../project/m2-exit-evidence.md), [M4 bounded telemetry](../project/m4-telemetry-evidence.md), [M4 exit evidence](../project/m4-exit-evidence.md) | [Observability contract](../operations/observability-contract.md) | Schema-version-1 events, commit/read/evidence timing, bounded incident retention, and the redacted `4 MiB` diagnostic bundle are implemented; telemetry remains non-authoritative and released verification is pending; Verified against released `oxide-batch` 0.5.0 (M5 Embedded Core Production Preview); see [M5 exit evidence](../project/m5-exit-evidence.md) |
-| OBS-METRICS-001 | 6.0.4 [api] | Metrics/traces | Lifecycle, item counts, duration, and failures are observable | Vendor-neutral bounded telemetry schema | Native equivalent | Verified | M4/M10 | Metric names/API differ; explicit cardinality budget | R/R/R/R/J/R | [M4 bounded telemetry](../project/m4-telemetry-evidence.md), [`telemetry_export_overhead`](../../crates/oxide-batch/tests/m4_exit_measurements.rs) | [Observability contract](../operations/observability-contract.md) | Metric names/units/labels, the fixed span hierarchy and safe fields, the per-family `200`-series budget, name allowlists, bounded drop-newest exporter queue, panic isolation, separate flush deadline, and the [measured export overhead, queue depth, and counted drops](../engineering/measurements/m4/telemetry-overhead.json) are implemented; complete M10 concurrency instrumentation remains pending; Verified against released `oxide-batch` 0.5.0 (M5 Embedded Core Production Preview); see [M5 exit evidence](../project/m5-exit-evidence.md) |
+| OBS-METRICS-001 | 6.0.4 [api] | Metrics/traces | Lifecycle, item counts, duration, and failures are observable | Vendor-neutral bounded telemetry schema | Native equivalent | Verified | M4/M10 | Metric names/API differ; explicit cardinality budget | R/R/R/R/J/R | [M4 bounded telemetry](../project/m4-telemetry-evidence.md), [`telemetry_export_overhead`](../../crates/oxide-batch/tests/m4_exit_measurements.rs) | [Observability contract](../operations/observability-contract.md) | Metric names/units/labels, the fixed span hierarchy and safe fields, the per-family `200`-series budget, name allowlists, bounded drop-newest exporter queue, panic isolation, separate flush deadline, and the [measured export overhead, queue depth, and counted drops](../engineering/measurements/m4/telemetry-overhead.json) are implemented; complete M10 concurrency instrumentation remains pending under [#203](https://github.com/luceat-lux-vestra/oxide-batch/issues/203); Verified against released `oxide-batch` 0.5.0 (M5 Embedded Core Production Preview); see [M5 exit evidence](../project/m5-exit-evidence.md) |
 
 ## Local and distributed scalability
 
@@ -252,8 +252,12 @@ themselves. M5's 28 released `Verified` rows remain verified against
 `LISTENER-ITEM-001`, `FLOW-SEQUENCE-001`, `FLOW-DECIDER-001`,
 `REPO-COMMAND-001`, `REPO-RETENTION-001`, `SCALE-PARSTEP-001`,
 `SCALE-LOCALPART-001`, and `REPEAT-POLICY-001` are implemented at a bounded
-M0-M5 boundary and expand in M7-M11. They are not advertised as verified
-capability, and the preview limitations record names each one and its bound.
+M0-M6 boundary and retain their reviewed `Partial` disposition. Rows with an
+explicit later milestone continue there; rows without one receive their later
+disposition owner in the [M7-M14 roadmap and feature-ledger reconciliation](../project/m7-m14-ledger-reconciliation.md)
+rather than implying speculative M7-M11 implementation. They are not
+advertised as verified capability, and the preview limitations record names
+each one and its bound.
 
 **`ITEM-STREAM-001`** moved from `Planned` to `Implemented` when
 [#144](https://github.com/luceat-lux-vestra/oxide-batch/issues/144) landed the
@@ -269,10 +273,13 @@ the architecture spike, closing the gap [M6 Gate C](../project/m6-design-gate-ev
 named. Promotion to `Verified` is still deferred to the next named release
 that links this evidence, following the ledger's own promotion rule.
 
-**Deferred and unreviewed rows.** The `39` `Planned` rows keep their accepted
-milestone. The `2` `Unknown` rows, `DB-MONGO-001` and `IO-MAILLDAP-001`, are
-M8 and M13 population and are outside the M0-M4 disposition review; they remain
-visible and unreviewed rather than being silently dropped.
+**Current post-M6 population and unreviewed rows.** After the M6 dispositions
+above, the current 83-row population is `28` `Verified`, `13` `Implemented`,
+`14` `Partial`, `26` `Planned`, and `2` `Unknown`. The `26` `Planned` rows keep
+their accepted milestone. The `2` `Unknown` rows, `DB-MONGO-001` and
+`IO-MAILLDAP-001`, remain visible until their reviewed decision gates in the
+[M7-M14 roadmap and feature-ledger reconciliation](../project/m7-m14-ledger-reconciliation.md);
+they cannot be silently dropped or treated as compatibility passes.
 
 The visibility of every non-advertised row prevents any full-parity,
 enterprise-readiness, or project-wide production claim by the preview.
