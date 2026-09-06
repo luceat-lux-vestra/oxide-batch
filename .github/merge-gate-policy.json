@@ -76,7 +76,5 @@
       ]
     }
   ],
-  "pending_ruleset_contexts": [
-    "actions-security"
-  ]
+  "pending_ruleset_contexts": []
 }
