@@ -69,6 +69,40 @@ See the [developer guide](docs/guides/developer-guide.md) for the complete path 
 - **Local scale** — bounded tasklet parallel splits and local partition execution.
 - **Application test support** — public `oxide-batch-test` utilities for exercising supported application-facing contracts.
 
+## External validation and benchmark evidence
+
+OxideBatch is validated from a separate external-consumer repository,
+[`oxide-batch-workloads`](https://github.com/luceat-lux-vestra/oxide-batch-workloads),
+using exact published crates.io releases. **Correctness gates performance
+claims:** clean execution, transaction/checkpoint semantics, hard-death
+recovery, and independent final-state verification must pass before a candidate
+is accepted into a primary performance comparison.
+
+The accepted PostgreSQL → PostgreSQL four-way campaign used the same GitHub
+hosted runner and PostgreSQL 18 service for raw Rust/sqlx, OxideBatch `0.6.0`,
+raw Java/JDBC, and Spring Batch `6.0.5`. The table below surfaces only the two
+observations that include OxideBatch; the
+[full matrix, provenance, artifact digests, and limitations](https://github.com/luceat-lux-vestra/oxide-batch-workloads#accepted-comparative-benchmark-evidence)
+live with the external evidence.
+
+| Comparison A → B | Cursor paired median elapsed `B/A` | Paging paired median elapsed `B/A` |
+|---|---:|---:|
+| raw Rust/sqlx → OxideBatch | `1.2455×` | `1.4052×` |
+| OxideBatch → Spring Batch | `1.8692×` | `1.4669×` |
+
+A value above `1.0×` means candidate B took longer than candidate A in the
+accepted paired same-runner observation. These numbers are **hosted-runner
+observational evidence**, not a protected threshold and not an unqualified
+“X% faster/slower” claim; runtime/startup effects remain part of the
+cross-language product observation.
+
+The same evidence program also qualified JBeret `3.2.0.Final` before allowing
+a benchmark stage. Its external after-write SIGKILL case exposed business
+progress at `300` rows while the durable JBeret checkpoint remained at `200`;
+public restart replayed already-committed rows. JBeret therefore failed the
+selected `semantic-parity-minimal-durability` class for that workload and was
+kept **reference-only**, with no primary performance number published.
+
 ## PostgreSQL
 
 OxideBatch separates migration and runtime identities and fails closed when repository schema expectations are not met.
