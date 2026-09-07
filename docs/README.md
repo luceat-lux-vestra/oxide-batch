@@ -30,9 +30,10 @@ decisions own the normative detail.
 5. [M3 basic-flow contract](architecture/basic-flow.md)
 6. [M4 shutdown and stale-recovery contract](architecture/shutdown-and-recovery.md)
 7. [M4 bounded local-scale contract](architecture/local-scale.md)
-8. [Performance and capacity plan](engineering/performance-plan.md)
-9. [Async execution ADR](architecture/decisions/0002-execution-model.md)
-10. relevant roadmap and conformance rows
+8. [M7 advanced-flow, scope, repeat, and definition-evolution contract](architecture/m7-advanced-flow-scope-repeat-and-evolution.md)
+9. [Performance and capacity plan](engineering/performance-plan.md)
+10. [Async execution ADR](architecture/decisions/0002-execution-model.md)
+11. relevant roadmap and conformance rows
 
 ### Repository and integration implementers
 
@@ -106,6 +107,8 @@ decisions own the normative detail.
 - [M6 complete item processing and user test kit kickoff gate](project/m6-kickoff-gate.md)
 - [M6 #151 completion-policy and listener-taxonomy evidence](project/m6-151-completion-and-listener-evidence.md)
 - [M6 exit evidence](project/m6-exit-evidence.md)
+- [M7 advanced flow, scope, repeat, and composition kickoff gate](project/m7-kickoff-gate.md)
+- [M7 advanced flow, scope, repeat, and composition design-gate evidence](project/m7-design-gate-evidence.md)
 - [Historical M0 decision register](product/open-decisions.md)
 
 Historical gates are preserved as records of their date. Later decisions link
@@ -150,6 +153,7 @@ to them and record supersession; they do not rewrite history.
 - [M3 basic flow and start-control contract](architecture/basic-flow.md)
 - [M4 shutdown and stale-recovery contract](architecture/shutdown-and-recovery.md)
 - [M4 bounded local-scale contract](architecture/local-scale.md)
+- [M7 advanced-flow, scope, repeat, and definition-evolution contract](architecture/m7-advanced-flow-scope-repeat-and-evolution.md)
 - [M5 staged crate-extraction contract](architecture/crate-extraction.md)
 - [Repository and transaction model](architecture/repository-and-transaction-model.md)
 - [M4 operator, explorer, and retention contract](architecture/operator-and-explorer-services.md)

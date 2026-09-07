@@ -294,4 +294,6 @@ unblocked according to the dependency graph above.
       M7 authorization.
 - [x] #200 is an independent exit verifier/aggregator, not a duplicate row
       owner.
-- [x] #195-#199 production implementation remains blocked on #194.
+- [x] At #193 closure, #195-#199 production implementation was blocked on #194;
+      after #194 semantic acceptance, fresh GitHub dependency state is the
+      authorization authority for unblocking.
