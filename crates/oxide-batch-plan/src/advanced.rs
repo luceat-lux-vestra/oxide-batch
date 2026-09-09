@@ -1,4 +1,10 @@
-use super::*;
+use super::{
+    BTreeMap, BTreeSet, CompiledExecutionPlan, CompiledFlowScope, DefinitionError,
+    DefinitionIdentity, DefinitionRevision, ExitCode, FlowGraph, FlowNode, FlowTarget,
+    FlowTransition, JobName, MAX_BRANCH_STEPS, MAX_FLOW_COMPOSITION_DEPTH, MAX_NODES,
+    MAX_OUTGOING_TRANSITIONS, MAX_SPLIT_BRANCHES, MAX_TRANSITIONS, NodeId, PlanError, StepNode,
+    TerminalKind, Value, check_unambiguous, json,
+};
 
 #[derive(Clone, Debug)]
 struct NestedRecord {
@@ -251,7 +257,7 @@ impl AdvancedCompiler {
         // child's ordinary durable decision remains the sole path authority.
         for edges in outgoing.values_mut() {
             for edge in edges.iter_mut() {
-                edge.target = self.resolve_nested_target(edge.target.clone(), &nested_scopes);
+                edge.target = Self::resolve_nested_target(edge.target.clone(), &nested_scopes);
             }
         }
         for (owner, scope) in &nested_scopes {
@@ -266,7 +272,7 @@ impl AdvancedCompiler {
                 .iter()
                 .cloned()
                 .map(|mut edge| {
-                    edge.target = self.resolve_nested_target(edge.target, &nested_scopes);
+                    edge.target = Self::resolve_nested_target(edge.target, &nested_scopes);
                     edge
                 })
                 .collect::<Vec<_>>();
@@ -322,7 +328,6 @@ impl AdvancedCompiler {
     }
 
     fn resolve_nested_target(
-        &self,
         target: FlowTarget,
         nested_scopes: &BTreeMap<NodeId, CompiledFlowScope>,
     ) -> FlowTarget {

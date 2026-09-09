@@ -1,8 +1,8 @@
-//! PostgreSQL 15/18 SIGKILL and restart evidence for M7 format-4 advanced flow.
+//! `PostgreSQL` 15/18 SIGKILL and restart evidence for M7 format-4 advanced flow.
 //!
 //! Each scenario parks a separate worker process only after the named durable
 //! flow event has been committed, then the parent sends SIGKILL. A fresh
-//! process inspects PostgreSQL, records an audited recovery decision, and
+//! process inspects `PostgreSQL`, records an audited recovery decision, and
 //! restarts the same definition with panic-on-reuse bindings. Any duplicated
 //! completed work or re-evaluated committed decider therefore fails closed.
 
@@ -159,10 +159,11 @@ impl FlowEventSink for CrashSink {
         if !self.point.matches_event(event) {
             return;
         }
-        std::fs::write(self.handshake.join("reached"), [])
-            .expect("worker must announce the durable crash boundary");
+        if let Err(error) = std::fs::write(self.handshake.join("reached"), []) {
+            panic!("worker must announce the durable crash boundary: {error}");
+        }
         loop {
-            std::thread::sleep(Duration::from_secs(60));
+            std::thread::sleep(Duration::from_mins(1));
         }
     }
 }
@@ -360,7 +361,7 @@ async fn run_worker(
     handshake: PathBuf,
     url: String,
 ) -> Result<(), Box<dyn Error>> {
-    let clock = FixedClock(SystemTime::UNIX_EPOCH + Duration::from_secs(12_000));
+    let clock = FixedClock(SystemTime::UNIX_EPOCH + Duration::from_mins(200));
     let repository = PostgresJobRepository::connect(config(url)?, Arc::new(clock)).await?;
     let ids = SequentialIdGenerator::new(NonZeroU64::MIN);
     let (_, stop) = StopSource::new();

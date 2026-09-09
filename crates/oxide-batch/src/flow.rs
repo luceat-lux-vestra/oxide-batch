@@ -1840,7 +1840,7 @@ impl<'a> FlowLauncher<'a> {
                         node_id = next;
                     }
                     FlowTarget::Terminal(terminal) => {
-                        let (status, exit_status, flow_failure) = match terminal {
+                        let (terminal_status, exit_status, flow_failure) = match terminal {
                             TerminalKind::Complete => {
                                 (BatchStatus::Completed, ExitStatus::completed(), None)
                             }
@@ -1853,14 +1853,14 @@ impl<'a> FlowLauncher<'a> {
                                 Some(source_failure.unwrap_or(FlowFailure::FailTerminal)),
                             ),
                         };
-                        let failure = if status == BatchStatus::Failed {
+                        let failure = if terminal_status == BatchStatus::Failed {
                             Some(self.next_failure_summary(FailureCategory::UserComponent)?)
                         } else {
                             None
                         };
-                        decisions.sort_by_key(|decision| decision.sequence());
+                        decisions.sort_by_key(FlowDecision::sequence);
                         return Ok(ScopeRun::terminal(
-                            status,
+                            terminal_status,
                             exit_status,
                             failure,
                             flow_failure,
@@ -1969,16 +1969,19 @@ impl<'a> FlowLauncher<'a> {
             ));
         }
 
-        let status = joined
+        let aggregate_status = joined
             .iter()
             .map(|branch| branch.status)
             .max_by_key(|status| split_status_severity(*status))
             .ok_or(FlowRuntimeError::Repository(
                 RepositoryError::FlowStateCorrupt,
             ))?;
-        let selected = joined.iter().find(|branch| branch.status == status).ok_or(
-            FlowRuntimeError::Repository(RepositoryError::FlowStateCorrupt),
-        )?;
+        let selected = joined
+            .iter()
+            .find(|branch| branch.status == aggregate_status)
+            .ok_or(FlowRuntimeError::Repository(
+                RepositoryError::FlowStateCorrupt,
+            ))?;
         let exit_status = selected.exit_status.clone();
         let failure = selected.failure;
         let flow_failure = selected.flow_failure.clone();
@@ -1993,9 +1996,9 @@ impl<'a> FlowLauncher<'a> {
             states.extend(branch.states);
             listener_failures.extend(branch.listener_failures);
         }
-        decisions.sort_by_key(|decision| decision.sequence());
+        decisions.sort_by_key(FlowDecision::sequence);
         Ok(SplitRun {
-            status,
+            status: aggregate_status,
             exit_status,
             failure,
             flow_failure,
@@ -3183,7 +3186,7 @@ impl ScopeRun {
         flow_failure: Option<FlowFailure>,
         step_executions: Vec<StepExecution>,
         decisions: Vec<FlowDecision>,
-        states: Vec<FlowStepState>,
+        flow_states: Vec<FlowStepState>,
         listener_failures: Vec<ListenerFailure>,
     ) -> Self {
         Self {
@@ -3193,7 +3196,7 @@ impl ScopeRun {
             flow_failure,
             step_executions,
             decisions,
-            states,
+            states: flow_states,
             listener_failures,
         }
     }
@@ -3296,7 +3299,6 @@ fn scope_execution_span(plan: &CompiledExecutionPlan, scope: &CompiledFlowScope)
                     span = span.saturating_add(branch_span.max(1));
                 }
             }
-            FlowNode::Decision(_) | FlowNode::Join(_) => {}
             _ => {}
         }
     }

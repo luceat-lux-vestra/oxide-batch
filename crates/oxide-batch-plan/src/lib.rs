@@ -652,6 +652,7 @@ impl CompiledFlowScope {
     }
 
     /// Iterates executable members in canonical logical-ID order.
+    #[must_use]
     pub fn members(&self) -> impl ExactSizeIterator<Item = &NodeId> {
         self.members.iter()
     }
