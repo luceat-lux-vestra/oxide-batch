@@ -16,16 +16,16 @@ use sha2::{Digest, Sha256};
 
 use crate::runtime::{invoke_after_step, invoke_before_step, invoke_tasklet};
 use crate::{
-    BatchStatus, BoxFuture, Clock, CompiledExecutionPlan, ExecutionAttempt, ExecutionCorrelation,
-    ExecutionCounts, ExitCode, ExitStatus, FailureCategory, FailureSummary, FlowDecision,
-    FlowDecisionRequest, FlowDecisionSequence, FlowNode, FlowSelectionError, FlowStepState,
-    FlowTarget, FlowTransitionKind, IdGenerator, JobExecution, JobExecutionId, JobInstance,
-    JobInstanceId, JobInstanceKey, JobName, JobParameters, JobRepository, LifecycleTransition,
-    ListenerContext, ListenerFailure, ListenerFailureKind, ListenerPhase, NodeId, PartitionKey,
-    PartitionPlanEntry, RepositoryCapability, RepositoryError, StartLimit, StepExecution,
-    StepExecutionId, StepName, StepPartition, StopPollInterval, StopTiming, StopToken,
-    TaskletContext, TaskletExecutionOutcome, TaskletFailure, TaskletOutcome, TaskletStep,
-    TerminalKind,
+    BatchStatus, BoxFuture, Clock, CompiledExecutionPlan, CompiledFlowScope, ExecutionAttempt,
+    ExecutionCorrelation, ExecutionCounts, ExitCode, ExitStatus, FailureCategory, FailureSummary,
+    FlowDecision, FlowDecisionRequest, FlowDecisionSequence, FlowNode, FlowSelectionError,
+    FlowStepState, FlowTarget, FlowTransitionKind, IdGenerator, JobExecution, JobExecutionId,
+    JobInstance, JobInstanceId, JobInstanceKey, JobName, JobParameters, JobRepository,
+    LifecycleTransition, ListenerContext, ListenerFailure, ListenerFailureKind, ListenerPhase,
+    NodeId, PartitionKey, PartitionPlanEntry, RepositoryCapability, RepositoryError, StartLimit,
+    StepExecution, StepExecutionId, StepName, StepPartition, StopPollInterval, StopTiming,
+    StopToken, TaskletContext, TaskletExecutionOutcome, TaskletFailure, TaskletOutcome,
+    TaskletStep, TerminalKind,
 };
 
 pub(crate) fn decision_matches_manifest(manifest: &Value, request: &FlowDecisionRequest) -> bool {
@@ -38,9 +38,11 @@ pub(crate) fn decision_matches_manifest(manifest: &Value, request: &FlowDecision
         Some(value)
             if value == u64::from(oxide_batch_core::MANIFEST_FORMAT_FLOW)
                 || value == u64::from(oxide_batch_core::MANIFEST_FORMAT_LOCAL_SCALE)
+                || value == u64::from(oxide_batch_core::MANIFEST_FORMAT_ADVANCED_FLOW)
     ) {
         return false;
     }
+    let advanced = format == Some(u64::from(oxide_batch_core::MANIFEST_FORMAT_ADVANCED_FLOW));
     let source_is_declared = document
         .get("nodes")
         .and_then(Value::as_array)
@@ -60,6 +62,9 @@ pub(crate) fn decision_matches_manifest(manifest: &Value, request: &FlowDecision
                 };
                 node.get("id").and_then(Value::as_str) == Some(request.source_node_id().as_str())
                     && kind_matches
+                    && (!advanced
+                        || node.get("decision_sequence").and_then(Value::as_u64)
+                            == Some(request.sequence().get()))
             })
         });
     if !source_is_declared {
@@ -528,7 +533,9 @@ impl FlowJob {
     pub fn new(name: JobName, plan: CompiledExecutionPlan) -> Result<Self, FlowJobError> {
         if !matches!(
             plan.manifest_format(),
-            oxide_batch_core::MANIFEST_FORMAT_FLOW | oxide_batch_core::MANIFEST_FORMAT_LOCAL_SCALE
+            oxide_batch_core::MANIFEST_FORMAT_FLOW
+                | oxide_batch_core::MANIFEST_FORMAT_LOCAL_SCALE
+                | oxide_batch_core::MANIFEST_FORMAT_ADVANCED_FLOW
         ) {
             return Err(FlowJobError::UnsupportedManifest {
                 format: plan.manifest_format(),
@@ -1308,513 +1315,564 @@ impl<'a> FlowLauncher<'a> {
             .await?;
         self.observe_process_shutdown(stop_token);
 
-        let mut node_id = job.plan.entry().clone();
-        let mut preceding: Option<FlowStepState> = None;
-        let mut steps = Vec::new();
-        let mut decisions = Vec::new();
-        let mut listener_failures = Vec::new();
-
-        loop {
-            self.observe_process_shutdown(stop_token);
-            if stop_token.is_stop_requested() {
-                let final_job = self
-                    .finish_job(&execution, BatchStatus::Stopped, None)
-                    .await?;
-                return Ok(FlowLaunchReport {
-                    instance,
-                    job_execution: final_job,
-                    step_executions: steps,
-                    decisions,
-                    outcome: FlowExecutionOutcome::Stopped,
-                    listener_failures,
-                });
-            }
-
-            let node = job.plan.node(&node_id).ok_or_else(|| {
-                FlowRuntimeError::Job(FlowJobError::MissingBinding {
-                    node: node_id.clone(),
-                })
-            })?;
-            let (
-                transition_node,
-                observed,
-                source_step,
-                kind,
-                input_digest,
-                reused,
-                source_failure,
-            ) = match node {
-                FlowNode::Step(compiled) => {
-                    let historical = self.latest_step(instance.id(), &node_id).await?;
-                    if let Some(history) = historical.as_ref()
-                        && history.execution().metadata().status() == BatchStatus::Completed
-                        && !compiled.start_controls().allow_start_if_complete()
-                    {
-                        let digest = step_input_digest(job.plan.fingerprint(), history);
-                        let reused = self
-                            .reusable_decision(
-                                instance.id(),
-                                &node_id,
-                                job.plan.fingerprint(),
-                                &digest,
-                                FlowTransitionKind::StepExit,
-                            )
-                            .await?;
-                        preceding = Some(history.clone());
-                        (
-                            node_id.clone(),
-                            history.execution().metadata().exit_status().clone(),
-                            Some(history.execution().id()),
-                            FlowTransitionKind::CompletedStepReuse,
-                            digest,
-                            reused.map(|decision| decision.id()),
-                            None,
-                        )
-                    } else {
-                        let tasklet = job.steps.get(&node_id).ok_or_else(|| {
-                            FlowRuntimeError::Job(FlowJobError::MissingBinding {
-                                node: node_id.clone(),
-                            })
-                        })?;
-                        let created = match self
-                            .create_step(
-                                execution.id(),
-                                compiled.step_name(),
-                                &node_id,
-                                compiled.start_controls().start_limit(),
-                            )
-                            .await
-                        {
-                            Ok(created) => created,
-                            Err(FlowRuntimeError::Repository(
-                                RepositoryError::StartLimitExceeded { limit, .. },
-                            )) => {
-                                self.emit_flow_event(&FlowEvent::new(
-                                    FlowEventKind::StartLimitExceeded,
-                                    job.name.clone(),
-                                    instance.id(),
-                                    execution.id(),
-                                    attempt,
-                                    node_id.clone(),
-                                    None,
-                                    None,
-                                    self.clock.now(),
-                                ));
-                                let failure =
-                                    self.next_failure_summary(FailureCategory::IllegalTransition)?;
-                                let final_job = self
-                                    .finish_job(&execution, BatchStatus::Failed, Some(failure))
-                                    .await?;
-                                return Ok(FlowLaunchReport {
-                                    instance,
-                                    job_execution: final_job,
-                                    step_executions: steps,
-                                    decisions,
-                                    outcome: FlowExecutionOutcome::Failed(
-                                        FlowFailure::StartLimitExceeded {
-                                            node: node_id,
-                                            limit,
-                                        },
-                                    ),
-                                    listener_failures,
-                                });
-                            }
-                            Err(error) => return Err(error),
-                        };
-                        let correlation = correlation(
-                            &job.name,
-                            instance.id(),
-                            execution.id(),
-                            attempt,
-                            compiled.step_name(),
-                            created.id(),
-                            steps.len(),
-                        )?;
-                        let run = self
-                            .run_step(
-                                &node_id,
-                                tasklet,
-                                created,
-                                parameters,
-                                stop_token,
-                                &correlation,
-                            )
-                            .await?;
-                        listener_failures.extend(run.listener_failures);
-                        steps.push(run.execution.clone());
-                        if run.outcome == TaskletExecutionOutcome::Unknown {
-                            let final_job = self
-                                .finish_job(&execution, BatchStatus::Unknown, run.failure)
-                                .await?;
-                            return Ok(FlowLaunchReport {
-                                instance,
-                                job_execution: final_job,
-                                step_executions: steps,
-                                decisions,
-                                outcome: FlowExecutionOutcome::Unknown,
-                                listener_failures,
-                            });
-                        }
-                        if matches!(run.outcome, TaskletExecutionOutcome::Stopped(_)) {
-                            let final_job = self
-                                .finish_job(&execution, BatchStatus::Stopped, None)
-                                .await?;
-                            return Ok(FlowLaunchReport {
-                                instance,
-                                job_execution: final_job,
-                                step_executions: steps,
-                                decisions,
-                                outcome: FlowExecutionOutcome::Stopped,
-                                listener_failures,
-                            });
-                        }
-                        let state = self.latest_step(instance.id(), &node_id).await?.ok_or(
-                            FlowRuntimeError::Repository(RepositoryError::FlowStateCorrupt),
-                        )?;
-                        let digest = step_input_digest(job.plan.fingerprint(), &state);
-                        preceding = Some(state);
-                        (
-                            node_id.clone(),
-                            run.exit_status,
-                            Some(run.execution.id()),
-                            FlowTransitionKind::StepExit,
-                            digest,
-                            None,
-                            run.flow_failure,
-                        )
-                    }
-                }
-                FlowNode::Decision(compiled) => {
-                    let digest = decision_input_digest(
-                        job.plan.fingerprint(),
-                        &node_id,
-                        compiled.revision().as_str(),
-                        compiled.input_version().get(),
-                        instance.id(),
-                        parameters,
-                        preceding.as_ref(),
-                    );
-                    if let Some(prior) = self
-                        .reusable_decision(
-                            instance.id(),
-                            &node_id,
-                            job.plan.fingerprint(),
-                            &digest,
-                            FlowTransitionKind::Decider,
-                        )
-                        .await?
-                    {
-                        (
-                            node_id.clone(),
-                            ExitStatus::new(prior.observed_outcome().clone()),
-                            None,
-                            FlowTransitionKind::Decider,
-                            digest,
-                            Some(prior.id()),
-                            None,
-                        )
-                    } else {
-                        let decider = job.deciders.get(&node_id).ok_or_else(|| {
-                            FlowRuntimeError::Job(FlowJobError::MissingBinding {
-                                node: node_id.clone(),
-                            })
-                        })?;
-                        let input = DecisionInput {
-                            job_instance_id: instance.id(),
-                            job_execution_id: execution.id(),
-                            attempt,
-                            plan_fingerprint: *job.plan.fingerprint(),
-                            node_id: &node_id,
-                            parameters,
-                            preceding_step: preceding.as_ref().map(DecisionStepInput::from_state),
-                        };
-                        match invoke_decider(decider.as_ref(), input).await {
-                            Ok(outcome) => (
-                                node_id.clone(),
-                                outcome,
-                                None,
-                                FlowTransitionKind::Decider,
-                                digest,
-                                None,
-                                None,
-                            ),
-                            Err(flow_failure) => {
-                                let failure =
-                                    self.next_failure_summary(FailureCategory::UserComponent)?;
-                                let final_job = self
-                                    .finish_job(&execution, BatchStatus::Failed, Some(failure))
-                                    .await?;
-                                return Ok(FlowLaunchReport {
-                                    instance,
-                                    job_execution: final_job,
-                                    step_executions: steps,
-                                    decisions,
-                                    outcome: FlowExecutionOutcome::Failed(flow_failure),
-                                    listener_failures,
-                                });
-                            }
-                        }
-                    }
-                }
-                FlowNode::Split(split) => {
-                    let run = self
-                        .run_split(
-                            job,
-                            split,
-                            &split_tasklets,
-                            instance.id(),
-                            execution.id(),
-                            attempt,
-                            parameters,
-                            stop_token,
-                        )
-                        .await?;
-                    steps.extend(run.step_executions);
-                    listener_failures.extend(run.listener_failures);
-                    preceding = None;
-                    if run.status == BatchStatus::Unknown {
-                        let final_job = self
-                            .finish_job(&execution, BatchStatus::Unknown, run.failure)
-                            .await?;
-                        return Ok(FlowLaunchReport {
-                            instance,
-                            job_execution: final_job,
-                            step_executions: steps,
-                            decisions,
-                            outcome: FlowExecutionOutcome::Unknown,
-                            listener_failures,
-                        });
-                    }
-                    if run.status == BatchStatus::Stopped {
-                        let final_job = self
-                            .finish_job(&execution, BatchStatus::Stopped, None)
-                            .await?;
-                        return Ok(FlowLaunchReport {
-                            instance,
-                            job_execution: final_job,
-                            step_executions: steps,
-                            decisions,
-                            outcome: FlowExecutionOutcome::Stopped,
-                            listener_failures,
-                        });
-                    }
-                    let reused = self
-                        .reusable_decision(
-                            instance.id(),
-                            split.join(),
-                            job.plan.fingerprint(),
-                            &run.input_digest,
-                            FlowTransitionKind::SplitAggregate,
-                        )
-                        .await?;
-                    (
-                        split.join().clone(),
-                        run.exit_status,
-                        None,
-                        FlowTransitionKind::SplitAggregate,
-                        run.input_digest,
-                        reused.map(|decision| decision.id()),
-                        run.flow_failure,
-                    )
-                }
-                FlowNode::PartitionedStep(compiled) => {
-                    let historical = self.latest_step(instance.id(), &node_id).await?;
-                    if let Some(history) = historical.as_ref()
-                        && history.execution().metadata().status() == BatchStatus::Completed
-                        && !compiled.start_controls().allow_start_if_complete()
-                    {
-                        let digest = step_input_digest(job.plan.fingerprint(), history);
-                        let reused = self
-                            .reusable_decision(
-                                instance.id(),
-                                &node_id,
-                                job.plan.fingerprint(),
-                                &digest,
-                                FlowTransitionKind::StepExit,
-                            )
-                            .await?;
-                        preceding = Some(history.clone());
-                        (
-                            node_id.clone(),
-                            history.execution().metadata().exit_status().clone(),
-                            Some(history.execution().id()),
-                            FlowTransitionKind::CompletedStepReuse,
-                            digest,
-                            reused.map(|decision| decision.id()),
-                            None,
-                        )
-                    } else {
-                        let binding = job.partitioned_tasklets.get(&node_id).ok_or_else(|| {
-                            FlowRuntimeError::Job(FlowJobError::MissingBinding {
-                                node: node_id.clone(),
-                            })
-                        })?;
-                        let run = self
-                            .run_partitioned_step(
-                                job,
-                                compiled,
-                                binding,
-                                historical.as_ref(),
-                                instance.id(),
-                                execution.id(),
-                                attempt,
-                                parameters,
-                                stop_token,
-                            )
-                            .await?;
-                        listener_failures.extend(run.listener_failures);
-                        steps.extend(run.worker_executions);
-                        steps.push(run.parent.clone());
-                        if run.status == BatchStatus::Stopped {
-                            let final_job = self
-                                .finish_job(&execution, BatchStatus::Stopped, None)
-                                .await?;
-                            return Ok(FlowLaunchReport {
-                                instance,
-                                job_execution: final_job,
-                                step_executions: steps,
-                                decisions,
-                                outcome: FlowExecutionOutcome::Stopped,
-                                listener_failures,
-                            });
-                        }
-                        let state = self.latest_step(instance.id(), &node_id).await?.ok_or(
-                            FlowRuntimeError::Repository(RepositoryError::FlowStateCorrupt),
-                        )?;
-                        let digest = step_input_digest(job.plan.fingerprint(), &state);
-                        preceding = Some(state);
-                        (
-                            node_id.clone(),
-                            run.exit_status,
-                            Some(run.parent.id()),
-                            FlowTransitionKind::StepExit,
-                            digest,
-                            None,
-                            run.flow_failure,
-                        )
-                    }
-                }
-                // A `FlowNode` variant added after this build cannot be
-                // dispatched here, so it is refused exactly as `Join` is
-                // rather than executed as a guessed node kind.
-                FlowNode::Join(_) | _ => {
-                    return Err(FlowRuntimeError::Job(FlowJobError::UnsupportedManifest {
-                        format: job.plan.manifest_format(),
-                    }));
-                }
-            };
-
-            let target = match job.plan.select_target(&transition_node, observed.code()) {
-                Ok(target) => target.clone(),
-                Err(FlowSelectionError::UnmappedExitOutcome { node, code }) => {
-                    let failure = self.next_failure_summary(FailureCategory::InvalidDefinition)?;
-                    let final_job = self
-                        .finish_job(&execution, BatchStatus::Failed, Some(failure))
-                        .await?;
-                    return Ok(FlowLaunchReport {
-                        instance,
-                        job_execution: final_job,
-                        step_executions: steps,
-                        decisions,
-                        outcome: FlowExecutionOutcome::Failed(FlowFailure::UnmappedExitOutcome {
-                            node,
-                            code,
-                        }),
-                        listener_failures,
-                    });
-                }
-                Err(FlowSelectionError::UnknownNode { .. }) => {
-                    return Err(FlowRuntimeError::Job(FlowJobError::MissingBinding {
-                        node: transition_node,
-                    }));
-                }
-                // A `FlowSelectionError` variant added after this build names a
-                // selection this runtime cannot interpret. No transition is
-                // taken and no decision is persisted; the launch stops as an
-                // unsupported manifest rather than following a guessed target.
-                Err(_) => {
-                    return Err(FlowRuntimeError::Job(FlowJobError::UnsupportedManifest {
-                        format: job.plan.manifest_format(),
-                    }));
-                }
-            };
-            let sequence = next_sequence(decisions.len())?;
-            let request = FlowDecisionRequest::new(
-                execution.id(),
-                sequence,
-                transition_node.clone(),
-                source_step,
-                kind,
-                observed.code().clone(),
-                target.clone(),
-                *job.plan.fingerprint(),
-                input_digest,
-                reused,
-                self.clock.now(),
-            );
-            let decision = self.append_decision(&request).await?;
-            self.emit_flow_event(&FlowEvent::new(
-                FlowEventKind::DecisionCommitted,
-                job.name.clone(),
+        let run = self
+            .run_scope(
+                job,
+                job.plan.root_scope(),
+                &split_tasklets,
                 instance.id(),
                 execution.id(),
                 attempt,
-                transition_node.clone(),
-                source_step,
-                Some(target.clone()),
-                decision.decided_at(),
-            ));
-            if kind == FlowTransitionKind::CompletedStepReuse {
+                parameters,
+                stop_token,
+                0,
+            )
+            .await?;
+        let outcome = match run.status {
+            BatchStatus::Completed => FlowExecutionOutcome::Completed,
+            BatchStatus::Stopped => FlowExecutionOutcome::Stopped,
+            BatchStatus::Unknown => FlowExecutionOutcome::Unknown,
+            BatchStatus::Failed => FlowExecutionOutcome::Failed(
+                run.flow_failure
+                    .clone()
+                    .unwrap_or(FlowFailure::FailTerminal),
+            ),
+            _ => {
+                return Err(FlowRuntimeError::Repository(
+                    RepositoryError::FlowStateCorrupt,
+                ));
+            }
+        };
+        let final_job = self.finish_job(&execution, run.status, run.failure).await?;
+        Ok(FlowLaunchReport {
+            instance,
+            job_execution: final_job,
+            step_executions: run.step_executions,
+            decisions: run.decisions,
+            outcome,
+            listener_failures: run.listener_failures,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    fn run_scope<'b>(
+        &'b self,
+        job: &'b FlowJob,
+        scope: &'b CompiledFlowScope,
+        split_tasklets: &'b BTreeMap<NodeId, TaskletStep>,
+        instance_id: JobInstanceId,
+        execution_id: JobExecutionId,
+        attempt: ExecutionAttempt,
+        parameters: &'b JobParameters,
+        stop_token: &'b StopToken,
+        ordinal_base: usize,
+    ) -> BoxFuture<'b, Result<ScopeRun, FlowRuntimeError>> {
+        Box::pin(async move {
+            let mut node_id = scope.entry().clone();
+            let mut preceding: Option<FlowStepState> = None;
+            let mut steps = Vec::new();
+            let mut decisions = Vec::new();
+            let mut states = Vec::new();
+            let mut listener_failures = Vec::new();
+
+            loop {
+                self.observe_process_shutdown(stop_token);
+                if stop_token.is_stop_requested() {
+                    return Ok(ScopeRun::terminal(
+                        BatchStatus::Stopped,
+                        ExitStatus::stopped(),
+                        None,
+                        None,
+                        steps,
+                        decisions,
+                        states,
+                        listener_failures,
+                    ));
+                }
+
+                let node = job.plan.node(&node_id).ok_or_else(|| {
+                    FlowRuntimeError::Job(FlowJobError::MissingBinding {
+                        node: node_id.clone(),
+                    })
+                })?;
+                let (
+                    transition_node,
+                    observed,
+                    source_step,
+                    kind,
+                    input_digest,
+                    reused,
+                    source_failure,
+                ) = match node {
+                    FlowNode::Step(compiled) => {
+                        let historical = self.latest_step(instance_id, &node_id).await?;
+                        if let Some(history) = historical.as_ref()
+                            && history.execution().metadata().status() == BatchStatus::Completed
+                            && !compiled.start_controls().allow_start_if_complete()
+                        {
+                            let digest = step_input_digest(job.plan.fingerprint(), history);
+                            let reused = self
+                                .reusable_decision(
+                                    instance_id,
+                                    &node_id,
+                                    job.plan.fingerprint(),
+                                    &digest,
+                                    FlowTransitionKind::StepExit,
+                                )
+                                .await?;
+                            preceding = Some(history.clone());
+                            states.push(history.clone());
+                            (
+                                node_id.clone(),
+                                history.execution().metadata().exit_status().clone(),
+                                Some(history.execution().id()),
+                                FlowTransitionKind::CompletedStepReuse,
+                                digest,
+                                reused.map(|decision| decision.id()),
+                                None,
+                            )
+                        } else {
+                            let tasklet = job.steps.get(&node_id).ok_or_else(|| {
+                                FlowRuntimeError::Job(FlowJobError::MissingBinding {
+                                    node: node_id.clone(),
+                                })
+                            })?;
+                            let created = match self
+                                .create_step(
+                                    execution_id,
+                                    compiled.step_name(),
+                                    &node_id,
+                                    compiled.start_controls().start_limit(),
+                                )
+                                .await
+                            {
+                                Ok(created) => created,
+                                Err(FlowRuntimeError::Repository(
+                                    RepositoryError::StartLimitExceeded { limit, .. },
+                                )) => {
+                                    self.emit_flow_event(&FlowEvent::new(
+                                        FlowEventKind::StartLimitExceeded,
+                                        job.name.clone(),
+                                        instance_id,
+                                        execution_id,
+                                        attempt,
+                                        node_id.clone(),
+                                        None,
+                                        None,
+                                        self.clock.now(),
+                                    ));
+                                    let failure = self
+                                        .next_failure_summary(FailureCategory::IllegalTransition)?;
+                                    return Ok(ScopeRun::terminal(
+                                        BatchStatus::Failed,
+                                        ExitStatus::failed(),
+                                        Some(failure),
+                                        Some(FlowFailure::StartLimitExceeded {
+                                            node: node_id,
+                                            limit,
+                                        }),
+                                        steps,
+                                        decisions,
+                                        states,
+                                        listener_failures,
+                                    ));
+                                }
+                                Err(error) => return Err(error),
+                            };
+                            let correlation = correlation(
+                                &job.name,
+                                instance_id,
+                                execution_id,
+                                attempt,
+                                compiled.step_name(),
+                                created.id(),
+                                ordinal_base.saturating_add(steps.len()),
+                            )?;
+                            let run = self
+                                .run_step(
+                                    &node_id,
+                                    tasklet,
+                                    created,
+                                    parameters,
+                                    stop_token,
+                                    &correlation,
+                                )
+                                .await?;
+                            listener_failures.extend(run.listener_failures);
+                            steps.push(run.execution.clone());
+                            if run.outcome == TaskletExecutionOutcome::Unknown {
+                                return Ok(ScopeRun::terminal(
+                                    BatchStatus::Unknown,
+                                    ExitStatus::unknown(),
+                                    run.failure,
+                                    None,
+                                    steps,
+                                    decisions,
+                                    states,
+                                    listener_failures,
+                                ));
+                            }
+                            if matches!(run.outcome, TaskletExecutionOutcome::Stopped(_)) {
+                                return Ok(ScopeRun::terminal(
+                                    BatchStatus::Stopped,
+                                    ExitStatus::stopped(),
+                                    None,
+                                    run.flow_failure,
+                                    steps,
+                                    decisions,
+                                    states,
+                                    listener_failures,
+                                ));
+                            }
+                            let state = self.latest_step(instance_id, &node_id).await?.ok_or(
+                                FlowRuntimeError::Repository(RepositoryError::FlowStateCorrupt),
+                            )?;
+                            let digest = step_input_digest(job.plan.fingerprint(), &state);
+                            preceding = Some(state.clone());
+                            states.push(state);
+                            (
+                                node_id.clone(),
+                                run.exit_status,
+                                Some(run.execution.id()),
+                                FlowTransitionKind::StepExit,
+                                digest,
+                                None,
+                                run.flow_failure,
+                            )
+                        }
+                    }
+                    FlowNode::Decision(compiled) => {
+                        let digest = decision_input_digest(
+                            job.plan.fingerprint(),
+                            &node_id,
+                            compiled.revision().as_str(),
+                            compiled.input_version().get(),
+                            instance_id,
+                            parameters,
+                            preceding.as_ref(),
+                        );
+                        if let Some(prior) = self
+                            .reusable_decision(
+                                instance_id,
+                                &node_id,
+                                job.plan.fingerprint(),
+                                &digest,
+                                FlowTransitionKind::Decider,
+                            )
+                            .await?
+                        {
+                            (
+                                node_id.clone(),
+                                ExitStatus::new(prior.observed_outcome().clone()),
+                                None,
+                                FlowTransitionKind::Decider,
+                                digest,
+                                Some(prior.id()),
+                                None,
+                            )
+                        } else {
+                            let decider = job.deciders.get(&node_id).ok_or_else(|| {
+                                FlowRuntimeError::Job(FlowJobError::MissingBinding {
+                                    node: node_id.clone(),
+                                })
+                            })?;
+                            let input = DecisionInput {
+                                job_instance_id: instance_id,
+                                job_execution_id: execution_id,
+                                attempt,
+                                plan_fingerprint: *job.plan.fingerprint(),
+                                node_id: &node_id,
+                                parameters,
+                                preceding_step: preceding
+                                    .as_ref()
+                                    .map(DecisionStepInput::from_state),
+                            };
+                            match invoke_decider(decider.as_ref(), input).await {
+                                Ok(outcome) => (
+                                    node_id.clone(),
+                                    outcome,
+                                    None,
+                                    FlowTransitionKind::Decider,
+                                    digest,
+                                    None,
+                                    None,
+                                ),
+                                Err(flow_failure) => {
+                                    let failure =
+                                        self.next_failure_summary(FailureCategory::UserComponent)?;
+                                    return Ok(ScopeRun::terminal(
+                                        BatchStatus::Failed,
+                                        ExitStatus::failed(),
+                                        Some(failure),
+                                        Some(flow_failure),
+                                        steps,
+                                        decisions,
+                                        states,
+                                        listener_failures,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    FlowNode::Split(split) => {
+                        let run = self
+                            .run_split(
+                                job,
+                                split,
+                                split_tasklets,
+                                instance_id,
+                                execution_id,
+                                attempt,
+                                parameters,
+                                stop_token,
+                                ordinal_base.saturating_add(steps.len()),
+                            )
+                            .await?;
+                        steps.extend(run.step_executions);
+                        decisions.extend(run.decisions);
+                        states.extend(run.states);
+                        listener_failures.extend(run.listener_failures);
+                        preceding = None;
+                        if run.status == BatchStatus::Unknown {
+                            return Ok(ScopeRun::terminal(
+                                BatchStatus::Unknown,
+                                ExitStatus::unknown(),
+                                run.failure,
+                                run.flow_failure,
+                                steps,
+                                decisions,
+                                states,
+                                listener_failures,
+                            ));
+                        }
+                        if run.status == BatchStatus::Stopped {
+                            return Ok(ScopeRun::terminal(
+                                BatchStatus::Stopped,
+                                ExitStatus::stopped(),
+                                None,
+                                run.flow_failure,
+                                steps,
+                                decisions,
+                                states,
+                                listener_failures,
+                            ));
+                        }
+                        let reused = self
+                            .reusable_decision(
+                                instance_id,
+                                split.join(),
+                                job.plan.fingerprint(),
+                                &run.input_digest,
+                                FlowTransitionKind::SplitAggregate,
+                            )
+                            .await?;
+                        (
+                            split.join().clone(),
+                            run.exit_status,
+                            None,
+                            FlowTransitionKind::SplitAggregate,
+                            run.input_digest,
+                            reused.map(|decision| decision.id()),
+                            run.flow_failure,
+                        )
+                    }
+                    FlowNode::PartitionedStep(compiled) => {
+                        let historical = self.latest_step(instance_id, &node_id).await?;
+                        if let Some(history) = historical.as_ref()
+                            && history.execution().metadata().status() == BatchStatus::Completed
+                            && !compiled.start_controls().allow_start_if_complete()
+                        {
+                            let digest = step_input_digest(job.plan.fingerprint(), history);
+                            let reused = self
+                                .reusable_decision(
+                                    instance_id,
+                                    &node_id,
+                                    job.plan.fingerprint(),
+                                    &digest,
+                                    FlowTransitionKind::StepExit,
+                                )
+                                .await?;
+                            preceding = Some(history.clone());
+                            states.push(history.clone());
+                            (
+                                node_id.clone(),
+                                history.execution().metadata().exit_status().clone(),
+                                Some(history.execution().id()),
+                                FlowTransitionKind::CompletedStepReuse,
+                                digest,
+                                reused.map(|decision| decision.id()),
+                                None,
+                            )
+                        } else {
+                            let binding =
+                                job.partitioned_tasklets.get(&node_id).ok_or_else(|| {
+                                    FlowRuntimeError::Job(FlowJobError::MissingBinding {
+                                        node: node_id.clone(),
+                                    })
+                                })?;
+                            let run = self
+                                .run_partitioned_step(
+                                    job,
+                                    compiled,
+                                    binding,
+                                    historical.as_ref(),
+                                    instance_id,
+                                    execution_id,
+                                    attempt,
+                                    parameters,
+                                    stop_token,
+                                )
+                                .await?;
+                            listener_failures.extend(run.listener_failures);
+                            steps.extend(run.worker_executions);
+                            steps.push(run.parent.clone());
+                            if run.status == BatchStatus::Stopped {
+                                return Ok(ScopeRun::terminal(
+                                    BatchStatus::Stopped,
+                                    ExitStatus::stopped(),
+                                    None,
+                                    run.flow_failure,
+                                    steps,
+                                    decisions,
+                                    states,
+                                    listener_failures,
+                                ));
+                            }
+                            let state = self.latest_step(instance_id, &node_id).await?.ok_or(
+                                FlowRuntimeError::Repository(RepositoryError::FlowStateCorrupt),
+                            )?;
+                            let digest = step_input_digest(job.plan.fingerprint(), &state);
+                            preceding = Some(state.clone());
+                            states.push(state);
+                            (
+                                node_id.clone(),
+                                run.exit_status,
+                                Some(run.parent.id()),
+                                FlowTransitionKind::StepExit,
+                                digest,
+                                None,
+                                run.flow_failure,
+                            )
+                        }
+                    }
+                    FlowNode::Join(_) | _ => {
+                        return Err(FlowRuntimeError::Job(FlowJobError::UnsupportedManifest {
+                            format: job.plan.manifest_format(),
+                        }));
+                    }
+                };
+
+                let target = match job.plan.select_target(&transition_node, observed.code()) {
+                    Ok(target) => target.clone(),
+                    Err(FlowSelectionError::UnmappedExitOutcome { node, code }) => {
+                        let failure =
+                            self.next_failure_summary(FailureCategory::InvalidDefinition)?;
+                        return Ok(ScopeRun::terminal(
+                            BatchStatus::Failed,
+                            ExitStatus::failed(),
+                            Some(failure),
+                            Some(FlowFailure::UnmappedExitOutcome { node, code }),
+                            steps,
+                            decisions,
+                            states,
+                            listener_failures,
+                        ));
+                    }
+                    Err(FlowSelectionError::UnknownNode { .. }) => {
+                        return Err(FlowRuntimeError::Job(FlowJobError::MissingBinding {
+                            node: transition_node,
+                        }));
+                    }
+                    Err(_) => {
+                        return Err(FlowRuntimeError::Job(FlowJobError::UnsupportedManifest {
+                            format: job.plan.manifest_format(),
+                        }));
+                    }
+                };
+                let sequence = decision_sequence_for(&job.plan, &transition_node, decisions.len())?;
+                let request = FlowDecisionRequest::new(
+                    execution_id,
+                    sequence,
+                    transition_node.clone(),
+                    source_step,
+                    kind,
+                    observed.code().clone(),
+                    target.clone(),
+                    *job.plan.fingerprint(),
+                    input_digest,
+                    reused,
+                    self.clock.now(),
+                );
+                let decision = self.append_decision(&request).await?;
                 self.emit_flow_event(&FlowEvent::new(
-                    FlowEventKind::CompletedStepReused,
+                    FlowEventKind::DecisionCommitted,
                     job.name.clone(),
-                    instance.id(),
-                    execution.id(),
+                    instance_id,
+                    execution_id,
                     attempt,
                     transition_node.clone(),
                     source_step,
                     Some(target.clone()),
                     decision.decided_at(),
                 ));
-            }
-            decisions.push(decision);
+                if kind == FlowTransitionKind::CompletedStepReuse {
+                    self.emit_flow_event(&FlowEvent::new(
+                        FlowEventKind::CompletedStepReused,
+                        job.name.clone(),
+                        instance_id,
+                        execution_id,
+                        attempt,
+                        transition_node.clone(),
+                        source_step,
+                        Some(target.clone()),
+                        decision.decided_at(),
+                    ));
+                }
+                decisions.push(decision);
 
-            match target {
-                FlowTarget::Node(next) => node_id = next,
-                FlowTarget::Terminal(terminal) => {
-                    let (status, outcome) = match terminal {
-                        TerminalKind::Complete => {
-                            (BatchStatus::Completed, FlowExecutionOutcome::Completed)
+                match target {
+                    FlowTarget::Node(next) => {
+                        if !scope.contains(&next) {
+                            return Err(FlowRuntimeError::Job(FlowJobError::UnsupportedManifest {
+                                format: job.plan.manifest_format(),
+                            }));
                         }
-                        TerminalKind::Stop => (BatchStatus::Stopped, FlowExecutionOutcome::Stopped),
-                        // `TerminalKind::Fail`, and any terminal this build does
-                        // not know: `TerminalKind` is `#[non_exhaustive]`, and an
-                        // unrecognized terminal fails the job rather than
-                        // completing or stopping it.
-                        _ => (
-                            BatchStatus::Failed,
-                            FlowExecutionOutcome::Failed(
-                                source_failure.unwrap_or(FlowFailure::FailTerminal),
+                        node_id = next;
+                    }
+                    FlowTarget::Terminal(terminal) => {
+                        let (status, exit_status, flow_failure) = match terminal {
+                            TerminalKind::Complete => {
+                                (BatchStatus::Completed, ExitStatus::completed(), None)
+                            }
+                            TerminalKind::Stop => {
+                                (BatchStatus::Stopped, ExitStatus::stopped(), None)
+                            }
+                            _ => (
+                                BatchStatus::Failed,
+                                ExitStatus::failed(),
+                                Some(source_failure.unwrap_or(FlowFailure::FailTerminal)),
                             ),
-                        ),
-                    };
-                    let failure = if status == BatchStatus::Failed {
-                        Some(self.next_failure_summary(FailureCategory::UserComponent)?)
-                    } else {
-                        None
-                    };
-                    let final_job = self.finish_job(&execution, status, failure).await?;
-                    return Ok(FlowLaunchReport {
-                        instance,
-                        job_execution: final_job,
-                        step_executions: steps,
-                        decisions,
-                        outcome,
-                        listener_failures,
-                    });
+                        };
+                        let failure = if status == BatchStatus::Failed {
+                            Some(self.next_failure_summary(FailureCategory::UserComponent)?)
+                        } else {
+                            None
+                        };
+                        decisions.sort_by_key(|decision| decision.sequence());
+                        return Ok(ScopeRun::terminal(
+                            status,
+                            exit_status,
+                            failure,
+                            flow_failure,
+                            steps,
+                            decisions,
+                            states,
+                            listener_failures,
+                        ));
+                    }
                 }
             }
-        }
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1828,17 +1886,27 @@ impl<'a> FlowLauncher<'a> {
         attempt: ExecutionAttempt,
         parameters: &JobParameters,
         parent_stop: &StopToken,
+        correlation_base: usize,
     ) -> Result<SplitRun, FlowRuntimeError> {
         let (split_stop_source, split_stop) = crate::StopSource::new();
         if parent_stop.is_stop_requested() {
             split_stop_source.request_stop();
         }
 
-        let mut ordinal_base = 0_usize;
-        let branches = futures_util::stream::iter(split.branches().iter().enumerate().map(
-            |(index, branch)| {
-                let base = ordinal_base;
-                ordinal_base = ordinal_base.saturating_add(branch.steps().len());
+        let mut ordinal_base = correlation_base;
+        let mut branch_work = Vec::with_capacity(split.branches().len());
+        for (index, branch) in split.branches().iter().enumerate() {
+            let scope = job.plan.split_branch_scope(split.id(), index).cloned();
+            let base = ordinal_base;
+            let span = scope.as_ref().map_or_else(
+                || branch.steps().len(),
+                |scope| scope_execution_span(&job.plan, scope),
+            );
+            ordinal_base = ordinal_base.saturating_add(span.max(1));
+            branch_work.push((index, base, branch.clone(), scope));
+        }
+        let branches = futures_util::stream::iter(branch_work.into_iter().map(
+            |(index, base, branch, scope)| {
                 let split_stop = split_stop.clone();
                 async move {
                     self.run_split_branch(
@@ -1846,6 +1914,7 @@ impl<'a> FlowLauncher<'a> {
                         index,
                         base,
                         branch,
+                        scope,
                         tasklets,
                         instance_id,
                         execution_id,
@@ -1915,11 +1984,16 @@ impl<'a> FlowLauncher<'a> {
         let flow_failure = selected.flow_failure.clone();
         let input_digest = split_input_digest(job.plan.fingerprint(), split.join(), &joined);
         let mut step_executions = Vec::new();
+        let mut decisions = Vec::new();
+        let mut states = Vec::new();
         let mut listener_failures = Vec::new();
         for branch in joined {
             step_executions.extend(branch.step_executions);
+            decisions.extend(branch.decisions);
+            states.extend(branch.states);
             listener_failures.extend(branch.listener_failures);
         }
+        decisions.sort_by_key(|decision| decision.sequence());
         Ok(SplitRun {
             status,
             exit_status,
@@ -1927,6 +2001,8 @@ impl<'a> FlowLauncher<'a> {
             flow_failure,
             input_digest,
             step_executions,
+            decisions,
+            states,
             listener_failures,
         })
     }
@@ -1937,7 +2013,8 @@ impl<'a> FlowLauncher<'a> {
         job: &FlowJob,
         index: usize,
         ordinal_base: usize,
-        branch: &crate::SplitBranch,
+        branch: crate::SplitBranch,
+        scope: Option<CompiledFlowScope>,
         tasklets: &BTreeMap<NodeId, TaskletStep>,
         instance_id: JobInstanceId,
         execution_id: JobExecutionId,
@@ -1945,6 +2022,33 @@ impl<'a> FlowLauncher<'a> {
         parameters: &JobParameters,
         stop: &StopToken,
     ) -> Result<SplitBranchRun, FlowRuntimeError> {
+        if let Some(scope) = scope.as_ref() {
+            let run = self
+                .run_scope(
+                    job,
+                    scope,
+                    tasklets,
+                    instance_id,
+                    execution_id,
+                    attempt,
+                    parameters,
+                    stop,
+                    ordinal_base,
+                )
+                .await?;
+            return Ok(SplitBranchRun {
+                index,
+                status: run.status,
+                exit_status: run.exit_status,
+                failure: run.failure,
+                flow_failure: run.flow_failure,
+                states: run.states,
+                step_executions: run.step_executions,
+                decisions: run.decisions,
+                listener_failures: run.listener_failures,
+            });
+        }
+
         let mut durable_states = Vec::with_capacity(branch.steps().len());
         let mut step_executions = Vec::new();
         let mut listener_failures = Vec::new();
@@ -2052,6 +2156,7 @@ impl<'a> FlowLauncher<'a> {
             flow_failure,
             states: durable_states,
             step_executions,
+            decisions: Vec::new(),
             listener_failures,
         })
     }
@@ -3058,6 +3163,42 @@ struct StepRun {
     listener_failures: Vec<ListenerFailure>,
 }
 
+struct ScopeRun {
+    status: BatchStatus,
+    exit_status: ExitStatus,
+    failure: Option<FailureSummary>,
+    flow_failure: Option<FlowFailure>,
+    step_executions: Vec<StepExecution>,
+    decisions: Vec<FlowDecision>,
+    states: Vec<FlowStepState>,
+    listener_failures: Vec<ListenerFailure>,
+}
+
+impl ScopeRun {
+    #[allow(clippy::too_many_arguments)]
+    fn terminal(
+        status: BatchStatus,
+        exit_status: ExitStatus,
+        failure: Option<FailureSummary>,
+        flow_failure: Option<FlowFailure>,
+        step_executions: Vec<StepExecution>,
+        decisions: Vec<FlowDecision>,
+        states: Vec<FlowStepState>,
+        listener_failures: Vec<ListenerFailure>,
+    ) -> Self {
+        Self {
+            status,
+            exit_status,
+            failure,
+            flow_failure,
+            step_executions,
+            decisions,
+            states,
+            listener_failures,
+        }
+    }
+}
+
 struct SplitBranchRun {
     index: usize,
     status: BatchStatus,
@@ -3066,6 +3207,7 @@ struct SplitBranchRun {
     flow_failure: Option<FlowFailure>,
     states: Vec<FlowStepState>,
     step_executions: Vec<StepExecution>,
+    decisions: Vec<FlowDecision>,
     listener_failures: Vec<ListenerFailure>,
 }
 
@@ -3076,6 +3218,8 @@ struct SplitRun {
     flow_failure: Option<FlowFailure>,
     input_digest: [u8; 32],
     step_executions: Vec<StepExecution>,
+    decisions: Vec<FlowDecision>,
+    states: Vec<FlowStepState>,
     listener_failures: Vec<ListenerFailure>,
 }
 
@@ -3131,6 +3275,49 @@ fn split_input_digest(
         }
     }
     hash.finalize().into()
+}
+
+fn scope_execution_span(plan: &CompiledExecutionPlan, scope: &CompiledFlowScope) -> usize {
+    let mut span = 0_usize;
+    for node_id in scope.members() {
+        let Some(node) = plan.node(node_id) else {
+            continue;
+        };
+        match node {
+            FlowNode::Step(_) | FlowNode::PartitionedStep(_) => {
+                span = span.saturating_add(1);
+            }
+            FlowNode::Split(split) => {
+                for (ordinal, branch) in split.branches().iter().enumerate() {
+                    let branch_span = plan.split_branch_scope(split.id(), ordinal).map_or_else(
+                        || branch.steps().len(),
+                        |child| scope_execution_span(plan, child),
+                    );
+                    span = span.saturating_add(branch_span.max(1));
+                }
+            }
+            FlowNode::Decision(_) | FlowNode::Join(_) => {}
+            _ => {}
+        }
+    }
+    span
+}
+
+fn decision_sequence_for(
+    plan: &CompiledExecutionPlan,
+    source: &NodeId,
+    observed_count: usize,
+) -> Result<FlowDecisionSequence, FlowRuntimeError> {
+    if plan.manifest_format() == oxide_batch_core::MANIFEST_FORMAT_ADVANCED_FLOW {
+        let sequence = plan
+            .decision_sequence(source)
+            .ok_or(FlowRuntimeError::Repository(
+                RepositoryError::FlowStateCorrupt,
+            ))?;
+        FlowDecisionSequence::new(sequence).map_err(|_| FlowRuntimeError::DecisionSequenceExhausted)
+    } else {
+        next_sequence(observed_count)
+    }
 }
 
 fn next_sequence(length: usize) -> Result<FlowDecisionSequence, FlowRuntimeError> {

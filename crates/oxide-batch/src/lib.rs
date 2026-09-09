@@ -498,11 +498,12 @@ pub use oxide_batch_core::{
     VersionedStateCodec,
 };
 pub use oxide_batch_plan::{
-    CompiledExecutionPlan, DeciderRevision, DecisionInputVersion, DecisionNode, ExitPattern,
-    FlowGraph, FlowNode, FlowSelectionError, FlowTransition, JoinNode, LocalFailurePolicy,
-    MAX_BRANCH_STEPS, MAX_OUTGOING_TRANSITIONS, MAX_PARTITION_WORKERS, MAX_PATTERN_BYTES,
-    MAX_SPLIT_BRANCHES, PartitionBudget, PartitionCount, PartitionedStepNode, PatternSpecificity,
-    PlanError, SplitBranch, SplitBudget, SplitNode, StepComponents, StepNode,
+    CompiledExecutionPlan, CompiledFlowScope, DeciderRevision, DecisionInputVersion, DecisionNode,
+    ExitPattern, FlowGraph, FlowNode, FlowSelectionError, FlowTransition, JoinNode,
+    LocalFailurePolicy, MAX_BRANCH_STEPS, MAX_FLOW_COMPOSITION_DEPTH, MAX_OUTGOING_TRANSITIONS,
+    MAX_PARTITION_WORKERS, MAX_PATTERN_BYTES, MAX_SPLIT_BRANCHES, NestedFlow, PartitionBudget,
+    PartitionCount, PartitionedStepNode, PatternSpecificity, PlanError, SplitBranch, SplitBudget,
+    SplitNode, StepComponents, StepNode,
 };
 pub use oxide_batch_repository::{
     ActorRef, AuthorizationClass, BoxFuture, Clock, Cursor, CursorError, CursorKey,

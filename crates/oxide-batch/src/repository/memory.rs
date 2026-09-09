@@ -972,17 +972,24 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .get(&request.job_execution_id())
                 .cloned()
                 .unwrap_or_default();
-            let expected_sequence = u64::try_from(existing.len())
-                .ok()
-                .and_then(|value| value.checked_add(1))
-                .ok_or(RepositoryError::FlowStateCorrupt)?;
-            if request.sequence().get() != expected_sequence
-                || existing.iter().any(|id| {
-                    self.staged.flow_decisions.get(id).is_some_and(|decision| {
-                        decision.source_node_id() == request.source_node_id()
-                    })
+            let advanced = manifest.get("format").and_then(serde_json::Value::as_u64)
+                == Some(u64::from(oxide_batch_core::MANIFEST_FORMAT_ADVANCED_FLOW));
+            let duplicate = existing.iter().any(|id| {
+                self.staged.flow_decisions.get(id).is_some_and(|decision| {
+                    decision.source_node_id() == request.source_node_id()
+                        || decision.sequence() == request.sequence()
                 })
-            {
+            });
+            let invalid_sequence = if advanced {
+                false
+            } else {
+                let expected_sequence = u64::try_from(existing.len())
+                    .ok()
+                    .and_then(|value| value.checked_add(1))
+                    .ok_or(RepositoryError::FlowStateCorrupt)?;
+                request.sequence().get() != expected_sequence
+            };
+            if invalid_sequence || duplicate {
                 return Err(RepositoryError::ConcurrentModification);
             }
             if let Some(step_id) = request.source_step_execution_id() {

@@ -318,6 +318,9 @@ jobs:
           cargo test -p oxide-batch --features postgres \
             --test postgres_local_split_crash_recovery \
             -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_advanced_flow_crash_recovery \
+            -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL M6 #144 item-stream component-state crash/restart evidence
         run: >-
@@ -451,10 +454,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      # The aggregate reads sibling Actions job state; it never mutates Actions.
-      actions: read
-      # Checkout only reads the verifier script from the reviewed tree.
-      contents: read
+      actions: read # Aggregate reads sibling Actions job state only; never mutates Actions.
+      contents: read # Checkout reads the verifier script only.
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
