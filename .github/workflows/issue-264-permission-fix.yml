@@ -39,4 +39,4 @@ jobs:
           git commit -m "fix(ci): document aggregate permissions inline"
           echo "FIX_COMMIT=$(git rev-parse HEAD)"
           echo "FIX_TREE=$(git rev-parse HEAD^{tree})"
-          git push origin HEAD:refs/heads/issue-264-final-review || true
+          git push --force-with-lease="refs/heads/issue-264-final-review:${GITHUB_SHA}" origin HEAD:refs/heads/issue-264-final-review || true
