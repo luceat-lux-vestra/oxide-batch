@@ -31,7 +31,7 @@ jobs:
           old_import = 'use super::*;\n'
           new_import = '''use super::{
               BTreeMap, BTreeSet, CompiledExecutionPlan, CompiledFlowScope, DefinitionError,
-              DefinitionIdentity, DefinitionRevision, Error, ExitCode, FlowGraph, FlowNode, FlowTarget,
+              DefinitionIdentity, DefinitionRevision, ExitCode, FlowGraph, FlowNode, FlowTarget,
               FlowTransition, JobName, NodeId, PlanError, StepNode, TerminalKind, Value,
               MAX_BRANCH_STEPS, MAX_FLOW_COMPOSITION_DEPTH, MAX_NODES, MAX_OUTGOING_TRANSITIONS,
               MAX_SPLIT_BRANCHES, MAX_TRANSITIONS, check_unambiguous, json,
