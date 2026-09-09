@@ -1,0 +1,193 @@
+name: Issue 264 corrected candidate builder
+
+on:
+  push:
+    branches:
+      - issue-264-final-review
+    paths:
+      - .github/workflows/issue-264-fix-builder.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Apply exact corrections and validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="427ecbed506557bcb7cc2dd4cb624c0cd2bb7add"
+          git reset --hard "$base"
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label} replacement cardinality failure: {count}")
+              return text.replace(old, new)
+
+          advanced = Path("crates/oxide-batch-plan/src/advanced.rs")
+          s = advanced.read_text()
+          s = replace_once(s, "use super::*;\n", """use super::{
+              BTreeMap, BTreeSet, CompiledExecutionPlan, CompiledFlowScope, DefinitionError,
+              DefinitionIdentity, DefinitionRevision, ExitCode, FlowGraph, FlowNode, FlowTarget,
+              FlowTransition, JobName, NodeId, PlanError, StepNode, TerminalKind, Value,
+              MAX_BRANCH_STEPS, MAX_FLOW_COMPOSITION_DEPTH, MAX_NODES, MAX_OUTGOING_TRANSITIONS,
+              MAX_SPLIT_BRANCHES, MAX_TRANSITIONS, check_unambiguous, json,
+          };
+          """, "wildcard import")
+          s = replace_once(s, """    fn resolve_nested_target(
+              &self,
+              target: FlowTarget,
+              nested_scopes: &BTreeMap<NodeId, CompiledFlowScope>,
+          ) -> FlowTarget {
+          """, """    fn resolve_nested_target(
+              target: FlowTarget,
+              nested_scopes: &BTreeMap<NodeId, CompiledFlowScope>,
+          ) -> FlowTarget {
+          """, "resolve_nested_target signature")
+          if s.count("self.resolve_nested_target(") != 2:
+              raise SystemExit(f"resolve_nested_target call replacement cardinality failure: {s.count('self.resolve_nested_target(')}")
+          s = s.replace("self.resolve_nested_target(", "Self::resolve_nested_target(")
+          advanced.write_text(s)
+
+          lib = Path("crates/oxide-batch-plan/src/lib.rs")
+          s = lib.read_text()
+          s = replace_once(s, """    /// Iterates executable members in canonical logical-ID order.
+              pub fn members(&self) -> impl ExactSizeIterator<Item = &NodeId> {
+          """, """    /// Iterates executable members in canonical logical-ID order.
+              #[must_use]
+              pub fn members(&self) -> impl ExactSizeIterator<Item = &NodeId> {
+          """, "members must_use")
+          lib.write_text(s)
+
+          flow = Path("crates/oxide-batch/src/flow.rs")
+          s = flow.read_text()
+          s = replace_once(s, """                        let (status, exit_status, flow_failure) = match terminal {
+          """, """                        let (terminal_status, exit_status, flow_failure) = match terminal {
+          """, "terminal status declaration")
+          s = replace_once(s, """                        let failure = if status == BatchStatus::Failed {
+          """, """                        let failure = if terminal_status == BatchStatus::Failed {
+          """, "terminal status failure test")
+          s = replace_once(s, """                        return Ok(ScopeRun::terminal(
+                                      status,
+                                      exit_status,
+          """, """                        return Ok(ScopeRun::terminal(
+                                      terminal_status,
+                                      exit_status,
+          """, "terminal status return")
+          s = replace_once(s, """        let status = joined
+                      .iter()
+                      .map(|branch| branch.status)
+                      .max_by_key(|status| split_status_severity(*status))
+          """, """        let aggregate_status = joined
+                      .iter()
+                      .map(|branch| branch.status)
+                      .max_by_key(|status| split_status_severity(*status))
+          """, "split aggregate status declaration")
+          s = replace_once(s, """        let selected = joined.iter().find(|branch| branch.status == status).ok_or(
+          """, """        let selected = joined
+                      .iter()
+                      .find(|branch| branch.status == aggregate_status)
+                      .ok_or(
+          """, "split selected status")
+          s = replace_once(s, """        Ok(SplitRun {
+                      status,
+                      exit_status,
+          """, """        Ok(SplitRun {
+                      status: aggregate_status,
+                      exit_status,
+          """, "split result status")
+          sort_old = "decisions.sort_by_key(|decision| decision.sequence());"
+          if s.count(sort_old) != 2:
+              raise SystemExit(f"decision sort replacement cardinality failure: {s.count(sort_old)}")
+          s = s.replace(sort_old, "decisions.sort_by_key(FlowDecision::sequence);")
+          s = replace_once(s, """        states: Vec<FlowStepState>,
+                  listener_failures: Vec<ListenerFailure>,
+              ) -> Self {
+                  Self {
+                      status,
+                      exit_status,
+                      failure,
+                      flow_failure,
+                      step_executions,
+                      decisions,
+                      states,
+                      listener_failures,
+                  }
+              }
+          """, """        flow_states: Vec<FlowStepState>,
+                  listener_failures: Vec<ListenerFailure>,
+              ) -> Self {
+                  Self {
+                      status,
+                      exit_status,
+                      failure,
+                      flow_failure,
+                      step_executions,
+                      decisions,
+                      states: flow_states,
+                      listener_failures,
+                  }
+              }
+          """, "ScopeRun terminal state parameter")
+          s = replace_once(s, """            FlowNode::Decision(_) | FlowNode::Join(_) => {}
+                      _ => {}
+          """, """            _ => {}
+          """, "same match arms")
+          flow.write_text(s)
+
+          pg = Path("crates/oxide-batch/tests/postgres_advanced_flow_crash_recovery.rs")
+          s = pg.read_text()
+          s = replace_once(s, "//! PostgreSQL 15/18 SIGKILL and restart evidence for M7 format-4 advanced flow.\n", "//! `PostgreSQL` 15/18 SIGKILL and restart evidence for M7 format-4 advanced flow.\n", "postgres doc heading")
+          s = replace_once(s, "//! process inspects PostgreSQL, records an audited recovery decision, and\n", "//! process inspects `PostgreSQL`, records an audited recovery decision, and\n", "postgres doc body")
+          s = replace_once(s, """        std::fs::write(self.handshake.join("reached"), [])
+                      .expect("worker must announce the durable crash boundary");
+          """, """        if let Err(error) = std::fs::write(self.handshake.join("reached"), []) {
+                      panic!("worker must announce the durable crash boundary: {error}");
+                  }
+          """, "handshake write")
+          s = replace_once(s, "Duration::from_secs(60)", "Duration::from_mins(1)", "worker park duration")
+          s = replace_once(s, "Duration::from_secs(12_000)", "Duration::from_mins(200)", "worker clock duration")
+          pg.write_text(s)
+
+          fingerprint = Path("crates/oxide-batch/tests/plan_fingerprint.rs")
+          s = fingerprint.read_text()
+          s = replace_once(s, '.replace("\\\"format\\\":3", "\\\"format\\\":4")', '.replace("\\\"format\\\":3", "\\\"format\\\":5")', "newer manifest fixture")
+          if s.count("format: 4,\n            supported: 3,") != 2:
+              raise SystemExit(f"manifest expectation replacement cardinality failure: {s.count('format: 4,\n            supported: 3,')}")
+          s = s.replace("format: 4,\n            supported: 3,", "format: 5,\n            supported: 4,")
+          fingerprint.write_text(s)
+          PY
+
+          cargo fmt --all
+          git diff --check
+          cargo clippy --workspace --all-targets --all-features -- -D warnings -A clippy::too_many_arguments -A clippy::too_many_lines
+          cargo test -p oxide-batch --all-features --test plan_fingerprint newer_manifest_format_is_rejected -- --nocapture
+          cargo test -p oxide-batch --all-features --test advanced_flow -- --nocapture
+          cargo test -p oxide-batch --all-features --test plan
+          cargo test -p oxide-batch --all-features --test plan_manifest
+          cargo test -p oxide-batch --all-features --test local_split_runtime
+          git diff --check
+          git add crates/oxide-batch-plan/src/advanced.rs \
+                  crates/oxide-batch-plan/src/lib.rs \
+                  crates/oxide-batch/src/flow.rs \
+                  crates/oxide-batch/tests/postgres_advanced_flow_crash_recovery.rs \
+                  crates/oxide-batch/tests/plan_fingerprint.rs
+          git diff --cached --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix(flow): satisfy strict review gates"
+          echo "FIX_COMMIT=$(git rev-parse HEAD)"
+          echo "FIX_TREE=$(git rev-parse HEAD^{tree})"
+          git push origin HEAD:refs/heads/issue-264-fix-candidate
