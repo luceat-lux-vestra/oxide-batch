@@ -1,0 +1,42 @@
+name: Issue 264 permission comment fix
+
+on:
+  push:
+    branches:
+      - issue-264-final-review
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+      - name: Build exact fixed commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git reset --hard 80f2292b6a752033448d8b6a87f70658f1b905aa
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.github/workflows/ci.yml')
+          s = p.read_text()
+          old = '''    permissions:\n      # The aggregate reads sibling Actions job state; it never mutates Actions.\n      actions: read\n      # Checkout only reads the verifier script from the reviewed tree.\n      contents: read\n'''
+          new = '''    permissions:\n      actions: read # Aggregate reads sibling Actions job state only; never mutates Actions.\n      contents: read # Checkout reads the verifier script only.\n'''
+          if s.count(old) != 1:
+              raise SystemExit(f'expected exactly one permission block, found {s.count(old)}')
+          p.write_text(s.replace(old, new))
+          PY
+          git diff --check
+          git diff -- .github/workflows/ci.yml
+          git add .github/workflows/ci.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix(ci): document aggregate permissions inline"
+          echo "FIX_COMMIT=$(git rev-parse HEAD)"
+          echo "FIX_TREE=$(git rev-parse HEAD^{tree})"
+          git push origin HEAD:refs/heads/issue-264-final-review || true
