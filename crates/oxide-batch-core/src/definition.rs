@@ -27,8 +27,10 @@ pub const MANIFEST_FORMAT_ONE_STEP: u16 = 1;
 pub const MANIFEST_FORMAT_FLOW: u16 = 2;
 /// The canonical manifest format for bounded M4 local-scale plans.
 pub const MANIFEST_FORMAT_LOCAL_SCALE: u16 = 3;
+/// The canonical manifest format for bounded M7 composed flows.
+pub const MANIFEST_FORMAT_ADVANCED_FLOW: u16 = 4;
 /// The newest canonical manifest format this runtime can interpret.
-pub(crate) const SUPPORTED_MANIFEST_FORMAT: u16 = MANIFEST_FORMAT_LOCAL_SCALE;
+pub(crate) const SUPPORTED_MANIFEST_FORMAT: u16 = MANIFEST_FORMAT_ADVANCED_FLOW;
 const LEGACY_REVISION: &str = "__m1_repository_port_v1";
 const LEGACY_MANIFEST: &[u8] =
     br#"{"format":1,"repository_port":"m1","revision":"__m1_repository_port_v1"}"#;
@@ -600,7 +602,14 @@ impl DefinitionIdentity {
             .get("format")
             .and_then(serde_json::Value::as_u64)
             .and_then(|value| u16::try_from(value).ok())
-            .filter(|value| matches!(*value, MANIFEST_FORMAT_FLOW | MANIFEST_FORMAT_LOCAL_SCALE))
+            .filter(|value| {
+                matches!(
+                    *value,
+                    MANIFEST_FORMAT_FLOW
+                        | MANIFEST_FORMAT_LOCAL_SCALE
+                        | MANIFEST_FORMAT_ADVANCED_FLOW
+                )
+            })
             .ok_or(DefinitionError::ManifestEncoding)?;
 
         Ok(Self::from_canonical(
@@ -794,20 +803,20 @@ impl DefinitionManifest {
             .map(JobName::new)
             .transpose()
             .map_err(|_| ManifestError::InvalidJobName)?;
-        let (node_count, transition_count) =
-            if matches!(format, MANIFEST_FORMAT_FLOW | MANIFEST_FORMAT_LOCAL_SCALE) {
+        let (node_count, transition_count) = match format {
+            MANIFEST_FORMAT_FLOW | MANIFEST_FORMAT_LOCAL_SCALE => {
                 let nodes = array_len(members.get("nodes"))?;
                 let transitions = array_len(members.get("transitions"))?;
-                if nodes > MAX_NODES || transitions > MAX_TRANSITIONS {
-                    return Err(ManifestError::GraphOutOfBounds {
-                        max_nodes: MAX_NODES,
-                        max_transitions: MAX_TRANSITIONS,
-                    });
-                }
+                ensure_graph_bounds(nodes, transitions)?;
                 (Some(nodes), Some(transitions))
-            } else {
-                (None, None)
-            };
+            }
+            MANIFEST_FORMAT_ADVANCED_FLOW => {
+                let (nodes, transitions) = advanced_graph_counts(members)?;
+                ensure_graph_bounds(nodes, transitions)?;
+                (Some(nodes), Some(transitions))
+            }
+            _ => (None, None),
+        };
         Ok(Self {
             format,
             digest: Sha256::digest(bytes).into(),
@@ -860,6 +869,111 @@ impl DefinitionManifest {
     pub const fn transition_count(&self) -> Option<usize> {
         self.transition_count
     }
+}
+
+fn ensure_graph_bounds(nodes: usize, transitions: usize) -> Result<(), ManifestError> {
+    if nodes > MAX_NODES || transitions > MAX_TRANSITIONS {
+        return Err(ManifestError::GraphOutOfBounds {
+            max_nodes: MAX_NODES,
+            max_transitions: MAX_TRANSITIONS,
+        });
+    }
+    Ok(())
+}
+
+fn advanced_graph_counts(
+    members: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(usize, usize), ManifestError> {
+    let nodes = members
+        .get("nodes")
+        .and_then(serde_json::Value::as_array)
+        .ok_or(ManifestError::MalformedGraph)?;
+    let transitions = array_len(members.get("transitions"))?;
+    let mut materialized_nodes = nodes.len();
+    let mut materialized_transitions = transitions;
+
+    for node in nodes {
+        let object = node.as_object().ok_or(ManifestError::MalformedGraph)?;
+        match object.get("kind").and_then(serde_json::Value::as_str) {
+            Some("step" | "decision" | "join") => {}
+            Some("partitioned_step") => {
+                if !object
+                    .get("worker")
+                    .is_some_and(serde_json::Value::is_object)
+                {
+                    return Err(ManifestError::MalformedGraph);
+                }
+                materialized_nodes =
+                    materialized_nodes
+                        .checked_add(1)
+                        .ok_or(ManifestError::GraphOutOfBounds {
+                            max_nodes: MAX_NODES,
+                            max_transitions: MAX_TRANSITIONS,
+                        })?;
+            }
+            Some("split") => {
+                let branches = object
+                    .get("branches")
+                    .and_then(serde_json::Value::as_array)
+                    .ok_or(ManifestError::MalformedGraph)?;
+                materialized_nodes = materialized_nodes.checked_add(branches.len()).ok_or(
+                    ManifestError::GraphOutOfBounds {
+                        max_nodes: MAX_NODES,
+                        max_transitions: MAX_TRANSITIONS,
+                    },
+                )?;
+                for branch in branches {
+                    let branch = branch.as_object().ok_or(ManifestError::MalformedGraph)?;
+                    match branch.get("kind").and_then(serde_json::Value::as_str) {
+                        Some("linear") => {
+                            materialized_nodes = materialized_nodes
+                                .checked_add(array_len(branch.get("steps"))?)
+                                .ok_or(ManifestError::GraphOutOfBounds {
+                                    max_nodes: MAX_NODES,
+                                    max_transitions: MAX_TRANSITIONS,
+                                })?;
+                        }
+                        Some("flow") => {
+                            if !branch
+                                .get("members")
+                                .is_some_and(serde_json::Value::is_array)
+                                || branch
+                                    .get("entry")
+                                    .and_then(serde_json::Value::as_str)
+                                    .is_none()
+                            {
+                                return Err(ManifestError::MalformedGraph);
+                            }
+                        }
+                        _ => return Err(ManifestError::MalformedGraph),
+                    }
+                }
+            }
+            Some("nested_flow") => {
+                let exits = array_len(object.get("exits"))?;
+                if !object
+                    .get("members")
+                    .is_some_and(serde_json::Value::is_array)
+                    || object
+                        .get("entry")
+                        .and_then(serde_json::Value::as_str)
+                        .is_none()
+                {
+                    return Err(ManifestError::MalformedGraph);
+                }
+                materialized_transitions = materialized_transitions.checked_add(exits).ok_or(
+                    ManifestError::GraphOutOfBounds {
+                        max_nodes: MAX_NODES,
+                        max_transitions: MAX_TRANSITIONS,
+                    },
+                )?;
+            }
+            _ => return Err(ManifestError::MalformedGraph),
+        }
+        ensure_graph_bounds(materialized_nodes, materialized_transitions)?;
+    }
+
+    Ok((materialized_nodes, materialized_transitions))
 }
 
 fn array_len(value: Option<&serde_json::Value>) -> Result<usize, ManifestError> {
