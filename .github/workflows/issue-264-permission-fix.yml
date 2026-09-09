@@ -104,12 +104,10 @@ jobs:
                       status: aggregate_status,
                       exit_status,
           ''', 'split result status')
-          s = replace_once(s, '''        decisions.sort_by_key(|decision| decision.sequence());
-          ''', '''        decisions.sort_by_key(FlowDecision::sequence);
-          ''', 'split sort closure')
-          s = replace_once(s, '''                        decisions.sort_by_key(|decision| decision.sequence());
-          ''', '''                        decisions.sort_by_key(FlowDecision::sequence);
-          ''', 'terminal sort closure')
+          sort_old = 'decisions.sort_by_key(|decision| decision.sequence());'
+          if s.count(sort_old) != 2:
+              raise SystemExit(f'decision sort replacement cardinality failure: {s.count(sort_old)}')
+          s = s.replace(sort_old, 'decisions.sort_by_key(FlowDecision::sequence);')
           s = replace_once(s, '''        states: Vec<FlowStepState>,
                   listener_failures: Vec<ListenerFailure>,
               ) -> Self {
