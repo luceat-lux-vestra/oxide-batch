@@ -1,4 +1,4 @@
-name: Issue 264 permission comment fix
+name: Issue 264 clippy correction
 
 on:
   push:
@@ -11,32 +11,76 @@ permissions:
 jobs:
   fix:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: true
           fetch-depth: 0
-      - name: Build exact fixed commit
+      - name: Apply exact corrections and run canonical clippy
         shell: bash
         run: |
           set -euo pipefail
-          git reset --hard 80f2292b6a752033448d8b6a87f70658f1b905aa
+          base="427ecbed506557bcb7cc2dd4cb624c0cd2bb7add"
+          git reset --hard "$base"
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('.github/workflows/ci.yml')
-          s = p.read_text()
-          old = '''    permissions:\n      # The aggregate reads sibling Actions job state; it never mutates Actions.\n      actions: read\n      # Checkout only reads the verifier script from the reviewed tree.\n      contents: read\n'''
-          new = '''    permissions:\n      actions: read # Aggregate reads sibling Actions job state only; never mutates Actions.\n      contents: read # Checkout reads the verifier script only.\n'''
+
+          advanced = Path('crates/oxide-batch-plan/src/advanced.rs')
+          s = advanced.read_text()
+          old_import = 'use super::*;\n'
+          new_import = '''use super::{
+              BTreeMap, BTreeSet, CompiledExecutionPlan, CompiledFlowScope, DefinitionError,
+              DefinitionIdentity, DefinitionRevision, Error, ExitCode, FlowGraph, FlowNode, FlowTarget,
+              FlowTransition, JobName, NodeId, PlanError, StepNode, TerminalKind, Value,
+              MAX_BRANCH_STEPS, MAX_FLOW_COMPOSITION_DEPTH, MAX_NODES, MAX_OUTGOING_TRANSITIONS,
+              MAX_SPLIT_BRANCHES, MAX_TRANSITIONS, check_unambiguous, json,
+          };
+          '''
+          if s.count(old_import) != 1:
+              raise SystemExit('wildcard import replacement cardinality failure')
+          s = s.replace(old_import, new_import)
+          old_sig = '''    fn resolve_nested_target(
+                  &self,
+                  target: FlowTarget,
+                  nested_scopes: &BTreeMap<NodeId, CompiledFlowScope>,
+              ) -> FlowTarget {
+          '''
+          new_sig = '''    fn resolve_nested_target(
+                  target: FlowTarget,
+                  nested_scopes: &BTreeMap<NodeId, CompiledFlowScope>,
+              ) -> FlowTarget {
+          '''
+          if s.count(old_sig) != 1:
+              raise SystemExit('resolve_nested_target signature replacement cardinality failure')
+          s = s.replace(old_sig, new_sig)
+          if s.count('self.resolve_nested_target(') != 2:
+              raise SystemExit('resolve_nested_target call replacement cardinality failure')
+          s = s.replace('self.resolve_nested_target(', 'Self::resolve_nested_target(')
+          advanced.write_text(s)
+
+          lib = Path('crates/oxide-batch-plan/src/lib.rs')
+          s = lib.read_text()
+          old = '''    /// Iterates executable members in canonical logical-ID order.
+              pub fn members(&self) -> impl ExactSizeIterator<Item = &NodeId> {
+          '''
+          new = '''    /// Iterates executable members in canonical logical-ID order.
+              #[must_use]
+              pub fn members(&self) -> impl ExactSizeIterator<Item = &NodeId> {
+          '''
           if s.count(old) != 1:
-              raise SystemExit(f'expected exactly one permission block, found {s.count(old)}')
-          p.write_text(s.replace(old, new))
+              raise SystemExit('members must_use replacement cardinality failure')
+          lib.write_text(s.replace(old, new))
           PY
+          cargo fmt --all
           git diff --check
-          git diff -- .github/workflows/ci.yml
-          git add .github/workflows/ci.yml
+          cargo clippy --workspace --all-targets --all-features -- -D warnings -A clippy::too_many_arguments -A clippy::too_many_lines
+          git diff --check
+          git add crates/oxide-batch-plan/src/advanced.rs crates/oxide-batch-plan/src/lib.rs
+          git diff --cached --check
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "fix(ci): document aggregate permissions inline"
+          git commit -m "fix(flow): satisfy strict plan lint policy"
           echo "FIX_COMMIT=$(git rev-parse HEAD)"
           echo "FIX_TREE=$(git rev-parse HEAD^{tree})"
-          git push --force-with-lease="refs/heads/issue-264-final-review:${GITHUB_SHA}" origin HEAD:refs/heads/issue-264-final-review || true
+          git push origin HEAD:refs/heads/issue-264-final-review || true
