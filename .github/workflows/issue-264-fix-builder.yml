@@ -33,86 +33,86 @@ jobs:
           def replace_once(text, old, new, label):
               count = text.count(old)
               if count != 1:
-                  raise SystemExit(f"{label} replacement cardinality failure: {count}")
+                  raise SystemExit(f'{label} replacement cardinality failure: {count}')
               return text.replace(old, new)
 
-          advanced = Path("crates/oxide-batch-plan/src/advanced.rs")
+          advanced = Path('crates/oxide-batch-plan/src/advanced.rs')
           s = advanced.read_text()
-          s = replace_once(s, "use super::*;\n", """use super::{
+          s = replace_once(s, 'use super::*;\n', '''use super::{
               BTreeMap, BTreeSet, CompiledExecutionPlan, CompiledFlowScope, DefinitionError,
               DefinitionIdentity, DefinitionRevision, ExitCode, FlowGraph, FlowNode, FlowTarget,
               FlowTransition, JobName, NodeId, PlanError, StepNode, TerminalKind, Value,
               MAX_BRANCH_STEPS, MAX_FLOW_COMPOSITION_DEPTH, MAX_NODES, MAX_OUTGOING_TRANSITIONS,
               MAX_SPLIT_BRANCHES, MAX_TRANSITIONS, check_unambiguous, json,
           };
-          """, "wildcard import")
-          s = replace_once(s, """    fn resolve_nested_target(
-              &self,
-              target: FlowTarget,
-              nested_scopes: &BTreeMap<NodeId, CompiledFlowScope>,
-          ) -> FlowTarget {
-          """, """    fn resolve_nested_target(
-              target: FlowTarget,
-              nested_scopes: &BTreeMap<NodeId, CompiledFlowScope>,
-          ) -> FlowTarget {
-          """, "resolve_nested_target signature")
-          if s.count("self.resolve_nested_target(") != 2:
-              raise SystemExit(f"resolve_nested_target call replacement cardinality failure: {s.count('self.resolve_nested_target(')}")
-          s = s.replace("self.resolve_nested_target(", "Self::resolve_nested_target(")
+          ''', 'wildcard import')
+          s = replace_once(s, '''    fn resolve_nested_target(
+                  &self,
+                  target: FlowTarget,
+                  nested_scopes: &BTreeMap<NodeId, CompiledFlowScope>,
+              ) -> FlowTarget {
+          ''', '''    fn resolve_nested_target(
+                  target: FlowTarget,
+                  nested_scopes: &BTreeMap<NodeId, CompiledFlowScope>,
+              ) -> FlowTarget {
+          ''', 'resolve_nested_target signature')
+          if s.count('self.resolve_nested_target(') != 2:
+              raise SystemExit('resolve_nested_target call replacement cardinality failure')
+          s = s.replace('self.resolve_nested_target(', 'Self::resolve_nested_target(')
           advanced.write_text(s)
 
-          lib = Path("crates/oxide-batch-plan/src/lib.rs")
+          lib = Path('crates/oxide-batch-plan/src/lib.rs')
           s = lib.read_text()
-          s = replace_once(s, """    /// Iterates executable members in canonical logical-ID order.
+          s = replace_once(s, '''    /// Iterates executable members in canonical logical-ID order.
               pub fn members(&self) -> impl ExactSizeIterator<Item = &NodeId> {
-          """, """    /// Iterates executable members in canonical logical-ID order.
+          ''', '''    /// Iterates executable members in canonical logical-ID order.
               #[must_use]
               pub fn members(&self) -> impl ExactSizeIterator<Item = &NodeId> {
-          """, "members must_use")
+          ''', 'members must_use')
           lib.write_text(s)
 
-          flow = Path("crates/oxide-batch/src/flow.rs")
+          flow = Path('crates/oxide-batch/src/flow.rs')
           s = flow.read_text()
-          s = replace_once(s, """                        let (status, exit_status, flow_failure) = match terminal {
-          """, """                        let (terminal_status, exit_status, flow_failure) = match terminal {
-          """, "terminal status declaration")
-          s = replace_once(s, """                        let failure = if status == BatchStatus::Failed {
-          """, """                        let failure = if terminal_status == BatchStatus::Failed {
-          """, "terminal status failure test")
-          s = replace_once(s, """                        return Ok(ScopeRun::terminal(
+          s = replace_once(s, '''                        let (status, exit_status, flow_failure) = match terminal {
+          ''', '''                        let (terminal_status, exit_status, flow_failure) = match terminal {
+          ''', 'terminal status declaration')
+          s = replace_once(s, '''                        let failure = if status == BatchStatus::Failed {
+          ''', '''                        let failure = if terminal_status == BatchStatus::Failed {
+          ''', 'terminal status failure test')
+          s = replace_once(s, '''                        return Ok(ScopeRun::terminal(
                                       status,
                                       exit_status,
-          """, """                        return Ok(ScopeRun::terminal(
+          ''', '''                        return Ok(ScopeRun::terminal(
                                       terminal_status,
                                       exit_status,
-          """, "terminal status return")
-          s = replace_once(s, """        let status = joined
+          ''', 'terminal status return')
+          s = replace_once(s, '''        let status = joined
                       .iter()
                       .map(|branch| branch.status)
                       .max_by_key(|status| split_status_severity(*status))
-          """, """        let aggregate_status = joined
+          ''', '''        let aggregate_status = joined
                       .iter()
                       .map(|branch| branch.status)
                       .max_by_key(|status| split_status_severity(*status))
-          """, "split aggregate status declaration")
-          s = replace_once(s, """        let selected = joined.iter().find(|branch| branch.status == status).ok_or(
-          """, """        let selected = joined
+          ''', 'split aggregate status declaration')
+          s = replace_once(s, '''        let selected = joined.iter().find(|branch| branch.status == status).ok_or(
+          ''', '''        let selected = joined
                       .iter()
                       .find(|branch| branch.status == aggregate_status)
                       .ok_or(
-          """, "split selected status")
-          s = replace_once(s, """        Ok(SplitRun {
+          ''', 'split selected status')
+          s = replace_once(s, '''        Ok(SplitRun {
                       status,
                       exit_status,
-          """, """        Ok(SplitRun {
+          ''', '''        Ok(SplitRun {
                       status: aggregate_status,
                       exit_status,
-          """, "split result status")
-          sort_old = "decisions.sort_by_key(|decision| decision.sequence());"
+          ''', 'split result status')
+          sort_old = 'decisions.sort_by_key(|decision| decision.sequence());'
           if s.count(sort_old) != 2:
-              raise SystemExit(f"decision sort replacement cardinality failure: {s.count(sort_old)}")
-          s = s.replace(sort_old, "decisions.sort_by_key(FlowDecision::sequence);")
-          s = replace_once(s, """        states: Vec<FlowStepState>,
+              raise SystemExit(f'decision sort replacement cardinality failure: {s.count(sort_old)}')
+          s = s.replace(sort_old, 'decisions.sort_by_key(FlowDecision::sequence);')
+          s = replace_once(s, '''        states: Vec<FlowStepState>,
                   listener_failures: Vec<ListenerFailure>,
               ) -> Self {
                   Self {
@@ -126,7 +126,7 @@ jobs:
                       listener_failures,
                   }
               }
-          """, """        flow_states: Vec<FlowStepState>,
+          ''', '''        flow_states: Vec<FlowStepState>,
                   listener_failures: Vec<ListenerFailure>,
               ) -> Self {
                   Self {
@@ -140,33 +140,31 @@ jobs:
                       listener_failures,
                   }
               }
-          """, "ScopeRun terminal state parameter")
-          s = replace_once(s, """            FlowNode::Decision(_) | FlowNode::Join(_) => {}
+          ''', 'ScopeRun terminal state parameter')
+          s = replace_once(s, '''            FlowNode::Decision(_) | FlowNode::Join(_) => {}
                       _ => {}
-          """, """            _ => {}
-          """, "same match arms")
+          ''', '''            _ => {}
+          ''', 'same match arms')
           flow.write_text(s)
 
-          pg = Path("crates/oxide-batch/tests/postgres_advanced_flow_crash_recovery.rs")
+          pg = Path('crates/oxide-batch/tests/postgres_advanced_flow_crash_recovery.rs')
           s = pg.read_text()
-          s = replace_once(s, "//! PostgreSQL 15/18 SIGKILL and restart evidence for M7 format-4 advanced flow.\n", "//! `PostgreSQL` 15/18 SIGKILL and restart evidence for M7 format-4 advanced flow.\n", "postgres doc heading")
-          s = replace_once(s, "//! process inspects PostgreSQL, records an audited recovery decision, and\n", "//! process inspects `PostgreSQL`, records an audited recovery decision, and\n", "postgres doc body")
-          s = replace_once(s, """        std::fs::write(self.handshake.join("reached"), [])
-                      .expect("worker must announce the durable crash boundary");
-          """, """        if let Err(error) = std::fs::write(self.handshake.join("reached"), []) {
-                      panic!("worker must announce the durable crash boundary: {error}");
-                  }
-          """, "handshake write")
-          s = replace_once(s, "Duration::from_secs(60)", "Duration::from_mins(1)", "worker park duration")
-          s = replace_once(s, "Duration::from_secs(12_000)", "Duration::from_mins(200)", "worker clock duration")
+          s = replace_once(s, '//! PostgreSQL 15/18 SIGKILL and restart evidence for M7 format-4 advanced flow.\n', '//! `PostgreSQL` 15/18 SIGKILL and restart evidence for M7 format-4 advanced flow.\n', 'postgres doc heading')
+          s = replace_once(s, '//! process inspects PostgreSQL, records an audited recovery decision, and\n', '//! process inspects `PostgreSQL`, records an audited recovery decision, and\n', 'postgres doc body')
+          old_write = '        std::fs::write(self.handshake.join("reached"), [])\n            .expect("worker must announce the durable crash boundary");\n'
+          new_write = '        if let Err(error) = std::fs::write(self.handshake.join("reached"), []) {\n            panic!("worker must announce the durable crash boundary: {error}");\n        }\n'
+          s = replace_once(s, old_write, new_write, 'handshake write')
+          s = replace_once(s, 'Duration::from_secs(60)', 'Duration::from_mins(1)', 'worker park duration')
+          s = replace_once(s, 'Duration::from_secs(12_000)', 'Duration::from_mins(200)', 'worker clock duration')
           pg.write_text(s)
 
-          fingerprint = Path("crates/oxide-batch/tests/plan_fingerprint.rs")
+          fingerprint = Path('crates/oxide-batch/tests/plan_fingerprint.rs')
           s = fingerprint.read_text()
-          s = replace_once(s, '.replace("\\\"format\\\":3", "\\\"format\\\":4")', '.replace("\\\"format\\\":3", "\\\"format\\\":5")', "newer manifest fixture")
-          if s.count("format: 4,\n            supported: 3,") != 2:
-              raise SystemExit(f"manifest expectation replacement cardinality failure: {s.count('format: 4,\n            supported: 3,')}")
-          s = s.replace("format: 4,\n            supported: 3,", "format: 5,\n            supported: 4,")
+          s = replace_once(s, '.replace("\\\"format\\\":3", "\\\"format\\\":4")', '.replace("\\\"format\\\":3", "\\\"format\\\":5")', 'newer manifest fixture')
+          old_expect = 'format: 4,\n            supported: 3,'
+          if s.count(old_expect) != 2:
+              raise SystemExit(f'manifest expectation replacement cardinality failure: {s.count(old_expect)}')
+          s = s.replace(old_expect, 'format: 5,\n            supported: 4,')
           fingerprint.write_text(s)
           PY
 
@@ -190,4 +188,4 @@ jobs:
           git commit -m "fix(flow): satisfy strict review gates"
           echo "FIX_COMMIT=$(git rev-parse HEAD)"
           echo "FIX_TREE=$(git rev-parse HEAD^{tree})"
-          git push origin HEAD:refs/heads/issue-264-fix-candidate
+          git push --force origin HEAD:refs/heads/issue-264-fix-candidate
