@@ -318,6 +318,9 @@ jobs:
           cargo test -p oxide-batch --features postgres \
             --test postgres_local_split_crash_recovery \
             -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_advanced_flow_crash_recovery \
+            -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL M6 #144 item-stream component-state crash/restart evidence
         run: >-

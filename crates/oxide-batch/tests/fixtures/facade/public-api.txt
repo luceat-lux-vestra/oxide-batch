@@ -64,6 +64,7 @@ oxide_batch::CodecId
 oxide_batch::CodecVersion
 oxide_batch::CodecVersionUpgrade
 oxide_batch::CompiledExecutionPlan
+oxide_batch::CompiledFlowScope
 oxide_batch::CompletionPolicy
 oxide_batch::CompletionPolicyError
 oxide_batch::ComponentRevision
@@ -232,6 +233,7 @@ oxide_batch::MAX_COMPOSITE_MEMBERS
 oxide_batch::MAX_CURSOR_BYTES
 oxide_batch::MAX_DROP_REPORT_WINDOW
 oxide_batch::MAX_EXPORT_QUEUE_RECORDS
+oxide_batch::MAX_FLOW_COMPOSITION_DEPTH
 oxide_batch::MAX_METRIC_NAME_ALLOWLIST
 oxide_batch::MAX_NODES
 oxide_batch::MAX_OPERATION_ID_BYTES
@@ -272,6 +274,7 @@ oxide_batch::MetricUnit
 oxide_batch::MonotonicClock
 oxide_batch::MonotonicInstant
 oxide_batch::NameKind
+oxide_batch::NestedFlow
 oxide_batch::NodeId
 oxide_batch::NoopChunkCompletion
 oxide_batch::OTHER_LABEL_VALUE
