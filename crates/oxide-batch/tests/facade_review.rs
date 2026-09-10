@@ -77,7 +77,9 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     ("item_stream", 11),
     ("listener", 7),
     ("oxide_batch_core", 106),
-    ("oxide_batch_plan", 26),
+    // #264 adds the reviewed M7 plan surface: CompiledFlowScope, NestedFlow,
+    // and MAX_FLOW_COMPOSITION_DEPTH.
+    ("oxide_batch_plan", 29),
     ("oxide_batch_repository", 110),
     ("repository", 14),
     ("runtime", 18),

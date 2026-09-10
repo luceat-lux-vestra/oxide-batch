@@ -277,6 +277,21 @@
       "budget_bound": "`1..=8`"
     },
     {
+      "resource": "flow-composition-depth",
+      "class": "worker-assignment",
+      "owner": "AdvancedCompiler",
+      "symbols": ["MAX_FLOW_COMPOSITION_DEPTH"],
+      "ceiling": 8,
+      "unit": "compiled flow scopes",
+      "policy": "fail-closed",
+      "report": "worker-assignment",
+      "postgres": false,
+      "proofs": ["construction-boundary"],
+      "budget_row": null,
+      "budget_bound": null,
+      "note": "The root scope counts as depth one. The report compiles an exact eight-scope nested-flow chain and refuses a nine-scope chain, proving the M7 compiler ceiling without introducing runtime frame state."
+    },
+    {
       "resource": "repository-connection-capacity",
       "class": "worker-assignment",
       "owner": "FlowLauncher::launch",
