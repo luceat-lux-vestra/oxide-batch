@@ -19,9 +19,10 @@
 //! structural error the accepted basic-flow contract names, and produces the
 //! canonical manifest whose SHA-256 digest is the definition fingerprint.
 //!
-//! The M3 graph remains acyclic. M4 adds only the accepted bounded split and
-//! local-partition forms; nested splits, decisions inside branches, dynamic
-//! partitioning, and remote execution remain outside this crate's contract.
+//! The graph remains finite and acyclic. M4 adds bounded local split and
+//! partition forms. M7 adds bounded nested-flow composition and split-branch
+//! subgraphs while retaining one compiled-plan authority; nested jobs and
+//! remote execution remain separate lifecycle boundaries.
 //! Existing one-step `TaskletJob` and `ChunkJob` definitions lower into a
 //! compatibility plan that retains their original format-1 manifest bytes and
 //! fingerprint.
@@ -42,6 +43,8 @@
 //! records each one.
 
 #![forbid(unsafe_code)]
+
+mod advanced;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -67,6 +70,8 @@ pub const MAX_SPLIT_BRANCHES: usize = 8;
 pub const MAX_BRANCH_STEPS: usize = 8;
 /// The maximum number of concurrent local partition workers.
 pub const MAX_PARTITION_WORKERS: u8 = 64;
+/// The maximum structural nesting depth of an M7 composed flow.
+pub const MAX_FLOW_COMPOSITION_DEPTH: usize = 8;
 
 /// The sibling behavior selected after one local child fails.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -622,30 +627,113 @@ impl DecisionNode {
     }
 }
 
-/// One declared linear branch of an M4 split.
+/// One validated execution scope inside an M7 composed plan.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompiledFlowScope {
+    entry: NodeId,
+    members: BTreeSet<NodeId>,
+}
+
+impl CompiledFlowScope {
+    pub(crate) fn new(entry: NodeId, members: BTreeSet<NodeId>) -> Self {
+        Self { entry, members }
+    }
+
+    /// Borrows the first executable node in this scope.
+    #[must_use]
+    pub const fn entry(&self) -> &NodeId {
+        &self.entry
+    }
+
+    /// Returns whether an executable node belongs to this scope.
+    #[must_use]
+    pub fn contains(&self, node: &NodeId) -> bool {
+        self.members.contains(node)
+    }
+
+    /// Iterates executable members in canonical logical-ID order.
+    #[must_use]
+    pub fn members(&self) -> impl ExactSizeIterator<Item = &NodeId> {
+        self.members.iter()
+    }
+}
+
+/// One reusable M7 flow embedded under a stable structural owner.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NestedFlow {
+    id: NodeId,
+    graph: Box<FlowGraph>,
+}
+
+impl NestedFlow {
+    /// Declares one nested-flow boundary.
+    #[must_use]
+    pub fn new(id: NodeId, graph: FlowGraph) -> Self {
+        Self {
+            id,
+            graph: Box::new(graph),
+        }
+    }
+
+    /// Borrows the stable structural owner ID.
+    #[must_use]
+    pub const fn id(&self) -> &NodeId {
+        &self.id
+    }
+
+    /// Borrows the nested graph declaration.
+    #[must_use]
+    pub const fn graph(&self) -> &FlowGraph {
+        &self.graph
+    }
+}
+
+/// One split branch. M4 branches are linear; M7 may embed a bounded flow.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SplitBranch {
     steps: Vec<StepNode>,
+    flow: Option<Box<FlowGraph>>,
 }
 
 impl SplitBranch {
-    /// Declares a branch from its ordered tasklet or chunk steps.
+    /// Declares the byte-compatible M4 linear branch form.
     ///
     /// Cardinality and identifier uniqueness are checked by
     /// [`FlowGraph::compile`], so builders can assemble a complete diagnostic
     /// instead of panicking while under construction.
     #[must_use]
     pub fn new(steps: Vec<StepNode>) -> Self {
-        Self { steps }
+        Self { steps, flow: None }
     }
 
-    /// Borrows the branch steps in declared execution order.
+    /// Declares an M7 branch as a bounded acyclic subgraph.
+    #[must_use]
+    pub fn flow(graph: FlowGraph) -> Self {
+        Self {
+            steps: Vec::new(),
+            flow: Some(Box::new(graph)),
+        }
+    }
+
+    /// Borrows the legacy linear branch steps.
+    ///
+    /// An M7 flow branch returns an empty slice; use [`flow_graph`](Self::flow_graph)
+    /// to inspect its declaration.
     #[must_use]
     pub fn steps(&self) -> &[StepNode] {
         &self.steps
     }
 
-    /// Borrows the branch identity, which is its first logical step ID.
+    /// Borrows the M7 branch graph when this is a flow branch.
+    #[must_use]
+    pub fn flow_graph(&self) -> Option<&FlowGraph> {
+        self.flow.as_deref()
+    }
+
+    /// Borrows the legacy branch identity, which is its first logical step ID.
+    ///
+    /// Flow branches have a separate compiled scope and therefore no synthetic
+    /// branch `NodeId`.
     #[must_use]
     pub fn id(&self) -> Option<&NodeId> {
         self.steps.first().map(StepNode::id)
@@ -1040,6 +1128,7 @@ pub struct FlowGraph {
     entry: Option<NodeId>,
     nodes: Vec<FlowNode>,
     transitions: Vec<FlowTransition>,
+    nested_flows: Vec<NestedFlow>,
 }
 
 impl FlowGraph {
@@ -1050,6 +1139,7 @@ impl FlowGraph {
             entry: Some(entry),
             nodes: Vec::new(),
             transitions: Vec::new(),
+            nested_flows: Vec::new(),
         }
     }
 
@@ -1058,6 +1148,29 @@ impl FlowGraph {
     pub fn with_node(mut self, node: FlowNode) -> Self {
         self.nodes.push(node);
         self
+    }
+
+    /// Embeds one reusable flow under a stable structural owner.
+    #[must_use]
+    pub fn with_nested_flow(mut self, flow: NestedFlow) -> Self {
+        self.nested_flows.push(flow);
+        self
+    }
+
+    /// Borrows the declared entry reference.
+    #[must_use]
+    pub const fn entry(&self) -> Option<&NodeId> {
+        self.entry.as_ref()
+    }
+
+    fn requires_advanced_format(&self) -> bool {
+        !self.nested_flows.is_empty()
+            || self.nodes.iter().any(|node| match node {
+                FlowNode::Split(split) => {
+                    split.branches().iter().any(|branch| branch.flow.is_some())
+                }
+                _ => false,
+            })
     }
 
     /// Declares one explicit transition.
@@ -1102,6 +1215,9 @@ impl FlowGraph {
         job_name: &JobName,
         revision: DefinitionRevision,
     ) -> Result<CompiledExecutionPlan, PlanError> {
+        if self.requires_advanced_format() {
+            return advanced::compile(self, job_name, revision);
+        }
         let entry = self.entry.ok_or(PlanError::MissingEntryNode)?;
         if self.nodes.len() > MAX_NODES {
             return Err(PlanError::TooManyNodes { max: MAX_NODES });
@@ -1195,9 +1311,13 @@ impl FlowGraph {
             .map_err(PlanError::Manifest)?;
         Ok(CompiledExecutionPlan {
             definition,
+            root_scope: CompiledFlowScope::new(entry.clone(), nodes.keys().cloned().collect()),
             entry,
             nodes,
             transitions: compiled,
+            split_branch_scopes: BTreeMap::new(),
+            nested_scopes: BTreeMap::new(),
+            decision_sequences: BTreeMap::new(),
         })
     }
 }
@@ -1479,8 +1599,12 @@ fn flow_manifest(
 pub struct CompiledExecutionPlan {
     definition: DefinitionIdentity,
     entry: NodeId,
+    root_scope: CompiledFlowScope,
     nodes: BTreeMap<NodeId, FlowNode>,
     transitions: BTreeMap<NodeId, Vec<FlowTransition>>,
+    split_branch_scopes: BTreeMap<(NodeId, usize), CompiledFlowScope>,
+    nested_scopes: BTreeMap<NodeId, CompiledFlowScope>,
+    decision_sequences: BTreeMap<NodeId, u64>,
 }
 
 impl CompiledExecutionPlan {
@@ -1515,9 +1639,13 @@ impl CompiledExecutionPlan {
         transitions.insert(entry.clone(), edges);
         Ok(Self {
             definition,
+            root_scope: CompiledFlowScope::new(entry.clone(), nodes.keys().cloned().collect()),
             entry,
             nodes,
             transitions,
+            split_branch_scopes: BTreeMap::new(),
+            nested_scopes: BTreeMap::new(),
+            decision_sequences: BTreeMap::new(),
         })
     }
 
@@ -1543,6 +1671,32 @@ impl CompiledExecutionPlan {
     #[must_use]
     pub const fn entry(&self) -> &NodeId {
         &self.entry
+    }
+
+    /// Borrows the root execution scope.
+    #[must_use]
+    pub const fn root_scope(&self) -> &CompiledFlowScope {
+        &self.root_scope
+    }
+
+    /// Borrows one M7 split-branch execution scope by zero-based branch ordinal.
+    #[must_use]
+    pub fn split_branch_scope(&self, split: &NodeId, ordinal: usize) -> Option<&CompiledFlowScope> {
+        self.split_branch_scopes.get(&(split.clone(), ordinal))
+    }
+
+    /// Borrows one flattened nested-flow scope by structural owner ID.
+    #[must_use]
+    pub fn nested_scope(&self, owner: &NodeId) -> Option<&CompiledFlowScope> {
+        self.nested_scopes.get(owner)
+    }
+
+    /// Returns the canonical format-4 decision sequence for one transition source.
+    ///
+    /// Formats 1-3 return `None` and retain their historical append sequence.
+    #[must_use]
+    pub fn decision_sequence(&self, source: &NodeId) -> Option<u64> {
+        self.decision_sequences.get(source).copied()
     }
 
     /// Returns the compiled node count.
@@ -1755,6 +1909,18 @@ pub enum PlanError {
         /// Maximum accepted partition count.
         max: u16,
     },
+    /// M7 composition exceeded the bounded structural nesting depth.
+    CompositionDepthExceeded {
+        /// Maximum accepted composition depth.
+        max: usize,
+    },
+    /// A nested-flow terminal class had no owner transition.
+    UnmappedNestedFlowExit {
+        /// Structural nested-flow owner.
+        flow: NodeId,
+        /// Normalized terminal outcome that could not be routed.
+        code: ExitCode,
+    },
     /// A logical identifier or revision token was invalid.
     Token(DefinitionError),
     /// The canonical manifest could not be encoded within its bound.
@@ -1889,6 +2055,14 @@ impl fmt::Display for PlanError {
             Self::InvalidPartitionCount { max } => {
                 write!(formatter, "partition count must be 1 to {max}")
             }
+            Self::CompositionDepthExceeded { max } => {
+                write!(formatter, "flow composition exceeds depth {max}")
+            }
+            Self::UnmappedNestedFlowExit { flow, code } => write!(
+                formatter,
+                "nested flow {} declares no transition for terminal outcome {code}",
+                flow.as_str()
+            ),
             Self::Token(error) => write!(formatter, "flow graph token is invalid: {error}"),
             Self::Manifest(error) => {
                 write!(formatter, "flow manifest could not be encoded: {error}")

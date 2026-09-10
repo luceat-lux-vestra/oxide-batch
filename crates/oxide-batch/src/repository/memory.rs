@@ -972,17 +972,24 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .get(&request.job_execution_id())
                 .cloned()
                 .unwrap_or_default();
-            let expected_sequence = u64::try_from(existing.len())
-                .ok()
-                .and_then(|value| value.checked_add(1))
-                .ok_or(RepositoryError::FlowStateCorrupt)?;
-            if request.sequence().get() != expected_sequence
-                || existing.iter().any(|id| {
-                    self.staged.flow_decisions.get(id).is_some_and(|decision| {
-                        decision.source_node_id() == request.source_node_id()
-                    })
+            let advanced = manifest.get("format").and_then(serde_json::Value::as_u64)
+                == Some(u64::from(oxide_batch_core::MANIFEST_FORMAT_ADVANCED_FLOW));
+            let duplicate = existing.iter().any(|id| {
+                self.staged.flow_decisions.get(id).is_some_and(|decision| {
+                    decision.source_node_id() == request.source_node_id()
+                        || decision.sequence() == request.sequence()
                 })
-            {
+            });
+            let invalid_sequence = if advanced {
+                false
+            } else {
+                let expected_sequence = u64::try_from(existing.len())
+                    .ok()
+                    .and_then(|value| value.checked_add(1))
+                    .ok_or(RepositoryError::FlowStateCorrupt)?;
+                request.sequence().get() != expected_sequence
+            };
+            if invalid_sequence || duplicate {
                 return Err(RepositoryError::ConcurrentModification);
             }
             if let Some(step_id) = request.source_step_execution_id() {
@@ -1097,7 +1104,8 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                     id: job_execution_id,
                 });
             }
-            self.staged
+            let mut decisions = self
+                .staged
                 .flow_decisions_by_job
                 .get(&job_execution_id)
                 .into_iter()
@@ -1109,7 +1117,9 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                         .cloned()
                         .ok_or(RepositoryError::FlowStateCorrupt)
                 })
-                .collect()
+                .collect::<Result<Vec<_>, _>>()?;
+            decisions.sort_by_key(|decision| (decision.sequence(), decision.id()));
+            Ok(decisions)
         })
     }
 
@@ -2234,7 +2244,7 @@ impl ExplorerRepository for InMemoryExplorer {
         Box::pin(async move {
             let state = self.snapshot()?;
             let after = ordered_after(window);
-            Ok(state
+            let mut decisions = state
                 .flow_decisions_by_job
                 .get(&job_execution_id)
                 .into_iter()
@@ -2246,6 +2256,12 @@ impl ExplorerRepository for InMemoryExplorer {
                         (decision.sequence().get(), decision.id().get()) > after
                     })
                 })
+                .collect::<Vec<_>>();
+            // Format-4 branches may commit in any order. Apply the keyset
+            // ordering before the page limit, or a cursor can skip a row.
+            decisions.sort_by_key(|decision| (decision.sequence(), decision.id()));
+            Ok(decisions
+                .into_iter()
                 .take(limit_of(window))
                 .cloned()
                 .collect())

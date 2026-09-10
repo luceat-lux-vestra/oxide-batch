@@ -51,12 +51,13 @@ use oxide_batch::{
     BatchStatus, BoxFuture, ComponentRevision, DefinitionRevision, ExecutionContext,
     ExecutionCounts, ExitStatus, FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode,
     FlowRuntimeError, FlowTarget, JobName, JobParameters, JobRepository, JoinNode,
-    MAX_BRANCH_STEPS, MAX_PARTITION_WORKERS, MAX_PARTITIONS, MAX_SPLIT_BRANCHES, NodeId,
-    PartitionBudget, PartitionCount, PartitionFactoryError, PartitionKey, PartitionPlanEntry,
-    PartitionPlanFactory, PartitionTaskletFactory, PartitionedStepNode, PostgresConfig,
-    PostgresJobRepository, PostgresMigrator, SequentialIdGenerator, SplitBranch, SplitBudget,
-    SplitNode, StateLimits, StepComponents, StepName, StepNode, StopSource, Tasklet,
-    TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TaskletStepFactory, TerminalKind,
+    MAX_BRANCH_STEPS, MAX_FLOW_COMPOSITION_DEPTH, MAX_PARTITION_WORKERS, MAX_PARTITIONS,
+    MAX_SPLIT_BRANCHES, NestedFlow, NodeId, PartitionBudget, PartitionCount, PartitionFactoryError,
+    PartitionKey, PartitionPlanEntry, PartitionPlanFactory, PartitionTaskletFactory,
+    PartitionedStepNode, PostgresConfig, PostgresJobRepository, PostgresMigrator,
+    SequentialIdGenerator, SplitBranch, SplitBudget, SplitNode, StateLimits, StepComponents,
+    StepName, StepNode, StopSource, Tasklet, TaskletContext, TaskletError, TaskletOutcome,
+    TaskletStep, TaskletStepFactory, TerminalKind,
 };
 use serde_json::{Value, json};
 use tokio::sync::Barrier;
@@ -734,6 +735,7 @@ async fn launch_residue(
 fn construction_cells() -> Vec<Cell> {
     let mut cells = partition_construction_cells();
     cells.extend(split_construction_cells());
+    cells.extend(flow_composition_construction_cells());
     cells.extend(pool_construction_cells());
     cells
 }
@@ -844,6 +846,59 @@ fn split_construction_cells() -> Vec<Cell> {
     ));
 
     cells
+}
+
+/// Reports the advanced-flow composition-depth construction boundary.
+fn flow_composition_construction_cells() -> Vec<Cell> {
+    vec![
+        Cell::new(
+            "flow-composition-depth",
+            "at the ceiling",
+            MAX_FLOW_COMPOSITION_DEPTH as u64,
+            compiles_flow_composition_depth(MAX_FLOW_COMPOSITION_DEPTH),
+            true,
+        ),
+        Cell::new(
+            "flow-composition-depth",
+            "one past the ceiling",
+            MAX_FLOW_COMPOSITION_DEPTH as u64 + 1,
+            compiles_flow_composition_depth(MAX_FLOW_COMPOSITION_DEPTH + 1),
+            false,
+        ),
+    ]
+}
+
+/// Reports whether a nested-flow chain of exactly `depth` compiled scopes is accepted.
+fn compiles_flow_composition_depth(depth: usize) -> bool {
+    fn graph(depth: usize) -> Result<FlowGraph, Box<dyn Error>> {
+        if depth == 0 {
+            return Err(Failure::boxed("flow composition depth must be positive"));
+        }
+        if depth == 1 {
+            let leaf = NodeId::new("depth-leaf")?;
+            return Ok(FlowGraph::new(leaf.clone())
+                .with_node(FlowNode::step(StepNode::new(
+                    leaf.clone(),
+                    StepName::new("depth-leaf")?,
+                    StepComponents::Tasklet(ComponentRevision::new("shape-v1")?),
+                )))
+                .with_sequence(leaf, FlowTarget::Terminal(TerminalKind::Complete))?);
+        }
+
+        let owner = NodeId::new(format!("depth-owner-{depth}"))?;
+        Ok(FlowGraph::new(owner.clone())
+            .with_nested_flow(NestedFlow::new(owner.clone(), graph(depth - 1)?))
+            .with_sequence(owner, FlowTarget::Terminal(TerminalKind::Complete))?)
+    }
+
+    let build = || -> Result<(), Box<dyn Error>> {
+        graph(depth)?.compile(
+            &JobName::new("m5-resource-bound-flow-depth")?,
+            DefinitionRevision::new("v1")?,
+        )?;
+        Ok(())
+    };
+    build().is_ok()
 }
 
 /// Reports the adapter pool-size constructions.
@@ -1289,6 +1344,10 @@ impl Cell {
                 (Some(MAX_SPLIT_BRANCHES as u64), Some("concurrent branches"))
             }
             "steps-per-split-branch" => (Some(MAX_BRANCH_STEPS as u64), Some("steps")),
+            "flow-composition-depth" => (
+                Some(MAX_FLOW_COMPOSITION_DEPTH as u64),
+                Some("compiled flow scopes"),
+            ),
             "repository-pool-size" => (Some(1024), Some("connections")),
             _ => (None, None),
         };

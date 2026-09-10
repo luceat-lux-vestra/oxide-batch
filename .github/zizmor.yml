@@ -19,7 +19,7 @@ rules:
       # These job-scoped permissions are least-privilege grants. The comments
       # adjacent to the jobs explain their purpose; this pedantic rule only
       # recognizes inline comments on each permission key.
-      - ci.yml:455
+      - ci.yml:458
       - issue-labeler.yml:24
       - pr-labeler.yml:29
       - release-draft.yml:27
