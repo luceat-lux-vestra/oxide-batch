@@ -29,42 +29,17 @@ jobs:
           import subprocess
 
           helper = subprocess.check_output(
-              ["git", "show", "HEAD~2:.github/workflows/m7-265-memory-helper.yml"],
+              ["git", "show", "58559c137b449b2606d27ac78a557d8cef402863:.github/workflows/m7-265-memory-helper.yml"],
               text=True,
           )
           begin = "          python3 - <<'PY'\n"
           end = "          PY\n\n          cargo fmt --all"
           body = helper.split(begin, 1)[1].split(end, 1)[0]
-          body = '\n'.join(
-              line[10:] if line.startswith('          ') else line
-              for line in body.splitlines()
-          )
-          first = '''                        BatchStatus::Abandoned => {
-                            return Err(RepositoryError::NestedJobStateCorrupt);
-                        }
-                    }
-'''
-          first_fixed = '''                        BatchStatus::Abandoned => {
-                            return Err(RepositoryError::NestedJobStateCorrupt);
-                        }
-                        _ => {
-                            return Err(RepositoryError::NestedJobStateCorrupt);
-                        }
-                    }
-'''
-          second = '''                BatchStatus::Abandoned => {
-                    return Err(RepositoryError::NestedJobStateCorrupt);
-                }
-            };
-'''
-          second_fixed = '''                BatchStatus::Abandoned => {
-                    return Err(RepositoryError::NestedJobStateCorrupt);
-                }
-                _ => {
-                    return Err(RepositoryError::NestedJobStateCorrupt);
-                }
-            };
-'''
+          body = '\n'.join(line[10:] if line.startswith('          ') else line for line in body.splitlines())
+          first = "                        BatchStatus::Abandoned => {\n                            return Err(RepositoryError::NestedJobStateCorrupt);\n                        }\n                    }\n"
+          first_fixed = "                        BatchStatus::Abandoned => {\n                            return Err(RepositoryError::NestedJobStateCorrupt);\n                        }\n                        _ => {\n                            return Err(RepositoryError::NestedJobStateCorrupt);\n                        }\n                    }\n"
+          second = "                BatchStatus::Abandoned => {\n                    return Err(RepositoryError::NestedJobStateCorrupt);\n                }\n            };\n"
+          second_fixed = "                BatchStatus::Abandoned => {\n                    return Err(RepositoryError::NestedJobStateCorrupt);\n                }\n                _ => {\n                    return Err(RepositoryError::NestedJobStateCorrupt);\n                }\n            };\n"
           if body.count(first) != 1 or body.count(second) != 1:
               raise RuntimeError('expected nested-job BatchStatus match arms were not found')
           body = body.replace(first, first_fixed, 1).replace(second, second_fixed, 1)
