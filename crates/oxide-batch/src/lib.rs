@@ -417,6 +417,7 @@ pub mod item_components;
 mod item_listener;
 mod item_stream;
 mod listener;
+mod nested_job_runtime;
 mod repository;
 mod runtime;
 mod service;
@@ -474,6 +475,7 @@ pub use listener::{
     JobExecutionListener, ListenerContext, ListenerError, ListenerFailure, ListenerFailureKind,
     ListenerPhase, StepExecutionListener,
 };
+pub use nested_job_runtime::NestedJobMappingFailure;
 pub use oxide_batch_core::{
     BackoffKind, BackoffPolicy, BatchStatus, Checkpoint, ChecksumAlgorithm,
     ChunkComponentRevisions, ChunkCount, ChunkCounts, ChunkDeliveryMode, ChunkError, ChunkProgress,

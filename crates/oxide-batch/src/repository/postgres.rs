@@ -2533,7 +2533,9 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 }
             } else if !matches!(
                 request.kind(),
-                FlowTransitionKind::Decider | FlowTransitionKind::SplitAggregate
+                FlowTransitionKind::Decider
+                    | FlowTransitionKind::SplitAggregate
+                    | FlowTransitionKind::NestedJobExit
             ) {
                 return Err(RepositoryError::FlowStateCorrupt);
             }
