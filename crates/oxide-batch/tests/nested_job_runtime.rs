@@ -80,7 +80,7 @@ impl Tasklet for CaptureChild {
                 .ok_or_else(TaskletError::new)?;
             self.seen
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push(value.to_owned());
             Ok(TaskletOutcome::Completed)
         })
@@ -208,7 +208,9 @@ async fn restart_reuses_completed_child_and_does_not_remap_new_parent_value()
         link
     };
     assert_eq!(
-        first_link.terminal().map(|terminal| terminal.status()),
+        first_link
+            .terminal()
+            .map(oxide_batch::NestedJobTerminalObservation::status),
         Some(BatchStatus::Completed)
     );
 
@@ -246,7 +248,7 @@ async fn restart_reuses_completed_child_and_does_not_remap_new_parent_value()
     );
     assert_eq!(
         seen.lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .as_slice(),
         ["first"]
     );
@@ -480,7 +482,8 @@ async fn failed_child_fails_parent_node_and_commits_terminal_observation()
         .expect("failed child remains durably linked");
     unit.rollback().await?;
     assert_eq!(
-        link.terminal().map(|terminal| terminal.status()),
+        link.terminal()
+            .map(oxide_batch::NestedJobTerminalObservation::status),
         Some(BatchStatus::Failed)
     );
     Ok(())
@@ -508,7 +511,8 @@ async fn stopped_child_stops_parent_and_commits_terminal_observation() -> Result
         .expect("stopped child remains durably linked");
     unit.rollback().await?;
     assert_eq!(
-        link.terminal().map(|terminal| terminal.status()),
+        link.terminal()
+            .map(oxide_batch::NestedJobTerminalObservation::status),
         Some(BatchStatus::Stopped)
     );
     Ok(())
@@ -609,7 +613,8 @@ async fn parent_stop_is_owned_joined_and_propagated_to_child() -> Result<(), Box
         .expect("cancelled child remains durably linked");
     unit.rollback().await?;
     assert_eq!(
-        link.terminal().map(|terminal| terminal.status()),
+        link.terminal()
+            .map(oxide_batch::NestedJobTerminalObservation::status),
         Some(BatchStatus::Stopped)
     );
     Ok(())
