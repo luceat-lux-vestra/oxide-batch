@@ -18,7 +18,7 @@
 //! its tables, columns, constraints, indexes, and applied-migration bookkeeping
 //! are the ones that version produced when it was the whole schema. The
 //! populated 4 -> 5 preservation and restore boundary is separately owned by
-//! the schema5 PostgreSQL design gate.
+//! the schema5 `PostgreSQL` design gate.
 //!
 //! Each source is then seeded with the durable state an operator's database
 //! would have held — registered definitions and the upgrade edge between them,
