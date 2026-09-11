@@ -1,0 +1,112 @@
+name: M7 265 repository contract helper
+
+on:
+  push:
+    branches:
+      - issue-265-nested-job-durable-linkage
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: issue-265-nested-job-durable-linkage
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Apply repository contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"{path}: expected one replacement, found {count}: {old[:100]!r}")
+              target.write_text(text.replace(old, new, 1))
+
+          lib = 'crates/oxide-batch-repository/src/lib.rs'
+          replace(lib, 'mod flow;\nmod operator;', 'mod flow;\nmod nested_job;\nmod operator;')
+          replace(
+              lib,
+              'pub use flow::{\n    FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowDecisionSequence, FlowStepState,\n    FlowTransitionKind,\n};\n',
+              'pub use flow::{\n    FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowDecisionSequence, FlowStepState,\n    FlowTransitionKind,\n};\npub use nested_job::{NestedJobLink, NestedJobLinkRequest, NestedJobTerminalObservation};\n',
+          )
+
+          repo = 'crates/oxide-batch-repository/src/repository.rs'
+          replace(
+              repo,
+              '    ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitStatus, FailureCategory,\n    FailureId, FailureSummary, IdentifierKind, JobExecution, JobExecutionId, JobInstance,\n    JobInstanceId, JobInstanceKey, JobName, LifecycleError, LifecycleTransition, NodeId,\n',
+              '    ExecutionContext, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitStatus,\n    FailureCategory, FailureId, FailureSummary, IdentifierKind, JobExecution, JobExecutionId,\n    JobInstance, JobInstanceId, JobInstanceKey, JobName, JobParameters, LifecycleError,\n    LifecycleTransition, NodeId,\n',
+          )
+          replace(
+              repo,
+              '    OperatorAction, OperatorRecord, OperatorRecordDraft, OwnerToken, PartitionAggregate,\n',
+              '    NestedJobLink, NestedJobLinkRequest, OperatorAction, OperatorRecord,\n    OperatorRecordDraft, OwnerToken, PartitionAggregate,\n',
+          )
+
+          anchor = '''    /// Inserts one complete bounded partition plan before any worker starts.\n'''
+          methods = '''    /// Reads the current parent-attempt link for one nested-job node.\n    fn nested_job_link<'a>(\n        &'a mut self,\n        _parent_job_execution_id: JobExecutionId,\n        _node_id: &'a NodeId,\n    ) -> BoxFuture<'a, Result<Option<NestedJobLink>, RepositoryError>> {\n        Box::pin(async {\n            Err(RepositoryError::UnsupportedCapability {\n                capability: RepositoryCapability::NestedJobs,\n            })\n        })\n    }\n\n    /// Reads the newest committed link for one parent instance/node lineage.\n    fn latest_nested_job_link<'a>(\n        &'a mut self,\n        _parent_job_instance_id: JobInstanceId,\n        _node_id: &'a NodeId,\n    ) -> BoxFuture<'a, Result<Option<NestedJobLink>, RepositoryError>> {\n        Box::pin(async {\n            Err(RepositoryError::UnsupportedCapability {\n                capability: RepositoryCapability::NestedJobs,\n            })\n        })\n    }\n\n    /// Atomically selects/creates the child instance, creates or safely reuses\n    /// its child execution, persists the complete child parameter set, and\n    /// commits the parent-attempt link before child user work may start.\n    fn create_nested_job_link<'a>(\n        &'a mut self,\n        _request: &'a NestedJobLinkRequest,\n    ) -> BoxFuture<'a, Result<NestedJobLink, RepositoryError>> {\n        Box::pin(async {\n            Err(RepositoryError::UnsupportedCapability {\n                capability: RepositoryCapability::NestedJobs,\n            })\n        })\n    }\n\n    /// Creates the next parent-attempt link from a committed prior link without\n    /// re-running parameter mapping. Completed child work is reused; a\n    /// failed/stopped child may create a new execution of the same child\n    /// instance with the exact persisted complete parameter set.\n    fn continue_nested_job_link<'a>(\n        &'a mut self,\n        _parent_job_execution_id: JobExecutionId,\n        _node_id: &'a NodeId,\n        _prior_parent_job_execution_id: JobExecutionId,\n        _linked_at: SystemTime,\n    ) -> BoxFuture<'a, Result<NestedJobLink, RepositoryError>> {\n        Box::pin(async {\n            Err(RepositoryError::UnsupportedCapability {\n                capability: RepositoryCapability::NestedJobs,\n            })\n        })\n    }\n\n    /// Loads the complete typed child parameter set owned by a committed link.\n    fn nested_job_parameters<'a>(\n        &'a mut self,\n        _parent_job_execution_id: JobExecutionId,\n        _node_id: &'a NodeId,\n    ) -> BoxFuture<'a, Result<JobParameters, RepositoryError>> {\n        Box::pin(async {\n            Err(RepositoryError::UnsupportedCapability {\n                capability: RepositoryCapability::NestedJobs,\n            })\n        })\n    }\n\n    /// Reads the committed job-execution context used by structured selectors.\n    fn job_execution_context(\n        &mut self,\n        _job_execution_id: JobExecutionId,\n    ) -> BoxFuture<'_, Result<Option<ExecutionContext>, RepositoryError>> {\n        Box::pin(async {\n            Err(RepositoryError::UnsupportedCapability {\n                capability: RepositoryCapability::NestedJobs,\n            })\n        })\n    }\n\n    /// Derives and commits one terminal observation from the linked child\n    /// execution. Callers cannot supply a fabricated status or exit code.\n    fn observe_nested_job_terminal<'a>(\n        &'a mut self,\n        _parent_job_execution_id: JobExecutionId,\n        _node_id: &'a NodeId,\n        _observed_at: SystemTime,\n    ) -> BoxFuture<'a, Result<NestedJobLink, RepositoryError>> {\n        Box::pin(async {\n            Err(RepositoryError::UnsupportedCapability {\n                capability: RepositoryCapability::NestedJobs,\n            })\n        })\n    }\n\n'''
+          replace(repo, anchor, methods + anchor)
+
+          replace(
+              repo,
+              '    /// Durable local partition plans and compare-and-swap results.\n    StepPartitions,\n',
+              '    /// Durable local partition plans and compare-and-swap results.\n    StepPartitions,\n    /// Atomic nested-job child creation, linkage, restart reuse, and observation.\n    NestedJobs,\n',
+          )
+          replace(
+              repo,
+              '            Self::StepPartitions => "durable step partitions",\n',
+              '            Self::StepPartitions => "durable step partitions",\n            Self::NestedJobs => "nested job linkage",\n',
+          )
+          replace(
+              repo,
+              '    /// Durable flow history is missing, contradictory, or corrupt.\n    FlowStateCorrupt,\n',
+              '    /// Durable flow history is missing, contradictory, or corrupt.\n    FlowStateCorrupt,\n    /// A nested-job link, child identity, or persisted parameter set is contradictory.\n    NestedJobStateCorrupt,\n    /// The linked child is active or ambiguous and cannot be silently duplicated.\n    NestedJobChildUnresolved {\n        /// Linked child attempt that requires completion or explicit recovery.\n        child_execution_id: JobExecutionId,\n        /// Durable status preventing a new child attempt.\n        status: BatchStatus,\n    },\n',
+          )
+          replace(
+              repo,
+              '            Self::FlowStateCorrupt => {\n                formatter.write_str("durable flow history is unusable and no work may begin")\n            }\n',
+              '            Self::FlowStateCorrupt => {\n                formatter.write_str("durable flow history is unusable and no work may begin")\n            }\n            Self::NestedJobStateCorrupt => {\n                formatter.write_str("durable nested-job state is unusable and no child work may begin")\n            }\n            Self::NestedJobChildUnresolved {\n                child_execution_id,\n                status,\n            } => write!(\n                formatter,\n                "nested child execution {child_execution_id} in {status} requires completion or recovery"\n            ),\n',
+          )
+
+          facade = 'crates/oxide-batch/src/lib.rs'
+          replace(
+              facade,
+              '    FlowTransitionKind, IdGenerationError, IdGenerator, JobExecutionProjection,\n',
+              '    FlowTransitionKind, IdGenerationError, IdGenerator, JobExecutionProjection,\n',
+          )
+          replace(
+              facade,
+              '    OperatorAction, OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft, OperatorRejection,\n',
+              '    NestedJobLink, NestedJobLinkRequest, NestedJobTerminalObservation, OperatorAction,\n    OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft, OperatorRejection,\n',
+          )
+          PY
+
+          cargo fmt --all
+          cargo check -p oxide-batch-repository
+          cargo check -p oxide-batch
+          cargo clippy -p oxide-batch-repository --all-targets --all-features -- -D warnings
+
+      - name: Promote repository contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/m7-265-repository-contract-helper.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "feat(repository): add nested-job linkage contract"
+          git push origin HEAD:issue-265-nested-job-durable-linkage
