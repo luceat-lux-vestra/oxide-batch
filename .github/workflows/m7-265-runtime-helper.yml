@@ -10,6 +10,7 @@ on:
       - .github/helpers/m7_265_stage_c.py
       - .github/helpers/m7_265_stage_d.py
       - .github/helpers/m7_265_stage_e.py
+      - .github/helpers/m7_265_stage_f.py
 
 permissions:
   contents: write
@@ -33,6 +34,8 @@ jobs:
         run: python3 .github/helpers/m7_265_stage_d.py
       - name: Fix runtime evidence imports
         run: python3 .github/helpers/m7_265_stage_e.py
+      - name: Validate nested-job durable decisions
+        run: python3 .github/helpers/m7_265_stage_f.py
       - name: Format
         run: cargo fmt --all
       - name: Compile library with PostgreSQL adapter
