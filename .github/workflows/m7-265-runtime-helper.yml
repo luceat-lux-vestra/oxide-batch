@@ -25,6 +25,8 @@ jobs:
         run: python3 .github/helpers/m7_265_stage_a.py
       - name: Apply precreated child launcher patch
         run: python3 .github/helpers/m7_265_stage_b.py
+      - name: Apply nested-job state machine patch
+        run: python3 .github/helpers/m7_265_stage_c.py
       - name: Format
         run: cargo fmt --all
       - name: Compile library with PostgreSQL adapter
