@@ -131,10 +131,7 @@ async fn row_exists(url: &str, table: &str, id: u64) -> Result<bool, Box<dyn Err
     Ok(exists)
 }
 
-async fn nested_link_exists(
-    url: &str,
-    parent_execution_id: u64,
-) -> Result<bool, Box<dyn Error>> {
+async fn nested_link_exists(url: &str, parent_execution_id: u64) -> Result<bool, Box<dyn Error>> {
     let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_nested_job_link \
@@ -506,7 +503,14 @@ fn postgres_nested_job_parent_purge_cascades_link_without_deleting_child()
         create.commit().await?;
 
         assert!(nested_link_exists(&url, parent_execution.id().get()).await?);
-        assert!(row_exists(&url, "ob_job_execution", link.child_job_execution_id().get()).await?);
+        assert!(
+            row_exists(
+                &url,
+                "ob_job_execution",
+                link.child_job_execution_id().get()
+            )
+            .await?
+        );
 
         let mut complete = repository.begin().await?;
         let started = complete
@@ -552,7 +556,14 @@ fn postgres_nested_job_parent_purge_cascades_link_without_deleting_child()
 
         assert!(!nested_link_exists(&url, parent_execution.id().get()).await?);
         assert!(!row_exists(&url, "ob_job_execution", parent_execution.id().get()).await?);
-        assert!(row_exists(&url, "ob_job_execution", link.child_job_execution_id().get()).await?);
+        assert!(
+            row_exists(
+                &url,
+                "ob_job_execution",
+                link.child_job_execution_id().get()
+            )
+            .await?
+        );
         Ok::<(), Box<dyn Error>>(())
     })
 }
@@ -571,7 +582,8 @@ fn postgres_nested_job_security_policy_separates_link_writers() -> Result<(), Bo
         security::recreate_database(&admin, DATABASE).await?;
         let database = security::with_database(&admin, DATABASE)?;
         security::apply_script(&database, &security::fixtures().join("roles.sql")).await?;
-        oxide_batch::PostgresMigrator::migrate(&security::fixture_config(database.clone())?).await?;
+        oxide_batch::PostgresMigrator::migrate(&security::fixture_config(database.clone())?)
+            .await?;
         security::apply_script(&database, &security::fixtures().join("grants.sql")).await?;
 
         let password = format!("m7_nested_{}", std::process::id());
@@ -613,8 +625,7 @@ fn postgres_nested_job_security_policy_separates_link_writers() -> Result<(), Bo
 
         security::drop_database(&admin, DATABASE).await?;
         for role in roles {
-            security::run_statement(&admin, format!("DROP ROLE IF EXISTS {role}"))
-                .await?;
+            security::run_statement(&admin, format!("DROP ROLE IF EXISTS {role}")).await?;
         }
         Ok::<(), Box<dyn Error>>(())
     })
