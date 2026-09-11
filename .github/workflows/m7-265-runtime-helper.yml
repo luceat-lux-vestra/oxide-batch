@@ -5,18 +5,13 @@ on:
     branches: [issue-265-nested-job-durable-linkage]
     paths:
       - .github/workflows/m7-265-runtime-helper.yml
-      - .github/helpers/m7_265_stage_a.py
-      - .github/helpers/m7_265_stage_b.py
-      - .github/helpers/m7_265_stage_c.py
-      - .github/helpers/m7_265_stage_d.py
-      - .github/helpers/m7_265_stage_e.py
-      - .github/helpers/m7_265_stage_g.py
+      - .github/helpers/m7_265_stage_h.py
 
 permissions:
   contents: write
 
 jobs:
-  implement-runtime:
+  verify-terminal-semantics:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -24,18 +19,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: true
-      - name: Apply runtime foundation patch
-        run: python3 .github/helpers/m7_265_stage_a.py
-      - name: Apply precreated child launcher patch
-        run: python3 .github/helpers/m7_265_stage_b.py
-      - name: Apply nested-job state machine patch
-        run: python3 .github/helpers/m7_265_stage_c.py
-      - name: Apply in-memory nested-job evidence patch
-        run: python3 .github/helpers/m7_265_stage_d.py
-      - name: Fix runtime evidence imports
-        run: python3 .github/helpers/m7_265_stage_e.py
-      - name: Allow nested-job decisions without a step source
-        run: python3 .github/helpers/m7_265_stage_g.py
+      - name: Add terminal and cancellation evidence
+        run: python3 .github/helpers/m7_265_stage_h.py
       - name: Format
         run: cargo fmt --all
       - name: Compile library with PostgreSQL adapter
@@ -48,19 +33,15 @@ jobs:
         run: cargo clippy -p oxide-batch --lib --features postgres --locked -- -D warnings
       - name: Diff check
         run: git diff --check
-      - name: Show candidate diff
-        run: |
-          git status --short
-          git diff --stat
-      - name: Promote green product changes
+      - name: Promote green runtime evidence
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add crates/oxide-batch/src crates/oxide-batch-repository/src crates/oxide-batch/tests/nested_job_runtime.rs
+          git add crates/oxide-batch/tests/nested_job_runtime.rs
           if git diff --cached --quiet; then
-            echo "no product changes to promote"
+            echo "no runtime evidence changes to promote"
             exit 0
           fi
-          git commit -m "feat(flow): execute durable nested jobs"
+          git commit -m "test(flow): cover nested-job terminal propagation"
           git push origin HEAD:issue-265-nested-job-durable-linkage
