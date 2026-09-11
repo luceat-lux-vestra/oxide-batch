@@ -38,10 +38,18 @@ new_fn = '''fn nested_child_definition() -> Result<DefinitionIdentity, Box<dyn E
 '''
 if test_text.count(old_fn) != 1:
     raise RuntimeError("nested_child_definition body did not match exactly once")
-test_path.write_text(test_text.replace(old_fn, new_fn, 1))
+test_text = test_text.replace(old_fn, new_fn, 1)
+closure = ".map(|terminal| terminal.status())"
+if test_text.count(closure) != 2:
+    raise RuntimeError("expected exactly two nested-job terminal status closures")
+test_text = test_text.replace(
+    closure,
+    ".map(oxide_batch::NestedJobTerminalObservation::status)",
+)
+test_path.write_text(test_text)
 
 # Extract invariant checks from create_nested_job_link instead of suppressing
-# clippy::too_many_lines. These helpers are also reusable by later adapters.
+# clippy::too_many_lines.
 memory_path = Path("crates/oxide-batch/src/repository/memory.rs")
 memory = memory_path.read_text()
 anchor = '''    fn next_recovery_decision_id(&self) -> Result<RecoveryDecisionId, RepositoryError> {
