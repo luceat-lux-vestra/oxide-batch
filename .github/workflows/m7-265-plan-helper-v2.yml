@@ -1,0 +1,65 @@
+name: M7 265 plan helper v2
+
+on:
+  push:
+    branches:
+      - issue-265-nested-job-durable-linkage
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: issue-265-nested-job-durable-linkage
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Apply corrected plan integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          helper = Path('.github/workflows/m7-265-plan-helper.yml').read_text()
+          begin = "          python3 - <<'PY'\n"
+          end = "          PY\n\n          cargo fmt --all"
+          body = helper.split(begin, 1)[1].split(end, 1)[0]
+          body = '\n'.join(line[10:] if line.startswith('          ') else line for line in body.splitlines())
+          namespace = {}
+          exec(compile(body, '<plan-helper>', 'exec'), namespace, namespace)
+
+          path = Path('crates/oxide-batch-plan/src/lib.rs')
+          text = path.read_text()
+          old = "            FlowNode::Step(_) | FlowNode::Decision(_) => {}\n"
+          new = "            FlowNode::Step(_) | FlowNode::Decision(_) | FlowNode::NestedJob(_) => {}\n"
+          if text.count(old) != 1:
+              raise RuntimeError('legacy local-scale exhaustive arm did not match exactly once')
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+          cargo fmt --all
+          cargo check -p oxide-batch-plan
+          cargo test -p oxide-batch --test nested_job_plan -- --nocapture
+          cargo test -p oxide-batch --test plan_manifest -- --nocapture
+          cargo test -p oxide-batch --test plan_fingerprint -- --nocapture
+
+      - name: Promote plan slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/m7-265-plan-helper.yml
+          git rm .github/workflows/m7-265-plan-helper-v2.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "feat(flow): add nested-job plan semantics"
+          git push origin HEAD:issue-265-nested-job-durable-linkage
