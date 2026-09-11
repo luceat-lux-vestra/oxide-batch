@@ -1,4 +1,4 @@
-//! PostgreSQL contract evidence for M7 nested-job durable linkage.
+//! `PostgreSQL` contract evidence for M7 nested-job durable linkage.
 
 #![cfg(feature = "postgres")]
 
