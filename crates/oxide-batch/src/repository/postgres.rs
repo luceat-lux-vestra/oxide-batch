@@ -35,21 +35,22 @@ use crate::{
     InheritedStepProgress, JobExecution, JobExecutionId, JobExecutionProjection, JobInstance,
     JobInstanceId, JobInstanceKey, JobInstanceProjection, JobInstanceSelection, JobName,
     JobParameter, JobParameters, JobRepository, LifecycleError, LifecycleTransition,
-    MAX_PARTITION_CONTEXT_BYTES, MAX_PARTITIONS, NodeId, OperationId, OperatorAction,
-    OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft, OperatorRejection,
-    OperatorRequestId, ParameterDescriptor, ParameterName, ParameterRole, ParameterValue,
-    ParameterValueKind, PartitionKey, PartitionPlanEntry, PartitionResult, PurgeBatchBound,
-    PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode,
-    RecoveryDecision, RecoveryDecisionId, RecoveryRequest, RecoveryResult, RepositoryCapability,
-    RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork, RequestDigest, RetentionAction,
-    RetentionActionId, RetentionHold, RetentionOutcome, RetentionRecord, RetentionRecordDraft,
-    RetryCounts, RetryKey, RetryLimit, RetryOrdinal, RetryReservation, RetryStateLimit, SkipCounts,
-    StartLimit, StateEnvelopeDescriptor, StateLimits, StateSchemaId, StateSchemaVersion,
-    StepExecution, StepExecutionId, StepExecutionProjection, StepName, StepPartition,
-    StepPartitionId, StepPartitionProjection, TerminalKind,
+    MAX_PARTITION_CONTEXT_BYTES, MAX_PARTITIONS, NestedJobLink, NestedJobLinkRequest,
+    NestedJobTerminalObservation, NodeId, OperationId, OperatorAction, OperatorOutcomeClass,
+    OperatorRecord, OperatorRecordDraft, OperatorRejection, OperatorRequestId, ParameterDescriptor,
+    ParameterName, ParameterRole, ParameterValue, ParameterValueKind, PartitionKey,
+    PartitionPlanEntry, PartitionResult, PurgeBatchBound, PurgeCandidate, PurgeCounts, PurgePlan,
+    PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecision, RecoveryDecisionId,
+    RecoveryRequest, RecoveryResult, RepositoryCapability, RepositoryDescriptor, RepositoryError,
+    RepositoryUnitOfWork, RequestDigest, RetentionAction, RetentionActionId, RetentionHold,
+    RetentionOutcome, RetentionRecord, RetentionRecordDraft, RetryCounts, RetryKey, RetryLimit,
+    RetryOrdinal, RetryReservation, RetryStateLimit, SkipCounts, StartLimit,
+    StateEnvelopeDescriptor, StateLimits, StateSchemaId, StateSchemaVersion, StepExecution,
+    StepExecutionId, StepExecutionProjection, StepName, StepPartition, StepPartitionId,
+    StepPartitionProjection, TerminalKind,
 };
 
-const SUPPORTED_SCHEMA_VERSION: u32 = 4;
+const SUPPORTED_SCHEMA_VERSION: u32 = 5;
 const MAX_INSTANCE_KEY_INPUT: usize = 1024 * 1024;
 const MAX_POOL_SIZE: u32 = 1024;
 const MAX_SHORT_TIMEOUT: Duration = Duration::from_mins(5);
@@ -859,6 +860,7 @@ impl JobRepository for PostgresJobRepository {
             [
                 RepositoryCapability::ExecutionOwnership,
                 RepositoryCapability::InstanceHolds,
+                RepositoryCapability::NestedJobs,
                 RepositoryCapability::OperatorRequests,
                 RepositoryCapability::RetentionPurge,
                 RepositoryCapability::StepPartitions,
@@ -2678,6 +2680,365 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
             rows.iter().map(decode_flow_decision).collect()
+        })
+    }
+
+    fn nested_job_link<'a>(
+        &'a mut self,
+        parent_job_execution_id: JobExecutionId,
+        node_id: &'a NodeId,
+    ) -> BoxFuture<'a, Result<Option<NestedJobLink>, RepositoryError>> {
+        Box::pin(async move {
+            let parent_id =
+                database_id(parent_job_execution_id.get(), IdentifierKind::JobExecution)?;
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_job_execution WHERE id = $1)",
+            )
+            .bind(parent_id)
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            if !exists {
+                return Err(RepositoryError::JobExecutionNotFound {
+                    id: parent_job_execution_id,
+                });
+            }
+            load_nested_job_link(
+                &mut **self.transaction()?,
+                parent_job_execution_id,
+                node_id,
+                false,
+            )
+            .await
+        })
+    }
+
+    fn latest_nested_job_link<'a>(
+        &'a mut self,
+        parent_job_instance_id: JobInstanceId,
+        node_id: &'a NodeId,
+    ) -> BoxFuture<'a, Result<Option<NestedJobLink>, RepositoryError>> {
+        Box::pin(async move {
+            let instance_id =
+                database_id(parent_job_instance_id.get(), IdentifierKind::JobInstance)?;
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_job_instance WHERE id = $1)",
+            )
+            .bind(instance_id)
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            if !exists {
+                return Err(RepositoryError::JobInstanceNotFound {
+                    id: parent_job_instance_id,
+                });
+            }
+            load_latest_nested_job_link(&mut **self.transaction()?, parent_job_instance_id, node_id)
+                .await
+        })
+    }
+
+    fn create_nested_job_link<'a>(
+        &'a mut self,
+        request: &'a NestedJobLinkRequest,
+    ) -> BoxFuture<'a, Result<NestedJobLink, RepositoryError>> {
+        Box::pin(async move {
+            let parent_execution_id = database_id(
+                request.parent_job_execution_id().get(),
+                IdentifierKind::JobExecution,
+            )?;
+            let parent_instance: i64 = sqlx::query_scalar(
+                "SELECT job_instance_id FROM oxide_batch.ob_job_execution \
+                 WHERE id = $1 FOR UPDATE",
+            )
+            .bind(parent_execution_id)
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .ok_or(RepositoryError::JobExecutionNotFound {
+                id: request.parent_job_execution_id(),
+            })?;
+            if u64::try_from(parent_instance).map_err(|_| RepositoryError::NestedJobStateCorrupt)?
+                != request.parent_job_instance_id().get()
+            {
+                return Err(RepositoryError::NestedJobStateCorrupt);
+            }
+            if let Some(existing) = load_nested_job_link(
+                &mut **self.transaction()?,
+                request.parent_job_execution_id(),
+                request.node_id(),
+                true,
+            )
+            .await?
+            {
+                let parameters = load_execution_parameters(
+                    &mut **self.transaction()?,
+                    existing.child_job_execution_id(),
+                )
+                .await?;
+                if existing.child_definition() != request.child_definition()
+                    || &parameters != request.child_parameters()
+                {
+                    return Err(RepositoryError::NestedJobStateCorrupt);
+                }
+                return Ok(existing);
+            }
+
+            let child_execution = select_nested_child_for_request(self, request).await?;
+            insert_nested_job_link(
+                &mut **self.transaction()?,
+                request.parent_job_instance_id(),
+                request.parent_job_execution_id(),
+                request.node_id(),
+                child_execution.id(),
+                request.linked_at(),
+                None,
+            )
+            .await?;
+            load_nested_job_link(
+                &mut **self.transaction()?,
+                request.parent_job_execution_id(),
+                request.node_id(),
+                false,
+            )
+            .await?
+            .ok_or(RepositoryError::NestedJobStateCorrupt)
+        })
+    }
+
+    fn continue_nested_job_link<'a>(
+        &'a mut self,
+        parent_job_execution_id: JobExecutionId,
+        node_id: &'a NodeId,
+        prior_parent_job_execution_id: JobExecutionId,
+        linked_at: SystemTime,
+    ) -> BoxFuture<'a, Result<NestedJobLink, RepositoryError>> {
+        Box::pin(async move {
+            let parent_id =
+                database_id(parent_job_execution_id.get(), IdentifierKind::JobExecution)?;
+            let parent_instance_raw: i64 = sqlx::query_scalar(
+                "SELECT job_instance_id FROM oxide_batch.ob_job_execution WHERE id = $1 FOR UPDATE",
+            )
+            .bind(parent_id)
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .ok_or(RepositoryError::JobExecutionNotFound {
+                id: parent_job_execution_id,
+            })?;
+            let parent_instance = JobInstanceId::new(
+                u64::try_from(parent_instance_raw)
+                    .map_err(|_| RepositoryError::NestedJobStateCorrupt)?,
+            )?;
+            if let Some(existing) = load_nested_job_link(
+                &mut **self.transaction()?,
+                parent_job_execution_id,
+                node_id,
+                true,
+            )
+            .await?
+            {
+                return Ok(existing);
+            }
+            let prior = load_nested_job_link(
+                &mut **self.transaction()?,
+                prior_parent_job_execution_id,
+                node_id,
+                true,
+            )
+            .await?
+            .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+            if prior.parent_job_instance_id() != parent_instance {
+                return Err(RepositoryError::NestedJobStateCorrupt);
+            }
+            let prior_parameters = load_execution_parameters(
+                &mut **self.transaction()?,
+                prior.child_job_execution_id(),
+            )
+            .await?;
+            let prior_child = self
+                .get_job_execution(prior.child_job_execution_id())
+                .await?
+                .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+            let child_execution = match prior_child.metadata().status() {
+                BatchStatus::Completed => prior_child,
+                BatchStatus::Failed | BatchStatus::Stopped => {
+                    self.create_job_execution_with_definition(
+                        prior.child_job_instance_id(),
+                        prior.child_definition(),
+                    )
+                    .await?
+                }
+                BatchStatus::Starting
+                | BatchStatus::Started
+                | BatchStatus::Stopping
+                | BatchStatus::Unknown => {
+                    return Err(RepositoryError::NestedJobChildUnresolved {
+                        child_execution_id: prior_child.id(),
+                        status: prior_child.metadata().status(),
+                    });
+                }
+                _ => return Err(RepositoryError::NestedJobStateCorrupt),
+            };
+            store_execution_parameters(
+                &mut **self.transaction()?,
+                child_execution.id(),
+                &prior_parameters,
+            )
+            .await?;
+            let terminal = if child_execution.id() == prior.child_job_execution_id() {
+                prior.terminal()
+            } else {
+                None
+            };
+            insert_nested_job_link(
+                &mut **self.transaction()?,
+                parent_instance,
+                parent_job_execution_id,
+                node_id,
+                child_execution.id(),
+                linked_at,
+                terminal,
+            )
+            .await?;
+            load_nested_job_link(
+                &mut **self.transaction()?,
+                parent_job_execution_id,
+                node_id,
+                false,
+            )
+            .await?
+            .ok_or(RepositoryError::NestedJobStateCorrupt)
+        })
+    }
+
+    fn nested_job_parameters<'a>(
+        &'a mut self,
+        parent_job_execution_id: JobExecutionId,
+        node_id: &'a NodeId,
+    ) -> BoxFuture<'a, Result<JobParameters, RepositoryError>> {
+        Box::pin(async move {
+            let link = load_nested_job_link(
+                &mut **self.transaction()?,
+                parent_job_execution_id,
+                node_id,
+                false,
+            )
+            .await?
+            .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+            load_execution_parameters(&mut **self.transaction()?, link.child_job_execution_id())
+                .await
+        })
+    }
+
+    fn job_execution_context(
+        &mut self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Option<ExecutionContext>, RepositoryError>> {
+        Box::pin(async move {
+            let row = sqlx::query(
+                "SELECT context_format, context_schema, context_schema_version, context_payload \
+                 FROM oxide_batch.ob_job_execution WHERE id = $1",
+            )
+            .bind(database_id(
+                job_execution_id.get(),
+                IdentifierKind::JobExecution,
+            )?)
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            row.as_ref()
+                .map(|row| {
+                    decode_durable_state(
+                        row,
+                        "context_format",
+                        "context_schema",
+                        "context_schema_version",
+                        "context_payload",
+                        "oxide-batch.execution-context",
+                        ExecutionContext::from_json,
+                    )
+                })
+                .transpose()
+        })
+    }
+
+    fn observe_nested_job_terminal<'a>(
+        &'a mut self,
+        parent_job_execution_id: JobExecutionId,
+        node_id: &'a NodeId,
+        observed_at: SystemTime,
+    ) -> BoxFuture<'a, Result<NestedJobLink, RepositoryError>> {
+        Box::pin(async move {
+            let link = load_nested_job_link(
+                &mut **self.transaction()?,
+                parent_job_execution_id,
+                node_id,
+                true,
+            )
+            .await?
+            .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+            let row = sqlx::query(AssertSqlSafe(job_execution_select(
+                "WHERE execution.id = $1 FOR UPDATE",
+            )))
+            .bind(database_id(
+                link.child_job_execution_id().get(),
+                IdentifierKind::JobExecution,
+            )?)
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+            let child = decode_job_execution(&row)?;
+            let status = child.metadata().status();
+            if !matches!(
+                status,
+                BatchStatus::Completed | BatchStatus::Failed | BatchStatus::Stopped
+            ) {
+                return Err(RepositoryError::NestedJobChildUnresolved {
+                    child_execution_id: child.id(),
+                    status,
+                });
+            }
+            if let Some(existing) = link.terminal() {
+                if existing.status() != status
+                    || existing.exit_status() != child.metadata().exit_status()
+                {
+                    return Err(RepositoryError::NestedJobStateCorrupt);
+                }
+                return Ok(link);
+            }
+            let observed_ms = system_time_millis(observed_at)?;
+            let affected = sqlx::query(
+                "UPDATE oxide_batch.ob_nested_job_link \
+                 SET terminal_status = $1, terminal_exit_code = $2, \
+                     terminal_observed_at = to_timestamp($3::double precision / 1000.0) \
+                 WHERE parent_job_execution_id = $4 AND node_id = $5 \
+                   AND terminal_status IS NULL",
+            )
+            .bind(status.as_str())
+            .bind(child.metadata().exit_status().code().as_str())
+            .bind(observed_ms)
+            .bind(database_id(
+                parent_job_execution_id.get(),
+                IdentifierKind::JobExecution,
+            )?)
+            .bind(node_id.as_str())
+            .execute(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .rows_affected();
+            if affected != 1 {
+                return Err(RepositoryError::ConcurrentModification);
+            }
+            load_nested_job_link(
+                &mut **self.transaction()?,
+                parent_job_execution_id,
+                node_id,
+                false,
+            )
+            .await?
+            .ok_or(RepositoryError::NestedJobStateCorrupt)
         })
     }
 
@@ -4868,6 +5229,471 @@ fn flow_decision_select(suffix: &str) -> String {
          (extract(epoch FROM decision.decided_at) * 1000)::bigint AS decided_ms \
          FROM oxide_batch.ob_flow_decision decision {suffix}"
     )
+}
+
+async fn select_nested_child_for_request(
+    unit: &mut PostgresUnitOfWork<'_>,
+    request: &NestedJobLinkRequest,
+) -> Result<JobExecution, RepositoryError> {
+    let child_name = request
+        .child_definition()
+        .job_name()
+        .cloned()
+        .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+    let child_key = JobInstanceKey::new(child_name, request.child_parameters());
+    let child_instance = unit
+        .select_or_create_job_instance(&child_key)
+        .await?
+        .instance()
+        .clone();
+    let latest = unit.job_executions(child_instance.id()).await?.pop();
+    let child_execution = match latest {
+        None => {
+            unit.create_job_execution_with_definition(
+                child_instance.id(),
+                request.child_definition(),
+            )
+            .await?
+        }
+        Some(latest) => {
+            let definition =
+                load_execution_definition(&mut **unit.transaction()?, latest.id()).await?;
+            if &definition != request.child_definition() {
+                return Err(RepositoryError::NestedJobStateCorrupt);
+            }
+            match latest.metadata().status() {
+                BatchStatus::Completed => {
+                    let parameters =
+                        load_execution_parameters(&mut **unit.transaction()?, latest.id()).await?;
+                    if &parameters != request.child_parameters() {
+                        return Err(RepositoryError::NestedJobStateCorrupt);
+                    }
+                    latest
+                }
+                BatchStatus::Failed | BatchStatus::Stopped => {
+                    unit.create_job_execution_with_definition(
+                        child_instance.id(),
+                        request.child_definition(),
+                    )
+                    .await?
+                }
+                BatchStatus::Starting
+                | BatchStatus::Started
+                | BatchStatus::Stopping
+                | BatchStatus::Unknown => {
+                    return Err(RepositoryError::NestedJobChildUnresolved {
+                        child_execution_id: latest.id(),
+                        status: latest.metadata().status(),
+                    });
+                }
+                _ => return Err(RepositoryError::NestedJobStateCorrupt),
+            }
+        }
+    };
+    store_execution_parameters(
+        &mut **unit.transaction()?,
+        child_execution.id(),
+        request.child_parameters(),
+    )
+    .await?;
+    Ok(child_execution)
+}
+
+fn nested_job_link_select(suffix: &str) -> String {
+    format!(
+        "SELECT link.parent_job_instance_id, link.parent_job_execution_id, link.node_id, \
+         link.child_job_instance_id, link.child_job_execution_id, \
+         definition.job_name AS child_job_name, \
+         definition.definition_revision AS child_definition_revision, \
+         definition.manifest_format AS child_manifest_format, \
+         definition.manifest_digest AS child_manifest_digest, \
+         definition.manifest AS child_manifest, \
+         (extract(epoch FROM link.linked_at) * 1000)::bigint AS linked_ms, \
+         link.terminal_status, link.terminal_exit_code, \
+         (extract(epoch FROM link.terminal_observed_at) * 1000)::bigint AS terminal_observed_ms \
+         FROM oxide_batch.ob_nested_job_link link \
+         JOIN oxide_batch.ob_job_definition definition \
+           ON definition.id = link.child_definition_id {suffix}"
+    )
+}
+
+fn encode_job_parameters(parameters: &JobParameters) -> Result<Value, RepositoryError> {
+    let mut object = Map::new();
+    for (name, parameter) in parameters.iter() {
+        let value = parameter.value();
+        let (kind, encoded) = match value.kind() {
+            ParameterValueKind::String => (
+                "string",
+                Value::String(
+                    value
+                        .as_str()
+                        .ok_or(RepositoryError::NestedJobStateCorrupt)?
+                        .to_owned(),
+                ),
+            ),
+            ParameterValueKind::I64 => (
+                "i64",
+                Value::Number(
+                    value
+                        .as_i64()
+                        .ok_or(RepositoryError::NestedJobStateCorrupt)?
+                        .into(),
+                ),
+            ),
+            ParameterValueKind::U64 => (
+                "u64",
+                Value::Number(
+                    value
+                        .as_u64()
+                        .ok_or(RepositoryError::NestedJobStateCorrupt)?
+                        .into(),
+                ),
+            ),
+            ParameterValueKind::Bool => (
+                "bool",
+                Value::Bool(
+                    value
+                        .as_bool()
+                        .ok_or(RepositoryError::NestedJobStateCorrupt)?,
+                ),
+            ),
+            _ => return Err(RepositoryError::NestedJobStateCorrupt),
+        };
+        object.insert(
+            name.as_str().to_owned(),
+            json!({
+                "type": kind,
+                "identifying": parameter.is_identifying(),
+                "value": encoded,
+            }),
+        );
+    }
+    let value = Value::Object(object);
+    if serde_json::to_vec(&value)
+        .map_err(|_| RepositoryError::NestedJobStateCorrupt)?
+        .len()
+        > MAX_INSTANCE_KEY_INPUT
+    {
+        return Err(RepositoryError::NestedJobStateCorrupt);
+    }
+    Ok(value)
+}
+
+fn decode_job_parameters(value: &Value) -> Result<JobParameters, RepositoryError> {
+    let object = value
+        .as_object()
+        .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+    let mut parameters = JobParameters::new();
+    for (raw_name, envelope) in object {
+        let envelope = envelope
+            .as_object()
+            .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+        let identifying = envelope
+            .get("identifying")
+            .and_then(Value::as_bool)
+            .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+        let kind = envelope
+            .get("type")
+            .and_then(Value::as_str)
+            .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+        let raw_value = envelope
+            .get("value")
+            .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+        let value = match kind {
+            "string" => ParameterValue::string(
+                raw_value
+                    .as_str()
+                    .ok_or(RepositoryError::NestedJobStateCorrupt)?,
+            )
+            .map_err(|_| RepositoryError::NestedJobStateCorrupt)?,
+            "i64" => ParameterValue::from(
+                raw_value
+                    .as_i64()
+                    .ok_or(RepositoryError::NestedJobStateCorrupt)?,
+            ),
+            "u64" => ParameterValue::from(
+                raw_value
+                    .as_u64()
+                    .ok_or(RepositoryError::NestedJobStateCorrupt)?,
+            ),
+            "bool" => ParameterValue::from(
+                raw_value
+                    .as_bool()
+                    .ok_or(RepositoryError::NestedJobStateCorrupt)?,
+            ),
+            _ => return Err(RepositoryError::NestedJobStateCorrupt),
+        };
+        parameters
+            .insert(
+                ParameterName::new(raw_name.clone())
+                    .map_err(|_| RepositoryError::NestedJobStateCorrupt)?,
+                JobParameter::new(
+                    value,
+                    if identifying {
+                        ParameterRole::Identifying
+                    } else {
+                        ParameterRole::NonIdentifying
+                    },
+                ),
+            )
+            .map_err(|_| RepositoryError::NestedJobStateCorrupt)?;
+    }
+    Ok(parameters)
+}
+
+fn decode_nested_job_link(row: &PgRow) -> Result<NestedJobLink, RepositoryError> {
+    let manifest = row
+        .try_get::<Json<Value>, _>("child_manifest")
+        .map_err(|_| RepositoryError::NestedJobStateCorrupt)?;
+    let canonical =
+        serde_json::to_vec(&manifest.0).map_err(|_| RepositoryError::NestedJobStateCorrupt)?;
+    let format = row
+        .try_get::<i16, _>("child_manifest_format")
+        .map_err(|_| RepositoryError::NestedJobStateCorrupt)
+        .and_then(|value| {
+            u16::try_from(value).map_err(|_| RepositoryError::NestedJobStateCorrupt)
+        })?;
+    let digest: [u8; 32] = row
+        .try_get::<Vec<u8>, _>("child_manifest_digest")
+        .map_err(|_| RepositoryError::NestedJobStateCorrupt)?
+        .try_into()
+        .map_err(|_| RepositoryError::NestedJobStateCorrupt)?;
+    let definition = DefinitionIdentity::from_durable(
+        JobName::new(read_text(row, "child_job_name")?)
+            .map_err(|_| RepositoryError::NestedJobStateCorrupt)?,
+        DefinitionRevision::new(read_text(row, "child_definition_revision")?)
+            .map_err(|_| RepositoryError::NestedJobStateCorrupt)?,
+        format,
+        &canonical,
+        digest,
+    )
+    .map_err(|_| RepositoryError::NestedJobStateCorrupt)?;
+
+    let terminal_status = read_optional_text(row, "terminal_status")?;
+    let terminal_exit = read_optional_text(row, "terminal_exit_code")?;
+    let terminal_ms = read_optional_i64(row, "terminal_observed_ms")?;
+    let terminal = match (terminal_status.as_deref(), terminal_exit, terminal_ms) {
+        (None, None, None) => None,
+        (Some(status @ ("COMPLETED" | "FAILED" | "STOPPED")), Some(exit), Some(observed)) => {
+            Some(NestedJobTerminalObservation::new(
+                decode_status(status)?,
+                ExitStatus::new(
+                    ExitCode::new(exit).map_err(|_| RepositoryError::NestedJobStateCorrupt)?,
+                ),
+                millis_system_time(observed)?,
+            ))
+        }
+        _ => return Err(RepositoryError::NestedJobStateCorrupt),
+    };
+
+    Ok(NestedJobLink::new(
+        JobInstanceId::new(read_u64(row, "parent_job_instance_id")?)?,
+        JobExecutionId::new(read_u64(row, "parent_job_execution_id")?)?,
+        NodeId::new(read_text(row, "node_id")?)
+            .map_err(|_| RepositoryError::NestedJobStateCorrupt)?,
+        definition,
+        JobInstanceId::new(read_u64(row, "child_job_instance_id")?)?,
+        JobExecutionId::new(read_u64(row, "child_job_execution_id")?)?,
+        millis_system_time(read_i64(row, "linked_ms")?)?,
+        terminal,
+    ))
+}
+
+async fn load_nested_job_link(
+    transaction: &mut PgConnection,
+    parent_job_execution_id: JobExecutionId,
+    node_id: &NodeId,
+    for_update: bool,
+) -> Result<Option<NestedJobLink>, RepositoryError> {
+    let suffix = if for_update {
+        "WHERE link.parent_job_execution_id = $1 AND link.node_id = $2 FOR UPDATE OF link"
+    } else {
+        "WHERE link.parent_job_execution_id = $1 AND link.node_id = $2"
+    };
+    sqlx::query(AssertSqlSafe(nested_job_link_select(suffix)))
+        .bind(database_id(
+            parent_job_execution_id.get(),
+            IdentifierKind::JobExecution,
+        )?)
+        .bind(node_id.as_str())
+        .fetch_optional(transaction)
+        .await
+        .map_err(|_| RepositoryError::Unavailable)?
+        .as_ref()
+        .map(decode_nested_job_link)
+        .transpose()
+}
+
+async fn load_latest_nested_job_link(
+    transaction: &mut PgConnection,
+    parent_job_instance_id: JobInstanceId,
+    node_id: &NodeId,
+) -> Result<Option<NestedJobLink>, RepositoryError> {
+    sqlx::query(AssertSqlSafe(nested_job_link_select(
+        "WHERE link.parent_job_instance_id = $1 AND link.node_id = $2 \
+         ORDER BY link.parent_job_execution_id DESC LIMIT 1",
+    )))
+    .bind(database_id(
+        parent_job_instance_id.get(),
+        IdentifierKind::JobInstance,
+    )?)
+    .bind(node_id.as_str())
+    .fetch_optional(transaction)
+    .await
+    .map_err(|_| RepositoryError::Unavailable)?
+    .as_ref()
+    .map(decode_nested_job_link)
+    .transpose()
+}
+
+async fn load_execution_parameters(
+    transaction: &mut PgConnection,
+    execution_id: JobExecutionId,
+) -> Result<JobParameters, RepositoryError> {
+    let parameters: Json<Value> =
+        sqlx::query_scalar("SELECT parameters FROM oxide_batch.ob_job_execution WHERE id = $1")
+            .bind(database_id(
+                execution_id.get(),
+                IdentifierKind::JobExecution,
+            )?)
+            .fetch_optional(transaction)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+    decode_job_parameters(&parameters.0)
+}
+
+async fn store_execution_parameters(
+    transaction: &mut PgConnection,
+    execution_id: JobExecutionId,
+    parameters: &JobParameters,
+) -> Result<(), RepositoryError> {
+    let encoded = encode_job_parameters(parameters)?;
+    let affected =
+        sqlx::query("UPDATE oxide_batch.ob_job_execution SET parameters = $1 WHERE id = $2")
+            .bind(Json(encoded))
+            .bind(database_id(
+                execution_id.get(),
+                IdentifierKind::JobExecution,
+            )?)
+            .execute(transaction)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .rows_affected();
+    if affected != 1 {
+        return Err(RepositoryError::NestedJobStateCorrupt);
+    }
+    Ok(())
+}
+
+async fn load_execution_definition(
+    transaction: &mut PgConnection,
+    execution_id: JobExecutionId,
+) -> Result<DefinitionIdentity, RepositoryError> {
+    let row = sqlx::query(
+        "SELECT definition.job_name AS child_job_name, \
+         definition.definition_revision AS child_definition_revision, \
+         definition.manifest_format AS child_manifest_format, \
+         definition.manifest_digest AS child_manifest_digest, \
+         definition.manifest AS child_manifest \
+         FROM oxide_batch.ob_job_execution execution \
+         JOIN oxide_batch.ob_job_definition definition ON definition.id = execution.definition_id \
+         WHERE execution.id = $1",
+    )
+    .bind(database_id(
+        execution_id.get(),
+        IdentifierKind::JobExecution,
+    )?)
+    .fetch_optional(transaction)
+    .await
+    .map_err(|_| RepositoryError::Unavailable)?
+    .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+    let manifest = row
+        .try_get::<Json<Value>, _>("child_manifest")
+        .map_err(|_| RepositoryError::NestedJobStateCorrupt)?;
+    let canonical =
+        serde_json::to_vec(&manifest.0).map_err(|_| RepositoryError::NestedJobStateCorrupt)?;
+    let format = row
+        .try_get::<i16, _>("child_manifest_format")
+        .map_err(|_| RepositoryError::NestedJobStateCorrupt)
+        .and_then(|value| {
+            u16::try_from(value).map_err(|_| RepositoryError::NestedJobStateCorrupt)
+        })?;
+    let digest: [u8; 32] = row
+        .try_get::<Vec<u8>, _>("child_manifest_digest")
+        .map_err(|_| RepositoryError::NestedJobStateCorrupt)?
+        .try_into()
+        .map_err(|_| RepositoryError::NestedJobStateCorrupt)?;
+    DefinitionIdentity::from_durable(
+        JobName::new(read_text(&row, "child_job_name")?)
+            .map_err(|_| RepositoryError::NestedJobStateCorrupt)?,
+        DefinitionRevision::new(read_text(&row, "child_definition_revision")?)
+            .map_err(|_| RepositoryError::NestedJobStateCorrupt)?,
+        format,
+        &canonical,
+        digest,
+    )
+    .map_err(|_| RepositoryError::NestedJobStateCorrupt)
+}
+
+async fn insert_nested_job_link(
+    transaction: &mut PgConnection,
+    parent_instance: JobInstanceId,
+    parent_execution: JobExecutionId,
+    node_id: &NodeId,
+    child_execution: JobExecutionId,
+    linked_at: SystemTime,
+    terminal: Option<&NestedJobTerminalObservation>,
+) -> Result<(), RepositoryError> {
+    let (child_instance_id, child_definition_id): (i64, i64) = sqlx::query_as(
+        "SELECT job_instance_id, definition_id FROM oxide_batch.ob_job_execution WHERE id = $1",
+    )
+    .bind(database_id(
+        child_execution.get(),
+        IdentifierKind::JobExecution,
+    )?)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|_| RepositoryError::Unavailable)?
+    .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+    let terminal_status = terminal.map(|value| value.status().as_str());
+    let terminal_exit = terminal.map(|value| value.exit_status().code().as_str());
+    let terminal_ms = terminal
+        .map(|value| system_time_millis(value.observed_at()))
+        .transpose()?;
+    sqlx::query(
+        "INSERT INTO oxide_batch.ob_nested_job_link \
+         (parent_job_instance_id, parent_job_execution_id, node_id, child_definition_id, \
+          child_job_instance_id, child_job_execution_id, linked_at, terminal_status, \
+          terminal_exit_code, terminal_observed_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, \
+          to_timestamp($7::double precision / 1000.0), $8, $9, \
+          CASE WHEN $10::bigint IS NULL THEN NULL \
+               ELSE to_timestamp($10::double precision / 1000.0) END)",
+    )
+    .bind(database_id(
+        parent_instance.get(),
+        IdentifierKind::JobInstance,
+    )?)
+    .bind(database_id(
+        parent_execution.get(),
+        IdentifierKind::JobExecution,
+    )?)
+    .bind(node_id.as_str())
+    .bind(child_definition_id)
+    .bind(child_instance_id)
+    .bind(database_id(
+        child_execution.get(),
+        IdentifierKind::JobExecution,
+    )?)
+    .bind(system_time_millis(linked_at)?)
+    .bind(terminal_status)
+    .bind(terminal_exit)
+    .bind(terminal_ms)
+    .execute(transaction)
+    .await
+    .map_err(|_| RepositoryError::ConcurrentModification)?;
+    Ok(())
 }
 
 fn partition_select(suffix: &str) -> String {
