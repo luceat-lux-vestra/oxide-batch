@@ -30,6 +30,29 @@ BEGIN
 END
 $verify$;
 
+DO $verify$
+BEGIN
+    INSERT INTO ob_flow_decision (
+        job_execution_id, source_step_execution_id, reused_decision_id,
+        sequence, source_node_id, observed_outcome, target_node_id,
+        transition_kind, terminal_kind, plan_fingerprint, input_digest, decided_at
+    ) VALUES (
+        93001, NULL, NULL,
+        1, 'nested-exit-fixture', 'COMPLETED', NULL,
+        'NESTED_JOB_EXIT', 'COMPLETE',
+        decode(repeat('55', 32), 'hex'), decode(repeat('66', 32), 'hex'),
+        '2026-09-01 00:00:05+00'
+    );
+
+    DELETE FROM ob_flow_decision
+        WHERE job_execution_id = 93001
+          AND source_node_id = 'nested-exit-fixture';
+EXCEPTION
+    WHEN check_violation THEN
+        RAISE EXCEPTION 'schema5 flow-decision constraint rejects NESTED_JOB_EXIT';
+END
+$verify$;
+
 INSERT INTO ob_nested_job_link (
     id, parent_job_instance_id, parent_job_execution_id, node_id,
     child_definition_id, child_job_instance_id, child_job_execution_id,
