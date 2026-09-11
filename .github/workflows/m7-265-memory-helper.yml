@@ -29,7 +29,7 @@ jobs:
           import subprocess
 
           helper = subprocess.check_output(
-              ["git", "show", "HEAD^:.github/workflows/m7-265-memory-helper.yml"],
+              ["git", "show", "HEAD~2:.github/workflows/m7-265-memory-helper.yml"],
               text=True,
           )
           begin = "          python3 - <<'PY'\n"
@@ -39,6 +39,35 @@ jobs:
               line[10:] if line.startswith('          ') else line
               for line in body.splitlines()
           )
+          first = '''                        BatchStatus::Abandoned => {
+                            return Err(RepositoryError::NestedJobStateCorrupt);
+                        }
+                    }
+'''
+          first_fixed = '''                        BatchStatus::Abandoned => {
+                            return Err(RepositoryError::NestedJobStateCorrupt);
+                        }
+                        _ => {
+                            return Err(RepositoryError::NestedJobStateCorrupt);
+                        }
+                    }
+'''
+          second = '''                BatchStatus::Abandoned => {
+                    return Err(RepositoryError::NestedJobStateCorrupt);
+                }
+            };
+'''
+          second_fixed = '''                BatchStatus::Abandoned => {
+                    return Err(RepositoryError::NestedJobStateCorrupt);
+                }
+                _ => {
+                    return Err(RepositoryError::NestedJobStateCorrupt);
+                }
+            };
+'''
+          if body.count(first) != 1 or body.count(second) != 1:
+              raise RuntimeError('expected nested-job BatchStatus match arms were not found')
+          body = body.replace(first, first_fixed, 1).replace(second, second_fixed, 1)
           namespace = {}
           exec(compile(body, '<m7-265-memory-helper>', 'exec'), namespace, namespace)
           PY
