@@ -354,6 +354,49 @@ impl InMemoryUnitOfWork<'_> {
             .ok_or(RepositoryError::JobExecutionNotFound { id: execution_id })
     }
 
+    fn matching_nested_job_link(
+        &self,
+        parent_job_execution_id: JobExecutionId,
+        node_id: &NodeId,
+        child_definition: &DefinitionIdentity,
+        child_parameters: &JobParameters,
+    ) -> Result<Option<NestedJobLink>, RepositoryError> {
+        let Some(existing) = self
+            .staged
+            .nested_job_links
+            .get(&(parent_job_execution_id, node_id.clone()))
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let parameters = self
+            .staged
+            .job_parameters
+            .get(&existing.child_job_execution_id())
+            .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+        if existing.child_definition() != child_definition || parameters != child_parameters {
+            return Err(RepositoryError::NestedJobStateCorrupt);
+        }
+        Ok(Some(existing))
+    }
+
+    fn store_nested_job_parameters(
+        &mut self,
+        child_execution_id: JobExecutionId,
+        parameters: &JobParameters,
+    ) -> Result<(), RepositoryError> {
+        match self.staged.job_parameters.get(&child_execution_id) {
+            Some(existing) if existing != parameters => Err(RepositoryError::NestedJobStateCorrupt),
+            Some(_) => Ok(()),
+            None => {
+                self.staged
+                    .job_parameters
+                    .insert(child_execution_id, parameters.clone());
+                Ok(())
+            }
+        }
+    }
+
     fn next_recovery_decision_id(&self) -> Result<RecoveryDecisionId, RepositoryError> {
         let next = self
             .staged
@@ -1186,17 +1229,12 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 return Err(RepositoryError::NestedJobStateCorrupt);
             }
             let link_key = (request.parent_job_execution_id(), request.node_id().clone());
-            if let Some(existing) = self.staged.nested_job_links.get(&link_key).cloned() {
-                let parameters = self
-                    .staged
-                    .job_parameters
-                    .get(&existing.child_job_execution_id())
-                    .ok_or(RepositoryError::NestedJobStateCorrupt)?;
-                if existing.child_definition() != request.child_definition()
-                    || parameters != request.child_parameters()
-                {
-                    return Err(RepositoryError::NestedJobStateCorrupt);
-                }
+            if let Some(existing) = self.matching_nested_job_link(
+                request.parent_job_execution_id(),
+                request.node_id(),
+                request.child_definition(),
+                request.child_parameters(),
+            )? {
                 return Ok(existing);
             }
 
@@ -1263,17 +1301,7 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                     }
                 }
             };
-            match self.staged.job_parameters.get(&child_execution.id()) {
-                Some(existing) if existing != request.child_parameters() => {
-                    return Err(RepositoryError::NestedJobStateCorrupt);
-                }
-                Some(_) => {}
-                None => {
-                    self.staged
-                        .job_parameters
-                        .insert(child_execution.id(), request.child_parameters().clone());
-                }
-            }
+            self.store_nested_job_parameters(child_execution.id(), request.child_parameters())?;
 
             let link = NestedJobLink::new(
                 parent_instance,

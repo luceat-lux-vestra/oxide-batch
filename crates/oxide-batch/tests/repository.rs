@@ -21,8 +21,9 @@ use oxide_batch::{
     DefinitionUpgradeKey, ExecutionVersion, ExitCode, ExitStatus, FailureCategory, FailureId,
     FailureSummary, IdGenerationError, IdGenerator, IdentifierKind, InMemoryJobRepository,
     JobInstanceKey, JobName, JobParameter, JobParameters, JobRepository, LifecycleError,
-    LifecycleTransition, OwnerToken, ParameterName, ParameterRole, ParameterValue, RecoveryRequest,
-    RepositoryError, SequentialIdGenerator, StepDefinitionUpgrade, StepName,
+    LifecycleTransition, NestedJobLinkRequest, NodeId, OwnerToken, ParameterName, ParameterRole,
+    ParameterValue, RecoveryRequest, RepositoryError, SequentialIdGenerator, StepDefinitionUpgrade,
+    StepName,
 };
 
 fn time(second: u64) -> SystemTime {
@@ -628,5 +629,336 @@ fn sequential_identifier_source_reports_exhaustion_without_returning_zero()
             kind: IdentifierKind::JobExecution,
         })
     );
+    Ok(())
+}
+
+fn nested_job_parameters_fixture() -> Result<JobParameters, oxide_batch::DomainError> {
+    JobParameters::try_from_iter([
+        (
+            ParameterName::new("account")?,
+            JobParameter::new(
+                ParameterValue::string("acct-42")?,
+                ParameterRole::Identifying,
+            ),
+        ),
+        (
+            ParameterName::new("trace")?,
+            JobParameter::new(
+                ParameterValue::string("mapped-once")?,
+                ParameterRole::NonIdentifying,
+            ),
+        ),
+    ])
+}
+
+fn nested_child_definition() -> Result<DefinitionIdentity, Box<dyn Error>> {
+    Ok(DefinitionIdentity::tasklet(
+        &JobName::new("nested_child")?,
+        &StepName::new("child_step")?,
+        DefinitionRevision::new("nested-child-v1")?,
+        &ComponentRevision::new("nested-child-tasklet-v1")?,
+    )?)
+}
+
+fn create_parent_attempt(
+    repository: &InMemoryJobRepository,
+    key: &JobInstanceKey,
+) -> Result<(oxide_batch::JobInstance, oxide_batch::JobExecution), Box<dyn Error>> {
+    let mut unit = block_on(repository.begin())?;
+    let instance = block_on(unit.select_or_create_job_instance(key))?
+        .instance()
+        .clone();
+    let execution = block_on(unit.create_job_execution(instance.id()))?;
+    block_on(unit.commit())?;
+    Ok((instance, execution))
+}
+
+fn stop_execution(
+    repository: &InMemoryJobRepository,
+    execution: &oxide_batch::JobExecution,
+    started_at: SystemTime,
+    stopped_at: SystemTime,
+) -> Result<oxide_batch::JobExecution, Box<dyn Error>> {
+    let mut unit = block_on(repository.begin())?;
+    let started = block_on(unit.transition_job_execution(
+        execution.id(),
+        execution.version(),
+        LifecycleTransition::new(BatchStatus::Started, started_at),
+    ))?;
+    let stopped = block_on(unit.transition_job_execution(
+        started.id(),
+        started.version(),
+        LifecycleTransition::new(BatchStatus::Stopped, stopped_at),
+    ))?;
+    block_on(unit.commit())?;
+    Ok(stopped)
+}
+
+#[test]
+fn nested_job_completed_child_is_reused_with_exact_parameters() -> Result<(), Box<dyn Error>> {
+    let (repository, clock) = repository(time(100))?;
+    let parent_key = JobInstanceKey::new(
+        JobName::new("nested_parent_completed")?,
+        &JobParameters::new(),
+    );
+    let (parent_instance, parent_execution) = create_parent_attempt(&repository, &parent_key)?;
+    let node = NodeId::new("child")?;
+    let child_definition = nested_child_definition()?;
+    let parameters = nested_job_parameters_fixture()?;
+
+    let mut create_link = block_on(repository.begin())?;
+    let first_link = block_on(
+        create_link.create_nested_job_link(&NestedJobLinkRequest::new(
+            parent_instance.id(),
+            parent_execution.id(),
+            node.clone(),
+            child_definition.clone(),
+            parameters.clone(),
+            time(101),
+        )),
+    )?;
+    block_on(create_link.commit())?;
+
+    let mut complete_child = block_on(repository.begin())?;
+    let child = block_on(complete_child.get_job_execution(first_link.child_job_execution_id()))?
+        .ok_or("linked child execution missing")?;
+    let started = block_on(complete_child.transition_job_execution(
+        child.id(),
+        child.version(),
+        LifecycleTransition::new(BatchStatus::Started, time(102)),
+    ))?;
+    block_on(complete_child.transition_job_execution(
+        started.id(),
+        started.version(),
+        LifecycleTransition::new(BatchStatus::Completed, time(103)),
+    ))?;
+    let observed = block_on(complete_child.observe_nested_job_terminal(
+        parent_execution.id(),
+        &node,
+        time(104),
+    ))?;
+    assert_eq!(
+        observed
+            .terminal()
+            .map(oxide_batch::NestedJobTerminalObservation::status),
+        Some(BatchStatus::Completed)
+    );
+    block_on(complete_child.commit())?;
+
+    stop_execution(&repository, &parent_execution, time(105), time(106))?;
+    clock.set(time(107));
+    let (_, restarted_parent) = create_parent_attempt(&repository, &parent_key)?;
+
+    let mut continuation = block_on(repository.begin())?;
+    let reused = block_on(continuation.continue_nested_job_link(
+        restarted_parent.id(),
+        &node,
+        parent_execution.id(),
+        time(108),
+    ))?;
+    assert_eq!(
+        reused.child_job_execution_id(),
+        first_link.child_job_execution_id()
+    );
+    assert_eq!(
+        reused.child_job_instance_id(),
+        first_link.child_job_instance_id()
+    );
+    assert_eq!(
+        reused
+            .terminal()
+            .map(oxide_batch::NestedJobTerminalObservation::status),
+        Some(BatchStatus::Completed)
+    );
+    let restored = block_on(continuation.nested_job_parameters(restarted_parent.id(), &node))?;
+    assert_eq!(restored, parameters);
+    block_on(continuation.commit())?;
+    Ok(())
+}
+
+#[test]
+fn nested_job_stopped_child_restarts_same_instance_with_exact_parameters()
+-> Result<(), Box<dyn Error>> {
+    let (repository, clock) = repository(time(200))?;
+    let parent_key = JobInstanceKey::new(
+        JobName::new("nested_parent_restart")?,
+        &JobParameters::new(),
+    );
+    let (parent_instance, parent_execution) = create_parent_attempt(&repository, &parent_key)?;
+    let node = NodeId::new("child")?;
+    let parameters = nested_job_parameters_fixture()?;
+
+    let mut create_link = block_on(repository.begin())?;
+    let first_link = block_on(
+        create_link.create_nested_job_link(&NestedJobLinkRequest::new(
+            parent_instance.id(),
+            parent_execution.id(),
+            node.clone(),
+            nested_child_definition()?,
+            parameters.clone(),
+            time(201),
+        )),
+    )?;
+    block_on(create_link.commit())?;
+
+    let mut child_read = block_on(repository.begin())?;
+    let child = block_on(child_read.get_job_execution(first_link.child_job_execution_id()))?
+        .ok_or("linked child execution missing")?;
+    block_on(child_read.rollback())?;
+    stop_execution(&repository, &child, time(202), time(203))?;
+    stop_execution(&repository, &parent_execution, time(204), time(205))?;
+
+    clock.set(time(206));
+    let (_, restarted_parent) = create_parent_attempt(&repository, &parent_key)?;
+    let mut continuation = block_on(repository.begin())?;
+    let restarted = block_on(continuation.continue_nested_job_link(
+        restarted_parent.id(),
+        &node,
+        parent_execution.id(),
+        time(207),
+    ))?;
+    assert_eq!(
+        restarted.child_job_instance_id(),
+        first_link.child_job_instance_id()
+    );
+    assert_ne!(
+        restarted.child_job_execution_id(),
+        first_link.child_job_execution_id()
+    );
+    assert!(restarted.terminal().is_none());
+    let restored = block_on(continuation.nested_job_parameters(restarted_parent.id(), &node))?;
+    assert_eq!(restored, parameters);
+    let attempts = block_on(continuation.job_executions(first_link.child_job_instance_id()))?;
+    assert_eq!(attempts.len(), 2);
+    block_on(continuation.commit())?;
+    Ok(())
+}
+
+#[test]
+fn nested_job_active_and_unknown_children_fail_closed_without_duplicate_attempt()
+-> Result<(), Box<dyn Error>> {
+    let (repository, clock) = repository(time(300))?;
+    let parent_key = JobInstanceKey::new(
+        JobName::new("nested_parent_unresolved")?,
+        &JobParameters::new(),
+    );
+    let (parent_instance, parent_execution) = create_parent_attempt(&repository, &parent_key)?;
+    let node = NodeId::new("child")?;
+
+    let mut create_link = block_on(repository.begin())?;
+    let first_link = block_on(
+        create_link.create_nested_job_link(&NestedJobLinkRequest::new(
+            parent_instance.id(),
+            parent_execution.id(),
+            node.clone(),
+            nested_child_definition()?,
+            nested_job_parameters_fixture()?,
+            time(301),
+        )),
+    )?;
+    block_on(create_link.commit())?;
+    stop_execution(&repository, &parent_execution, time(302), time(303))?;
+    clock.set(time(304));
+    let (_, restarted_parent) = create_parent_attempt(&repository, &parent_key)?;
+
+    let mut active = block_on(repository.begin())?;
+    assert_eq!(
+        block_on(active.continue_nested_job_link(
+            restarted_parent.id(),
+            &node,
+            parent_execution.id(),
+            time(305),
+        )),
+        Err(RepositoryError::NestedJobChildUnresolved {
+            child_execution_id: first_link.child_job_execution_id(),
+            status: BatchStatus::Starting,
+        })
+    );
+    let attempts = block_on(active.job_executions(first_link.child_job_instance_id()))?;
+    assert_eq!(attempts.len(), 1);
+    block_on(active.rollback())?;
+
+    let mut mark_unknown = block_on(repository.begin())?;
+    let child = block_on(mark_unknown.get_job_execution(first_link.child_job_execution_id()))?
+        .ok_or("linked child execution missing")?;
+    block_on(mark_unknown.transition_job_execution(
+        child.id(),
+        child.version(),
+        LifecycleTransition::new(BatchStatus::Unknown, time(306)),
+    ))?;
+    block_on(mark_unknown.commit())?;
+
+    let mut ambiguous = block_on(repository.begin())?;
+    assert_eq!(
+        block_on(ambiguous.continue_nested_job_link(
+            restarted_parent.id(),
+            &node,
+            parent_execution.id(),
+            time(307),
+        )),
+        Err(RepositoryError::NestedJobChildUnresolved {
+            child_execution_id: first_link.child_job_execution_id(),
+            status: BatchStatus::Unknown,
+        })
+    );
+    let attempts = block_on(ambiguous.job_executions(first_link.child_job_instance_id()))?;
+    assert_eq!(attempts.len(), 1);
+    block_on(ambiguous.rollback())?;
+    Ok(())
+}
+
+#[test]
+fn nested_job_existing_link_rejects_parameter_drift_without_duplicate_child()
+-> Result<(), Box<dyn Error>> {
+    let (repository, _) = repository(time(400))?;
+    let parent_key =
+        JobInstanceKey::new(JobName::new("nested_parent_drift")?, &JobParameters::new());
+    let (parent_instance, parent_execution) = create_parent_attempt(&repository, &parent_key)?;
+    let node = NodeId::new("child")?;
+    let definition = nested_child_definition()?;
+    let parameters = nested_job_parameters_fixture()?;
+
+    let mut first = block_on(repository.begin())?;
+    let link = block_on(first.create_nested_job_link(&NestedJobLinkRequest::new(
+        parent_instance.id(),
+        parent_execution.id(),
+        node.clone(),
+        definition.clone(),
+        parameters,
+        time(401),
+    )))?;
+    block_on(first.commit())?;
+
+    let drifted = JobParameters::try_from_iter([
+        (
+            ParameterName::new("account")?,
+            JobParameter::new(
+                ParameterValue::string("acct-42")?,
+                ParameterRole::Identifying,
+            ),
+        ),
+        (
+            ParameterName::new("trace")?,
+            JobParameter::new(
+                ParameterValue::string("remapped-differently")?,
+                ParameterRole::NonIdentifying,
+            ),
+        ),
+    ])?;
+    let mut duplicate = block_on(repository.begin())?;
+    assert_eq!(
+        block_on(duplicate.create_nested_job_link(&NestedJobLinkRequest::new(
+            parent_instance.id(),
+            parent_execution.id(),
+            node,
+            definition,
+            drifted,
+            time(402),
+        ))),
+        Err(RepositoryError::NestedJobStateCorrupt)
+    );
+    let attempts = block_on(duplicate.job_executions(link.child_job_instance_id()))?;
+    assert_eq!(attempts.len(), 1);
+    block_on(duplicate.rollback())?;
     Ok(())
 }
