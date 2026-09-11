@@ -1,0 +1,40 @@
+name: M7 265 postgres nested-job helper
+
+on:
+  push:
+    branches: [issue-265-nested-job-durable-linkage]
+    paths:
+      - .github/m7-265-postgres-patch.py
+      - .github/workflows/m7-265-postgres-helper.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: issue-265-nested-job-durable-linkage
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Apply and verify PostgreSQL nested-job slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/m7-265-postgres-patch.py
+          cargo fmt --all
+          cargo check -p oxide-batch --features postgres --all-targets --locked
+          cargo clippy -p oxide-batch --features postgres --all-targets --locked -- -D warnings
+      - name: Promote PostgreSQL slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/m7-265-postgres-patch.py .github/workflows/m7-265-postgres-helper.yml
+          git add crates/oxide-batch-core/src/definition.rs crates/oxide-batch/src/repository/postgres.rs crates/oxide-batch/migrations/0006_nested_job_linkage.sql
+          git commit -m 'feat(repository): persist nested-job links in postgres'
+          git push origin HEAD:issue-265-nested-job-durable-linkage
