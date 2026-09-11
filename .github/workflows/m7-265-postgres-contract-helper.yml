@@ -1,0 +1,58 @@
+name: M7 265 postgres nested-job contract helper
+
+on:
+  push:
+    branches: [issue-265-nested-job-durable-linkage]
+    paths:
+      - crates/oxide-batch/tests/postgres_nested_job.rs
+      - .github/workflows/m7-265-postgres-contract-helper.yml
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-nested-job:
+    name: postgres-${{ matrix.postgres }}-nested-job
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["15", "18"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}@sha256:${{ matrix.postgres == '15' && '926f8799aef36e00001cfe15fba7abbd37d3c5224ea57e4c858e4bb670f10561' || matrix.postgres == '18' && '4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280' || 'unsupported' }} # zizmor: ignore[unpinned-images]
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oxide_batch_nested_job
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username postgres --dbname oxide_batch_nested_job"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      OXIDEBATCH_POSTGRES_ADMIN_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_nested_job
+      OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_nested_job
+      OXIDEBATCH_POSTGRES_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_nested_job
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Apply schema 5 migrations
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_repository
+          migration_is_idempotent_when_migrator_fixture_is_available
+          -- --nocapture --test-threads=1
+      - name: Run nested-job PostgreSQL contract
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_nested_job
+          -- --nocapture --test-threads=1
+      - name: Lint nested-job PostgreSQL contract
+        run: >-
+          cargo clippy -p oxide-batch --features postgres
+          --test postgres_nested_job --locked -- -D warnings
