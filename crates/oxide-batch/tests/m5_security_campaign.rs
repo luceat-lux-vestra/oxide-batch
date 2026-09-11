@@ -79,10 +79,10 @@ const DENIED_ATTRIBUTES: &[&str] = &["NOSUPERUSER", "NOCREATEDB", "NOCREATEROLE"
 
 /// The schema the privilege matrix is checked on.
 ///
-/// The M5 preview installed schema 3; M6 `#144` added
-/// `0005_item_stream_component_state.sql`, which carries this crate's
-/// installed schema to 4 without changing anything schema 3 declared.
-const SCHEMA_VERSION: u64 = 4;
+/// The M5 preview installed schema 3; M6 `#144` added schema 4 component
+/// state, and M7 `#265` adds schema 5 durable nested-job linkage. The campaign
+/// must exercise the privilege matrix against the current installed schema.
+const SCHEMA_VERSION: u64 = 5;
 
 /// The transport the M5 preview supports in production.
 const TLS_MODE: &str = "verify-full";
