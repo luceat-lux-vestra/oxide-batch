@@ -1,0 +1,124 @@
+name: M7 265 plan helper
+
+on:
+  push:
+    branches:
+      - issue-265-nested-job-durable-linkage
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: issue-265-nested-job-durable-linkage
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Apply plan integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"{path}: expected one replacement, found {count}: {old[:80]!r}")
+              target.write_text(text.replace(old, new, 1))
+
+          plan = "crates/oxide-batch-plan/src/lib.rs"
+          replace(
+              plan,
+              "mod advanced;\n\nuse std::collections",
+              "mod advanced;\nmod nested_job;\n\npub use nested_job::{\n    FrameworkParameterSource, MAX_NESTED_JOB_PARAMETERS, MAX_SELECTOR_PATH_BYTES,\n    MAX_SELECTOR_PATH_SEGMENTS, MissingParameterPolicy, NestedJobNode,\n    NestedJobParameterMapping, NestedJobParameterSource, ParameterCoercion, SelectorPath,\n};\n\nuse std::collections",
+          )
+          replace(
+              plan,
+              "    JobName, MAX_NODES, MAX_PARTITIONS, MAX_TRANSITIONS, NodeId, StartControls, StepName,\n",
+              "    JobName, MAX_NODES, MAX_PARTITIONS, MAX_TRANSITIONS, NodeId, ParameterName, StartControls,\n    StepName,\n",
+          )
+          replace(
+              plan,
+              "    /// A deterministic decision.\n    Decision(DecisionNode),\n    /// A bounded set of linear branches and its structural join.\n",
+              "    /// A deterministic decision.\n    Decision(DecisionNode),\n    /// A separately durable child-job lifecycle boundary.\n    NestedJob(Box<NestedJobNode>),\n    /// A bounded set of linear branches and its structural join.\n",
+          )
+          replace(
+              plan,
+              "    pub const fn decision(node: DecisionNode) -> Self {\n        Self::Decision(node)\n    }\n\n    /// Declares a bounded split node.\n",
+              "    pub const fn decision(node: DecisionNode) -> Self {\n        Self::Decision(node)\n    }\n\n    /// Declares a separately durable nested-job node.\n    #[must_use]\n    pub fn nested_job(node: NestedJobNode) -> Self {\n        Self::NestedJob(Box::new(node))\n    }\n\n    /// Declares a bounded split node.\n",
+          )
+          replace(
+              plan,
+              "            Self::Decision(node) => node.id(),\n            Self::Split(node) => node.id(),\n",
+              "            Self::Decision(node) => node.id(),\n            Self::NestedJob(node) => node.id(),\n            Self::Split(node) => node.id(),\n",
+          )
+          replace(
+              plan,
+              "            Self::Decision(node) => node.manifest_value(),\n            Self::Split(node) => node.manifest_value(),\n",
+              "            Self::Decision(node) => node.manifest_value(),\n            Self::NestedJob(node) => node.manifest_value(),\n            Self::Split(node) => node.manifest_value(),\n",
+          )
+          replace(
+              plan,
+              "            || self.nodes.iter().any(|node| match node {\n                FlowNode::Split(split) => {\n                    split.branches().iter().any(|branch| branch.flow.is_some())\n                }\n                _ => false,\n            })\n",
+              "            || self.nodes.iter().any(|node| match node {\n                FlowNode::NestedJob(_) => true,\n                FlowNode::Split(split) => {\n                    split.branches().iter().any(|branch| branch.flow.is_some())\n                }\n                _ => false,\n            })\n",
+          )
+          replace(
+              plan,
+              "    /// A logical identifier or revision token was invalid.\n    Token(DefinitionError),\n",
+              "    /// A structured selector path exceeded its closed bounded shape.\n    InvalidSelectorPath {\n        /// Maximum accepted encoded path bytes.\n        max_bytes: usize,\n        /// Maximum accepted segment count.\n        max_segments: usize,\n    },\n    /// A nested-job child definition had no bound job identity.\n    NestedJobMissingChildIdentity {\n        /// Nested-job node with the unbound child.\n        node: NodeId,\n    },\n    /// A nested job declared more child parameters than the M7 ceiling.\n    TooManyNestedJobParameters {\n        /// Nested-job node over the limit.\n        node: NodeId,\n        /// Maximum accepted mapping count.\n        max: usize,\n    },\n    /// Two mappings targeted the same child parameter.\n    DuplicateNestedJobParameter {\n        /// Nested-job node with the duplicate target.\n        node: NodeId,\n        /// Repeated child parameter name.\n        parameter: ParameterName,\n    },\n    /// A logical identifier or revision token was invalid.\n    Token(DefinitionError),\n",
+          )
+          replace(
+              plan,
+              "            Self::CompositionDepthExceeded { max } => {\n                write!(formatter, \"flow composition exceeds depth {max}\")\n            }\n            Self::UnmappedNestedFlowExit { flow, code } => write!(\n",
+              "            Self::CompositionDepthExceeded { max } => {\n                write!(formatter, \"flow composition exceeds depth {max}\")\n            }\n            Self::InvalidSelectorPath {\n                max_bytes,\n                max_segments,\n            } => write!(\n                formatter,\n                \"selector path must contain 1 to {max_segments} bounded segments within {max_bytes} bytes\"\n            ),\n            Self::NestedJobMissingChildIdentity { node } => write!(\n                formatter,\n                \"nested job {} requires a bound child definition identity\",\n                node.as_str()\n            ),\n            Self::TooManyNestedJobParameters { node, max } => write!(\n                formatter,\n                \"nested job {} exceeds {max} child parameters\",\n                node.as_str()\n            ),\n            Self::DuplicateNestedJobParameter { node, parameter } => write!(\n                formatter,\n                \"nested job {} maps child parameter {} more than once\",\n                node.as_str(),\n                parameter.as_str()\n            ),\n            Self::UnmappedNestedFlowExit { flow, code } => write!(\n",
+          )
+
+          advanced = "crates/oxide-batch-plan/src/advanced.rs"
+          replace(
+              advanced,
+              "                FlowNode::Step(_) | FlowNode::Decision(_) | FlowNode::Join(_) => {}\n",
+              "                FlowNode::Step(_)\n                | FlowNode::Decision(_)\n                | FlowNode::NestedJob(_)\n                | FlowNode::Join(_) => {}\n",
+          )
+
+          core = "crates/oxide-batch-core/src/definition.rs"
+          replace(
+              core,
+              "            Some(\"step\" | \"decision\" | \"join\") => {}\n            Some(\"partitioned_step\") => {\n",
+              "            Some(\"step\" | \"decision\" | \"join\") => {}\n            Some(\"nested_job\") => {\n                if !object.get(\"child\").is_some_and(serde_json::Value::is_object)\n                    || !object\n                        .get(\"parameters\")\n                        .is_some_and(serde_json::Value::is_array)\n                    || object\n                        .get(\"mapping_revision\")\n                        .and_then(serde_json::Value::as_str)\n                        .is_none()\n                {\n                    return Err(ManifestError::MalformedGraph);\n                }\n            }\n            Some(\"partitioned_step\") => {\n",
+          )
+
+          facade = "crates/oxide-batch/src/lib.rs"
+          replace(
+              facade,
+              "    ExitPattern, FlowGraph, FlowNode, FlowSelectionError, FlowTransition, JoinNode,\n    LocalFailurePolicy, MAX_BRANCH_STEPS, MAX_FLOW_COMPOSITION_DEPTH, MAX_OUTGOING_TRANSITIONS,\n    MAX_PARTITION_WORKERS, MAX_PATTERN_BYTES, MAX_SPLIT_BRANCHES, NestedFlow, PartitionBudget,\n    PartitionCount, PartitionedStepNode, PatternSpecificity, PlanError, SplitBranch, SplitBudget,\n    SplitNode, StepComponents, StepNode,\n",
+              "    ExitPattern, FlowGraph, FlowNode, FlowSelectionError, FlowTransition,\n    FrameworkParameterSource, JoinNode, LocalFailurePolicy, MAX_BRANCH_STEPS,\n    MAX_FLOW_COMPOSITION_DEPTH, MAX_NESTED_JOB_PARAMETERS, MAX_OUTGOING_TRANSITIONS,\n    MAX_PARTITION_WORKERS, MAX_PATTERN_BYTES, MAX_SELECTOR_PATH_BYTES,\n    MAX_SELECTOR_PATH_SEGMENTS, MAX_SPLIT_BRANCHES, MissingParameterPolicy, NestedFlow,\n    NestedJobNode, NestedJobParameterMapping, NestedJobParameterSource, ParameterCoercion,\n    PartitionBudget, PartitionCount, PartitionedStepNode, PatternSpecificity, PlanError,\n    SelectorPath, SplitBranch, SplitBudget, SplitNode, StepComponents, StepNode,\n",
+          )
+          PY
+
+          cargo fmt --all
+          cargo check -p oxide-batch-plan
+          cargo test -p oxide-batch --test nested_job_plan -- --nocapture
+          cargo test -p oxide-batch --test plan_manifest -- --nocapture
+          cargo test -p oxide-batch --test plan_fingerprint -- --nocapture
+
+      - name: Promote plan slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/m7-265-plan-helper.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "feat(flow): add nested-job plan semantics"
+          git push origin HEAD:issue-265-nested-job-durable-linkage
