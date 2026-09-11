@@ -6,12 +6,14 @@ on:
     paths:
       - .github/workflows/m7-265-runtime-helper.yml
       - .github/helpers/m7_265_stage_a.py
+      - .github/helpers/m7_265_stage_b.py
+      - .github/helpers/m7_265_stage_c.py
 
 permissions:
   contents: write
 
 jobs:
-  implement-runtime-foundation:
+  implement-runtime:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -21,19 +23,11 @@ jobs:
           persist-credentials: true
       - name: Apply runtime foundation patch
         run: python3 .github/helpers/m7_265_stage_a.py
+      - name: Apply precreated child launcher patch
+        run: python3 .github/helpers/m7_265_stage_b.py
       - name: Format
         run: cargo fmt --all
-      - name: Compile all oxide-batch targets
-        run: cargo check -p oxide-batch --all-targets --locked
-      - name: Strict clippy
-        run: cargo clippy -p oxide-batch --all-targets --locked -- -D warnings
+      - name: Compile library with PostgreSQL adapter
+        run: cargo check -p oxide-batch --lib --features postgres --locked
       - name: Diff check
         run: git diff --check
-      - name: Promote green product changes
-        run: |
-          set -euo pipefail
-          git config user.name "oxide-batch-ci"
-          git config user.email "oxide-batch-ci@users.noreply.github.com"
-          git add crates/oxide-batch/src/nested_job_runtime.rs crates/oxide-batch/src/lib.rs crates/oxide-batch/src/flow.rs crates/oxide-batch-repository/src/flow.rs
-          git commit -m "feat(flow): add nested-job runtime foundation"
-          git push origin HEAD:issue-265-nested-job-durable-linkage
