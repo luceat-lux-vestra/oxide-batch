@@ -26,6 +26,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
+          from pathlib import Path
+          import re
           import subprocess
 
           helper = subprocess.check_output(
@@ -36,15 +38,28 @@ jobs:
           end = "          PY\n\n          cargo fmt --all"
           body = helper.split(begin, 1)[1].split(end, 1)[0]
           body = '\n'.join(line[10:] if line.startswith('          ') else line for line in body.splitlines())
-          first = "                        BatchStatus::Abandoned => {\n                            return Err(RepositoryError::NestedJobStateCorrupt);\n                        }\n                    }\n"
-          first_fixed = "                        BatchStatus::Abandoned => {\n                            return Err(RepositoryError::NestedJobStateCorrupt);\n                        }\n                        _ => {\n                            return Err(RepositoryError::NestedJobStateCorrupt);\n                        }\n                    }\n"
-          second = "                BatchStatus::Abandoned => {\n                    return Err(RepositoryError::NestedJobStateCorrupt);\n                }\n            };\n"
-          second_fixed = "                BatchStatus::Abandoned => {\n                    return Err(RepositoryError::NestedJobStateCorrupt);\n                }\n                _ => {\n                    return Err(RepositoryError::NestedJobStateCorrupt);\n                }\n            };\n"
-          if body.count(first) != 1 or body.count(second) != 1:
-              raise RuntimeError('expected nested-job BatchStatus match arms were not found')
-          body = body.replace(first, first_fixed, 1).replace(second, second_fixed, 1)
           namespace = {}
           exec(compile(body, '<m7-265-memory-helper>', 'exec'), namespace, namespace)
+
+          path = Path('crates/oxide-batch/src/repository/memory.rs')
+          text = path.read_text()
+          pattern = re.compile(
+              r'(?m)^(?P<indent> +)BatchStatus::Abandoned => \{\n'
+              r'(?P=indent)    return Err\(RepositoryError::NestedJobStateCorrupt\);\n'
+              r'(?P=indent)\}'
+          )
+          def fail_closed(match):
+              indent = match.group('indent')
+              return (
+                  match.group(0)
+                  + f"\n{indent}_ => {{\n"
+                  + f"{indent}    return Err(RepositoryError::NestedJobStateCorrupt);\n"
+                  + f"{indent}}}"
+              )
+          text, count = pattern.subn(fail_closed, text)
+          if count != 2:
+              raise RuntimeError(f'expected two non-exhaustive nested-job status matches, found {count}')
+          path.write_text(text)
           PY
 
           cargo fmt --all
