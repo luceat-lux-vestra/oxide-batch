@@ -8,6 +8,7 @@ on:
       - .github/helpers/m7_265_stage_a.py
       - .github/helpers/m7_265_stage_b.py
       - .github/helpers/m7_265_stage_c.py
+      - .github/helpers/m7_265_stage_d.py
 
 permissions:
   contents: write
@@ -15,7 +16,7 @@ permissions:
 jobs:
   implement-runtime:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - name: Check out branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -27,9 +28,33 @@ jobs:
         run: python3 .github/helpers/m7_265_stage_b.py
       - name: Apply nested-job state machine patch
         run: python3 .github/helpers/m7_265_stage_c.py
+      - name: Apply in-memory nested-job evidence patch
+        run: python3 .github/helpers/m7_265_stage_d.py
       - name: Format
         run: cargo fmt --all
       - name: Compile library with PostgreSQL adapter
         run: cargo check -p oxide-batch --lib --features postgres --locked
+      - name: Run nested-job runtime evidence
+        run: cargo test -p oxide-batch --test nested_job_runtime --locked -- --nocapture
+      - name: Run nested-job plan regressions
+        run: cargo test -p oxide-batch --test nested_job_plan --locked
+      - name: Strict Clippy
+        run: cargo clippy -p oxide-batch --lib --features postgres --locked -- -D warnings
       - name: Diff check
         run: git diff --check
+      - name: Show candidate diff
+        run: |
+          git status --short
+          git diff --stat
+      - name: Promote green product changes
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add crates/oxide-batch/src crates/oxide-batch-repository/src crates/oxide-batch/tests/nested_job_runtime.rs
+          if git diff --cached --quiet; then
+            echo "no product changes to promote"
+            exit 0
+          fi
+          git commit -m "feat(flow): execute durable nested jobs"
+          git push origin HEAD:issue-265-nested-job-durable-linkage
