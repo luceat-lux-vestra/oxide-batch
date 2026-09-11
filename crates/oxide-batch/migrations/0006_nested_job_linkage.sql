@@ -13,7 +13,7 @@ CREATE TABLE ob_nested_job_link (
     parent_job_instance_id bigint NOT NULL
         REFERENCES ob_job_instance (id) ON DELETE RESTRICT,
     parent_job_execution_id bigint NOT NULL
-        REFERENCES ob_job_execution (id) ON DELETE RESTRICT,
+        REFERENCES ob_job_execution (id) ON DELETE CASCADE,
     node_id varchar(128) COLLATE "C" NOT NULL
         CHECK (octet_length(node_id) BETWEEN 1 AND 128),
     child_definition_id bigint NOT NULL
