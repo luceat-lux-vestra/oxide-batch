@@ -180,9 +180,7 @@ impl Tasklet for BoundaryChild {
                     Self::append_business_effect(&self.handshake.join("business-effects"))?;
                     Ok(TaskletOutcome::Completed)
                 }
-                ChildMode::Restart(
-                    CrashPoint::BeforeLinkCommit | CrashPoint::AfterLinkCommit,
-                ) => {
+                ChildMode::Restart(CrashPoint::BeforeLinkCommit | CrashPoint::AfterLinkCommit) => {
                     Self::append_business_effect(&self.handshake.join("business-effects"))?;
                     Ok(TaskletOutcome::Completed)
                 }
@@ -259,7 +257,7 @@ fn parent_job(
             ParameterValueKind::String,
             ParameterCoercion::Exact,
             MissingParameterPolicy::Fail,
-        )?],
+        )],
     )?;
     let plan = FlowGraph::new(nested.clone())
         .with_node(FlowNode::nested_job(nested_node))
@@ -330,12 +328,11 @@ async fn wait_for_child_status(
 ) -> Result<(), Box<dyn Error>> {
     let started = Instant::now();
     loop {
-        let status: Option<String> = sqlx::query_scalar(
-            "SELECT status FROM oxide_batch.ob_job_execution WHERE id = $1",
-        )
-        .bind(child_execution_id)
-        .fetch_optional(pool)
-        .await?;
+        let status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM oxide_batch.ob_job_execution WHERE id = $1")
+                .bind(child_execution_id)
+                .fetch_optional(pool)
+                .await?;
         if status.as_deref() == Some(expected) {
             return Ok(());
         }
@@ -651,16 +648,10 @@ async fn run_parent_scenario(
     let original_parent = original_parent_execution(&repository, point).await?;
     assert_eq!(original_parent.metadata().status(), BatchStatus::Started);
 
-    let (_, nested) = parent_job(
-        point,
-        ChildMode::Restart(point),
-        handshake.clone(),
-    )?;
+    let (_, nested) = parent_job(point, ChildMode::Restart(point), handshake.clone())?;
     let first_link = {
         let mut unit = repository.begin().await?;
-        let link = unit
-            .nested_job_link(original_parent.id(), &nested)
-            .await?;
+        let link = unit.nested_job_link(original_parent.id(), &nested).await?;
         unit.rollback().await?;
         link
     };
@@ -706,11 +697,7 @@ async fn run_parent_scenario(
 
     let ids = SequentialIdGenerator::new(NonZeroU64::MIN);
     let (_, stop) = StopSource::new();
-    let (restart_job, nested) = parent_job(
-        point,
-        ChildMode::Restart(point),
-        handshake.clone(),
-    )?;
+    let (restart_job, nested) = parent_job(point, ChildMode::Restart(point), handshake.clone())?;
     let restart_child_key = if point == CrashPoint::BeforeLinkCommit {
         "original"
     } else {
