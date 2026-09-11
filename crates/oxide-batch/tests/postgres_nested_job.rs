@@ -9,8 +9,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use oxide_batch::{
     BatchStatus, Clock, ComponentRevision, DefinitionIdentity, DefinitionRevision, JobExecution,
     JobInstance, JobInstanceKey, JobName, JobParameter, JobParameters, JobRepository,
-    LifecycleTransition, NestedJobLinkRequest, NodeId, ParameterName, ParameterRole, ParameterValue,
-    PostgresConfig, PostgresJobRepository, RepositoryError, StepName, TlsMode,
+    LifecycleTransition, NestedJobLinkRequest, NodeId, ParameterName, ParameterRole,
+    ParameterValue, PostgresConfig, PostgresJobRepository, RepositoryError, StepName, TlsMode,
 };
 
 #[derive(Clone, Copy)]
@@ -192,7 +192,10 @@ fn postgres_nested_job_completed_child_reuses_exact_committed_link() -> Result<(
             reused.child_job_execution_id(),
             first.child_job_execution_id()
         );
-        assert_eq!(reused.child_job_instance_id(), first.child_job_instance_id());
+        assert_eq!(
+            reused.child_job_instance_id(),
+            first.child_job_instance_id()
+        );
         assert_eq!(
             reused
                 .terminal()
