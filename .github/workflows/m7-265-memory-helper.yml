@@ -51,14 +51,13 @@ jobs:
           def fail_closed(match):
               indent = match.group('indent')
               return (
-                  match.group(0)
-                  + f"\n{indent}_ => {{\n"
+                  f"{indent}_ => {{\n"
                   + f"{indent}    return Err(RepositoryError::NestedJobStateCorrupt);\n"
                   + f"{indent}}}"
               )
           text, count = pattern.subn(fail_closed, text)
           if count != 2:
-              raise RuntimeError(f'expected two non-exhaustive nested-job status matches, found {count}')
+              raise RuntimeError(f'expected two nested-job status fallback arms, found {count}')
           path.write_text(text)
           PY
 
