@@ -17,8 +17,24 @@ exec(compile(body, "<m7-265-memory-tests-patch>", "exec"), namespace, namespace)
 
 path = Path("crates/oxide-batch/tests/repository.rs")
 text = path.read_text()
-old = "fn nested_child_definition() -> Result<DefinitionIdentity, oxide_batch::DefinitionError> {"
-new = "fn nested_child_definition() -> Result<DefinitionIdentity, Box<dyn Error>> {"
-if text.count(old) != 1:
-    raise RuntimeError("nested_child_definition signature did not match exactly once")
-path.write_text(text.replace(old, new, 1))
+old_fn = '''fn nested_child_definition() -> Result<DefinitionIdentity, oxide_batch::DefinitionError> {
+    DefinitionIdentity::tasklet(
+        &JobName::new("nested_child")?,
+        &StepName::new("child_step")?,
+        DefinitionRevision::new("nested-child-v1")?,
+        &ComponentRevision::new("nested-child-tasklet-v1")?,
+    )
+}
+'''
+new_fn = '''fn nested_child_definition() -> Result<DefinitionIdentity, Box<dyn Error>> {
+    Ok(DefinitionIdentity::tasklet(
+        &JobName::new("nested_child")?,
+        &StepName::new("child_step")?,
+        DefinitionRevision::new("nested-child-v1")?,
+        &ComponentRevision::new("nested-child-tasklet-v1")?,
+    )?)
+}
+'''
+if text.count(old_fn) != 1:
+    raise RuntimeError("nested_child_definition body did not match exactly once")
+path.write_text(text.replace(old_fn, new_fn, 1))
