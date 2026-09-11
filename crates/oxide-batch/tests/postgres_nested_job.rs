@@ -2,6 +2,8 @@
 
 #![cfg(feature = "postgres")]
 
+mod security;
+
 use std::error::Error;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -551,6 +553,69 @@ fn postgres_nested_job_parent_purge_cascades_link_without_deleting_child()
         assert!(!nested_link_exists(&url, parent_execution.id().get()).await?);
         assert!(!row_exists(&url, "ob_job_execution", parent_execution.id().get()).await?);
         assert!(row_exists(&url, "ob_job_execution", link.child_job_execution_id().get()).await?);
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
+
+#[test]
+fn postgres_nested_job_security_policy_separates_link_writers() -> Result<(), Box<dyn Error>> {
+    const DATABASE: &str = "oxide_batch_m7_nested_security";
+    let Some(admin) = security::admin_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_ADMIN_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        security::recreate_database(&admin, DATABASE).await?;
+        let database = security::with_database(&admin, DATABASE)?;
+        security::apply_script(&database, &security::fixtures().join("roles.sql")).await?;
+        oxide_batch::PostgresMigrator::migrate(&security::fixture_config(database.clone())?).await?;
+        security::apply_script(&database, &security::fixtures().join("grants.sql")).await?;
+
+        let password = format!("m7_nested_{}", std::process::id());
+        let roles = [
+            "oxide_batch_m5_runtime",
+            "oxide_batch_m5_explorer",
+            "oxide_batch_m5_operator",
+            "oxide_batch_m5_retention",
+        ];
+        for role in roles {
+            security::run_statement(
+                &database,
+                format!("ALTER ROLE {role} PASSWORD '{password}'"),
+            )
+            .await?;
+        }
+
+        let insert = "INSERT INTO oxide_batch.ob_nested_job_link \
+                      SELECT * FROM oxide_batch.ob_nested_job_link WHERE false";
+        let update = "UPDATE oxide_batch.ob_nested_job_link \
+                      SET terminal_status = terminal_status WHERE false";
+        let runtime_url = security::with_role(&database, roles[0], &password)?;
+        assert_eq!(
+            security::attempt_statement(&runtime_url, insert).await?,
+            security::StatementOutcome::Succeeded
+        );
+        assert_eq!(
+            security::attempt_statement(&runtime_url, update).await?,
+            security::StatementOutcome::Succeeded
+        );
+
+        for role in &roles[1..] {
+            let url = security::with_role(&database, role, &password)?;
+            for statement in [insert, update] {
+                let outcome = security::attempt_statement(&url, statement).await?;
+                assert_eq!(outcome.code(), Some(security::INSUFFICIENT_PRIVILEGE));
+            }
+        }
+
+        security::drop_database(&admin, DATABASE).await?;
+        for role in roles {
+            security::run_statement(&admin, format!("DROP ROLE IF EXISTS {role}"))
+                .await?;
+        }
         Ok::<(), Box<dyn Error>>(())
     })
 }
