@@ -401,10 +401,7 @@ impl NestedJobNode {
     }
 
     pub(crate) fn manifest_value(&self) -> Value {
-        let child_name = self
-            .child_definition
-            .job_name()
-            .map_or("", JobName::as_str);
+        let child_name = self.child_definition.job_name().map_or("", JobName::as_str);
         json!({
             "child": {
                 "fingerprint": digest_hex(self.child_definition.manifest_digest()),

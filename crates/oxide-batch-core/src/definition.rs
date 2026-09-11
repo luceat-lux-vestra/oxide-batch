@@ -896,6 +896,21 @@ fn advanced_graph_counts(
         let object = node.as_object().ok_or(ManifestError::MalformedGraph)?;
         match object.get("kind").and_then(serde_json::Value::as_str) {
             Some("step" | "decision" | "join") => {}
+            Some("nested_job") => {
+                if !object
+                    .get("child")
+                    .is_some_and(serde_json::Value::is_object)
+                    || !object
+                        .get("parameters")
+                        .is_some_and(serde_json::Value::is_array)
+                    || object
+                        .get("mapping_revision")
+                        .and_then(serde_json::Value::as_str)
+                        .is_none()
+                {
+                    return Err(ManifestError::MalformedGraph);
+                }
+            }
             Some("partitioned_step") => {
                 if !object
                     .get("worker")

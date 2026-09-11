@@ -499,10 +499,13 @@ pub use oxide_batch_core::{
 };
 pub use oxide_batch_plan::{
     CompiledExecutionPlan, CompiledFlowScope, DeciderRevision, DecisionInputVersion, DecisionNode,
-    ExitPattern, FlowGraph, FlowNode, FlowSelectionError, FlowTransition, JoinNode,
-    LocalFailurePolicy, MAX_BRANCH_STEPS, MAX_FLOW_COMPOSITION_DEPTH, MAX_OUTGOING_TRANSITIONS,
-    MAX_PARTITION_WORKERS, MAX_PATTERN_BYTES, MAX_SPLIT_BRANCHES, NestedFlow, PartitionBudget,
-    PartitionCount, PartitionedStepNode, PatternSpecificity, PlanError, SplitBranch, SplitBudget,
+    ExitPattern, FlowGraph, FlowNode, FlowSelectionError, FlowTransition, FrameworkParameterSource,
+    JoinNode, LocalFailurePolicy, MAX_BRANCH_STEPS, MAX_FLOW_COMPOSITION_DEPTH,
+    MAX_NESTED_JOB_PARAMETERS, MAX_OUTGOING_TRANSITIONS, MAX_PARTITION_WORKERS, MAX_PATTERN_BYTES,
+    MAX_SELECTOR_PATH_BYTES, MAX_SELECTOR_PATH_SEGMENTS, MAX_SPLIT_BRANCHES,
+    MissingParameterPolicy, NestedFlow, NestedJobNode, NestedJobParameterMapping,
+    NestedJobParameterSource, ParameterCoercion, PartitionBudget, PartitionCount,
+    PartitionedStepNode, PatternSpecificity, PlanError, SelectorPath, SplitBranch, SplitBudget,
     SplitNode, StepComponents, StepNode,
 };
 pub use oxide_batch_repository::{

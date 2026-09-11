@@ -189,7 +189,10 @@ impl AdvancedCompiler {
                 FlowNode::PartitionedStep(partitioned) => {
                     self.reserve_id(partitioned.worker().id())?;
                 }
-                FlowNode::Step(_) | FlowNode::Decision(_) | FlowNode::Join(_) => {}
+                FlowNode::Step(_)
+                | FlowNode::Decision(_)
+                | FlowNode::NestedJob(_)
+                | FlowNode::Join(_) => {}
             }
         }
         for (id, node) in local_nodes {
