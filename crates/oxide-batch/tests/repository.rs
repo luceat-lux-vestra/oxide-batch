@@ -903,6 +903,13 @@ fn nested_job_active_and_unknown_children_fail_closed_without_duplicate_attempt(
     );
     let attempts = block_on(ambiguous.job_executions(first_link.child_job_instance_id()))?;
     assert_eq!(attempts.len(), 1);
+    assert_eq!(
+        block_on(ambiguous.observe_nested_job_terminal(parent_execution.id(), &node, time(308),)),
+        Err(RepositoryError::NestedJobChildUnresolved {
+            child_execution_id: first_link.child_job_execution_id(),
+            status: BatchStatus::Unknown,
+        })
+    );
     block_on(ambiguous.rollback())?;
     Ok(())
 }

@@ -1471,10 +1471,7 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
             let status = child.metadata().status();
             if !matches!(
                 status,
-                BatchStatus::Completed
-                    | BatchStatus::Failed
-                    | BatchStatus::Stopped
-                    | BatchStatus::Unknown
+                BatchStatus::Completed | BatchStatus::Failed | BatchStatus::Stopped
             ) {
                 return Err(RepositoryError::NestedJobChildUnresolved {
                     child_execution_id: child.id(),

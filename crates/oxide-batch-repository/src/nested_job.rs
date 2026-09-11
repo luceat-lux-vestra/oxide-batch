@@ -24,8 +24,9 @@ impl NestedJobTerminalObservation {
     /// Reconstructs a repository-validated terminal child observation.
     ///
     /// Adapters may construct this only from the linked child execution after
-    /// validating that the child is `COMPLETED`, `FAILED`, `STOPPED`, or
-    /// `UNKNOWN`.
+    /// validating that the child is `COMPLETED`, `FAILED`, or `STOPPED`.
+    /// `UNKNOWN` is deliberately not terminal for a nested-job parent: it
+    /// remains unresolved until ordinary recovery resolves the child attempt.
     #[doc(hidden)]
     #[must_use]
     pub const fn new(
