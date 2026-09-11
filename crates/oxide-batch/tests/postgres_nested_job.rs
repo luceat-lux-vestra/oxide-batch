@@ -7,11 +7,13 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use oxide_batch::{
-    BatchStatus, Clock, ComponentRevision, DefinitionIdentity, DefinitionRevision, JobExecution,
-    JobInstance, JobInstanceKey, JobName, JobParameter, JobParameters, JobRepository,
-    LifecycleTransition, NestedJobLinkRequest, NodeId, ParameterName, ParameterRole,
-    ParameterValue, PostgresConfig, PostgresJobRepository, RepositoryError, StepName, TlsMode,
+    ActorRef, BatchStatus, Clock, ComponentRevision, DefinitionIdentity, DefinitionRevision,
+    JobExecution, JobInstance, JobInstanceKey, JobName, JobParameter, JobParameters, JobRepository,
+    LifecycleTransition, NestedJobLinkRequest, NodeId, OperationId, ParameterName, ParameterRole,
+    ParameterValue, PostgresConfig, PostgresJobRepository, PurgeBatchBound, PurgePlanRequest,
+    ReasonCode, RepositoryError, RetentionService, StepName, TerminalStatusSet, TlsMode,
 };
+use sqlx::postgres::PgPoolOptions;
 
 #[derive(Clone, Copy)]
 struct FixedClock(SystemTime);
@@ -114,6 +116,33 @@ async fn stop_execution(
         .await?;
     unit.commit().await?;
     Ok(stopped)
+}
+
+async fn row_exists(url: &str, table: &str, id: u64) -> Result<bool, Box<dyn Error>> {
+    let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
+    let statement = format!("SELECT EXISTS(SELECT 1 FROM oxide_batch.{table} WHERE id = $1)");
+    let exists: bool = sqlx::query_scalar(&statement)
+        .bind(i64::try_from(id)?)
+        .fetch_one(&pool)
+        .await?;
+    pool.close().await;
+    Ok(exists)
+}
+
+async fn nested_link_exists(
+    url: &str,
+    parent_execution_id: u64,
+) -> Result<bool, Box<dyn Error>> {
+    let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_nested_job_link \
+         WHERE parent_job_execution_id = $1)",
+    )
+    .bind(i64::try_from(parent_execution_id)?)
+    .fetch_one(&pool)
+    .await?;
+    pool.close().await;
+    Ok(exists)
 }
 
 #[test]
@@ -440,6 +469,88 @@ fn postgres_nested_job_existing_link_rejects_nonidentifying_parameter_drift()
         );
         duplicate.rollback().await?;
         repository.close().await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
+
+#[test]
+fn postgres_nested_job_parent_purge_cascades_link_without_deleting_child()
+-> Result<(), Box<dyn Error>> {
+    const PARENT_JOB: &str = "pg_nested_parent_retention";
+    let Some(url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let repository = repository(&url, 5_000).await?;
+        let (parent_instance, parent_execution) =
+            create_parent_attempt(&repository, PARENT_JOB).await?;
+        let node = NodeId::new("child")?;
+
+        let mut create = repository.begin().await?;
+        let link = create
+            .create_nested_job_link(&NestedJobLinkRequest::new(
+                parent_instance.id(),
+                parent_execution.id(),
+                node,
+                child_definition("pg_nested_child_retention")?,
+                child_parameters("trace-retention")?,
+                at(5_001),
+            ))
+            .await?;
+        create.commit().await?;
+
+        assert!(nested_link_exists(&url, parent_execution.id().get()).await?);
+        assert!(row_exists(&url, "ob_job_execution", link.child_job_execution_id().get()).await?);
+
+        let mut complete = repository.begin().await?;
+        let started = complete
+            .transition_job_execution(
+                parent_execution.id(),
+                parent_execution.version(),
+                LifecycleTransition::new(BatchStatus::Started, at(5_001)),
+            )
+            .await?;
+        complete
+            .transition_job_execution(
+                started.id(),
+                started.version(),
+                LifecycleTransition::new(BatchStatus::Completed, at(5_002)),
+            )
+            .await?;
+        complete.commit().await?;
+        repository.close().await?;
+
+        let later = FixedClock(at(5_002) + Duration::from_hours(30 * 24));
+        let purging = PostgresJobRepository::connect(
+            PostgresConfig::new(url.clone())?.with_tls_mode(TlsMode::Plaintext),
+            Arc::new(later),
+        )
+        .await?;
+        let retention = RetentionService::new(purging, Arc::new(later));
+        let request = PurgePlanRequest::new(
+            JobName::new(PARENT_JOB)?,
+            TerminalStatusSet::new([BatchStatus::Completed])?,
+            Duration::from_hours(24),
+            PurgeBatchBound::new(10)?,
+        )?;
+        let plan = retention.plan_purge(&request).await?;
+        assert_eq!(plan.candidates().len(), 1);
+        retention
+            .apply_purge(
+                OperationId::new("m7-nested-job-retention")?,
+                ActorRef::new("operator:m7-retention")?,
+                ReasonCode::new("SCHEDULED_PURGE")?,
+                &plan,
+            )
+            .await?;
+
+        assert!(!nested_link_exists(&url, parent_execution.id().get()).await?);
+        assert!(!row_exists(&url, "ob_job_execution", parent_execution.id().get()).await?);
+        assert!(row_exists(&url, "ob_job_execution", link.child_job_execution_id().get()).await?);
         Ok::<(), Box<dyn Error>>(())
     })
 }
