@@ -2,6 +2,10 @@ from pathlib import Path
 
 path = Path('crates/oxide-batch/src/runtime.rs')
 s = path.read_text()
+s = s.replace(
+    '    JobExecutionId, JobExecutionListener, JobInstance, JobInstanceKey, JobName, JobParameters,\n',
+    '    JobExecutionId, JobExecutionListener, JobInstance, JobInstanceId, JobInstanceKey, JobName,\n    JobParameters,\n',
+)
 impl_start = s.index("impl<'a> JobLauncher<'a> {")
 start = s.index('    pub async fn launch(\n', impl_start)
 end = s.index('    async fn reload_step', start)
@@ -59,6 +63,7 @@ replacement = '''    pub async fn launch(
         stop: &StopToken,
         graph: CreatedExecutionGraph,
     ) -> Result<LaunchReport, LaunchError> {
+        let plan = job.compiled_plan();
 ''' + rest + '''    }
 
 '''
