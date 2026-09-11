@@ -2,30 +2,43 @@
 //!
 //! The M5 preview's rollback story is restore-based, and this target is the
 //! report for it. It is deliberately not a downgrade migration: no SQL in this
-//! repository turns a current-schema database back into an older one, and none
-//! is written here. What an operator has instead is the logical backup taken
-//! before the upgrade, and what this report proves is that restoring it returns
-//! a database at the prior schema carrying the state it had at that moment.
+//! repository turns a current-schema database back into an older one, and
+//! none is written here. What an operator has instead is the logical backup
+//! taken before the upgrade, and what this report proves is that restoring it
+//! returns a database at the prior schema carrying the state it had at that
+//! moment.
 //!
-//! The campaign retains its original schema-1/schema-2 sources and the
-//! schema-3 source added for M6. M7 `#265` advances the current upgrade target
-//! to schema 5; the populated schema4 -> schema5 preservation boundary itself
-//! is owned by the dedicated PostgreSQL schema5 design gate.
+//! The M5 preview covered two directions (schema 1 and schema 2, both
+//! upgrading to schema 3, which was current then). M6 `#144` added schema 4,
+//! so a schema-3 source is added here too: it proves the 3 -> 4 edge M6
+//! introduced is recoverable exactly the way the two M5 edges already were,
+//! rather than assuming an additive migration is automatically safe to roll
+//! back. M7 `#265` advances the current upgrade target to schema 5; populated
+//! schema-4 -> schema-5 preservation is owned by the dedicated schema5 design
+//! gate rather than duplicated here.
 //!
 //! Each run does the whole operational sequence. A prior-schema database is
 //! built and seeded, `pg_dump` writes a custom-format archive of the metadata
 //! schema, the migrator upgrades the database to the current schema, and the
 //! upgraded database is then used — a hold is placed through the retention
 //! service, which writes to a column and an audit table that exist only from
-//! schema 3 onward, so the upgraded state genuinely diverges from the backed-up
-//! state rather than merely being labelled differently. `pg_restore` then loads
-//! the archive into a separate, freshly created database.
+//! schema 3 onward, so the upgraded state genuinely diverges from the
+//! backed-up state rather than merely being labelled differently. (A
+//! schema-3 source already carries a schema-3 shape; using the same
+//! post-upgrade hold for every source keeps one divergence proof for all of
+//! them rather than a different one per source.) `pg_restore` then loads the
+//! archive into a separate, freshly created database.
 //!
 //! What the report requires of the restored database is that it be the prior
 //! one: the recorded version is the source version, the structures the source
 //! schema did not declare are absent, every durable value equals the reading
-//! taken immediately before the archive was written, and the current runtime
-//! refuses to open it — with `MigrationRequired`, naming the version it found.
+//! taken immediately before the archive was written, and the current
+//! runtime refuses to open it — with `MigrationRequired`, naming the version
+//! it found. That last requirement is the one that keeps the report honest. A
+//! rollback that produced something the current runtime accepted would not be
+//! a rollback, and nothing here claims the newer-schema state was converted:
+//! the upgraded database is checked afterwards and still has everything the
+//! restore did not bring back.
 
 #![cfg(feature = "postgres")]
 
@@ -50,15 +63,22 @@ use upgrade::{
 };
 
 /// The schema versions an upgrade is rolled back to: the M5 preview's
-/// original schema 1 and schema 2 plus the schema-3 source added for M6.
+/// original schema 1 and schema 2, plus the schema-3 source the M6 3 -> 4
+/// edge needs.
 const SOURCE_VERSIONS: [u32; 3] = [1, 2, 3];
 
 /// The schema version the upgrade reaches before the rollback: the current
-/// installed schema (5, since M7 `#265`).
+/// installed schema (5, since M7 `#265`), not the schema-3 target the M5
+/// preview named when it was current.
 const UPGRADED_VERSION: u32 = 5;
 
+/// The metadata schema the logical backup covers.
 const DUMPED_SCHEMA: &str = "oxide_batch";
+
+/// The actor the post-upgrade hold is placed by.
 const HOLD_ACTOR: &str = "operator:m5-upgrade-campaign";
+
+/// The reason the post-upgrade hold is placed for.
 const HOLD_REASON: &str = "M5_UPGRADE_ROLLBACK";
 
 #[test]
@@ -78,6 +98,7 @@ fn every_source_backup_restores_its_prior_schema() -> Result<(), Box<dyn Error>>
         .block_on(run_report(&migrator, &admin))
 }
 
+/// Rolls one upgrade back per source version and reports on every one.
 async fn run_report(migrator: &str, admin: &str) -> Result<(), Box<dyn Error>> {
     let server = server_version(migrator).await?;
     let mut paths = Vec::new();
@@ -106,6 +127,7 @@ async fn run_report(migrator: &str, admin: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Backs up one prior schema, upgrades it, and restores the backup elsewhere.
 #[allow(
     clippy::too_many_lines,
     reason = "backing up a prior schema, upgrading it, using the upgraded database, restoring \
@@ -135,6 +157,9 @@ async fn roll_back_from(migrator: &str, admin: &str, source: u32) -> Result<Valu
         "the schema-{source} fixture seeded no durable state, so the backup would carry nothing",
     );
 
+    // The backup an operator would take before running the migrator. It is a
+    // real logical archive written by the real tool, and the report records
+    // which tool wrote it.
     let archive = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("m5-upgrade-rollback-{source}.dump"));
     let dump = run_tool(
@@ -149,7 +174,10 @@ async fn roll_back_from(migrator: &str, admin: &str, source: u32) -> Result<Valu
         ],
     )?;
     let archive_bytes = std::fs::metadata(&archive)?.len();
-    assert!(archive_bytes > 0, "a logical backup that wrote nothing is not a backup");
+    assert!(
+        archive_bytes > 0,
+        "a logical backup that wrote nothing is not a backup",
+    );
 
     PostgresMigrator::migrate(&config(upgraded_url.clone())?).await?;
     assert_eq!(
@@ -158,6 +186,10 @@ async fn roll_back_from(migrator: &str, admin: &str, source: u32) -> Result<Valu
         "the database must be at schema {UPGRADED_VERSION} before the rollback is meaningful",
     );
 
+    // Using the upgraded database, through a path that exists only in schema 3.
+    // Without this the restored copy and the upgraded one would differ by a
+    // version number alone, and the report would not be able to say the restore
+    // brought back the earlier state rather than the later one.
     let repository = PostgresJobRepository::connect(
         config(upgraded_url.clone())?,
         Arc::new(FixedClock(UNIX_EPOCH)),
@@ -178,9 +210,14 @@ async fn roll_back_from(migrator: &str, admin: &str, source: u32) -> Result<Valu
             instance,
         )
         .await?;
-    assert!(retention.hold(instance).await?.is_some());
+    assert!(
+        retention.hold(instance).await?.is_some(),
+        "the upgraded database must record the hold that only schema 3 can hold",
+    );
     repository.close().await?;
 
+    // The rollback. A separate database, created empty, loaded from the archive
+    // taken before the upgrade. Nothing is downgraded in place.
     recreate_database(admin, &restored_database).await?;
     let restore = run_tool(
         "pg_restore",
@@ -193,12 +230,22 @@ async fn roll_back_from(migrator: &str, admin: &str, source: u32) -> Result<Valu
         ],
     )?;
 
-    assert_eq!(schema_version(&restored_url).await?, Some(source));
+    assert_eq!(
+        schema_version(&restored_url).await?,
+        Some(source),
+        "the restored database must be at the schema the backup was taken from",
+    );
     assert_historical_shape(&restored_url, source).await?;
 
     let restored = DurableDigest::read(&restored_url, &columns, &tables).await?;
-    assert_eq!(at_backup.differences(&restored), Vec::<String>::new());
+    assert_eq!(
+        at_backup.differences(&restored),
+        Vec::<String>::new(),
+        "the restored database must report the durable state the backup was taken from",
+    );
 
+    // A restored prior schema is a prior schema, and this runtime says so. An
+    // upgrade rolled back is a runtime that has to be rolled back with it.
     let opened = PostgresJobRepository::connect(
         config(restored_url.clone())?,
         Arc::new(FixedClock(UNIX_EPOCH)),
@@ -214,18 +261,33 @@ async fn roll_back_from(migrator: &str, admin: &str, source: u32) -> Result<Valu
         RepositoryError::MigrationRequired {
             current: source,
             supported: PostgresMigrator::supported_schema_version(),
-        }
+        },
+        "the current runtime must refuse a database restored to schema {source} by naming the \
+         version it found, rather than treating it as compatible",
     );
 
-    assert_eq!(schema_version(&upgraded_url).await?, Some(UPGRADED_VERSION));
+    // The rollback restored the earlier state; it did not convert the later
+    // one. The upgraded database is untouched by all of this, hold included.
+    assert_eq!(
+        schema_version(&upgraded_url).await?,
+        Some(UPGRADED_VERSION),
+        "restoring the backup elsewhere must not change the upgraded database",
+    );
     let after = PostgresJobRepository::connect(
         config(upgraded_url.clone())?,
         Arc::new(FixedClock(UNIX_EPOCH)),
     )
     .await?;
     let retention_after = RetentionService::new(after.clone(), Arc::new(FixedClock(UNIX_EPOCH)));
-    assert!(retention_after.hold(instance).await?.is_some());
-    assert_eq!(read_through_port(&after).await?, upgraded_reading);
+    assert!(
+        retention_after.hold(instance).await?.is_some(),
+        "the upgraded database must still hold the schema-3 state the restore did not bring back",
+    );
+    assert_eq!(
+        read_through_port(&after).await?,
+        upgraded_reading,
+        "restoring the backup elsewhere must not change what the upgraded database reports",
+    );
     after.close().await?;
 
     let observation = json!({
