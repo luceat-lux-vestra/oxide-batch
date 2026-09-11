@@ -57,14 +57,14 @@ INSERT INTO ob_job_execution (
     );
 
 INSERT INTO ob_step_execution (
-    id, job_execution_id, step_name, status, exit_code,
+    id, job_execution_id, step_name, step_logical_id, status, exit_code,
     read_count, processed_count, write_count, filter_count, commit_count,
     rollback_count, checkpoint_format, checkpoint_schema,
     checkpoint_schema_version, checkpoint_payload, context_format,
     context_schema, context_schema_version, context_payload, failure_category,
     failure_id, created_at, started_at, ended_at, updated_at, version
 ) VALUES (
-    94001, 93001, 'preserved_step', 'COMPLETED', 'COMPLETED',
+    94001, 93001, 'preserved_step', 'preserved_step', 'COMPLETED', 'COMPLETED',
     7, 7, 7, 0, 1, 0,
     1, 'fixture-checkpoint', 1, '{"offset":7}'::jsonb,
     1, 'fixture-context', 1, '{"step":"preserved"}'::jsonb,
