@@ -120,13 +120,14 @@ async fn stop_execution(
     Ok(stopped)
 }
 
-async fn row_exists(url: &str, table: &str, id: u64) -> Result<bool, Box<dyn Error>> {
+async fn job_execution_exists(url: &str, id: u64) -> Result<bool, Box<dyn Error>> {
     let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
-    let statement = format!("SELECT EXISTS(SELECT 1 FROM oxide_batch.{table} WHERE id = $1)");
-    let exists: bool = sqlx::query_scalar(&statement)
-        .bind(i64::try_from(id)?)
-        .fetch_one(&pool)
-        .await?;
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_job_execution WHERE id = $1)",
+    )
+    .bind(i64::try_from(id)?)
+    .fetch_one(&pool)
+    .await?;
     pool.close().await;
     Ok(exists)
 }
@@ -503,14 +504,7 @@ fn postgres_nested_job_parent_purge_cascades_link_without_deleting_child()
         create.commit().await?;
 
         assert!(nested_link_exists(&url, parent_execution.id().get()).await?);
-        assert!(
-            row_exists(
-                &url,
-                "ob_job_execution",
-                link.child_job_execution_id().get()
-            )
-            .await?
-        );
+        assert!(job_execution_exists(&url, link.child_job_execution_id().get()).await?);
 
         let mut complete = repository.begin().await?;
         let started = complete
@@ -555,15 +549,8 @@ fn postgres_nested_job_parent_purge_cascades_link_without_deleting_child()
             .await?;
 
         assert!(!nested_link_exists(&url, parent_execution.id().get()).await?);
-        assert!(!row_exists(&url, "ob_job_execution", parent_execution.id().get()).await?);
-        assert!(
-            row_exists(
-                &url,
-                "ob_job_execution",
-                link.child_job_execution_id().get()
-            )
-            .await?
-        );
+        assert!(!job_execution_exists(&url, parent_execution.id().get()).await?);
+        assert!(job_execution_exists(&url, link.child_job_execution_id().get()).await?);
         Ok::<(), Box<dyn Error>>(())
     })
 }
