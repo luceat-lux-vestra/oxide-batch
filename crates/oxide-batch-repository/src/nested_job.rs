@@ -28,7 +28,11 @@ impl NestedJobTerminalObservation {
     /// `UNKNOWN`.
     #[doc(hidden)]
     #[must_use]
-    pub const fn new(status: BatchStatus, exit_status: ExitStatus, observed_at: SystemTime) -> Self {
+    pub const fn new(
+        status: BatchStatus,
+        exit_status: ExitStatus,
+        observed_at: SystemTime,
+    ) -> Self {
         Self {
             status,
             exit_status,
