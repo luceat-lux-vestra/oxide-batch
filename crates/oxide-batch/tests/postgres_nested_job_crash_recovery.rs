@@ -477,6 +477,7 @@ fn kill_worker(child: &mut Child) -> Result<(), Box<dyn Error>> {
     assert_eq!(status.signal(), Some(SIGKILL));
     Ok(())
 }
+
 fn business_effect_count(handshake: &Path) -> Result<usize, Box<dyn Error>> {
     let path = handshake.join("business-effects");
     if !path.exists() {
