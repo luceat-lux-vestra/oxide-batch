@@ -72,7 +72,7 @@ const REQUIRED_PATHS: &[&str] = &[
 /// The M5 preview installed schema 3; M6 `#144` added schema 4 component state,
 /// and M7 `#265` adds schema 5 durable nested-job linkage. The historical
 /// source denominator remains 1/2/3; populated 4 -> 5 preservation is owned by
-/// the dedicated schema5 PostgreSQL design gate.
+/// the dedicated v5 `PostgreSQL` DB design gate.
 const TARGET_SCHEMA_VERSION: u64 = 5;
 
 /// The regression test the campaign keeps and does not stand in for.
