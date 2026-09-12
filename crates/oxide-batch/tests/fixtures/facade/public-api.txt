@@ -282,6 +282,7 @@ oxide_batch::NameKind
 oxide_batch::NestedFlow
 oxide_batch::NestedJobLink
 oxide_batch::NestedJobLinkRequest
+oxide_batch::NestedJobMappingFailure
 oxide_batch::NestedJobNode
 oxide_batch::NestedJobParameterMapping
 oxide_batch::NestedJobParameterSource

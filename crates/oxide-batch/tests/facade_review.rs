@@ -76,6 +76,8 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     ("item_listener", 12),
     ("item_stream", 11),
     ("listener", 7),
+    // #265 adds the facade-owned bounded mapping diagnostic.
+    ("nested_job_runtime", 1),
     ("oxide_batch_core", 106),
     // #264 adds the reviewed M7 plan surface: CompiledFlowScope, NestedFlow,
     // and MAX_FLOW_COMPOSITION_DEPTH. #265 adds the nested-job declaration
@@ -252,14 +254,19 @@ fn groups(source: &str) -> Vec<(String, usize)> {
             statement.push_str(next);
         }
 
-        let Some((path, names)) = statement.trim_end_matches(';').split_once("::{") else {
+        let statement = statement.trim_end_matches(';');
+        let (path, count) = if let Some((path, names)) = statement.split_once("::{") {
+            let count = names
+                .trim_end_matches('}')
+                .split(',')
+                .filter(|name| !name.trim().is_empty())
+                .count();
+            (path, count)
+        } else if let Some((path, _name)) = statement.rsplit_once("::") {
+            (path, 1)
+        } else {
             continue;
         };
-        let count = names
-            .trim_end_matches('}')
-            .split(',')
-            .filter(|name| !name.trim().is_empty())
-            .count();
 
         match counted.iter_mut().find(|(group, _)| group == path) {
             Some((_, total)) => *total += count,
