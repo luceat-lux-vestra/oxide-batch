@@ -1,6 +1,6 @@
-//! PostgreSQL 15/18 SIGKILL evidence for M7 #265 nested-job linkage.
+//! `PostgreSQL` 15/18 SIGKILL evidence for M7 #265 nested-job linkage.
 //!
-//! The harness uses only ordinary PostgreSQL locks and a child-tasklet
+//! The harness uses only ordinary `PostgreSQL` locks and a child-tasklet
 //! handshake. No production fault hook is required. Four boundaries are
 //! exercised in fresh worker processes:
 //!
@@ -167,7 +167,7 @@ impl Tasklet for BoundaryChild {
                 ChildMode::Worker(CrashPoint::AfterLinkCommit) => {
                     Self::write_marker(&self.handshake.join("child-entered"))?;
                     loop {
-                        tokio::time::sleep(Duration::from_secs(60)).await;
+                        tokio::time::sleep(Duration::from_mins(1)).await;
                     }
                 }
                 ChildMode::Worker(
@@ -477,7 +477,6 @@ fn kill_worker(child: &mut Child) -> Result<(), Box<dyn Error>> {
     assert_eq!(status.signal(), Some(SIGKILL));
     Ok(())
 }
-
 fn business_effect_count(handshake: &Path) -> Result<usize, Box<dyn Error>> {
     let path = handshake.join("business-effects");
     if !path.exists() {
