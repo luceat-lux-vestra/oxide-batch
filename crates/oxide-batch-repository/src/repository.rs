@@ -11,18 +11,19 @@ use std::time::SystemTime;
 
 use oxide_batch_core::{
     BatchStatus, DefinitionIdentity, DefinitionRevision, DefinitionUpgrade, DomainError,
-    ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitStatus, FailureCategory,
-    FailureId, FailureSummary, IdentifierKind, JobExecution, JobExecutionId, JobInstance,
-    JobInstanceId, JobInstanceKey, JobName, LifecycleError, LifecycleTransition, NodeId,
-    RecoveryDecisionId, StartLimit, StepExecution, StepExecutionId, StepName, StepPartitionId,
+    ExecutionContext, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitStatus,
+    FailureCategory, FailureId, FailureSummary, IdentifierKind, JobExecution, JobExecutionId,
+    JobInstance, JobInstanceId, JobInstanceKey, JobName, JobParameters, LifecycleError,
+    LifecycleTransition, NodeId, RecoveryDecisionId, StartLimit, StepExecution, StepExecutionId,
+    StepName, StepPartitionId,
 };
 
 use crate::{
-    ActorRef, FlowDecision, FlowDecisionRequest, FlowStepState, FlowTransitionKind, OperationId,
-    OperatorAction, OperatorRecord, OperatorRecordDraft, OwnerToken, PartitionAggregate,
-    PartitionAggregationError, PartitionPlanEntry, PurgeCounts, PurgePlan, PurgePlanRequest,
-    PurgeSurvey, ReasonCode, RetentionAction, RetentionHold, RetentionRecord, RetentionRecordDraft,
-    StepPartition,
+    ActorRef, FlowDecision, FlowDecisionRequest, FlowStepState, FlowTransitionKind, NestedJobLink,
+    NestedJobLinkRequest, OperationId, OperatorAction, OperatorRecord, OperatorRecordDraft,
+    OwnerToken, PartitionAggregate, PartitionAggregationError, PartitionPlanEntry, PurgeCounts,
+    PurgePlan, PurgePlanRequest, PurgeSurvey, ReasonCode, RetentionAction, RetentionHold,
+    RetentionRecord, RetentionRecordDraft, StepPartition,
 };
 
 const MAX_RECOVERY_REASON_BYTES: usize = 64;
@@ -879,6 +880,104 @@ pub trait RepositoryUnitOfWork: Send {
         Box::pin(async { Err(RepositoryError::FlowStateCorrupt) })
     }
 
+    /// Reads the current parent-attempt link for one nested-job node.
+    fn nested_job_link<'a>(
+        &'a mut self,
+        _parent_job_execution_id: JobExecutionId,
+        _node_id: &'a NodeId,
+    ) -> BoxFuture<'a, Result<Option<NestedJobLink>, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::NestedJobs,
+            })
+        })
+    }
+
+    /// Reads the newest committed link for one parent instance/node lineage.
+    fn latest_nested_job_link<'a>(
+        &'a mut self,
+        _parent_job_instance_id: JobInstanceId,
+        _node_id: &'a NodeId,
+    ) -> BoxFuture<'a, Result<Option<NestedJobLink>, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::NestedJobs,
+            })
+        })
+    }
+
+    /// Atomically selects/creates the child instance, creates or safely reuses
+    /// its child execution, persists the complete child parameter set, and
+    /// commits the parent-attempt link before child user work may start.
+    fn create_nested_job_link<'a>(
+        &'a mut self,
+        _request: &'a NestedJobLinkRequest,
+    ) -> BoxFuture<'a, Result<NestedJobLink, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::NestedJobs,
+            })
+        })
+    }
+
+    /// Creates the next parent-attempt link from a committed prior link without
+    /// re-running parameter mapping. Completed child work is reused; a
+    /// failed/stopped child may create a new execution of the same child
+    /// instance with the exact persisted complete parameter set.
+    fn continue_nested_job_link<'a>(
+        &'a mut self,
+        _parent_job_execution_id: JobExecutionId,
+        _node_id: &'a NodeId,
+        _prior_parent_job_execution_id: JobExecutionId,
+        _linked_at: SystemTime,
+    ) -> BoxFuture<'a, Result<NestedJobLink, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::NestedJobs,
+            })
+        })
+    }
+
+    /// Loads the complete typed child parameter set owned by a committed link.
+    fn nested_job_parameters<'a>(
+        &'a mut self,
+        _parent_job_execution_id: JobExecutionId,
+        _node_id: &'a NodeId,
+    ) -> BoxFuture<'a, Result<JobParameters, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::NestedJobs,
+            })
+        })
+    }
+
+    /// Reads the committed job-execution context used by structured selectors.
+    fn job_execution_context(
+        &mut self,
+        _job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Option<ExecutionContext>, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::NestedJobs,
+            })
+        })
+    }
+
+    /// Derives and commits one terminal observation from the linked child
+    /// execution. Callers cannot supply a fabricated status or exit code.
+    fn observe_nested_job_terminal<'a>(
+        &'a mut self,
+        _parent_job_execution_id: JobExecutionId,
+        _node_id: &'a NodeId,
+        _observed_at: SystemTime,
+    ) -> BoxFuture<'a, Result<NestedJobLink, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::NestedJobs,
+            })
+        })
+    }
+
     /// Inserts one complete bounded partition plan before any worker starts.
     ///
     /// Entry order becomes the stable one-based partition ordinal. The method
@@ -1198,6 +1297,8 @@ pub enum RepositoryCapability {
     RetentionPurge,
     /// Durable local partition plans and compare-and-swap results.
     StepPartitions,
+    /// Atomic nested-job child creation, linkage, restart reuse, and observation.
+    NestedJobs,
 }
 
 impl RepositoryCapability {
@@ -1211,6 +1312,7 @@ impl RepositoryCapability {
             Self::InstanceHolds => "instance holds",
             Self::RetentionPurge => "retention purge",
             Self::StepPartitions => "durable step partitions",
+            Self::NestedJobs => "nested job linkage",
         }
     }
 }
@@ -1492,6 +1594,15 @@ pub enum RepositoryError {
     },
     /// Durable flow history is missing, contradictory, or corrupt.
     FlowStateCorrupt,
+    /// A nested-job link, child identity, or persisted parameter set is contradictory.
+    NestedJobStateCorrupt,
+    /// The linked child is active or ambiguous and cannot be silently duplicated.
+    NestedJobChildUnresolved {
+        /// Linked child attempt that requires completion or explicit recovery.
+        child_execution_id: JobExecutionId,
+        /// Durable status preventing a new child attempt.
+        status: BatchStatus,
+    },
     /// Recovery was requested for a state that needs no recovery decision.
     RecoveryNotAllowed {
         /// Rejected execution.
@@ -1694,6 +1805,15 @@ impl fmt::Display for RepositoryError {
             Self::FlowStateCorrupt => {
                 formatter.write_str("durable flow history is unusable and no work may begin")
             }
+            Self::NestedJobStateCorrupt => formatter
+                .write_str("durable nested-job state is unusable and no child work may begin"),
+            Self::NestedJobChildUnresolved {
+                child_execution_id,
+                status,
+            } => write!(
+                formatter,
+                "nested child execution {child_execution_id} in {status} requires completion or recovery"
+            ),
             Self::RecoveryNotAllowed { id, status } => {
                 write!(
                     formatter,

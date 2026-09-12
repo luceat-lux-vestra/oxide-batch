@@ -78,9 +78,15 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     ("listener", 7),
     ("oxide_batch_core", 106),
     // #264 adds the reviewed M7 plan surface: CompiledFlowScope, NestedFlow,
-    // and MAX_FLOW_COMPOSITION_DEPTH.
-    ("oxide_batch_plan", 29),
-    ("oxide_batch_repository", 110),
+    // and MAX_FLOW_COMPOSITION_DEPTH. #265 adds the nested-job declaration
+    // contract: FrameworkParameterSource, MAX_NESTED_JOB_PARAMETERS,
+    // MAX_SELECTOR_PATH_BYTES, MAX_SELECTOR_PATH_SEGMENTS,
+    // MissingParameterPolicy, NestedJobNode, NestedJobParameterMapping,
+    // NestedJobParameterSource, ParameterCoercion, and SelectorPath.
+    ("oxide_batch_plan", 39),
+    // #265 adds the durable-link repository contract: NestedJobLink,
+    // NestedJobLinkRequest, and NestedJobTerminalObservation.
+    ("oxide_batch_repository", 113),
     ("repository", 14),
     ("runtime", 18),
     ("service", 7),

@@ -10,10 +10,10 @@
 -- The classes below are separated by what the services actually do, so a grant
 -- that no supported path needs is a grant that is not here:
 --
--- runtime    drives the job, step, partition, and flow lifecycle. It writes the
---            execution graph and reads the decisions other classes record. It
---            never deletes, never migrates, and never records an operator or
---            retention action.
+-- runtime    drives the job, step, partition, flow, and nested-job lifecycle.
+--            It writes the execution graph and reads the decisions other
+--            classes record. It never deletes, never migrates, and never
+--            records an operator or retention action.
 -- explorer   answers bounded read questions and nothing else, so it holds
 --            SELECT and no other privilege on anything.
 -- operator   records guarded, audited requests and resolves executions. It may
@@ -57,13 +57,18 @@ GRANT SELECT, INSERT, UPDATE ON
     oxide_batch.ob_step_execution,
     oxide_batch.ob_step_partition,
     oxide_batch.ob_flow_decision,
-    oxide_batch.ob_component_state
+    oxide_batch.ob_component_state,
+    oxide_batch.ob_nested_job_link
     TO oxide_batch_m5_runtime;
 -- ob_component_state (M6 #144, schema 4) is the ItemStream restart-state side
 -- table. The runtime reads it to restore state on open, UPSERTs a candidate
 -- in the same transaction as the checkpoint commit, and copies committed rows
 -- forward to a new step execution on restart -- all SELECT/INSERT/UPDATE, the
 -- same shape as every other table in this class's grant.
+-- ob_nested_job_link (#265, schema 5) is likewise runtime-owned durable state:
+-- nested execution creates the linkage, restart reads it, and terminal
+-- observation updates it. Parent-execution retention is handled by the
+-- parent foreign key's cascade; the runtime itself never deletes linkage.
 -- Creating an attempt locks the instance row for the duration of the
 -- transaction, so that two launches cannot both decide they are the first.
 -- PostgreSQL requires UPDATE on at least one column to take that lock, and the

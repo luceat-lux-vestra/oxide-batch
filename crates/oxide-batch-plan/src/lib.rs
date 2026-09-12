@@ -45,6 +45,13 @@
 #![forbid(unsafe_code)]
 
 mod advanced;
+mod nested_job;
+
+pub use nested_job::{
+    FrameworkParameterSource, MAX_NESTED_JOB_PARAMETERS, MAX_SELECTOR_PATH_BYTES,
+    MAX_SELECTOR_PATH_SEGMENTS, MissingParameterPolicy, NestedJobNode, NestedJobParameterMapping,
+    NestedJobParameterSource, ParameterCoercion, SelectorPath,
+};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -56,8 +63,8 @@ use serde_json::{Value, json};
 use oxide_batch_core::{
     ChunkComponentRevisions, ChunkSize, ComponentRevision, DefinitionError, DefinitionIdentity,
     DefinitionRevision, DefinitionTokenKind, ExitCode, FaultPolicy, FlowTarget, InFlightPolicy,
-    JobName, MAX_NODES, MAX_PARTITIONS, MAX_TRANSITIONS, NodeId, StartControls, StepName,
-    TerminalKind, definition_token, validate_token,
+    JobName, MAX_NODES, MAX_PARTITIONS, MAX_TRANSITIONS, NodeId, ParameterName, StartControls,
+    StepName, TerminalKind, definition_token, validate_token,
 };
 
 /// The maximum number of transitions leaving one node.
@@ -1011,6 +1018,8 @@ pub enum FlowNode {
     Step(Box<StepNode>),
     /// A deterministic decision.
     Decision(DecisionNode),
+    /// A separately durable child-job lifecycle boundary.
+    NestedJob(Box<NestedJobNode>),
     /// A bounded set of linear branches and its structural join.
     Split(Box<SplitNode>),
     /// A structural join owned by exactly one split.
@@ -1030,6 +1039,12 @@ impl FlowNode {
     #[must_use]
     pub const fn decision(node: DecisionNode) -> Self {
         Self::Decision(node)
+    }
+
+    /// Declares a separately durable nested-job node.
+    #[must_use]
+    pub fn nested_job(node: NestedJobNode) -> Self {
+        Self::NestedJob(Box::new(node))
     }
 
     /// Declares a bounded split node.
@@ -1056,6 +1071,7 @@ impl FlowNode {
         match self {
             Self::Step(node) => node.id(),
             Self::Decision(node) => node.id(),
+            Self::NestedJob(node) => node.id(),
             Self::Split(node) => node.id(),
             Self::Join(node) => node.id(),
             Self::PartitionedStep(node) => node.id(),
@@ -1066,6 +1082,7 @@ impl FlowNode {
         match self {
             Self::Step(node) => node.manifest_value(),
             Self::Decision(node) => node.manifest_value(),
+            Self::NestedJob(node) => node.manifest_value(),
             Self::Split(node) => node.manifest_value(),
             Self::Join(node) => node.manifest_value(),
             Self::PartitionedStep(node) => node.manifest_value(),
@@ -1166,6 +1183,7 @@ impl FlowGraph {
     fn requires_advanced_format(&self) -> bool {
         !self.nested_flows.is_empty()
             || self.nodes.iter().any(|node| match node {
+                FlowNode::NestedJob(_) => true,
                 FlowNode::Split(split) => {
                     split.branches().iter().any(|branch| branch.flow.is_some())
                 }
@@ -1391,7 +1409,7 @@ fn check_local_scale_subset(
                     });
                 }
             }
-            FlowNode::Step(_) | FlowNode::Decision(_) => {}
+            FlowNode::Step(_) | FlowNode::Decision(_) | FlowNode::NestedJob(_) => {}
         }
     }
     if nodes.len().saturating_add(embedded_ids.len()) > MAX_NODES {
@@ -1921,6 +1939,32 @@ pub enum PlanError {
         /// Normalized terminal outcome that could not be routed.
         code: ExitCode,
     },
+    /// A structured selector path exceeded its closed bounded shape.
+    InvalidSelectorPath {
+        /// Maximum accepted encoded path bytes.
+        max_bytes: usize,
+        /// Maximum accepted segment count.
+        max_segments: usize,
+    },
+    /// A nested-job child definition had no bound job identity.
+    NestedJobMissingChildIdentity {
+        /// Nested-job node with the unbound child.
+        node: NodeId,
+    },
+    /// A nested job declared more child parameters than the M7 ceiling.
+    TooManyNestedJobParameters {
+        /// Nested-job node over the limit.
+        node: NodeId,
+        /// Maximum accepted mapping count.
+        max: usize,
+    },
+    /// Two mappings targeted the same child parameter.
+    DuplicateNestedJobParameter {
+        /// Nested-job node with the duplicate target.
+        node: NodeId,
+        /// Repeated child parameter name.
+        parameter: ParameterName,
+    },
     /// A logical identifier or revision token was invalid.
     Token(DefinitionError),
     /// The canonical manifest could not be encoded within its bound.
@@ -2058,6 +2102,29 @@ impl fmt::Display for PlanError {
             Self::CompositionDepthExceeded { max } => {
                 write!(formatter, "flow composition exceeds depth {max}")
             }
+            Self::InvalidSelectorPath {
+                max_bytes,
+                max_segments,
+            } => write!(
+                formatter,
+                "selector path must contain 1 to {max_segments} bounded segments within {max_bytes} bytes"
+            ),
+            Self::NestedJobMissingChildIdentity { node } => write!(
+                formatter,
+                "nested job {} requires a bound child definition identity",
+                node.as_str()
+            ),
+            Self::TooManyNestedJobParameters { node, max } => write!(
+                formatter,
+                "nested job {} exceeds {max} child parameters",
+                node.as_str()
+            ),
+            Self::DuplicateNestedJobParameter { node, parameter } => write!(
+                formatter,
+                "nested job {} maps child parameter {} more than once",
+                node.as_str(),
+                parameter.as_str()
+            ),
             Self::UnmappedNestedFlowExit { flow, code } => write!(
                 formatter,
                 "nested flow {} declares no transition for terminal outcome {code}",

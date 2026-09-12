@@ -13,7 +13,9 @@
 //! so a schema-3 source is added here too: it proves the 3 -> 4 edge M6
 //! introduced is recoverable exactly the way the two M5 edges already were,
 //! rather than assuming an additive migration is automatically safe to roll
-//! back.
+//! back. M7 `#265` advances the current upgrade target to schema 5; populated
+//! schema-4 -> schema-5 preservation is owned by the dedicated schema5 design
+//! gate rather than duplicated here.
 //!
 //! Each run does the whole operational sequence. A prior-schema database is
 //! built and seeded, `pg_dump` writes a custom-format archive of the metadata
@@ -66,9 +68,9 @@ use upgrade::{
 const SOURCE_VERSIONS: [u32; 3] = [1, 2, 3];
 
 /// The schema version the upgrade reaches before the rollback: the current
-/// installed schema (4, since M6 `#144`), not the schema-3 target the M5
+/// installed schema (5, since M7 `#265`), not the schema-3 target the M5
 /// preview named when it was current.
-const UPGRADED_VERSION: u32 = 4;
+const UPGRADED_VERSION: u32 = 5;
 
 /// The metadata schema the logical backup covers.
 const DUMPED_SCHEMA: &str = "oxide_batch";
