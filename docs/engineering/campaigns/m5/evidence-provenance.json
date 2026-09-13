@@ -118,9 +118,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+        "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
         "execution_commit_note": "Exact PR #270 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "8c87f4f47963756c953535a880048703f03633c3",
+        "branch_head_sha": "f2b2658d6e043f62081eb6ef5ae9965d1ce1f7d8",
         "branch_head_note": "Exact PR #270 branch head that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -130,27 +130,27 @@
       "workflow_run": {
         "workflow": "M5 Cancellation",
         "workflow_file": ".github/workflows/m5-cancellation.yml",
-        "id": 34738748628,
+        "id": 34746342757,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-cancellation-campaign",
-        "id": 103674711521,
+        "id": 103694864332,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-15",
-        "id": 10312176605,
-        "digest": "sha256:a04996a4bb6140130fbe83b7e9baede26dccd53cb3f0596f593090f5a89ef861",
-        "size_bytes": 5743
+        "id": 10314600682,
+        "digest": "sha256:5a6d3ec94af0c404a033e3e5324b00faa25f58051dc0dab0e095fcf82da2456e",
+        "size_bytes": 5740
       },
-      "retained_report_git_blob": "d76bbb622054b92c98d13908402574ecee3fadbc",
+      "retained_report_git_blob": "a9314115d3e5b35a7880ae4b674fbe2b0bb1b88e",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-13T05:10:08Z",
-        "run_id": 34738748628,
+        "verified_at": "2026-09-13T11:13:00Z",
+        "run_id": 34746342757,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -168,9 +168,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+        "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
         "execution_commit_note": "Exact PR #270 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "8c87f4f47963756c953535a880048703f03633c3",
+        "branch_head_sha": "f2b2658d6e043f62081eb6ef5ae9965d1ce1f7d8",
         "branch_head_note": "Exact PR #270 branch head that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -180,27 +180,27 @@
       "workflow_run": {
         "workflow": "M5 Cancellation",
         "workflow_file": ".github/workflows/m5-cancellation.yml",
-        "id": 34738748628,
+        "id": 34746342757,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-cancellation-campaign",
-        "id": 103674711645,
+        "id": 103694864281,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-18",
-        "id": 10311557599,
-        "digest": "sha256:a0ccbbe547b855847f9a0143f3c2be60927a2e382454d8b18ce71005dbc18a81",
-        "size_bytes": 5735
+        "id": 10313843326,
+        "digest": "sha256:70b978ef0d18726717c7dd86b24e0b8ea5b930aa4db70d816b0e4dd956df3c1c",
+        "size_bytes": 5750
       },
-      "retained_report_git_blob": "643d1e744830a72e36af2ee24a2b415c0d2ef94b",
+      "retained_report_git_blob": "86de3a2b91bd2eb9a1f18c65ec51b48aba3b1ef2",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-13T05:10:08Z",
-        "run_id": 34738748628,
+        "verified_at": "2026-09-13T11:13:00Z",
+        "run_id": 34746342757,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -218,9 +218,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+        "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
         "execution_commit_note": "Exact PR #270 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "8c87f4f47963756c953535a880048703f03633c3",
+        "branch_head_sha": "f2b2658d6e043f62081eb6ef5ae9965d1ce1f7d8",
         "branch_head_note": "Exact PR #270 branch head that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -230,27 +230,27 @@
       "workflow_run": {
         "workflow": "M5 Conformance",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 34738748793,
+        "id": 34746342833,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-conformance-campaign",
-        "id": 103674711700,
+        "id": 103694864474,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-15",
-        "id": 10311447804,
-        "digest": "sha256:1a16c44f4a0986fa4f5eb357131469ee6e110240a700c4bd95ab89cb520c7528",
-        "size_bytes": 7135
+        "id": 10314422021,
+        "digest": "sha256:100ddbf2721821aa13d939ce3f2b039b34adeecb68097d24056c903bcdaa8aff",
+        "size_bytes": 7134
       },
-      "retained_report_git_blob": "e40e7d2948f4a3d038a84e29f58770d7df33b75e",
+      "retained_report_git_blob": "21ff60e0141a0c1f9fa92c154faabd7a8d7b5093",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-13T05:10:08Z",
-        "run_id": 34738748793,
+        "verified_at": "2026-09-13T11:13:00Z",
+        "run_id": 34746342833,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -268,9 +268,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+        "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
         "execution_commit_note": "Exact PR #270 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "8c87f4f47963756c953535a880048703f03633c3",
+        "branch_head_sha": "f2b2658d6e043f62081eb6ef5ae9965d1ce1f7d8",
         "branch_head_note": "Exact PR #270 branch head that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -280,27 +280,27 @@
       "workflow_run": {
         "workflow": "M5 Conformance",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 34738748793,
+        "id": 34746342833,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-conformance-campaign",
-        "id": 103674711750,
+        "id": 103694864563,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-18",
-        "id": 10311787644,
-        "digest": "sha256:1eb5f65244b3b7f1c1aefcacbf9bc97ccffeb85b8016a72992fefefbee01726e",
+        "id": 10314750518,
+        "digest": "sha256:1e7ff72ef6827fd8007501f372c53fa36975b93d2fd39ec5de00f3da68fda67b",
         "size_bytes": 7134
       },
-      "retained_report_git_blob": "e6a8ff9c04fb79eaab9b15111f2000b3196b5f7b",
+      "retained_report_git_blob": "02d04c0ab2d6e2f03e63d3fe36ccdb0da7485961",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-13T05:10:08Z",
-        "run_id": 34738748793,
+        "verified_at": "2026-09-13T11:13:00Z",
+        "run_id": 34746342833,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -318,9 +318,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+        "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
         "execution_commit_note": "Exact PR #270 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "8c87f4f47963756c953535a880048703f03633c3",
+        "branch_head_sha": "f2b2658d6e043f62081eb6ef5ae9965d1ce1f7d8",
         "branch_head_note": "Exact PR #270 branch head that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -330,27 +330,27 @@
       "workflow_run": {
         "workflow": "M5 Crash and Restore",
         "workflow_file": ".github/workflows/m5-crash-restore.yml",
-        "id": 34738748655,
+        "id": 34746342759,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-crash-restore-campaign",
-        "id": 103674711488,
+        "id": 103694864469,
         "conclusion": "success"
       },
       "artifact": {
         "name": "crash-restore-campaign-postgres-15",
-        "id": 10312361086,
-        "digest": "sha256:354e178e400da7e69302318ee886f9d203e6b7ac4ade5218165dcc0f8ef0953f",
-        "size_bytes": 6686
+        "id": 10314715455,
+        "digest": "sha256:47c392247af6cfdc5dbe3cb2f555c6405a8eef1499f79f12e5cc780f24fb3f2e",
+        "size_bytes": 6688
       },
-      "retained_report_git_blob": "a949ac99f36423287534a5fcd21aa161071b8ff7",
+      "retained_report_git_blob": "3f3dd96b0e5b40a9bc251e440dfadc2b4eac4f68",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-13T05:10:08Z",
-        "run_id": 34738748655,
+        "verified_at": "2026-09-13T11:13:00Z",
+        "run_id": 34746342759,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -368,9 +368,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+        "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
         "execution_commit_note": "Exact PR #270 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "8c87f4f47963756c953535a880048703f03633c3",
+        "branch_head_sha": "f2b2658d6e043f62081eb6ef5ae9965d1ce1f7d8",
         "branch_head_note": "Exact PR #270 branch head that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -380,27 +380,27 @@
       "workflow_run": {
         "workflow": "M5 Crash and Restore",
         "workflow_file": ".github/workflows/m5-crash-restore.yml",
-        "id": 34738748655,
+        "id": 34746342759,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-crash-restore-campaign",
-        "id": 103674711497,
+        "id": 103694864408,
         "conclusion": "success"
       },
       "artifact": {
         "name": "crash-restore-campaign-postgres-18",
-        "id": 10311782602,
-        "digest": "sha256:cf3f72b7dd1ee594a1bc78b2514962de76e8d6954c57aa0c7196c791a31f70bd",
-        "size_bytes": 6672
+        "id": 10314092714,
+        "digest": "sha256:230c400b2de24e59defa6255b53c9b2e3d81c77950be891d6bb609326d746d5d",
+        "size_bytes": 6679
       },
-      "retained_report_git_blob": "7cdf7934a479251b5353569b4f8413ece17635f5",
+      "retained_report_git_blob": "382b67180a58596768ce3da7f519ea31e3d87f07",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-13T05:10:08Z",
-        "run_id": 34738748655,
+        "verified_at": "2026-09-13T11:13:00Z",
+        "run_id": 34746342759,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -418,9 +418,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+        "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
         "execution_commit_note": "Exact PR #270 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "8c87f4f47963756c953535a880048703f03633c3",
+        "branch_head_sha": "f2b2658d6e043f62081eb6ef5ae9965d1ce1f7d8",
         "branch_head_note": "Exact PR #270 branch head that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -430,27 +430,27 @@
       "workflow_run": {
         "workflow": "M5 Performance",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 34738748791,
+        "id": 34746342789,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-performance-campaign",
-        "id": 103674711734,
+        "id": 103694864663,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-15",
-        "id": 10311727932,
-        "digest": "sha256:5d6b76936a2c7ed8bcf73d18d10999bbe56bee473043e06e4599702c0cc900d9",
-        "size_bytes": 6613
+        "id": 10314047754,
+        "digest": "sha256:9f16aff3e6815f46e3258316a37e82202a24a916655d3f37cf5473484cd58eb3",
+        "size_bytes": 6606
       },
-      "retained_report_git_blob": "eccf4a51bcdc53714a412bcf5d470a9c0c2a9d0d",
+      "retained_report_git_blob": "12bfcaf2a02772052666648dc5f392e3295d90e3",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-13T05:10:08Z",
-        "run_id": 34738748791,
+        "verified_at": "2026-09-13T11:13:00Z",
+        "run_id": 34746342789,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -468,9 +468,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+        "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
         "execution_commit_note": "Exact PR #270 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "8c87f4f47963756c953535a880048703f03633c3",
+        "branch_head_sha": "f2b2658d6e043f62081eb6ef5ae9965d1ce1f7d8",
         "branch_head_note": "Exact PR #270 branch head that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -480,27 +480,27 @@
       "workflow_run": {
         "workflow": "M5 Performance",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 34738748791,
+        "id": 34746342789,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-performance-campaign",
-        "id": 103674711613,
+        "id": 103694864560,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-18",
-        "id": 10311637460,
-        "digest": "sha256:a7bf716482e8c46458db2df1ca90b8ca8186b3244bb227a08660d7759229d48b",
-        "size_bytes": 6615
+        "id": 10313907977,
+        "digest": "sha256:38f9ab3018c28db64aab8fef146fe9603d7ffecc8ba9556fc7158b3dccc40cbd",
+        "size_bytes": 6607
       },
-      "retained_report_git_blob": "06d9a54d9ce94e2dafeaf42f0d75dd7aa8f5c884",
+      "retained_report_git_blob": "a848a22954bb6679a978419b7a58421051b7df38",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-13T05:10:08Z",
-        "run_id": 34738748791,
+        "verified_at": "2026-09-13T11:13:00Z",
+        "run_id": 34746342789,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -518,9 +518,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+        "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
         "execution_commit_note": "Exact PR #270 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "8c87f4f47963756c953535a880048703f03633c3",
+        "branch_head_sha": "f2b2658d6e043f62081eb6ef5ae9965d1ce1f7d8",
         "branch_head_note": "Exact PR #270 branch head that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -530,27 +530,27 @@
       "workflow_run": {
         "workflow": "M5 Resource Bounds",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 34738748667,
+        "id": 34746342808,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-resource-bounds-campaign",
-        "id": 103674711447,
+        "id": 103694864705,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-15",
-        "id": 10311817279,
-        "digest": "sha256:3c791e47e9a5b49a1bb797a67ef860c3decf1b85a1d52e5109fc12ba22b9c79a",
-        "size_bytes": 14187
+        "id": 10313743710,
+        "digest": "sha256:ad26c0b9efcd2b2331e0ce0bd8c254274e7b9e781e6acb16826d4e207fa618ea",
+        "size_bytes": 14183
       },
-      "retained_report_git_blob": "9d1fb66c7400f408f1500ef5d90a7c82357aa4b7",
+      "retained_report_git_blob": "90b2a5641d305429e3e1ab682ccb2ccc40e11850",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-13T05:10:08Z",
-        "run_id": 34738748667,
+        "verified_at": "2026-09-13T11:13:00Z",
+        "run_id": 34746342808,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -568,9 +568,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+        "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
         "execution_commit_note": "Exact PR #270 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "8c87f4f47963756c953535a880048703f03633c3",
+        "branch_head_sha": "f2b2658d6e043f62081eb6ef5ae9965d1ce1f7d8",
         "branch_head_note": "Exact PR #270 branch head that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -580,27 +580,27 @@
       "workflow_run": {
         "workflow": "M5 Resource Bounds",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 34738748667,
+        "id": 34746342808,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-resource-bounds-campaign",
-        "id": 103674711520,
+        "id": 103694864589,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-18",
-        "id": 10311927028,
-        "digest": "sha256:653d50a4896f6bd3e0896a7a03ee238a5a3a1135611bb18a96f66b81b53ee80b",
-        "size_bytes": 14186
+        "id": 10314471700,
+        "digest": "sha256:f2d7991cc2b52ade757ac55320a66ab290547e2200bcfd9506ecf14ca80ff76e",
+        "size_bytes": 14182
       },
-      "retained_report_git_blob": "b7d6b300e28f5eb9cd4aa448419d8a6c8dd49de9",
+      "retained_report_git_blob": "d1bc9b58561637b779ef9d5064885ea9e55bd372",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-13T05:10:08Z",
-        "run_id": 34738748667,
+        "verified_at": "2026-09-13T11:13:00Z",
+        "run_id": 34746342808,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -618,9 +618,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+        "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
         "execution_commit_note": "Exact PR #270 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "8c87f4f47963756c953535a880048703f03633c3",
+        "branch_head_sha": "f2b2658d6e043f62081eb6ef5ae9965d1ce1f7d8",
         "branch_head_note": "Exact PR #270 branch head that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -630,27 +630,27 @@
       "workflow_run": {
         "workflow": "M5 Security",
         "workflow_file": ".github/workflows/m5-security.yml",
-        "id": 34738748645,
+        "id": 34746342783,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-security-campaign",
-        "id": 103674711333,
+        "id": 103694864437,
         "conclusion": "success"
       },
       "artifact": {
         "name": "security-campaign-postgres-15",
-        "id": 10311487732,
-        "digest": "sha256:2b194af7bd12d9c2443bbbafc2ffc01c8f8096e73c2685b4e04eef50611304d6",
-        "size_bytes": 7583
+        "id": 10314550914,
+        "digest": "sha256:027f3eafd2b1455528ada4894527d515684e185313eefdd18097fdd9ca206324",
+        "size_bytes": 7580
       },
-      "retained_report_git_blob": "f12d3bb7e3fa1211087d992cc80dd4855a643a5f",
+      "retained_report_git_blob": "c4a43c243a21d8f1b3d8185f34816dbf218b011d",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-13T05:10:08Z",
-        "run_id": 34738748645,
+        "verified_at": "2026-09-13T11:13:00Z",
+        "run_id": 34746342783,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -668,9 +668,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+        "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
         "execution_commit_note": "Exact PR #270 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "8c87f4f47963756c953535a880048703f03633c3",
+        "branch_head_sha": "f2b2658d6e043f62081eb6ef5ae9965d1ce1f7d8",
         "branch_head_note": "Exact PR #270 branch head that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -680,27 +680,27 @@
       "workflow_run": {
         "workflow": "M5 Security",
         "workflow_file": ".github/workflows/m5-security.yml",
-        "id": 34738748645,
+        "id": 34746342783,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-security-campaign",
-        "id": 103674711465,
+        "id": 103694864345,
         "conclusion": "success"
       },
       "artifact": {
         "name": "security-campaign-postgres-18",
-        "id": 10311353002,
-        "digest": "sha256:e161d284f535000067744ec0740f368f37f3e6fbd6d5ff98fb15b3e301624b10",
-        "size_bytes": 7582
+        "id": 10314545843,
+        "digest": "sha256:d237be0e1d527df1e6b2589a471a7a82a9ead65e1b04ac3a9a42b7fcc406a0d4",
+        "size_bytes": 7579
       },
-      "retained_report_git_blob": "3c7fe5bfd20983d458221dfac581efa53f78cecf",
+      "retained_report_git_blob": "271aba841ed8f4ea3c82711bdb1b4b18dbaba9da",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-13T05:10:08Z",
-        "run_id": 34738748645,
+        "verified_at": "2026-09-13T11:13:00Z",
+        "run_id": 34746342783,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -718,9 +718,9 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+        "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
         "execution_commit_note": "Exact PR #270 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "8c87f4f47963756c953535a880048703f03633c3",
+        "branch_head_sha": "f2b2658d6e043f62081eb6ef5ae9965d1ce1f7d8",
         "branch_head_note": "Exact PR #270 branch head that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -730,27 +730,27 @@
       "workflow_run": {
         "workflow": "M5 Soak",
         "workflow_file": ".github/workflows/m5-soak.yml",
-        "id": 34738748573,
+        "id": 34746342794,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-soak-campaign",
-        "id": 103674711427,
+        "id": 103694864675,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-15",
-        "id": 10312171761,
-        "digest": "sha256:8cbdf441c976b569c76f93c8b8917c374519d031e307577061b667768cab9115",
-        "size_bytes": 88127
+        "id": 10314342370,
+        "digest": "sha256:5d4bb9ec24b914c447a03306e81c4d383f44ad234bcc2b763b417d6c43745ec3",
+        "size_bytes": 88811
       },
-      "retained_report_git_blob": "1820985823a2e9b6425e1e9efeb35708e0e60b6b",
+      "retained_report_git_blob": "c770436efcfbfe9f49416047191f955ea5087eeb",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-13T05:10:08Z",
-        "run_id": 34738748573,
+        "verified_at": "2026-09-13T11:13:00Z",
+        "run_id": 34746342794,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -768,9 +768,9 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+        "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
         "execution_commit_note": "Exact PR #270 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "8c87f4f47963756c953535a880048703f03633c3",
+        "branch_head_sha": "f2b2658d6e043f62081eb6ef5ae9965d1ce1f7d8",
         "branch_head_note": "Exact PR #270 branch head that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -780,27 +780,27 @@
       "workflow_run": {
         "workflow": "M5 Soak",
         "workflow_file": ".github/workflows/m5-soak.yml",
-        "id": 34738748573,
+        "id": 34746342794,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-soak-campaign",
-        "id": 103674711287,
+        "id": 103694864562,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-18",
-        "id": 10311827536,
-        "digest": "sha256:8dca5e201e00d3419e57c86de7c12add162db030e2e7a3b4345658144fb26be3",
-        "size_bytes": 89966
+        "id": 10313958076,
+        "digest": "sha256:65c52b37be56b6eb52631e16dc577a12b4de2ad9084d414b91b45c10b787a60d",
+        "size_bytes": 88851
       },
-      "retained_report_git_blob": "37d84876f34554e7969428bfdf5b0b77e23e0be2",
+      "retained_report_git_blob": "e9f0e5febb78d25a75aa2cc13eff2984322ae552",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-13T05:10:08Z",
-        "run_id": 34738748573,
+        "verified_at": "2026-09-13T11:13:00Z",
+        "run_id": 34746342794,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -818,9 +818,9 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+        "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
         "execution_commit_note": "Exact PR #270 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "8c87f4f47963756c953535a880048703f03633c3",
+        "branch_head_sha": "f2b2658d6e043f62081eb6ef5ae9965d1ce1f7d8",
         "branch_head_note": "Exact PR #270 branch head that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -830,27 +830,27 @@
       "workflow_run": {
         "workflow": "M5 Upgrade",
         "workflow_file": ".github/workflows/m5-upgrade.yml",
-        "id": 34738748654,
+        "id": 34746342752,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-upgrade-campaign",
-        "id": 103674711240,
+        "id": 103694864607,
         "conclusion": "success"
       },
       "artifact": {
         "name": "upgrade-campaign-postgres-15",
-        "id": 10311678748,
-        "digest": "sha256:87edaa9c526c8f4a7974ab2e0e3922808fffaf5feb245c7363e77f4fb610f9b9",
+        "id": 10314267277,
+        "digest": "sha256:c812891ff99358b3e031777b5a17d8dde612b3fef4f69f2ec05dbd309c88bb60",
         "size_bytes": 5758
       },
-      "retained_report_git_blob": "ebc5e4d337b7bb11d39e7e1d6038898ae2aeaa28",
+      "retained_report_git_blob": "795e8e380445d9df695633b22e262b0f294e95b7",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-13T05:10:08Z",
-        "run_id": 34738748654,
+        "verified_at": "2026-09-13T11:13:00Z",
+        "run_id": 34746342752,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -868,9 +868,9 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+        "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
         "execution_commit_note": "Exact PR #270 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "8c87f4f47963756c953535a880048703f03633c3",
+        "branch_head_sha": "f2b2658d6e043f62081eb6ef5ae9965d1ce1f7d8",
         "branch_head_note": "Exact PR #270 branch head that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -880,27 +880,27 @@
       "workflow_run": {
         "workflow": "M5 Upgrade",
         "workflow_file": ".github/workflows/m5-upgrade.yml",
-        "id": 34738748654,
+        "id": 34746342752,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-upgrade-campaign",
-        "id": 103674711359,
+        "id": 103694864457,
         "conclusion": "success"
       },
       "artifact": {
         "name": "upgrade-campaign-postgres-18",
-        "id": 10311477962,
-        "digest": "sha256:44345733276af49a34bcf60de54a94fc776c0455c1888e6b27e81dc2321fb1bd",
-        "size_bytes": 5757
+        "id": 10314077677,
+        "digest": "sha256:bb8eca45b690f453aef82c0c0506a0041f2a429c36f3d9e2b4a1c2617a8402d1",
+        "size_bytes": 5755
       },
-      "retained_report_git_blob": "33748c2ebf167ed2e049130f6e0045cf1d3f2792",
+      "retained_report_git_blob": "3bd719f967986a535ac51c951deddbf0a3d41f22",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-13T05:10:08Z",
-        "run_id": 34738748654,
+        "verified_at": "2026-09-13T11:13:00Z",
+        "run_id": 34746342752,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,

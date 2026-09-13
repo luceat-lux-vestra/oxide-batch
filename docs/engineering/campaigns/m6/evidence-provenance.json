@@ -39,9 +39,9 @@
       "matrix_point": "postgres-15",
       "postgres_major_version": "15",
       "producer": {
-        "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+        "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
         "execution_commit_note": "Exact PR #270 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "8c87f4f47963756c953535a880048703f03633c3",
+        "branch_head_sha": "f2b2658d6e043f62081eb6ef5ae9965d1ce1f7d8",
         "branch_head_note": "Exact PR #270 branch head that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -51,27 +51,27 @@
       "workflow_run": {
         "workflow": "M6 Gate B Transaction/Restart Equivalence",
         "workflow_file": ".github/workflows/m6-gate-b.yml",
-        "id": 34738748650,
+        "id": 34746342777,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-gate-b-campaign",
-        "id": 103674711467,
+        "id": 103694864498,
         "conclusion": "success"
       },
       "artifact": {
         "name": "gate-b-campaign-postgres-15",
-        "id": 10312380959,
-        "digest": "sha256:9a058ad354db2328186ff6a05febd8b0bf9f72ca01903951aa335665cddc47c1",
+        "id": 10314850211,
+        "digest": "sha256:da255434143cd3146b789dcf22bb828fa3e246d0b7df74b957f2b5fbcb95ece6",
         "size_bytes": 2334
       },
-      "retained_report_git_blob": "1591e978f8ee6e16775511fdaad099708e188863",
+      "retained_report_git_blob": "d8318306a4f56d4ecd5216762dfe93b6cffb38ed",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-13T05:10:08Z",
-        "run_id": 34738748650,
+        "verified_at": "2026-09-13T11:13:00Z",
+        "run_id": 34746342777,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -89,9 +89,9 @@
       "matrix_point": "postgres-18",
       "postgres_major_version": "18",
       "producer": {
-        "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+        "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
         "execution_commit_note": "Exact PR #270 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "8c87f4f47963756c953535a880048703f03633c3",
+        "branch_head_sha": "f2b2658d6e043f62081eb6ef5ae9965d1ce1f7d8",
         "branch_head_note": "Exact PR #270 branch head that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -101,27 +101,27 @@
       "workflow_run": {
         "workflow": "M6 Gate B Transaction/Restart Equivalence",
         "workflow_file": ".github/workflows/m6-gate-b.yml",
-        "id": 34738748650,
+        "id": 34746342777,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-gate-b-campaign",
-        "id": 103674711315,
+        "id": 103694864577,
         "conclusion": "success"
       },
       "artifact": {
         "name": "gate-b-campaign-postgres-18",
-        "id": 10311447736,
-        "digest": "sha256:abb0b1fc5aae4c9c97c65bccb2bb48788637de83a3c63cdf888ba73aed9c197e",
+        "id": 10314740446,
+        "digest": "sha256:0fc8dba2832e6e902f6d41e735cf510750b1cf6383112a319e81573ef9683f58",
         "size_bytes": 2334
       },
-      "retained_report_git_blob": "119e7c21fe69c300f4921a3604cf027a3231b38c",
+      "retained_report_git_blob": "36e64788299f808774aae4d1bd5c0954031fd279",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-13T05:10:08Z",
-        "run_id": 34738748650,
+        "verified_at": "2026-09-13T11:13:00Z",
+        "run_id": 34746342777,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -139,9 +139,9 @@
       "matrix_point": "performance-linux-release",
       "postgres_major_version": "not-applicable",
       "producer": {
-        "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+        "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
         "execution_commit_note": "Exact PR #270 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "8c87f4f47963756c953535a880048703f03633c3",
+        "branch_head_sha": "f2b2658d6e043f62081eb6ef5ae9965d1ce1f7d8",
         "branch_head_note": "Exact PR #270 branch head that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -151,27 +151,27 @@
       "workflow_run": {
         "workflow": "M6 Gate H P-002 Performance",
         "workflow_file": ".github/workflows/m6-gate-h.yml",
-        "id": 34738748586,
+        "id": 34746342776,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "gate-h-campaign",
-        "id": 103674711286,
+        "id": 103694864340,
         "conclusion": "success"
       },
       "artifact": {
         "name": "gate-h-campaign",
-        "id": 10311532505,
-        "digest": "sha256:96d42967c3ad1174e17f0d578ae483171bb0b3c6dcdea7603edaea8a7e317f8c",
-        "size_bytes": 3141
+        "id": 10314022757,
+        "digest": "sha256:2c7a2ee005bb4b25af9fc68c8bb8f0a92bae5b8e593f63bb23660004461c2758",
+        "size_bytes": 3133
       },
-      "retained_report_git_blob": "4eafabdad1864e265081d70473b0a7662c539e91",
+      "retained_report_git_blob": "e0221e1556ce5de7a8507a0cd544d440cce1ba5c",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-13T05:10:08Z",
-        "run_id": 34738748586,
+        "verified_at": "2026-09-13T11:13:00Z",
+        "run_id": 34746342776,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -189,9 +189,9 @@
       "matrix_point": "postgres-15",
       "postgres_major_version": "15",
       "producer": {
-        "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+        "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
         "execution_commit_note": "Exact PR #270 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "8c87f4f47963756c953535a880048703f03633c3",
+        "branch_head_sha": "f2b2658d6e043f62081eb6ef5ae9965d1ce1f7d8",
         "branch_head_note": "Exact PR #270 branch head that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -201,27 +201,27 @@
       "workflow_run": {
         "workflow": "M6 Full Component Conformance",
         "workflow_file": ".github/workflows/m6-conformance.yml",
-        "id": 34738748694,
+        "id": 34746342763,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-m6-conformance",
-        "id": 103674711609,
+        "id": 103694864516,
         "conclusion": "success"
       },
       "artifact": {
         "name": "m6-conformance-campaign-postgres-15",
-        "id": 10311273551,
-        "digest": "sha256:41326d36c3de57f3ddde6926ae75905c0a3551341b7b6c0fb3b0dbfaa76dbe3f",
-        "size_bytes": 10405
+        "id": 10314422023,
+        "digest": "sha256:391d01c42070d2895ffee142f2a1638c97cb5634c366cf7e8afec851534c1786",
+        "size_bytes": 10428
       },
-      "retained_report_git_blob": "65e0c68e120cd186d216f1b0fd0724689370047e",
+      "retained_report_git_blob": "667e83b827f5976425d6b426067ecd2f4a1df63e",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-13T05:10:08Z",
-        "run_id": 34738748694,
+        "verified_at": "2026-09-13T11:13:00Z",
+        "run_id": 34746342763,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -239,9 +239,9 @@
       "matrix_point": "postgres-18",
       "postgres_major_version": "18",
       "producer": {
-        "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+        "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
         "execution_commit_note": "Exact PR #270 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "8c87f4f47963756c953535a880048703f03633c3",
+        "branch_head_sha": "f2b2658d6e043f62081eb6ef5ae9965d1ce1f7d8",
         "branch_head_note": "Exact PR #270 branch head that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
@@ -251,27 +251,27 @@
       "workflow_run": {
         "workflow": "M6 Full Component Conformance",
         "workflow_file": ".github/workflows/m6-conformance.yml",
-        "id": 34738748694,
+        "id": 34746342763,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-m6-conformance",
-        "id": 103674711668,
+        "id": 103694864325,
         "conclusion": "success"
       },
       "artifact": {
         "name": "m6-conformance-campaign-postgres-18",
-        "id": 10312071760,
-        "digest": "sha256:30f703f50e077634dfa14b0a557aa8051566d3ac267c5b5d7a544a3da2018833",
-        "size_bytes": 10405
+        "id": 10313778456,
+        "digest": "sha256:6a4a8581fc7498951a8ea382f8228ec9d1e265ce2ba4a057f106623140f73c16",
+        "size_bytes": 10428
       },
-      "retained_report_git_blob": "57ff673d71bdc867b6ed021adef65bffd4c94fdd",
+      "retained_report_git_blob": "0932d1e9625712925af91ac4e0933f57179095b8",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-13T05:10:08Z",
-        "run_id": 34738748694,
+        "verified_at": "2026-09-13T11:13:00Z",
+        "run_id": 34746342763,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,

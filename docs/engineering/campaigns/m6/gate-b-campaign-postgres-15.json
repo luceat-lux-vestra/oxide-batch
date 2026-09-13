@@ -6,12 +6,12 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+    "source_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
     "source_tree_clean": true
   },
   "observation": {
     "execution_manifest": {
-      "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+      "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -26,7 +26,7 @@
         "crates/oxide-batch-repository/src": "8d98a5c311795670612adfabead7a9308aa0d454",
         "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
         "crates/oxide-batch/migrations": "f3169d95fac45b092157d8eaef4372ee7e425403",
-        "crates/oxide-batch/src": "3d27e31f54e4f0b3a6313d77d3aa11f97fd33695",
+        "crates/oxide-batch/src": "693a00cc63427bf58bd3fa71e165f18d33bba1b0",
         "crates/oxide-batch/tests/crash_restore": "3dd21590addc215dd316177a062ca34f51ee6351",
         "crates/oxide-batch/tests/gate_b_01_normal_commit.rs": "4fe92eaee82af562987897d7df79a17e70844746",
         "crates/oxide-batch/tests/gate_b_02_writer_failure_rollback.rs": "3939a66acf1efb498ad7c39830065ea508bdc33c",

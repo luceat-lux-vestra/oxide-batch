@@ -6,12 +6,12 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+    "source_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
     "source_tree_clean": true
   },
   "observation": {
     "execution_manifest": {
-      "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+      "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
       "execution_commit_note": "The tree this run actually executed against; in CI this is the pull-request merge commit.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -28,7 +28,7 @@
         "crates/oxide-batch-test/src": "aff891fc18dfb4331304a5c8cd9cc3ebb0be650a",
         "crates/oxide-batch-test/tests": "8d913629efca6a0e80be6b8e10211a34ad1c0f0a",
         "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
-        "crates/oxide-batch/src": "3d27e31f54e4f0b3a6313d77d3aa11f97fd33695",
+        "crates/oxide-batch/src": "693a00cc63427bf58bd3fa71e165f18d33bba1b0",
         "crates/oxide-batch/tests": "b66725a9a0ba1b7c63e8a7736223bdc011498c05",
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
         "tests/fixtures/m6-conformance/campaign-semantics.json": "025340def56776fcb42d9f2855a957f389bbdd99",
@@ -134,6 +134,7 @@
         "item_components::postgres_keyset::tests::validate_key_columns_requires_at_least_one": "ok",
         "item_components::postgres_paging::tests::page_query_sql_omits_the_predicate_on_initial_execution": "ok",
         "item_components::postgres_paging::tests::page_query_sql_places_limit_after_the_composite_predicate": "ok",
+        "nested_job_runtime::tests::unavailable_durable_context_source_fails_closed": "ok",
         "repository::postgres::tests::canonical_instance_key_matches_version_one_golden_vector": "ok",
         "service::recovery::tests::advancing_observation_time_preserves_a_durable_evidence_digest": "ok",
         "service::recovery::tests::backwards_repository_time_invalidates_the_next_observation": "ok",
@@ -150,7 +151,7 @@
       ],
       "succeeded": true,
       "target": "__lib",
-      "tests": 91
+      "tests": 92
     },
     {
       "ignored": 0,

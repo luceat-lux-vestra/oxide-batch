@@ -2,12 +2,12 @@
   "binary_size_and_compile_time": {
     "boxed": {
       "binary_size_bytes": 1798248,
-      "compile_time_seconds": 37.909564102,
+      "compile_time_seconds": 22.720847754,
       "target_directory_isolation": "clean-per-reference"
     },
     "typed": {
       "binary_size_bytes": 1784984,
-      "compile_time_seconds": 37.963517638,
+      "compile_time_seconds": 22.674892179,
       "target_directory_isolation": "clean-per-reference"
     }
   },
@@ -18,7 +18,7 @@
     "os": "linux",
     "profile": "release",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+    "source_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
     "source_tree_clean": true
   },
   "hard_invariants": {
@@ -34,7 +34,7 @@
   "no_invented_threshold_note": "Throughput, latency, allocation-delta, binary-size, and compile-time numbers are retained as disclosure evidence per the frozen protocol; none is compared against an invented pass/fail threshold by this runner.",
   "observation": {
     "execution_manifest": {
-      "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
+      "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -48,7 +48,7 @@
         "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
         "crates/oxide-batch/examples/gate_h_boxed_reference.rs": "8f574d70530b27964063c1d4eb4f0a55abc96b53",
         "crates/oxide-batch/examples/gate_h_typed_reference.rs": "fe4e142d1159876291e609ec9654160d423f7d03",
-        "crates/oxide-batch/src": "3d27e31f54e4f0b3a6313d77d3aa11f97fd33695",
+        "crates/oxide-batch/src": "693a00cc63427bf58bd3fa71e165f18d33bba1b0",
         "crates/oxide-batch/tests/gate_h_allocation.rs": "7c39944fb14c2a01d0b7f861bbab3e550a92879b",
         "crates/oxide-batch/tests/gate_h_dispatch.rs": "43864d2adf603de48e11a6d2c26c774b7e42461c",
         "crates/oxide-batch/tests/gate_h_throughput.rs": "54e51ec7bfa119ab45373f4f4ec3cac03e0e6087",
@@ -180,17 +180,17 @@
     {
       "observation": {
         "boxed": {
-          "max_nanoseconds": 68720474,
-          "mean_nanoseconds": 68343662,
-          "min_nanoseconds": 68016983,
+          "max_nanoseconds": 43329669,
+          "mean_nanoseconds": 43181371,
+          "min_nanoseconds": 42948568,
           "raw_latency_nanoseconds": [
-            68313509,
-            68016983,
-            68275037,
-            68720474,
-            68392308
+            42948568,
+            43129189,
+            43213836,
+            43329669,
+            43285593
           ],
-          "throughput_items_per_second": 731596.7353344338
+          "throughput_items_per_second": 1157906.7278804092
         },
         "buffer_reuse": {
           "note": "Delimited component internal buffer reuse is not exposed as a counter.",
@@ -204,17 +204,17 @@
           "typed_per_item_future_allocations": 0
         },
         "typed": {
-          "max_nanoseconds": 69171270,
-          "mean_nanoseconds": 68884886,
-          "min_nanoseconds": 68545726,
+          "max_nanoseconds": 42469669,
+          "mean_nanoseconds": 42359213,
+          "min_nanoseconds": 42295779,
           "raw_latency_nanoseconds": [
-            69171270,
-            69151393,
-            68630646,
-            68545726,
-            68925398
+            42383079,
+            42295779,
+            42335158,
+            42312383,
+            42469669
           ],
-          "throughput_items_per_second": 725848.6281010902
+          "throughput_items_per_second": 1180380.759198713
         },
         "workload": {
           "chunk_size": 50000,
