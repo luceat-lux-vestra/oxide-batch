@@ -45,7 +45,10 @@
 #![forbid(unsafe_code)]
 
 mod advanced;
+mod custom_leaf;
 mod nested_job;
+
+pub use custom_leaf::{CustomLeafKind, CustomLeafNode};
 
 pub use nested_job::{
     FrameworkParameterSource, MAX_NESTED_JOB_PARAMETERS, MAX_SELECTOR_PATH_BYTES,
@@ -1020,6 +1023,8 @@ pub enum FlowNode {
     Decision(DecisionNode),
     /// A separately durable child-job lifecycle boundary.
     NestedJob(Box<NestedJobNode>),
+    /// A registered framework-owned custom leaf.
+    CustomLeaf(Box<CustomLeafNode>),
     /// A bounded set of linear branches and its structural join.
     Split(Box<SplitNode>),
     /// A structural join owned by exactly one split.
@@ -1047,6 +1052,12 @@ impl FlowNode {
         Self::NestedJob(Box::new(node))
     }
 
+    /// Declares a registered framework-owned custom leaf.
+    #[must_use]
+    pub fn custom_leaf(node: CustomLeafNode) -> Self {
+        Self::CustomLeaf(Box::new(node))
+    }
+
     /// Declares a bounded split node.
     #[must_use]
     pub fn split(node: SplitNode) -> Self {
@@ -1072,6 +1083,7 @@ impl FlowNode {
             Self::Step(node) => node.id(),
             Self::Decision(node) => node.id(),
             Self::NestedJob(node) => node.id(),
+            Self::CustomLeaf(node) => node.id(),
             Self::Split(node) => node.id(),
             Self::Join(node) => node.id(),
             Self::PartitionedStep(node) => node.id(),
@@ -1083,6 +1095,7 @@ impl FlowNode {
             Self::Step(node) => node.manifest_value(),
             Self::Decision(node) => node.manifest_value(),
             Self::NestedJob(node) => node.manifest_value(),
+            Self::CustomLeaf(node) => node.manifest_value(),
             Self::Split(node) => node.manifest_value(),
             Self::Join(node) => node.manifest_value(),
             Self::PartitionedStep(node) => node.manifest_value(),
@@ -1183,7 +1196,7 @@ impl FlowGraph {
     fn requires_advanced_format(&self) -> bool {
         !self.nested_flows.is_empty()
             || self.nodes.iter().any(|node| match node {
-                FlowNode::NestedJob(_) => true,
+                FlowNode::NestedJob(_) | FlowNode::CustomLeaf(_) => true,
                 FlowNode::Split(split) => {
                     split.branches().iter().any(|branch| branch.flow.is_some())
                 }
@@ -1409,7 +1422,10 @@ fn check_local_scale_subset(
                     });
                 }
             }
-            FlowNode::Step(_) | FlowNode::Decision(_) | FlowNode::NestedJob(_) => {}
+            FlowNode::Step(_)
+            | FlowNode::Decision(_)
+            | FlowNode::NestedJob(_)
+            | FlowNode::CustomLeaf(_) => {}
         }
     }
     if nodes.len().saturating_add(embedded_ids.len()) > MAX_NODES {
