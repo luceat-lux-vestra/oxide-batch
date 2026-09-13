@@ -127,7 +127,7 @@ async fn report(runtime: String, migrator: String) -> Result<(), Box<dyn Error>>
     cells.extend(upgrade_chain_cells());
     cells.extend(listener_cells());
     cells.extend(identifier_cells());
-    cells.extend(nested_job_mapping_cells()?);
+    cells.extend(nested_job_mapping_cells());
 
     let mut violations: Vec<String> = cells.iter().filter_map(Cell::violation).collect();
 
@@ -573,12 +573,12 @@ fn listener_cells() -> Vec<Cell> {
 }
 
 /// Reports the nested-job mapping and structured-selector ceilings.
-fn nested_job_mapping_cells() -> Result<Vec<Cell>, Box<dyn Error>> {
+fn nested_job_mapping_cells() -> Vec<Cell> {
     let mapping_ceiling = MAX_NESTED_JOB_PARAMETERS as u64;
     let selector_bytes_ceiling = MAX_SELECTOR_PATH_BYTES as u64;
     let selector_segments_ceiling = MAX_SELECTOR_PATH_SEGMENTS as u64;
 
-    Ok(vec![
+    vec![
         Cell::named(
             "nested-job-parameter-mappings",
             "mapping-count",
@@ -639,7 +639,7 @@ fn nested_job_mapping_cells() -> Result<Vec<Cell>, Box<dyn Error>> {
             false,
             "segments",
         ),
-    ])
+    ]
 }
 
 /// Builds a valid child definition for the real nested-job node constructor.
