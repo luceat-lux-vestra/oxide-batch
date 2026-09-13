@@ -537,6 +537,48 @@
       "budget_bound": null
     },
     {
+      "resource": "nested-job-parameter-mappings",
+      "class": "buffer",
+      "owner": "NestedJobNode",
+      "symbols": ["MAX_NESTED_JOB_PARAMETERS"],
+      "ceiling": 64,
+      "unit": "mappings",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": false,
+      "proofs": ["construction-boundary"],
+      "budget_row": null,
+      "budget_bound": null
+    },
+    {
+      "resource": "nested-job-selector-path-bytes",
+      "class": "buffer",
+      "owner": "SelectorPath",
+      "symbols": ["MAX_SELECTOR_PATH_BYTES"],
+      "ceiling": 1024,
+      "unit": "bytes",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": false,
+      "proofs": ["construction-boundary"],
+      "budget_row": null,
+      "budget_bound": null
+    },
+    {
+      "resource": "nested-job-selector-path-segments",
+      "class": "buffer",
+      "owner": "SelectorPath",
+      "symbols": ["MAX_SELECTOR_PATH_SEGMENTS"],
+      "ceiling": 32,
+      "unit": "segments",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": false,
+      "proofs": ["construction-boundary"],
+      "budget_row": null,
+      "budget_bound": null
+    },
+    {
       "resource": "state-upgrade-chain",
       "class": "buffer",
       "owner": "StateCodec",

@@ -49,15 +49,18 @@ use oxide_batch::{
     ExecutionContext, ExecutionVersion, ExitCode, ExitPattern, FailureCategory, FaultPhase,
     FaultStateEntry, FaultStateEnvelope, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget,
     ItemListenerSet, JobInstanceKey, JobName, JobParameter, JobParameters, JobRepository,
-    MAX_ACTOR_REF_BYTES, MAX_NODES, MAX_OPERATION_ID_BYTES, MAX_OUTGOING_TRANSITIONS,
-    MAX_PARTITION_CONTEXT_BYTES, MAX_PARTITION_KEY_BYTES, MAX_PATTERN_BYTES, MAX_REASON_CODE_BYTES,
-    MAX_TRANSITIONS, NodeId, OperationId, ParameterName, ParameterRole, ParameterValue,
-    PartitionBudget, PartitionCount, PartitionKey, PartitionPlanEntry, PartitionPlanFactory,
-    PartitionTaskletFactory, PartitionedStepNode, PostgresJobRepository, PostgresMigrator,
-    ReadListener, ReasonCode, RecoveryRequest, RetryKey, RetryOrdinal, RetryStateLimit,
-    SequentialIdGenerator, StateCodecError, StateLimits, StateSchemaId, StateSchemaUpgrade,
-    StateSchemaVersion, StepComponents, StepName, StepNode, StopSource, Tasklet, TaskletContext,
-    TaskletError, TaskletOutcome, TaskletStep, TerminalKind, VersionedStateCodec,
+    MAX_ACTOR_REF_BYTES, MAX_NESTED_JOB_PARAMETERS, MAX_NODES, MAX_OPERATION_ID_BYTES,
+    MAX_OUTGOING_TRANSITIONS, MAX_PARTITION_CONTEXT_BYTES, MAX_PARTITION_KEY_BYTES,
+    MAX_PATTERN_BYTES, MAX_REASON_CODE_BYTES, MAX_SELECTOR_PATH_BYTES, MAX_SELECTOR_PATH_SEGMENTS,
+    MAX_TRANSITIONS, MissingParameterPolicy, NestedJobNode, NestedJobParameterMapping,
+    NestedJobParameterSource, NodeId, OperationId, ParameterCoercion, ParameterName, ParameterRole,
+    ParameterValue, ParameterValueKind, PartitionBudget, PartitionCount, PartitionKey,
+    PartitionPlanEntry, PartitionPlanFactory, PartitionTaskletFactory, PartitionedStepNode,
+    PostgresJobRepository, PostgresMigrator, ReadListener, ReasonCode, RecoveryRequest, RetryKey,
+    RetryOrdinal, RetryStateLimit, SelectorPath, SequentialIdGenerator, StateCodecError,
+    StateLimits, StateSchemaId, StateSchemaUpgrade, StateSchemaVersion, StepComponents, StepName,
+    StepNode, StopSource, Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep,
+    TerminalKind, VersionedStateCodec,
 };
 use serde_json::{Value, json};
 
@@ -124,6 +127,7 @@ async fn report(runtime: String, migrator: String) -> Result<(), Box<dyn Error>>
     cells.extend(upgrade_chain_cells());
     cells.extend(listener_cells());
     cells.extend(identifier_cells());
+    cells.extend(nested_job_mapping_cells()?);
 
     let mut violations: Vec<String> = cells.iter().filter_map(Cell::violation).collect();
 
@@ -566,6 +570,116 @@ fn listener_cells() -> Vec<Cell> {
             false,
         ),
     ]
+}
+
+/// Reports the nested-job mapping and structured-selector ceilings.
+fn nested_job_mapping_cells() -> Result<Vec<Cell>, Box<dyn Error>> {
+    let mapping_ceiling = MAX_NESTED_JOB_PARAMETERS as u64;
+    let selector_bytes_ceiling = MAX_SELECTOR_PATH_BYTES as u64;
+    let selector_segments_ceiling = MAX_SELECTOR_PATH_SEGMENTS as u64;
+
+    Ok(vec![
+        Cell::named(
+            "nested-job-parameter-mappings",
+            "mapping-count",
+            "at the ceiling",
+            mapping_ceiling,
+            mapping_ceiling,
+            nested_job_node(MAX_NESTED_JOB_PARAMETERS).is_ok(),
+            true,
+            "mappings",
+        ),
+        Cell::named(
+            "nested-job-parameter-mappings",
+            "mapping-count",
+            "one past the ceiling",
+            mapping_ceiling,
+            mapping_ceiling + 1,
+            nested_job_node(MAX_NESTED_JOB_PARAMETERS + 1).is_ok(),
+            false,
+            "mappings",
+        ),
+        Cell::named(
+            "nested-job-selector-path-bytes",
+            "path-bytes",
+            "at the ceiling",
+            selector_bytes_ceiling,
+            selector_bytes_ceiling,
+            SelectorPath::new(vec!["x".repeat(MAX_SELECTOR_PATH_BYTES)]).is_ok(),
+            true,
+            "bytes",
+        ),
+        Cell::named(
+            "nested-job-selector-path-bytes",
+            "path-bytes",
+            "one byte past the ceiling",
+            selector_bytes_ceiling,
+            selector_bytes_ceiling + 1,
+            SelectorPath::new(vec!["x".repeat(MAX_SELECTOR_PATH_BYTES + 1)]).is_ok(),
+            false,
+            "bytes",
+        ),
+        Cell::named(
+            "nested-job-selector-path-segments",
+            "path-segments",
+            "at the ceiling",
+            selector_segments_ceiling,
+            selector_segments_ceiling,
+            SelectorPath::new(vec!["x".to_owned(); MAX_SELECTOR_PATH_SEGMENTS]).is_ok(),
+            true,
+            "segments",
+        ),
+        Cell::named(
+            "nested-job-selector-path-segments",
+            "path-segments",
+            "one segment past the ceiling",
+            selector_segments_ceiling,
+            selector_segments_ceiling + 1,
+            SelectorPath::new(vec!["x".to_owned(); MAX_SELECTOR_PATH_SEGMENTS + 1]).is_ok(),
+            false,
+            "segments",
+        ),
+    ])
+}
+
+/// Builds a valid child definition for the real nested-job node constructor.
+fn nested_child_plan() -> Result<oxide_batch::CompiledExecutionPlan, Box<dyn Error>> {
+    let id = NodeId::new("nested-boundary-child")?;
+    let graph = FlowGraph::new(id.clone())
+        .with_node(FlowNode::step(StepNode::new(
+            id.clone(),
+            StepName::new("nested-boundary-child")?,
+            StepComponents::Tasklet(ComponentRevision::new("nested-boundary-v1")?),
+        )))
+        .with_sequence(id, FlowTarget::Terminal(TerminalKind::Complete))?;
+    Ok(graph.compile(
+        &JobName::new("nested-boundary-child-job")?,
+        DefinitionRevision::new("v1")?,
+    )?)
+}
+
+/// Calls `NestedJobNode::new` with exactly `count` distinct typed mappings.
+fn nested_job_node(count: usize) -> Result<NestedJobNode, Box<dyn Error>> {
+    let child = nested_child_plan()?;
+    let mappings = (0..count)
+        .map(|index| {
+            Ok(NestedJobParameterMapping::new(
+                ParameterName::new(format!("p{index:02}"))?,
+                ParameterRole::Identifying,
+                NestedJobParameterSource::ParentParameter(ParameterName::new("source")?),
+                ParameterValueKind::String,
+                ParameterCoercion::Exact,
+                MissingParameterPolicy::Fail,
+            ))
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+
+    Ok(NestedJobNode::new(
+        NodeId::new("nested-boundary-node")?,
+        child.definition_identity().clone(),
+        ComponentRevision::new("nested-boundary-mapping-v1")?,
+        mappings,
+    )?)
 }
 
 /// Reports every bounded identifier and reference, as one table.
