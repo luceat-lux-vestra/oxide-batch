@@ -265,9 +265,7 @@ fn declared_nested_job_privilege_probes_match_scope_denominator() -> Result<(), 
         ),
     );
     assert_eq!(
-        denominator
-            .get("forbidden_probes")
-            .and_then(Value::as_u64),
+        denominator.get("forbidden_probes").and_then(Value::as_u64),
         Some(
             PROBES
                 .iter()
