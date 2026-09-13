@@ -417,6 +417,7 @@ pub mod item_components;
 mod item_listener;
 mod item_stream;
 mod listener;
+mod nested_job_runtime;
 mod repository;
 mod runtime;
 mod service;
@@ -474,6 +475,7 @@ pub use listener::{
     JobExecutionListener, ListenerContext, ListenerError, ListenerFailure, ListenerFailureKind,
     ListenerPhase, StepExecutionListener,
 };
+pub use nested_job_runtime::NestedJobMappingFailure;
 pub use oxide_batch_core::{
     BackoffKind, BackoffPolicy, BatchStatus, Checkpoint, ChecksumAlgorithm,
     ChunkComponentRevisions, ChunkCount, ChunkCounts, ChunkDeliveryMode, ChunkError, ChunkProgress,
@@ -499,10 +501,13 @@ pub use oxide_batch_core::{
 };
 pub use oxide_batch_plan::{
     CompiledExecutionPlan, CompiledFlowScope, DeciderRevision, DecisionInputVersion, DecisionNode,
-    ExitPattern, FlowGraph, FlowNode, FlowSelectionError, FlowTransition, JoinNode,
-    LocalFailurePolicy, MAX_BRANCH_STEPS, MAX_FLOW_COMPOSITION_DEPTH, MAX_OUTGOING_TRANSITIONS,
-    MAX_PARTITION_WORKERS, MAX_PATTERN_BYTES, MAX_SPLIT_BRANCHES, NestedFlow, PartitionBudget,
-    PartitionCount, PartitionedStepNode, PatternSpecificity, PlanError, SplitBranch, SplitBudget,
+    ExitPattern, FlowGraph, FlowNode, FlowSelectionError, FlowTransition, FrameworkParameterSource,
+    JoinNode, LocalFailurePolicy, MAX_BRANCH_STEPS, MAX_FLOW_COMPOSITION_DEPTH,
+    MAX_NESTED_JOB_PARAMETERS, MAX_OUTGOING_TRANSITIONS, MAX_PARTITION_WORKERS, MAX_PATTERN_BYTES,
+    MAX_SELECTOR_PATH_BYTES, MAX_SELECTOR_PATH_SEGMENTS, MAX_SPLIT_BRANCHES,
+    MissingParameterPolicy, NestedFlow, NestedJobNode, NestedJobParameterMapping,
+    NestedJobParameterSource, ParameterCoercion, PartitionBudget, PartitionCount,
+    PartitionedStepNode, PatternSpecificity, PlanError, SelectorPath, SplitBranch, SplitBudget,
     SplitNode, StepComponents, StepNode,
 };
 pub use oxide_batch_repository::{
@@ -515,20 +520,21 @@ pub use oxide_batch_repository::{
     MAX_CLOCK_SKEW, MAX_CURSOR_BYTES, MAX_OPERATION_ID_BYTES, MAX_PAGE_SIZE,
     MAX_PARTITION_CONTEXT_BYTES, MAX_PARTITION_KEY_BYTES, MAX_PURGE_BATCH, MAX_REASON_CODE_BYTES,
     MAX_RESPONSE_BYTES, MAX_STALE_THRESHOLD, MIN_CLOCK_SKEW, MIN_PURGE_AGE, MIN_STALE_THRESHOLD,
-    MIN_UNRESOLVED_AGE, MaxClockSkew, MonotonicClock, MonotonicInstant, OperationId,
-    OperatorAction, OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft, OperatorRejection,
-    OperatorRequest, OwnerObservation, OwnerToken, Page, PageRequest, PageSize,
-    ParameterDescriptor, PartitionAggregate, PartitionAggregationError, PartitionKey,
-    PartitionPlanEntry, PartitionResult, PartitionValueError, PurgeBatchBound, PurgeCandidate,
-    PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode,
-    RecoveryDecision, RecoveryDirective, RecoveryDisposition, RecoveryError, RecoveryEvidence,
-    RecoveryField, RecoveryMarkers, RecoveryProposal, RecoveryRepository, RecoveryRequest,
-    RecoveryRequestError, RecoveryResult, RecoverySnapshot, RecoveryStepEvidence,
-    RepositoryCapability, RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork,
-    RequestDigest, RequestField, RequestFieldError, RetentionAction, RetentionError, RetentionHold,
-    RetentionOutcome, RetentionRecord, RetentionRecordDraft, SequentialIdGenerator, StaleThreshold,
-    StateEnvelopeDescriptor, StepExecutionProjection, StepPartition, StepPartitionProjection,
-    SystemClock, SystemMonotonicClock, TerminalStatusSet, aggregate_step_partitions,
+    MIN_UNRESOLVED_AGE, MaxClockSkew, MonotonicClock, MonotonicInstant, NestedJobLink,
+    NestedJobLinkRequest, NestedJobTerminalObservation, OperationId, OperatorAction,
+    OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft, OperatorRejection, OperatorRequest,
+    OwnerObservation, OwnerToken, Page, PageRequest, PageSize, ParameterDescriptor,
+    PartitionAggregate, PartitionAggregationError, PartitionKey, PartitionPlanEntry,
+    PartitionResult, PartitionValueError, PurgeBatchBound, PurgeCandidate, PurgeCounts, PurgePlan,
+    PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecision, RecoveryDirective,
+    RecoveryDisposition, RecoveryError, RecoveryEvidence, RecoveryField, RecoveryMarkers,
+    RecoveryProposal, RecoveryRepository, RecoveryRequest, RecoveryRequestError, RecoveryResult,
+    RecoverySnapshot, RecoveryStepEvidence, RepositoryCapability, RepositoryDescriptor,
+    RepositoryError, RepositoryUnitOfWork, RequestDigest, RequestField, RequestFieldError,
+    RetentionAction, RetentionError, RetentionHold, RetentionOutcome, RetentionRecord,
+    RetentionRecordDraft, SequentialIdGenerator, StaleThreshold, StateEnvelopeDescriptor,
+    StepExecutionProjection, StepPartition, StepPartitionProjection, SystemClock,
+    SystemMonotonicClock, TerminalStatusSet, aggregate_step_partitions,
 };
 #[cfg(feature = "postgres")]
 pub use repository::{

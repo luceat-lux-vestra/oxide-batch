@@ -48,11 +48,13 @@
     "tls_report_must_observe_exactly_the_required_attempt_set": true,
     "tls_report_must_observe_exactly_the_required_attempt_set_note": "trusted-authority-and-name (connects), untrusted-authority, hostname-mismatch, and server-without-tls — no fewer, no more, no duplicates — each carrying the failure class the scope document names and leaving no residual plaintext session.",
     "role_matrix_must_match_the_declared_cell_counts_exactly": true,
-    "role_matrix_must_match_the_declared_cell_counts_exactly_note": "The independent verifier requires the exact per-class allowed and forbidden cell counts tests/fixtures/security/campaign-scope.json declares (40 cells total: 30 forbidden, 10 allowed), with no duplicate cell identity, every forbidden cell refused under SQLSTATE 42501, and no PUBLIC grant in the metadata schema.",
+    "role_matrix_must_match_the_declared_cell_counts_exactly_note": "The independent verifier requires the exact per-class allowed and forbidden cell counts tests/fixtures/security/campaign-scope.json declares (44 cells total: 33 forbidden, 11 allowed), with no duplicate cell identity, every forbidden cell refused under SQLSTATE 42501, and no PUBLIC grant in the metadata schema.",
+    "nested_job_link_privileges_must_match_schema5_policy": true,
+    "nested_job_link_privileges_must_match_schema5_policy_note": "The dedicated schema-5 report runs actual SELECT, INSERT, UPDATE, and DELETE probes against ob_nested_job_link under runtime, explorer, operator, and retention. Runtime may read/create/update but not delete; the other three may read but direct writes and deletes must be refused under SQLSTATE 42501.",
     "redaction_sweep_must_be_non_vacuous": true,
     "redaction_sweep_must_be_non_vacuous_note": "artifacts_scanned and strings_scanned must both be greater than zero, every declared surface must have collected at least one artifact, every declared value class must have injected a canary, and prohibited_occurrences must be exactly zero.",
     "declared_reports_must_agree_on_one_execution_manifest": true,
-    "declared_reports_must_agree_on_one_execution_manifest_note": "Each report records the object identity of the campaign's semantic closure from inside its own test process, including the redaction sweep, which runs in a different workspace crate. All three must agree, or the campaign ran against a tree that changed underneath it."
+    "declared_reports_must_agree_on_one_execution_manifest_note": "Each report records the object identity of the campaign's semantic closure from inside its own test process, including the redaction sweep, which runs in a different workspace crate. All four must agree, or the campaign ran against a tree that changed underneath it."
   },
   "environment": {
     "OXIDEBATCH_CAMPAIGN_DIR": "target/m5-campaigns",
@@ -62,10 +64,11 @@
   "artifact_name": "security-campaign-postgres-{major}",
   "artifact_retention": "30 days, on success and on failure alike, because what a failed security campaign is mostly worth reading for is which report, which TLS attempt, which privilege cell, or which surface it lost",
   "timeout_minutes": 45,
-  "timeout_note": "The campaign's execution envelope is one TLS report of four attempts, one role matrix of forty cells across five classes, and one redaction sweep across four surfaces, a bounded workload rather than a whole-workspace suite. Still a ceiling: a campaign that stopped making progress must fail rather than occupy a runner.",
-  "required_reports": ["verify-full-tls", "least-privilege-roles", "redaction-sweep"],
+  "timeout_note": "The campaign's execution envelope is one TLS report of four attempts, one schema-5 nested-link privilege report, one role matrix of forty-four cells across five classes, and one redaction sweep across four surfaces, a bounded workload rather than a whole-workspace suite. Still a ceiling: a campaign that stopped making progress must fail rather than occupy a runner.",
+  "required_reports": ["verify-full-tls", "nested-job-privileges", "least-privilege-roles", "redaction-sweep"],
   "required_scenarios": [
     "verify_full_tls_is_required_in_the_supported_mode",
+    "nested_job_link_privileges_match_schema5_policy",
     "least_privilege_role_cannot_exceed_its_class",
     "redaction_sweep_finds_no_prohibited_value_class"
   ],
@@ -79,6 +82,6 @@
   "required_redaction_surfaces": ["errors", "telemetry", "cli", "bundle"],
   "required_redaction_value_classes": ["password", "database-url-endpoint", "certificate", "payload"],
   "database_reports_must_self_identify_postgresql_major": true,
-  "database_reports": ["verify-full-tls", "least-privilege-roles"],
+  "database_reports": ["verify-full-tls", "nested-job-privileges", "least-privilege-roles"],
   "database_free_reports": ["redaction-sweep"]
 }

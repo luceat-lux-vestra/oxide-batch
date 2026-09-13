@@ -4,7 +4,7 @@
   "rule": "A change to anything here changes what the evidence is evidence of, so retained reports produced before the change may not be promoted after it: the campaign has to be run again. A change to anything not here — documentation, the changelog, or unrelated jobs in `.github/workflows/ci.yml` — leaves retained evidence valid. The dedicated `.github/workflows/m5-security.yml` is bound as one object, so changes to the security provisioning or call layer invalidate security evidence without binding the rest of CI.",
   "categories": {
     "workspace framework and adapter source": {
-      "why": "The TLS report and the least-privilege report run the PostgreSQL adapter this code declares — the connection path, `PostgresConfig`, the TLS mode, and the migrator — and the redaction sweep runs the in-memory services, the CLI launch path, and the diagnostic bundle assembly this code declares.",
+      "why": "The TLS report and the least-privilege reports run the PostgreSQL adapter this code declares — the connection path, `PostgresConfig`, the TLS mode, the migrator, and schema-5 nested-job linkage — and the redaction sweep runs the in-memory services, the CLI launch path, and the diagnostic bundle assembly this code declares.",
       "paths": [
         "crates/oxide-batch/src",
         "crates/oxide-batch-core/src",
@@ -14,7 +14,7 @@
       ]
     },
     "migrations": {
-      "why": "The durable schema (currently schema 4) the migration class installs and the least-privilege matrix is checked on.",
+      "why": "The durable schema (currently schema 5) the migration class installs and the least-privilege reports are checked on.",
       "paths": [
         "crates/oxide-batch/migrations"
       ]
@@ -23,6 +23,7 @@
       "why": "The exact test targets the committed scope document's reports name, plus the shared support modules those targets compile against. A workspace test file not listed here is outside the campaign: it is not selected, so it is neither run nor able to affect the campaign's result.",
       "paths": [
         "crates/oxide-batch/tests/postgres_verify_full_tls.rs",
+        "crates/oxide-batch/tests/postgres_nested_job_privileges.rs",
         "crates/oxide-batch/tests/postgres_least_privilege_roles.rs",
         "crates/oxide-batch/tests/security",
         "crates/oxide-batch-cli/tests/m5_redaction_sweep.rs",
@@ -62,14 +63,14 @@
       ]
     },
     "campaign fixtures": {
-      "why": "The declared denominator — the three reports, the TLS refusals, the privilege classes, and the redaction surfaces and value classes — and this closure itself. The producer derives what it runs from this document, so a change to it can change which targets and which properties the campaign requires.",
+      "why": "The declared denominator — the four reports, the TLS refusals, the privilege classes, and the redaction surfaces and value classes — and this closure itself. The producer derives what it runs from this document, so a change to it can change which targets and which properties the campaign requires.",
       "paths": [
         "tests/fixtures/security/campaign-scope.json",
         "tests/fixtures/security/campaign-semantics.json"
       ]
     },
     "role-matrix denominator": {
-      "why": "The exact cell-identity set (id, class, surface, expected) the least-privilege matrix must equal, cell for cell, not merely by count. Reconciled bidirectionally: crates/oxide-batch/tests/postgres_least_privilege_roles.rs's own BOUNDARIES, PERMITTED, SERVICE_PATH_CELLS, and EXTRA_ALLOWED_CELLS tables (already bound by the campaign implementation category above, since that file is a selected test target) are checked against this file in an ordinary cargo test, and this file is checked against the raw retained observation in xtask/src/security.rs.",
+      "why": "The exact cell-identity set (id, class, surface, expected) the long-lived M5 least-privilege matrix must equal, cell for cell, not merely by count. Reconciled bidirectionally: crates/oxide-batch/tests/postgres_least_privilege_roles.rs's own BOUNDARIES, PERMITTED, SERVICE_PATH_CELLS, and EXTRA_ALLOWED_CELLS tables are checked against this file in an ordinary cargo test, and this file is checked against the raw retained observation in xtask/src/security.rs. Schema-5 nested-job linkage has its own direct restricted-role report and therefore does not silently mutate this historical denominator.",
       "paths": [
         "tests/fixtures/security/role-matrix.json"
       ]

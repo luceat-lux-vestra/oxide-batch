@@ -657,6 +657,49 @@ impl DefinitionIdentity {
         }
     }
 
+    /// Reconstructs and validates one exact durable definition identity.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed when the manifest is unsupported, non-canonical, too large,
+    /// declares a different format, or does not reproduce the stored digest.
+    #[doc(hidden)]
+    pub fn from_durable(
+        job_name: JobName,
+        revision: DefinitionRevision,
+        manifest_format: u16,
+        canonical: &[u8],
+        expected_digest: [u8; 32],
+    ) -> Result<Self, DefinitionError> {
+        if canonical.len() > MAX_MANIFEST_BYTES {
+            return Err(DefinitionError::ManifestTooLarge {
+                max_bytes: MAX_MANIFEST_BYTES,
+            });
+        }
+        check_manifest_format(manifest_format).map_err(|_| DefinitionError::ManifestEncoding)?;
+        let document: serde_json::Value =
+            serde_json::from_slice(canonical).map_err(|_| DefinitionError::ManifestEncoding)?;
+        let reencoded =
+            serde_json::to_vec(&document).map_err(|_| DefinitionError::ManifestEncoding)?;
+        if !document.is_object()
+            || reencoded != canonical
+            || document.get("format").and_then(serde_json::Value::as_u64)
+                != Some(u64::from(manifest_format))
+        {
+            return Err(DefinitionError::ManifestEncoding);
+        }
+        let identity = Self::from_canonical(
+            Some(job_name),
+            revision,
+            canonical.to_vec(),
+            manifest_format,
+        );
+        if identity.manifest_digest != expected_digest {
+            return Err(DefinitionError::ManifestEncoding);
+        }
+        Ok(identity)
+    }
+
     /// Borrows the application-owned definition revision.
     #[must_use]
     pub const fn revision(&self) -> &DefinitionRevision {
@@ -896,6 +939,7 @@ fn advanced_graph_counts(
         let object = node.as_object().ok_or(ManifestError::MalformedGraph)?;
         match object.get("kind").and_then(serde_json::Value::as_str) {
             Some("step" | "decision" | "join") => {}
+            Some("nested_job") => validate_nested_job_manifest(object)?,
             Some("partitioned_step") => {
                 if !object
                     .get("worker")
@@ -974,6 +1018,25 @@ fn advanced_graph_counts(
     }
 
     Ok((materialized_nodes, materialized_transitions))
+}
+
+fn validate_nested_job_manifest(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), ManifestError> {
+    if !object
+        .get("child")
+        .is_some_and(serde_json::Value::is_object)
+        || !object
+            .get("parameters")
+            .is_some_and(serde_json::Value::is_array)
+        || object
+            .get("mapping_revision")
+            .and_then(serde_json::Value::as_str)
+            .is_none()
+    {
+        return Err(ManifestError::MalformedGraph);
+    }
+    Ok(())
 }
 
 fn array_len(value: Option<&serde_json::Value>) -> Result<usize, ManifestError> {

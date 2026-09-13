@@ -6,12 +6,12 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "fdd4d42e27077573a4bc297c301bbd124f8f757d",
+    "source_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
     "source_tree_clean": true
   },
   "observation": {
     "execution_manifest": {
-      "execution_commit": "fdd4d42e27077573a4bc297c301bbd124f8f757d",
+      "execution_commit": "43d9c4392cace8f3fd1201670c9ba25b36c7b04f",
       "execution_commit_note": "The tree this run actually executed against; in CI this is the pull-request merge commit.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -19,17 +19,17 @@
         "Cargo.lock": "3ad914b2f114c567734059bf73f770a8748ea2e0",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
-        "crates/oxide-batch-core/src": "4e0a5c64f08bdf6616f4d73e931a840b4f396521",
+        "crates/oxide-batch-core/src": "30bad9491dc7dd68e877316822e726af7c27ae25",
         "crates/oxide-batch-plan/Cargo.toml": "6c327e26d3fb6cb0e5572432ea8e0e5b09b36c72",
-        "crates/oxide-batch-plan/src": "b0dfc31f0fd6c6260e3faab9df77dc4121745e60",
+        "crates/oxide-batch-plan/src": "1d04b78d59e40233ba07d7680fecbdecb3fb5400",
         "crates/oxide-batch-repository/Cargo.toml": "d6148373ea81b843d5bc2590bc6264ea5fc3e657",
-        "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+        "crates/oxide-batch-repository/src": "8d98a5c311795670612adfabead7a9308aa0d454",
         "crates/oxide-batch-test/Cargo.toml": "0a74527ceb16f35febc4cb5a2f7a791345d5add9",
         "crates/oxide-batch-test/src": "aff891fc18dfb4331304a5c8cd9cc3ebb0be650a",
         "crates/oxide-batch-test/tests": "8d913629efca6a0e80be6b8e10211a34ad1c0f0a",
         "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
-        "crates/oxide-batch/src": "5a9c2a472da01d0d3a172bacbad905693c3873cf",
-        "crates/oxide-batch/tests": "e675b5acd01499d0ee47750a7ad81569205ec5c7",
+        "crates/oxide-batch/src": "693a00cc63427bf58bd3fa71e165f18d33bba1b0",
+        "crates/oxide-batch/tests": "b66725a9a0ba1b7c63e8a7736223bdc011498c05",
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
         "tests/fixtures/m6-conformance/campaign-semantics.json": "025340def56776fcb42d9f2855a957f389bbdd99",
         "tests/fixtures/m6-conformance/execution-contract.json": "df49c9ebecc9d05073e8278c84aeeba949961280",
@@ -134,6 +134,7 @@
         "item_components::postgres_keyset::tests::validate_key_columns_requires_at_least_one": "ok",
         "item_components::postgres_paging::tests::page_query_sql_omits_the_predicate_on_initial_execution": "ok",
         "item_components::postgres_paging::tests::page_query_sql_places_limit_after_the_composite_predicate": "ok",
+        "nested_job_runtime::tests::unavailable_durable_context_source_fails_closed": "ok",
         "repository::postgres::tests::canonical_instance_key_matches_version_one_golden_vector": "ok",
         "service::recovery::tests::advancing_observation_time_preserves_a_durable_evidence_digest": "ok",
         "service::recovery::tests::backwards_repository_time_invalidates_the_next_observation": "ok",
@@ -150,7 +151,7 @@
       ],
       "succeeded": true,
       "target": "__lib",
-      "tests": 91
+      "tests": 92
     },
     {
       "ignored": 0,

@@ -37,6 +37,7 @@
 
 mod explorer;
 mod flow;
+mod nested_job;
 mod operator;
 mod partition;
 mod recovery;
@@ -56,6 +57,7 @@ pub use flow::{
     FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowDecisionSequence, FlowStepState,
     FlowTransitionKind,
 };
+pub use nested_job::{NestedJobLink, NestedJobLinkRequest, NestedJobTerminalObservation};
 pub use operator::{
     OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft, OperatorRejection, OperatorRequest,
     RecoveryDirective,

@@ -15,11 +15,12 @@ use crate::{
     ExecutionVersion, ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, FlowDecision,
     FlowDecisionId, FlowDecisionRequest, FlowStepState, FlowTransitionKind, IdentifierKind,
     JobExecution, JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId,
-    JobInstanceKey, JobInstanceProjection, JobName, LifecycleError, LifecycleTransition,
-    MAX_PARTITIONS, NodeId, OperationId, OperatorAction, OperatorRecord, OperatorRecordDraft,
-    OperatorRequestId, OwnerObservation, OwnerToken, ParameterDescriptor, PartitionPlanEntry,
-    PartitionResult, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey,
-    QueryWindow, ReasonCode, RecoveryDecisionId, RecoveryRepository, RecoverySnapshot,
+    JobInstanceKey, JobInstanceProjection, JobName, JobParameters, LifecycleError,
+    LifecycleTransition, MAX_PARTITIONS, NestedJobLink, NestedJobLinkRequest,
+    NestedJobTerminalObservation, NodeId, OperationId, OperatorAction, OperatorRecord,
+    OperatorRecordDraft, OperatorRequestId, OwnerObservation, OwnerToken, ParameterDescriptor,
+    PartitionPlanEntry, PartitionResult, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest,
+    PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecisionId, RecoveryRepository, RecoverySnapshot,
     RecoveryStepEvidence, RetentionAction, RetentionActionId, RetentionHold, RetentionRecord,
     RetentionRecordDraft, StartLimit, StateEnvelopeDescriptor, StepExecution, StepExecutionId,
     StepExecutionProjection, StepName, StepPartition, StepPartitionId, StepPartitionProjection,
@@ -95,6 +96,7 @@ impl JobRepository for InMemoryJobRepository {
             [
                 RepositoryCapability::ExecutionOwnership,
                 RepositoryCapability::InstanceHolds,
+                RepositoryCapability::NestedJobs,
                 RepositoryCapability::OperatorRequests,
                 RepositoryCapability::RetentionPurge,
                 RepositoryCapability::StepPartitions,
@@ -132,6 +134,9 @@ struct MemoryState {
     instances_by_id: BTreeMap<JobInstanceId, JobInstance>,
     job_executions: BTreeMap<JobExecutionId, JobExecution>,
     job_executions_by_instance: BTreeMap<JobInstanceId, Vec<JobExecutionId>>,
+    job_parameters: BTreeMap<JobExecutionId, JobParameters>,
+    nested_job_links: BTreeMap<(JobExecutionId, NodeId), NestedJobLink>,
+    nested_job_links_by_instance: BTreeMap<(JobInstanceId, NodeId), Vec<JobExecutionId>>,
     step_executions: BTreeMap<StepExecutionId, StepExecution>,
     step_executions_by_job: BTreeMap<JobExecutionId, Vec<StepExecutionId>>,
     step_logical_ids: BTreeMap<StepExecutionId, NodeId>,
@@ -347,6 +352,49 @@ impl InMemoryUnitOfWork<'_> {
             .get(&execution_id)
             .map(JobExecution::job_instance_id)
             .ok_or(RepositoryError::JobExecutionNotFound { id: execution_id })
+    }
+
+    fn matching_nested_job_link(
+        &self,
+        parent_job_execution_id: JobExecutionId,
+        node_id: &NodeId,
+        child_definition: &DefinitionIdentity,
+        child_parameters: &JobParameters,
+    ) -> Result<Option<NestedJobLink>, RepositoryError> {
+        let Some(existing) = self
+            .staged
+            .nested_job_links
+            .get(&(parent_job_execution_id, node_id.clone()))
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let parameters = self
+            .staged
+            .job_parameters
+            .get(&existing.child_job_execution_id())
+            .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+        if existing.child_definition() != child_definition || parameters != child_parameters {
+            return Err(RepositoryError::NestedJobStateCorrupt);
+        }
+        Ok(Some(existing))
+    }
+
+    fn store_nested_job_parameters(
+        &mut self,
+        child_execution_id: JobExecutionId,
+        parameters: &JobParameters,
+    ) -> Result<(), RepositoryError> {
+        match self.staged.job_parameters.get(&child_execution_id) {
+            Some(existing) if existing != parameters => Err(RepositoryError::NestedJobStateCorrupt),
+            Some(_) => Ok(()),
+            None => {
+                self.staged
+                    .job_parameters
+                    .insert(child_execution_id, parameters.clone());
+                Ok(())
+            }
+        }
     }
 
     fn next_recovery_decision_id(&self) -> Result<RecoveryDecisionId, RepositoryError> {
@@ -1005,7 +1053,9 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 }
             } else if !matches!(
                 request.kind(),
-                FlowTransitionKind::Decider | FlowTransitionKind::SplitAggregate
+                FlowTransitionKind::Decider
+                    | FlowTransitionKind::SplitAggregate
+                    | FlowTransitionKind::NestedJobExit
             ) {
                 return Err(RepositoryError::FlowStateCorrupt);
             }
@@ -1120,6 +1170,332 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .collect::<Result<Vec<_>, _>>()?;
             decisions.sort_by_key(|decision| (decision.sequence(), decision.id()));
             Ok(decisions)
+        })
+    }
+
+    fn nested_job_link<'a>(
+        &'a mut self,
+        parent_job_execution_id: JobExecutionId,
+        node_id: &'a NodeId,
+    ) -> BoxFuture<'a, Result<Option<NestedJobLink>, RepositoryError>> {
+        Box::pin(async move {
+            self.instance_for_execution(parent_job_execution_id)?;
+            Ok(self
+                .staged
+                .nested_job_links
+                .get(&(parent_job_execution_id, node_id.clone()))
+                .cloned())
+        })
+    }
+
+    fn latest_nested_job_link<'a>(
+        &'a mut self,
+        parent_job_instance_id: JobInstanceId,
+        node_id: &'a NodeId,
+    ) -> BoxFuture<'a, Result<Option<NestedJobLink>, RepositoryError>> {
+        Box::pin(async move {
+            if !self
+                .staged
+                .instances_by_id
+                .contains_key(&parent_job_instance_id)
+            {
+                return Err(RepositoryError::JobInstanceNotFound {
+                    id: parent_job_instance_id,
+                });
+            }
+            let Some(parent_execution_id) = self
+                .staged
+                .nested_job_links_by_instance
+                .get(&(parent_job_instance_id, node_id.clone()))
+                .and_then(|ids| ids.last())
+                .copied()
+            else {
+                return Ok(None);
+            };
+            self.staged
+                .nested_job_links
+                .get(&(parent_execution_id, node_id.clone()))
+                .cloned()
+                .map(Some)
+                .ok_or(RepositoryError::NestedJobStateCorrupt)
+        })
+    }
+
+    fn create_nested_job_link<'a>(
+        &'a mut self,
+        request: &'a NestedJobLinkRequest,
+    ) -> BoxFuture<'a, Result<NestedJobLink, RepositoryError>> {
+        Box::pin(async move {
+            let parent_instance = self.instance_for_execution(request.parent_job_execution_id())?;
+            if parent_instance != request.parent_job_instance_id() {
+                return Err(RepositoryError::NestedJobStateCorrupt);
+            }
+            let link_key = (request.parent_job_execution_id(), request.node_id().clone());
+            if let Some(existing) = self.matching_nested_job_link(
+                request.parent_job_execution_id(),
+                request.node_id(),
+                request.child_definition(),
+                request.child_parameters(),
+            )? {
+                return Ok(existing);
+            }
+
+            let child_name = request
+                .child_definition()
+                .job_name()
+                .cloned()
+                .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+            let child_key = JobInstanceKey::new(child_name, request.child_parameters());
+            let child_instance = self
+                .select_or_create_job_instance(&child_key)
+                .await?
+                .instance()
+                .clone();
+            let latest = self.latest_job_execution(child_instance.id())?.cloned();
+            let child_execution = match latest {
+                None => {
+                    self.create_job_execution_with_definition(
+                        child_instance.id(),
+                        request.child_definition(),
+                    )
+                    .await?
+                }
+                Some(latest) => {
+                    let definition = self
+                        .staged
+                        .execution_definitions
+                        .get(&latest.id())
+                        .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+                    if definition != request.child_definition() {
+                        return Err(RepositoryError::NestedJobStateCorrupt);
+                    }
+                    match latest.metadata().status() {
+                        BatchStatus::Completed => {
+                            let parameters = self
+                                .staged
+                                .job_parameters
+                                .get(&latest.id())
+                                .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+                            if parameters != request.child_parameters() {
+                                return Err(RepositoryError::NestedJobStateCorrupt);
+                            }
+                            latest
+                        }
+                        BatchStatus::Failed | BatchStatus::Stopped => {
+                            self.create_job_execution_with_definition(
+                                child_instance.id(),
+                                request.child_definition(),
+                            )
+                            .await?
+                        }
+                        BatchStatus::Starting
+                        | BatchStatus::Started
+                        | BatchStatus::Stopping
+                        | BatchStatus::Unknown => {
+                            return Err(RepositoryError::NestedJobChildUnresolved {
+                                child_execution_id: latest.id(),
+                                status: latest.metadata().status(),
+                            });
+                        }
+                        _ => {
+                            return Err(RepositoryError::NestedJobStateCorrupt);
+                        }
+                    }
+                }
+            };
+            self.store_nested_job_parameters(child_execution.id(), request.child_parameters())?;
+
+            let link = NestedJobLink::new(
+                parent_instance,
+                request.parent_job_execution_id(),
+                request.node_id().clone(),
+                request.child_definition().clone(),
+                child_instance.id(),
+                child_execution.id(),
+                request.linked_at(),
+                None,
+            );
+            self.staged.nested_job_links.insert(link_key, link.clone());
+            self.staged
+                .nested_job_links_by_instance
+                .entry((parent_instance, request.node_id().clone()))
+                .or_default()
+                .push(request.parent_job_execution_id());
+            Ok(link)
+        })
+    }
+
+    fn continue_nested_job_link<'a>(
+        &'a mut self,
+        parent_job_execution_id: JobExecutionId,
+        node_id: &'a NodeId,
+        prior_parent_job_execution_id: JobExecutionId,
+        linked_at: SystemTime,
+    ) -> BoxFuture<'a, Result<NestedJobLink, RepositoryError>> {
+        Box::pin(async move {
+            let parent_instance = self.instance_for_execution(parent_job_execution_id)?;
+            if let Some(existing) = self
+                .staged
+                .nested_job_links
+                .get(&(parent_job_execution_id, node_id.clone()))
+                .cloned()
+            {
+                return Ok(existing);
+            }
+            let prior = self
+                .staged
+                .nested_job_links
+                .get(&(prior_parent_job_execution_id, node_id.clone()))
+                .cloned()
+                .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+            if prior.parent_job_instance_id() != parent_instance {
+                return Err(RepositoryError::NestedJobStateCorrupt);
+            }
+            let prior_parameters = self
+                .staged
+                .job_parameters
+                .get(&prior.child_job_execution_id())
+                .cloned()
+                .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+            let prior_child = self
+                .staged
+                .job_executions
+                .get(&prior.child_job_execution_id())
+                .cloned()
+                .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+            let child_execution = match prior_child.metadata().status() {
+                BatchStatus::Completed => prior_child,
+                BatchStatus::Failed | BatchStatus::Stopped => {
+                    self.create_job_execution_with_definition(
+                        prior.child_job_instance_id(),
+                        prior.child_definition(),
+                    )
+                    .await?
+                }
+                BatchStatus::Starting
+                | BatchStatus::Started
+                | BatchStatus::Stopping
+                | BatchStatus::Unknown => {
+                    return Err(RepositoryError::NestedJobChildUnresolved {
+                        child_execution_id: prior_child.id(),
+                        status: prior_child.metadata().status(),
+                    });
+                }
+                _ => {
+                    return Err(RepositoryError::NestedJobStateCorrupt);
+                }
+            };
+            match self.staged.job_parameters.get(&child_execution.id()) {
+                Some(existing) if existing != &prior_parameters => {
+                    return Err(RepositoryError::NestedJobStateCorrupt);
+                }
+                Some(_) => {}
+                None => {
+                    self.staged
+                        .job_parameters
+                        .insert(child_execution.id(), prior_parameters);
+                }
+            }
+            let link = NestedJobLink::new(
+                parent_instance,
+                parent_job_execution_id,
+                node_id.clone(),
+                prior.child_definition().clone(),
+                prior.child_job_instance_id(),
+                child_execution.id(),
+                linked_at,
+                if child_execution.id() == prior.child_job_execution_id() {
+                    prior.terminal().cloned()
+                } else {
+                    None
+                },
+            );
+            self.staged
+                .nested_job_links
+                .insert((parent_job_execution_id, node_id.clone()), link.clone());
+            self.staged
+                .nested_job_links_by_instance
+                .entry((parent_instance, node_id.clone()))
+                .or_default()
+                .push(parent_job_execution_id);
+            Ok(link)
+        })
+    }
+
+    fn nested_job_parameters<'a>(
+        &'a mut self,
+        parent_job_execution_id: JobExecutionId,
+        node_id: &'a NodeId,
+    ) -> BoxFuture<'a, Result<JobParameters, RepositoryError>> {
+        Box::pin(async move {
+            let link = self
+                .staged
+                .nested_job_links
+                .get(&(parent_job_execution_id, node_id.clone()))
+                .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+            self.staged
+                .job_parameters
+                .get(&link.child_job_execution_id())
+                .cloned()
+                .ok_or(RepositoryError::NestedJobStateCorrupt)
+        })
+    }
+
+    fn job_execution_context(
+        &mut self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Option<crate::ExecutionContext>, RepositoryError>> {
+        Box::pin(async move {
+            self.instance_for_execution(job_execution_id)?;
+            Ok(None)
+        })
+    }
+
+    fn observe_nested_job_terminal<'a>(
+        &'a mut self,
+        parent_job_execution_id: JobExecutionId,
+        node_id: &'a NodeId,
+        observed_at: SystemTime,
+    ) -> BoxFuture<'a, Result<NestedJobLink, RepositoryError>> {
+        Box::pin(async move {
+            let key = (parent_job_execution_id, node_id.clone());
+            let link = self
+                .staged
+                .nested_job_links
+                .get(&key)
+                .cloned()
+                .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+            let child = self
+                .staged
+                .job_executions
+                .get(&link.child_job_execution_id())
+                .ok_or(RepositoryError::NestedJobStateCorrupt)?;
+            let status = child.metadata().status();
+            if !matches!(
+                status,
+                BatchStatus::Completed | BatchStatus::Failed | BatchStatus::Stopped
+            ) {
+                return Err(RepositoryError::NestedJobChildUnresolved {
+                    child_execution_id: child.id(),
+                    status,
+                });
+            }
+            if let Some(existing) = link.terminal() {
+                if existing.status() != status
+                    || existing.exit_status() != child.metadata().exit_status()
+                {
+                    return Err(RepositoryError::NestedJobStateCorrupt);
+                }
+                return Ok(link);
+            }
+            let observed = NestedJobTerminalObservation::new(
+                status,
+                child.metadata().exit_status().clone(),
+                observed_at,
+            );
+            let link = link.with_terminal(observed);
+            self.staged.nested_job_links.insert(key, link.clone());
+            Ok(link)
         })
     }
 

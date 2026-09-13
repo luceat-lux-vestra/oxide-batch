@@ -90,7 +90,6 @@ docker run --rm \
    chown postgres:postgres /tls/ca.crt /tls/server.crt /tls/server.key &&
    chmod 600 /tls/server.key &&
    chmod 644 /tls/ca.crt /tls/server.crt'
-
 docker run --detach --rm \
   --name "${container_name}" \
   --publish "127.0.0.1:${database_port}:5432" \
@@ -137,7 +136,8 @@ docker exec -i \
 
 # Schema-1 to schema-2 upgrade evidence. The immutable released SQL is applied
 # to a separate database that already holds realistic schema-1 history, because
-# the migrator run below installs both migrations at once on a clean schema.
+# the migrator run below installs the complete current migration chain at once
+# on a clean schema.
 upgrade_psql() {
   docker exec -i \
     --env PGPASSWORD=postgres \
@@ -196,6 +196,16 @@ if [[ "${reapply_output}" != *"schema version 1 is required"* ]]; then
 fi
 
 echo "PostgreSQL ${postgres_major} schema 1 to 2 upgrade fixture passed"
+
+# Schema-4 to schema-5 evidence is isolated for the same reason: it starts from
+# populated schema-4 history, applies only the reviewed nested-job migration,
+# proves fail-closed reapplication, then dumps and restores the populated
+# schema-5 metadata including the new durable link record.
+bash "${fixture_root}/design-gate/run-schema5-upgrade-gate.sh" \
+  "${container_name}" \
+  "${repository_root}" \
+  "${fixture_root}" \
+  "${temporary_root}"
 
 (
   cd "${repository_root}"
@@ -278,14 +288,13 @@ docker exec \
   --command \
   "SELECT version FROM oxide_batch.ob_schema_version WHERE singleton = true" \
   | tr -d '[:space:]' \
-  | grep -qx '4'
-
+  | grep -qx '5'
 docker exec \
   --env PGPASSWORD=fixture-migrator-only \
   "${container_name}" \
   psql \
   "host=localhost dbname=oxide_batch_restore user=oxide_batch_migrator sslmode=verify-full sslrootcert=/tls/ca.crt" \
-  --command "UPDATE oxide_batch.ob_schema_version SET version = 5" \
+  --command "UPDATE oxide_batch.ob_schema_version SET version = 6" \
   >/dev/null
 
 set +e
@@ -304,7 +313,7 @@ if [[ ${newer_schema_status} -eq 0 ]]; then
   echo "newer metadata schema was not rejected" >&2
   exit 1
 fi
-if [[ "${newer_schema_output}" != *"newer than supported version 4"* ]]; then
+if [[ "${newer_schema_output}" != *"newer than supported version 5"* ]]; then
   echo "${newer_schema_output}" >&2
   echo "newer-schema rejection returned an unexpected diagnostic" >&2
   exit 1

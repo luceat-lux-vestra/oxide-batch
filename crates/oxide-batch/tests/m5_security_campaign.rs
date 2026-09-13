@@ -10,7 +10,7 @@
 //!   committed scope document, and the targets this workspace declares. It runs
 //!   here, in an ordinary `cargo test`, so a shrinking denominator is caught in
 //!   review rather than in the campaign.
-//! - **whether the campaign passes.** Two of its three scenarios need a real
+//! - **whether the campaign passes.** Three of its four reports need a real
 //!   database and return green without one, because they skip. That half is
 //!   `cargo xtask security`, which requires the fixtures, runs the targets,
 //!   requires each declared property to have been observed, and writes the
@@ -27,9 +27,9 @@
 //! certificate at all — the server that offers no TLS — because a campaign made
 //! only of certificate refusals would pass against a client that fell back to
 //! plaintext whenever TLS was unavailable. And the committed least-privilege
-//! policy must still be the two SQL files the matrix is checked against, and
-//! must still deny every class the cluster-level privileges that would put it
-//! outside every grant.
+//! policy must still be the two SQL files the matrix and schema-5 linkage report
+//! are checked against, and must still deny every class the cluster-level
+//! privileges that would put it outside every grant.
 
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -39,9 +39,10 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-/// The reports the performance plan's security row requires.
+/// The reports the accepted security obligations require.
 const REQUIRED_REPORTS: &[&str] = &[
     "verify-full-tls",
+    "nested-job-privileges",
     "least-privilege-roles",
     "redaction-sweep",
 ];
@@ -79,10 +80,10 @@ const DENIED_ATTRIBUTES: &[&str] = &["NOSUPERUSER", "NOCREATEDB", "NOCREATEROLE"
 
 /// The schema the privilege matrix is checked on.
 ///
-/// The M5 preview installed schema 3; M6 `#144` added
-/// `0005_item_stream_component_state.sql`, which carries this crate's
-/// installed schema to 4 without changing anything schema 3 declared.
-const SCHEMA_VERSION: u64 = 4;
+/// The M5 preview installed schema 3; M6 `#144` added schema 4 component
+/// state, and M7 `#265` adds schema 5 durable nested-job linkage. The campaign
+/// must exercise the privilege matrix against the current installed schema.
+const SCHEMA_VERSION: u64 = 5;
 
 /// The transport the M5 preview supports in production.
 const TLS_MODE: &str = "verify-full";
@@ -104,7 +105,7 @@ fn campaign_scope_matches_the_accepted_security_obligations() -> Result<(), Box<
             .map(|report| report.id.as_str())
             .collect::<BTreeSet<_>>(),
         REQUIRED_REPORTS.iter().copied().collect::<BTreeSet<_>>(),
-        "the campaign delivers exactly the reports the performance plan's security row requires",
+        "the campaign delivers exactly the reports the accepted security obligations require",
     );
     assert_eq!(
         scope.classes, REQUIRED_CLASSES,

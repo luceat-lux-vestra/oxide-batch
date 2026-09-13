@@ -69,10 +69,11 @@ const REQUIRED_PATHS: &[&str] = &[
 
 /// The schema version this crate installs, and the only upgrade target.
 ///
-/// The M5 preview installed schema 3; M6 `#144` added
-/// `0005_item_stream_component_state.sql`, which carries this crate's
-/// installed schema to 4 without changing anything schema 3 declared.
-const TARGET_SCHEMA_VERSION: u64 = 4;
+/// The M5 preview installed schema 3; M6 `#144` added schema 4 component state,
+/// and M7 `#265` adds schema 5 durable nested-job linkage. The historical
+/// source denominator remains 1/2/3; populated 4 -> 5 preservation is owned by
+/// the dedicated v5 `PostgreSQL` DB design gate.
+const TARGET_SCHEMA_VERSION: u64 = 5;
 
 /// The regression test the campaign keeps and does not stand in for.
 const KEPT_REGRESSION: &str = "newer_schema_is_rejected_without_guessing_compatibility";

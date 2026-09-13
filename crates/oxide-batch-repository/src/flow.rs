@@ -85,6 +85,8 @@ pub enum FlowTransitionKind {
     CompletedStepReuse,
     /// A bounded local split joined durable branch results in declared order.
     SplitAggregate,
+    /// A separately durable nested child completed and exposed its committed exit.
+    NestedJobExit,
 }
 
 impl FlowTransitionKind {
@@ -97,6 +99,7 @@ impl FlowTransitionKind {
             Self::Decider => "DECIDER",
             Self::CompletedStepReuse => "COMPLETED_STEP_REUSE",
             Self::SplitAggregate => "SPLIT_AGGREGATE",
+            Self::NestedJobExit => "NESTED_JOB_EXIT",
         }
     }
 
@@ -109,6 +112,7 @@ impl FlowTransitionKind {
             "DECIDER" => Some(Self::Decider),
             "COMPLETED_STEP_REUSE" => Some(Self::CompletedStepReuse),
             "SPLIT_AGGREGATE" => Some(Self::SplitAggregate),
+            "NESTED_JOB_EXIT" => Some(Self::NestedJobExit),
             _ => None,
         }
     }

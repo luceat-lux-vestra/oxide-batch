@@ -6,17 +6,19 @@
 //! directly to schema 3, which was the current schema when M5 wrote it. M6
 //! `#144` then added `0005_item_stream_component_state.sql`, an additive
 //! migration that carries the installed schema to 4 without changing anything
-//! schema 3 declared. The historical M5 claim (1/2 -> 3, direct) is preserved
-//! below as an intermediate structural checkpoint every path still passes
-//! through; the report's actual target is now the current schema, whatever
-//! that is, and a schema-3 source is added so the 3 -> 4 edge M6 introduced
-//! gets the same direct-upgrade evidence the 1 -> 3 and 2 -> 3 edges already
-//! had. This target performs every upgrade on a real database at its source
-//! schema rather than on a reconstruction of one: each source database is
-//! built by running the immutable migration set up to the version under test
-//! and stopping there, so its tables, columns, constraints, indexes, and
-//! applied-migration bookkeeping are the ones that version produced when it
-//! was the whole schema.
+//! schema 3 declared, and M7 `#265` adds `0006_nested_job_linkage.sql`, carrying
+//! the installed schema to 5. The historical M5 claim (1/2 -> 3, direct) is
+//! preserved below as an intermediate structural checkpoint every path still
+//! passes through; the report's actual target is now the current schema, and a
+//! schema-3 source is retained so the 3 -> current path keeps the same
+//! direct-upgrade evidence the 1 -> 3 and 2 -> 3 edges already had. This target
+//! performs every upgrade on a real database at its source schema rather than
+//! on a reconstruction of one: each source database is built by running the
+//! immutable migration set up to the version under test and stopping there, so
+//! its tables, columns, constraints, indexes, and applied-migration bookkeeping
+//! are the ones that version produced when it was the whole schema. The
+//! populated 4 -> 5 preservation and restore boundary is separately owned by
+//! the schema5 `PostgreSQL` design gate.
 //!
 //! Each source is then seeded with the durable state an operator's database
 //! would have held — registered definitions and the upgrade edge between them,
@@ -31,7 +33,7 @@
 //! version becomes the current schema version and every structural checkpoint
 //! from the source's own schema up through the current one appears in order
 //! (so a schema-1 source is still shown passing through schema 3's shape on
-//! its way to schema 4). Every value of every column the source schema
+//! its way to schema 5). Every value of every column the source schema
 //! declared is byte-identical afterwards, compared through the source's own
 //! column list so a column a later schema added cannot mask a loss. The new
 //! `ItemStream` component-state table schema 4 adds carries no row for any of
@@ -68,13 +70,13 @@ use upgrade::{
 };
 
 /// The schema versions this report upgrades from directly: the M5 preview's
-/// original 1/2 -> 3 claim, plus the schema-3 source the 3 -> 4 M6 edge needs.
+/// original 1/2 -> 3 claim, plus the schema-3 source retained for later edges.
 const SOURCE_VERSIONS: [u32; 3] = [1, 2, 3];
 
 /// The schema version the upgrade must reach: the current installed schema
-/// (4, since M6 `#144`'s additive `ItemStream` component-state migration),
-/// not the schema-3 target the M5 preview named when it was current.
-const TARGET_VERSION: u32 = 4;
+/// (5, since M7 `#265`'s durable nested-job linkage migration), not the
+/// schema-3 target the M5 preview named when it was current.
+const TARGET_VERSION: u32 = 5;
 
 #[test]
 fn schema1_and_schema2_upgrade_directly_to_schema3() -> Result<(), Box<dyn Error>> {
@@ -104,7 +106,7 @@ async fn run_report(migrator: &str, admin: &str) -> Result<(), Box<dyn Error>> {
     retain_observation(
         "schema-upgrade",
         &json!({
-            "report": "direct upgrade to schema 3",
+            "report": "direct upgrade to the current schema",
             "scenario": "schema1_and_schema2_upgrade_directly_to_schema3",
             "fixture": "postgres-upgrade",
             "server_version": server,

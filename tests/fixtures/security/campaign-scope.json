@@ -3,11 +3,11 @@
   "issue": "https://github.com/luceat-lux-vestra/oxide-batch/issues/102",
   "gate": "docs/project/m5-design-gate-evidence.md",
   "plan": "docs/engineering/performance-plan.md",
-  "note": "This document is the campaign's denominator. The runner reads it to decide what must run and what each report must have observed, and the in-process reconciliation in crates/oxide-batch/tests/m5_security_campaign.rs reads it to decide whether it still says what the accepted documents require.",
+  "note": "This document is the campaign's denominator. The runner reads it to decide what must run and what each report must have observed, and the in-process reconciliation in crates/oxide-batch/tests/m5_security_campaign.rs reads it to decide whether it still says what the accepted documents require. M7 #265 adds schema 5 nested-job linkage; the same five privilege classes remain, with the runtime class owning durable nested linkage and a dedicated restricted-role report exercising the new table directly.",
   "support_contract": {
     "postgres_versions": ["15", "16", "17", "18"],
     "matrix_endpoints": ["15", "18"],
-    "installed_schema_version": 4,
+    "installed_schema_version": 5,
     "tls_mode": "verify-full",
     "privilege_classes": [
       "migration",
@@ -48,6 +48,16 @@
       "target": "postgres_verify_full_tls",
       "name": "verify_full_tls_is_required_in_the_supported_mode",
       "fixture": "postgres-security-tls",
+      "database_report": true
+    },
+    {
+      "id": "nested-job-privileges",
+      "title": "Schema-5 nested-job linkage least-privilege",
+      "owes": "actual PostgreSQL allow/refuse evidence for the schema-5 nested-job linkage table under the committed roles and grants",
+      "package": "oxide-batch",
+      "target": "postgres_nested_job_privileges",
+      "name": "nested_job_link_privileges_match_schema5_policy",
+      "fixture": "postgres-security-roles",
       "database_report": true
     },
     {
@@ -105,7 +115,7 @@
     {
       "class": "runtime",
       "role": "oxide_batch_m5_runtime",
-      "allowed": "the job, step, partition, flow, and ItemStream component-state lifecycle",
+      "allowed": "the job, step, partition, flow, nested-job linkage, and ItemStream component-state lifecycle",
       "forbidden": "schema lifecycle, migration bookkeeping, operator decisions, retention deletes, and retention holds",
       "allowed_cells": 3,
       "forbidden_cells": 8
@@ -114,7 +124,7 @@
       "class": "explorer",
       "role": "oxide_batch_m5_explorer",
       "allowed": "bounded reads",
-      "forbidden": "every mutation, the migration bookkeeping, and writing ItemStream component state",
+      "forbidden": "every mutation, the migration bookkeeping, and writing runtime-owned durable state",
       "allowed_cells": 1,
       "forbidden_cells": 7
     },
@@ -122,24 +132,49 @@
       "class": "operator",
       "role": "oxide_batch_m5_operator",
       "allowed": "guarded, audited recovery and stop actions",
-      "forbidden": "schema lifecycle, execution ownership, step creation, retention deletes, retention records, and writing ItemStream component state",
+      "forbidden": "schema lifecycle, execution ownership, step creation, retention deletes, retention records, and writing runtime-owned durable state",
       "allowed_cells": 2,
       "forbidden_cells": 7
     },
     {
       "class": "retention",
       "role": "oxide_batch_m5_retention",
-      "allowed": "plan, apply, hold, release, and delete within its scope, including a purged step execution's ItemStream component state",
-      "forbidden": "schema lifecycle, lifecycle mutation, operator records, instance identity, and writing ItemStream component state",
+      "allowed": "plan, apply, hold, release, and delete within its scope, including dependent runtime state removed by schema-owned referential actions",
+      "forbidden": "schema lifecycle, lifecycle mutation, operator records, instance identity, and writing runtime-owned durable state",
       "allowed_cells": 3,
       "forbidden_cells": 7
     }
   ],
   "role_matrix": {
-    "note": "The exact cell count of the least-privilege matrix `postgres_least_privilege_roles.rs` produces, counted from the `PERMITTED` and `BOUNDARIES` tables and the one service-path cell each class contributes. This is a denominator, not a policy: it exists so the independent verifier can require the exact cell count per class rather than merely 'at least one of each', and a change to it must be a change reviewed alongside the test that produces the cells it counts.",
+    "note": "The exact cell count of the long-lived M5 least-privilege matrix `postgres_least_privilege_roles.rs` produces, counted from the `PERMITTED` and `BOUNDARIES` tables and the one service-path cell each class contributes. Schema-5 `ob_nested_job_link` permissions are exercised separately by the `nested-job-privileges` report so this historical denominator does not silently change shape.",
     "total_cells": 44,
     "total_allowed_cells": 11,
     "total_forbidden_cells": 33
+  },
+  "nested_job_privileges": {
+    "note": "Exact schema-5 probe denominator for `postgres_nested_job_privileges.rs`. The ordinary Rust suite reconciles these identities against the source declaration, and the security campaign executes every declared probe against a real server on PostgreSQL 15 and 18.",
+    "report": "nested-job-privileges",
+    "total_probes": 16,
+    "allowed_probes": 6,
+    "forbidden_probes": 10,
+    "probes": [
+      { "id": "runtime.read-nested-job-link", "role": "oxide_batch_m5_runtime", "expected": "allowed" },
+      { "id": "runtime.create-nested-job-link", "role": "oxide_batch_m5_runtime", "expected": "allowed" },
+      { "id": "runtime.update-nested-job-link", "role": "oxide_batch_m5_runtime", "expected": "allowed" },
+      { "id": "runtime.delete-nested-job-link", "role": "oxide_batch_m5_runtime", "expected": "forbidden" },
+      { "id": "explorer.read-nested-job-link", "role": "oxide_batch_m5_explorer", "expected": "allowed" },
+      { "id": "explorer.create-nested-job-link", "role": "oxide_batch_m5_explorer", "expected": "forbidden" },
+      { "id": "explorer.update-nested-job-link", "role": "oxide_batch_m5_explorer", "expected": "forbidden" },
+      { "id": "explorer.delete-nested-job-link", "role": "oxide_batch_m5_explorer", "expected": "forbidden" },
+      { "id": "operator.read-nested-job-link", "role": "oxide_batch_m5_operator", "expected": "allowed" },
+      { "id": "operator.create-nested-job-link", "role": "oxide_batch_m5_operator", "expected": "forbidden" },
+      { "id": "operator.update-nested-job-link", "role": "oxide_batch_m5_operator", "expected": "forbidden" },
+      { "id": "operator.delete-nested-job-link", "role": "oxide_batch_m5_operator", "expected": "forbidden" },
+      { "id": "retention.read-nested-job-link", "role": "oxide_batch_m5_retention", "expected": "allowed" },
+      { "id": "retention.create-nested-job-link", "role": "oxide_batch_m5_retention", "expected": "forbidden" },
+      { "id": "retention.update-nested-job-link", "role": "oxide_batch_m5_retention", "expected": "forbidden" },
+      { "id": "retention.delete-nested-job-link", "role": "oxide_batch_m5_retention", "expected": "forbidden" }
+    ]
   },
   "redaction": {
     "report": "redaction-sweep",
