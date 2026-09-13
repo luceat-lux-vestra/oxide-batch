@@ -15,10 +15,10 @@ mod security;
 
 use std::collections::BTreeSet;
 use std::error::Error;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use oxide_batch::PostgresMigrator;
 use serde_json::{Value, json};
+use sqlx::{Connection, PgConnection};
 
 use security::{
     Failure, INSUFFICIENT_PRIVILEGE, StatementOutcome, admin_url, apply_script, attempt_statement,
@@ -294,7 +294,7 @@ async fn run_report(admin: &str) -> Result<(), Box<dyn Error>> {
 
 async fn run_report_in_database(admin: &str, database: &str) -> Result<(), Box<dyn Error>> {
     apply_script(database, &fixtures().join("roles.sql")).await?;
-    let password = disposable_password();
+    let password = disposable_password(database).await?;
     for role in ROLES {
         run_statement(database, format!("ALTER ROLE {role} PASSWORD '{password}'")).await?;
     }
@@ -363,9 +363,11 @@ fn probe_observation(probe: &Probe, outcome: &StatementOutcome) -> Value {
     })
 }
 
-fn disposable_password() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_nanos());
-    format!("m7s{:x}{:x}", std::process::id(), nanos)
+async fn disposable_password(database: &str) -> Result<String, Box<dyn Error>> {
+    let mut connection = PgConnection::connect(database).await?;
+    let password = sqlx::query_scalar("SELECT gen_random_uuid()::text")
+        .fetch_one(&mut connection)
+        .await?;
+    connection.close().await?;
+    Ok(password)
 }
