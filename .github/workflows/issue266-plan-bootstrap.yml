@@ -75,6 +75,11 @@ jobs:
               "                FlowNode::NestedJob(_) => true,\n                FlowNode::Split(split) => {",
               "                FlowNode::NestedJob(_) | FlowNode::CustomLeaf(_) => true,\n                FlowNode::Split(split) => {",
           )
+          replace_one(
+              lib,
+              "            FlowNode::Step(_) | FlowNode::Decision(_) | FlowNode::NestedJob(_) => {}",
+              "            FlowNode::Step(_)\n            | FlowNode::Decision(_)\n            | FlowNode::NestedJob(_)\n            | FlowNode::CustomLeaf(_) => {}",
+          )
 
           advanced = "crates/oxide-batch-plan/src/advanced.rs"
           replace_one(
@@ -119,7 +124,10 @@ jobs:
 
           #[test]
           fn custom_leaf_forces_format_four() {
-              assert_eq!(compiled("example", "handler-v1", "state", 1).manifest_format(), MANIFEST_FORMAT_ADVANCED_FLOW);
+              assert_eq!(
+                  compiled("example", "handler-v1", "state", 1).manifest_format(),
+                  MANIFEST_FORMAT_ADVANCED_FLOW
+              );
           }
 
           #[test]
