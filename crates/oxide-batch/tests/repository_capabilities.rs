@@ -64,7 +64,7 @@ fn reference_repository() -> InMemoryJobRepository {
 }
 
 /// Every capability this milestone defines.
-fn all_capabilities() -> [RepositoryCapability; 6] {
+fn all_capabilities() -> [RepositoryCapability; 7] {
     [
         RepositoryCapability::ExecutionOwnership,
         RepositoryCapability::InstanceHolds,
@@ -72,6 +72,7 @@ fn all_capabilities() -> [RepositoryCapability; 6] {
         RepositoryCapability::RetentionPurge,
         RepositoryCapability::StepPartitions,
         RepositoryCapability::StopRequests,
+        RepositoryCapability::NestedJobs,
     ]
 }
 
