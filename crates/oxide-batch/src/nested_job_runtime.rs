@@ -21,6 +21,8 @@ use crate::{
 pub enum NestedJobMappingFailure {
     /// The selected durable source did not contain the declared value.
     MissingSource,
+    /// The selected durable context source is unavailable from this repository.
+    SourceUnavailable,
     /// A committed context used another schema identity or version.
     SourceSchemaMismatch,
     /// The selected value did not have the type required by the mapping.
@@ -35,6 +37,7 @@ impl fmt::Display for NestedJobMappingFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::MissingSource => "nested-job mapping source is missing",
+            Self::SourceUnavailable => "nested-job durable context source is unavailable",
             Self::SourceSchemaMismatch => "nested-job mapping source schema does not match",
             Self::SourceTypeMismatch => "nested-job mapping source type does not match",
             Self::CoercionFailed => "nested-job parameter coercion failed",
@@ -78,6 +81,7 @@ pub(crate) async fn resolve_nested_job_parameters(
     attempt: ExecutionAttempt,
     parent_parameters: &JobParameters,
 ) -> Result<JobParameters, NestedJobResolutionError> {
+    let durable_context_sources = repository.descriptor().schema_version() != 0;
     let mut unit = repository.begin().await?;
     let mut resolved = JobParameters::new();
     let mut primary = None;
@@ -85,6 +89,7 @@ pub(crate) async fn resolve_nested_job_parameters(
     for mapping in node.mappings() {
         let source = match resolve_source(
             unit.as_mut(),
+            durable_context_sources,
             plan,
             node,
             mapping,
@@ -154,6 +159,7 @@ pub(crate) async fn resolve_nested_job_parameters(
 #[allow(clippy::too_many_arguments)]
 async fn resolve_source(
     unit: &mut dyn RepositoryUnitOfWork,
+    durable_context_sources: bool,
     plan: &CompiledExecutionPlan,
     node: &NestedJobNode,
     mapping: &NestedJobParameterMapping,
@@ -171,6 +177,7 @@ async fn resolve_source(
             schema_version,
             path,
         } => {
+            require_durable_context_source(durable_context_sources)?;
             let Some(context) = unit.job_execution_context(parent_job_execution_id).await? else {
                 return Ok(None);
             };
@@ -182,6 +189,7 @@ async fn resolve_source(
             schema_version,
             path,
         } => {
+            require_durable_context_source(durable_context_sources)?;
             let Some(state) = unit
                 .latest_flow_step(parent_job_instance_id, source_node)
                 .await?
@@ -219,6 +227,16 @@ async fn resolve_source(
             Ok(Some(SourceValue::Parameter(value)))
         }
         _ => Err(NestedJobMappingFailure::InvalidValue.into()),
+    }
+}
+
+fn require_durable_context_source(
+    durable_context_sources: bool,
+) -> Result<(), NestedJobResolutionError> {
+    if durable_context_sources {
+        Ok(())
+    } else {
+        Err(NestedJobMappingFailure::SourceUnavailable.into())
     }
 }
 
@@ -382,4 +400,22 @@ fn digest_hex(digest: &[u8; 32]) -> String {
         encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
     }
     encoded
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        NestedJobMappingFailure, NestedJobResolutionError, require_durable_context_source,
+    };
+
+    #[test]
+    fn unavailable_durable_context_source_fails_closed() {
+        assert!(matches!(
+            require_durable_context_source(false),
+            Err(NestedJobResolutionError::Mapping(
+                NestedJobMappingFailure::SourceUnavailable
+            ))
+        ));
+        assert!(require_durable_context_source(true).is_ok());
+    }
 }
