@@ -285,8 +285,7 @@ async fn run_report(admin: &str) -> Result<(), Box<dyn Error>> {
     let cleanup = drop_database(admin, DATABASE).await;
     match (result, cleanup) {
         (Ok(()), Ok(())) => Ok(()),
-        (Err(error), Ok(())) => Err(error),
-        (Ok(()), Err(error)) => Err(error),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
         (Err(error), Err(cleanup_error)) => Err(Box::new(Failure(format!(
             "nested-job privilege report failed: {error}; cleanup also failed: {cleanup_error}"
         )))),
