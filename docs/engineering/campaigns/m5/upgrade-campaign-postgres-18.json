@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "fdd4d42e27077573a4bc297c301bbd124f8f757d",
+    "source_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -20,7 +20,7 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "fdd4d42e27077573a4bc297c301bbd124f8f757d",
+      "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -28,20 +28,20 @@
         "Cargo.lock": "3ad914b2f114c567734059bf73f770a8748ea2e0",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
-        "crates/oxide-batch-core/src": "4e0a5c64f08bdf6616f4d73e931a840b4f396521",
+        "crates/oxide-batch-core/src": "30bad9491dc7dd68e877316822e726af7c27ae25",
         "crates/oxide-batch-plan/Cargo.toml": "6c327e26d3fb6cb0e5572432ea8e0e5b09b36c72",
-        "crates/oxide-batch-plan/src": "b0dfc31f0fd6c6260e3faab9df77dc4121745e60",
+        "crates/oxide-batch-plan/src": "1d04b78d59e40233ba07d7680fecbdecb3fb5400",
         "crates/oxide-batch-repository/Cargo.toml": "d6148373ea81b843d5bc2590bc6264ea5fc3e657",
-        "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+        "crates/oxide-batch-repository/src": "8d98a5c311795670612adfabead7a9308aa0d454",
         "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
-        "crates/oxide-batch/migrations": "7923dcfb1ff0d152499466259107986cd8ae27e5",
-        "crates/oxide-batch/src": "5a9c2a472da01d0d3a172bacbad905693c3873cf",
+        "crates/oxide-batch/migrations": "f3169d95fac45b092157d8eaef4372ee7e425403",
+        "crates/oxide-batch/src": "3d27e31f54e4f0b3a6313d77d3aa11f97fd33695",
         "crates/oxide-batch/tests/postgres_schema_rejection.rs": "ae495d4d6694357c86889f681e7293feef8abe41",
-        "crates/oxide-batch/tests/postgres_schema_upgrade.rs": "dfaab4cdf715ab79db26e23d85505435bf1ac044",
-        "crates/oxide-batch/tests/postgres_upgrade_rollback.rs": "596de3227deb6a5f2bdbfeacd9148ff86221a788",
+        "crates/oxide-batch/tests/postgres_schema_upgrade.rs": "b8b3755fad4c1f539973cd836a349d18491172d7",
+        "crates/oxide-batch/tests/postgres_upgrade_rollback.rs": "ddc89b3aa7685ab592ee2ca6bde97ebe9c266699",
         "crates/oxide-batch/tests/upgrade": "3ae27e220bd0564ecf81b6b10c0518de0e9709bf",
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
-        "tests/fixtures/upgrade/campaign-scope.json": "8e2fde228088ee9e9b3a57f42e09a39df779bee3",
+        "tests/fixtures/upgrade/campaign-scope.json": "831bf202c2e76c5b23826cb9904b24932052af52",
         "tests/fixtures/upgrade/campaign-semantics.json": "f793661720e907fe88bee73e0287b4829fbaea4b",
         "tests/fixtures/upgrade/execution-contract.json": "27d7d00ff17108107711656defa31a6f91806e4f",
         "tests/fixtures/upgrade/run-ci-campaign.sh": "f10774dc3a88644577159354cf44f79abbe3a62d",
@@ -66,51 +66,51 @@
       "backup_restore_result": null,
       "expected": "one migrator invocation carries a schema-1 database to the current schema, every value of every column schema 1 declared is unchanged, no component-state row is invented, and the result opens through the current repository",
       "id": "upgrade-from-1",
-      "observed_schema_version": 4,
+      "observed_schema_version": 5,
       "report": "schema-upgrade",
       "repository_open_result": "ok",
       "source_schema_version": 1,
-      "target_schema_version": 4
+      "target_schema_version": 5
     },
     {
       "backup_restore_result": null,
       "expected": "one migrator invocation carries a schema-2 database to the current schema, every value of every column schema 2 declared is unchanged, no component-state row is invented, and the result opens through the current repository",
       "id": "upgrade-from-2",
-      "observed_schema_version": 4,
+      "observed_schema_version": 5,
       "report": "schema-upgrade",
       "repository_open_result": "ok",
       "source_schema_version": 2,
-      "target_schema_version": 4
+      "target_schema_version": 5
     },
     {
       "backup_restore_result": null,
       "expected": "one migrator invocation carries a schema-3 database to the current schema, every value of every column schema 3 declared is unchanged, no component-state row is invented, and the result opens through the current repository",
       "id": "upgrade-from-3",
-      "observed_schema_version": 4,
+      "observed_schema_version": 5,
       "report": "schema-upgrade",
       "repository_open_result": "ok",
       "source_schema_version": 3,
-      "target_schema_version": 4
+      "target_schema_version": 5
     },
     {
       "backup_restore_result": null,
       "expected": "the runtime that shipped against schema 2 refuses a database upgraded to the current schema from both its repository and its migrator, with the typed newer-schema failure, and writes nothing while refusing",
       "id": "reject-from-schema-2-runtime",
-      "observed_schema_version": 4,
+      "observed_schema_version": 5,
       "report": "schema-rejection",
       "repository_open_result": "refused: NewerSchema",
       "source_schema_version": 2,
-      "target_schema_version": 4
+      "target_schema_version": 5
     },
     {
       "backup_restore_result": null,
       "expected": "the runtime that shipped against schema 3 refuses a database upgraded to the current schema from both its repository and its migrator, with the typed newer-schema failure, and writes nothing while refusing",
       "id": "reject-from-schema-3-runtime",
-      "observed_schema_version": 4,
+      "observed_schema_version": 5,
       "report": "schema-rejection",
       "repository_open_result": "refused: NewerSchema",
       "source_schema_version": 3,
-      "target_schema_version": 4
+      "target_schema_version": 5
     },
     {
       "backup_restore_result": "ok",
@@ -120,7 +120,7 @@
       "report": "upgrade-rollback",
       "repository_open_result": "refused: MigrationRequired",
       "source_schema_version": 1,
-      "target_schema_version": 4
+      "target_schema_version": 5
     },
     {
       "backup_restore_result": "ok",
@@ -130,7 +130,7 @@
       "report": "upgrade-rollback",
       "repository_open_result": "refused: MigrationRequired",
       "source_schema_version": 2,
-      "target_schema_version": 4
+      "target_schema_version": 5
     },
     {
       "backup_restore_result": "ok",
@@ -140,7 +140,7 @@
       "report": "upgrade-rollback",
       "repository_open_result": "refused: MigrationRequired",
       "source_schema_version": 3,
-      "target_schema_version": 4
+      "target_schema_version": 5
     }
   ],
   "postgresql_major_version": "18",
@@ -162,7 +162,7 @@
       "name": "schema1_and_schema2_upgrade_directly_to_schema3",
       "observation": {
         "execution_manifest": {
-          "execution_commit": "fdd4d42e27077573a4bc297c301bbd124f8f757d",
+          "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -170,20 +170,20 @@
             "Cargo.lock": "3ad914b2f114c567734059bf73f770a8748ea2e0",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
-            "crates/oxide-batch-core/src": "4e0a5c64f08bdf6616f4d73e931a840b4f396521",
+            "crates/oxide-batch-core/src": "30bad9491dc7dd68e877316822e726af7c27ae25",
             "crates/oxide-batch-plan/Cargo.toml": "6c327e26d3fb6cb0e5572432ea8e0e5b09b36c72",
-            "crates/oxide-batch-plan/src": "b0dfc31f0fd6c6260e3faab9df77dc4121745e60",
+            "crates/oxide-batch-plan/src": "1d04b78d59e40233ba07d7680fecbdecb3fb5400",
             "crates/oxide-batch-repository/Cargo.toml": "d6148373ea81b843d5bc2590bc6264ea5fc3e657",
-            "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+            "crates/oxide-batch-repository/src": "8d98a5c311795670612adfabead7a9308aa0d454",
             "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
-            "crates/oxide-batch/migrations": "7923dcfb1ff0d152499466259107986cd8ae27e5",
-            "crates/oxide-batch/src": "5a9c2a472da01d0d3a172bacbad905693c3873cf",
+            "crates/oxide-batch/migrations": "f3169d95fac45b092157d8eaef4372ee7e425403",
+            "crates/oxide-batch/src": "3d27e31f54e4f0b3a6313d77d3aa11f97fd33695",
             "crates/oxide-batch/tests/postgres_schema_rejection.rs": "ae495d4d6694357c86889f681e7293feef8abe41",
-            "crates/oxide-batch/tests/postgres_schema_upgrade.rs": "dfaab4cdf715ab79db26e23d85505435bf1ac044",
-            "crates/oxide-batch/tests/postgres_upgrade_rollback.rs": "596de3227deb6a5f2bdbfeacd9148ff86221a788",
+            "crates/oxide-batch/tests/postgres_schema_upgrade.rs": "b8b3755fad4c1f539973cd836a349d18491172d7",
+            "crates/oxide-batch/tests/postgres_upgrade_rollback.rs": "ddc89b3aa7685ab592ee2ca6bde97ebe9c266699",
             "crates/oxide-batch/tests/upgrade": "3ae27e220bd0564ecf81b6b10c0518de0e9709bf",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
-            "tests/fixtures/upgrade/campaign-scope.json": "8e2fde228088ee9e9b3a57f42e09a39df779bee3",
+            "tests/fixtures/upgrade/campaign-scope.json": "831bf202c2e76c5b23826cb9904b24932052af52",
             "tests/fixtures/upgrade/campaign-semantics.json": "f793661720e907fe88bee73e0287b4829fbaea4b",
             "tests/fixtures/upgrade/execution-contract.json": "27d7d00ff17108107711656defa31a6f91806e4f",
             "tests/fixtures/upgrade/run-ci-campaign.sh": "f10774dc3a88644577159354cf44f79abbe3a62d",
@@ -236,7 +236,7 @@
               "result": "ok"
             },
             "migration_result": "ok",
-            "observed_schema_version": 4,
+            "observed_schema_version": 5,
             "passed": true,
             "port_reading": {
               "attempt_statuses": [
@@ -286,7 +286,7 @@
                 "import"
               ]
             ],
-            "target_schema_version": 4,
+            "target_schema_version": 5,
             "violations": []
           },
           {
@@ -323,7 +323,7 @@
               "result": "ok"
             },
             "migration_result": "ok",
-            "observed_schema_version": 4,
+            "observed_schema_version": 5,
             "passed": true,
             "port_reading": {
               "attempt_statuses": [
@@ -373,7 +373,7 @@
                 "import"
               ]
             ],
-            "target_schema_version": 4,
+            "target_schema_version": 5,
             "violations": []
           },
           {
@@ -416,7 +416,7 @@
               "result": "ok"
             },
             "migration_result": "ok",
-            "observed_schema_version": 4,
+            "observed_schema_version": 5,
             "passed": true,
             "port_reading": {
               "attempt_statuses": [
@@ -466,12 +466,12 @@
                 "import"
               ]
             ],
-            "target_schema_version": 4,
+            "target_schema_version": 5,
             "violations": []
           }
         ],
         "postgres_major_version": "18",
-        "report": "direct upgrade to schema 3",
+        "report": "direct upgrade to the current schema",
         "scenario": "schema1_and_schema2_upgrade_directly_to_schema3",
         "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
         "violations": []
@@ -489,10 +489,10 @@
       "observation": {
         "applied_migrations_unchanged": true,
         "current_runtime_still_opens_it": true,
-        "current_schema_version": 4,
+        "current_schema_version": 5,
         "durable_state_unchanged": true,
         "execution_manifest": {
-          "execution_commit": "fdd4d42e27077573a4bc297c301bbd124f8f757d",
+          "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -500,20 +500,20 @@
             "Cargo.lock": "3ad914b2f114c567734059bf73f770a8748ea2e0",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
-            "crates/oxide-batch-core/src": "4e0a5c64f08bdf6616f4d73e931a840b4f396521",
+            "crates/oxide-batch-core/src": "30bad9491dc7dd68e877316822e726af7c27ae25",
             "crates/oxide-batch-plan/Cargo.toml": "6c327e26d3fb6cb0e5572432ea8e0e5b09b36c72",
-            "crates/oxide-batch-plan/src": "b0dfc31f0fd6c6260e3faab9df77dc4121745e60",
+            "crates/oxide-batch-plan/src": "1d04b78d59e40233ba07d7680fecbdecb3fb5400",
             "crates/oxide-batch-repository/Cargo.toml": "d6148373ea81b843d5bc2590bc6264ea5fc3e657",
-            "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+            "crates/oxide-batch-repository/src": "8d98a5c311795670612adfabead7a9308aa0d454",
             "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
-            "crates/oxide-batch/migrations": "7923dcfb1ff0d152499466259107986cd8ae27e5",
-            "crates/oxide-batch/src": "5a9c2a472da01d0d3a172bacbad905693c3873cf",
+            "crates/oxide-batch/migrations": "f3169d95fac45b092157d8eaef4372ee7e425403",
+            "crates/oxide-batch/src": "3d27e31f54e4f0b3a6313d77d3aa11f97fd33695",
             "crates/oxide-batch/tests/postgres_schema_rejection.rs": "ae495d4d6694357c86889f681e7293feef8abe41",
-            "crates/oxide-batch/tests/postgres_schema_upgrade.rs": "dfaab4cdf715ab79db26e23d85505435bf1ac044",
-            "crates/oxide-batch/tests/postgres_upgrade_rollback.rs": "596de3227deb6a5f2bdbfeacd9148ff86221a788",
+            "crates/oxide-batch/tests/postgres_schema_upgrade.rs": "b8b3755fad4c1f539973cd836a349d18491172d7",
+            "crates/oxide-batch/tests/postgres_upgrade_rollback.rs": "ddc89b3aa7685ab592ee2ca6bde97ebe9c266699",
             "crates/oxide-batch/tests/upgrade": "3ae27e220bd0564ecf81b6b10c0518de0e9709bf",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
-            "tests/fixtures/upgrade/campaign-scope.json": "8e2fde228088ee9e9b3a57f42e09a39df779bee3",
+            "tests/fixtures/upgrade/campaign-scope.json": "831bf202c2e76c5b23826cb9904b24932052af52",
             "tests/fixtures/upgrade/campaign-semantics.json": "f793661720e907fe88bee73e0287b4829fbaea4b",
             "tests/fixtures/upgrade/execution-contract.json": "27d7d00ff17108107711656defa31a6f91806e4f",
             "tests/fixtures/upgrade/run-ci-campaign.sh": "f10774dc3a88644577159354cf44f79abbe3a62d",
@@ -540,7 +540,7 @@
             "durable_state_verified": true,
             "failed_closed": true,
             "migration_result": "ok",
-            "observed_schema_version": 4,
+            "observed_schema_version": 5,
             "passed": true,
             "repository_open_result": "refused: NewerSchema",
             "runtime": {
@@ -552,17 +552,17 @@
             "runtime_migrator_run": {
               "accepted": false,
               "error": "NewerSchema",
-              "observed_schema_version": 4,
+              "observed_schema_version": 5,
               "supported_schema_version": 2
             },
             "runtime_repository_open": {
               "accepted": false,
               "error": "NewerSchema",
-              "observed_schema_version": 4,
+              "observed_schema_version": 5,
               "supported_schema_version": 2
             },
             "source_schema_version": 2,
-            "target_schema_version": 4,
+            "target_schema_version": 5,
             "violations": []
           },
           {
@@ -571,7 +571,7 @@
             "durable_state_verified": true,
             "failed_closed": true,
             "migration_result": "ok",
-            "observed_schema_version": 4,
+            "observed_schema_version": 5,
             "passed": true,
             "repository_open_result": "refused: NewerSchema",
             "runtime": {
@@ -583,17 +583,17 @@
             "runtime_migrator_run": {
               "accepted": false,
               "error": "NewerSchema",
-              "observed_schema_version": 4,
+              "observed_schema_version": 5,
               "supported_schema_version": 3
             },
             "runtime_repository_open": {
               "accepted": false,
               "error": "NewerSchema",
-              "observed_schema_version": 4,
+              "observed_schema_version": 5,
               "supported_schema_version": 3
             },
             "source_schema_version": 3,
-            "target_schema_version": 4,
+            "target_schema_version": 5,
             "violations": []
           }
         ],
@@ -630,7 +630,7 @@
       "name": "every_source_backup_restores_its_prior_schema",
       "observation": {
         "execution_manifest": {
-          "execution_commit": "fdd4d42e27077573a4bc297c301bbd124f8f757d",
+          "execution_commit": "f27c72845589fd66189e3045ba3a3ffeda8ee215",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -638,20 +638,20 @@
             "Cargo.lock": "3ad914b2f114c567734059bf73f770a8748ea2e0",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
-            "crates/oxide-batch-core/src": "4e0a5c64f08bdf6616f4d73e931a840b4f396521",
+            "crates/oxide-batch-core/src": "30bad9491dc7dd68e877316822e726af7c27ae25",
             "crates/oxide-batch-plan/Cargo.toml": "6c327e26d3fb6cb0e5572432ea8e0e5b09b36c72",
-            "crates/oxide-batch-plan/src": "b0dfc31f0fd6c6260e3faab9df77dc4121745e60",
+            "crates/oxide-batch-plan/src": "1d04b78d59e40233ba07d7680fecbdecb3fb5400",
             "crates/oxide-batch-repository/Cargo.toml": "d6148373ea81b843d5bc2590bc6264ea5fc3e657",
-            "crates/oxide-batch-repository/src": "81576d18759d9e7adc2e41fb086246e992f7bbff",
+            "crates/oxide-batch-repository/src": "8d98a5c311795670612adfabead7a9308aa0d454",
             "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
-            "crates/oxide-batch/migrations": "7923dcfb1ff0d152499466259107986cd8ae27e5",
-            "crates/oxide-batch/src": "5a9c2a472da01d0d3a172bacbad905693c3873cf",
+            "crates/oxide-batch/migrations": "f3169d95fac45b092157d8eaef4372ee7e425403",
+            "crates/oxide-batch/src": "3d27e31f54e4f0b3a6313d77d3aa11f97fd33695",
             "crates/oxide-batch/tests/postgres_schema_rejection.rs": "ae495d4d6694357c86889f681e7293feef8abe41",
-            "crates/oxide-batch/tests/postgres_schema_upgrade.rs": "dfaab4cdf715ab79db26e23d85505435bf1ac044",
-            "crates/oxide-batch/tests/postgres_upgrade_rollback.rs": "596de3227deb6a5f2bdbfeacd9148ff86221a788",
+            "crates/oxide-batch/tests/postgres_schema_upgrade.rs": "b8b3755fad4c1f539973cd836a349d18491172d7",
+            "crates/oxide-batch/tests/postgres_upgrade_rollback.rs": "ddc89b3aa7685ab592ee2ca6bde97ebe9c266699",
             "crates/oxide-batch/tests/upgrade": "3ae27e220bd0564ecf81b6b10c0518de0e9709bf",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
-            "tests/fixtures/upgrade/campaign-scope.json": "8e2fde228088ee9e9b3a57f42e09a39df779bee3",
+            "tests/fixtures/upgrade/campaign-scope.json": "831bf202c2e76c5b23826cb9904b24932052af52",
             "tests/fixtures/upgrade/campaign-semantics.json": "f793661720e907fe88bee73e0287b4829fbaea4b",
             "tests/fixtures/upgrade/execution-contract.json": "27d7d00ff17108107711656defa31a6f91806e4f",
             "tests/fixtures/upgrade/run-ci-campaign.sh": "f10774dc3a88644577159354cf44f79abbe3a62d",
@@ -676,7 +676,7 @@
         "paths": [
           {
             "backup": {
-              "archive_bytes": 36177,
+              "archive_bytes": 36174,
               "format": "custom",
               "rows_covered": {
                 "ob_definition_upgrade": 1,
@@ -691,7 +691,7 @@
               "tool": "pg_dump (PostgreSQL) 18.6 (Ubuntu 18.6-1.pgdg24.04+2)"
             },
             "backup_restore_result": "ok",
-            "current_runtime_refuses_restored_database": "MigrationRequired { current: 1, supported: 4 }",
+            "current_runtime_refuses_restored_database": "MigrationRequired { current: 1, supported: 5 }",
             "databases": {
               "restored_into": "oxide_batch_m5_restored_to_1",
               "upgraded": "oxide_batch_m5_rollback_from_1"
@@ -718,7 +718,7 @@
             "restored_state_matches_backup": true,
             "source_schema_version": 1,
             "structures_newer_than_source_absent_after_restore": true,
-            "target_schema_version": 4,
+            "target_schema_version": 5,
             "upgraded_database_unchanged_by_rollback": true,
             "violations": []
           },
@@ -740,7 +740,7 @@
               "tool": "pg_dump (PostgreSQL) 18.6 (Ubuntu 18.6-1.pgdg24.04+2)"
             },
             "backup_restore_result": "ok",
-            "current_runtime_refuses_restored_database": "MigrationRequired { current: 2, supported: 4 }",
+            "current_runtime_refuses_restored_database": "MigrationRequired { current: 2, supported: 5 }",
             "databases": {
               "restored_into": "oxide_batch_m5_restored_to_2",
               "upgraded": "oxide_batch_m5_rollback_from_2"
@@ -767,13 +767,13 @@
             "restored_state_matches_backup": true,
             "source_schema_version": 2,
             "structures_newer_than_source_absent_after_restore": true,
-            "target_schema_version": 4,
+            "target_schema_version": 5,
             "upgraded_database_unchanged_by_rollback": true,
             "violations": []
           },
           {
             "backup": {
-              "archive_bytes": 70021,
+              "archive_bytes": 70020,
               "format": "custom",
               "rows_covered": {
                 "ob_definition_upgrade": 1,
@@ -792,7 +792,7 @@
               "tool": "pg_dump (PostgreSQL) 18.6 (Ubuntu 18.6-1.pgdg24.04+2)"
             },
             "backup_restore_result": "ok",
-            "current_runtime_refuses_restored_database": "MigrationRequired { current: 3, supported: 4 }",
+            "current_runtime_refuses_restored_database": "MigrationRequired { current: 3, supported: 5 }",
             "databases": {
               "restored_into": "oxide_batch_m5_restored_to_3",
               "upgraded": "oxide_batch_m5_rollback_from_3"
@@ -819,7 +819,7 @@
             "restored_state_matches_backup": true,
             "source_schema_version": 3,
             "structures_newer_than_source_absent_after_restore": true,
-            "target_schema_version": 4,
+            "target_schema_version": 5,
             "upgraded_database_unchanged_by_rollback": true,
             "violations": []
           }
