@@ -21,9 +21,9 @@ use oxide_batch::PostgresMigrator;
 use serde_json::{Value, json};
 
 use security::{
-    Failure, INSUFFICIENT_PRIVILEGE, StatementOutcome, admin_url, apply_script,
-    attempt_statement, drop_database, execution_manifest, fixture_config, fixtures, major_version,
-    recreate_database, retain_observation, run_statement, server_version, with_database, with_role,
+    Failure, INSUFFICIENT_PRIVILEGE, StatementOutcome, admin_url, apply_script, attempt_statement,
+    drop_database, execution_manifest, fixture_config, fixtures, major_version, recreate_database,
+    retain_observation, run_statement, server_version, with_database, with_role,
 };
 
 const DATABASE: &str = "oxide_batch_m7_nested_job_privileges";
@@ -211,9 +211,8 @@ fn declared_nested_job_privilege_probes_match_scope_denominator() -> Result<(), 
         .and_then(Value::as_array)
         .ok_or("nested_job_privileges declares no probes")?;
 
-    let identity = |value: (&str, &str, &str)| {
-        (value.0.to_owned(), value.1.to_owned(), value.2.to_owned())
-    };
+    let identity =
+        |value: (&str, &str, &str)| (value.0.to_owned(), value.1.to_owned(), value.2.to_owned());
     let declared = PROBES
         .iter()
         .map(|probe| identity((probe.id, probe.role, probe.expected.as_str())))
@@ -238,9 +237,20 @@ fn declared_nested_job_privilege_probes_match_scope_denominator() -> Result<(), 
         })
         .collect::<Result<BTreeSet<_>, Box<dyn Error>>>()?;
 
-    assert_eq!(declared.len(), PROBES.len(), "probe identities must be unique");
-    assert_eq!(committed.len(), cells.len(), "scope probe identities must be unique");
-    assert_eq!(declared, committed, "source probes and scope denominator differ");
+    assert_eq!(
+        declared.len(),
+        PROBES.len(),
+        "probe identities must be unique"
+    );
+    assert_eq!(
+        committed.len(),
+        cells.len(),
+        "scope probe identities must be unique"
+    );
+    assert_eq!(
+        declared, committed,
+        "source probes and scope denominator differ"
+    );
     assert_eq!(
         denominator.get("total_probes").and_then(Value::as_u64),
         Some(PROBES.len() as u64),
@@ -255,7 +265,9 @@ fn declared_nested_job_privilege_probes_match_scope_denominator() -> Result<(), 
         ),
     );
     assert_eq!(
-        denominator.get("forbidden_probes").and_then(Value::as_u64),
+        denominator
+            .get("forbidden_probes")
+            .and_then(Value::as_u64),
         Some(
             PROBES
                 .iter()

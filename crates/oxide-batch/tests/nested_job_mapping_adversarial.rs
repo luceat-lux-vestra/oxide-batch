@@ -100,10 +100,7 @@ fn parameters(payload: ParameterValue) -> Result<JobParameters, Box<dyn Error>> 
     let mut parameters = JobParameters::new();
     parameters.insert(
         ParameterName::new("run")?,
-        JobParameter::new(
-            ParameterValue::string("one")?,
-            ParameterRole::Identifying,
-        ),
+        JobParameter::new(ParameterValue::string("one")?, ParameterRole::Identifying),
     )?;
     parameters.insert(
         ParameterName::new("payload")?,
@@ -120,14 +117,14 @@ async fn run_failure(
     let calls = Arc::new(AtomicUsize::new(0));
     let child = child_job(calls.clone())?;
     let (parent, node_id) = parent_job(child, expected, coercion)?;
-    let clock = Arc::new(FixedClock(
-        SystemTime::UNIX_EPOCH + Duration::from_secs(10),
-    ));
+    let clock = Arc::new(FixedClock(SystemTime::UNIX_EPOCH + Duration::from_secs(10)));
     let ids = Arc::new(SequentialIdGenerator::new(NonZeroU64::MIN));
     let repository = InMemoryJobRepository::new(clock.clone(), ids.clone());
     let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
     let (_, stop) = StopSource::new();
-    let report = launcher.launch(&parent, &parameters(payload)?, &stop).await?;
+    let report = launcher
+        .launch(&parent, &parameters(payload)?, &stop)
+        .await?;
 
     let has_link = {
         let mut unit = repository.begin().await?;
@@ -166,7 +163,8 @@ async fn exact_type_mismatch_fails_before_link_or_child_work() -> Result<(), Box
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn coercion_failure_is_value_redacted_and_precedes_link_commit() -> Result<(), Box<dyn Error>> {
+async fn coercion_failure_is_value_redacted_and_precedes_link_commit() -> Result<(), Box<dyn Error>>
+{
     const SENTINEL: &str = "nested-secret-not-a-number-7f3c";
     let (outcome, calls, has_link) = run_failure(
         ParameterValueKind::U64,
