@@ -1418,7 +1418,7 @@ impl<'a> FlowLauncher<'a> {
             .await?;
         self.observe_process_shutdown(stop_token);
 
-        let run = self
+        let run = match self
             .run_scope(
                 job,
                 job.plan.root_scope(),
@@ -1430,7 +1430,23 @@ impl<'a> FlowLauncher<'a> {
                 stop_token,
                 0,
             )
-            .await?;
+            .await
+        {
+            Ok(run) => run,
+            Err(
+                error @ FlowRuntimeError::Repository(RepositoryError::NestedJobChildUnresolved {
+                    ..
+                }),
+            ) => {
+                // The restart attempt is already STARTED when a prior child
+                // is found unresolved. Preserve the durable ambiguity on the
+                // parent instead of leaving a misleading active execution.
+                self.finish_job(&execution, BatchStatus::Unknown, None)
+                    .await?;
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        };
         let outcome = match run.status {
             BatchStatus::Completed => FlowExecutionOutcome::Completed,
             BatchStatus::Stopped => FlowExecutionOutcome::Stopped,

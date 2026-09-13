@@ -11,11 +11,12 @@ use std::time::{Duration, SystemTime};
 use oxide_batch::{
     BatchStatus, BoxFuture, Clock, ComponentRevision, DefinitionRevision, FlowExecutionOutcome,
     FlowFailure, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget, InMemoryJobRepository,
-    JobName, JobParameter, JobParameters, JobRepository, MissingParameterPolicy,
-    NestedJobMappingFailure, NestedJobNode, NestedJobParameterMapping, NestedJobParameterSource,
-    NodeId, ParameterCoercion, ParameterName, ParameterRole, ParameterValue, ParameterValueKind,
-    SequentialIdGenerator, StepComponents, StepName, StepNode, StopSource, Tasklet, TaskletContext,
-    TaskletError, TaskletJob, TaskletOutcome, TaskletStep, TerminalKind,
+    JobInstanceKey, JobName, JobParameter, JobParameters, JobRepository, LifecycleTransition,
+    MissingParameterPolicy, NestedJobLinkRequest, NestedJobMappingFailure, NestedJobNode,
+    NestedJobParameterMapping, NestedJobParameterSource, NodeId, ParameterCoercion, ParameterName,
+    ParameterRole, ParameterValue, ParameterValueKind, RepositoryError, SequentialIdGenerator,
+    StepComponents, StepName, StepNode, StopSource, Tasklet, TaskletContext, TaskletError,
+    TaskletJob, TaskletOutcome, TaskletStep, TerminalKind,
 };
 
 #[derive(Debug)]
@@ -549,6 +550,96 @@ async fn unknown_child_leaves_parent_unknown_without_fabricated_terminal()
     unit.rollback().await?;
     assert!(link.terminal().is_none());
     assert_eq!(child_execution.metadata().status(), BatchStatus::Unknown);
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn unresolved_prior_child_marks_restart_parent_unknown() -> Result<(), Box<dyn Error>> {
+    let child = child_job(
+        Arc::new(AtomicUsize::new(0)),
+        Arc::new(Mutex::new(Vec::new())),
+    )?;
+    let (parent, nested) = parent_job(
+        child.clone(),
+        Arc::new(AtomicUsize::new(0)),
+        MissingParameterPolicy::Fail,
+    )?;
+    let (clock, ids, repository) = infrastructure();
+    let (_, stop) = StopSource::new();
+    let parameters = parent_parameters("unresolved-restart", Some("payload"))?;
+    let key = JobInstanceKey::new(JobName::new("parent-job")?, &parameters);
+
+    let prior_parent = {
+        let mut unit = repository.begin().await?;
+        let instance = unit
+            .select_or_create_job_instance(&key)
+            .await?
+            .instance()
+            .clone();
+        let execution = unit
+            .create_job_execution_with_definition(
+                instance.id(),
+                parent.compiled_plan().definition_identity(),
+            )
+            .await?;
+        let started = unit
+            .transition_job_execution(
+                execution.id(),
+                execution.version(),
+                LifecycleTransition::new(BatchStatus::Started, clock.now()),
+            )
+            .await?;
+        let stopped = unit
+            .transition_job_execution(
+                started.id(),
+                started.version(),
+                LifecycleTransition::new(
+                    BatchStatus::Stopped,
+                    SystemTime::UNIX_EPOCH + Duration::from_secs(11),
+                ),
+            )
+            .await?;
+        let mut child_parameters = JobParameters::new();
+        child_parameters.insert(
+            ParameterName::new("child-payload")?,
+            parameter(
+                ParameterValue::string("payload")?,
+                ParameterRole::Identifying,
+            ),
+        )?;
+        unit.create_nested_job_link(&NestedJobLinkRequest::new(
+            instance.id(),
+            stopped.id(),
+            nested.clone(),
+            child.definition_identity().clone(),
+            child_parameters,
+            clock.now(),
+        ))
+        .await?;
+        unit.commit().await?;
+        stopped
+    };
+
+    let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
+    let error = launcher
+        .launch(&parent, &parameters, &stop)
+        .await
+        .expect_err("an unresolved prior child must block restart");
+    assert!(matches!(
+        error,
+        oxide_batch::FlowRuntimeError::Repository(RepositoryError::NestedJobChildUnresolved { .. })
+    ));
+
+    let mut unit = repository.begin().await?;
+    let attempts = unit.job_executions(prior_parent.job_instance_id()).await?;
+    assert_eq!(attempts.len(), 2);
+    assert_eq!(attempts[1].metadata().status(), BatchStatus::Unknown);
+    let link = unit.nested_job_link(attempts[1].id(), &nested).await?;
+    assert!(
+        link.is_none(),
+        "failed restart must not create a second link"
+    );
+    unit.rollback().await?;
     Ok(())
 }
 
