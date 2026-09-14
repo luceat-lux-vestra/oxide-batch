@@ -409,6 +409,7 @@ mod chunk;
 mod chunk_builder;
 mod chunk_runtime;
 mod completion;
+mod custom_leaf;
 mod diagnostics;
 mod fault;
 mod fault_state;
@@ -444,6 +445,9 @@ pub use completion::{
     AdaptiveBounds, AdaptiveCompletionPolicy, ChunkTimeThreshold, CompletionPolicy,
     CompletionPolicyError, CompositeCompletionPolicy, CompositeMode, ItemCountCompletionPolicy,
     MAX_COMPOSITE_DEPTH, MAX_COMPOSITE_MEMBERS, TimeCompletionPolicy,
+};
+pub use custom_leaf::{
+    CustomLeafContext, CustomLeafHandler, CustomLeafRegistration, CustomLeafResult,
 };
 pub use diagnostics::{
     DiagnosticField, EventComponent, EventSeverity, ExecutionAttempt, ExecutionCorrelation,
@@ -500,15 +504,15 @@ pub use oxide_batch_core::{
     VersionedStateCodec,
 };
 pub use oxide_batch_plan::{
-    CompiledExecutionPlan, CompiledFlowScope, DeciderRevision, DecisionInputVersion, DecisionNode,
-    ExitPattern, FlowGraph, FlowNode, FlowSelectionError, FlowTransition, FrameworkParameterSource,
-    JoinNode, LocalFailurePolicy, MAX_BRANCH_STEPS, MAX_FLOW_COMPOSITION_DEPTH,
-    MAX_NESTED_JOB_PARAMETERS, MAX_OUTGOING_TRANSITIONS, MAX_PARTITION_WORKERS, MAX_PATTERN_BYTES,
-    MAX_SELECTOR_PATH_BYTES, MAX_SELECTOR_PATH_SEGMENTS, MAX_SPLIT_BRANCHES,
-    MissingParameterPolicy, NestedFlow, NestedJobNode, NestedJobParameterMapping,
-    NestedJobParameterSource, ParameterCoercion, PartitionBudget, PartitionCount,
-    PartitionedStepNode, PatternSpecificity, PlanError, SelectorPath, SplitBranch, SplitBudget,
-    SplitNode, StepComponents, StepNode,
+    CompiledExecutionPlan, CompiledFlowScope, CustomLeafKind, CustomLeafNode, DeciderRevision,
+    DecisionInputVersion, DecisionNode, ExitPattern, FlowGraph, FlowNode, FlowSelectionError,
+    FlowTransition, FrameworkParameterSource, JoinNode, LocalFailurePolicy, MAX_BRANCH_STEPS,
+    MAX_FLOW_COMPOSITION_DEPTH, MAX_NESTED_JOB_PARAMETERS, MAX_OUTGOING_TRANSITIONS,
+    MAX_PARTITION_WORKERS, MAX_PATTERN_BYTES, MAX_SELECTOR_PATH_BYTES, MAX_SELECTOR_PATH_SEGMENTS,
+    MAX_SPLIT_BRANCHES, MissingParameterPolicy, NestedFlow, NestedJobNode,
+    NestedJobParameterMapping, NestedJobParameterSource, ParameterCoercion, PartitionBudget,
+    PartitionCount, PartitionedStepNode, PatternSpecificity, PlanError, SelectorPath, SplitBranch,
+    SplitBudget, SplitNode, StepComponents, StepNode,
 };
 pub use oxide_batch_repository::{
     ActorRef, AuthorizationClass, BoxFuture, Clock, Cursor, CursorError, CursorKey,

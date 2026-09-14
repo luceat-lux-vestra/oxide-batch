@@ -54,7 +54,7 @@ pub(crate) fn decision_matches_manifest(manifest: &Value, request: &FlowDecision
                     FlowTransitionKind::SplitAggregate => kind == Some("join"),
                     FlowTransitionKind::NestedJobExit => kind == Some("nested_job"),
                     FlowTransitionKind::StepExit | FlowTransitionKind::CompletedStepReuse => {
-                        matches!(kind, Some("step" | "partitioned_step"))
+                        matches!(kind, Some("step" | "partitioned_step" | "custom_leaf"))
                     }
                     // Absorbs any transition kind added later: an unrecognized
                     // kind matches no declared node, so the decision is
@@ -529,6 +529,7 @@ pub struct FlowJob {
     split_tasklets: BTreeMap<NodeId, TaskletStepFactory>,
     partitioned_tasklets: BTreeMap<NodeId, PartitionedTaskletBinding>,
     nested_jobs: BTreeMap<NodeId, NestedJobBinding>,
+    custom_leaves: BTreeMap<NodeId, crate::CustomLeafRegistration>,
 }
 
 impl fmt::Debug for FlowJob {
@@ -545,6 +546,7 @@ impl fmt::Debug for FlowJob {
                 &self.partitioned_tasklets.len(),
             )
             .field("nested_job_count", &self.nested_jobs.len())
+            .field("custom_leaf_count", &self.custom_leaves.len())
             .finish()
     }
 }
@@ -577,6 +579,7 @@ impl FlowJob {
             split_tasklets: BTreeMap::new(),
             partitioned_tasklets: BTreeMap::new(),
             nested_jobs: BTreeMap::new(),
+            custom_leaves: BTreeMap::new(),
         })
     }
 
@@ -752,6 +755,32 @@ impl FlowJob {
         Ok(self)
     }
 
+    /// Binds one exact registered handler to a compiled custom-leaf node.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a non-custom node, identity/listener mismatch, or duplicate binding.
+    pub fn with_custom_leaf_registration(
+        mut self,
+        node_id: NodeId,
+        registration: crate::CustomLeafRegistration,
+    ) -> Result<Self, FlowJobError> {
+        let Some(FlowNode::CustomLeaf(compiled)) = self.plan.node(&node_id) else {
+            return Err(FlowJobError::WrongNodeKind { node: node_id });
+        };
+        if !custom_leaf_registration_matches(compiled, &registration) {
+            return Err(FlowJobError::CustomLeafRegistrationMismatch { node: node_id });
+        }
+        if self
+            .custom_leaves
+            .insert(node_id.clone(), registration)
+            .is_some()
+        {
+            return Err(FlowJobError::DuplicateBinding { node: node_id });
+        }
+        Ok(self)
+    }
+
     /// Validates that every compiled node has exactly one executable binding.
     ///
     /// # Errors
@@ -775,6 +804,11 @@ impl FlowJob {
                 FlowNode::NestedJob(compiled) => self.nested_jobs.get(id).is_some_and(|binding| {
                     binding.definition_identity() == compiled.child_definition()
                 }),
+                FlowNode::CustomLeaf(compiled) => {
+                    self.custom_leaves.get(id).is_some_and(|registration| {
+                        custom_leaf_registration_matches(compiled, registration)
+                    })
+                }
                 FlowNode::Split(_) | FlowNode::Join(_) => true,
                 FlowNode::PartitionedStep(_) => self.partitioned_tasklets.contains_key(id),
                 // A `FlowNode` variant added after this build accepts no
@@ -845,6 +879,11 @@ pub enum FlowJobError {
         /// Mismatched logical nested-job node.
         node: NodeId,
     },
+    /// A custom-leaf handler/listener registration does not match its declaration.
+    CustomLeafRegistrationMismatch {
+        /// Mismatched logical custom-leaf node.
+        node: NodeId,
+    },
     /// The bound executable does not match the compiled step declaration.
     ComponentMismatch {
         /// Mismatched logical node.
@@ -900,6 +939,11 @@ impl fmt::Display for FlowJobError {
                 "nested-job node {} was bound to a different child definition",
                 node.as_str()
             ),
+            Self::CustomLeafRegistrationMismatch { node } => write!(
+                formatter,
+                "custom-leaf node {} registration does not match its compiled identity",
+                node.as_str()
+            ),
             Self::ComponentMismatch { node } => write!(
                 formatter,
                 "node {} executable components do not match the compiled declaration",
@@ -915,6 +959,22 @@ impl fmt::Display for FlowJobError {
 }
 
 impl Error for FlowJobError {}
+
+fn custom_leaf_registration_matches(
+    compiled: &crate::CustomLeafNode,
+    registration: &crate::CustomLeafRegistration,
+) -> bool {
+    compiled.kind() == registration.kind()
+        && compiled.handler_revision() == registration.handler_revision()
+        && compiled.state_schema_id() == registration.state_schema_id()
+        && compiled.state_schema_version() == registration.state_schema_version()
+        && compiled.listener_revisions().len() == registration.listeners().len()
+        && compiled
+            .listener_revisions()
+            .iter()
+            .zip(registration.listeners())
+            .all(|(declared, (registered, _))| declared == registered)
+}
 
 fn split_step<'a>(
     plan: &'a CompiledExecutionPlan,
@@ -1292,6 +1352,7 @@ fn plan_capabilities(plan: &CompiledExecutionPlan) -> BTreeSet<RepositoryCapabil
         .filter_map(|(_, node)| match node {
             FlowNode::PartitionedStep(_) => Some(RepositoryCapability::StepPartitions),
             FlowNode::NestedJob(_) => Some(RepositoryCapability::NestedJobs),
+            FlowNode::CustomLeaf(_) => Some(RepositoryCapability::CustomLeafState),
             _ => None,
         })
         .collect()
