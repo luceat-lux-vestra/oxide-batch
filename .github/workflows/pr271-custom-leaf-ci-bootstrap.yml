@@ -7,45 +7,24 @@ on:
 
 permissions: {}
 
-concurrency:
-  group: pr271-custom-leaf-ci-bootstrap-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   wire-and-verify:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write
     steps:
-      - name: Check out exact branch
+      - name: Check out branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Wire PostgreSQL 15/18 crash matrix and verify
+      - name: Wire crash matrix
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path('.github/workflows/ci.yml')
-          text = path.read_text()
-          anchor = '''          cargo test -p oxide-batch --features postgres \\
-            --test postgres_nested_job_crash_recovery \\
-            -- --nocapture --test-threads=1
-'''
-          addition = anchor + '''          cargo test -p oxide-batch --features postgres \\
-            --test postgres_custom_leaf_crash_recovery \\
-            -- --nocapture --test-threads=1
-'''
-          if text.count(anchor) != 1:
-              raise SystemExit(f'expected one nested-job crash-matrix anchor, found {text.count(anchor)}')
-          path.write_text(text.replace(anchor, addition, 1))
-          PY
+          python3 -c 'from pathlib import Path; p=Path(".github/workflows/ci.yml"); s=p.read_text(); a="          cargo test -p oxide-batch --features postgres \\\n            --test postgres_nested_job_crash_recovery \\\n            -- --nocapture --test-threads=1\n"; b=a+"          cargo test -p oxide-batch --features postgres \\\n            --test postgres_custom_leaf_crash_recovery \\\n            -- --nocapture --test-threads=1\n"; assert s.count(a)==1, s.count(a); p.write_text(s.replace(a,b,1))'
           cargo fmt --all
           git diff --check
           cargo check --workspace --all-targets --all-features --locked
