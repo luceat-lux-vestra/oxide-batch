@@ -61,13 +61,12 @@ fn exact_custom_leaf_registration_validates() -> Result<(), Box<dyn Error>> {
 #[test]
 fn custom_leaf_revision_mismatch_fails_closed() -> Result<(), Box<dyn Error>> {
     let (name, id, compiled) = plan()?;
-    let error = FlowJob::new(name, compiled)?
-        .with_custom_leaf_registration(id.clone(), registration("handler-v2")?)
-        .expect_err("revision mismatch must be rejected");
-    assert_eq!(
-        error,
-        FlowJobError::CustomLeafRegistrationMismatch { node: id }
-    );
+    let result = FlowJob::new(name, compiled)?
+        .with_custom_leaf_registration(id.clone(), registration("handler-v2")?);
+    assert!(matches!(
+        result,
+        Err(FlowJobError::CustomLeafRegistrationMismatch { node }) if node == id
+    ));
     Ok(())
 }
 
