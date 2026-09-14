@@ -60,15 +60,15 @@ jobs:
               'context("example.state", 2, 1).expect("valid wrong-state fixture")',
               1,
           )
-          third = '''    let third = launcher
-              .launch(&job, &JobParameters::new(), &stop)
-              .await?;
-          assert_eq!(third.outcome(), &FlowExecutionOutcome::Completed);
-
-'''
-          if text.count(third) != 1:
-              raise SystemExit(f"expected one invalid third launch, found {text.count(third)}")
-          text = text.replace(third, '', 1)
+          pattern = re.compile(
+              r"    let third = launcher\n"
+              r"        \.launch\(&job, &JobParameters::new\(\), &stop\)\n"
+              r"        \.await\?;\n"
+              r"    assert_eq!\(third\.outcome\(\), &FlowExecutionOutcome::Completed\);\n\n"
+          )
+          text, count = pattern.subn('', text, count=1)
+          if count != 1:
+              raise SystemExit(f"expected one invalid third launch, found {count}")
           test.write_text(text)
 
           plan_test = Path("crates/oxide-batch-plan/tests/custom_leaf.rs")
