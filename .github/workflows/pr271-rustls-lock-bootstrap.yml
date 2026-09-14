@@ -29,6 +29,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('crates/oxide-batch/tests/postgres_custom_leaf_crash_recovery.rs')
+          text = path.read_text()
+          old = '''    FailureCategory, FailureId, FlowEvent, FlowEventKind, FlowEventSink,
+              FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget, JobInstanceKey,
+              JobName, JobParameters, JobRepository, ListenerContext, ListenerError, PostgresConfig,
+              PostgresJobRepository, PostgresMigrator, RecoveryRequest, SequentialIdGenerator, StateLimits,
+          '''.replace('              ', '    ')
+          new = '''    FailureCategory, FailureId, FlowEvent, FlowEventKind, FlowEventSink,
+              FlowExecutionOutcome, FlowFailure, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowRuntimeError,
+              FlowTarget, JobInstanceKey, JobName, JobParameters, JobRepository, ListenerContext,
+              ListenerError, PostgresConfig, PostgresJobRepository, PostgresMigrator, RecoveryRequest,
+              RepositoryError, SequentialIdGenerator, StateLimits,
+          '''.replace('              ', '    ')
+          if new not in text:
+              if old not in text:
+                  raise SystemExit('postgres custom-leaf import pre-anchor not found')
+              path.write_text(text.replace(old, new, 1))
+          PY
           python3 .github/scripts/pr271-final-review-fix.py
           cargo fmt --all
           git diff --check
