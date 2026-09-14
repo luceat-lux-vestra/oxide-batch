@@ -1,4 +1,4 @@
-name: PR 271 rustls lock bootstrap
+name: PR 271 final review bootstrap
 
 on:
   push:
@@ -8,16 +8,16 @@ on:
 permissions: {}
 
 concurrency:
-  group: pr271-rustls-lock-bootstrap-${{ github.ref }}
+  group: pr271-final-review-bootstrap-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  refresh-lock:
+  verify-and-commit:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 30
     permissions:
-      contents: write # Required only to push the reviewed Cargo.lock refresh below.
+      contents: write # Required only to push the reviewed candidate commit below.
     steps:
       - name: Check out exact branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -25,25 +25,37 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Refresh vulnerable rustls lock entry
+      - name: Apply final review fixes and verify
         shell: bash
         run: |
           set -euo pipefail
-          cargo update -p rustls --precise 0.23.45
-          git diff --check -- Cargo.lock
-          test "$(git status --short | wc -l)" -eq 1
-          test "$(git status --short | awk '{print $2}')" = "Cargo.lock"
-          grep -A2 '^name = "rustls"$' Cargo.lock | grep -q '^version = "0.23.45"$'
+          python3 .github/scripts/pr271-final-review-fix.py
+          cargo fmt --all
+          git diff --check
+          cargo clippy --workspace --all-targets --all-features -- \
+            -D warnings \
+            -A clippy::too_many_arguments \
+            -A clippy::too_many_lines
+          cargo check --workspace --all-targets --all-features --locked
+          cargo test -p oxide-batch-plan --test custom_leaf --locked
+          cargo test -p oxide-batch --test custom_leaf_binding --all-features --locked
+          cargo test -p oxide-batch --test custom_leaf_runtime --all-features --locked
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_custom_leaf_crash_recovery --no-run --locked
+          cargo run --package oxide-batch-xtask -- surface
 
-      - name: Commit lock refresh
+      - name: Commit final candidate
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          git add Cargo.lock
+          rm .github/scripts/pr271-final-review-fix.py
+          rm .github/workflows/pr271-rustls-lock-bootstrap.yml
+          git add -A
           git diff --cached --check
+          test -z "$(git status --short | grep 'pr271-final-review-fix.py\|pr271-rustls-lock-bootstrap.yml' || true)"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore(deps): update rustls for RUSTSEC-2026-0285"
+          git commit -m "fix(flow): close custom-leaf review gaps"
           git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_REF_NAME}"
