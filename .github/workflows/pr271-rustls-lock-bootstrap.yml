@@ -1,0 +1,49 @@
+name: PR 271 rustls lock bootstrap
+
+on:
+  push:
+    branches:
+      - issue-266-custom-leaf-lifecycle
+
+permissions: {}
+
+concurrency:
+  group: pr271-rustls-lock-bootstrap-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  refresh-lock:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # Required only to push the reviewed Cargo.lock refresh below.
+    steps:
+      - name: Check out exact branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Refresh vulnerable rustls lock entry
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo update -p rustls --precise 0.23.45
+          git diff --check -- Cargo.lock
+          test "$(git status --short | wc -l)" -eq 1
+          test "$(git status --short | awk '{print $2}')" = "Cargo.lock"
+          grep -A2 '^name = "rustls"$' Cargo.lock | grep -q '^version = "0.23.45"$'
+
+      - name: Commit lock refresh
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git add Cargo.lock
+          git diff --cached --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(deps): update rustls for RUSTSEC-2026-0285"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_REF_NAME}"
