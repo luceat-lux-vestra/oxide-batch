@@ -858,6 +858,7 @@ impl JobRepository for PostgresJobRepository {
         RepositoryDescriptor::new(
             SUPPORTED_SCHEMA_VERSION,
             [
+                RepositoryCapability::CustomLeafState,
                 RepositoryCapability::ExecutionOwnership,
                 RepositoryCapability::InstanceHolds,
                 RepositoryCapability::NestedJobs,
@@ -2327,6 +2328,66 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 return Err(self.classify_step_cas(id, expected_version).await);
             }
             Ok(execution)
+        })
+    }
+
+    fn commit_step_execution_context<'a>(
+        &'a mut self,
+        id: StepExecutionId,
+        expected_version: ExecutionVersion,
+        context: &'a ExecutionContext,
+    ) -> BoxFuture<'a, Result<StepExecution, RepositoryError>> {
+        Box::pin(async move {
+            let current = self
+                .step_execution(id)
+                .await?
+                .ok_or(RepositoryError::StepExecutionNotFound { id })?;
+            if current.version() != expected_version {
+                return Err(RepositoryError::Lifecycle(LifecycleError::StaleVersion {
+                    expected: expected_version,
+                    actual: current.version(),
+                }));
+            }
+            if current.metadata().status() != BatchStatus::Started {
+                return Err(RepositoryError::FlowStateCorrupt);
+            }
+            let payload: Value = serde_json::from_slice(
+                &context
+                    .payload_json()
+                    .map_err(|_| RepositoryError::FlowStateCorrupt)?,
+            )
+            .map_err(|_| RepositoryError::FlowStateCorrupt)?;
+            let next_version = expected_version.next()?;
+            let updated_at = system_time_millis(self.repository.clock.now())?;
+            let affected = sqlx::query(
+                "UPDATE oxide_batch.ob_step_execution SET \
+                 context_format = $1, context_schema = $2, context_schema_version = $3, \
+                 context_payload = $4, updated_at = to_timestamp($5::double precision / 1000.0), \
+                 version = $6 WHERE id = $7 AND version = $8 AND status = 'STARTED'",
+            )
+            .bind(
+                i16::try_from(context.format_version())
+                    .map_err(|_| RepositoryError::FlowStateCorrupt)?,
+            )
+            .bind(context.schema_id().as_str())
+            .bind(
+                i32::try_from(context.schema_version().get())
+                    .map_err(|_| RepositoryError::FlowStateCorrupt)?,
+            )
+            .bind(Json(payload))
+            .bind(updated_at)
+            .bind(database_version(next_version)?)
+            .bind(database_id(id.get(), IdentifierKind::StepExecution)?)
+            .bind(database_version(expected_version)?)
+            .execute(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            if affected.rows_affected() != 1 {
+                return Err(self.classify_step_cas(id, expected_version).await);
+            }
+            self.step_execution(id)
+                .await?
+                .ok_or(RepositoryError::StepExecutionNotFound { id })
         })
     }
 
