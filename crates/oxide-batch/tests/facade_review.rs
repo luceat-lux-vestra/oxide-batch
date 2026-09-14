@@ -69,6 +69,7 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     ("chunk_builder", 2),
     ("chunk_runtime", 14),
     ("completion", 11),
+    ("custom_leaf", 4),
     ("diagnostics", 9),
     ("fault", 2),
     ("fault_state", 11),
@@ -84,8 +85,9 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     // contract: FrameworkParameterSource, MAX_NESTED_JOB_PARAMETERS,
     // MAX_SELECTOR_PATH_BYTES, MAX_SELECTOR_PATH_SEGMENTS,
     // MissingParameterPolicy, NestedJobNode, NestedJobParameterMapping,
-    // NestedJobParameterSource, ParameterCoercion, and SelectorPath.
-    ("oxide_batch_plan", 39),
+    // NestedJobParameterSource, ParameterCoercion, and SelectorPath. #266 adds
+    // CustomLeafKind and CustomLeafNode.
+    ("oxide_batch_plan", 41),
     // #265 adds the durable-link repository contract: NestedJobLink,
     // NestedJobLinkRequest, and NestedJobTerminalObservation.
     ("oxide_batch_repository", 113),

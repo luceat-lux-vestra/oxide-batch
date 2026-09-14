@@ -79,6 +79,12 @@ oxide_batch::ContentIdentity
 oxide_batch::Cursor
 oxide_batch::CursorError
 oxide_batch::CursorKey
+oxide_batch::CustomLeafContext
+oxide_batch::CustomLeafHandler
+oxide_batch::CustomLeafKind
+oxide_batch::CustomLeafNode
+oxide_batch::CustomLeafRegistration
+oxide_batch::CustomLeafResult
 oxide_batch::DEFAULT_DROP_REPORT_WINDOW
 oxide_batch::DEFAULT_EXPORT_QUEUE_RECORDS
 oxide_batch::DEFAULT_MAX_CLOCK_SKEW
