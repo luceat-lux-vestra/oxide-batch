@@ -1,11 +1,11 @@
-//! PostgreSQL 15/18 real-process SIGKILL and restart evidence for registered custom leaves.
+//! `PostgreSQL` 15/18 real-process SIGKILL and restart evidence for registered custom leaves.
 //!
 //! The three boundaries are deliberately distinct:
 //! - before the handler returns its candidate state (no custom state may become durable),
 //! - after custom state CAS commits but before the terminal step transition (the state must survive),
 //! - after the terminal step transition commits (restart must reuse the completed leaf and never invoke it again).
 //!
-//! The parent always kills a separate worker process from the outside, inspects durable PostgreSQL state,
+//! The parent always kills a separate worker process from the outside, inspects durable `PostgreSQL` state,
 //! records an audited recovery decision, and restarts through the public flow launcher.
 
 #![cfg(all(feature = "postgres", unix))]
@@ -16,8 +16,8 @@ use std::num::NonZeroU64;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use oxide_batch::{
@@ -153,10 +153,8 @@ fn registration(
         handler,
     );
     if let Some(listener) = listener {
-        registration = registration.with_listener(
-            ComponentRevision::new(LISTENER_REVISION)?,
-            listener,
-        );
+        registration =
+            registration.with_listener(ComponentRevision::new(LISTENER_REVISION)?, listener);
     }
     Ok(registration)
 }
@@ -167,10 +165,12 @@ fn job(
     listener: Option<Arc<dyn StepExecutionListener>>,
 ) -> Result<FlowJob, Box<dyn Error>> {
     let name = JobName::new(point.job_name())?;
-    Ok(FlowJob::new(name, plan(point)?)?.with_custom_leaf_registration(
-        oxide_batch::NodeId::new(NODE)?,
-        registration(handler, listener)?,
-    )?)
+    Ok(
+        FlowJob::new(name, plan(point)?)?.with_custom_leaf_registration(
+            oxide_batch::NodeId::new(NODE)?,
+            registration(handler, listener)?,
+        )?,
+    )
 }
 
 struct ParkBeforeState {
@@ -185,7 +185,7 @@ impl CustomLeafHandler for ParkBeforeState {
         Box::pin(async move {
             std::fs::write(&self.reached, []).map_err(TaskletError::from_error)?;
             loop {
-                std::thread::sleep(Duration::from_secs(60));
+                std::thread::sleep(Duration::from_mins(1));
             }
         })
     }
@@ -199,7 +199,9 @@ impl CustomLeafHandler for PublishState {
         _context: CustomLeafContext<'a>,
     ) -> BoxFuture<'a, Result<CustomLeafResult, TaskletError>> {
         Box::pin(async {
-            let next = state(1).map_err(|error| std::io::Error::other(error.to_string()))?;
+            let next = state(1).map_err(|error| {
+                TaskletError::from_error(std::io::Error::other(error.to_string()))
+            })?;
             Ok(CustomLeafResult::new(TaskletOutcome::Completed).with_state(next))
         })
     }
@@ -222,7 +224,9 @@ impl CustomLeafHandler for ExpectedRestartHandler {
                 observed, self.expected,
                 "restart must receive exactly the last committed custom state"
             );
-            let next = state(2).map_err(|error| std::io::Error::other(error.to_string()))?;
+            let next = state(2).map_err(|error| {
+                TaskletError::from_error(std::io::Error::other(error.to_string()))
+            })?;
             Ok(CustomLeafResult::new(TaskletOutcome::Completed).with_state(next))
         })
     }
@@ -259,7 +263,7 @@ impl StepExecutionListener for ParkAfterState {
         Box::pin(async move {
             std::fs::write(&self.reached, []).map_err(|_| ListenerError::new())?;
             loop {
-                std::thread::sleep(Duration::from_secs(60));
+                std::thread::sleep(Duration::from_mins(1));
             }
         })
     }
@@ -290,13 +294,14 @@ struct ParkAfterTerminal {
 
 impl FlowEventSink for ParkAfterTerminal {
     fn emit(&self, event: &FlowEvent) {
-        if event.kind() != FlowEventKind::StepResultCommitted || event.source_node_id().as_str() != NODE
+        if event.kind() != FlowEventKind::StepResultCommitted
+            || event.source_node_id().as_str() != NODE
         {
             return;
         }
         std::fs::write(&self.reached, []).expect("announce terminal transition boundary");
         loop {
-            std::thread::sleep(Duration::from_secs(60));
+            std::thread::sleep(Duration::from_mins(1));
         }
     }
 }
@@ -412,7 +417,7 @@ async fn run_worker(
 }
 
 async fn inspect_recover_restart(point: CrashPoint, url: String) -> Result<(), Box<dyn Error>> {
-    let clock = FixedClock(SystemTime::UNIX_EPOCH + Duration::from_secs(21_000));
+    let clock = FixedClock(SystemTime::UNIX_EPOCH + Duration::from_mins(350));
     let repository = PostgresJobRepository::connect(config(url)?, Arc::new(clock)).await?;
     let key = JobInstanceKey::new(JobName::new(point.job_name())?, &JobParameters::new());
     let node_id = oxide_batch::NodeId::new(NODE)?;
@@ -437,15 +442,24 @@ async fn inspect_recover_restart(point: CrashPoint, url: String) -> Result<(), B
     assert_eq!(original.metadata().status(), BatchStatus::Started);
     match point {
         CrashPoint::BeforeStateCommit => {
-            assert_eq!(durable.execution().metadata().status(), BatchStatus::Started);
+            assert_eq!(
+                durable.execution().metadata().status(),
+                BatchStatus::Started
+            );
             assert!(durable.context().is_none());
         }
         CrashPoint::AfterStateCommitBeforeTransition => {
-            assert_eq!(durable.execution().metadata().status(), BatchStatus::Started);
+            assert_eq!(
+                durable.execution().metadata().status(),
+                BatchStatus::Started
+            );
             assert_eq!(durable.context().and_then(state_value), Some(1));
         }
         CrashPoint::AfterTerminalTransition => {
-            assert_eq!(durable.execution().metadata().status(), BatchStatus::Completed);
+            assert_eq!(
+                durable.execution().metadata().status(),
+                BatchStatus::Completed
+            );
             assert_eq!(durable.context().and_then(state_value), Some(1));
         }
     }
@@ -459,7 +473,9 @@ async fn inspect_recover_restart(point: CrashPoint, url: String) -> Result<(), B
         FailureId::new(21_000)?,
     )?;
     let mut recover = repository.begin().await?;
-    recover.recover_job_execution(original.id(), &request).await?;
+    recover
+        .recover_job_execution(original.id(), &request)
+        .await?;
     recover.commit().await?;
 
     let ids = SequentialIdGenerator::new(NonZeroU64::MIN);
@@ -502,18 +518,17 @@ async fn inspect_recover_restart(point: CrashPoint, url: String) -> Result<(), B
     verify.rollback().await?;
 
     match point {
-        CrashPoint::BeforeStateCommit => {
-            assert_eq!(calls.load(Ordering::SeqCst), 1);
-            assert_eq!(final_state.context().and_then(state_value), Some(2));
-        }
-        CrashPoint::AfterStateCommitBeforeTransition => {
+        CrashPoint::BeforeStateCommit | CrashPoint::AfterStateCommitBeforeTransition => {
             assert_eq!(calls.load(Ordering::SeqCst), 1);
             assert_eq!(final_state.context().and_then(state_value), Some(2));
         }
         CrashPoint::AfterTerminalTransition => {
             assert_eq!(calls.load(Ordering::SeqCst), 0);
             assert_eq!(final_state.context().and_then(state_value), Some(1));
-            assert_eq!(final_state.execution().metadata().status(), BatchStatus::Completed);
+            assert_eq!(
+                final_state.execution().metadata().status(),
+                BatchStatus::Completed
+            );
         }
     }
     repository.close().await?;

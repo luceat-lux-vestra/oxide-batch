@@ -962,11 +962,14 @@ impl fmt::Display for FlowJobError {
 
 impl Error for FlowJobError {}
 
+const RESERVED_CUSTOM_LEAF_STATE_SCHEMA: &str = "oxide_batch.empty.v1";
+
 fn custom_leaf_registration_matches(
     compiled: &crate::CustomLeafNode,
     registration: &crate::CustomLeafRegistration,
 ) -> bool {
-    compiled.kind() == registration.kind()
+    compiled.state_schema_id().as_str() != RESERVED_CUSTOM_LEAF_STATE_SCHEMA
+        && compiled.kind() == registration.kind()
         && compiled.handler_revision() == registration.handler_revision()
         && compiled.state_schema_id() == registration.state_schema_id()
         && compiled.state_schema_version() == registration.state_schema_version()
@@ -3722,7 +3725,6 @@ impl<'a> FlowLauncher<'a> {
                                         TaskletOutcome::Stopped,
                                     )));
                                 }
-                                _ => return Ok(Err(failure)),
                             }
                         }
                         FaultDecision::Stop => {
@@ -3893,11 +3895,6 @@ impl<'a> FlowLauncher<'a> {
                             TaskletExecutionOutcome::Unknown,
                             ExitStatus::unknown(),
                             None,
-                        ),
-                        _ => (
-                            TaskletExecutionOutcome::Failed(TaskletFailure::Error),
-                            ExitStatus::failed(),
-                            Some(TaskletFailure::Error),
                         ),
                     }
                 }
