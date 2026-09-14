@@ -97,11 +97,12 @@ jobs:
           set -euo pipefail
           rm -f .github/scripts/pr271-final-review-fix.py
           rm -f .github/workflows/pr271-rustls-lock-bootstrap.yml
+          test ! -e .github/scripts/pr271-final-review-fix.py
+          test ! -e .github/workflows/pr271-rustls-lock-bootstrap.yml
+          git diff --quiet 552a4575212f0ab0bc43072ddb7152e606e7bfe1 -- Cargo.lock
           git add -A
           git diff --cached --check
           git diff --cached --quiet && { echo 'expected cleanup changes'; exit 1; }
-          test -z "$(git diff --cached --name-only | grep '^Cargo.lock$' || true)"
-          test -z "$(git diff --cached --name-only | grep 'pr271-final-review-fix.py\|pr271-rustls-lock-bootstrap.yml' || true)" || true
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "fix(flow): finalize custom-leaf review surface"
