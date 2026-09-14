@@ -60,8 +60,8 @@ jobs:
           import re
           from pathlib import Path
 
-          path = Path('crates/oxide-batch/src/flow.rs')
-          text = path.read_text()
+          flow = Path('crates/oxide-batch/src/flow.rs')
+          text = flow.read_text()
           pattern = re.compile(
               r'        if !matches!\(outcome, TaskletExecutionOutcome::Unknown\) \{\n'
               r'            if let Some\(state\) = candidate_state\.as_ref\(\) \{\n'
@@ -72,15 +72,7 @@ jobs:
               re.S,
           )
           match = pattern.search(text)
-          if match is None:
-              collapsed = (
-                  '        if !matches!(outcome, TaskletExecutionOutcome::Unknown)\n'
-                  '            && let Some(state) = candidate_state.as_ref()\n'
-                  '        {\n'
-              )
-              if collapsed not in text:
-                  raise SystemExit('UNKNOWN state guard regex not found')
-          else:
+          if match is not None:
               replacement = (
                   '        if !matches!(outcome, TaskletExecutionOutcome::Unknown)\n'
                   '            && let Some(state) = candidate_state.as_ref()\n'
@@ -89,7 +81,28 @@ jobs:
                   + '        }\n\n'
                   + '        let mut failures'
               )
-              path.write_text(text[:match.start()] + replacement + text[match.end():])
+              flow.write_text(text[:match.start()] + replacement + text[match.end():])
+          elif '&& let Some(state) = candidate_state.as_ref()' not in text:
+              raise SystemExit('UNKNOWN state guard regex not found')
+
+          runtime = Path('crates/oxide-batch/tests/custom_leaf_runtime.rs')
+          text = runtime.read_text()
+          old = '''    let mut launch = Box::pin(
+              FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref()).launch(
+                  &job,
+                  &JobParameters::new(),
+                  &stop,
+              ),
+          );
+          '''.replace('              ', '    ')
+          new = '''    let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
+          let parameters = JobParameters::new();
+          let mut launch = Box::pin(launcher.launch(&job, &parameters, &stop));
+          '''.replace('          ', '')
+          if old not in text and 'let launcher = FlowLauncher::new(&repository' not in text:
+              raise SystemExit('ownership test lifetime anchor not found')
+          if old in text:
+              runtime.write_text(text.replace(old, new, 1))
           PY
           cargo fmt --all
           git diff --check
