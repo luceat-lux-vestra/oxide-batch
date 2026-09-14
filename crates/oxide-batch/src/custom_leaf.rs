@@ -1,13 +1,29 @@
 //! Registered custom-leaf handler contract for the single flow runtime.
 
 use std::fmt;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
+use futures_util::FutureExt;
+
 use crate::{
-    BoxFuture, ComponentRevision, CustomLeafKind, ExecutionContext, JobExecutionId, JobParameters,
-    StateSchemaId, StateSchemaVersion, StepExecutionId, StepExecutionListener, StopToken,
-    TaskletContext, TaskletError, TaskletOutcome,
+    BoxFuture, ComponentRevision, CustomLeafKind, ExecutionContext, FaultRuntime, JobExecutionId,
+    JobParameters, StateSchemaId, StateSchemaVersion, StepExecutionId, StepExecutionListener,
+    StopToken, TaskletContext, TaskletError, TaskletFailure, TaskletOutcome,
 };
+
+pub(crate) async fn invoke_custom_leaf(
+    handler: &dyn CustomLeafHandler,
+    context: CustomLeafContext<'_>,
+) -> Result<CustomLeafResult, TaskletFailure> {
+    let future = catch_unwind(AssertUnwindSafe(|| handler.execute(context)))
+        .map_err(|_| TaskletFailure::Panic)?;
+    match AssertUnwindSafe(future).catch_unwind().await {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(_)) => Err(TaskletFailure::Error),
+        Err(_) => Err(TaskletFailure::Panic),
+    }
+}
 
 /// Application handler for one registered custom-leaf kind.
 ///
@@ -77,7 +93,10 @@ impl fmt::Debug for CustomLeafContext<'_> {
             .debug_struct("CustomLeafContext")
             .field("job_execution_id", &self.tasklet.job_execution_id())
             .field("step_execution_id", &self.tasklet.step_execution_id())
-            .field("stop_requested", &self.tasklet.stop_token().is_stop_requested())
+            .field(
+                "stop_requested",
+                &self.tasklet.stop_token().is_stop_requested(),
+            )
             .field("previous_state", &self.previous_state.map(|_| "<redacted>"))
             .finish_non_exhaustive()
     }
@@ -134,6 +153,7 @@ pub struct CustomLeafRegistration {
     state_schema_id: StateSchemaId,
     state_schema_version: StateSchemaVersion,
     handler: Arc<dyn CustomLeafHandler>,
+    fault_runtime: Option<FaultRuntime>,
     listeners: Vec<(ComponentRevision, Arc<dyn StepExecutionListener>)>,
 }
 
@@ -153,8 +173,16 @@ impl CustomLeafRegistration {
             state_schema_id,
             state_schema_version,
             handler,
+            fault_runtime: None,
             listeners: Vec::new(),
         }
+    }
+
+    /// Installs the framework fault runtime matching the compiled policy.
+    #[must_use]
+    pub fn with_fault_runtime(mut self, fault_runtime: FaultRuntime) -> Self {
+        self.fault_runtime = Some(fault_runtime);
+        self
     }
 
     /// Registers one framework step listener with its restart-relevant revision.
@@ -196,6 +224,10 @@ impl CustomLeafRegistration {
         self.handler.as_ref()
     }
 
+    pub(crate) const fn fault_runtime(&self) -> Option<&FaultRuntime> {
+        self.fault_runtime.as_ref()
+    }
+
     pub(crate) fn listeners(&self) -> &[(ComponentRevision, Arc<dyn StepExecutionListener>)] {
         &self.listeners
     }
@@ -209,6 +241,10 @@ impl fmt::Debug for CustomLeafRegistration {
             .field("handler_revision", &self.handler_revision)
             .field("state_schema_id", &self.state_schema_id)
             .field("state_schema_version", &self.state_schema_version)
+            .field(
+                "fault_runtime",
+                &self.fault_runtime.as_ref().map(|_| "<attached>"),
+            )
             .field("listener_count", &self.listeners.len())
             .finish_non_exhaustive()
     }

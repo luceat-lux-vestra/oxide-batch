@@ -1,3 +1,5 @@
+//! Custom-leaf definition identity and manifest tests.
+
 use oxide_batch_core::{
     ComponentRevision, DefinitionRevision, FlowTarget, JobName, MANIFEST_FORMAT_ADVANCED_FLOW,
     NodeId, StateSchemaId, StateSchemaVersion, StepName, TerminalKind,

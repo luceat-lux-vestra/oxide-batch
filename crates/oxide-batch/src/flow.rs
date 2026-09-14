@@ -14,18 +14,20 @@ use futures_util::{FutureExt, StreamExt};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use crate::custom_leaf::invoke_custom_leaf;
 use crate::runtime::{invoke_after_step, invoke_before_step, invoke_tasklet};
 use crate::{
-    BatchStatus, BoxFuture, Clock, CompiledExecutionPlan, CompiledFlowScope, ExecutionAttempt,
-    ExecutionCorrelation, ExecutionCounts, ExitCode, ExitStatus, FailureCategory, FailureSummary,
-    FlowDecision, FlowDecisionRequest, FlowDecisionSequence, FlowNode, FlowSelectionError,
-    FlowStepState, FlowTarget, FlowTransitionKind, IdGenerator, JobExecution, JobExecutionId,
-    JobInstance, JobInstanceId, JobInstanceKey, JobName, JobParameters, JobRepository,
-    LifecycleTransition, ListenerContext, ListenerFailure, ListenerFailureKind, ListenerPhase,
-    NodeId, PartitionKey, PartitionPlanEntry, RepositoryCapability, RepositoryError, StartLimit,
-    StepExecution, StepExecutionId, StepName, StepPartition, StopPollInterval, StopTiming,
-    StopToken, TaskletContext, TaskletExecutionOutcome, TaskletFailure, TaskletJob, TaskletOutcome,
-    TaskletStep, TerminalKind,
+    BackoffOutcome, BatchStatus, BoxFuture, Clock, CompiledExecutionPlan, CompiledFlowScope,
+    ExecutionAttempt, ExecutionCorrelation, ExecutionCounts, ExitCode, ExitStatus, FailureCategory,
+    FailureSummary, FaultDecision, FaultDescriptor, FaultEvidence, FaultPhase, FlowDecision,
+    FlowDecisionRequest, FlowDecisionSequence, FlowNode, FlowSelectionError, FlowStepState,
+    FlowTarget, FlowTransitionKind, IdGenerator, JobExecution, JobExecutionId, JobInstance,
+    JobInstanceId, JobInstanceKey, JobName, JobParameters, JobRepository, LifecycleTransition,
+    ListenerContext, ListenerFailure, ListenerFailureKind, ListenerPhase, NodeId, PartitionKey,
+    PartitionPlanEntry, RepositoryCapability, RepositoryError, RetryOrdinal, RetryReservation,
+    SkipCounts, StartLimit, StepExecution, StepExecutionId, StepName, StepPartition,
+    StopPollInterval, StopTiming, StopToken, TaskletContext, TaskletExecutionOutcome,
+    TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep, TerminalKind,
 };
 
 pub(crate) fn decision_matches_manifest(manifest: &Value, request: &FlowDecisionRequest) -> bool {
@@ -968,6 +970,10 @@ fn custom_leaf_registration_matches(
         && compiled.handler_revision() == registration.handler_revision()
         && compiled.state_schema_id() == registration.state_schema_id()
         && compiled.state_schema_version() == registration.state_schema_version()
+        && compiled.fault_policy()
+            == registration
+                .fault_runtime()
+                .map(crate::FaultRuntime::policy)
         && compiled.listener_revisions().len() == registration.listeners().len()
         && compiled
             .listener_revisions()
@@ -1032,6 +1038,11 @@ pub enum FlowFailure {
     /// A linked nested child committed `FAILED`.
     NestedJobChildFailed {
         /// Logical nested-job node.
+        node: NodeId,
+    },
+    /// A custom leaf produced or inherited state outside its declared schema.
+    CustomLeafState {
+        /// Logical custom-leaf node.
         node: NodeId,
     },
     /// A produced exit outcome had no mapping.
@@ -1721,6 +1732,167 @@ impl<'a> FlowLauncher<'a> {
                             )
                         }
                     }
+
+                    FlowNode::CustomLeaf(compiled) => {
+                        let historical = self.latest_step(instance_id, &node_id).await?;
+                        let previous_state = historical.as_ref().and_then(FlowStepState::context);
+                        if previous_state
+                            .is_some_and(|state| !custom_leaf_state_matches(compiled, state))
+                        {
+                            let failure =
+                                self.next_failure_summary(FailureCategory::InvalidDefinition)?;
+                            return Ok(ScopeRun::terminal(
+                                BatchStatus::Failed,
+                                ExitStatus::failed(),
+                                Some(failure),
+                                Some(FlowFailure::CustomLeafState {
+                                    node: node_id.clone(),
+                                }),
+                                steps,
+                                decisions,
+                                states,
+                                listener_failures,
+                            ));
+                        }
+                        if let Some(history) = historical.as_ref()
+                            && history.execution().metadata().status() == BatchStatus::Completed
+                            && !compiled.start_controls().allow_start_if_complete()
+                        {
+                            let digest = step_input_digest(job.plan.fingerprint(), history);
+                            let reused = self
+                                .reusable_decision(
+                                    instance_id,
+                                    &node_id,
+                                    job.plan.fingerprint(),
+                                    &digest,
+                                    FlowTransitionKind::StepExit,
+                                )
+                                .await?;
+                            preceding = Some(history.clone());
+                            states.push(history.clone());
+                            (
+                                node_id.clone(),
+                                history.execution().metadata().exit_status().clone(),
+                                Some(history.execution().id()),
+                                FlowTransitionKind::CompletedStepReuse,
+                                digest,
+                                reused.map(|decision| decision.id()),
+                                None,
+                            )
+                        } else {
+                            let registration =
+                                job.custom_leaves.get(&node_id).ok_or_else(|| {
+                                    FlowRuntimeError::Job(FlowJobError::MissingBinding {
+                                        node: node_id.clone(),
+                                    })
+                                })?;
+                            let created = match self
+                                .create_step(
+                                    execution_id,
+                                    compiled.step_name(),
+                                    &node_id,
+                                    compiled.start_controls().start_limit(),
+                                )
+                                .await
+                            {
+                                Ok(created) => created,
+                                Err(FlowRuntimeError::Repository(
+                                    RepositoryError::StartLimitExceeded { limit, .. },
+                                )) => {
+                                    self.emit_flow_event(&FlowEvent::new(
+                                        FlowEventKind::StartLimitExceeded,
+                                        job.name.clone(),
+                                        instance_id,
+                                        execution_id,
+                                        attempt,
+                                        node_id.clone(),
+                                        None,
+                                        None,
+                                        self.clock.now(),
+                                    ));
+                                    let failure = self
+                                        .next_failure_summary(FailureCategory::IllegalTransition)?;
+                                    return Ok(ScopeRun::terminal(
+                                        BatchStatus::Failed,
+                                        ExitStatus::failed(),
+                                        Some(failure),
+                                        Some(FlowFailure::StartLimitExceeded {
+                                            node: node_id,
+                                            limit,
+                                        }),
+                                        steps,
+                                        decisions,
+                                        states,
+                                        listener_failures,
+                                    ));
+                                }
+                                Err(error) => return Err(error),
+                            };
+                            let correlation = correlation(
+                                &job.name,
+                                instance_id,
+                                execution_id,
+                                attempt,
+                                compiled.step_name(),
+                                created.id(),
+                                ordinal_base.saturating_add(steps.len()),
+                            )?;
+                            let run = self
+                                .run_custom_leaf(
+                                    job.plan.fingerprint(),
+                                    compiled,
+                                    registration,
+                                    previous_state,
+                                    created,
+                                    parameters,
+                                    stop_token,
+                                    &correlation,
+                                )
+                                .await?;
+                            listener_failures.extend(run.listener_failures);
+                            steps.push(run.execution.clone());
+                            if run.outcome == TaskletExecutionOutcome::Unknown {
+                                return Ok(ScopeRun::terminal(
+                                    BatchStatus::Unknown,
+                                    ExitStatus::unknown(),
+                                    run.failure,
+                                    run.flow_failure,
+                                    steps,
+                                    decisions,
+                                    states,
+                                    listener_failures,
+                                ));
+                            }
+                            if matches!(run.outcome, TaskletExecutionOutcome::Stopped(_)) {
+                                return Ok(ScopeRun::terminal(
+                                    BatchStatus::Stopped,
+                                    ExitStatus::stopped(),
+                                    None,
+                                    run.flow_failure,
+                                    steps,
+                                    decisions,
+                                    states,
+                                    listener_failures,
+                                ));
+                            }
+                            let state = self.latest_step(instance_id, &node_id).await?.ok_or(
+                                FlowRuntimeError::Repository(RepositoryError::FlowStateCorrupt),
+                            )?;
+                            let digest = step_input_digest(job.plan.fingerprint(), &state);
+                            preceding = Some(state.clone());
+                            states.push(state);
+                            (
+                                node_id.clone(),
+                                run.exit_status,
+                                Some(run.execution.id()),
+                                FlowTransitionKind::StepExit,
+                                digest,
+                                None,
+                                run.flow_failure,
+                            )
+                        }
+                    }
+
                     FlowNode::Decision(compiled) => {
                         let digest = decision_input_digest(
                             job.plan.fingerprint(),
@@ -3431,6 +3603,399 @@ impl<'a> FlowLauncher<'a> {
         Ok(decision)
     }
 
+    async fn invoke_custom_leaf_once_with_execution_control(
+        &self,
+        execution_id: JobExecutionId,
+        handler: &dyn crate::CustomLeafHandler,
+        tasklet_context: TaskletContext<'_>,
+        previous_state: Option<&crate::ExecutionContext>,
+        stop: &StopToken,
+    ) -> Result<Result<crate::CustomLeafResult, TaskletFailure>, FlowRuntimeError> {
+        let context = crate::CustomLeafContext::new(tasklet_context, previous_state);
+        if self.execution_control.is_none() && self.shutdown_signal.is_none() {
+            return Ok(invoke_custom_leaf(handler, context).await);
+        }
+        let invocation = invoke_custom_leaf(handler, context);
+        tokio::pin!(invocation);
+        let mut shutdown_observed = false;
+        loop {
+            tokio::select! {
+                result = &mut invocation => return Ok(result),
+                () = async {
+                    match self.execution_control {
+                        Some((_, interval)) => tokio::time::sleep(interval.get()).await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    self.poll_execution_control(execution_id, stop).await?;
+                }
+                () = async {
+                    match self.shutdown_signal {
+                        Some(signal) => signal.cancelled().await,
+                        None => std::future::pending().await,
+                    }
+                }, if !shutdown_observed => {
+                    shutdown_observed = true;
+                    stop.request_stop();
+                }
+            }
+        }
+    }
+
+    async fn invoke_custom_leaf_with_fault(
+        &self,
+        fingerprint: &[u8; 32],
+        compiled: &crate::CustomLeafNode,
+        registration: &crate::CustomLeafRegistration,
+        tasklet_context: TaskletContext<'_>,
+        previous_state: Option<&crate::ExecutionContext>,
+        stop: &StopToken,
+    ) -> Result<Result<crate::CustomLeafResult, TaskletFailure>, FlowRuntimeError> {
+        let Some(fault) = registration.fault_runtime() else {
+            return self
+                .invoke_custom_leaf_once_with_execution_control(
+                    tasklet_context.job_execution_id(),
+                    registration.handler(),
+                    tasklet_context,
+                    previous_state,
+                    stop,
+                )
+                .await;
+        };
+        let key = custom_leaf_retry_key(fingerprint, compiled, previous_state)?;
+        loop {
+            let retry_ordinal = fault
+                .state()
+                .reserved_ordinal(key)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?
+                .unwrap_or(RetryOrdinal::INITIAL);
+            let invoked = self
+                .invoke_custom_leaf_once_with_execution_control(
+                    tasklet_context.job_execution_id(),
+                    registration.handler(),
+                    tasklet_context,
+                    previous_state,
+                    stop,
+                )
+                .await?;
+            match invoked {
+                Ok(result) => {
+                    fault
+                        .state()
+                        .resolve(key)
+                        .await
+                        .map_err(|_| RepositoryError::Unavailable)?;
+                    fault
+                        .state()
+                        .clear_resolved()
+                        .await
+                        .map_err(|_| RepositoryError::Unavailable)?;
+                    return Ok(Ok(result));
+                }
+                Err(failure) => {
+                    let summary = self.next_failure_summary(FailureCategory::UserComponent)?;
+                    let descriptor = FaultDescriptor::new(
+                        FaultPhase::Process,
+                        summary,
+                        retry_ordinal,
+                        SkipCounts::ZERO,
+                        false,
+                        fault.delivery_mode(),
+                    );
+                    match fault.policy().decide(&descriptor, FaultEvidence::NONE) {
+                        FaultDecision::Retry { ordinal, delay } => {
+                            fault
+                                .state()
+                                .reserve(RetryReservation::new(
+                                    key,
+                                    FaultPhase::Process,
+                                    FailureCategory::UserComponent,
+                                    ordinal,
+                                ))
+                                .await
+                                .map_err(|_| RepositoryError::Unavailable)?;
+                            match fault.sleeper().sleep(delay, stop).await {
+                                BackoffOutcome::Elapsed => {}
+                                BackoffOutcome::Stopped => {
+                                    return Ok(Ok(crate::CustomLeafResult::new(
+                                        TaskletOutcome::Stopped,
+                                    )));
+                                }
+                                _ => return Ok(Err(failure)),
+                            }
+                        }
+                        FaultDecision::Stop => {
+                            return Ok(Ok(crate::CustomLeafResult::new(TaskletOutcome::Stopped)));
+                        }
+                        FaultDecision::Unknown => {
+                            return Ok(Ok(crate::CustomLeafResult::new(
+                                TaskletOutcome::CommitOutcomeUnknown,
+                            )));
+                        }
+                        FaultDecision::FailAndRollback | FaultDecision::Skip { .. } => {
+                            return Ok(Err(failure));
+                        }
+                        _ => return Ok(Err(failure)),
+                    }
+                }
+            }
+        }
+    }
+
+    async fn commit_custom_leaf_state(
+        &self,
+        instance_id: JobInstanceId,
+        node_id: &NodeId,
+        step: &StepExecution,
+        state: &crate::ExecutionContext,
+    ) -> Result<StepExecution, FlowRuntimeError> {
+        let mut unit = self.repository.begin().await?;
+        let proposed = unit
+            .commit_step_execution_context(step.id(), step.version(), state)
+            .await?;
+        match unit.commit().await {
+            Ok(()) => Ok(proposed),
+            Err(RepositoryError::CommitOutcomeUnknown) => {
+                let durable = self
+                    .latest_step(instance_id, node_id)
+                    .await?
+                    .filter(|durable| {
+                        durable.execution().id() == proposed.id()
+                            && durable.execution().version() == proposed.version()
+                            && durable.context() == Some(state)
+                    })
+                    .ok_or(RepositoryError::CommitOutcomeUnknown)?;
+                Ok(durable.execution().clone())
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    async fn run_custom_leaf(
+        &self,
+        fingerprint: &[u8; 32],
+        compiled: &crate::CustomLeafNode,
+        registration: &crate::CustomLeafRegistration,
+        previous_state: Option<&crate::ExecutionContext>,
+        created: StepExecution,
+        parameters: &JobParameters,
+        stop_token: &StopToken,
+        correlation: &ExecutionCorrelation,
+    ) -> Result<StepRun, FlowRuntimeError> {
+        let context = ListenerContext::new(correlation, parameters, stop_token);
+        for (index, (_, listener)) in registration.listeners().iter().enumerate() {
+            if let Err(kind) = invoke_before_step(listener.as_ref(), context).await {
+                let summary = self.next_failure_summary(FailureCategory::UserComponent)?;
+                let failure = ListenerFailure::new(ListenerPhase::BeforeStep, index, kind, summary);
+                let outcome = if kind == ListenerFailureKind::Panic {
+                    TaskletExecutionOutcome::Failed(TaskletFailure::ListenerPanic)
+                } else {
+                    TaskletExecutionOutcome::Failed(TaskletFailure::ListenerError)
+                };
+                let execution = self
+                    .finish_step(
+                        &created,
+                        outcome,
+                        &ExitStatus::failed(),
+                        Some(summary),
+                        false,
+                    )
+                    .await?;
+                self.emit_flow_event(&FlowEvent::new(
+                    FlowEventKind::StepResultCommitted,
+                    correlation.job_name().clone(),
+                    correlation.job_instance_id(),
+                    correlation.job_execution_id(),
+                    correlation.job_attempt(),
+                    compiled.id().clone(),
+                    Some(execution.id()),
+                    None,
+                    self.clock.now(),
+                ));
+                return Ok(StepRun {
+                    execution,
+                    outcome,
+                    exit_status: ExitStatus::failed(),
+                    failure: Some(summary),
+                    flow_failure: Some(FlowFailure::Listener(match outcome {
+                        TaskletExecutionOutcome::Failed(value) => value,
+                        _ => TaskletFailure::ListenerError,
+                    })),
+                    listener_failures: vec![failure],
+                });
+            }
+        }
+
+        let started = self.start_step(&created).await?;
+        let terminal_rollback = AtomicBool::new(false);
+        let tasklet_context = TaskletContext::new_for_flow(
+            parameters,
+            started.job_execution_id(),
+            started.id(),
+            stop_token,
+            correlation,
+            &terminal_rollback,
+        );
+        let invoked = self
+            .invoke_custom_leaf_with_fault(
+                fingerprint,
+                compiled,
+                registration,
+                tasklet_context,
+                previous_state,
+                stop_token,
+            )
+            .await?;
+
+        let mut candidate_state = None;
+        let mut state_failure = false;
+        let (mut outcome, mut exit, tasklet_failure) = match invoked {
+            Ok(result) => {
+                let (tasklet_outcome, state) = result.into_parts();
+                if let Some(state) = state {
+                    if custom_leaf_state_matches(compiled, &state) {
+                        candidate_state = Some(state);
+                    } else {
+                        state_failure = true;
+                    }
+                }
+                if state_failure {
+                    (
+                        TaskletExecutionOutcome::Failed(TaskletFailure::Error),
+                        ExitStatus::failed(),
+                        Some(TaskletFailure::Error),
+                    )
+                } else {
+                    match tasklet_outcome {
+                        TaskletOutcome::Completed if !stop_token.is_stop_requested() => (
+                            TaskletExecutionOutcome::Completed,
+                            ExitStatus::completed(),
+                            None,
+                        ),
+                        TaskletOutcome::CompletedWith(exit) if !stop_token.is_stop_requested() => {
+                            (TaskletExecutionOutcome::Completed, exit, None)
+                        }
+                        TaskletOutcome::Completed
+                        | TaskletOutcome::CompletedWith(_)
+                        | TaskletOutcome::Stopped => (
+                            TaskletExecutionOutcome::Stopped(StopTiming::DuringExecution),
+                            ExitStatus::stopped(),
+                            None,
+                        ),
+                        TaskletOutcome::StoppedAfterBlockingWork => (
+                            TaskletExecutionOutcome::Stopped(StopTiming::AfterBlockingWork),
+                            ExitStatus::stopped(),
+                            None,
+                        ),
+                        TaskletOutcome::CommitOutcomeUnknown => (
+                            TaskletExecutionOutcome::Unknown,
+                            ExitStatus::unknown(),
+                            None,
+                        ),
+                        _ => (
+                            TaskletExecutionOutcome::Failed(TaskletFailure::Error),
+                            ExitStatus::failed(),
+                            Some(TaskletFailure::Error),
+                        ),
+                    }
+                }
+            }
+            Err(failure) => (
+                TaskletExecutionOutcome::Failed(failure),
+                ExitStatus::failed(),
+                Some(failure),
+            ),
+        };
+
+        let tasklet_summary = tasklet_failure
+            .map(|_| self.next_failure_summary(FailureCategory::UserComponent))
+            .transpose()?;
+        let mut durable = started;
+        if let Some(state) = candidate_state.as_ref() {
+            durable = self
+                .commit_custom_leaf_state(
+                    correlation.job_instance_id(),
+                    compiled.id(),
+                    &durable,
+                    state,
+                )
+                .await?;
+        }
+
+        let mut failures = Vec::new();
+        for (index, (_, listener)) in registration.listeners().iter().enumerate().rev() {
+            if let Err(kind) = invoke_after_step(listener.as_ref(), context, outcome).await {
+                let summary = self.next_failure_summary(FailureCategory::UserComponent)?;
+                failures.push(ListenerFailure::new(
+                    ListenerPhase::AfterStep,
+                    index,
+                    kind,
+                    summary,
+                ));
+            }
+        }
+        if let Some(first) = failures.first() {
+            outcome = if first.kind() == ListenerFailureKind::Panic {
+                TaskletExecutionOutcome::Failed(TaskletFailure::ListenerPanic)
+            } else {
+                TaskletExecutionOutcome::Failed(TaskletFailure::ListenerError)
+            };
+            exit = ExitStatus::failed();
+        }
+        let failure = failures
+            .first()
+            .map(|failure| failure.summary())
+            .or(tasklet_summary);
+        let execution = self
+            .finish_step(
+                &durable,
+                outcome,
+                &exit,
+                failure,
+                terminal_rollback.load(Ordering::Acquire),
+            )
+            .await?;
+        self.emit_flow_event(&FlowEvent::new(
+            FlowEventKind::StepResultCommitted,
+            correlation.job_name().clone(),
+            correlation.job_instance_id(),
+            correlation.job_execution_id(),
+            correlation.job_attempt(),
+            compiled.id().clone(),
+            Some(execution.id()),
+            None,
+            self.clock.now(),
+        ));
+        let flow_failure = if let Some(first) = failures.first() {
+            Some(FlowFailure::Listener(
+                if first.kind() == ListenerFailureKind::Panic {
+                    TaskletFailure::ListenerPanic
+                } else {
+                    TaskletFailure::ListenerError
+                },
+            ))
+        } else if state_failure {
+            Some(FlowFailure::CustomLeafState {
+                node: compiled.id().clone(),
+            })
+        } else {
+            match outcome {
+                TaskletExecutionOutcome::Failed(value) => Some(FlowFailure::Tasklet(value)),
+                _ => None,
+            }
+        };
+        Ok(StepRun {
+            execution,
+            outcome,
+            exit_status: exit,
+            failure,
+            flow_failure,
+            listener_failures: failures,
+        })
+    }
+
     #[allow(clippy::too_many_lines)]
     async fn run_step(
         &self,
@@ -3684,6 +4249,47 @@ impl<'a> FlowLauncher<'a> {
     }
 }
 
+fn custom_leaf_state_matches(
+    compiled: &crate::CustomLeafNode,
+    state: &crate::ExecutionContext,
+) -> bool {
+    if state.schema_id() != compiled.state_schema_id()
+        || state.schema_version() != compiled.state_schema_version()
+    {
+        return false;
+    }
+    state
+        .to_json()
+        .ok()
+        .and_then(|bytes| {
+            crate::ExecutionContext::from_json(&bytes, crate::StateLimits::default()).ok()
+        })
+        .is_some()
+}
+
+fn custom_leaf_retry_key(
+    fingerprint: &[u8; 32],
+    compiled: &crate::CustomLeafNode,
+    previous_state: Option<&crate::ExecutionContext>,
+) -> Result<crate::RetryKey, FlowRuntimeError> {
+    let state_digest = match previous_state {
+        Some(state) => {
+            let bytes = state
+                .to_json()
+                .map_err(|_| RepositoryError::FlowStateCorrupt)?;
+            Sha256::digest(bytes).into()
+        }
+        None => [0_u8; 32],
+    };
+    Ok(crate::RetryKey::derive(
+        fingerprint,
+        compiled.step_name(),
+        FaultPhase::Process,
+        &state_digest,
+        0,
+    ))
+}
+
 fn partition_worker_identity(
     compiled: &crate::PartitionedStepNode,
     partition: &StepPartition,
@@ -3859,7 +4465,7 @@ fn scope_execution_span(plan: &CompiledExecutionPlan, scope: &CompiledFlowScope)
             continue;
         };
         match node {
-            FlowNode::Step(_) | FlowNode::PartitionedStep(_) => {
+            FlowNode::Step(_) | FlowNode::CustomLeaf(_) | FlowNode::PartitionedStep(_) => {
                 span = span.saturating_add(1);
             }
             FlowNode::Split(split) => {

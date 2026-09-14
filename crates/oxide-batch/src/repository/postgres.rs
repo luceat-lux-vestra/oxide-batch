@@ -2533,10 +2533,16 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             .map_err(|_| RepositoryError::Unavailable)?;
             row.map(|row| {
                 let durable = decode_durable_step_state(&row)?;
+                let context =
+                    if durable.execution_context.schema_id().as_str() == DEFAULT_CONTEXT_SCHEMA {
+                        None
+                    } else {
+                        Some(durable.execution_context)
+                    };
                 Ok(FlowStepState::new(
                     node_id.clone(),
                     durable.step_execution,
-                    Some(durable.execution_context),
+                    context,
                 ))
             })
             .transpose()
