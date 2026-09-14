@@ -31,23 +31,33 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          path = Path('crates/oxide-batch/tests/postgres_custom_leaf_crash_recovery.rs')
-          text = path.read_text()
-          old = '''    FailureCategory, FailureId, FlowEvent, FlowEventKind, FlowEventSink,
-              FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget, JobInstanceKey,
-              JobName, JobParameters, JobRepository, ListenerContext, ListenerError, PostgresConfig,
-              PostgresJobRepository, PostgresMigrator, RecoveryRequest, SequentialIdGenerator, StateLimits,
+
+          source = Path('crates/oxide-batch/tests/postgres_custom_leaf_crash_recovery.rs')
+          text = source.read_text()
+          replacements = [
+              ('FlowExecutionOutcome, FlowGraph,', 'FlowExecutionOutcome, FlowFailure, FlowGraph,'),
+              ('FlowLauncher, FlowNode, FlowTarget,', 'FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget,'),
+              ('RecoveryRequest, SequentialIdGenerator,', 'RecoveryRequest, RepositoryError, SequentialIdGenerator,'),
+          ]
+          for old, new in replacements:
+              if new not in text:
+                  if old not in text:
+                      raise SystemExit(f'postgres custom-leaf import token not found: {old}')
+                  text = text.replace(old, new, 1)
+          source.write_text(text)
+
+          script = Path('.github/scripts/pr271-final-review-fix.py')
+          patch = script.read_text()
+          old_guard = '''elif new_import not in text:
+              raise SystemExit("postgres custom-leaf import anchor not found")
           '''.replace('              ', '    ')
-          new = '''    FailureCategory, FailureId, FlowEvent, FlowEventKind, FlowEventSink,
-              FlowExecutionOutcome, FlowFailure, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowRuntimeError,
-              FlowTarget, JobInstanceKey, JobName, JobParameters, JobRepository, ListenerContext,
-              ListenerError, PostgresConfig, PostgresJobRepository, PostgresMigrator, RecoveryRequest,
-              RepositoryError, SequentialIdGenerator, StateLimits,
+          new_guard = '''elif new_import not in text:
+              pass
           '''.replace('              ', '    ')
-          if new not in text:
-              if old not in text:
-                  raise SystemExit('postgres custom-leaf import pre-anchor not found')
-              path.write_text(text.replace(old, new, 1))
+          if old_guard not in patch and new_guard not in patch:
+              raise SystemExit('review-fix import guard not found')
+          if old_guard in patch:
+              script.write_text(patch.replace(old_guard, new_guard, 1))
           PY
           python3 .github/scripts/pr271-final-review-fix.py
           cargo fmt --all
