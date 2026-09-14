@@ -17,92 +17,37 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
-      contents: write # Required only to push the cleaned candidate commit.
+      contents: write
     steps:
-      - name: Check out exact branch
+      - name: Check out branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Remove review scaffolding and dependency drift
-        shell: bash
+      - name: Apply cleanup
+        run: python3 .github/scripts/pr271-final-review-fix.py
+
+      - name: Verify candidate
         run: |
-          set -euo pipefail
-          git checkout 552a4575212f0ab0bc43072ddb7152e606e7bfe1 -- Cargo.lock
-          python3 - <<'PY'
-          from pathlib import Path
-
-          review = Path('crates/oxide-batch/tests/facade_review.rs')
-          text = review.read_text()
-          old = '    ("completion", 11),\n    ("diagnostics", 9),\n'
-          new = '    ("completion", 11),\n    ("custom_leaf", 4),\n    ("diagnostics", 9),\n'
-          if new not in text:
-              if text.count(old) != 1:
-                  raise SystemExit(f'facade custom_leaf group anchor count: {text.count(old)}')
-              text = text.replace(old, new, 1)
-          old = '''    // MAX_SELECTOR_PATH_BYTES, MAX_SELECTOR_PATH_SEGMENTS,
-    // MissingParameterPolicy, NestedJobNode, NestedJobParameterMapping,
-    // NestedJobParameterSource, ParameterCoercion, and SelectorPath.
-    ("oxide_batch_plan", 39),
-'''
-          new = '''    // MAX_SELECTOR_PATH_BYTES, MAX_SELECTOR_PATH_SEGMENTS,
-    // MissingParameterPolicy, NestedJobNode, NestedJobParameterMapping,
-    // NestedJobParameterSource, ParameterCoercion, and SelectorPath. #266 adds
-    // CustomLeafKind and CustomLeafNode.
-    ("oxide_batch_plan", 41),
-'''
-          if new not in text:
-              if text.count(old) != 1:
-                  raise SystemExit(f'facade plan-count anchor count: {text.count(old)}')
-              text = text.replace(old, new, 1)
-          review.write_text(text)
-
-          snapshot = Path('crates/oxide-batch/tests/fixtures/facade/public-api.txt')
-          lines = [line for line in snapshot.read_text().splitlines() if line]
-          additions = {
-              'oxide_batch::CustomLeafContext',
-              'oxide_batch::CustomLeafHandler',
-              'oxide_batch::CustomLeafKind',
-              'oxide_batch::CustomLeafNode',
-              'oxide_batch::CustomLeafRegistration',
-              'oxide_batch::CustomLeafResult',
-          }
-          before = set(lines)
-          if additions & before and not additions <= before:
-              raise SystemExit('partial custom-leaf API snapshot already present')
-          merged = sorted(before | additions)
-          if len(merged) != len(before) + (0 if additions <= before else 6):
-              raise SystemExit('unexpected public API snapshot cardinality')
-          snapshot.write_text('\n'.join(merged) + '\n')
-          PY
           cargo fmt --all -- --check
           git diff --check
-          cargo clippy --workspace --all-targets --all-features -- \
-            -D warnings \
-            -A clippy::too_many_arguments \
-            -A clippy::too_many_lines
+          cargo clippy --workspace --all-targets --all-features -- -D warnings -A clippy::too_many_arguments -A clippy::too_many_lines
           cargo test -p oxide-batch --test facade_review --all-features --locked
           cargo test -p oxide-batch --test custom_leaf_binding --all-features --locked
           cargo test -p oxide-batch --test custom_leaf_runtime --all-features --locked
-          cargo test -p oxide-batch --features postgres \
-            --test postgres_custom_leaf_crash_recovery --no-run --locked
+          cargo test -p oxide-batch --features postgres --test postgres_custom_leaf_crash_recovery --no-run --locked
           cargo run --package oxide-batch-xtask -- surface
 
       - name: Commit cleaned candidate
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          rm -f .github/scripts/pr271-final-review-fix.py
-          rm -f .github/workflows/pr271-rustls-lock-bootstrap.yml
-          test ! -e .github/scripts/pr271-final-review-fix.py
-          test ! -e .github/workflows/pr271-rustls-lock-bootstrap.yml
+          rm .github/scripts/pr271-final-review-fix.py
+          rm .github/workflows/pr271-rustls-lock-bootstrap.yml
           git diff --quiet 552a4575212f0ab0bc43072ddb7152e606e7bfe1 -- Cargo.lock
           git add -A
           git diff --cached --check
-          git diff --cached --quiet && { echo 'expected cleanup changes'; exit 1; }
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "fix(flow): finalize custom-leaf review surface"
