@@ -249,8 +249,9 @@ async fn custom_leaf_observes_framework_owned_cancellation_and_is_joined()
     let (clock, ids, repository) = infrastructure();
     let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
     let (source, stop) = StopSource::new();
+    let parameters = JobParameters::new();
 
-    let launch = launcher.launch(&job, &JobParameters::new(), &stop);
+    let launch = launcher.launch(&job, &parameters, &stop);
     let request_stop = async {
         while entered.load(Ordering::SeqCst) == 0 {
             tokio::task::yield_now().await;
