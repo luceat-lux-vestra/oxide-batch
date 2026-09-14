@@ -48,18 +48,49 @@ jobs:
 
           script = Path('.github/scripts/pr271-final-review-fix.py')
           patch = script.read_text()
-          old_guard = '''elif new_import not in text:
-              raise SystemExit("postgres custom-leaf import anchor not found")
-          '''.replace('              ', '    ')
-          new_guard = '''elif new_import not in text:
-              pass
-          '''.replace('              ', '    ')
+          old_guard = 'elif new_import not in text:\n    raise SystemExit("postgres custom-leaf import anchor not found")\n'
+          new_guard = 'elif new_import not in text:\n    pass\n'
           if old_guard not in patch and new_guard not in patch:
               raise SystemExit('review-fix import guard not found')
           if old_guard in patch:
               script.write_text(patch.replace(old_guard, new_guard, 1))
           PY
           python3 .github/scripts/pr271-final-review-fix.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('crates/oxide-batch/src/flow.rs')
+          text = path.read_text()
+          old = '''        if !matches!(outcome, TaskletExecutionOutcome::Unknown) {
+              if let Some(state) = candidate_state.as_ref() {
+                  durable = self
+                      .commit_custom_leaf_state(
+                          correlation.job_instance_id(),
+                          compiled.id(),
+                          &durable,
+                          state,
+                      )
+                      .await?;
+              }
+          }
+          '''.replace('              ', '    ')
+          new = '''        if !matches!(outcome, TaskletExecutionOutcome::Unknown)
+              && let Some(state) = candidate_state.as_ref()
+          {
+              durable = self
+                  .commit_custom_leaf_state(
+                      correlation.job_instance_id(),
+                      compiled.id(),
+                      &durable,
+                      state,
+                  )
+                  .await?;
+          }
+          '''.replace('              ', '    ')
+          if old not in text and new not in text:
+              raise SystemExit('UNKNOWN state guard anchor not found')
+          if old in text:
+              path.write_text(text.replace(old, new, 1))
+          PY
           cargo fmt --all
           git diff --check
           cargo clippy --workspace --all-targets --all-features -- \
