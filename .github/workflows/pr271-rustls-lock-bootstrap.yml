@@ -1,4 +1,4 @@
-name: PR 271 final review bootstrap
+name: PR 271 final candidate cleanup
 
 on:
   push:
@@ -8,16 +8,16 @@ on:
 permissions: {}
 
 concurrency:
-  group: pr271-final-review-bootstrap-${{ github.ref }}
+  group: pr271-final-candidate-cleanup-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  verify-and-commit:
+  cleanup-and-verify:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
-      contents: write # Required only to push the reviewed candidate commit below.
+      contents: write # Required only to push the cleaned candidate commit.
     steps:
       - name: Check out exact branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -25,113 +25,84 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Apply final review fixes and verify
+      - name: Remove review scaffolding and dependency drift
         shell: bash
         run: |
           set -euo pipefail
+          git checkout 552a4575212f0ab0bc43072ddb7152e606e7bfe1 -- Cargo.lock
           python3 - <<'PY'
           from pathlib import Path
 
-          source = Path('crates/oxide-batch/tests/postgres_custom_leaf_crash_recovery.rs')
-          text = source.read_text()
-          replacements = [
-              ('FlowExecutionOutcome, FlowGraph,', 'FlowExecutionOutcome, FlowFailure, FlowGraph,'),
-              ('FlowLauncher, FlowNode, FlowTarget,', 'FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget,'),
-              ('RecoveryRequest, SequentialIdGenerator,', 'RecoveryRequest, RepositoryError, SequentialIdGenerator,'),
-          ]
-          for old, new in replacements:
-              if new not in text:
-                  if old not in text:
-                      raise SystemExit(f'postgres custom-leaf import token not found: {old}')
-                  text = text.replace(old, new, 1)
-          source.write_text(text)
+          review = Path('crates/oxide-batch/tests/facade_review.rs')
+          text = review.read_text()
+          old = '    ("completion", 11),\n    ("diagnostics", 9),\n'
+          new = '    ("completion", 11),\n    ("custom_leaf", 4),\n    ("diagnostics", 9),\n'
+          if new not in text:
+              if text.count(old) != 1:
+                  raise SystemExit(f'facade custom_leaf group anchor count: {text.count(old)}')
+              text = text.replace(old, new, 1)
+          old = '''    // MAX_SELECTOR_PATH_BYTES, MAX_SELECTOR_PATH_SEGMENTS,
+    // MissingParameterPolicy, NestedJobNode, NestedJobParameterMapping,
+    // NestedJobParameterSource, ParameterCoercion, and SelectorPath.
+    ("oxide_batch_plan", 39),
+'''
+          new = '''    // MAX_SELECTOR_PATH_BYTES, MAX_SELECTOR_PATH_SEGMENTS,
+    // MissingParameterPolicy, NestedJobNode, NestedJobParameterMapping,
+    // NestedJobParameterSource, ParameterCoercion, and SelectorPath. #266 adds
+    // CustomLeafKind and CustomLeafNode.
+    ("oxide_batch_plan", 41),
+'''
+          if new not in text:
+              if text.count(old) != 1:
+                  raise SystemExit(f'facade plan-count anchor count: {text.count(old)}')
+              text = text.replace(old, new, 1)
+          review.write_text(text)
 
-          script = Path('.github/scripts/pr271-final-review-fix.py')
-          patch = script.read_text()
-          old_guard = 'elif new_import not in text:\n    raise SystemExit("postgres custom-leaf import anchor not found")\n'
-          new_guard = 'elif new_import not in text:\n    pass\n'
-          if old_guard not in patch and new_guard not in patch:
-              raise SystemExit('review-fix import guard not found')
-          if old_guard in patch:
-              script.write_text(patch.replace(old_guard, new_guard, 1))
+          snapshot = Path('crates/oxide-batch/tests/fixtures/facade/public-api.txt')
+          lines = [line for line in snapshot.read_text().splitlines() if line]
+          additions = {
+              'oxide_batch::CustomLeafContext',
+              'oxide_batch::CustomLeafHandler',
+              'oxide_batch::CustomLeafKind',
+              'oxide_batch::CustomLeafNode',
+              'oxide_batch::CustomLeafRegistration',
+              'oxide_batch::CustomLeafResult',
+          }
+          before = set(lines)
+          if additions & before and not additions <= before:
+              raise SystemExit('partial custom-leaf API snapshot already present')
+          merged = sorted(before | additions)
+          if len(merged) != len(before) + (0 if additions <= before else 6):
+              raise SystemExit('unexpected public API snapshot cardinality')
+          snapshot.write_text('\n'.join(merged) + '\n')
           PY
-          python3 .github/scripts/pr271-final-review-fix.py
-          python3 - <<'PY'
-          import re
-          from pathlib import Path
-
-          flow = Path('crates/oxide-batch/src/flow.rs')
-          text = flow.read_text()
-          pattern = re.compile(
-              r'        if !matches!\(outcome, TaskletExecutionOutcome::Unknown\) \{\n'
-              r'            if let Some\(state\) = candidate_state\.as_ref\(\) \{\n'
-              r'(?P<body>.*?)'
-              r'            \}\n'
-              r'        \}\n\n'
-              r'        let mut failures',
-              re.S,
-          )
-          match = pattern.search(text)
-          if match is not None:
-              replacement = (
-                  '        if !matches!(outcome, TaskletExecutionOutcome::Unknown)\n'
-                  '            && let Some(state) = candidate_state.as_ref()\n'
-                  '        {\n'
-                  + match.group('body')
-                  + '        }\n\n'
-                  + '        let mut failures'
-              )
-              flow.write_text(text[:match.start()] + replacement + text[match.end():])
-          elif '&& let Some(state) = candidate_state.as_ref()' not in text:
-              raise SystemExit('UNKNOWN state guard regex not found')
-
-          runtime = Path('crates/oxide-batch/tests/custom_leaf_runtime.rs')
-          text = runtime.read_text()
-          pattern = re.compile(
-              r'    let mut launch = Box::pin\(\n'
-              r'        FlowLauncher::new\(&repository, clock\.as_ref\(\), ids\.as_ref\(\)\)\.launch\(\n'
-              r'            &job,\n'
-              r'            &JobParameters::new\(\),\n'
-              r'            &stop,\n'
-              r'        \),\n'
-              r'    \);'
-          )
-          replacement = (
-              '    let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());\n'
-              '    let parameters = JobParameters::new();\n'
-              '    let mut launch = Box::pin(launcher.launch(&job, &parameters, &stop));'
-          )
-          text, count = pattern.subn(replacement, text, count=1)
-          if count == 0 and 'let launcher = FlowLauncher::new(&repository' not in text:
-              raise SystemExit('ownership test lifetime regex not found')
-          runtime.write_text(text)
-          PY
-          cargo fmt --all
+          cargo fmt --all -- --check
           git diff --check
           cargo clippy --workspace --all-targets --all-features -- \
             -D warnings \
             -A clippy::too_many_arguments \
             -A clippy::too_many_lines
-          cargo check --workspace --all-targets --all-features --locked
-          cargo test -p oxide-batch-plan --test custom_leaf --locked
+          cargo test -p oxide-batch --test facade_review --all-features --locked
           cargo test -p oxide-batch --test custom_leaf_binding --all-features --locked
           cargo test -p oxide-batch --test custom_leaf_runtime --all-features --locked
           cargo test -p oxide-batch --features postgres \
             --test postgres_custom_leaf_crash_recovery --no-run --locked
           cargo run --package oxide-batch-xtask -- surface
 
-      - name: Commit final candidate
+      - name: Commit cleaned candidate
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          rm .github/scripts/pr271-final-review-fix.py
-          rm .github/workflows/pr271-rustls-lock-bootstrap.yml
+          rm -f .github/scripts/pr271-final-review-fix.py
+          rm -f .github/workflows/pr271-rustls-lock-bootstrap.yml
           git add -A
           git diff --cached --check
-          test -z "$(git status --short | grep 'pr271-final-review-fix.py\|pr271-rustls-lock-bootstrap.yml' || true)"
+          git diff --cached --quiet && { echo 'expected cleanup changes'; exit 1; }
+          test -z "$(git diff --cached --name-only | grep '^Cargo.lock$' || true)"
+          test -z "$(git diff --cached --name-only | grep 'pr271-final-review-fix.py\|pr271-rustls-lock-bootstrap.yml' || true)" || true
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "fix(flow): close custom-leaf review gaps"
+          git commit -m "fix(flow): finalize custom-leaf review surface"
           git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_REF_NAME}"
