@@ -204,6 +204,72 @@ async fn committed_custom_state_is_reused_on_restart() -> Result<(), Box<dyn Err
     Ok(())
 }
 
+struct CooperativeStopHandler {
+    entered: Arc<AtomicUsize>,
+    observed_stop: Arc<AtomicUsize>,
+}
+
+impl CustomLeafHandler for CooperativeStopHandler {
+    fn execute<'a>(
+        &'a self,
+        context: CustomLeafContext<'a>,
+    ) -> BoxFuture<'a, Result<CustomLeafResult, TaskletError>> {
+        let stop = context.stop_token().clone();
+        let entered = self.entered.clone();
+        let observed_stop = self.observed_stop.clone();
+        Box::pin(async move {
+            entered.store(1, Ordering::SeqCst);
+            while !stop.is_stop_requested() {
+                tokio::task::yield_now().await;
+            }
+            observed_stop.store(1, Ordering::SeqCst);
+            Ok(CustomLeafResult::new(TaskletOutcome::Stopped))
+        })
+    }
+}
+
+#[tokio::test]
+async fn custom_leaf_observes_framework_owned_cancellation_and_is_joined()
+-> Result<(), Box<dyn Error>> {
+    let (name, id, plan) = node("custom-leaf-cancellation", None, None)?;
+    let entered = Arc::new(AtomicUsize::new(0));
+    let observed_stop = Arc::new(AtomicUsize::new(0));
+    let handler = Arc::new(CooperativeStopHandler {
+        entered: entered.clone(),
+        observed_stop: observed_stop.clone(),
+    });
+    let registration = CustomLeafRegistration::new(
+        CustomLeafKind::new("example.handler")?,
+        ComponentRevision::new("handler-v1")?,
+        StateSchemaId::new("example.state")?,
+        StateSchemaVersion::new(1)?,
+        handler,
+    );
+    let job = FlowJob::new(name, plan)?.with_custom_leaf_registration(id, registration)?;
+    let (clock, ids, repository) = infrastructure();
+    let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
+    let (source, stop) = StopSource::new();
+
+    let launch = launcher.launch(&job, &JobParameters::new(), &stop);
+    let request_stop = async {
+        while entered.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+        source.request_stop();
+    };
+    let (report, ()) = tokio::join!(launch, request_stop);
+    let report = report?;
+
+    assert_eq!(observed_stop.load(Ordering::SeqCst), 1);
+    assert_eq!(report.outcome(), &FlowExecutionOutcome::Stopped);
+    assert_eq!(report.step_executions().len(), 1);
+    assert_eq!(
+        report.step_executions()[0].metadata().status(),
+        BatchStatus::Stopped
+    );
+    Ok(())
+}
+
 #[derive(Clone, Copy)]
 enum Mode {
     Error,
