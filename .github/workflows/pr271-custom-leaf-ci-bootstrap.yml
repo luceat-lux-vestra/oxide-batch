@@ -25,6 +25,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 .github/scripts/pr271-review-fix.py
+          python3 .github/scripts/pr271-crash-lint-fix.py
           cargo fmt --all
           git diff --check
           cargo clippy --workspace --all-targets --all-features -- -D warnings -A clippy::too_many_arguments -A clippy::too_many_lines
@@ -41,6 +42,7 @@ jobs:
           set -euo pipefail
           rm .github/workflows/pr271-custom-leaf-ci-bootstrap.yml
           rm .github/scripts/pr271-review-fix.py
+          rm .github/scripts/pr271-crash-lint-fix.py
           git add -A
           git diff --cached --check
           git config user.name "github-actions[bot]"
