@@ -59,6 +59,19 @@ fn exact_custom_leaf_registration_validates() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn duplicate_custom_leaf_registration_fails_closed() -> Result<(), Box<dyn Error>> {
+    let (name, id, compiled) = plan()?;
+    let job = FlowJob::new(name, compiled)?
+        .with_custom_leaf_registration(id.clone(), registration("handler-v1")?)?;
+    let result = job.with_custom_leaf_registration(id.clone(), registration("handler-v1")?);
+    assert!(matches!(
+        result,
+        Err(FlowJobError::DuplicateBinding { node }) if node == id
+    ));
+    Ok(())
+}
+
+#[test]
 fn custom_leaf_revision_mismatch_fails_closed() -> Result<(), Box<dyn Error>> {
     let (name, id, compiled) = plan()?;
     let result = FlowJob::new(name, compiled)?
