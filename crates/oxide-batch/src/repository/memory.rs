@@ -11,12 +11,12 @@ use oxide_batch_repository::{
 
 use crate::{
     ActorRef, BatchStatus, CursorKey, DefinitionDescriptor, DefinitionIdentity, DefinitionRevision,
-    DefinitionUpgrade, DurableStateKind, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps,
-    ExecutionVersion, ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, FlowDecision,
-    FlowDecisionId, FlowDecisionRequest, FlowStepState, FlowTransitionKind, IdentifierKind,
-    JobExecution, JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId,
-    JobInstanceKey, JobInstanceProjection, JobName, JobParameters, LifecycleError,
-    LifecycleTransition, MAX_PARTITIONS, NestedJobLink, NestedJobLinkRequest,
+    DefinitionUpgrade, DurableStateKind, ExecutionContext, ExecutionCounts, ExecutionMetadata,
+    ExecutionTimestamps, ExecutionVersion, ExitStatus, ExplorerError, ExplorerQuery,
+    ExplorerRepository, FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowStepState,
+    FlowTransitionKind, IdentifierKind, JobExecution, JobExecutionId, JobExecutionProjection,
+    JobInstance, JobInstanceId, JobInstanceKey, JobInstanceProjection, JobName, JobParameters,
+    LifecycleError, LifecycleTransition, MAX_PARTITIONS, NestedJobLink, NestedJobLinkRequest,
     NestedJobTerminalObservation, NodeId, OperationId, OperatorAction, OperatorRecord,
     OperatorRecordDraft, OperatorRequestId, OwnerObservation, OwnerToken, ParameterDescriptor,
     PartitionPlanEntry, PartitionResult, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest,
@@ -94,6 +94,7 @@ impl JobRepository for InMemoryJobRepository {
         RepositoryDescriptor::new(
             0,
             [
+                RepositoryCapability::CustomLeafState,
                 RepositoryCapability::ExecutionOwnership,
                 RepositoryCapability::InstanceHolds,
                 RepositoryCapability::NestedJobs,
@@ -140,6 +141,7 @@ struct MemoryState {
     step_executions: BTreeMap<StepExecutionId, StepExecution>,
     step_executions_by_job: BTreeMap<JobExecutionId, Vec<StepExecutionId>>,
     step_logical_ids: BTreeMap<StepExecutionId, NodeId>,
+    step_contexts: BTreeMap<StepExecutionId, ExecutionContext>,
     step_partitions: BTreeMap<StepPartitionId, StepPartition>,
     step_partitions_by_step: BTreeMap<StepExecutionId, Vec<StepPartitionId>>,
     flow_decisions: BTreeMap<FlowDecisionId, FlowDecision>,
@@ -450,6 +452,7 @@ impl InMemoryUnitOfWork<'_> {
         }
         self.staged.step_executions.remove(&step_execution_id);
         self.staged.step_logical_ids.remove(&step_execution_id);
+        self.staged.step_contexts.remove(&step_execution_id);
     }
 
     fn purge_eligible(&self, request: &PurgePlanRequest, now: SystemTime) -> Vec<PurgeCandidate> {
@@ -589,7 +592,12 @@ impl InMemoryUnitOfWork<'_> {
                         .get(step_id)
                         .cloned()
                         .ok_or(RepositoryError::FlowStateCorrupt)?;
-                    return Ok(Some(FlowStepState::new(node_id.clone(), execution, None)));
+                    let context = self.staged.step_contexts.get(step_id).cloned();
+                    return Ok(Some(FlowStepState::new(
+                        node_id.clone(),
+                        execution,
+                        context,
+                    )));
                 }
             }
         }
@@ -812,11 +820,13 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                     value: id.get(),
                 });
             }
-            let counts = self
-                .latest_flow_step_snapshot(instance_id, node_id)?
+            let prior = self.latest_flow_step_snapshot(instance_id, node_id)?;
+            let counts = prior
+                .as_ref()
                 .map_or_else(ExecutionCounts::default, |state| {
                     state.execution().metadata().counts()
                 });
+            let inherited_context = prior.and_then(|state| state.context().cloned());
             let created_at = self.repository.clock.now();
             let metadata = ExecutionMetadata::new(
                 BatchStatus::Starting,
@@ -828,6 +838,9 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
             let execution = StepExecution::new(id, job_execution_id, step_name.clone(), metadata);
             self.staged.step_executions.insert(id, execution.clone());
             self.staged.step_logical_ids.insert(id, node_id.clone());
+            if let Some(context) = inherited_context {
+                self.staged.step_contexts.insert(id, context);
+            }
             self.staged
                 .step_executions_by_job
                 .entry(job_execution_id)
@@ -905,6 +918,42 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .ok_or(RepositoryError::StepExecutionNotFound { id })?;
             execution.enrich_exit_status(expected_version, exit_status.clone())?;
             Ok(execution.clone())
+        })
+    }
+
+    fn commit_step_execution_context<'a>(
+        &'a mut self,
+        id: StepExecutionId,
+        expected_version: ExecutionVersion,
+        context: &'a ExecutionContext,
+    ) -> BoxFuture<'a, Result<StepExecution, RepositoryError>> {
+        Box::pin(async move {
+            let execution = self
+                .staged
+                .step_executions
+                .get(&id)
+                .cloned()
+                .ok_or(RepositoryError::StepExecutionNotFound { id })?;
+            if execution.version() != expected_version {
+                return Err(RepositoryError::Lifecycle(LifecycleError::StaleVersion {
+                    expected: expected_version,
+                    actual: execution.version(),
+                }));
+            }
+            if execution.metadata().status() != BatchStatus::Started {
+                return Err(RepositoryError::FlowStateCorrupt);
+            }
+            let next_version = expected_version.next()?;
+            let updated = StepExecution::from_snapshot(
+                execution.id(),
+                execution.job_execution_id(),
+                execution.step_name().clone(),
+                execution.metadata().clone(),
+                next_version,
+            );
+            self.staged.step_executions.insert(id, updated.clone());
+            self.staged.step_contexts.insert(id, context.clone());
+            Ok(updated)
         })
     }
 

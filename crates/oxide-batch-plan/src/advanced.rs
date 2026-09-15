@@ -192,6 +192,7 @@ impl AdvancedCompiler {
                 FlowNode::Step(_)
                 | FlowNode::Decision(_)
                 | FlowNode::NestedJob(_)
+                | FlowNode::CustomLeaf(_)
                 | FlowNode::Join(_) => {}
             }
         }

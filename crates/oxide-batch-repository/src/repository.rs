@@ -807,6 +807,23 @@ pub trait RepositoryUnitOfWork: Send {
         exit_status: &'a ExitStatus,
     ) -> BoxFuture<'a, Result<StepExecution, RepositoryError>>;
 
+    /// Commits one bounded custom-leaf execution context by compare-and-swap.
+    ///
+    /// Adapters that cannot persist custom-leaf restart state reject the
+    /// negotiated capability rather than silently dropping the candidate.
+    fn commit_step_execution_context<'a>(
+        &'a mut self,
+        _id: StepExecutionId,
+        _expected_version: ExecutionVersion,
+        _context: &'a ExecutionContext,
+    ) -> BoxFuture<'a, Result<StepExecution, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::CustomLeafState,
+            })
+        })
+    }
+
     /// Finds a job instance by its canonical identifying key.
     fn find_job_instance<'a>(
         &'a mut self,
@@ -1297,6 +1314,8 @@ pub enum RepositoryCapability {
     RetentionPurge,
     /// Durable local partition plans and compare-and-swap results.
     StepPartitions,
+    /// Durable bounded custom-leaf execution-context state.
+    CustomLeafState,
     /// Atomic nested-job child creation, linkage, restart reuse, and observation.
     NestedJobs,
 }
@@ -1312,6 +1331,7 @@ impl RepositoryCapability {
             Self::InstanceHolds => "instance holds",
             Self::RetentionPurge => "retention purge",
             Self::StepPartitions => "durable step partitions",
+            Self::CustomLeafState => "custom leaf state",
             Self::NestedJobs => "nested job linkage",
         }
     }
