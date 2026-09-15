@@ -110,9 +110,8 @@ fn custom_kind_changes_definition_fingerprint() -> Result<(), Box<dyn Error>> {
 #[test]
 fn start_controls_change_definition_fingerprint() -> Result<(), Box<dyn Error>> {
     let baseline = compiled_leaf(leaf()?)?;
-    let changed = compiled_leaf(
-        leaf()?.with_start_controls(StartControls::new(StartLimit::new(2)?, true)),
-    )?;
+    let changed =
+        compiled_leaf(leaf()?.with_start_controls(StartControls::new(StartLimit::new(2)?, true)))?;
     assert_ne!(baseline.fingerprint(), changed.fingerprint());
     Ok(())
 }
