@@ -1,13 +1,13 @@
 {
   "binary_size_and_compile_time": {
     "boxed": {
-      "binary_size_bytes": 1810328,
-      "compile_time_seconds": 34.291998281,
+      "binary_size_bytes": 1810304,
+      "compile_time_seconds": 23.104951852,
       "target_directory_isolation": "clean-per-reference"
     },
     "typed": {
-      "binary_size_bytes": 1791184,
-      "compile_time_seconds": 33.976101422,
+      "binary_size_bytes": 1791168,
+      "compile_time_seconds": 23.253668839,
       "target_directory_isolation": "clean-per-reference"
     }
   },
@@ -18,7 +18,7 @@
     "os": "linux",
     "profile": "release",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "e77fba33f9e9aba2c23199d8673441f53e3ff85b",
+    "source_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
     "source_tree_clean": true
   },
   "hard_invariants": {
@@ -34,12 +34,12 @@
   "no_invented_threshold_note": "Throughput, latency, allocation-delta, binary-size, and compile-time numbers are retained as disclosure evidence per the frozen protocol; none is compared against an invented pass/fail threshold by this runner.",
   "observation": {
     "execution_manifest": {
-      "execution_commit": "e77fba33f9e9aba2c23199d8673441f53e3ff85b",
+      "execution_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
         ".github/workflows/m6-gate-h.yml": "236dab3d9c0f8e84e07477b1b57dfcd02eb66db0",
-        "Cargo.lock": "a8d28f534b0ab2ac307cf53a640b969d6415812f",
+        "Cargo.lock": "3371d04d0a34097b91eb09e4347030468d703f90",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
         "crates/oxide-batch-core/src": "30bad9491dc7dd68e877316822e726af7c27ae25",
@@ -180,17 +180,17 @@
     {
       "observation": {
         "boxed": {
-          "max_nanoseconds": 190758511,
-          "mean_nanoseconds": 91773046,
-          "min_nanoseconds": 61300958,
+          "max_nanoseconds": 109988290,
+          "mean_nanoseconds": 78170738,
+          "min_nanoseconds": 43371087,
           "raw_latency_nanoseconds": [
-            66015486,
-            62181847,
-            190758511,
-            61300958,
-            78608430
+            43371087,
+            99547038,
+            109988290,
+            64195691,
+            73751585
           ],
-          "throughput_items_per_second": 544822.2782100966
+          "throughput_items_per_second": 639625.5335340444
         },
         "buffer_reuse": {
           "note": "Delimited component internal buffer reuse is not exposed as a counter.",
@@ -204,17 +204,17 @@
           "typed_per_item_future_allocations": 0
         },
         "typed": {
-          "max_nanoseconds": 61771228,
-          "mean_nanoseconds": 60843447,
-          "min_nanoseconds": 60180338,
+          "max_nanoseconds": 80583499,
+          "mean_nanoseconds": 50394109,
+          "min_nanoseconds": 42665348,
           "raw_latency_nanoseconds": [
-            61771228,
-            60967646,
-            60881046,
-            60416980,
-            60180338
+            42925018,
+            42665348,
+            80583499,
+            42773071,
+            43023609
           ],
-          "throughput_items_per_second": 821781.1854085124
+          "throughput_items_per_second": 992179.4628812666
         },
         "workload": {
           "chunk_size": 50000,

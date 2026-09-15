@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "e77fba33f9e9aba2c23199d8673441f53e3ff85b",
+    "source_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -20,12 +20,12 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "e77fba33f9e9aba2c23199d8673441f53e3ff85b",
+      "execution_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
         ".github/workflows/m5-upgrade.yml": "00d414bd6254e57f0d06aecf2fa4f2d87e0080e3",
-        "Cargo.lock": "a8d28f534b0ab2ac307cf53a640b969d6415812f",
+        "Cargo.lock": "3371d04d0a34097b91eb09e4347030468d703f90",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
         "crates/oxide-batch-core/src": "30bad9491dc7dd68e877316822e726af7c27ae25",
@@ -162,12 +162,12 @@
       "name": "schema1_and_schema2_upgrade_directly_to_schema3",
       "observation": {
         "execution_manifest": {
-          "execution_commit": "e77fba33f9e9aba2c23199d8673441f53e3ff85b",
+          "execution_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-upgrade.yml": "00d414bd6254e57f0d06aecf2fa4f2d87e0080e3",
-            "Cargo.lock": "a8d28f534b0ab2ac307cf53a640b969d6415812f",
+            "Cargo.lock": "3371d04d0a34097b91eb09e4347030468d703f90",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
             "crates/oxide-batch-core/src": "30bad9491dc7dd68e877316822e726af7c27ae25",
@@ -492,12 +492,12 @@
         "current_schema_version": 5,
         "durable_state_unchanged": true,
         "execution_manifest": {
-          "execution_commit": "e77fba33f9e9aba2c23199d8673441f53e3ff85b",
+          "execution_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-upgrade.yml": "00d414bd6254e57f0d06aecf2fa4f2d87e0080e3",
-            "Cargo.lock": "a8d28f534b0ab2ac307cf53a640b969d6415812f",
+            "Cargo.lock": "3371d04d0a34097b91eb09e4347030468d703f90",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
             "crates/oxide-batch-core/src": "30bad9491dc7dd68e877316822e726af7c27ae25",
@@ -630,12 +630,12 @@
       "name": "every_source_backup_restores_its_prior_schema",
       "observation": {
         "execution_manifest": {
-          "execution_commit": "e77fba33f9e9aba2c23199d8673441f53e3ff85b",
+          "execution_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-upgrade.yml": "00d414bd6254e57f0d06aecf2fa4f2d87e0080e3",
-            "Cargo.lock": "a8d28f534b0ab2ac307cf53a640b969d6415812f",
+            "Cargo.lock": "3371d04d0a34097b91eb09e4347030468d703f90",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
             "crates/oxide-batch-core/src": "30bad9491dc7dd68e877316822e726af7c27ae25",
@@ -724,7 +724,7 @@
           },
           {
             "backup": {
-              "archive_bytes": 46170,
+              "archive_bytes": 46172,
               "format": "custom",
               "rows_covered": {
                 "ob_definition_upgrade": 1,
@@ -773,7 +773,7 @@
           },
           {
             "backup": {
-              "archive_bytes": 69524,
+              "archive_bytes": 69531,
               "format": "custom",
               "rows_covered": {
                 "ob_definition_upgrade": 1,
