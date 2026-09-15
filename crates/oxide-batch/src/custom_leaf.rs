@@ -122,7 +122,11 @@ impl CustomLeafResult {
     /// Attaches the next candidate durable custom state.
     ///
     /// The framework validates its declared schema identity and commits it by
-    /// repository CAS before the step terminal lifecycle transition.
+    /// repository CAS before the step terminal lifecycle transition. A valid
+    /// candidate returned in `Ok(CustomLeafResult)` is a restart/recovery
+    /// checkpoint independent of the terminal class, so `Stopped` and
+    /// `CommitOutcomeUnknown` may publish state without being reinterpreted as
+    /// success. Handler errors and panics cannot publish a candidate state.
     #[must_use]
     pub fn with_state(mut self, state: ExecutionContext) -> Self {
         self.state = Some(state);
