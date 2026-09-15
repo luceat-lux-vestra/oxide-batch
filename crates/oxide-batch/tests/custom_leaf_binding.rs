@@ -85,7 +85,7 @@ fn retry_policy() -> Result<FaultPolicy, Box<dyn Error>> {
 
 fn assert_registration_mismatch(
     name: JobName,
-    id: NodeId,
+    id: &NodeId,
     compiled: oxide_batch::CompiledExecutionPlan,
     registration: CustomLeafRegistration,
 ) -> Result<(), Box<dyn Error>> {
@@ -93,7 +93,7 @@ fn assert_registration_mismatch(
         FlowJob::new(name, compiled)?.with_custom_leaf_registration(id.clone(), registration);
     assert!(matches!(
         result,
-        Err(FlowJobError::CustomLeafRegistrationMismatch { node }) if node == id
+        Err(FlowJobError::CustomLeafRegistrationMismatch { node }) if node == *id
     ));
     Ok(())
 }
@@ -123,7 +123,7 @@ fn duplicate_custom_leaf_registration_fails_closed() -> Result<(), Box<dyn Error
 #[test]
 fn custom_leaf_revision_mismatch_fails_closed() -> Result<(), Box<dyn Error>> {
     let (name, id, compiled) = plan()?;
-    assert_registration_mismatch(name, id, compiled, registration("handler-v2")?)
+    assert_registration_mismatch(name, &id, compiled, registration("handler-v2")?)
 }
 
 #[test]
@@ -131,7 +131,7 @@ fn custom_leaf_kind_mismatch_fails_closed() -> Result<(), Box<dyn Error>> {
     let (name, id, compiled) = plan()?;
     assert_registration_mismatch(
         name,
-        id,
+        &id,
         compiled,
         registration_with("other.handler", "handler-v1", "example.state", 1)?,
     )
@@ -142,7 +142,7 @@ fn custom_leaf_state_schema_id_mismatch_fails_closed() -> Result<(), Box<dyn Err
     let (name, id, compiled) = plan()?;
     assert_registration_mismatch(
         name,
-        id,
+        &id,
         compiled,
         registration_with("example.handler", "handler-v1", "other.state", 1)?,
     )
@@ -153,7 +153,7 @@ fn custom_leaf_state_schema_version_mismatch_fails_closed() -> Result<(), Box<dy
     let (name, id, compiled) = plan()?;
     assert_registration_mismatch(
         name,
-        id,
+        &id,
         compiled,
         registration_with("example.handler", "handler-v1", "example.state", 2)?,
     )
@@ -171,7 +171,7 @@ fn custom_leaf_listener_presence_mismatch_fails_closed() -> Result<(), Box<dyn E
     )
     .with_listener_revision(ComponentRevision::new("listener-v1")?);
     let (name, id, compiled) = plan_with_node(node)?;
-    assert_registration_mismatch(name, id, compiled, registration("handler-v1")?)
+    assert_registration_mismatch(name, &id, compiled, registration("handler-v1")?)
 }
 
 #[test]
@@ -186,7 +186,7 @@ fn custom_leaf_fault_runtime_presence_mismatch_fails_closed() -> Result<(), Box<
     )
     .with_fault_policy(retry_policy()?);
     let (name, id, compiled) = plan_with_node(node)?;
-    assert_registration_mismatch(name, id, compiled, registration("handler-v1")?)
+    assert_registration_mismatch(name, &id, compiled, registration("handler-v1")?)
 }
 
 #[test]
