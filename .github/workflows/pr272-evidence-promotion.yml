@@ -1,0 +1,53 @@
+name: PR 272 evidence promotion bootstrap
+
+on:
+  push:
+    branches:
+      - dependabot/cargo/cargo-minor-and-patch-32f95b6a42
+
+permissions: {}
+
+concurrency:
+  group: pr272-evidence-promotion-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  promote-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Check out exact branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Promote exact PR 272 producer artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: python3 .github/scripts/pr272-evidence-promote.py
+
+      - name: Verify retained evidence policy and provenance
+        run: |
+          cargo run --package oxide-batch-xtask --bin retained_evidence_policy
+          cargo run --package oxide-batch-xtask -- evidence
+          git diff --check
+
+      - name: Commit evidence-only candidate and remove bootstrap
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm .github/scripts/pr272-evidence-promote.py
+          rm .github/workflows/pr272-evidence-promotion.yml
+          git add -A
+          git diff --cached --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "test(evidence): retain PR 272 dependency campaign"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_REF_NAME}"
