@@ -117,10 +117,7 @@ async fn assert_checkpoint(
     expected_outcome: FlowExecutionOutcome,
     expected_status: BatchStatus,
 ) -> Result<(), Box<dyn Error>> {
-    let (job, id) = job(
-        job_name,
-        Arc::new(CheckpointHandler { mode, value: 7 }),
-    )?;
+    let (job, id) = job(job_name, Arc::new(CheckpointHandler { mode, value: 7 }))?;
     let (clock, ids, repository) = infrastructure();
     let (_, stop) = StopSource::new();
     let report = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref())
