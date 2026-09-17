@@ -1,4 +1,4 @@
-name: Apply #269 recovery patch
+name: "Apply 269 recovery patch"
 
 on:
   push:
@@ -12,7 +12,7 @@ jobs:
   patch:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
@@ -46,15 +46,36 @@ jobs:
               text = target.read_text()
               count = text.count(old)
               if count != 1:
-                  raise SystemExit(f"{path}: expected one anchor, found {count}")
+                  raise SystemExit(f"{path}: expected one global anchor, found {count}: {old[:80]!r}")
               target.write_text(text.replace(old, new, 1))
 
           def insert_before(path: str, anchor: str, addition: str) -> None:
               replace_once(path, anchor, addition + anchor)
 
-          # Shared child recovery transformation. It is deliberately separate
-          # from ordinary lifecycle transitions: UNKNOWN is recoverable and the
-          # parent recovery request owns the disposition/failure evidence.
+          def scoped_replace(path: str, start: str, end: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text()
+              start_at = text.find(start)
+              if start_at < 0:
+                  raise SystemExit(f"{path}: scope start not found: {start!r}")
+              end_at = text.find(end, start_at + len(start))
+              if end_at < 0:
+                  raise SystemExit(f"{path}: scope end not found: {end!r}")
+              section = text[start_at:end_at]
+              count = section.count(old)
+              if count != 1:
+                  raise SystemExit(
+                      f"{path}: expected one scoped anchor, found {count}: {old[:80]!r}"
+                  )
+              section = section.replace(old, new, 1)
+              target.write_text(text[:start_at] + section + text[end_at:])
+
+          def scoped_insert_after(path: str, start: str, end: str, anchor: str, addition: str) -> None:
+              scoped_replace(path, start, end, anchor, anchor + addition)
+
+          def scoped_insert_before(path: str, start: str, end: str, anchor: str, addition: str) -> None:
+              scoped_replace(path, start, end, anchor, addition + anchor)
+
           insert_before(
               "crates/oxide-batch-repository/src/repository.rs",
               "/// Starts isolated repository units of work.\n",
@@ -63,94 +84,144 @@ jobs:
 
           replace_once(
               "crates/oxide-batch/src/repository/memory.rs",
-              "    PartitionMutationError, aggregate_partition_parent, map_partition_aggregation,\n    recovered_execution,\n",
-              "    PartitionMutationError, aggregate_partition_parent, map_partition_aggregation,\n    recovered_execution, recovered_step_execution,\n",
+              "    recovered_execution,\n",
+              "    recovered_execution, recovered_step_execution,\n",
           )
-          replace_once(
+          memory_start = "    fn recover_job_execution<'a>(\n"
+          memory_end = "    fn recovery_decision(\n"
+          scoped_insert_after(
               "crates/oxide-batch/src/repository/memory.rs",
-              "            let recovered = recovered_execution(&prior, request, decided_at)?;\n            let decision_id = self.next_recovery_decision_id()?;\n",
-              '''            let recovered = recovered_execution(&prior, request, decided_at)?;\n            let child_ids = self\n                .staged\n                .step_executions_by_job\n                .get(&id)\n                .cloned()\n                .unwrap_or_default();\n            let mut recovered_children = Vec::new();\n            for child_id in child_ids {\n                let prior_child = self\n                    .staged\n                    .step_executions\n                    .get(&child_id)\n                    .cloned()\n                    .ok_or(RepositoryError::FlowStateCorrupt)?;\n                if let Some(child) =\n                    recovered_step_execution(&prior_child, request, decided_at)?\n                {\n                    recovered_children.push(child);\n                }\n            }\n            let decision_id = self.next_recovery_decision_id()?;\n''',
+              memory_start,
+              memory_end,
+              "            let recovered = recovered_execution(&prior, request, decided_at)?;\n",
+              '''            let child_ids = self\n                .staged\n                .step_executions_by_job\n                .get(&id)\n                .cloned()\n                .unwrap_or_default();\n            let mut recovered_children = Vec::new();\n            for child_id in child_ids {\n                let prior_child = self\n                    .staged\n                    .step_executions\n                    .get(&child_id)\n                    .cloned()\n                    .ok_or(RepositoryError::FlowStateCorrupt)?;\n                if let Some(child) =\n                    recovered_step_execution(&prior_child, request, decided_at)?\n                {\n                    recovered_children.push(child);\n                }\n            }\n''',
           )
-          replace_once(
+          scoped_insert_after(
               "crates/oxide-batch/src/repository/memory.rs",
-              "            self.staged.job_executions.insert(id, recovered.clone());\n            self.staged\n                .execution_updated_at\n                .insert(id, decided_at);\n",
-              '''            self.staged.job_executions.insert(id, recovered.clone());\n            for child in recovered_children {\n                self.staged.step_executions.insert(child.id(), child);\n            }\n            self.staged\n                .execution_updated_at\n                .insert(id, decided_at);\n''',
+              memory_start,
+              memory_end,
+              "            self.staged.job_executions.insert(id, recovered.clone());\n",
+              '''            for child in recovered_children {\n                self.staged.step_executions.insert(child.id(), child);\n            }\n''',
           )
 
           replace_once(
               "crates/oxide-batch/src/repository/postgres.rs",
-              "    PartitionMutationError, aggregate_partition_parent, map_partition_aggregation,\n    recovered_execution,\n",
-              "    PartitionMutationError, aggregate_partition_parent, map_partition_aggregation,\n    recovered_execution, recovered_step_execution,\n",
+              "    recovered_execution,\n",
+              "    recovered_execution, recovered_step_execution,\n",
           )
-          replace_once(
+          postgres_start = "    fn recover_job_execution<'a>(\n"
+          postgres_end = "    fn recovery_decision(\n"
+          scoped_insert_after(
               "crates/oxide-batch/src/repository/postgres.rs",
-              "            let recovered = recovered_execution(&prior, request, decided_at)?;\n            let decided_ms = system_time_millis(decided_at)?;\n",
-              '''            let recovered = recovered_execution(&prior, request, decided_at)?;\n            let child_rows = sqlx::query(AssertSqlSafe(step_execution_select(\n                "WHERE execution.job_execution_id = $1 ORDER BY execution.id FOR UPDATE",\n            )))\n            .bind(database_execution_id)\n            .fetch_all(&mut **self.transaction()?)\n            .await\n            .map_err(|_| RepositoryError::Unavailable)?;\n            let mut recovered_children = Vec::new();\n            for row in &child_rows {\n                let prior_child = decode_step_execution(row)?;\n                if let Some(child) =\n                    recovered_step_execution(&prior_child, request, decided_at)?\n                {\n                    recovered_children.push((prior_child.version(), child));\n                }\n            }\n            let decided_ms = system_time_millis(decided_at)?;\n''',
+              postgres_start,
+              postgres_end,
+              "            let recovered = recovered_execution(&prior, request, decided_at)?;\n",
+              '''            let child_rows = sqlx::query(AssertSqlSafe(step_execution_select(\n                "WHERE execution.job_execution_id = $1 ORDER BY execution.id FOR UPDATE",\n            )))\n            .bind(database_execution_id)\n            .fetch_all(&mut **self.transaction()?)\n            .await\n            .map_err(|_| RepositoryError::Unavailable)?;\n            let mut recovered_children = Vec::new();\n            for row in &child_rows {\n                let prior_child = decode_step_execution(row)?;\n                if let Some(child) =\n                    recovered_step_execution(&prior_child, request, decided_at)?\n                {\n                    recovered_children.push((prior_child.version(), child));\n                }\n            }\n''',
           )
-          replace_once(
+          scoped_replace(
               "crates/oxide-batch/src/repository/postgres.rs",
+              postgres_start,
+              postgres_end,
               '''            let affected = update_job_execution(\n                &mut **self.transaction()?,\n                &recovered,\n                decided_at,\n                request.expected_version(),\n            )\n            .await?;\n''',
               '''            let affected = match update_job_execution(\n                &mut **self.transaction()?,\n                &recovered,\n                decided_at,\n                request.expected_version(),\n            )\n            .await\n            {\n                Ok(affected) => affected,\n                Err(error) => {\n                    rollback_recovery_savepoint(&mut **self.transaction()?).await;\n                    return Err(error);\n                }\n            };\n''',
           )
-          replace_once(
+          scoped_insert_before(
               "crates/oxide-batch/src/repository/postgres.rs",
-              '''            if affected != 1 {\n                rollback_recovery_savepoint(&mut **self.transaction()?).await;\n                return Err(self.classify_job_cas(id, request.expected_version()).await);\n            }\n            let insert = sqlx::query(\n''',
-              '''            if affected != 1 {\n                rollback_recovery_savepoint(&mut **self.transaction()?).await;\n                return Err(self.classify_job_cas(id, request.expected_version()).await);\n            }\n            for (expected_version, child) in &recovered_children {\n                let affected = match update_step_execution(\n                    &mut **self.transaction()?,\n                    child,\n                    decided_at,\n                    *expected_version,\n                )\n                .await\n                {\n                    Ok(affected) => affected,\n                    Err(error) => {\n                        rollback_recovery_savepoint(&mut **self.transaction()?).await;\n                        return Err(error);\n                    }\n                };\n                if affected != 1 {\n                    rollback_recovery_savepoint(&mut **self.transaction()?).await;\n                    return Err(self.classify_step_cas(child.id(), *expected_version).await);\n                }\n            }\n            let insert = sqlx::query(\n''',
+              postgres_start,
+              postgres_end,
+              "            let insert = sqlx::query(\n",
+              '''            for (expected_version, child) in &recovered_children {\n                let affected = match update_step_execution(\n                    &mut **self.transaction()?,\n                    child,\n                    decided_at,\n                    *expected_version,\n                )\n                .await\n                {\n                    Ok(affected) => affected,\n                    Err(error) => {\n                        rollback_recovery_savepoint(&mut **self.transaction()?).await;\n                        return Err(error);\n                    }\n                };\n                if affected != 1 {\n                    rollback_recovery_savepoint(&mut **self.transaction()?).await;\n                    return Err(self.classify_step_cas(child.id(), *expected_version).await);\n                }\n            }\n''',
           )
 
-          # In-memory public-path regressions: MarkFailed closes STARTED child;
-          # Abandon closes STARTED child. The assertions occur after commit.
-          replace_once(
-              "crates/oxide-batch/tests/repository.rs",
-              "    let execution = block_on(create.create_job_execution(instance.id()))?;\n    block_on(create.commit())?;\n\n    let mut unknown = block_on(repository.begin())?;\n",
-              '''    let execution = block_on(create.create_job_execution(instance.id()))?;\n    let step = block_on(create.create_step_execution(execution.id(), &StepName::new("import")?))?;\n    block_on(create.commit())?;\n\n    let mut unknown = block_on(repository.begin())?;\n    let started_step = block_on(unknown.transition_step_execution(\n        step.id(),\n        step.version(),\n        LifecycleTransition::new(BatchStatus::Started, time(101)),\n    ))?;\n''',
+          repo_path = "crates/oxide-batch/tests/repository.rs"
+          explicit_start = "fn explicit_recovery_is_audited_before_restart()"
+          explicit_end = "fn recovery_is_versioned_bounded_and_value_redacted()"
+          scoped_insert_after(
+              repo_path,
+              explicit_start,
+              explicit_end,
+              "    let execution = block_on(create.create_job_execution(instance.id()))?;\n",
+              '''    let step = block_on(create.create_step_execution(\n        execution.id(),\n        &StepName::new("import")?,\n    ))?;\n''',
           )
-          replace_once(
-              "crates/oxide-batch/tests/repository.rs",
-              "    block_on(recovery.commit())?;\n\n    let mut restart = block_on(repository.begin())?;\n",
-              '''    block_on(recovery.commit())?;\n\n    let mut child_inspection = block_on(repository.begin())?;\n    let recovered_step = block_on(child_inspection.get_step_execution(step.id()))?\n        .ok_or("recovered child step was not found")?;\n    assert_eq!(recovered_step.metadata().status(), BatchStatus::Failed);\n    assert_eq!(recovered_step.metadata().timestamps().ended_at(), Some(time(102)));\n    assert_eq!(recovered_step.version(), started_step.version().next()?);\n    block_on(child_inspection.rollback())?;\n\n    let mut restart = block_on(repository.begin())?;\n''',
+          scoped_insert_after(
+              repo_path,
+              explicit_start,
+              explicit_end,
+              "    let mut unknown = block_on(repository.begin())?;\n",
+              '''    let started_step = block_on(unknown.transition_step_execution(\n        step.id(),\n        step.version(),\n        LifecycleTransition::new(BatchStatus::Started, time(101)),\n    ))?;\n''',
           )
-
-          # Scope the abandon-test edits with anchors unique to its local body.
-          replace_once(
-              "crates/oxide-batch/tests/repository.rs",
-              '''    let execution = block_on(create.create_job_execution(instance.id()))?;\n    block_on(create.commit())?;\n    let mut start = block_on(repository.begin())?;\n    let started = block_on(start.transition_job_execution(\n''',
-              '''    let execution = block_on(create.create_job_execution(instance.id()))?;\n    let step = block_on(create.create_step_execution(execution.id(), &StepName::new("import")?))?;\n    block_on(create.commit())?;\n    let mut start = block_on(repository.begin())?;\n    let started = block_on(start.transition_job_execution(\n''',
-          )
-          replace_once(
-              "crates/oxide-batch/tests/repository.rs",
-              '''    let started = block_on(start.transition_job_execution(\n        execution.id(),\n        execution.version(),\n        LifecycleTransition::new(BatchStatus::Started, time(101)),\n    ))?;\n    block_on(start.commit())?;\n\n    clock.set(time(102));\n    let request = RecoveryRequest::abandon(\n''',
-              '''    let started = block_on(start.transition_job_execution(\n        execution.id(),\n        execution.version(),\n        LifecycleTransition::new(BatchStatus::Started, time(101)),\n    ))?;\n    let started_step = block_on(start.transition_step_execution(\n        step.id(),\n        step.version(),\n        LifecycleTransition::new(BatchStatus::Started, time(101)),\n    ))?;\n    block_on(start.commit())?;\n\n    clock.set(time(102));\n    let request = RecoveryRequest::abandon(\n''',
-          )
-          replace_once(
-              "crates/oxide-batch/tests/repository.rs",
-              '''    assert!(!diagnostic.contains("153, 153"));\n\n    let mut restart = block_on(repository.begin())?;\n''',
-              '''    assert!(!diagnostic.contains("153, 153"));\n    let mut child_inspection = block_on(repository.begin())?;\n    let abandoned_step = block_on(child_inspection.get_step_execution(step.id()))?\n        .ok_or("abandoned child step was not found")?;\n    assert_eq!(abandoned_step.metadata().status(), BatchStatus::Abandoned);\n    assert_eq!(abandoned_step.metadata().timestamps().ended_at(), Some(time(102)));\n    assert_eq!(abandoned_step.version(), started_step.version().next()?);\n    block_on(child_inspection.rollback())?;\n\n    let mut restart = block_on(repository.begin())?;\n''',
+          scoped_insert_after(
+              repo_path,
+              explicit_start,
+              explicit_end,
+              "    block_on(recovery.commit())?;\n",
+              '''\n    let mut child_inspection = block_on(repository.begin())?;\n    let recovered_step = block_on(child_inspection.get_step_execution(step.id()))?\n        .ok_or("recovered child step was not found")?;\n    assert_eq!(recovered_step.metadata().status(), BatchStatus::Failed);\n    assert_eq!(recovered_step.metadata().timestamps().ended_at(), Some(time(102)));\n    assert_eq!(recovered_step.version(), started_step.version().next()?);\n    block_on(child_inspection.rollback())?;\n''',
           )
 
-          # PostgreSQL direct public-path regression matching the external Track F shape.
-          replace_once(
-              "crates/oxide-batch/tests/postgres_repository.rs",
-              '''        let execution = create.create_job_execution(instance.id()).await?;\n        create.commit().await?;\n        let mut mark_unknown = repository.begin().await?;\n''',
-              '''        let execution = create.create_job_execution(instance.id()).await?;\n        let step = create\n            .create_step_execution(execution.id(), &StepName::new("import")?)\n            .await?;\n        create.commit().await?;\n        let mut mark_unknown = repository.begin().await?;\n        let started_step = mark_unknown\n            .transition_step_execution(\n                step.id(),\n                step.version(),\n                LifecycleTransition::new(\n                    BatchStatus::Started,\n                    UNIX_EPOCH + Duration::from_secs(800),\n                ),\n            )\n            .await?;\n''',
+          abandon_start = "fn audited_abandon_makes_an_orphaned_instance_terminal()"
+          abandon_end = "fn restart_definition_drift_and_direct_compatibility_are_typed()"
+          scoped_insert_after(
+              repo_path,
+              abandon_start,
+              abandon_end,
+              "    let execution = block_on(create.create_job_execution(instance.id()))?;\n",
+              '''    let step = block_on(create.create_step_execution(\n        execution.id(),\n        &StepName::new("import")?,\n    ))?;\n''',
           )
-          replace_once(
-              "crates/oxide-batch/tests/postgres_repository.rs",
-              '''        assert_eq!(\n            recovered.execution().metadata().status(),\n            BatchStatus::Failed\n        );\n\n        let mut inspect = repository.begin().await?;\n''',
-              '''        assert_eq!(\n            recovered.execution().metadata().status(),\n            BatchStatus::Failed\n        );\n\n        let mut child_inspection = repository.begin().await?;\n        let recovered_step = child_inspection\n            .get_step_execution(step.id())\n            .await?\n            .ok_or("recovered child step was not found")?;\n        assert_eq!(recovered_step.metadata().status(), BatchStatus::Failed);\n        assert_eq!(\n            recovered_step.metadata().timestamps().ended_at(),\n            Some(UNIX_EPOCH + Duration::from_secs(800))\n        );\n        assert_eq!(recovered_step.version(), started_step.version().next()?);\n        child_inspection.rollback().await?;\n\n        let mut inspect = repository.begin().await?;\n''',
+          scoped_insert_after(
+              repo_path,
+              abandon_start,
+              abandon_end,
+              '''    let started = block_on(start.transition_job_execution(\n        execution.id(),\n        execution.version(),\n        LifecycleTransition::new(BatchStatus::Started, time(101)),\n    ))?;\n''',
+              '''    let started_step = block_on(start.transition_step_execution(\n        step.id(),\n        step.version(),\n        LifecycleTransition::new(BatchStatus::Started, time(101)),\n    ))?;\n''',
+          )
+          scoped_insert_after(
+              repo_path,
+              abandon_start,
+              abandon_end,
+              "    assert!(!diagnostic.contains(\"153, 153\"));\n",
+              '''    let mut child_inspection = block_on(repository.begin())?;\n    let abandoned_step = block_on(child_inspection.get_step_execution(step.id()))?\n        .ok_or("abandoned child step was not found")?;\n    assert_eq!(abandoned_step.metadata().status(), BatchStatus::Abandoned);\n    assert_eq!(abandoned_step.metadata().timestamps().ended_at(), Some(time(102)));\n    assert_eq!(abandoned_step.version(), started_step.version().next()?);\n    block_on(child_inspection.rollback())?;\n''',
           )
 
-          # Process-crash evidence: prove hierarchy closure before a restart is created.
-          replace_once(
-              "crates/oxide-batch/tests/postgres_crash_recovery.rs",
-              '''    assert!(!format!("{:?}", recovered.decision()).contains("[42"));\n\n    let mut restart = repository.begin().await?;\n''',
-              '''    assert!(!format!("{:?}", recovered.decision()).contains("[42"));\n\n    let mut post_recovery = repository.begin().await?;\n    let recovered_steps = post_recovery.step_executions(original.id()).await?;\n    assert_eq!(recovered_steps.len(), 1);\n    assert_eq!(recovered_steps[0].id(), original_step.id());\n    assert_eq!(recovered_steps[0].metadata().status(), BatchStatus::Failed);\n    assert_eq!(\n        recovered_steps[0].metadata().timestamps().ended_at(),\n        Some(UNIX_EPOCH + Duration::from_secs(902))\n    );\n    post_recovery.rollback().await?;\n\n    let mut restart = repository.begin().await?;\n''',
+          pg_repo_path = "crates/oxide-batch/tests/postgres_repository.rs"
+          pg_start = "fn unknown_execution_requires_audited_postgres_recovery()"
+          pg_end = "fn committed_chunk_advances_checkpoint()"
+          scoped_insert_after(
+              pg_repo_path,
+              pg_start,
+              pg_end,
+              "        let execution = create.create_job_execution(instance.id()).await?;\n",
+              '''        let step = create\n            .create_step_execution(execution.id(), &StepName::new("import")?)\n            .await?;\n''',
+          )
+          scoped_insert_after(
+              pg_repo_path,
+              pg_start,
+              pg_end,
+              "        let mut mark_unknown = repository.begin().await?;\n",
+              '''        let started_step = mark_unknown\n            .transition_step_execution(\n                step.id(),\n                step.version(),\n                LifecycleTransition::new(\n                    BatchStatus::Started,\n                    UNIX_EPOCH + Duration::from_secs(800),\n                ),\n            )\n            .await?;\n''',
+          )
+          scoped_insert_after(
+              pg_repo_path,
+              pg_start,
+              pg_end,
+              '''        assert_eq!(\n            recovered.execution().metadata().status(),\n            BatchStatus::Failed\n        );\n''',
+              '''\n        let mut child_inspection = repository.begin().await?;\n        let recovered_step = child_inspection\n            .get_step_execution(step.id())\n            .await?\n            .ok_or("recovered child step was not found")?;\n        assert_eq!(recovered_step.metadata().status(), BatchStatus::Failed);\n        assert_eq!(\n            recovered_step.metadata().timestamps().ended_at(),\n            Some(UNIX_EPOCH + Duration::from_secs(800))\n        );\n        assert_eq!(recovered_step.version(), started_step.version().next()?);\n        child_inspection.rollback().await?;\n''',
+          )
+
+          crash_path = "crates/oxide-batch/tests/postgres_crash_recovery.rs"
+          crash_start = "async fn inspect_recover_and_restart("
+          crash_end = "#[test]\nfn crash_worker_process()"
+          scoped_insert_after(
+              crash_path,
+              crash_start,
+              crash_end,
+              '''    assert!(!format!("{:?}", recovered.decision()).contains("[42"));\n''',
+              '''\n    let mut post_recovery = repository.begin().await?;\n    let recovered_steps = post_recovery.step_executions(original.id()).await?;\n    assert_eq!(recovered_steps.len(), 1);\n    assert_eq!(recovered_steps[0].id(), original_step.id());\n    assert_eq!(recovered_steps[0].metadata().status(), BatchStatus::Failed);\n    assert_eq!(\n        recovered_steps[0].metadata().timestamps().ended_at(),\n        Some(UNIX_EPOCH + Duration::from_secs(902))\n    );\n    post_recovery.rollback().await?;\n''',
           )
 
       - name: Format
         run: cargo fmt --all
 
-      - name: Run in-memory recovery regressions
+      - name: Run in-memory recovery regression
         run: >-
           cargo test -p oxide-batch --test repository
           explicit_recovery_is_audited_before_restart -- --nocapture
@@ -159,6 +230,12 @@ jobs:
         run: >-
           cargo test -p oxide-batch --test repository
           audited_abandon_makes_an_orphaned_instance_terminal -- --nocapture
+
+      - name: Initialize PostgreSQL metadata schema
+        run: >-
+          cargo test -p oxide-batch --features postgres --test postgres_repository
+          migration_is_idempotent_when_migrator_fixture_is_available
+          -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL recovery regression
         run: >-
@@ -170,14 +247,18 @@ jobs:
           cargo test -p oxide-batch --features postgres --test postgres_crash_recovery
           -- --nocapture --test-threads=1
 
-      - name: Commit validated patch and remove one-shot workflow
+      - name: Commit validated patch
         shell: bash
         run: |
           set -euo pipefail
-          rm .github/workflows/apply-269-recovery-patch.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
+          git add crates/oxide-batch-repository/src/repository.rs \
+                  crates/oxide-batch/src/repository/memory.rs \
+                  crates/oxide-batch/src/repository/postgres.rs \
+                  crates/oxide-batch/tests/repository.rs \
+                  crates/oxide-batch/tests/postgres_repository.rs \
+                  crates/oxide-batch/tests/postgres_crash_recovery.rs
           git diff --cached --check
           git commit -m "fix(recovery): close child steps with recovered attempt (#269)"
           git push origin HEAD:fix/269-recovery-child-terminalization
