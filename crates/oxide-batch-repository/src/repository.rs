@@ -639,6 +639,50 @@ pub fn recovered_execution(
     ))
 }
 
+/// Applies a parent recovery decision to one child step from the same attempt.
+///
+/// Finished child executions are left unchanged. Recoverable/nonterminal children
+/// are closed with the parent's disposition, decision timestamp, and redacted
+/// failure evidence while preserving exit status, counters, and durable state.
+///
+/// # Errors
+///
+/// Returns a domain or lifecycle error when the recovery timestamp or optimistic
+/// version cannot be represented.
+#[doc(hidden)]
+pub fn recovered_step_execution(
+    prior: &StepExecution,
+    request: &RecoveryRequest,
+    decided_at: SystemTime,
+) -> Result<Option<StepExecution>, RepositoryError> {
+    if !matches!(
+        prior.metadata().status(),
+        BatchStatus::Starting | BatchStatus::Started | BatchStatus::Stopping | BatchStatus::Unknown
+    ) {
+        return Ok(None);
+    }
+    let current_time = prior.metadata().timestamps();
+    let timestamps = ExecutionTimestamps::new(
+        current_time.created_at(),
+        current_time.started_at(),
+        Some(decided_at),
+    )?;
+    let metadata = ExecutionMetadata::new(
+        request.disposition().resulting_status(),
+        prior.metadata().exit_status().clone(),
+        timestamps,
+        prior.metadata().counts(),
+        request.failure(),
+    )?;
+    Ok(Some(StepExecution::from_snapshot(
+        prior.id(),
+        prior.job_execution_id(),
+        prior.step_name().clone(),
+        metadata,
+        prior.version().next()?,
+    )))
+}
+
 /// Starts isolated repository units of work.
 ///
 /// A unit of work does not become visible until it is committed. Dropping one

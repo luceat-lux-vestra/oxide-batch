@@ -410,6 +410,17 @@ async fn inspect_recover_and_restart(point: CrashPoint, url: String) -> Result<(
     assert_eq!(recovered.decision().resulting_status(), BatchStatus::Failed);
     assert!(!format!("{:?}", recovered.decision()).contains("[42"));
 
+    let mut post_recovery = repository.begin().await?;
+    let recovered_steps = post_recovery.step_executions(original.id()).await?;
+    assert_eq!(recovered_steps.len(), 1);
+    assert_eq!(recovered_steps[0].id(), original_step.id());
+    assert_eq!(recovered_steps[0].metadata().status(), BatchStatus::Failed);
+    assert_eq!(
+        recovered_steps[0].metadata().timestamps().ended_at(),
+        Some(UNIX_EPOCH + Duration::from_secs(902))
+    );
+    post_recovery.rollback().await?;
+
     let mut restart = repository.begin().await?;
     let restarted = restart
         .create_job_execution_with_definition(instance.id(), &definition)

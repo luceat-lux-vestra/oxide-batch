@@ -117,9 +117,15 @@ fn explicit_recovery_is_audited_before_restart() -> Result<(), Box<dyn Error>> {
         .instance()
         .clone();
     let execution = block_on(create.create_job_execution(instance.id()))?;
+    let step = block_on(create.create_step_execution(execution.id(), &StepName::new("import")?))?;
     block_on(create.commit())?;
 
     let mut unknown = block_on(repository.begin())?;
+    let started_step = block_on(unknown.transition_step_execution(
+        step.id(),
+        step.version(),
+        LifecycleTransition::new(BatchStatus::Started, time(101)),
+    ))?;
     let ambiguous = block_on(unknown.transition_job_execution(
         execution.id(),
         execution.version(),
@@ -154,6 +160,17 @@ fn explicit_recovery_is_audited_before_restart() -> Result<(), Box<dyn Error>> {
     assert_eq!(result.decision().resulting_status(), BatchStatus::Failed);
     assert_eq!(result.decision().decided_at(), time(102));
     block_on(recovery.commit())?;
+
+    let mut child_inspection = block_on(repository.begin())?;
+    let recovered_step = block_on(child_inspection.get_step_execution(step.id()))?
+        .ok_or("recovered child step was not found")?;
+    assert_eq!(recovered_step.metadata().status(), BatchStatus::Failed);
+    assert_eq!(
+        recovered_step.metadata().timestamps().ended_at(),
+        Some(time(102))
+    );
+    assert_eq!(recovered_step.version(), started_step.version().next()?);
+    block_on(child_inspection.rollback())?;
 
     let mut restart = block_on(repository.begin())?;
     let restarted = block_on(restart.create_job_execution(instance.id()))?;
@@ -202,11 +219,17 @@ fn audited_abandon_makes_an_orphaned_instance_terminal() -> Result<(), Box<dyn E
         .instance()
         .clone();
     let execution = block_on(create.create_job_execution(instance.id()))?;
+    let step = block_on(create.create_step_execution(execution.id(), &StepName::new("import")?))?;
     block_on(create.commit())?;
     let mut start = block_on(repository.begin())?;
     let started = block_on(start.transition_job_execution(
         execution.id(),
         execution.version(),
+        LifecycleTransition::new(BatchStatus::Started, time(101)),
+    ))?;
+    let started_step = block_on(start.transition_step_execution(
+        step.id(),
+        step.version(),
         LifecycleTransition::new(BatchStatus::Started, time(101)),
     ))?;
     block_on(start.commit())?;
@@ -228,6 +251,16 @@ fn audited_abandon_makes_an_orphaned_instance_terminal() -> Result<(), Box<dyn E
     let diagnostic = format!("{:?}", abandoned.decision());
     assert!(diagnostic.contains("ORPHAN_CONFIRMED"));
     assert!(!diagnostic.contains("153, 153"));
+    let mut child_inspection = block_on(repository.begin())?;
+    let abandoned_step = block_on(child_inspection.get_step_execution(step.id()))?
+        .ok_or("abandoned child step was not found")?;
+    assert_eq!(abandoned_step.metadata().status(), BatchStatus::Abandoned);
+    assert_eq!(
+        abandoned_step.metadata().timestamps().ended_at(),
+        Some(time(102))
+    );
+    assert_eq!(abandoned_step.version(), started_step.version().next()?);
+    block_on(child_inspection.rollback())?;
 
     let mut restart = block_on(repository.begin())?;
     assert_eq!(

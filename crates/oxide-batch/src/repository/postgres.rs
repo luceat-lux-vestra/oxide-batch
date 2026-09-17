@@ -16,7 +16,7 @@ use sqlx::{AssertSqlSafe, Connection, PgConnection, PgPool, Postgres, Row};
 
 use oxide_batch_repository::{
     PartitionMutationError, aggregate_partition_parent, map_partition_aggregation,
-    recovered_execution,
+    recovered_execution, recovered_step_execution,
 };
 
 use crate::{
@@ -3793,6 +3793,20 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             let prior = decode_job_execution(&row)?;
             let decided_at = self.repository.clock.now();
             let recovered = recovered_execution(&prior, request, decided_at)?;
+            let child_rows = sqlx::query(AssertSqlSafe(step_execution_select(
+                "WHERE execution.job_execution_id = $1 ORDER BY execution.id FOR UPDATE",
+            )))
+            .bind(database_execution_id)
+            .fetch_all(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            let mut recovered_children = Vec::new();
+            for row in &child_rows {
+                let prior_child = decode_step_execution(row)?;
+                if let Some(child) = recovered_step_execution(&prior_child, request, decided_at)? {
+                    recovered_children.push((prior_child.version(), child));
+                }
+            }
             let decided_ms = system_time_millis(decided_at)?;
             let prior_version = database_version(request.expected_version())?;
             let resulting_status = recovered.metadata().status().to_string();
@@ -3800,16 +3814,43 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 .execute(&mut **self.transaction()?)
                 .await
                 .map_err(|_| RepositoryError::Unavailable)?;
-            let affected = update_job_execution(
+            let affected = match update_job_execution(
                 &mut **self.transaction()?,
                 &recovered,
                 decided_at,
                 request.expected_version(),
             )
-            .await?;
+            .await
+            {
+                Ok(affected) => affected,
+                Err(error) => {
+                    rollback_recovery_savepoint(&mut **self.transaction()?).await;
+                    return Err(error);
+                }
+            };
             if affected != 1 {
                 rollback_recovery_savepoint(&mut **self.transaction()?).await;
                 return Err(self.classify_job_cas(id, request.expected_version()).await);
+            }
+            for (expected_version, child) in &recovered_children {
+                let affected = match update_step_execution(
+                    &mut **self.transaction()?,
+                    child,
+                    decided_at,
+                    *expected_version,
+                )
+                .await
+                {
+                    Ok(affected) => affected,
+                    Err(error) => {
+                        rollback_recovery_savepoint(&mut **self.transaction()?).await;
+                        return Err(error);
+                    }
+                };
+                if affected != 1 {
+                    rollback_recovery_savepoint(&mut **self.transaction()?).await;
+                    return Err(self.classify_step_cas(child.id(), *expected_version).await);
+                }
             }
             let insert = sqlx::query(
                 "INSERT INTO oxide_batch.ob_recovery_decision \

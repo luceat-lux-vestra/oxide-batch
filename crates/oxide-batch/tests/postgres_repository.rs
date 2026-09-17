@@ -899,8 +899,21 @@ fn unknown_execution_requires_audited_postgres_recovery() -> Result<(), Box<dyn 
             .instance()
             .clone();
         let execution = create.create_job_execution(instance.id()).await?;
+        let step = create
+            .create_step_execution(execution.id(), &StepName::new("import")?)
+            .await?;
         create.commit().await?;
         let mut mark_unknown = repository.begin().await?;
+        let started_step = mark_unknown
+            .transition_step_execution(
+                step.id(),
+                step.version(),
+                LifecycleTransition::new(
+                    BatchStatus::Started,
+                    UNIX_EPOCH + Duration::from_secs(800),
+                ),
+            )
+            .await?;
         let unknown = mark_unknown
             .transition_job_execution(
                 execution.id(),
@@ -930,6 +943,19 @@ fn unknown_execution_requires_audited_postgres_recovery() -> Result<(), Box<dyn 
             recovered.execution().metadata().status(),
             BatchStatus::Failed
         );
+
+        let mut child_inspection = repository.begin().await?;
+        let recovered_step = child_inspection
+            .get_step_execution(step.id())
+            .await?
+            .ok_or("recovered child step was not found")?;
+        assert_eq!(recovered_step.metadata().status(), BatchStatus::Failed);
+        assert_eq!(
+            recovered_step.metadata().timestamps().ended_at(),
+            Some(UNIX_EPOCH + Duration::from_secs(800))
+        );
+        assert_eq!(recovered_step.version(), started_step.version().next()?);
+        child_inspection.rollback().await?;
 
         let mut inspect = repository.begin().await?;
         assert_eq!(
