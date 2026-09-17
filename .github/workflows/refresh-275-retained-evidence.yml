@@ -1,0 +1,286 @@
+name: Refresh 275 retained evidence
+
+on:
+  push:
+    branches:
+      - fix/269-recovery-child-terminalization
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  retain:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Promote exact successful campaign artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCER_HEAD: f5af503eae18c7a17985e9ffb7aed1766171c314
+        shell: python
+        run: |
+          import datetime
+          import hashlib
+          import json
+          import os
+          import subprocess
+          import tempfile
+          import urllib.request
+          import zipfile
+          from pathlib import Path
+
+          REPO = "luceat-lux-vestra/oxide-batch"
+          TOKEN = os.environ["GH_TOKEN"]
+          PRODUCER_HEAD = os.environ["PRODUCER_HEAD"]
+          API = f"https://api.github.com/repos/{REPO}"
+          VERIFIED_AT = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+          RUNS = {
+              "cancellation-campaign-": 35217872968,
+              "conformance-campaign-": 35217872782,
+              "crash-restore-campaign-": 35217872996,
+              "performance-campaign-": 35217872764,
+              "resource-bounds-campaign-": 35217872974,
+              "security-campaign-": 35217872947,
+              "soak-campaign-": 35217872781,
+              "upgrade-campaign-": 35217872887,
+              "gate-b-campaign-": 35217872766,
+              "gate-h-campaign": 35217873022,
+              "m6-conformance-campaign-": 35217872959,
+          }
+
+          def api(path):
+              request = urllib.request.Request(
+                  API + path,
+                  headers={
+                      "Authorization": f"Bearer {TOKEN}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                      "User-Agent": "oxide-batch-evidence-retention",
+                  },
+              )
+              with urllib.request.urlopen(request) as response:
+                  return json.load(response)
+
+          def run_for_artifact(name):
+              matches = [run_id for prefix, run_id in RUNS.items() if name == prefix or name.startswith(prefix)]
+              if len(matches) != 1:
+                  raise SystemExit(f"artifact {name!r}: expected one producer run mapping, got {matches}")
+              return matches[0]
+
+          def manifests(value, found=None):
+              if found is None:
+                  found = []
+              if isinstance(value, dict):
+                  manifest = value.get("execution_manifest")
+                  if isinstance(manifest, dict):
+                      found.append(manifest)
+                  for child in value.values():
+                      manifests(child, found)
+              elif isinstance(value, list):
+                  for child in value:
+                      manifests(child, found)
+              return found
+
+          def env_value(report, key, fallback):
+              env = report.get("environment")
+              if isinstance(env, dict) and env.get(key) is not None:
+                  return env[key]
+              return fallback
+
+          def promote(provenance_path):
+              path = Path(provenance_path)
+              document = json.loads(path.read_text())
+              retained_dir = path.parent
+              for entry in document["evidence"]:
+                  report_name = entry["report"]
+                  artifact_name = entry["artifact"]["name"]
+                  run_id = run_for_artifact(artifact_name)
+                  run = api(f"/actions/runs/{run_id}")
+                  if run["conclusion"] != "success":
+                      raise SystemExit(f"run {run_id} is not successful: {run['conclusion']}")
+                  if run["head_sha"] != PRODUCER_HEAD:
+                      raise SystemExit(f"run {run_id} head moved: {run['head_sha']} != {PRODUCER_HEAD}")
+                  if run["event"] != "pull_request":
+                      raise SystemExit(f"run {run_id} has unexpected event {run['event']}")
+
+                  jobs = api(f"/actions/runs/{run_id}/jobs?per_page=100")["jobs"]
+                  job_name = entry["producing_job"]["name"]
+                  job_matches = [job for job in jobs if job["name"] == job_name]
+                  if len(job_matches) != 1:
+                      raise SystemExit(f"run {run_id}: expected one job {job_name!r}, got {len(job_matches)}")
+                  job = job_matches[0]
+                  if job["conclusion"] != "success":
+                      raise SystemExit(f"job {job_name!r} is not successful: {job['conclusion']}")
+
+                  artifacts = api(f"/actions/runs/{run_id}/artifacts?per_page=100")["artifacts"]
+                  artifact_matches = [artifact for artifact in artifacts if artifact["name"] == artifact_name]
+                  if len(artifact_matches) != 1:
+                      raise SystemExit(f"run {run_id}: expected one artifact {artifact_name!r}, got {len(artifact_matches)}")
+                  artifact = artifact_matches[0]
+                  if artifact.get("expired"):
+                      raise SystemExit(f"artifact {artifact_name!r} is expired")
+
+                  with tempfile.TemporaryDirectory() as temporary:
+                      archive = Path(temporary) / "artifact.zip"
+                      subprocess.run(
+                          [
+                              "curl", "--fail", "--silent", "--show-error", "--location",
+                              "-H", f"Authorization: Bearer {TOKEN}",
+                              "-H", "Accept: application/vnd.github+json",
+                              "-H", "X-GitHub-Api-Version: 2022-11-28",
+                              f"{API}/actions/artifacts/{artifact['id']}/zip",
+                              "-o", str(archive),
+                          ],
+                          check=True,
+                      )
+                      archive_digest = "sha256:" + hashlib.sha256(archive.read_bytes()).hexdigest()
+                      if archive_digest != artifact["digest"]:
+                          raise SystemExit(
+                              f"artifact {artifact_name!r} digest mismatch: {archive_digest} != {artifact['digest']}"
+                          )
+                      with zipfile.ZipFile(archive) as zipped:
+                          candidates = [name for name in zipped.namelist() if Path(name).name == report_name]
+                          if len(candidates) != 1:
+                              raise SystemExit(
+                                  f"artifact {artifact_name!r}: expected one {report_name!r}, got {candidates}"
+                              )
+                          report_bytes = zipped.read(candidates[0])
+
+                  report = json.loads(report_bytes)
+                  if report.get("passed") is not True:
+                      raise SystemExit(f"report {report_name!r} is not passed")
+                  if report.get("violations", []) != []:
+                      raise SystemExit(f"report {report_name!r} has violations: {report.get('violations')}")
+                  report_manifests = manifests(report)
+                  if not report_manifests:
+                      raise SystemExit(f"report {report_name!r} has no execution manifest")
+                  execution_commits = {manifest.get("execution_commit") for manifest in report_manifests}
+                  if len(execution_commits) != 1 or None in execution_commits:
+                      raise SystemExit(f"report {report_name!r} has inconsistent execution commits: {execution_commits}")
+                  execution_commit = next(iter(execution_commits))
+                  object_sets = [manifest.get("objects") for manifest in report_manifests if manifest.get("objects") is not None]
+                  if object_sets and any(objects != object_sets[0] for objects in object_sets[1:]):
+                      raise SystemExit(f"report {report_name!r} has inconsistent execution object manifests")
+                  if any(manifest.get("tree_clean") is not True for manifest in report_manifests):
+                      raise SystemExit(f"report {report_name!r} was not produced from a clean execution tree")
+                  environment = report.get("environment", {})
+                  if isinstance(environment, dict):
+                      source_commit = environment.get("source_commit")
+                      if source_commit is not None and source_commit != execution_commit:
+                          raise SystemExit(
+                              f"report {report_name!r} source commit {source_commit} != manifest {execution_commit}"
+                          )
+                  expected_major = entry.get("postgres_major_version")
+                  actual_major = report.get("postgresql_major_version")
+                  if expected_major not in (None, "not-applicable") and str(actual_major) != str(expected_major):
+                      raise SystemExit(
+                          f"report {report_name!r} PostgreSQL major {actual_major!r} != {expected_major!r}"
+                      )
+
+                  retained_path = retained_dir / report_name
+                  retained_path.write_bytes(report_bytes)
+                  retained_blob = subprocess.check_output(
+                      ["git", "hash-object", str(retained_path)], text=True
+                  ).strip()
+
+                  entry["producer"].update(
+                      {
+                          "execution_commit": execution_commit,
+                          "execution_commit_note": (
+                              "Exact PR #275 synthetic merge execution tree recorded by the successful producer report; "
+                              "object-manifest identities are the authority for later local verification."
+                          ),
+                          "branch_head_sha": run["head_sha"],
+                          "branch_head_note": (
+                              "Exact PR #275 source candidate that triggered the successful producer run; "
+                              "recorded separately from the ephemeral execution tree."
+                          ),
+                          "source_tree_clean": True,
+                          "rustc": env_value(report, "rustc", entry["producer"].get("rustc")),
+                          "os": env_value(report, "os", entry["producer"].get("os")),
+                          "arch": env_value(report, "arch", entry["producer"].get("arch")),
+                      }
+                  )
+                  entry["workflow_run"].update(
+                      {
+                          "id": run_id,
+                          "attempt": run["run_attempt"],
+                          "event": run["event"],
+                          "conclusion": run["conclusion"],
+                      }
+                  )
+                  entry["producing_job"].update(
+                      {"id": job["id"], "conclusion": job["conclusion"]}
+                  )
+                  entry["artifact"].update(
+                      {
+                          "id": artifact["id"],
+                          "digest": artifact["digest"],
+                          "size_bytes": artifact["size_in_bytes"],
+                      }
+                  )
+                  entry["retained_report_git_blob"] = retained_blob
+                  entry["remote_verification"] = {
+                      "verified": True,
+                      "verified_at": VERIFIED_AT,
+                      "run_id": run_id,
+                      "workflow_run_identity": True,
+                      "workflow_run_conclusion": True,
+                      "producing_job_identity": True,
+                      "producing_job_conclusion": True,
+                      "artifact_digest": True,
+                      "artifact_bytes_match_retained_report": True,
+                      "execution_commit_matches_report": True,
+                      "note": (
+                          "PR #275 successful Actions artifact independently fetched through the GitHub API; "
+                          "run/job identity and success, archive SHA-256, exact report bytes, canonical report identity, "
+                          "runtime axis when declared, and execution commit were verified before retention."
+                      ),
+                  }
+                  print(
+                      f"promoted {report_name}: run={run_id} job={job['id']} artifact={artifact['id']} "
+                      f"execution={execution_commit} blob={retained_blob}"
+                  )
+              path.write_text(json.dumps(document, indent=2, ensure_ascii=False) + "\n")
+
+          promote("docs/engineering/campaigns/m5/evidence-provenance.json")
+          promote("docs/engineering/campaigns/m6/evidence-provenance.json")
+
+      - name: Remove one-shot workflow before validation
+        run: rm .github/workflows/refresh-275-retained-evidence.yml
+
+      - name: Verify retained evidence policy and provenance
+        run: |
+          cargo run --package oxide-batch-xtask --bin retained_evidence_policy
+          cargo run --package oxide-batch-xtask -- evidence
+          git diff --check
+          python - <<'PY'
+          import subprocess
+          paths = subprocess.check_output(["git", "diff", "--name-only"], text=True).splitlines()
+          allowed = (
+              "docs/engineering/campaigns/m5/",
+              "docs/engineering/campaigns/m6/",
+              ".github/workflows/refresh-275-retained-evidence.yml",
+          )
+          unexpected = [path for path in paths if not path.startswith(allowed)]
+          if unexpected:
+              raise SystemExit(f"unexpected retention paths: {unexpected}")
+          print(f"validated retention diff across {len(paths)} path(s)")
+          PY
+
+      - name: Commit exact retained evidence
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/engineering/campaigns/m5 docs/engineering/campaigns/m6 .github/workflows/refresh-275-retained-evidence.yml
+          git diff --cached --check
+          git commit -m "evidence: retain #275 recovery campaigns"
+          git push origin HEAD:fix/269-recovery-child-terminalization
