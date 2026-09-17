@@ -1,0 +1,163 @@
+name: "Apply 275 adversarial hardening"
+
+on:
+  push:
+    branches:
+      - fix/269-recovery-child-terminalization
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oxide_batch_repository
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username postgres --dbname oxide_batch_repository"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      OXIDEBATCH_POSTGRES_ADMIN_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_repository
+      OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_repository
+      OXIDEBATCH_POSTGRES_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_repository
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Apply fail-closed status handling and adversarial tests
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one global anchor, found {count}: {old[:100]!r}")
+              target.write_text(text.replace(old, new, 1))
+
+          def scoped_replace(path: str, start: str, end: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text()
+              start_at = text.find(start)
+              if start_at < 0:
+                  raise SystemExit(f"{path}: scope start not found: {start!r}")
+              end_at = text.find(end, start_at + len(start))
+              if end_at < 0:
+                  raise SystemExit(f"{path}: scope end not found: {end!r}")
+              section = text[start_at:end_at]
+              count = section.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one scoped anchor, found {count}: {old[:100]!r}")
+              section = section.replace(old, new, 1)
+              target.write_text(text[:start_at] + section + text[end_at:])
+
+          def scoped_insert_after(path: str, start: str, end: str, anchor: str, addition: str) -> None:
+              scoped_replace(path, start, end, anchor, anchor + addition)
+
+          # Future BatchStatus variants must not silently leave a recovered hierarchy unresolved.
+          replace_once(
+              "crates/oxide-batch-repository/src/repository.rs",
+              '''    if !matches!(\n        prior.metadata().status(),\n        BatchStatus::Starting | BatchStatus::Started | BatchStatus::Stopping | BatchStatus::Unknown\n    ) {\n        return Ok(None);\n    }\n''',
+              '''    let prior_status = prior.metadata().status();\n    if prior_status.is_finished() {\n        return Ok(None);\n    }\n    if !prior_status.is_active() && !matches!(prior_status, BatchStatus::Unknown) {\n        return Err(RepositoryError::Lifecycle(\n            LifecycleError::IllegalTransition {\n                from: prior_status,\n                to: request.disposition().resulting_status(),\n            },\n        ));\n    }\n''',
+          )
+
+          # In-memory: prove STARTED + UNKNOWN children close, while COMPLETED is immutable.
+          repo_path = "crates/oxide-batch/tests/repository.rs"
+          repo_start = "fn explicit_recovery_is_audited_before_restart()"
+          repo_end = "fn recovery_is_versioned_bounded_and_value_redacted()"
+          scoped_insert_after(
+              repo_path,
+              repo_start,
+              repo_end,
+              '''    let step = block_on(create.create_step_execution(execution.id(), &StepName::new("import")?))?;\n''',
+              '''    let unknown_step = block_on(create.create_step_execution(\n        execution.id(),\n        &StepName::new("ambiguous-child")?,\n    ))?;\n    let completed_step = block_on(create.create_step_execution(\n        execution.id(),\n        &StepName::new("already-complete")?,\n    ))?;\n''',
+          )
+          scoped_insert_after(
+              repo_path,
+              repo_start,
+              repo_end,
+              '''    let started_step = block_on(unknown.transition_step_execution(\n        step.id(),\n        step.version(),\n        LifecycleTransition::new(BatchStatus::Started, time(101)),\n    ))?;\n''',
+              '''    let unknown_started = block_on(unknown.transition_step_execution(\n        unknown_step.id(),\n        unknown_step.version(),\n        LifecycleTransition::new(BatchStatus::Started, time(101)),\n    ))?;\n    let ambiguous_child = block_on(unknown.transition_step_execution(\n        unknown_step.id(),\n        unknown_started.version(),\n        LifecycleTransition::new(BatchStatus::Unknown, time(101)),\n    ))?;\n    let completed_started = block_on(unknown.transition_step_execution(\n        completed_step.id(),\n        completed_step.version(),\n        LifecycleTransition::new(BatchStatus::Started, time(101)),\n    ))?;\n    let completed_child = block_on(unknown.transition_step_execution(\n        completed_step.id(),\n        completed_started.version(),\n        LifecycleTransition::new(BatchStatus::Completed, time(101)),\n    ))?;\n''',
+          )
+          scoped_insert_after(
+              repo_path,
+              repo_start,
+              repo_end,
+              '''    assert_eq!(recovered_step.version(), started_step.version().next()?);\n''',
+              '''    assert_eq!(recovered_step.metadata().failure(), request.failure());\n    let recovered_unknown = block_on(child_inspection.get_step_execution(unknown_step.id()))?\n        .ok_or("recovered UNKNOWN child step was not found")?;\n    assert_eq!(recovered_unknown.metadata().status(), BatchStatus::Failed);\n    assert_eq!(\n        recovered_unknown.metadata().timestamps().ended_at(),\n        Some(time(102))\n    );\n    assert_eq!(\n        recovered_unknown.version(),\n        ambiguous_child.version().next()?\n    );\n    assert_eq!(recovered_unknown.metadata().failure(), request.failure());\n    let preserved_completed = block_on(child_inspection.get_step_execution(completed_step.id()))?\n        .ok_or("completed child step was not found")?;\n    assert_eq!(preserved_completed.metadata().status(), BatchStatus::Completed);\n    assert_eq!(preserved_completed.version(), completed_child.version());\n    assert_eq!(\n        preserved_completed.metadata().timestamps().ended_at(),\n        completed_child.metadata().timestamps().ended_at()\n    );\n''',
+          )
+
+          # PostgreSQL: the same classification and preservation proof through the durable adapter.
+          pg_path = "crates/oxide-batch/tests/postgres_repository.rs"
+          pg_start = "fn unknown_execution_requires_audited_postgres_recovery()"
+          pg_end = "fn committed_chunk_advances_checkpoint()"
+          scoped_insert_after(
+              pg_path,
+              pg_start,
+              pg_end,
+              '''        let step = create\n            .create_step_execution(execution.id(), &StepName::new("import")?)\n            .await?;\n''',
+              '''        let unknown_step = create\n            .create_step_execution(execution.id(), &StepName::new("ambiguous-child")?)\n            .await?;\n        let completed_step = create\n            .create_step_execution(execution.id(), &StepName::new("already-complete")?)\n            .await?;\n''',
+          )
+          scoped_insert_after(
+              pg_path,
+              pg_start,
+              pg_end,
+              '''        let started_step = mark_unknown\n            .transition_step_execution(\n                step.id(),\n                step.version(),\n                LifecycleTransition::new(\n                    BatchStatus::Started,\n                    UNIX_EPOCH + Duration::from_secs(800),\n                ),\n            )\n            .await?;\n''',
+              '''        let unknown_started = mark_unknown\n            .transition_step_execution(\n                unknown_step.id(),\n                unknown_step.version(),\n                LifecycleTransition::new(\n                    BatchStatus::Started,\n                    UNIX_EPOCH + Duration::from_secs(800),\n                ),\n            )\n            .await?;\n        let ambiguous_child = mark_unknown\n            .transition_step_execution(\n                unknown_step.id(),\n                unknown_started.version(),\n                LifecycleTransition::new(\n                    BatchStatus::Unknown,\n                    UNIX_EPOCH + Duration::from_secs(800),\n                ),\n            )\n            .await?;\n        let completed_started = mark_unknown\n            .transition_step_execution(\n                completed_step.id(),\n                completed_step.version(),\n                LifecycleTransition::new(\n                    BatchStatus::Started,\n                    UNIX_EPOCH + Duration::from_secs(800),\n                ),\n            )\n            .await?;\n        let completed_child = mark_unknown\n            .transition_step_execution(\n                completed_step.id(),\n                completed_started.version(),\n                LifecycleTransition::new(\n                    BatchStatus::Completed,\n                    UNIX_EPOCH + Duration::from_secs(800),\n                ),\n            )\n            .await?;\n''',
+          )
+          scoped_insert_after(
+              pg_path,
+              pg_start,
+              pg_end,
+              '''        assert_eq!(recovered_step.version(), started_step.version().next()?);\n''',
+              '''        assert_eq!(recovered_step.metadata().failure(), request.failure());\n        let recovered_unknown = child_inspection\n            .get_step_execution(unknown_step.id())\n            .await?\n            .ok_or("recovered UNKNOWN child step was not found")?;\n        assert_eq!(recovered_unknown.metadata().status(), BatchStatus::Failed);\n        assert_eq!(\n            recovered_unknown.metadata().timestamps().ended_at(),\n            Some(UNIX_EPOCH + Duration::from_secs(800))\n        );\n        assert_eq!(\n            recovered_unknown.version(),\n            ambiguous_child.version().next()?\n        );\n        assert_eq!(recovered_unknown.metadata().failure(), request.failure());\n        let preserved_completed = child_inspection\n            .get_step_execution(completed_step.id())\n            .await?\n            .ok_or("completed child step was not found")?;\n        assert_eq!(preserved_completed.metadata().status(), BatchStatus::Completed);\n        assert_eq!(preserved_completed.version(), completed_child.version());\n        assert_eq!(\n            preserved_completed.metadata().timestamps().ended_at(),\n            completed_child.metadata().timestamps().ended_at()\n        );\n''',
+          )
+
+      - name: Format
+        run: cargo fmt --all
+
+      - name: Run in-memory repository recovery suite
+        run: cargo test -p oxide-batch --test repository -- --nocapture
+
+      - name: Initialize PostgreSQL metadata schema
+        run: >-
+          cargo test -p oxide-batch --features postgres --test postgres_repository
+          migration_is_idempotent_when_migrator_fixture_is_available
+          -- --nocapture --test-threads=1
+
+      - name: Run PostgreSQL recovery adversarial regression
+        run: >-
+          cargo test -p oxide-batch --features postgres --test postgres_repository
+          unknown_execution_requires_audited_postgres_recovery
+          -- --nocapture --test-threads=1
+
+      - name: Run process-crash recovery regression
+        run: >-
+          cargo test -p oxide-batch --features postgres --test postgres_crash_recovery
+          -- --nocapture --test-threads=1
+
+      - name: Commit validated hardening and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/apply-275-adversarial-hardening.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "test(recovery): harden child disposition invariants (#269)"
+          git push origin HEAD:fix/269-recovery-child-terminalization
