@@ -2,8 +2,7 @@ name: Refresh 275 retained evidence
 
 on:
   push:
-    branches:
-      - fix/269-recovery-child-terminalization
+    branches: [fix/269-recovery-child-terminalization]
 
 permissions:
   contents: write
@@ -26,14 +25,7 @@ jobs:
           PRODUCER_HEAD: f5af503eae18c7a17985e9ffb7aed1766171c314
         shell: python
         run: |
-          import datetime
-          import hashlib
-          import json
-          import os
-          import subprocess
-          import tempfile
-          import urllib.request
-          import zipfile
+          import datetime, hashlib, json, os, subprocess, tempfile, urllib.request, zipfile
           from pathlib import Path
 
           REPO = "luceat-lux-vestra/oxide-batch"
@@ -41,7 +33,6 @@ jobs:
           PRODUCER_HEAD = os.environ["PRODUCER_HEAD"]
           API = f"https://api.github.com/repos/{REPO}"
           VERIFIED_AT = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
           RUNS = {
               "cancellation-campaign-": 35217872968,
               "conformance-campaign-": 35217872782,
@@ -70,63 +61,74 @@ jobs:
                   return json.load(response)
 
           def run_for_artifact(name):
-              matches = [run_id for prefix, run_id in RUNS.items() if name == prefix or name.startswith(prefix)]
+              matches = [rid for prefix, rid in RUNS.items() if name == prefix or name.startswith(prefix)]
               if len(matches) != 1:
-                  raise SystemExit(f"artifact {name!r}: expected one producer run mapping, got {matches}")
+                  raise SystemExit(f"artifact {name!r}: producer run mapping is ambiguous: {matches}")
               return matches[0]
 
-          def manifests(value, found=None):
-              if found is None:
-                  found = []
+          def collect_manifests(value, found=None):
+              found = [] if found is None else found
               if isinstance(value, dict):
-                  manifest = value.get("execution_manifest")
-                  if isinstance(manifest, dict):
-                      found.append(manifest)
+                  if isinstance(value.get("execution_manifest"), dict):
+                      found.append(value["execution_manifest"])
                   for child in value.values():
-                      manifests(child, found)
+                      collect_manifests(child, found)
               elif isinstance(value, list):
                   for child in value:
-                      manifests(child, found)
+                      collect_manifests(child, found)
               return found
 
-          def env_value(report, key, fallback):
-              env = report.get("environment")
-              if isinstance(env, dict) and env.get(key) is not None:
-                  return env[key]
-              return fallback
+          def select_report(zipped, entry):
+              expected_major = entry.get("postgres_major_version")
+              candidates = []
+              for name in zipped.namelist():
+                  if name.endswith("/") or not name.lower().endswith(".json"):
+                      continue
+                  raw = zipped.read(name)
+                  try:
+                      report = json.loads(raw)
+                  except json.JSONDecodeError:
+                      continue
+                  if report.get("campaign") != entry["campaign"]:
+                      continue
+                  actual_major = report.get("postgresql_major_version")
+                  if expected_major not in (None, "not-applicable") and str(actual_major) != str(expected_major):
+                      continue
+                  candidates.append((name, raw, report))
+              if len(candidates) != 1:
+                  raise SystemExit(
+                      f"artifact {entry['artifact']['name']!r}: expected one canonical report for "
+                      f"{entry['campaign']!r}/{expected_major!r}, got {[name for name, _, _ in candidates]}"
+                  )
+              return candidates[0]
 
           def promote(provenance_path):
-              path = Path(provenance_path)
-              document = json.loads(path.read_text())
-              retained_dir = path.parent
+              provenance = Path(provenance_path)
+              document = json.loads(provenance.read_text())
+              retained_dir = provenance.parent
               for entry in document["evidence"]:
                   report_name = entry["report"]
                   artifact_name = entry["artifact"]["name"]
                   run_id = run_for_artifact(artifact_name)
                   run = api(f"/actions/runs/{run_id}")
-                  if run["conclusion"] != "success":
-                      raise SystemExit(f"run {run_id} is not successful: {run['conclusion']}")
-                  if run["head_sha"] != PRODUCER_HEAD:
-                      raise SystemExit(f"run {run_id} head moved: {run['head_sha']} != {PRODUCER_HEAD}")
-                  if run["event"] != "pull_request":
-                      raise SystemExit(f"run {run_id} has unexpected event {run['event']}")
+                  if run["conclusion"] != "success" or run["head_sha"] != PRODUCER_HEAD or run["event"] != "pull_request":
+                      raise SystemExit(
+                          f"run {run_id} identity mismatch: conclusion={run['conclusion']} "
+                          f"head={run['head_sha']} event={run['event']}"
+                      )
 
-                  jobs = api(f"/actions/runs/{run_id}/jobs?per_page=100")["jobs"]
                   job_name = entry["producing_job"]["name"]
+                  jobs = api(f"/actions/runs/{run_id}/jobs?per_page=100")["jobs"]
                   job_matches = [job for job in jobs if job["name"] == job_name]
-                  if len(job_matches) != 1:
-                      raise SystemExit(f"run {run_id}: expected one job {job_name!r}, got {len(job_matches)}")
+                  if len(job_matches) != 1 or job_matches[0]["conclusion"] != "success":
+                      raise SystemExit(f"run {run_id}: producing job {job_name!r} missing or unsuccessful")
                   job = job_matches[0]
-                  if job["conclusion"] != "success":
-                      raise SystemExit(f"job {job_name!r} is not successful: {job['conclusion']}")
 
                   artifacts = api(f"/actions/runs/{run_id}/artifacts?per_page=100")["artifacts"]
-                  artifact_matches = [artifact for artifact in artifacts if artifact["name"] == artifact_name]
-                  if len(artifact_matches) != 1:
-                      raise SystemExit(f"run {run_id}: expected one artifact {artifact_name!r}, got {len(artifact_matches)}")
+                  artifact_matches = [a for a in artifacts if a["name"] == artifact_name]
+                  if len(artifact_matches) != 1 or artifact_matches[0].get("expired"):
+                      raise SystemExit(f"run {run_id}: artifact {artifact_name!r} missing/expired/ambiguous")
                   artifact = artifact_matches[0]
-                  if artifact.get("expired"):
-                      raise SystemExit(f"artifact {artifact_name!r} is expired")
 
                   with tempfile.TemporaryDirectory() as temporary:
                       archive = Path(temporary) / "artifact.zip"
@@ -138,95 +140,62 @@ jobs:
                               "-H", "X-GitHub-Api-Version: 2022-11-28",
                               f"{API}/actions/artifacts/{artifact['id']}/zip",
                               "-o", str(archive),
-                          ],
-                          check=True,
+                          ], check=True,
                       )
-                      archive_digest = "sha256:" + hashlib.sha256(archive.read_bytes()).hexdigest()
-                      if archive_digest != artifact["digest"]:
-                          raise SystemExit(
-                              f"artifact {artifact_name!r} digest mismatch: {archive_digest} != {artifact['digest']}"
-                          )
+                      actual_digest = "sha256:" + hashlib.sha256(archive.read_bytes()).hexdigest()
+                      if actual_digest != artifact["digest"]:
+                          raise SystemExit(f"artifact {artifact_name!r}: {actual_digest} != {artifact['digest']}")
                       with zipfile.ZipFile(archive) as zipped:
-                          candidates = [name for name in zipped.namelist() if Path(name).name == report_name]
-                          if len(candidates) != 1:
-                              raise SystemExit(
-                                  f"artifact {artifact_name!r}: expected one {report_name!r}, got {candidates}"
-                              )
-                          report_bytes = zipped.read(candidates[0])
+                          archive_member, report_bytes, report = select_report(zipped, entry)
 
-                  report = json.loads(report_bytes)
-                  if report.get("passed") is not True:
-                      raise SystemExit(f"report {report_name!r} is not passed")
+                  if "passed" in report and report["passed"] is not True:
+                      raise SystemExit(f"report {report_name!r} did not pass")
                   if report.get("violations", []) != []:
-                      raise SystemExit(f"report {report_name!r} has violations: {report.get('violations')}")
-                  report_manifests = manifests(report)
-                  if not report_manifests:
+                      raise SystemExit(f"report {report_name!r} contains violations")
+                  manifests = collect_manifests(report)
+                  if not manifests:
                       raise SystemExit(f"report {report_name!r} has no execution manifest")
-                  execution_commits = {manifest.get("execution_commit") for manifest in report_manifests}
-                  if len(execution_commits) != 1 or None in execution_commits:
-                      raise SystemExit(f"report {report_name!r} has inconsistent execution commits: {execution_commits}")
-                  execution_commit = next(iter(execution_commits))
-                  object_sets = [manifest.get("objects") for manifest in report_manifests if manifest.get("objects") is not None]
+                  commits = {manifest.get("execution_commit") for manifest in manifests}
+                  if len(commits) != 1 or None in commits:
+                      raise SystemExit(f"report {report_name!r} has inconsistent execution commits: {commits}")
+                  execution_commit = next(iter(commits))
+                  if any(manifest.get("tree_clean") is not True for manifest in manifests):
+                      raise SystemExit(f"report {report_name!r} did not record a clean execution tree")
+                  object_sets = [manifest["objects"] for manifest in manifests if "objects" in manifest]
                   if object_sets and any(objects != object_sets[0] for objects in object_sets[1:]):
                       raise SystemExit(f"report {report_name!r} has inconsistent execution object manifests")
-                  if any(manifest.get("tree_clean") is not True for manifest in report_manifests):
-                      raise SystemExit(f"report {report_name!r} was not produced from a clean execution tree")
                   environment = report.get("environment", {})
-                  if isinstance(environment, dict):
-                      source_commit = environment.get("source_commit")
-                      if source_commit is not None and source_commit != execution_commit:
-                          raise SystemExit(
-                              f"report {report_name!r} source commit {source_commit} != manifest {execution_commit}"
-                          )
-                  expected_major = entry.get("postgres_major_version")
-                  actual_major = report.get("postgresql_major_version")
-                  if expected_major not in (None, "not-applicable") and str(actual_major) != str(expected_major):
-                      raise SystemExit(
-                          f"report {report_name!r} PostgreSQL major {actual_major!r} != {expected_major!r}"
-                      )
+                  if isinstance(environment, dict) and environment.get("source_commit") not in (None, execution_commit):
+                      raise SystemExit(f"report {report_name!r}: environment source commit disagrees with manifest")
 
                   retained_path = retained_dir / report_name
                   retained_path.write_bytes(report_bytes)
-                  retained_blob = subprocess.check_output(
-                      ["git", "hash-object", str(retained_path)], text=True
-                  ).strip()
+                  retained_blob = subprocess.check_output(["git", "hash-object", str(retained_path)], text=True).strip()
 
-                  entry["producer"].update(
-                      {
-                          "execution_commit": execution_commit,
-                          "execution_commit_note": (
-                              "Exact PR #275 synthetic merge execution tree recorded by the successful producer report; "
-                              "object-manifest identities are the authority for later local verification."
-                          ),
-                          "branch_head_sha": run["head_sha"],
-                          "branch_head_note": (
-                              "Exact PR #275 source candidate that triggered the successful producer run; "
-                              "recorded separately from the ephemeral execution tree."
-                          ),
-                          "source_tree_clean": True,
-                          "rustc": env_value(report, "rustc", entry["producer"].get("rustc")),
-                          "os": env_value(report, "os", entry["producer"].get("os")),
-                          "arch": env_value(report, "arch", entry["producer"].get("arch")),
-                      }
-                  )
-                  entry["workflow_run"].update(
-                      {
-                          "id": run_id,
-                          "attempt": run["run_attempt"],
-                          "event": run["event"],
-                          "conclusion": run["conclusion"],
-                      }
-                  )
-                  entry["producing_job"].update(
-                      {"id": job["id"], "conclusion": job["conclusion"]}
-                  )
-                  entry["artifact"].update(
-                      {
-                          "id": artifact["id"],
-                          "digest": artifact["digest"],
-                          "size_bytes": artifact["size_in_bytes"],
-                      }
-                  )
+                  producer = entry["producer"]
+                  producer.update({
+                      "execution_commit": execution_commit,
+                      "execution_commit_note": "Exact PR #275 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
+                      "branch_head_sha": run["head_sha"],
+                      "branch_head_note": "Exact PR #275 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
+                      "source_tree_clean": True,
+                  })
+                  if isinstance(environment, dict):
+                      for key in ("rustc", "os", "arch"):
+                          if environment.get(key) is not None:
+                              producer[key] = environment[key]
+                  entry["workflow_run"].update({
+                      "id": run_id,
+                      "attempt": run["run_attempt"],
+                      "event": run["event"],
+                      "conclusion": run["conclusion"],
+                  })
+                  entry["producing_job"].update({"id": job["id"], "conclusion": job["conclusion"]})
+                  entry["artifact"].update({
+                      "id": artifact["id"],
+                      "digest": artifact["digest"],
+                      "size_bytes": artifact["size_in_bytes"],
+                  })
                   entry["retained_report_git_blob"] = retained_blob
                   entry["remote_verification"] = {
                       "verified": True,
@@ -239,17 +208,13 @@ jobs:
                       "artifact_digest": True,
                       "artifact_bytes_match_retained_report": True,
                       "execution_commit_matches_report": True,
-                      "note": (
-                          "PR #275 successful Actions artifact independently fetched through the GitHub API; "
-                          "run/job identity and success, archive SHA-256, exact report bytes, canonical report identity, "
-                          "runtime axis when declared, and execution commit were verified before retention."
-                      ),
+                      "note": "PR #275 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention.",
                   }
                   print(
-                      f"promoted {report_name}: run={run_id} job={job['id']} artifact={artifact['id']} "
-                      f"execution={execution_commit} blob={retained_blob}"
+                      f"promoted {report_name} from {archive_member}: run={run_id} job={job['id']} "
+                      f"artifact={artifact['id']} execution={execution_commit} blob={retained_blob}"
                   )
-              path.write_text(json.dumps(document, indent=2, ensure_ascii=False) + "\n")
+              provenance.write_text(json.dumps(document, indent=2, ensure_ascii=False) + "\n")
 
           promote("docs/engineering/campaigns/m5/evidence-provenance.json")
           promote("docs/engineering/campaigns/m6/evidence-provenance.json")
