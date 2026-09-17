@@ -4,7 +4,7 @@
     "stages": [
       {
         "stage": "actual execution tree",
-        "what": "The tree the campaign really ran against, recorded by the run from inside its own checkout as an object manifest in the report. On a pull request this is the ephemeral merge commit, which no later clone can resolve \u2014 which is exactly why the manifest is recorded rather than the commit name being trusted to stand for it."
+        "what": "The tree the campaign really ran against, recorded by the run from inside its own checkout as an object manifest in the report. On a pull request this is the ephemeral merge commit, which no later clone can resolve — which is exactly why the manifest is recorded rather than the commit name being trusted to stand for it."
       },
       {
         "stage": "workflow run",
@@ -21,7 +21,7 @@
       "Presenting the retention commit as the producer.",
       "Editing a retained artifact so that a recorded hash or commit matches.",
       "Re-running the campaign on each new head to make the execution tree equal the retention commit.",
-      "Treating a summary the report wrote about itself \u2014 a verdict, a total, a pass \u2014 as evidence for the run it describes."
+      "Treating a summary the report wrote about itself — a verdict, a total, a pass — as evidence for the run it describes."
     ]
   },
   "retention_paths": {
@@ -33,7 +33,7 @@
   },
   "binding": {
     "derived_verdicts": "The report's correctness results, growth verdicts and campaign totals are not read as evidence. `cargo xtask soak` recomputes each of them from the raw per-cycle journal and the retained samples, after first requiring the chronology of those arrays to be a contiguous, ordered, correctly phased run of the declared length, and requires the report's own answers to match.",
-    "note": "Two verifications with different reach, and the difference is stated rather than blurred. `cargo xtask evidence` is repository-local: it resolves nothing over the network, so it keeps working long after GitHub has expired the artifacts it describes, and what it establishes is that the retained bytes are the bytes this repository recorded, over a tree whose campaign still means what it meant. It cannot say the retained bytes are the bytes the workflow uploaded. That stronger check needs the GitHub API, which is why it is performed once \u2014 at the moment evidence is promoted \u2014 and its result recorded per entry under remote_verification.",
+    "note": "Two verifications with different reach, and the difference is stated rather than blurred. `cargo xtask evidence` is repository-local: it resolves nothing over the network, so it keeps working long after GitHub has expired the artifacts it describes, and what it establishes is that the retained bytes are the bytes this repository recorded, over a tree whose campaign still means what it meant. It cannot say the retained bytes are the bytes the workflow uploaded. That stronger check needs the GitHub API, which is why it is performed once — at the moment evidence is promoted — and its result recorded per entry under remote_verification.",
     "remote_verification": "Performed once per retention, against the GitHub Actions API: the run, attempt and job exist and succeeded; the artifact's own sha256 digest is recorded; the artifact is downloaded and its extracted report compared byte-for-byte with the retained file. It is deliberately not a permanent CI dependency, because Actions artifacts expire and a verifier that stopped working on a retention boundary would be switched off rather than fixed.",
     "local_verification": "Enforced on every CI run. Artifact git blob identity, the three-way producer/recorded/HEAD binding over campaign-semantics paths, exactly-once matrix coverage, schema completeness, and the report contract.",
     "why_object_ids": "Git object identities for the local binding, because git is already required by this tooling, the values are verifiable by hand with `git rev-parse HEAD:<path>` and `git hash-object <file>`, and no dependency is added to compute them. The GitHub artifact digest is recorded separately and is a different thing: a sha256 over the uploaded archive, which is what the one-time remote check compares against.",
@@ -118,10 +118,10 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
-        "execution_commit_note": "Exact PR #272 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "67a40eb0eb8722d7df35d23190be201c9cd6633d",
-        "branch_head_note": "Exact PR #272 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
+        "execution_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+        "execution_commit_note": "Exact PR #275 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
+        "branch_head_sha": "f5af503eae18c7a17985e9ffb7aed1766171c314",
+        "branch_head_note": "Exact PR #275 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
         "os": "linux",
@@ -130,27 +130,27 @@
       "workflow_run": {
         "workflow": "M5 Cancellation",
         "workflow_file": ".github/workflows/m5-cancellation.yml",
-        "id": 34933190141,
+        "id": 35217872968,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-cancellation-campaign",
-        "id": 104265514633,
+        "id": 105190563469,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-15",
-        "id": 10382870182,
-        "digest": "sha256:70c38b3b2c73ef860e48574d720cbbb0bc44621c8972a2a15634b7eea1a5df70",
-        "size_bytes": 5745
+        "id": 10494953685,
+        "digest": "sha256:713cf6ab8e5c65593d057fdf883ba7cccedd605c5222fb14ec92daf5730de585",
+        "size_bytes": 5747
       },
-      "retained_report_git_blob": "f4c1fb5447027ce71f06eab0825f57cdcc2da5f7",
+      "retained_report_git_blob": "9ee440f7b235e3bb9dc680cf508507b0c0b592e5",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-15T09:35:38Z",
-        "run_id": 34933190141,
+        "verified_at": "2026-09-17T14:57:53Z",
+        "run_id": 35217872968,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -158,7 +158,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "PR #272 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
+        "note": "PR #275 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
       }
     },
     {
@@ -168,10 +168,10 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
-        "execution_commit_note": "Exact PR #272 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "67a40eb0eb8722d7df35d23190be201c9cd6633d",
-        "branch_head_note": "Exact PR #272 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
+        "execution_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+        "execution_commit_note": "Exact PR #275 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
+        "branch_head_sha": "f5af503eae18c7a17985e9ffb7aed1766171c314",
+        "branch_head_note": "Exact PR #275 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
         "os": "linux",
@@ -180,27 +180,27 @@
       "workflow_run": {
         "workflow": "M5 Cancellation",
         "workflow_file": ".github/workflows/m5-cancellation.yml",
-        "id": 34933190141,
+        "id": 35217872968,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-cancellation-campaign",
-        "id": 104265514426,
+        "id": 105190563641,
         "conclusion": "success"
       },
       "artifact": {
         "name": "cancellation-campaign-postgres-18",
-        "id": 10381919727,
-        "digest": "sha256:ca88f5c523c5999788d324ebac81cb962846eb2777bc28bd72867c7bc462aa81",
-        "size_bytes": 5757
+        "id": 10496230348,
+        "digest": "sha256:f727e8918216dab1eb516075f4b9cdd5dac920126a437776e28a41b77f6e34a1",
+        "size_bytes": 5747
       },
-      "retained_report_git_blob": "bb480684d9f65fa64441668c98616727655489e4",
+      "retained_report_git_blob": "3ede234fa83edc440748fb99cbf94a0629718039",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-15T09:35:38Z",
-        "run_id": 34933190141,
+        "verified_at": "2026-09-17T14:57:53Z",
+        "run_id": 35217872968,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -208,7 +208,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "PR #272 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
+        "note": "PR #275 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
       }
     },
     {
@@ -218,10 +218,10 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
-        "execution_commit_note": "Exact PR #272 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "67a40eb0eb8722d7df35d23190be201c9cd6633d",
-        "branch_head_note": "Exact PR #272 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
+        "execution_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+        "execution_commit_note": "Exact PR #275 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
+        "branch_head_sha": "f5af503eae18c7a17985e9ffb7aed1766171c314",
+        "branch_head_note": "Exact PR #275 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
         "os": "linux",
@@ -230,27 +230,27 @@
       "workflow_run": {
         "workflow": "M5 Conformance",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 34933190051,
+        "id": 35217872782,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-conformance-campaign",
-        "id": 104265514227,
+        "id": 105190683908,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-15",
-        "id": 10381939698,
-        "digest": "sha256:5b20de219d6ba7c1b301772816d89c87172ec4897620ccf2be709f4d6ac56c6a",
-        "size_bytes": 7137
+        "id": 10495058601,
+        "digest": "sha256:33713670d8ab966ef890c1edf9453fec97fb9aed7bf20132fe859ce30967c219",
+        "size_bytes": 7136
       },
-      "retained_report_git_blob": "c4f827adfb6051daa2c89fc5b03585d27fc3215d",
+      "retained_report_git_blob": "dc0f46edca301c75df2065985a8b25d799b1ac1c",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-15T09:35:38Z",
-        "run_id": 34933190051,
+        "verified_at": "2026-09-17T14:57:53Z",
+        "run_id": 35217872782,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -258,7 +258,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "PR #272 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
+        "note": "PR #275 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
       }
     },
     {
@@ -268,10 +268,10 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
-        "execution_commit_note": "Exact PR #272 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "67a40eb0eb8722d7df35d23190be201c9cd6633d",
-        "branch_head_note": "Exact PR #272 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
+        "execution_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+        "execution_commit_note": "Exact PR #275 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
+        "branch_head_sha": "f5af503eae18c7a17985e9ffb7aed1766171c314",
+        "branch_head_note": "Exact PR #275 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
         "os": "linux",
@@ -280,27 +280,27 @@
       "workflow_run": {
         "workflow": "M5 Conformance",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 34933190051,
+        "id": 35217872782,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-conformance-campaign",
-        "id": 104265513992,
+        "id": 105190684140,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-18",
-        "id": 10382266879,
-        "digest": "sha256:0c7503d834070aec64b76b794082c08331d94b7ad8f0ba75583af74909331da2",
-        "size_bytes": 7137
+        "id": 10494958810,
+        "digest": "sha256:edb49f1d259531338501ec098df1547793d5a55d5c90ed2d916c3e1d07fa3506",
+        "size_bytes": 7136
       },
-      "retained_report_git_blob": "fe88e14181dbc6236435d8e0371bc73489d17c3f",
+      "retained_report_git_blob": "9a2e14f01eed936c86820383957f761df4db0e79",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-15T09:35:38Z",
-        "run_id": 34933190051,
+        "verified_at": "2026-09-17T14:57:53Z",
+        "run_id": 35217872782,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -308,7 +308,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "PR #272 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
+        "note": "PR #275 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
       }
     },
     {
@@ -318,10 +318,10 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
-        "execution_commit_note": "Exact PR #272 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "67a40eb0eb8722d7df35d23190be201c9cd6633d",
-        "branch_head_note": "Exact PR #272 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
+        "execution_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+        "execution_commit_note": "Exact PR #275 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
+        "branch_head_sha": "f5af503eae18c7a17985e9ffb7aed1766171c314",
+        "branch_head_note": "Exact PR #275 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
         "os": "linux",
@@ -330,27 +330,27 @@
       "workflow_run": {
         "workflow": "M5 Crash and Restore",
         "workflow_file": ".github/workflows/m5-crash-restore.yml",
-        "id": 34933190085,
+        "id": 35217872996,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-crash-restore-campaign",
-        "id": 104265514129,
+        "id": 105190564176,
         "conclusion": "success"
       },
       "artifact": {
         "name": "crash-restore-campaign-postgres-15",
-        "id": 10382138981,
-        "digest": "sha256:6db853e0a6497d4aa1a8d3023d5a9c8a2d9ff61ffe28271dbe5d8f165e535816",
-        "size_bytes": 6674
+        "id": 10496265268,
+        "digest": "sha256:bbfecbcb8c47a7c34198a0f14abc0cc740814d0cc37cb96a093ab29132c1a8d3",
+        "size_bytes": 6678
       },
-      "retained_report_git_blob": "789ad3435db63c31d236207c837d1d49ef3400ad",
+      "retained_report_git_blob": "45882ae77f26950e70d71976b3d71ff457c8e065",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-15T09:35:38Z",
-        "run_id": 34933190085,
+        "verified_at": "2026-09-17T14:57:53Z",
+        "run_id": 35217872996,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -358,7 +358,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "PR #272 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
+        "note": "PR #275 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
       }
     },
     {
@@ -368,10 +368,10 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
-        "execution_commit_note": "Exact PR #272 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "67a40eb0eb8722d7df35d23190be201c9cd6633d",
-        "branch_head_note": "Exact PR #272 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
+        "execution_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+        "execution_commit_note": "Exact PR #275 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
+        "branch_head_sha": "f5af503eae18c7a17985e9ffb7aed1766171c314",
+        "branch_head_note": "Exact PR #275 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
         "os": "linux",
@@ -380,27 +380,27 @@
       "workflow_run": {
         "workflow": "M5 Crash and Restore",
         "workflow_file": ".github/workflows/m5-crash-restore.yml",
-        "id": 34933190085,
+        "id": 35217872996,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-crash-restore-campaign",
-        "id": 104265514344,
+        "id": 105190563874,
         "conclusion": "success"
       },
       "artifact": {
         "name": "crash-restore-campaign-postgres-18",
-        "id": 10381844843,
-        "digest": "sha256:ad8765914245cee316a4f5fa40fc8ba5ca5d20dfe5848cda92e39b5df8320f91",
-        "size_bytes": 6678
+        "id": 10495955480,
+        "digest": "sha256:7272d577817591f91d4dfa8bc73c33d27ccff1f7c0bee6d7a32affabcc63998a",
+        "size_bytes": 6699
       },
-      "retained_report_git_blob": "f6ef84468915aaa706d35572372c342ff50e94ef",
+      "retained_report_git_blob": "b7f013beddd00b4c01d9c5a3c3bd8d26ae4173a2",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-15T09:35:38Z",
-        "run_id": 34933190085,
+        "verified_at": "2026-09-17T14:57:53Z",
+        "run_id": 35217872996,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -408,7 +408,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "PR #272 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
+        "note": "PR #275 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
       }
     },
     {
@@ -418,10 +418,10 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
-        "execution_commit_note": "Exact PR #272 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "67a40eb0eb8722d7df35d23190be201c9cd6633d",
-        "branch_head_note": "Exact PR #272 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
+        "execution_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+        "execution_commit_note": "Exact PR #275 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
+        "branch_head_sha": "f5af503eae18c7a17985e9ffb7aed1766171c314",
+        "branch_head_note": "Exact PR #275 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
         "os": "linux",
@@ -430,27 +430,27 @@
       "workflow_run": {
         "workflow": "M5 Performance",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 34933190033,
+        "id": 35217872764,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-performance-campaign",
-        "id": 104265514012,
+        "id": 105190563301,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-15",
-        "id": 10382870200,
-        "digest": "sha256:b4dc764e5677e8e2717fede9f5620661c09e0a5bc14b2795801b05844773eb1c",
+        "id": 10496055514,
+        "digest": "sha256:ff7e068ed094a582a1aa4d31661ce0d33b9240fd3ab0eb5792ebba9a2d3bd89b",
         "size_bytes": 6603
       },
-      "retained_report_git_blob": "bae15882160e111ccb1ceec7c228d27a175800f8",
+      "retained_report_git_blob": "e12a74fe52f0213aa7412d984e60dafc6b29709d",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-15T09:35:38Z",
-        "run_id": 34933190033,
+        "verified_at": "2026-09-17T14:57:53Z",
+        "run_id": 35217872764,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -458,7 +458,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "PR #272 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
+        "note": "PR #275 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
       }
     },
     {
@@ -468,10 +468,10 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
-        "execution_commit_note": "Exact PR #272 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "67a40eb0eb8722d7df35d23190be201c9cd6633d",
-        "branch_head_note": "Exact PR #272 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
+        "execution_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+        "execution_commit_note": "Exact PR #275 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
+        "branch_head_sha": "f5af503eae18c7a17985e9ffb7aed1766171c314",
+        "branch_head_note": "Exact PR #275 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
         "os": "linux",
@@ -480,27 +480,27 @@
       "workflow_run": {
         "workflow": "M5 Performance",
         "workflow_file": ".github/workflows/m5-performance.yml",
-        "id": 34933190033,
+        "id": 35217872764,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-performance-campaign",
-        "id": 104265514221,
+        "id": 105190563033,
         "conclusion": "success"
       },
       "artifact": {
         "name": "performance-campaign-postgres-18",
-        "id": 10382975106,
-        "digest": "sha256:58bcd5b3381f59e91720823bf598d511db316f95f6829d16d8314e434d229f87",
-        "size_bytes": 6607
+        "id": 10495668356,
+        "digest": "sha256:3c234fed81bbcc3b05cb507eed204e721a281f39441088883999d19f4bd5b8e9",
+        "size_bytes": 6618
       },
-      "retained_report_git_blob": "562cf55d046102a070c34d2a48f12d360b4377ac",
+      "retained_report_git_blob": "1cb2270cba02f613ebb1bd0f2008ab21321e90d3",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-15T09:35:38Z",
-        "run_id": 34933190033,
+        "verified_at": "2026-09-17T14:57:53Z",
+        "run_id": 35217872764,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -508,7 +508,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "PR #272 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
+        "note": "PR #275 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
       }
     },
     {
@@ -518,10 +518,10 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
-        "execution_commit_note": "Exact PR #272 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "67a40eb0eb8722d7df35d23190be201c9cd6633d",
-        "branch_head_note": "Exact PR #272 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
+        "execution_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+        "execution_commit_note": "Exact PR #275 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
+        "branch_head_sha": "f5af503eae18c7a17985e9ffb7aed1766171c314",
+        "branch_head_note": "Exact PR #275 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
         "os": "linux",
@@ -530,27 +530,27 @@
       "workflow_run": {
         "workflow": "M5 Resource Bounds",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 34933190086,
+        "id": 35217872974,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-resource-bounds-campaign",
-        "id": 104265514338,
+        "id": 105190563486,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-15",
-        "id": 10382124140,
-        "digest": "sha256:9ed1b223048df05562a13356e3bbfbaff9f6043d75049d9c37e423f77e3e7d84",
-        "size_bytes": 14186
+        "id": 10495648348,
+        "digest": "sha256:ef6df418076da1ab4ee88999a4c66ead780073e4f7a4ed3871d076df15fdcab7",
+        "size_bytes": 14189
       },
-      "retained_report_git_blob": "269cfa236e14d7708962f65f7a02af2022c11632",
+      "retained_report_git_blob": "b483cda345ec595f1bae7787b6111835611de1fa",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-15T09:35:38Z",
-        "run_id": 34933190086,
+        "verified_at": "2026-09-17T14:57:53Z",
+        "run_id": 35217872974,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -558,7 +558,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "PR #272 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
+        "note": "PR #275 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
       }
     },
     {
@@ -568,10 +568,10 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
-        "execution_commit_note": "Exact PR #272 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "67a40eb0eb8722d7df35d23190be201c9cd6633d",
-        "branch_head_note": "Exact PR #272 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
+        "execution_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+        "execution_commit_note": "Exact PR #275 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
+        "branch_head_sha": "f5af503eae18c7a17985e9ffb7aed1766171c314",
+        "branch_head_note": "Exact PR #275 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
         "os": "linux",
@@ -580,27 +580,27 @@
       "workflow_run": {
         "workflow": "M5 Resource Bounds",
         "workflow_file": ".github/workflows/m5-resource-bounds.yml",
-        "id": 34933190086,
+        "id": 35217872974,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-resource-bounds-campaign",
-        "id": 104265514146,
+        "id": 105190563814,
         "conclusion": "success"
       },
       "artifact": {
         "name": "resource-bounds-campaign-postgres-18",
-        "id": 10382276725,
-        "digest": "sha256:3e1abc6dcba1404deb8c94a90499483cdbd4794ecff3e296b6205b39540a719f",
-        "size_bytes": 14185
+        "id": 10496070473,
+        "digest": "sha256:54376cea42cd435a8c5fc53c721483f0e4862055611fb8abd1686a426988be49",
+        "size_bytes": 14188
       },
-      "retained_report_git_blob": "18cf4ef6e85fecb014d4559d040e330aaa7b270e",
+      "retained_report_git_blob": "074b5a81a1832c3602738c2691d67c4de1267a3c",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-15T09:35:38Z",
-        "run_id": 34933190086,
+        "verified_at": "2026-09-17T14:57:53Z",
+        "run_id": 35217872974,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -608,7 +608,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "PR #272 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
+        "note": "PR #275 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
       }
     },
     {
@@ -618,10 +618,10 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
-        "execution_commit_note": "Exact PR #272 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "67a40eb0eb8722d7df35d23190be201c9cd6633d",
-        "branch_head_note": "Exact PR #272 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
+        "execution_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+        "execution_commit_note": "Exact PR #275 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
+        "branch_head_sha": "f5af503eae18c7a17985e9ffb7aed1766171c314",
+        "branch_head_note": "Exact PR #275 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
         "os": "linux",
@@ -630,27 +630,27 @@
       "workflow_run": {
         "workflow": "M5 Security",
         "workflow_file": ".github/workflows/m5-security.yml",
-        "id": 34933190034,
+        "id": 35217872947,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-security-campaign",
-        "id": 104265513985,
+        "id": 105190564046,
         "conclusion": "success"
       },
       "artifact": {
         "name": "security-campaign-postgres-15",
-        "id": 10382223585,
-        "digest": "sha256:dafb428ebbd5726580f43932a6fbe5d4497179470fcb93e3d0c544292bf82ae7",
-        "size_bytes": 7582
+        "id": 10496380351,
+        "digest": "sha256:b5d5452737e30bc330f9adc452c288d10b5090475790dab7e7a46c81f3159c9a",
+        "size_bytes": 7583
       },
-      "retained_report_git_blob": "f82ecac7af30f8d2cdd950e22ddb177847eba885",
+      "retained_report_git_blob": "d55cd9a140889dae081bc860ef85d6a00ff84b69",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-15T09:35:38Z",
-        "run_id": 34933190034,
+        "verified_at": "2026-09-17T14:57:53Z",
+        "run_id": 35217872947,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -658,7 +658,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "PR #272 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
+        "note": "PR #275 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
       }
     },
     {
@@ -668,10 +668,10 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
-        "execution_commit_note": "Exact PR #272 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "67a40eb0eb8722d7df35d23190be201c9cd6633d",
-        "branch_head_note": "Exact PR #272 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
+        "execution_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+        "execution_commit_note": "Exact PR #275 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
+        "branch_head_sha": "f5af503eae18c7a17985e9ffb7aed1766171c314",
+        "branch_head_note": "Exact PR #275 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
         "os": "linux",
@@ -680,27 +680,27 @@
       "workflow_run": {
         "workflow": "M5 Security",
         "workflow_file": ".github/workflows/m5-security.yml",
-        "id": 34933190034,
+        "id": 35217872947,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-security-campaign",
-        "id": 104265514166,
+        "id": 105190564060,
         "conclusion": "success"
       },
       "artifact": {
         "name": "security-campaign-postgres-18",
-        "id": 10381899763,
-        "digest": "sha256:f88be135abd7cd8215c173b9cc7c6147e1c3b622bdd388237355d75bd49341c5",
-        "size_bytes": 7581
+        "id": 10496440283,
+        "digest": "sha256:98cc50bb56a522f4921c6facb92d759a044d0f845645a2274bbe88367ae8babe",
+        "size_bytes": 7582
       },
-      "retained_report_git_blob": "abde3c2d6a454d6ec42bc04e8803ad102643dbb6",
+      "retained_report_git_blob": "f3cb6f60dc90ae82830da401f271cf7449e2a06c",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-15T09:35:38Z",
-        "run_id": 34933190034,
+        "verified_at": "2026-09-17T14:57:53Z",
+        "run_id": 35217872947,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -708,7 +708,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "PR #272 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
+        "note": "PR #275 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
       }
     },
     {
@@ -718,10 +718,10 @@
       "postgres_major_version": "15",
       "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
-        "execution_commit_note": "Exact PR #272 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "67a40eb0eb8722d7df35d23190be201c9cd6633d",
-        "branch_head_note": "Exact PR #272 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
+        "execution_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+        "execution_commit_note": "Exact PR #275 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
+        "branch_head_sha": "f5af503eae18c7a17985e9ffb7aed1766171c314",
+        "branch_head_note": "Exact PR #275 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
         "os": "linux",
@@ -730,27 +730,27 @@
       "workflow_run": {
         "workflow": "M5 Soak",
         "workflow_file": ".github/workflows/m5-soak.yml",
-        "id": 34933190093,
+        "id": 35217872781,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-soak-campaign",
-        "id": 104265514310,
+        "id": 105190692980,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-15",
-        "id": 10383100038,
-        "digest": "sha256:478e8e40c927329489c38dbf8d5cc4ad9fbd5f2b8cd56199e8ac8e1fd49b8bcd",
-        "size_bytes": 88506
+        "id": 10495523992,
+        "digest": "sha256:6ea2eff7e300ba6c02334f96a003c025fa0044190af4d2b030a36e88df56d967",
+        "size_bytes": 89178
       },
-      "retained_report_git_blob": "f6bd6896873b1f2a69f6a4f0757f3e6edeb3e664",
+      "retained_report_git_blob": "6a164ecf82371dd6ad32ec93d4d4456f052738ed",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-15T09:35:38Z",
-        "run_id": 34933190093,
+        "verified_at": "2026-09-17T14:57:53Z",
+        "run_id": 35217872781,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -758,7 +758,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "PR #272 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
+        "note": "PR #275 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
       }
     },
     {
@@ -768,10 +768,10 @@
       "postgres_major_version": "18",
       "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
       "producer": {
-        "execution_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
-        "execution_commit_note": "Exact PR #272 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "67a40eb0eb8722d7df35d23190be201c9cd6633d",
-        "branch_head_note": "Exact PR #272 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
+        "execution_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+        "execution_commit_note": "Exact PR #275 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
+        "branch_head_sha": "f5af503eae18c7a17985e9ffb7aed1766171c314",
+        "branch_head_note": "Exact PR #275 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
         "os": "linux",
@@ -780,27 +780,27 @@
       "workflow_run": {
         "workflow": "M5 Soak",
         "workflow_file": ".github/workflows/m5-soak.yml",
-        "id": 34933190093,
+        "id": 35217872781,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-soak-campaign",
-        "id": 104265514127,
+        "id": 105190693259,
         "conclusion": "success"
       },
       "artifact": {
         "name": "soak-campaign-postgres-18",
-        "id": 10382517073,
-        "digest": "sha256:fcc15760ac8199de863dba90b2c42df89fa9029d992d27d47b8b605548866cbf",
-        "size_bytes": 88264
+        "id": 10495074074,
+        "digest": "sha256:66120e09654e9048e04d1877476e8efb1063e3a0f0ea9e9da901db0083671e4a",
+        "size_bytes": 89258
       },
-      "retained_report_git_blob": "fbd05c49dc1533e6099db2f3eb4151330a670f3e",
+      "retained_report_git_blob": "474d63b09f048c8434e6be51ee16982b4f98cb37",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-15T09:35:38Z",
-        "run_id": 34933190093,
+        "verified_at": "2026-09-17T14:57:53Z",
+        "run_id": 35217872781,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -808,7 +808,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "PR #272 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
+        "note": "PR #275 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
       }
     },
     {
@@ -818,10 +818,10 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
-        "execution_commit_note": "Exact PR #272 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "67a40eb0eb8722d7df35d23190be201c9cd6633d",
-        "branch_head_note": "Exact PR #272 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
+        "execution_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+        "execution_commit_note": "Exact PR #275 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
+        "branch_head_sha": "f5af503eae18c7a17985e9ffb7aed1766171c314",
+        "branch_head_note": "Exact PR #275 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
         "os": "linux",
@@ -830,27 +830,27 @@
       "workflow_run": {
         "workflow": "M5 Upgrade",
         "workflow_file": ".github/workflows/m5-upgrade.yml",
-        "id": 34933190097,
+        "id": 35217872887,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-15-upgrade-campaign",
-        "id": 104265514141,
+        "id": 105190669098,
         "conclusion": "success"
       },
       "artifact": {
         "name": "upgrade-campaign-postgres-15",
-        "id": 10382297745,
-        "digest": "sha256:ea5c89a71e38680c3745ab3d4683fbc59a533e5648903ebf7bd89cdd73884b26",
-        "size_bytes": 5756
+        "id": 10495713687,
+        "digest": "sha256:01a94339ce253b3202016f05e835a80da737dc6f022e248903d9cf7fd7118570",
+        "size_bytes": 5759
       },
-      "retained_report_git_blob": "126d381ddbc6401cdb1e11839b1ab55db4a7f47f",
+      "retained_report_git_blob": "6b0b71b2b302c0aa41f908363789b30ddb97485f",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-15T09:35:38Z",
-        "run_id": 34933190097,
+        "verified_at": "2026-09-17T14:57:53Z",
+        "run_id": 35217872887,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -858,7 +858,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "PR #272 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
+        "note": "PR #275 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
       }
     },
     {
@@ -868,10 +868,10 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "b5d1ca2206335714e66aa2ec5c7bd7d2911509ea",
-        "execution_commit_note": "Exact PR #272 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "67a40eb0eb8722d7df35d23190be201c9cd6633d",
-        "branch_head_note": "Exact PR #272 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
+        "execution_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+        "execution_commit_note": "Exact PR #275 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
+        "branch_head_sha": "f5af503eae18c7a17985e9ffb7aed1766171c314",
+        "branch_head_note": "Exact PR #275 source candidate that triggered the successful producer run; recorded separately from the ephemeral execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
         "os": "linux",
@@ -880,27 +880,27 @@
       "workflow_run": {
         "workflow": "M5 Upgrade",
         "workflow_file": ".github/workflows/m5-upgrade.yml",
-        "id": 34933190097,
+        "id": 35217872887,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
         "name": "postgres-18-upgrade-campaign",
-        "id": 104265514603,
+        "id": 105190669461,
         "conclusion": "success"
       },
       "artifact": {
         "name": "upgrade-campaign-postgres-18",
-        "id": 10382740542,
-        "digest": "sha256:f1bc90d80573bd53afe8bb39c7198e49f8171b88a505d7b4f4420ceb2ff38c31",
-        "size_bytes": 5757
+        "id": 10496445470,
+        "digest": "sha256:4acbc54bc707f9dd9c1da3de0c53e1c6c9d25bc4fa7c6bee4b47f3363262381a",
+        "size_bytes": 5761
       },
-      "retained_report_git_blob": "d999199695a6bc6ab1cba93837bc64ddda22faee",
+      "retained_report_git_blob": "8d3899e28a245954ce3ec511d1b9e7bcf4faeaa1",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-15T09:35:38Z",
-        "run_id": 34933190097,
+        "verified_at": "2026-09-17T14:57:53Z",
+        "run_id": 35217872887,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -908,7 +908,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "PR #272 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
+        "note": "PR #275 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
       }
     }
   ],
