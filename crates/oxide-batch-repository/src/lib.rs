@@ -81,6 +81,8 @@ pub use repository::{
     RecoveryRequestError, RecoveryResult, RepositoryCapability, RepositoryDescriptor,
     RepositoryError, RepositoryUnitOfWork, SequentialIdGenerator, SystemClock,
 };
+// Internal adapter helpers keep parent and child recovery transformations aligned
+// without extending the facade's supported public surface.
 pub use repository::{
     aggregate_partition_parent, map_partition_aggregation, recovered_execution,
     recovered_step_execution,
