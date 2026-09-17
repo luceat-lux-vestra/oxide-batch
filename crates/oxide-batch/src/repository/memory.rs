@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime};
 
 use oxide_batch_repository::{
     PartitionMutationError, aggregate_partition_parent, map_partition_aggregation,
-    recovered_execution,
+    recovered_execution, recovered_step_execution,
 };
 
 use crate::{
@@ -1963,6 +1963,24 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
             }
             let decided_at = self.repository.clock.now();
             let recovered = recovered_execution(&prior, request, decided_at)?;
+            let child_ids = self
+                .staged
+                .step_executions_by_job
+                .get(&id)
+                .cloned()
+                .unwrap_or_default();
+            let mut recovered_children = Vec::new();
+            for child_id in child_ids {
+                let prior_child = self
+                    .staged
+                    .step_executions
+                    .get(&child_id)
+                    .cloned()
+                    .ok_or(RepositoryError::FlowStateCorrupt)?;
+                if let Some(child) = recovered_step_execution(&prior_child, request, decided_at)? {
+                    recovered_children.push(child);
+                }
+            }
             let decision_id = self.next_recovery_decision_id()?;
             let decision = RecoveryDecision::new(
                 decision_id,
@@ -1976,6 +1994,9 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 decided_at,
             );
             self.staged.job_executions.insert(id, recovered.clone());
+            for child in recovered_children {
+                self.staged.step_executions.insert(child.id(), child);
+            }
             self.staged.execution_updated_at.insert(id, decided_at);
             self.staged
                 .recovery_decisions

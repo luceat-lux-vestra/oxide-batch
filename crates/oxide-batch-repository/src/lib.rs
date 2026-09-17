@@ -81,7 +81,12 @@ pub use repository::{
     RecoveryRequestError, RecoveryResult, RepositoryCapability, RepositoryDescriptor,
     RepositoryError, RepositoryUnitOfWork, SequentialIdGenerator, SystemClock,
 };
-pub use repository::{aggregate_partition_parent, map_partition_aggregation, recovered_execution};
+// Internal adapter helpers keep parent and child recovery transformations aligned
+// without extending the facade's supported public surface.
+pub use repository::{
+    aggregate_partition_parent, map_partition_aggregation, recovered_execution,
+    recovered_step_execution,
+};
 pub use request::hex_digest;
 pub use request::{
     ActorRef, AuthorizationClass, MAX_ACTOR_REF_BYTES, MAX_OPERATION_ID_BYTES,
