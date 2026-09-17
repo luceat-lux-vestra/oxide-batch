@@ -80,6 +80,7 @@ jobs:
 
           def select_report(zipped, entry):
               expected_major = entry.get("postgres_major_version")
+              expected_matrix = entry.get("matrix_point")
               candidates = []
               for name in zipped.namelist():
                   if name.endswith("/") or not name.lower().endswith(".json"):
@@ -89,16 +90,20 @@ jobs:
                       report = json.loads(raw)
                   except json.JSONDecodeError:
                       continue
-                  if report.get("campaign") != entry["campaign"]:
+                  if not collect_manifests(report):
                       continue
                   actual_major = report.get("postgresql_major_version")
                   if expected_major not in (None, "not-applicable") and str(actual_major) != str(expected_major):
                       continue
+                  environment = report.get("environment")
+                  actual_matrix = environment.get("matrix") if isinstance(environment, dict) else None
+                  if actual_matrix is not None and expected_matrix is not None and actual_matrix != expected_matrix:
+                      continue
                   candidates.append((name, raw, report))
               if len(candidates) != 1:
                   raise SystemExit(
-                      f"artifact {entry['artifact']['name']!r}: expected one canonical report for "
-                      f"{entry['campaign']!r}/{expected_major!r}, got {[name for name, _, _ in candidates]}"
+                      f"artifact {entry['artifact']['name']!r}: expected one manifest-bearing report for "
+                      f"matrix={expected_matrix!r} pg={expected_major!r}, got {[name for name, _, _ in candidates]}"
                   )
               return candidates[0]
 
@@ -153,8 +158,6 @@ jobs:
                   if report.get("violations", []) != []:
                       raise SystemExit(f"report {report_name!r} contains violations")
                   manifests = collect_manifests(report)
-                  if not manifests:
-                      raise SystemExit(f"report {report_name!r} has no execution manifest")
                   commits = {manifest.get("execution_commit") for manifest in manifests}
                   if len(commits) != 1 or None in commits:
                       raise SystemExit(f"report {report_name!r} has inconsistent execution commits: {commits}")
