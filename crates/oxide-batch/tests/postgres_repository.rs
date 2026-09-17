@@ -902,6 +902,12 @@ fn unknown_execution_requires_audited_postgres_recovery() -> Result<(), Box<dyn 
         let step = create
             .create_step_execution(execution.id(), &StepName::new("import")?)
             .await?;
+        let unknown_step = create
+            .create_step_execution(execution.id(), &StepName::new("ambiguous-child")?)
+            .await?;
+        let completed_step = create
+            .create_step_execution(execution.id(), &StepName::new("already-complete")?)
+            .await?;
         create.commit().await?;
         let mut mark_unknown = repository.begin().await?;
         let started_step = mark_unknown
@@ -910,6 +916,46 @@ fn unknown_execution_requires_audited_postgres_recovery() -> Result<(), Box<dyn 
                 step.version(),
                 LifecycleTransition::new(
                     BatchStatus::Started,
+                    UNIX_EPOCH + Duration::from_secs(800),
+                ),
+            )
+            .await?;
+        let unknown_started = mark_unknown
+            .transition_step_execution(
+                unknown_step.id(),
+                unknown_step.version(),
+                LifecycleTransition::new(
+                    BatchStatus::Started,
+                    UNIX_EPOCH + Duration::from_secs(800),
+                ),
+            )
+            .await?;
+        let ambiguous_child = mark_unknown
+            .transition_step_execution(
+                unknown_step.id(),
+                unknown_started.version(),
+                LifecycleTransition::new(
+                    BatchStatus::Unknown,
+                    UNIX_EPOCH + Duration::from_secs(800),
+                ),
+            )
+            .await?;
+        let completed_started = mark_unknown
+            .transition_step_execution(
+                completed_step.id(),
+                completed_step.version(),
+                LifecycleTransition::new(
+                    BatchStatus::Started,
+                    UNIX_EPOCH + Duration::from_secs(800),
+                ),
+            )
+            .await?;
+        let completed_child = mark_unknown
+            .transition_step_execution(
+                completed_step.id(),
+                completed_started.version(),
+                LifecycleTransition::new(
+                    BatchStatus::Completed,
                     UNIX_EPOCH + Duration::from_secs(800),
                 ),
             )
@@ -955,6 +1001,34 @@ fn unknown_execution_requires_audited_postgres_recovery() -> Result<(), Box<dyn 
             Some(UNIX_EPOCH + Duration::from_secs(800))
         );
         assert_eq!(recovered_step.version(), started_step.version().next()?);
+        assert_eq!(recovered_step.metadata().failure(), request.failure());
+        let recovered_unknown = child_inspection
+            .get_step_execution(unknown_step.id())
+            .await?
+            .ok_or("recovered UNKNOWN child step was not found")?;
+        assert_eq!(recovered_unknown.metadata().status(), BatchStatus::Failed);
+        assert_eq!(
+            recovered_unknown.metadata().timestamps().ended_at(),
+            Some(UNIX_EPOCH + Duration::from_secs(800))
+        );
+        assert_eq!(
+            recovered_unknown.version(),
+            ambiguous_child.version().next()?
+        );
+        assert_eq!(recovered_unknown.metadata().failure(), request.failure());
+        let preserved_completed = child_inspection
+            .get_step_execution(completed_step.id())
+            .await?
+            .ok_or("completed child step was not found")?;
+        assert_eq!(
+            preserved_completed.metadata().status(),
+            BatchStatus::Completed
+        );
+        assert_eq!(preserved_completed.version(), completed_child.version());
+        assert_eq!(
+            preserved_completed.metadata().timestamps().ended_at(),
+            completed_child.metadata().timestamps().ended_at()
+        );
         child_inspection.rollback().await?;
 
         let mut inspect = repository.begin().await?;

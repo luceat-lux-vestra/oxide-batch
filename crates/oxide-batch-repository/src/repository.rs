@@ -655,11 +655,17 @@ pub fn recovered_step_execution(
     request: &RecoveryRequest,
     decided_at: SystemTime,
 ) -> Result<Option<StepExecution>, RepositoryError> {
-    if !matches!(
-        prior.metadata().status(),
-        BatchStatus::Starting | BatchStatus::Started | BatchStatus::Stopping | BatchStatus::Unknown
-    ) {
+    let prior_status = prior.metadata().status();
+    if prior_status.is_finished() {
         return Ok(None);
+    }
+    if !prior_status.is_active() && !matches!(prior_status, BatchStatus::Unknown) {
+        return Err(RepositoryError::Lifecycle(
+            LifecycleError::IllegalTransition {
+                from: prior_status,
+                to: request.disposition().resulting_status(),
+            },
+        ));
     }
     let current_time = prior.metadata().timestamps();
     let timestamps = ExecutionTimestamps::new(

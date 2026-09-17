@@ -118,6 +118,11 @@ fn explicit_recovery_is_audited_before_restart() -> Result<(), Box<dyn Error>> {
         .clone();
     let execution = block_on(create.create_job_execution(instance.id()))?;
     let step = block_on(create.create_step_execution(execution.id(), &StepName::new("import")?))?;
+    let unknown_step =
+        block_on(create.create_step_execution(execution.id(), &StepName::new("ambiguous-child")?))?;
+    let completed_step = block_on(
+        create.create_step_execution(execution.id(), &StepName::new("already-complete")?),
+    )?;
     block_on(create.commit())?;
 
     let mut unknown = block_on(repository.begin())?;
@@ -125,6 +130,26 @@ fn explicit_recovery_is_audited_before_restart() -> Result<(), Box<dyn Error>> {
         step.id(),
         step.version(),
         LifecycleTransition::new(BatchStatus::Started, time(101)),
+    ))?;
+    let unknown_started = block_on(unknown.transition_step_execution(
+        unknown_step.id(),
+        unknown_step.version(),
+        LifecycleTransition::new(BatchStatus::Started, time(101)),
+    ))?;
+    let ambiguous_child = block_on(unknown.transition_step_execution(
+        unknown_step.id(),
+        unknown_started.version(),
+        LifecycleTransition::new(BatchStatus::Unknown, time(101)),
+    ))?;
+    let completed_started = block_on(unknown.transition_step_execution(
+        completed_step.id(),
+        completed_step.version(),
+        LifecycleTransition::new(BatchStatus::Started, time(101)),
+    ))?;
+    let completed_child = block_on(unknown.transition_step_execution(
+        completed_step.id(),
+        completed_started.version(),
+        LifecycleTransition::new(BatchStatus::Completed, time(101)),
     ))?;
     let ambiguous = block_on(unknown.transition_job_execution(
         execution.id(),
@@ -170,6 +195,30 @@ fn explicit_recovery_is_audited_before_restart() -> Result<(), Box<dyn Error>> {
         Some(time(102))
     );
     assert_eq!(recovered_step.version(), started_step.version().next()?);
+    assert_eq!(recovered_step.metadata().failure(), request.failure());
+    let recovered_unknown = block_on(child_inspection.get_step_execution(unknown_step.id()))?
+        .ok_or("recovered UNKNOWN child step was not found")?;
+    assert_eq!(recovered_unknown.metadata().status(), BatchStatus::Failed);
+    assert_eq!(
+        recovered_unknown.metadata().timestamps().ended_at(),
+        Some(time(102))
+    );
+    assert_eq!(
+        recovered_unknown.version(),
+        ambiguous_child.version().next()?
+    );
+    assert_eq!(recovered_unknown.metadata().failure(), request.failure());
+    let preserved_completed = block_on(child_inspection.get_step_execution(completed_step.id()))?
+        .ok_or("completed child step was not found")?;
+    assert_eq!(
+        preserved_completed.metadata().status(),
+        BatchStatus::Completed
+    );
+    assert_eq!(preserved_completed.version(), completed_child.version());
+    assert_eq!(
+        preserved_completed.metadata().timestamps().ended_at(),
+        completed_child.metadata().timestamps().ended_at()
+    );
     block_on(child_inspection.rollback())?;
 
     let mut restart = block_on(repository.begin())?;
