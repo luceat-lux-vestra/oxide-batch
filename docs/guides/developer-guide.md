@@ -98,6 +98,38 @@ are in [PostgreSQL setup](../operations/postgres-setup.md). A worked
 PostgreSQL-backed local-partition job is
 [`crates/oxide-batch/examples/postgres_local_partition.rs`](../../crates/oxide-batch/examples/postgres_local_partition.rs).
 
+### 4.1. Build a durable `ItemStream` chunk job
+
+[`crates/oxide-batch/examples/postgres_durable_csv.rs`](../../crates/oxide-batch/examples/postgres_durable_csv.rs)
+is the first-party application example for the complete durable chunk path. It
+uses only the public `oxide-batch` facade: separate migrator/runtime database
+configuration, `PostgresJobRepository`, `PostgresChunkTransactionManager`,
+a restartable CSV reader and paired `ItemStream`, `ChunkPipelineBuilder`,
+and `JobLauncher::launch_chunk`. It does not depend on `oxide-batch-test`.
+
+Run it with a CSV file after supplying the database identities described above:
+
+```console
+MIGRATOR_DATABASE_URL=... RUNTIME_DATABASE_URL=... \
+  cargo run -p oxide-batch --features postgres \
+  --example postgres_durable_csv -- input.csv
+```
+
+The important construction rule is that
+`ChunkPipelineBuilder::with_stream(identity, stream, contract, revision)`
+takes the `ComponentStreamIdentity` once and applies that same identity to
+both the runtime registration and the restart-relevant definition revision.
+Application code therefore does not need to duplicate the namespace through
+`ChunkStep::with_item_stream` and
+`ChunkComponentRevisions::with_stream_revision`.
+
+The example's `ChunkRestartContract` checkpoint/context schemas match the
+schemas emitted by its `PostgresChunkStateProvider`; the stream revision is a
+separate application-owned revision for the logical stream namespace. On a
+crash, do not simply launch again over an execution left `Started`: follow the
+[audited recovery procedure](../operations/crash-restart-and-recovery.md)
+before starting the next attempt.
+
 ## 5. Add fault tolerance
 
 `ChunkStep::with_fault_runtime` installs a `FaultRuntime` built from a

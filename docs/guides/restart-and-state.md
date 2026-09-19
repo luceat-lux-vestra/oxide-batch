@@ -43,10 +43,13 @@ In code, this is `ComponentStreamIdentity::new(name)` for an `ItemStream`'s
 own namespace, and `ComponentRevision::new(revision)` for a
 reader/processor/writer/checkpoint-schema revision, both stable strings a
 caller assigns explicitly at construction — never derived from a type name
-or memory address (see `crates/oxide-batch/tests/support/gate_b.rs`'s
-`ChunkComponentRevisions::new(reader_revision, processor_revision,
-writer_revision, checkpoint_revision, restart_contract)` for a working
-example of every identity a chunk step declares).
+or memory address. For application code, prefer
+[`ChunkPipelineBuilder::with_stream`](../../crates/oxide-batch/src/chunk_builder.rs):
+it accepts the stream identity once and applies that same value to both the
+runtime registration and the restart-relevant stream revision. The
+[durable chunk construction example](developer-guide.md#41-build-a-durable-itemstream-chunk-job)
+shows the complete public PostgreSQL path without depending on test support
+code.
 
 The **definition identity** — the job/step-level fingerprint restart
 compatibility is checked against — is a separate, higher-level concept:
@@ -64,10 +67,11 @@ Component durable state (an `ItemStream`'s checkpoint payload) carries a
 schema ID and version, and a codec ID and version, independently of the
 component's own logical identity. `StateSchemaId::new(..)` and
 `StateSchemaVersion::new(..)` are the types; a `ChunkRestartContract`
-(`crates/oxide-batch/src/chunk_builder.rs`, or `support/gate_b.rs`'s
-`restart_contract()` for a minimal working example) declares the checkpoint
-and context schema identity/version pair a step's durable state is written
-under, plus its `ChunkDeliveryMode`.
+declares the checkpoint and context schema identity/version pair a step's
+durable state is written under, plus its `ChunkDeliveryMode`. See the
+[durable chunk construction example](developer-guide.md#41-build-a-durable-itemstream-chunk-job)
+for an application-owned contract wired to
+`PostgresChunkTransactionManager` and `JobLauncher::launch_chunk`.
 
 Decode/migration rules
 ([item-processing-model.md § State and checkpointing](../architecture/item-processing-model.md#state-and-checkpointing)):
@@ -117,6 +121,35 @@ restart requires an explicit, audited recovery decision
 (`RecoveryRequest::mark_failed`) before a new attempt is allowed — it is
 never a bare retry (see `gate_b.rs::mark_crashed_execution_failed`'s doc
 comment for exactly why, discovered directly while building this evidence).
+
+### Transaction-port decorators must preserve the durable path
+
+A decorator around `ChunkTransactionManager` is an adapter extension, not a
+second transaction model; the canonical port responsibilities remain those in
+[repository and transaction model](../architecture/repository-and-transaction-model.md).
+When the wrapped manager owns durable restart state, the decorator must
+explicitly forward or intentionally intercept `begin_for`,
+`inherited_progress`, and `inherited_component_state`. Forward `begin` as
+well if the wrapper is meant to preserve the standalone/unbound path.
+
+The defaults are fallbacks, not delegation. Inheriting
+`ChunkTransactionManager::inherited_progress` substitutes
+`InheritedStepProgress::NONE`; inheriting `inherited_component_state`
+substitutes an empty state set; and overriding only `begin` does not intercept
+a durable manager whose repository-backed launch path uses `begin_for`. A
+monitoring, fault-injection, tracing, or other transparent wrapper that omits
+those forwards can therefore observe a different restart path from the manager
+it claims to wrap.
+
+The same rule applies one level down. A transparent `ChunkTransaction`
+decorator preserves `business_transaction`, `commit`,
+`commit_with_component_state`, and `rollback`. The trait's
+`commit_with_component_state` default only calls `commit` for an empty
+component-state slice; nonempty `ItemStream` state is rejected with
+`ChunkTransactionError::ComponentStateUnsupported`. It never discovers and
+delegates to an inner transaction's override automatically. This is fail-closed
+for component state, but a wrapper that intends to preserve a durable
+`ItemStream` transaction must forward the override explicitly.
 
 ## Policy-owned state/revision semantics
 
