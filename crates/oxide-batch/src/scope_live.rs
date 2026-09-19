@@ -242,6 +242,17 @@ pub(crate) struct LiveScope {
     closed: bool,
 }
 
+impl fmt::Debug for LiveScope {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LiveScope")
+            .field("scope", &self.scope)
+            .field("component_count", &self.entries.len())
+            .field("closed", &self.closed)
+            .finish_non_exhaustive()
+    }
+}
+
 impl LiveScope {
     pub(crate) async fn build(
         scope: ScopeKind,
@@ -262,7 +273,7 @@ impl LiveScope {
             if builder.entries.contains_key(&id) {
                 continue;
             }
-            if let Err(mut failure) = builder.construct(&id).await {
+            if let Err(mut failure) = builder.construct(id).await {
                 let report = builder.cleanup_all().await;
                 failure.cleanup_failures = report.failures.len();
                 return Err(failure);
@@ -318,16 +329,16 @@ struct ScopeBuilder<'a> {
 impl<'a> ScopeBuilder<'a> {
     fn construct<'b>(
         &'b mut self,
-        id: &'b ScopedComponentId,
+        id: ScopedComponentId,
     ) -> BoxFuture<'b, Result<ScopedComponentHandle, ScopeBuildFailure>> {
         Box::pin(async move {
-            if let Some(entry) = self.entries.get(id) {
+            if let Some(entry) = self.entries.get(&id) {
                 return Ok(entry.handle.clone());
             }
 
             let registration = self
                 .registrations
-                .get(id)
+                .get(&id)
                 .cloned()
                 .ok_or_else(|| {
                     ScopeBuildFailure::new(
@@ -339,11 +350,11 @@ impl<'a> ScopeBuilder<'a> {
 
             let mut dependencies = BTreeMap::new();
             for dependency_id in registration.dependencies() {
-                let dependency = self.construct(dependency_id).await?;
+                let dependency = self.construct(dependency_id.clone()).await?;
                 dependencies.insert(dependency_id.clone(), dependency);
             }
 
-            let inputs = self.inputs.get(id).ok_or_else(|| {
+            let inputs = self.inputs.get(&id).ok_or_else(|| {
                 ScopeBuildFailure::new(ScopeBuildFailureKind::MissingInputs, Some(id.clone()))
             })?;
             let context = ScopedFactoryContext::new(inputs, &dependencies);
