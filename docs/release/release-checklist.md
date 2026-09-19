@@ -21,6 +21,13 @@ one-time manual bootstrap and is never generalized by the workflow.
       ledger rows, baseline version, and known divergences.
 - [ ] Confirm preview, RC, stable, and readiness wording matches the approved
       milestone/release gate rather than a proposed roadmap label.
+- [ ] Before creating the immutable tag, audit README/release-facing wording
+      for **tag-stable facts only**. A tagged source snapshot must not say that
+      the release is "not yet published", "awaiting publication", or make any
+      other time-sensitive registry/GitHub-Release claim whose truth value can
+      change after the tag is created. Keep the tag's README historical and
+      immutable; point readers to the GitHub Release and crates.io for live
+      publication state instead.
 - [ ] Confirm public API and feature changes match SemVer.
 - [ ] Confirm MSRV and supported database/platform matrix.
 - [ ] Review dependency advisories, licenses, sources, and exceptions.
@@ -86,6 +93,11 @@ one-time manual bootstrap and is never generalized by the workflow.
 - [ ] Build a clean consumer project from crates.io with documented features.
 - [ ] Run the release smoke job against a supported PostgreSQL version.
 - [ ] Confirm GitHub artifacts, SBOM, provenance, and release notes.
+- [ ] Confirm the tagged README contains no publication-state wording that
+      became stale merely because the reviewed GitHub Release or crates.io
+      publication completed. If such wording escaped review, preserve the tag,
+      correct `main` prospectively, and record the discrepancy; never rewrite
+      the published tag to make history match the later registry state.
 - [ ] Announce known limitations and support window.
 - [ ] Promote candidate compatibility rows only after the named released
       version and post-publication evidence exist; campaign PASS alone is not
