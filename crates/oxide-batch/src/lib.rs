@@ -563,7 +563,7 @@ pub use runtime::{
     TaskletError, TaskletExecutionOutcome, TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep,
 };
 pub use scope_live::{
-    MAX_SCOPED_DEPENDENCY_DEPTH, ScopeRegistrationError, ScopedCleanupError,
+    MAX_SCOPED_DEPENDENCY_DEPTH, ScopeBuildFailureKind, ScopeRegistrationError, ScopedCleanupError,
     ScopedComponentFactory, ScopedComponentHandle, ScopedComponentRegistration,
     ScopedFactoryContext, ScopedFactoryError,
 };
