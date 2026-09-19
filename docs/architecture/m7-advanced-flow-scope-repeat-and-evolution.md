@@ -343,26 +343,27 @@ been reached. Format-4 readers also reject unsupported required members,
 duplicate keys, invalid canonical encoding/order, newer format, over-bound
 structure, and corrupt digest. Earlier readers reject format 4 as newer.
 
-### PostgreSQL repository schema 5
+### PostgreSQL repository schema evolution
 
 The current M6 repository baseline is schema `4`, established by component-state
-durability. M7 appends repository schema `5`; it does not reuse or reinterpret
-schema 4.
+durability. M7 repository migrations are append-only: once a child ships one
+version, a later child does not rewrite or reinterpret that migration.
 
-Schema 5 adds bounded records/indexes required for immutable registry/direct
-compatibility edges, fork lineage, nested-job links, generalized branch/join
-state, scope-resolution metadata, repeat state/decisions, and M7 operator/
-explorer projections.
+#265 appends schema `5` for durable nested-job linkage. #276 appends schema `6`
+for bounded, value-free scope-resolution provenance. This physical version split
+preserves the Gate-F semantics: each newly durable boundary is versioned, older
+state is not rewritten, and a newer runtime reaches the current schema only
+through the ordered migration chain.
 
-The `4 -> 5` migration is ordered and transactional. It does not rewrite
-existing manifests/fingerprints, component state, checkpoints, contexts,
-lifecycle history, or prior audit rows. Supported earlier schemas reach 5 via
-the existing chain ending in `4 -> 5`.
+The `4 -> 5` and `5 -> 6` migrations are ordered and transactional. Neither
+rewrites existing manifests/fingerprints, component state, checkpoints,
+contexts, lifecycle history, or prior audit rows. Supported earlier schemas
+reach 6 through the existing chain ending in `4 -> 5 -> 6`.
 
-A pre-schema-5 runtime rejects schema 5 before repository/migrator writes. A
-failed schema-5 migration must leave the source schema usable. Operational
-rollback after successful migration is restore-based from a pre-migration
-backup; no down-migration compatibility is claimed.
+A pre-schema-6 runtime rejects schema 6 before repository/migrator writes. A
+failed schema-6 migration must leave schema 5 usable. Operational rollback after
+successful migration is restore-based from a pre-migration backup; no
+down-migration compatibility is claimed.
 
 ### Structured resource ownership
 
@@ -379,10 +380,11 @@ observations are unchanged.
 
 Every newly durable M7 boundary receives visible PostgreSQL 15 and 18 restart/
 process-kill evidence, including before/after transition/branch/join decisions,
-nested-job parameter/link creation and child terminal observation, repeat
-iteration/continue decisions, compatible transformed-state/new-execution
-commit, fork lineage/new-instance commit, registry/edge mutations, and the
-schema-5 migration transaction boundary.
+nested-job parameter/link creation and child terminal observation,
+scope-resolution provenance commit/re-resolution, repeat iteration/continue
+decisions, compatible transformed-state/new-execution commit, fork
+lineage/new-instance commit, registry/edge mutations, and each M7 schema
+migration transaction boundary.
 
 Normalized observations compare durable rows, logical decisions, counters,
 checkpoint/context digests, audit rows, and public outcomes independent of task
@@ -393,9 +395,9 @@ scheduling. A green skip does not count as evidence.
 | Area | M7 decision |
 | --- | --- |
 | Public API | Typed composition/custom leaf, structured late-bound selector, scope factory, repeat/interceptor, registry/evolution, incrementer, and bounded operator/explorer families only; no adapter/runtime/credential leakage. |
-| Durable meaning | Manifest format 4 (still <=64 KiB); repository schema 5 over current schema-4 M6 baseline. |
+| Durable meaning | Manifest format 4 (still <=64 KiB); append-only repository schema chain over the schema-4 M6 baseline (#265 = 5, #276 = 6). |
 | Restart | Exact fingerprint default; one direct compatible edge across changed identity; fork is new lineage only; nested-job mapping/link is committed before child work. |
 | Security | Resolver excludes credentials/ambient state; no derived resolved-value digest is persisted; diagnostics/explorer/audit remain payload-redacted; deployment owns auth/RBAC. |
 | Resource | Existing graph/split/manifest ceilings plus composition depth 8, scope bounds, repeat interceptor/nesting bounds, structured child ownership. |
-| Compatibility | Manifest 1-3 remain immutable/readable and pre-format-4 readers reject format 4; repository schema 1-4 use the ordered chain to 5 and pre-schema-5 runtimes reject schema 5 before writes. |
+| Compatibility | Manifest 1-3 remain immutable/readable and pre-format-4 readers reject format 4; repository schemas use the ordered append-only chain through the current version, and older runtimes reject unsupported newer schemas before writes. |
 | Out of scope | M8 portability, M9 integrations, M10 scheduler/performance, M11 remote execution, M12 migration tooling, hosted control plane, generic cross-resource exactly-once. |

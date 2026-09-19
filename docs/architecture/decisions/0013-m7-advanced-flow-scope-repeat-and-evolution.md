@@ -57,12 +57,15 @@ Adopt the M7 contract linked above as the binding semantic boundary.
    optimistic-versioned, operation-ID idempotent, audited, bounded, and
    redacted. Parameter incrementers are deterministic pure functions over typed
    parameter state and definition identity.
-7. **M7 introduces definition-manifest format 4 and PostgreSQL repository
-   schema 5.** Manifest formats 1-3 remain immutable/readable. Existing schema
-   4 remains the M6 baseline; M7 appends an ordered `4 -> 5` migration and
-   earlier supported schemas reach 5 through the existing chain. Older
-   runtimes reject unsupported newer schema/manifest versions before writes.
-   Operational rollback after a successful schema migration is restore-based.
+7. **M7 introduces definition-manifest format 4 and an ordered PostgreSQL
+   repository schema chain.** Manifest formats 1-3 remain immutable/readable.
+   Existing schema 4 remains the M6 baseline. The first shipped M7 durable
+   boundary (#265) appends schema 5; later durable children append new versions
+   rather than rewrite that migration. #276 therefore appends schema 6 for
+   scope-resolution provenance. Earlier supported schemas reach the current
+   version through the ordered chain. Older runtimes reject unsupported newer
+   schema/manifest versions before writes. Operational rollback after a
+   successful schema migration is restore-based.
 8. **ADR-0009 fingerprint membership is unchanged.** Only values that select or
    reinterpret durable meaning enter the fingerprint. Framework capability
    ceilings, throughput-only budgets, credentials, runtime locations,
@@ -78,9 +81,9 @@ Adopt the M7 contract linked above as the binding semantic boundary.
   contract after #194 itself passes exact-head/post-main acceptance.
 - Scope/repeat persist bounded restart-relevant metadata/state only; live
   component instances and sensitive values are never durable identity.
-- Manifest format 4 and schema 5 require golden vectors, populated migration and
-  restore fixtures, older-runtime rejection, and PostgreSQL 15/18 failure/
-  restart evidence before M7 exit.
+- Manifest format 4 and each appended M7 repository schema version require
+  golden vectors, populated migration and restore fixtures, older-runtime
+  rejection, and PostgreSQL 15/18 failure/restart evidence before M7 exit.
 - Database migration never rewrites persisted manifest formats 1-3 or invents a
   compatibility edge. Restart under a changed definition still follows
   ADR-0004.
@@ -108,13 +111,14 @@ Dependent delivery issues must satisfy the adversarial scenario matrix in
 [`m7-design-gate-evidence.md`](../../project/m7-design-gate-evidence.md),
 including deterministic flow/restart, scope cleanup/resolution, repeat/fault
 ordering, registry concurrency/evolution, operator idempotency, format/schema
-rejection, schema-4-to-5 migration/restore, dual-PostgreSQL process-kill
-recovery, resource bounds, and redaction.
+rejection, schema-4-to-5 and schema-5-to-6 migration/restore, dual-PostgreSQL
+process-kill recovery, resource bounds, and redaction.
 
 ## Revisit triggers
 
 Revisit if a required capability cannot be represented without structural graph
 cycles; if scope requires a durable secret model; if repeat cannot compose with
 M6 fault semantics without duplicate accounting; if manifest format 4 cannot
-represent the M7 graph inside the accepted bounds; or if repository schema 5
-cannot be migrated/restored from every supported prior schema.
+represent the M7 graph inside the accepted bounds; or if any appended M7
+repository schema cannot be migrated/restored from every supported prior
+schema.
