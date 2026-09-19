@@ -425,6 +425,11 @@ mod runtime;
     dead_code,
     reason = "#276 delivers typed resolution/provenance before sibling live-scope construction wires it"
 )]
+#[allow(
+    dead_code,
+    reason = "#277 live-scope core is validated before launcher integration exposes it"
+)]
+mod scope_live;
 mod scope_runtime;
 mod service;
 mod shutdown;
