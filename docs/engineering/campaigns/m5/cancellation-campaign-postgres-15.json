@@ -24,7 +24,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+    "source_commit": "fefd3732a99b5c89a0f14001824d250742b0b373",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -37,7 +37,7 @@
   },
   "observation": {
     "execution_manifest": {
-      "execution_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+      "execution_commit": "fefd3732a99b5c89a0f14001824d250742b0b373",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -45,14 +45,14 @@
         "Cargo.lock": "3371d04d0a34097b91eb09e4347030468d703f90",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
-        "crates/oxide-batch-core/src": "30bad9491dc7dd68e877316822e726af7c27ae25",
+        "crates/oxide-batch-core/src": "c86a8e09ee0993d9d3ab2fe6b5ef2899e2c476dd",
         "crates/oxide-batch-plan/Cargo.toml": "6c327e26d3fb6cb0e5572432ea8e0e5b09b36c72",
-        "crates/oxide-batch-plan/src": "65abf01728482850986364ab922ea9b7f97fe0b1",
+        "crates/oxide-batch-plan/src": "7ba3721cb87e6a6067fd626455156a2fa5345c00",
         "crates/oxide-batch-repository/Cargo.toml": "d6148373ea81b843d5bc2590bc6264ea5fc3e657",
-        "crates/oxide-batch-repository/src": "20165d257122306680820757bf4898bb0948ad36",
+        "crates/oxide-batch-repository/src": "c2b9bf7c2729ab218aec08def17a8b315b661e98",
         "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
-        "crates/oxide-batch/migrations": "f3169d95fac45b092157d8eaef4372ee7e425403",
-        "crates/oxide-batch/src": "c4494e35a82631a5af75d83bd7346a265a7e2f44",
+        "crates/oxide-batch/migrations": "cd942c54a89a46bedfa78f51aef78b47e27c48ee",
+        "crates/oxide-batch/src": "40868cc9d205116fd6c02a8d0a523f00d644b16a",
         "crates/oxide-batch/tests/cancellation": "ee3fb84bb73b0d0d072d3271e20044fdcf000515",
         "crates/oxide-batch/tests/postgres_cancellation.rs": "70954e6a69df2ce7d09e7825a47fe43c3e2a49f8",
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
@@ -86,13 +86,13 @@
           "path": "request_execution_stop under compare-and-swap, committed before the clock starts"
         },
         "checkpoint": {
-          "committed_partitions_after_cancellation": 4,
+          "committed_partitions_after_cancellation": 2,
           "committed_partitions_before_cancellation": 1,
           "partition_statuses": {
-            "partition-0000": "COMPLETED",
+            "partition-0000": "STOPPED",
             "partition-0001": "COMPLETED",
             "partition-0002": "COMPLETED",
-            "partition-0003": "COMPLETED",
+            "partition-0003": "STOPPED",
             "partition-0004": "STOPPED",
             "partition-0005": "STOPPED",
             "partition-0006": "STOPPED",
@@ -163,7 +163,7 @@
           "watched_status": "STOPPED"
         },
         "execution_manifest": {
-          "execution_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+          "execution_commit": "fefd3732a99b5c89a0f14001824d250742b0b373",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -171,14 +171,14 @@
             "Cargo.lock": "3371d04d0a34097b91eb09e4347030468d703f90",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
-            "crates/oxide-batch-core/src": "30bad9491dc7dd68e877316822e726af7c27ae25",
+            "crates/oxide-batch-core/src": "c86a8e09ee0993d9d3ab2fe6b5ef2899e2c476dd",
             "crates/oxide-batch-plan/Cargo.toml": "6c327e26d3fb6cb0e5572432ea8e0e5b09b36c72",
-            "crates/oxide-batch-plan/src": "65abf01728482850986364ab922ea9b7f97fe0b1",
+            "crates/oxide-batch-plan/src": "7ba3721cb87e6a6067fd626455156a2fa5345c00",
             "crates/oxide-batch-repository/Cargo.toml": "d6148373ea81b843d5bc2590bc6264ea5fc3e657",
-            "crates/oxide-batch-repository/src": "20165d257122306680820757bf4898bb0948ad36",
+            "crates/oxide-batch-repository/src": "c2b9bf7c2729ab218aec08def17a8b315b661e98",
             "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
-            "crates/oxide-batch/migrations": "f3169d95fac45b092157d8eaef4372ee7e425403",
-            "crates/oxide-batch/src": "c4494e35a82631a5af75d83bd7346a265a7e2f44",
+            "crates/oxide-batch/migrations": "cd942c54a89a46bedfa78f51aef78b47e27c48ee",
+            "crates/oxide-batch/src": "40868cc9d205116fd6c02a8d0a523f00d644b16a",
             "crates/oxide-batch/tests/cancellation": "ee3fb84bb73b0d0d072d3271e20044fdcf000515",
             "crates/oxide-batch/tests/postgres_cancellation.rs": "70954e6a69df2ce7d09e7825a47fe43c3e2a49f8",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
@@ -198,9 +198,9 @@
         "latency": {
           "ordering_holds": true,
           "request_to_durable_terminal_means": "from the committed operator request to the durable STOPPED status being first readable",
-          "request_to_durable_terminal_micros": 549258,
+          "request_to_durable_terminal_micros": 979921,
           "request_to_intake_stop_means": "from the committed operator request to the durable STOPPING transition being first readable",
-          "request_to_intake_stop_micros": 117077,
+          "request_to_intake_stop_micros": 86298,
           "status": "observational",
           "status_note": "No accepted document states a cancellation budget. These are measurements and nothing in this campaign compares them against a limit."
         },
@@ -210,7 +210,7 @@
           "os": "linux",
           "profile": "debug",
           "profile_note": "Every M5 campaign runs debug so the matrix points are comparable with each other. The absolute latencies below are therefore debug-build latencies and are not release figures.",
-          "resident_kib": 15928,
+          "resident_kib": 16076,
           "tokio_worker_threads": 4,
           "watch_interval_millis": 5,
           "watch_interval_note": "The campaign's own sampling floor. Every duration measured by reading a durable status back carries this as quantisation: a transition that happened immediately is reported as having taken up to one interval."
@@ -222,7 +222,7 @@
         "violations": [],
         "workers": {
           "active_after_return": 0,
-          "admitted": 8,
+          "admitted": 6,
           "peak": 4
         },
         "workload": {
@@ -247,7 +247,7 @@
       "name": "cancellation_latency_is_measured_separately_per_phase",
       "observation": {
         "execution_manifest": {
-          "execution_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+          "execution_commit": "fefd3732a99b5c89a0f14001824d250742b0b373",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -255,14 +255,14 @@
             "Cargo.lock": "3371d04d0a34097b91eb09e4347030468d703f90",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
-            "crates/oxide-batch-core/src": "30bad9491dc7dd68e877316822e726af7c27ae25",
+            "crates/oxide-batch-core/src": "c86a8e09ee0993d9d3ab2fe6b5ef2899e2c476dd",
             "crates/oxide-batch-plan/Cargo.toml": "6c327e26d3fb6cb0e5572432ea8e0e5b09b36c72",
-            "crates/oxide-batch-plan/src": "65abf01728482850986364ab922ea9b7f97fe0b1",
+            "crates/oxide-batch-plan/src": "7ba3721cb87e6a6067fd626455156a2fa5345c00",
             "crates/oxide-batch-repository/Cargo.toml": "d6148373ea81b843d5bc2590bc6264ea5fc3e657",
-            "crates/oxide-batch-repository/src": "20165d257122306680820757bf4898bb0948ad36",
+            "crates/oxide-batch-repository/src": "c2b9bf7c2729ab218aec08def17a8b315b661e98",
             "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
-            "crates/oxide-batch/migrations": "f3169d95fac45b092157d8eaef4372ee7e425403",
-            "crates/oxide-batch/src": "c4494e35a82631a5af75d83bd7346a265a7e2f44",
+            "crates/oxide-batch/migrations": "cd942c54a89a46bedfa78f51aef78b47e27c48ee",
+            "crates/oxide-batch/src": "40868cc9d205116fd6c02a8d0a523f00d644b16a",
             "crates/oxide-batch/tests/cancellation": "ee3fb84bb73b0d0d072d3271e20044fdcf000515",
             "crates/oxide-batch/tests/postgres_cancellation.rs": "70954e6a69df2ce7d09e7825a47fe43c3e2a49f8",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
@@ -289,7 +289,7 @@
           "os": "linux",
           "profile": "debug",
           "profile_note": "Every M5 campaign runs debug so the matrix points are comparable with each other. The absolute latencies below are therefore debug-build latencies and are not release figures.",
-          "resident_kib": 15860,
+          "resident_kib": 16208,
           "tokio_worker_threads": 4,
           "watch_interval_millis": 5,
           "watch_interval_note": "The campaign's own sampling floor. Every duration measured by reading a durable status back carries this as quantisation: a transition that happened immediately is reported as having taken up to one interval."
@@ -303,14 +303,14 @@
               "mechanism": "a test-only PhaseGate the target-phase worker marks synchronously on reaching the phase; the cancel side polls the sticky mark, never occupancy, before requesting a stop, and the worker cannot leave the phase again except by observing the very stop about to be requested (async, transaction) or an explicit release granted only after that request durably commits (blocking)",
               "target_phase_entered_before_request": true,
               "target_worker_in_flight_at_request": true,
-              "workers_in_flight_at_request": 3
+              "workers_in_flight_at_request": 2
             },
             "delivered_mechanism": "an asynchronous tasklet awaiting the cooperative stop token while it runs",
             "exit_status": "STOPPED",
             "outcome": "Stopped",
             "phase": "async",
-            "request_to_durable_terminal_micros": 544546,
-            "request_to_intake_stop_micros": 91201,
+            "request_to_durable_terminal_micros": 1560932,
+            "request_to_intake_stop_micros": 7985,
             "stop_timing_contract": "DuringExecution for a worker already running, BeforeStart for one not yet reached",
             "stop_timing_contract_note": "A static description of what the accepted StopTiming contract promises for this mechanism, not a measurement of this run. See cancellation_point for what this run actually observed.",
             "workers_active_after_return": 0
@@ -321,14 +321,14 @@
               "mechanism": "a test-only PhaseGate the target-phase worker marks synchronously on reaching the phase; the cancel side polls the sticky mark, never occupancy, before requesting a stop, and the worker cannot leave the phase again except by observing the very stop about to be requested (async, transaction) or an explicit release granted only after that request durably commits (blocking)",
               "target_phase_entered_before_request": true,
               "target_worker_in_flight_at_request": true,
-              "workers_in_flight_at_request": 3
+              "workers_in_flight_at_request": 2
             },
             "delivered_mechanism": "BlockingTaskletAdapter, whose synchronous body runs to completion and reports the stop afterwards",
             "exit_status": "STOPPED",
             "outcome": "Stopped",
             "phase": "blocking",
-            "request_to_durable_terminal_micros": 894430,
-            "request_to_intake_stop_micros": 97725,
+            "request_to_durable_terminal_micros": 7073047,
+            "request_to_intake_stop_micros": 498593,
             "stop_timing_contract": "AfterBlockingWork for a worker already inside its synchronous body",
             "stop_timing_contract_note": "A static description of what the accepted StopTiming contract promises for this mechanism, not a measurement of this run. See cancellation_point for what this run actually observed.",
             "workers_active_after_return": 0
@@ -345,8 +345,8 @@
             "exit_status": "STOPPED",
             "outcome": "Stopped",
             "phase": "transaction",
-            "request_to_durable_terminal_micros": 639731,
-            "request_to_intake_stop_micros": 92954,
+            "request_to_durable_terminal_micros": 899243,
+            "request_to_intake_stop_micros": 14505,
             "stop_timing_contract": "DuringExecution for a worker already running, BeforeStart for one not yet reached",
             "stop_timing_contract_note": "A static description of what the accepted StopTiming contract promises for this mechanism, not a measurement of this run. See cancellation_point for what this run actually observed.",
             "workers_active_after_return": 0
@@ -357,7 +357,7 @@
           "first_request": "Initiated",
           "note": "An atomic state transition rather than a committed transaction, and measured by spinning on the accepted intake predicate rather than by polling a database. It shares no mechanism with the durable operator path and is reported separately for that reason.",
           "path": "ShutdownSignal::request_shutdown then ensure_accepting",
-          "request_to_intake_stop_micros": 2
+          "request_to_intake_stop_micros": 3
         },
         "report": "phase-separation",
         "server_version": "15.19 (Debian 15.19-1.pgdg13+2)",
@@ -384,7 +384,7 @@
               "drain_complete": true,
               "note": "The tasks finish well before the deadline, so this measures the coordinator's join cost rather than the deadline.",
               "panicked_tasks": 0,
-              "request_to_drain_complete_micros": 84874,
+              "request_to_drain_complete_micros": 56717,
               "unjoined_tasks": 0
             },
             "deadline": "minimum",
@@ -409,7 +409,7 @@
                 }
               ],
               "unjoined_tasks": 3,
-              "waited_micros": 1001554
+              "waited_micros": 1001243
             },
             "held_tasks": 3
           },
@@ -419,7 +419,7 @@
               "drain_complete": true,
               "note": "The tasks finish well before the deadline, so this measures the coordinator's join cost rather than the deadline.",
               "panicked_tasks": 0,
-              "request_to_drain_complete_micros": 88504,
+              "request_to_drain_complete_micros": 60555,
               "unjoined_tasks": 0
             },
             "deadline": "intermediate",
@@ -444,7 +444,7 @@
                 }
               ],
               "unjoined_tasks": 5,
-              "waited_micros": 5000698
+              "waited_micros": 5001668
             },
             "held_tasks": 5
           },
@@ -454,7 +454,7 @@
               "drain_complete": true,
               "note": "The tasks finish well before the deadline, so this measures the coordinator's join cost rather than the deadline.",
               "panicked_tasks": 0,
-              "request_to_drain_complete_micros": 5788,
+              "request_to_drain_complete_micros": 4192,
               "unjoined_tasks": 0
             },
             "deadline": "default",
@@ -479,7 +479,7 @@
                 }
               ],
               "unjoined_tasks": 7,
-              "waited_micros": 30001586
+              "waited_micros": 30000776
             },
             "held_tasks": 7
           }
@@ -504,11 +504,11 @@
               "phase": "Transaction"
             }
           ],
-          "request_to_escalated_report_micros": 54,
+          "request_to_escalated_report_micros": 33,
           "unjoined_tasks": 4
         },
         "execution_manifest": {
-          "execution_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+          "execution_commit": "fefd3732a99b5c89a0f14001824d250742b0b373",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -516,14 +516,14 @@
             "Cargo.lock": "3371d04d0a34097b91eb09e4347030468d703f90",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
-            "crates/oxide-batch-core/src": "30bad9491dc7dd68e877316822e726af7c27ae25",
+            "crates/oxide-batch-core/src": "c86a8e09ee0993d9d3ab2fe6b5ef2899e2c476dd",
             "crates/oxide-batch-plan/Cargo.toml": "6c327e26d3fb6cb0e5572432ea8e0e5b09b36c72",
-            "crates/oxide-batch-plan/src": "65abf01728482850986364ab922ea9b7f97fe0b1",
+            "crates/oxide-batch-plan/src": "7ba3721cb87e6a6067fd626455156a2fa5345c00",
             "crates/oxide-batch-repository/Cargo.toml": "d6148373ea81b843d5bc2590bc6264ea5fc3e657",
-            "crates/oxide-batch-repository/src": "20165d257122306680820757bf4898bb0948ad36",
+            "crates/oxide-batch-repository/src": "c2b9bf7c2729ab218aec08def17a8b315b661e98",
             "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
-            "crates/oxide-batch/migrations": "f3169d95fac45b092157d8eaef4372ee7e425403",
-            "crates/oxide-batch/src": "c4494e35a82631a5af75d83bd7346a265a7e2f44",
+            "crates/oxide-batch/migrations": "cd942c54a89a46bedfa78f51aef78b47e27c48ee",
+            "crates/oxide-batch/src": "40868cc9d205116fd6c02a8d0a523f00d644b16a",
             "crates/oxide-batch/tests/cancellation": "ee3fb84bb73b0d0d072d3271e20044fdcf000515",
             "crates/oxide-batch/tests/postgres_cancellation.rs": "70954e6a69df2ce7d09e7825a47fe43c3e2a49f8",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
@@ -546,7 +546,7 @@
           "os": "linux",
           "profile": "debug",
           "profile_note": "Every M5 campaign runs debug so the matrix points are comparable with each other. The absolute latencies below are therefore debug-build latencies and are not release figures.",
-          "resident_kib": 14952,
+          "resident_kib": 14924,
           "tokio_worker_threads": 4,
           "watch_interval_millis": 5,
           "watch_interval_note": "The campaign's own sampling floor. Every duration measured by reading a durable status back carries this as quantisation: a transition that happened immediately is reported as having taken up to one interval."
@@ -581,11 +581,11 @@
       "observation": {
         "cancelled_attempt": {
           "batch_status": "STOPPED",
-          "committed_partitions": 2,
+          "committed_partitions": 4,
           "exit_status": "STOPPED"
         },
         "execution_manifest": {
-          "execution_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+          "execution_commit": "fefd3732a99b5c89a0f14001824d250742b0b373",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -593,14 +593,14 @@
             "Cargo.lock": "3371d04d0a34097b91eb09e4347030468d703f90",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
-            "crates/oxide-batch-core/src": "30bad9491dc7dd68e877316822e726af7c27ae25",
+            "crates/oxide-batch-core/src": "c86a8e09ee0993d9d3ab2fe6b5ef2899e2c476dd",
             "crates/oxide-batch-plan/Cargo.toml": "6c327e26d3fb6cb0e5572432ea8e0e5b09b36c72",
-            "crates/oxide-batch-plan/src": "65abf01728482850986364ab922ea9b7f97fe0b1",
+            "crates/oxide-batch-plan/src": "7ba3721cb87e6a6067fd626455156a2fa5345c00",
             "crates/oxide-batch-repository/Cargo.toml": "d6148373ea81b843d5bc2590bc6264ea5fc3e657",
-            "crates/oxide-batch-repository/src": "20165d257122306680820757bf4898bb0948ad36",
+            "crates/oxide-batch-repository/src": "c2b9bf7c2729ab218aec08def17a8b315b661e98",
             "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
-            "crates/oxide-batch/migrations": "f3169d95fac45b092157d8eaef4372ee7e425403",
-            "crates/oxide-batch/src": "c4494e35a82631a5af75d83bd7346a265a7e2f44",
+            "crates/oxide-batch/migrations": "cd942c54a89a46bedfa78f51aef78b47e27c48ee",
+            "crates/oxide-batch/src": "40868cc9d205116fd6c02a8d0a523f00d644b16a",
             "crates/oxide-batch/tests/cancellation": "ee3fb84bb73b0d0d072d3271e20044fdcf000515",
             "crates/oxide-batch/tests/postgres_cancellation.rs": "70954e6a69df2ce7d09e7825a47fe43c3e2a49f8",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
@@ -623,7 +623,7 @@
           "os": "linux",
           "profile": "debug",
           "profile_note": "Every M5 campaign runs debug so the matrix points are comparable with each other. The absolute latencies below are therefore debug-build latencies and are not release figures.",
-          "resident_kib": 16092,
+          "resident_kib": 16228,
           "tokio_worker_threads": 4,
           "watch_interval_millis": 5,
           "watch_interval_note": "The campaign's own sampling floor. Every duration measured by reading a durable status back carries this as quantisation: a transition that happened immediately is reported as having taken up to one interval."
@@ -636,7 +636,7 @@
           "committed_partitions_re_run": [],
           "exit_status": "COMPLETED",
           "new_execution": true,
-          "partitions_re_run": 62,
+          "partitions_re_run": 60,
           "recovery_path": "a second launch of the same job and identifying parameters after the cancelled attempt, with no stop request outstanding",
           "same_instance": true
         },
@@ -644,7 +644,7 @@
         "violations": [],
         "workers": {
           "active_after_return": 0,
-          "admitted": 67,
+          "admitted": 68,
           "peak": 4
         }
       },
