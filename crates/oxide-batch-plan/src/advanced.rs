@@ -2,7 +2,8 @@ use super::{
     BTreeMap, BTreeSet, CompiledExecutionPlan, CompiledFlowScope, DefinitionError,
     DefinitionIdentity, DefinitionRevision, ExitCode, FlowGraph, FlowNode, FlowTarget,
     FlowTransition, JobName, MAX_BRANCH_STEPS, MAX_FLOW_COMPOSITION_DEPTH, MAX_NODES,
-    MAX_OUTGOING_TRANSITIONS, MAX_SPLIT_BRANCHES, MAX_TRANSITIONS, NestedFlow, NodeId, PlanError,
+    MAX_OUTGOING_TRANSITIONS, MAX_SCOPED_COMPONENTS, MAX_SPLIT_BRANCHES, MAX_TRANSITIONS,
+    NestedFlow, NodeId, PlanError, ScopeKind, ScopedComponentDefinition, ScopedComponentId,
     StepNode, TerminalKind, Value, check_unambiguous, json,
 };
 
@@ -39,6 +40,7 @@ pub(super) fn compile(
 
     Ok(CompiledExecutionPlan {
         definition,
+        scoped_components: compiler.scoped_components,
         entry: root_scope.entry().clone(),
         root_scope,
         nodes: compiler.nodes,
@@ -62,6 +64,7 @@ struct AdvancedCompiler {
     all_ids: BTreeSet<NodeId>,
     structural_branches: usize,
     declared_transitions: usize,
+    scoped_components: BTreeMap<(ScopeKind, ScopedComponentId), ScopedComponentDefinition>,
 }
 
 impl AdvancedCompiler {
@@ -105,6 +108,9 @@ impl AdvancedCompiler {
             return Err(PlanError::CompositionDepthExceeded {
                 max: MAX_FLOW_COMPOSITION_DEPTH,
             });
+        }
+        for component in graph.scoped_components {
+            self.install_scoped_component(component)?;
         }
         self.declared_transitions = self
             .declared_transitions
@@ -414,6 +420,33 @@ impl AdvancedCompiler {
         Ok(())
     }
 
+    fn install_scoped_component(
+        &mut self,
+        component: ScopedComponentDefinition,
+    ) -> Result<(), PlanError> {
+        let key = (component.scope(), component.id().clone());
+        if self.scoped_components.contains_key(&key) {
+            return Err(PlanError::DuplicateScopedComponent {
+                scope: component.scope(),
+                component: component.id().clone(),
+            });
+        }
+        let scope = component.scope();
+        if self
+            .scoped_components
+            .keys()
+            .filter(|(existing_scope, _)| *existing_scope == scope)
+            .count()
+            == MAX_SCOPED_COMPONENTS
+        {
+            return Err(PlanError::TooManyScopedComponents {
+                max: MAX_SCOPED_COMPONENTS,
+            });
+        }
+        self.scoped_components.insert(key, component);
+        Ok(())
+    }
+
     fn reserve_id(&mut self, id: &NodeId) -> Result<(), PlanError> {
         if !self.all_ids.insert(id.clone()) {
             return Err(PlanError::DuplicateNodeId { node: id.clone() });
@@ -588,13 +621,27 @@ impl AdvancedCompiler {
             .values()
             .flat_map(|edges| edges.iter().map(FlowTransition::manifest_value))
             .collect::<Vec<_>>();
-        json!({
+        let mut manifest = json!({
             "entry": root_scope.entry().as_str(),
             "format": oxide_batch_core::MANIFEST_FORMAT_ADVANCED_FLOW,
             "job": job_name.as_str(),
             "nodes": node_values.into_values().collect::<Vec<_>>(),
             "transitions": transitions
-        })
+        });
+        if !self.scoped_components.is_empty()
+            && let Some(object) = manifest.as_object_mut()
+        {
+            object.insert(
+                "scoped_components".to_owned(),
+                Value::Array(
+                    self.scoped_components
+                        .values()
+                        .map(ScopedComponentDefinition::manifest_value)
+                        .collect(),
+                ),
+            );
+        }
+        manifest
     }
 }
 

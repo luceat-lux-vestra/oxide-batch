@@ -421,8 +421,14 @@ mod listener;
 mod nested_job_runtime;
 mod repository;
 mod runtime;
+#[allow(
+    dead_code,
+    reason = "#276 delivers typed resolution/provenance before sibling live-scope construction wires it"
+)]
+mod scope_runtime;
 mod service;
 mod shutdown;
+mod structured_selector;
 mod telemetry;
 
 pub use chunk::{
@@ -506,13 +512,16 @@ pub use oxide_batch_core::{
 pub use oxide_batch_plan::{
     CompiledExecutionPlan, CompiledFlowScope, CustomLeafKind, CustomLeafNode, DeciderRevision,
     DecisionInputVersion, DecisionNode, ExitPattern, FlowGraph, FlowNode, FlowSelectionError,
-    FlowTransition, FrameworkParameterSource, JoinNode, LocalFailurePolicy, MAX_BRANCH_STEPS,
-    MAX_FLOW_COMPOSITION_DEPTH, MAX_NESTED_JOB_PARAMETERS, MAX_OUTGOING_TRANSITIONS,
-    MAX_PARTITION_WORKERS, MAX_PATTERN_BYTES, MAX_SELECTOR_PATH_BYTES, MAX_SELECTOR_PATH_SEGMENTS,
-    MAX_SPLIT_BRANCHES, MissingParameterPolicy, NestedFlow, NestedJobNode,
-    NestedJobParameterMapping, NestedJobParameterSource, ParameterCoercion, PartitionBudget,
-    PartitionCount, PartitionedStepNode, PatternSpecificity, PlanError, SelectorPath, SplitBranch,
-    SplitBudget, SplitNode, StepComponents, StepNode,
+    FlowTransition, FrameworkParameterSource, JoinNode, LateBindingDefinitionError, LateBoundInput,
+    LateBoundSource, LocalFailurePolicy, MAX_BRANCH_STEPS, MAX_FLOW_COMPOSITION_DEPTH,
+    MAX_LATE_BOUND_INPUTS, MAX_NESTED_JOB_PARAMETERS, MAX_OUTGOING_TRANSITIONS,
+    MAX_PARTITION_WORKERS, MAX_PATTERN_BYTES, MAX_SCOPED_COMPONENTS, MAX_SELECTOR_PATH_BYTES,
+    MAX_SELECTOR_PATH_SEGMENTS, MAX_SPLIT_BRANCHES, MissingParameterPolicy, NestedFlow,
+    NestedJobNode, NestedJobParameterMapping, NestedJobParameterSource, ParameterCoercion,
+    PartitionBudget, PartitionCount, PartitionedStepNode, PatternSpecificity, PlanError,
+    ScopeFactoryKind, ScopeFrameworkSource, ScopeKind, ScopeResolverKind,
+    ScopedComponentDefinition, ScopedComponentId, SelectorPath, SplitBranch, SplitBudget,
+    SplitNode, StepComponents, StepNode,
 };
 pub use oxide_batch_repository::{
     ActorRef, AuthorizationClass, BoxFuture, Clock, Cursor, CursorError, CursorKey,
@@ -552,6 +561,7 @@ pub use runtime::{
     LaunchReport, StopPollInterval, StopSource, StopTiming, StopToken, Tasklet, TaskletContext,
     TaskletError, TaskletExecutionOutcome, TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep,
 };
+pub use scope_runtime::ScopeResolutionFailure;
 pub use service::{
     JobExplorer, JobOperator, OperatorError, OperatorOutcome, RecoveryProposer, RetentionReport,
     RetentionService,

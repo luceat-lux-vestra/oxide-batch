@@ -15,8 +15,8 @@ use sqlx::types::Json;
 use sqlx::{AssertSqlSafe, Connection, PgConnection, PgPool, Postgres, Row};
 
 use oxide_batch_repository::{
-    PartitionMutationError, aggregate_partition_parent, map_partition_aggregation,
-    recovered_execution, recovered_step_execution,
+    PartitionMutationError, ScopeResolutionProvenance, aggregate_partition_parent,
+    map_partition_aggregation, recovered_execution, recovered_step_execution,
 };
 
 use crate::{
@@ -44,13 +44,13 @@ use crate::{
     RecoveryRequest, RecoveryResult, RepositoryCapability, RepositoryDescriptor, RepositoryError,
     RepositoryUnitOfWork, RequestDigest, RetentionAction, RetentionActionId, RetentionHold,
     RetentionOutcome, RetentionRecord, RetentionRecordDraft, RetryCounts, RetryKey, RetryLimit,
-    RetryOrdinal, RetryReservation, RetryStateLimit, SkipCounts, StartLimit,
-    StateEnvelopeDescriptor, StateLimits, StateSchemaId, StateSchemaVersion, StepExecution,
-    StepExecutionId, StepExecutionProjection, StepName, StepPartition, StepPartitionId,
-    StepPartitionProjection, TerminalKind,
+    RetryOrdinal, RetryReservation, RetryStateLimit, ScopeKind, ScopedComponentId, SkipCounts,
+    StartLimit, StateEnvelopeDescriptor, StateLimits, StateSchemaId, StateSchemaVersion,
+    StepExecution, StepExecutionId, StepExecutionProjection, StepName, StepPartition,
+    StepPartitionId, StepPartitionProjection, TerminalKind,
 };
 
-const SUPPORTED_SCHEMA_VERSION: u32 = 5;
+const SUPPORTED_SCHEMA_VERSION: u32 = 6;
 const MAX_INSTANCE_KEY_INPUT: usize = 1024 * 1024;
 const MAX_POOL_SIZE: u32 = 1024;
 const MAX_SHORT_TIMEOUT: Duration = Duration::from_mins(5);
@@ -862,6 +862,7 @@ impl JobRepository for PostgresJobRepository {
                 RepositoryCapability::ExecutionOwnership,
                 RepositoryCapability::InstanceHolds,
                 RepositoryCapability::NestedJobs,
+                RepositoryCapability::ScopeResolution,
                 RepositoryCapability::OperatorRequests,
                 RepositoryCapability::RetentionPurge,
                 RepositoryCapability::StepPartitions,
@@ -1836,9 +1837,22 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             let job_name: String = instance
                 .try_get("job_name")
                 .map_err(|_| RepositoryError::Unavailable)?;
-            let parameters: Json<Value> = instance
-                .try_get("identifying_parameters")
-                .map_err(|_| RepositoryError::Unavailable)?;
+            let parameters: Json<Value> = if let Some(previous) = &latest {
+                sqlx::query_scalar(
+                    "SELECT parameters FROM oxide_batch.ob_job_execution WHERE id = $1",
+                )
+                .bind(database_id(
+                    previous.id().get(),
+                    IdentifierKind::JobExecution,
+                )?)
+                .fetch_one(&mut **self.transaction()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?
+            } else {
+                instance
+                    .try_get("identifying_parameters")
+                    .map_err(|_| RepositoryError::Unavailable)?
+            };
             let registered_at = self.repository.clock.now();
             let definition_id = ensure_definition(
                 &mut **self.transaction()?,
@@ -1876,6 +1890,18 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                     }
                     upgrade_from = Some(previous_definition_id);
                 }
+            }
+            if upgrade_from.is_some()
+                && let Some(previous) = &latest
+                && super::scope_postgres::has_scope_resolution_provenance(
+                    &mut **self.transaction()?,
+                    previous.id(),
+                )
+                .await?
+            {
+                return Err(RepositoryError::IncompatibleDefinition {
+                    instance_id: job_instance_id,
+                });
             }
             let attempt: i32 = sqlx::query_scalar(
                 "SELECT COALESCE(MAX(attempt), 0) + 1 \
@@ -1917,6 +1943,16 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             .map_err(|_| RepositoryError::Unavailable)?;
             let id_value =
                 JobExecutionId::new(u64::try_from(id).map_err(|_| RepositoryError::Unavailable)?)?;
+            if upgrade_from.is_none()
+                && let Some(previous) = &latest
+            {
+                super::scope_postgres::copy_forward_job_scope_resolution_provenance(
+                    &mut **self.transaction()?,
+                    previous.id(),
+                    id_value,
+                )
+                .await?;
+            }
             Ok(JobExecution::new(
                 id_value,
                 job_instance_id,
@@ -1933,6 +1969,117 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         Box::pin(async move {
             self.definition_override = Some(definition.clone());
             self.create_job_execution(job_instance_id).await
+        })
+    }
+
+    fn create_job_execution_with_definition_and_parameters<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        definition: &'a DefinitionIdentity,
+        parameters: &'a JobParameters,
+    ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>> {
+        Box::pin(async move {
+            self.definition_override = Some(definition.clone());
+            let execution = self.create_job_execution(job_instance_id).await?;
+            store_execution_parameters(&mut **self.transaction()?, execution.id(), parameters)
+                .await
+                .map_err(|error| match error {
+                    RepositoryError::NestedJobStateCorrupt => {
+                        RepositoryError::ScopeResolutionStateCorrupt
+                    }
+                    other => other,
+                })?;
+            Ok(execution)
+        })
+    }
+
+    fn job_execution_parameters(
+        &mut self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<JobParameters, RepositoryError>> {
+        Box::pin(async move {
+            load_execution_parameters(&mut **self.transaction()?, job_execution_id)
+                .await
+                .map_err(|error| match error {
+                    RepositoryError::NestedJobStateCorrupt => {
+                        RepositoryError::ScopeResolutionStateCorrupt
+                    }
+                    other => other,
+                })
+        })
+    }
+
+    fn scope_execution_definition(
+        &mut self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<DefinitionIdentity, RepositoryError>> {
+        Box::pin(async move {
+            load_execution_definition(&mut **self.transaction()?, job_execution_id)
+                .await
+                .map_err(|error| match error {
+                    RepositoryError::NestedJobStateCorrupt => {
+                        RepositoryError::ScopeResolutionStateCorrupt
+                    }
+                    other => other,
+                })
+        })
+    }
+
+    fn scope_execution_attempt(
+        &mut self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<std::num::NonZeroU64, RepositoryError>> {
+        Box::pin(async move {
+            let raw: i32 = sqlx::query_scalar(
+                "SELECT attempt FROM oxide_batch.ob_job_execution WHERE id = $1",
+            )
+            .bind(database_id(
+                job_execution_id.get(),
+                IdentifierKind::JobExecution,
+            )?)
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .ok_or(RepositoryError::JobExecutionNotFound {
+                id: job_execution_id,
+            })?;
+            let ordinal = u64::try_from(raw)
+                .ok()
+                .and_then(std::num::NonZeroU64::new)
+                .ok_or(RepositoryError::ScopeResolutionStateCorrupt)?;
+            Ok(ordinal)
+        })
+    }
+
+    fn scope_resolution_provenance<'a>(
+        &'a mut self,
+        scope: ScopeKind,
+        component: &'a ScopedComponentId,
+        owner_job_execution_id: JobExecutionId,
+        owner_step_execution_id: Option<StepExecutionId>,
+    ) -> BoxFuture<'a, Result<Vec<ScopeResolutionProvenance>, RepositoryError>> {
+        Box::pin(async move {
+            super::scope_postgres::load_scope_resolution_provenance(
+                &mut **self.transaction()?,
+                scope,
+                component,
+                owner_job_execution_id,
+                owner_step_execution_id,
+            )
+            .await
+        })
+    }
+
+    fn store_scope_resolution_provenance<'a>(
+        &'a mut self,
+        entries: &'a [ScopeResolutionProvenance],
+    ) -> BoxFuture<'a, Result<(), RepositoryError>> {
+        Box::pin(async move {
+            super::scope_postgres::store_scope_resolution_provenance(
+                &mut **self.transaction()?,
+                entries,
+            )
+            .await
         })
     }
 
@@ -2072,6 +2219,8 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 .await
                 .map_err(|_| RepositoryError::Unavailable)?,
             };
+            let id_value =
+                StepExecutionId::new(u64::try_from(id).map_err(|_| RepositoryError::Unavailable)?)?;
             if let Some(source_step_execution_id) = source_step_execution_id {
                 copy_forward_component_state(
                     &mut **self.transaction()?,
@@ -2079,9 +2228,18 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                     id,
                 )
                 .await?;
+                let source_step_id = StepExecutionId::new(
+                    u64::try_from(source_step_execution_id)
+                        .map_err(|_| RepositoryError::Unavailable)?,
+                )?;
+                super::scope_postgres::copy_forward_step_scope_resolution_provenance(
+                    &mut **self.transaction()?,
+                    source_step_id,
+                    job_execution_id,
+                    id_value,
+                )
+                .await?;
             }
-            let id_value =
-                StepExecutionId::new(u64::try_from(id).map_err(|_| RepositoryError::Unavailable)?)?;
             let execution = self
                 .step_execution(id_value)
                 .await?
@@ -2213,12 +2371,27 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 .await
                 .map_err(|_| RepositoryError::ConcurrentModification)?
             };
-            if let Some(source_id) = source_id {
-                copy_forward_component_state(&mut **self.transaction()?, source_id, id).await?;
-            }
             let id = StepExecutionId::new(
                 u64::try_from(id).map_err(|_| RepositoryError::FlowStateCorrupt)?,
             )?;
+            if let Some(source_id) = source_id {
+                copy_forward_component_state(
+                    &mut **self.transaction()?,
+                    source_id,
+                    i64::try_from(id.get()).map_err(|_| RepositoryError::FlowStateCorrupt)?,
+                )
+                .await?;
+                let source_step_id = StepExecutionId::new(
+                    u64::try_from(source_id).map_err(|_| RepositoryError::FlowStateCorrupt)?,
+                )?;
+                super::scope_postgres::copy_forward_step_scope_resolution_provenance(
+                    &mut **self.transaction()?,
+                    source_step_id,
+                    job_execution_id,
+                    id,
+                )
+                .await?;
+            }
             self.step_execution(id)
                 .await?
                 .ok_or(RepositoryError::StepExecutionNotFound { id })
@@ -2544,6 +2717,37 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                     durable.step_execution,
                     context,
                 ))
+            })
+            .transpose()
+        })
+    }
+
+    fn scope_step_state(
+        &mut self,
+        step_execution_id: StepExecutionId,
+    ) -> BoxFuture<'_, Result<Option<FlowStepState>, RepositoryError>> {
+        Box::pin(async move {
+            let row = sqlx::query(AssertSqlSafe(durable_step_select(
+                "WHERE execution.id = $1",
+            )))
+            .bind(database_id(
+                step_execution_id.get(),
+                IdentifierKind::StepExecution,
+            )?)
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            row.map(|row| {
+                let node = NodeId::new(read_text(&row, "step_logical_id")?)
+                    .map_err(|_| RepositoryError::ScopeResolutionStateCorrupt)?;
+                let durable = decode_durable_step_state(&row)?;
+                let context =
+                    if durable.execution_context.schema_id().as_str() == DEFAULT_CONTEXT_SCHEMA {
+                        None
+                    } else {
+                        Some(durable.execution_context)
+                    };
+                Ok(FlowStepState::new(node, durable.step_execution, context))
             })
             .transpose()
         })
@@ -3030,6 +3234,13 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 })
                 .transpose()
         })
+    }
+
+    fn scope_job_execution_context(
+        &mut self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Option<ExecutionContext>, RepositoryError>> {
+        self.job_execution_context(job_execution_id)
     }
 
     fn observe_nested_job_terminal<'a>(
@@ -4308,6 +4519,14 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                      SELECT 1 FROM oxide_batch.ob_job_execution sibling \
                      WHERE sibling.job_instance_id = execution.job_instance_id \
                        AND sibling.status IN ('STARTING', 'STARTED', 'STOPPING', 'UNKNOWN')) \
+                   AND NOT EXISTS ( \
+                     SELECT 1 \
+                     FROM oxide_batch.ob_scope_resolution_provenance provenance \
+                     LEFT JOIN oxide_batch.ob_step_execution source_step \
+                       ON source_step.id = provenance.source_step_execution_id \
+                     WHERE provenance.owner_job_execution_id <> execution.id \
+                       AND (provenance.source_job_execution_id = execution.id \
+                         OR source_step.job_execution_id = execution.id)) \
                  ORDER BY execution.job_instance_id, execution.id \
                  LIMIT $4",
             )
@@ -4362,7 +4581,15 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                    AND NOT EXISTS ( \
                      SELECT 1 FROM oxide_batch.ob_job_execution sibling \
                      WHERE sibling.job_instance_id = execution.job_instance_id \
-                       AND sibling.status IN ('STARTING', 'STARTED', 'STOPPING', 'UNKNOWN'))",
+                       AND sibling.status IN ('STARTING', 'STARTED', 'STOPPING', 'UNKNOWN')) \
+                   AND NOT EXISTS ( \
+                     SELECT 1 \
+                     FROM oxide_batch.ob_scope_resolution_provenance provenance \
+                     LEFT JOIN oxide_batch.ob_step_execution source_step \
+                       ON source_step.id = provenance.source_step_execution_id \
+                     WHERE provenance.owner_job_execution_id <> execution.id \
+                       AND (provenance.source_job_execution_id = execution.id \
+                         OR source_step.job_execution_id = execution.id))",
             )
             .bind(&executions)
             .bind(&versions)
@@ -5295,7 +5522,7 @@ fn job_execution_select(suffix: &str) -> String {
 fn step_execution_select(suffix: &str) -> String {
     format!(
         "SELECT execution.id, execution.job_execution_id, execution.step_name, \
-         execution.status, execution.exit_code, execution.read_count, \
+         execution.step_logical_id, execution.status, execution.exit_code, execution.read_count, \
          execution.processed_count, execution.write_count, execution.filter_count, \
          execution.commit_count, execution.rollback_count, execution.failure_category, \
          execution.failure_id, \

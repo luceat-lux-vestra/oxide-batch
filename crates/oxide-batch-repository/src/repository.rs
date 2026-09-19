@@ -14,8 +14,8 @@ use oxide_batch_core::{
     ExecutionContext, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitStatus,
     FailureCategory, FailureId, FailureSummary, IdentifierKind, JobExecution, JobExecutionId,
     JobInstance, JobInstanceId, JobInstanceKey, JobName, JobParameters, LifecycleError,
-    LifecycleTransition, NodeId, RecoveryDecisionId, StartLimit, StepExecution, StepExecutionId,
-    StepName, StepPartitionId,
+    LifecycleTransition, NodeId, RecoveryDecisionId, ScopeKind, ScopedComponentId, StartLimit,
+    StepExecution, StepExecutionId, StepName, StepPartitionId,
 };
 
 use crate::{
@@ -23,7 +23,7 @@ use crate::{
     NestedJobLinkRequest, OperationId, OperatorAction, OperatorRecord, OperatorRecordDraft,
     OwnerToken, PartitionAggregate, PartitionAggregationError, PartitionPlanEntry, PurgeCounts,
     PurgePlan, PurgePlanRequest, PurgeSurvey, ReasonCode, RetentionAction, RetentionHold,
-    RetentionRecord, RetentionRecordDraft, StepPartition,
+    RetentionRecord, RetentionRecordDraft, ScopeResolutionProvenance, StepPartition,
 };
 
 const MAX_RECOVERY_REASON_BYTES: usize = 64;
@@ -802,6 +802,93 @@ pub trait RepositoryUnitOfWork: Send {
         definition: &'a DefinitionIdentity,
     ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>>;
 
+    /// Creates one attempt and binds its complete immutable parameter set.
+    ///
+    /// Scoped late binding requires the execution record, not the logical
+    /// instance key, to remain the authoritative source for non-identifying
+    /// parameters. Adapters that do not declare scope resolution reject this
+    /// path before user work starts.
+    fn create_job_execution_with_definition_and_parameters<'a>(
+        &'a mut self,
+        _job_instance_id: JobInstanceId,
+        _definition: &'a DefinitionIdentity,
+        _parameters: &'a JobParameters,
+    ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::ScopeResolution,
+            })
+        })
+    }
+
+    /// Loads the complete immutable parameter set owned by one execution attempt.
+    fn job_execution_parameters(
+        &mut self,
+        _job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<JobParameters, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::ScopeResolution,
+            })
+        })
+    }
+
+    /// Loads the exact durable definition identity bound to one scoped execution.
+    fn scope_execution_definition(
+        &mut self,
+        _job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<DefinitionIdentity, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::ScopeResolution,
+            })
+        })
+    }
+
+    /// Loads the durable one-based attempt ordinal bound to one execution.
+    fn scope_execution_attempt(
+        &mut self,
+        _job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<NonZeroU64, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::ScopeResolution,
+            })
+        })
+    }
+
+    /// Loads value-free provenance for one logical scoped component.
+    #[doc(hidden)]
+    fn scope_resolution_provenance<'a>(
+        &'a mut self,
+        _scope: ScopeKind,
+        _component: &'a ScopedComponentId,
+        _owner_job_execution_id: JobExecutionId,
+        _owner_step_execution_id: Option<StepExecutionId>,
+    ) -> BoxFuture<'a, Result<Vec<ScopeResolutionProvenance>, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::ScopeResolution,
+            })
+        })
+    }
+
+    /// Persists one component's complete bounded, value-free provenance set.
+    ///
+    /// Adapters must treat an exact repeat as idempotent and reject any
+    /// conflicting record for an existing owner/component/input key.
+    #[doc(hidden)]
+    fn store_scope_resolution_provenance<'a>(
+        &'a mut self,
+        _entries: &'a [ScopeResolutionProvenance],
+    ) -> BoxFuture<'a, Result<(), RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::ScopeResolution,
+            })
+        })
+    }
+
     /// Creates a step attempt linked to an existing job execution.
     fn create_step_execution<'a>(
         &'a mut self,
@@ -919,6 +1006,18 @@ pub trait RepositoryUnitOfWork: Send {
         Box::pin(async { Err(RepositoryError::FlowStateCorrupt) })
     }
 
+    /// Loads one exact flow-step attempt for scoped source re-resolution.
+    fn scope_step_state(
+        &mut self,
+        _step_execution_id: StepExecutionId,
+    ) -> BoxFuture<'_, Result<Option<FlowStepState>, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::ScopeResolution,
+            })
+        })
+    }
+
     /// Appends one already plan-validated transition before its target starts.
     fn append_flow_decision<'a>(
         &'a mut self,
@@ -1026,6 +1125,18 @@ pub trait RepositoryUnitOfWork: Send {
         Box::pin(async {
             Err(RepositoryError::UnsupportedCapability {
                 capability: RepositoryCapability::NestedJobs,
+            })
+        })
+    }
+
+    /// Reads the committed job-execution context for scoped resolution.
+    fn scope_job_execution_context(
+        &mut self,
+        _job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Option<ExecutionContext>, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::ScopeResolution,
             })
         })
     }
@@ -1368,6 +1479,8 @@ pub enum RepositoryCapability {
     CustomLeafState,
     /// Atomic nested-job child creation, linkage, restart reuse, and observation.
     NestedJobs,
+    /// Durable scoped-selector source identity and value-free resolution provenance.
+    ScopeResolution,
 }
 
 impl RepositoryCapability {
@@ -1383,6 +1496,7 @@ impl RepositoryCapability {
             Self::StepPartitions => "durable step partitions",
             Self::CustomLeafState => "custom leaf state",
             Self::NestedJobs => "nested job linkage",
+            Self::ScopeResolution => "scope resolution provenance",
         }
     }
 }
@@ -1666,6 +1780,8 @@ pub enum RepositoryError {
     FlowStateCorrupt,
     /// A nested-job link, child identity, or persisted parameter set is contradictory.
     NestedJobStateCorrupt,
+    /// Scoped-selector authoritative source or provenance state is contradictory.
+    ScopeResolutionStateCorrupt,
     /// The linked child is active or ambiguous and cannot be silently duplicated.
     NestedJobChildUnresolved {
         /// Linked child attempt that requires completion or explicit recovery.
@@ -1877,6 +1993,9 @@ impl fmt::Display for RepositoryError {
             }
             Self::NestedJobStateCorrupt => formatter
                 .write_str("durable nested-job state is unusable and no child work may begin"),
+            Self::ScopeResolutionStateCorrupt => formatter.write_str(
+                "durable scope-resolution state is unusable and no scoped work may begin",
+            ),
             Self::NestedJobChildUnresolved {
                 child_execution_id,
                 status,

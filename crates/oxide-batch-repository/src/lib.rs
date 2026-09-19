@@ -44,6 +44,7 @@ mod recovery;
 mod repository;
 mod request;
 mod retention;
+mod scope;
 
 pub use explorer::{
     Cursor, CursorError, CursorKey, DEFAULT_PAGE_SIZE, DefinitionDescriptor, ExplorerError,
@@ -98,4 +99,9 @@ pub use retention::{
     DEFAULT_PURGE_AGE, MAX_PURGE_BATCH, MIN_PURGE_AGE, PurgeBatchBound, PurgeCandidate,
     PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey, RetentionAction, RetentionError,
     RetentionHold, RetentionOutcome, RetentionRecord, RetentionRecordDraft, TerminalStatusSet,
+};
+#[doc(hidden)]
+pub use scope::{
+    ScopeResolutionProvenance, ScopeResolutionProvenanceError, ScopeResolutionSource,
+    ScopeResolutionSourceKind,
 };

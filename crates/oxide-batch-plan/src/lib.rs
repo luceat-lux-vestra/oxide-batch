@@ -46,9 +46,16 @@
 
 mod advanced;
 mod custom_leaf;
+mod late_binding;
 mod nested_job;
 
 pub use custom_leaf::{CustomLeafKind, CustomLeafNode};
+
+pub use late_binding::{
+    LateBindingDefinitionError, LateBoundInput, LateBoundSource, MAX_LATE_BOUND_INPUTS,
+    MAX_SCOPED_COMPONENTS, ScopeFactoryKind, ScopeFrameworkSource, ScopeKind, ScopeResolverKind,
+    ScopedComponentDefinition, ScopedComponentId,
+};
 
 pub use nested_job::{
     FrameworkParameterSource, MAX_NESTED_JOB_PARAMETERS, MAX_SELECTOR_PATH_BYTES,
@@ -1159,6 +1166,7 @@ pub struct FlowGraph {
     nodes: Vec<FlowNode>,
     transitions: Vec<FlowTransition>,
     nested_flows: Vec<NestedFlow>,
+    scoped_components: Vec<ScopedComponentDefinition>,
 }
 
 impl FlowGraph {
@@ -1170,6 +1178,7 @@ impl FlowGraph {
             nodes: Vec::new(),
             transitions: Vec::new(),
             nested_flows: Vec::new(),
+            scoped_components: Vec::new(),
         }
     }
 
@@ -1187,6 +1196,16 @@ impl FlowGraph {
         self
     }
 
+    /// Declares one restart-relevant job- or step-scoped component.
+    ///
+    /// Components are canonicalized by scope and logical component ID during
+    /// compilation. Duplicate identities fail closed.
+    #[must_use]
+    pub fn with_scoped_component(mut self, component: ScopedComponentDefinition) -> Self {
+        self.scoped_components.push(component);
+        self
+    }
+
     /// Borrows the declared entry reference.
     #[must_use]
     pub const fn entry(&self) -> Option<&NodeId> {
@@ -1194,7 +1213,8 @@ impl FlowGraph {
     }
 
     fn requires_advanced_format(&self) -> bool {
-        !self.nested_flows.is_empty()
+        !self.scoped_components.is_empty()
+            || !self.nested_flows.is_empty()
             || self.nodes.iter().any(|node| match node {
                 FlowNode::NestedJob(_) | FlowNode::CustomLeaf(_) => true,
                 FlowNode::Split(split) => {
@@ -1342,6 +1362,7 @@ impl FlowGraph {
             .map_err(PlanError::Manifest)?;
         Ok(CompiledExecutionPlan {
             definition,
+            scoped_components: BTreeMap::new(),
             root_scope: CompiledFlowScope::new(entry.clone(), nodes.keys().cloned().collect()),
             entry,
             nodes,
@@ -1632,6 +1653,7 @@ fn flow_manifest(
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompiledExecutionPlan {
     definition: DefinitionIdentity,
+    scoped_components: BTreeMap<(ScopeKind, ScopedComponentId), ScopedComponentDefinition>,
     entry: NodeId,
     root_scope: CompiledFlowScope,
     nodes: BTreeMap<NodeId, FlowNode>,
@@ -1673,6 +1695,7 @@ impl CompiledExecutionPlan {
         transitions.insert(entry.clone(), edges);
         Ok(Self {
             definition,
+            scoped_components: BTreeMap::new(),
             root_scope: CompiledFlowScope::new(entry.clone(), nodes.keys().cloned().collect()),
             entry,
             nodes,
@@ -1687,6 +1710,22 @@ impl CompiledExecutionPlan {
     #[must_use]
     pub const fn definition_identity(&self) -> &DefinitionIdentity {
         &self.definition
+    }
+
+    /// Iterates scoped component definitions in canonical scope/ID order.
+    #[must_use]
+    pub fn scoped_components(&self) -> impl ExactSizeIterator<Item = &ScopedComponentDefinition> {
+        self.scoped_components.values()
+    }
+
+    /// Borrows one scoped component definition by scope and logical ID.
+    #[must_use]
+    pub fn scoped_component(
+        &self,
+        scope: ScopeKind,
+        id: &ScopedComponentId,
+    ) -> Option<&ScopedComponentDefinition> {
+        self.scoped_components.get(&(scope, id.clone()))
     }
 
     /// Returns the canonical manifest format this plan is identified by.
@@ -1967,6 +2006,18 @@ pub enum PlanError {
         /// Nested-job node with the unbound child.
         node: NodeId,
     },
+    /// A graph declared more scoped components than the M7 ceiling.
+    TooManyScopedComponents {
+        /// Maximum accepted scoped component count.
+        max: usize,
+    },
+    /// Two declarations reused one scope/component logical identity.
+    DuplicateScopedComponent {
+        /// Repeated scope.
+        scope: ScopeKind,
+        /// Repeated logical component identifier.
+        component: ScopedComponentId,
+    },
     /// A nested job declared more child parameters than the M7 ceiling.
     TooManyNestedJobParameters {
         /// Nested-job node over the limit.
@@ -2129,6 +2180,15 @@ impl fmt::Display for PlanError {
                 formatter,
                 "nested job {} requires a bound child definition identity",
                 node.as_str()
+            ),
+            Self::TooManyScopedComponents { max } => {
+                write!(formatter, "flow graph exceeds {max} scoped components")
+            }
+            Self::DuplicateScopedComponent { scope, component } => write!(
+                formatter,
+                "{} scope component {} is declared more than once",
+                scope.as_str(),
+                component.as_str()
             ),
             Self::TooManyNestedJobParameters { node, max } => write!(
                 formatter,

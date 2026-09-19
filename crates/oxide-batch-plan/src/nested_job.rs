@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use oxide_batch_core::{
     ComponentRevision, DefinitionIdentity, JobName, NodeId, ParameterName, ParameterRole,
-    ParameterValueKind, StateSchemaId, StateSchemaVersion,
+    ParameterValueKind, StateSchemaId, StateSchemaVersion, selector_path_is_valid,
 };
 use serde_json::{Value, json};
 
@@ -10,10 +10,7 @@ use super::PlanError;
 
 /// Maximum number of typed child parameters one nested-job node may declare.
 pub const MAX_NESTED_JOB_PARAMETERS: usize = 64;
-/// Maximum UTF-8 bytes across one structured selector path.
-pub const MAX_SELECTOR_PATH_BYTES: usize = 1_024;
-/// Maximum number of path segments in one structured selector.
-pub const MAX_SELECTOR_PATH_SEGMENTS: usize = 32;
+pub use oxide_batch_core::{MAX_SELECTOR_PATH_BYTES, MAX_SELECTOR_PATH_SEGMENTS};
 
 /// A bounded structured path into committed execution-context state.
 ///
@@ -32,24 +29,7 @@ impl SelectorPath {
     /// segments, control characters, or a path larger than 1,024 UTF-8 bytes.
     pub fn new(segments: impl IntoIterator<Item = String>) -> Result<Self, PlanError> {
         let segments = segments.into_iter().collect::<Vec<_>>();
-        if segments.is_empty() || segments.len() > MAX_SELECTOR_PATH_SEGMENTS {
-            return Err(PlanError::InvalidSelectorPath {
-                max_bytes: MAX_SELECTOR_PATH_BYTES,
-                max_segments: MAX_SELECTOR_PATH_SEGMENTS,
-            });
-        }
-        let bytes = segments
-            .iter()
-            .map(String::len)
-            .sum::<usize>()
-            .saturating_add(segments.len().saturating_sub(1));
-        if bytes > MAX_SELECTOR_PATH_BYTES
-            || segments.iter().any(|segment| {
-                segment.is_empty()
-                    || segment.trim() != segment
-                    || segment.chars().any(char::is_control)
-            })
-        {
+        if !selector_path_is_valid(&segments) {
             return Err(PlanError::InvalidSelectorPath {
                 max_bytes: MAX_SELECTOR_PATH_BYTES,
                 max_segments: MAX_SELECTOR_PATH_SEGMENTS,

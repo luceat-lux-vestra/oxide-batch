@@ -28,6 +28,7 @@ mod definition;
 mod domain;
 mod fault;
 mod flow;
+mod scope;
 mod state;
 
 pub use chunk::{ChunkCount, ChunkCounts, ChunkError, ChunkProgress, ChunkSize};
@@ -62,6 +63,11 @@ pub use fault::{
     RetryStateLimit, RollbackDisposition, SkipCounts, SkipLimit,
 };
 pub use flow::{FlowTarget, MAX_PARTITIONS, NodeId, StartControls, StartLimit, TerminalKind};
+pub use scope::{
+    MAX_LATE_BOUND_INPUTS, MAX_SCOPED_COMPONENTS, MAX_SELECTOR_PATH_BYTES,
+    MAX_SELECTOR_PATH_SEGMENTS, ScopeFrameworkSource, ScopeKind, ScopedComponentId,
+    selector_path_is_valid,
+};
 pub use state::{
     Checkpoint, DurableStateKind, ExecutionContext, StateCodecError, StateError, StateLimits,
     StateSchemaId, StateSchemaUpgrade, StateSchemaVersion, VersionedStateCodec,
