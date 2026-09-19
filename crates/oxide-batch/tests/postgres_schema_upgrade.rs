@@ -6,8 +6,10 @@
 //! directly to schema 3, which was the current schema when M5 wrote it. M6
 //! `#144` then added `0005_item_stream_component_state.sql`, an additive
 //! migration that carries the installed schema to 4 without changing anything
-//! schema 3 declared, and M7 `#265` adds `0006_nested_job_linkage.sql`, carrying
-//! the installed schema to 5. The historical M5 claim (1/2 -> 3, direct) is
+//! schema 3 declared, M7 `#265` adds `0006_nested_job_linkage.sql` carrying
+//! the installed schema to 5, and M7 `#276` adds value-free scoped-resolution
+//! provenance in `0007_scope_resolution_provenance.sql`, carrying it to 6.
+//! The historical M5 claim (1/2 -> 3, direct) is
 //! preserved below as an intermediate structural checkpoint every path still
 //! passes through; the report's actual target is now the current schema, and a
 //! schema-3 source is retained so the 3 -> current path keeps the same
@@ -33,7 +35,7 @@
 //! version becomes the current schema version and every structural checkpoint
 //! from the source's own schema up through the current one appears in order
 //! (so a schema-1 source is still shown passing through schema 3's shape on
-//! its way to schema 5). Every value of every column the source schema
+//! its way to schema 6). Every value of every column the source schema
 //! declared is byte-identical afterwards, compared through the source's own
 //! column list so a column a later schema added cannot mask a loss. The new
 //! `ItemStream` component-state table schema 4 adds carries no row for any of
@@ -74,9 +76,9 @@ use upgrade::{
 const SOURCE_VERSIONS: [u32; 3] = [1, 2, 3];
 
 /// The schema version the upgrade must reach: the current installed schema
-/// (5, since M7 `#265`'s durable nested-job linkage migration), not the
+/// (6, since M7 `#276`'s scoped-resolution provenance migration), not the
 /// schema-3 target the M5 preview named when it was current.
-const TARGET_VERSION: u32 = 5;
+const TARGET_VERSION: u32 = 6;
 
 #[test]
 fn schema1_and_schema2_upgrade_directly_to_schema3() -> Result<(), Box<dyn Error>> {

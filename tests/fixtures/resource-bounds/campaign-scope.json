@@ -537,6 +537,36 @@
       "budget_bound": null
     },
     {
+      "resource": "scoped-component-late-bound-inputs",
+      "class": "buffer",
+      "owner": "ScopedComponentDefinition",
+      "symbols": ["MAX_LATE_BOUND_INPUTS"],
+      "ceiling": 64,
+      "unit": "inputs",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": false,
+      "proofs": ["construction-boundary"],
+      "budget_row": null,
+      "budget_bound": null,
+      "note": "The accepted side constructs one scoped component with exactly 64 distinct typed late-bound inputs; the refused side offers 65 to the same constructor. This proves the public per-component input ceiling rather than only classifying the constant."
+    },
+    {
+      "resource": "scoped-components-per-scope",
+      "class": "buffer",
+      "owner": "AdvancedCompiler",
+      "symbols": ["MAX_SCOPED_COMPONENTS"],
+      "ceiling": 256,
+      "unit": "components",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": false,
+      "proofs": ["construction-boundary"],
+      "budget_row": null,
+      "budget_bound": null,
+      "note": "The accepted side compiles one scope with exactly 256 distinct component declarations; the refused side adds one more in that same scope. The boundary is per scope rather than a global plan count."
+    },
+    {
       "resource": "nested-job-parameter-mappings",
       "class": "buffer",
       "owner": "NestedJobNode",

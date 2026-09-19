@@ -49,18 +49,20 @@ use oxide_batch::{
     ExecutionContext, ExecutionVersion, ExitCode, ExitPattern, FailureCategory, FaultPhase,
     FaultStateEntry, FaultStateEnvelope, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget,
     ItemListenerSet, JobInstanceKey, JobName, JobParameter, JobParameters, JobRepository,
-    MAX_ACTOR_REF_BYTES, MAX_NESTED_JOB_PARAMETERS, MAX_NODES, MAX_OPERATION_ID_BYTES,
-    MAX_OUTGOING_TRANSITIONS, MAX_PARTITION_CONTEXT_BYTES, MAX_PARTITION_KEY_BYTES,
-    MAX_PATTERN_BYTES, MAX_REASON_CODE_BYTES, MAX_SELECTOR_PATH_BYTES, MAX_SELECTOR_PATH_SEGMENTS,
-    MAX_TRANSITIONS, MissingParameterPolicy, NestedJobNode, NestedJobParameterMapping,
-    NestedJobParameterSource, NodeId, OperationId, ParameterCoercion, ParameterName, ParameterRole,
-    ParameterValue, ParameterValueKind, PartitionBudget, PartitionCount, PartitionKey,
-    PartitionPlanEntry, PartitionPlanFactory, PartitionTaskletFactory, PartitionedStepNode,
-    PostgresJobRepository, PostgresMigrator, ReadListener, ReasonCode, RecoveryRequest, RetryKey,
-    RetryOrdinal, RetryStateLimit, SelectorPath, SequentialIdGenerator, StateCodecError,
-    StateLimits, StateSchemaId, StateSchemaUpgrade, StateSchemaVersion, StepComponents, StepName,
-    StepNode, StopSource, Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep,
-    TerminalKind, VersionedStateCodec,
+    LateBoundInput, LateBoundSource, MAX_ACTOR_REF_BYTES, MAX_LATE_BOUND_INPUTS,
+    MAX_NESTED_JOB_PARAMETERS, MAX_NODES, MAX_OPERATION_ID_BYTES, MAX_OUTGOING_TRANSITIONS,
+    MAX_PARTITION_CONTEXT_BYTES, MAX_PARTITION_KEY_BYTES, MAX_PATTERN_BYTES, MAX_REASON_CODE_BYTES,
+    MAX_SCOPED_COMPONENTS, MAX_SELECTOR_PATH_BYTES, MAX_SELECTOR_PATH_SEGMENTS, MAX_TRANSITIONS,
+    MissingParameterPolicy, NestedJobNode, NestedJobParameterMapping, NestedJobParameterSource,
+    NodeId, OperationId, ParameterCoercion, ParameterName, ParameterRole, ParameterValue,
+    ParameterValueKind, PartitionBudget, PartitionCount, PartitionKey, PartitionPlanEntry,
+    PartitionPlanFactory, PartitionTaskletFactory, PartitionedStepNode, PostgresJobRepository,
+    PostgresMigrator, ReadListener, ReasonCode, RecoveryRequest, RetryKey, RetryOrdinal,
+    RetryStateLimit, ScopeFactoryKind, ScopeFrameworkSource, ScopeKind, ScopeResolverKind,
+    ScopedComponentDefinition, ScopedComponentId, SelectorPath, SequentialIdGenerator,
+    StateCodecError, StateLimits, StateSchemaId, StateSchemaUpgrade, StateSchemaVersion,
+    StepComponents, StepName, StepNode, StopSource, Tasklet, TaskletContext, TaskletError,
+    TaskletOutcome, TaskletStep, TerminalKind, VersionedStateCodec,
 };
 use serde_json::{Value, json};
 
@@ -128,6 +130,7 @@ async fn report(runtime: String, migrator: String) -> Result<(), Box<dyn Error>>
     cells.extend(listener_cells());
     cells.extend(identifier_cells());
     cells.extend(nested_job_mapping_cells());
+    cells.extend(scoped_late_binding_cells());
 
     let mut violations: Vec<String> = cells.iter().filter_map(Cell::violation).collect();
 
@@ -640,6 +643,113 @@ fn nested_job_mapping_cells() -> Vec<Cell> {
             "segments",
         ),
     ]
+}
+
+/// Reports scoped-component declaration ceilings at their exact boundaries.
+fn scoped_late_binding_cells() -> Vec<Cell> {
+    let input_ceiling = MAX_LATE_BOUND_INPUTS as u64;
+    let component_ceiling = MAX_SCOPED_COMPONENTS as u64;
+
+    vec![
+        Cell::named(
+            "scoped-component-late-bound-inputs",
+            "input-count",
+            "at the ceiling",
+            input_ceiling,
+            input_ceiling,
+            scoped_component_definition(MAX_LATE_BOUND_INPUTS).is_ok(),
+            true,
+            "inputs",
+        ),
+        Cell::named(
+            "scoped-component-late-bound-inputs",
+            "input-count",
+            "one input past the ceiling",
+            input_ceiling,
+            input_ceiling + 1,
+            scoped_component_definition(MAX_LATE_BOUND_INPUTS + 1).is_ok(),
+            false,
+            "inputs",
+        ),
+        Cell::named(
+            "scoped-components-per-scope",
+            "component-count",
+            "at the ceiling",
+            component_ceiling,
+            component_ceiling,
+            scoped_component_plan(MAX_SCOPED_COMPONENTS).is_ok(),
+            true,
+            "components",
+        ),
+        Cell::named(
+            "scoped-components-per-scope",
+            "component-count",
+            "one component past the ceiling",
+            component_ceiling,
+            component_ceiling + 1,
+            scoped_component_plan(MAX_SCOPED_COMPONENTS + 1).is_ok(),
+            false,
+            "components",
+        ),
+    ]
+}
+
+/// Constructs one job-scoped component with exactly `count` late-bound inputs.
+fn scoped_component_definition(count: usize) -> Result<ScopedComponentDefinition, Box<dyn Error>> {
+    let inputs = (0..count)
+        .map(|index| {
+            Ok(LateBoundInput::new(
+                ParameterName::new(format!("scope-input-{index:03}"))?,
+                LateBoundSource::Framework(ScopeFrameworkSource::Attempt),
+                ParameterValueKind::U64,
+                ParameterCoercion::Exact,
+                MissingParameterPolicy::Fail,
+            ))
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+
+    Ok(ScopedComponentDefinition::new(
+        ScopeKind::Job,
+        ScopedComponentId::new("resource-bound-component")?,
+        ScopeFactoryKind::new("resource-bound-factory")?,
+        ComponentRevision::new("resource-bound-factory-v1")?,
+        ScopeResolverKind::new("resource-bound-resolver")?,
+        ComponentRevision::new("resource-bound-resolver-v1")?,
+        inputs,
+    )?)
+}
+
+/// Compiles one scope with exactly `count` distinct scoped components.
+fn scoped_component_plan(
+    count: usize,
+) -> Result<oxide_batch::CompiledExecutionPlan, Box<dyn Error>> {
+    let node = NodeId::new("scoped-component-boundary-step")?;
+    let mut graph = FlowGraph::new(node.clone())
+        .with_node(FlowNode::step(StepNode::new(
+            node.clone(),
+            StepName::new("scoped-component-boundary-step")?,
+            StepComponents::Tasklet(ComponentRevision::new(
+                "scoped-component-boundary-tasklet-v1",
+            )?),
+        )))
+        .with_sequence(node, FlowTarget::Terminal(TerminalKind::Complete))?;
+
+    for index in 0..count {
+        graph = graph.with_scoped_component(ScopedComponentDefinition::new(
+            ScopeKind::Job,
+            ScopedComponentId::new(format!("resource-bound-component-{index:03}"))?,
+            ScopeFactoryKind::new("resource-bound-factory")?,
+            ComponentRevision::new("resource-bound-factory-v1")?,
+            ScopeResolverKind::new("resource-bound-resolver")?,
+            ComponentRevision::new("resource-bound-resolver-v1")?,
+            Vec::new(),
+        )?);
+    }
+
+    Ok(graph.compile(
+        &JobName::new("scoped-component-boundary-job")?,
+        DefinitionRevision::new("v1")?,
+    )?)
 }
 
 /// Builds a valid child definition for the real nested-job node constructor.

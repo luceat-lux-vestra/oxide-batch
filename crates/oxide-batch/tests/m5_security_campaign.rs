@@ -43,6 +43,7 @@ use serde_json::Value;
 const REQUIRED_REPORTS: &[&str] = &[
     "verify-full-tls",
     "nested-job-privileges",
+    "scope-resolution-privileges",
     "least-privilege-roles",
     "redaction-sweep",
 ];
@@ -81,9 +82,10 @@ const DENIED_ATTRIBUTES: &[&str] = &["NOSUPERUSER", "NOCREATEDB", "NOCREATEROLE"
 /// The schema the privilege matrix is checked on.
 ///
 /// The M5 preview installed schema 3; M6 `#144` added schema 4 component
-/// state, and M7 `#265` adds schema 5 durable nested-job linkage. The campaign
-/// must exercise the privilege matrix against the current installed schema.
-const SCHEMA_VERSION: u64 = 5;
+/// state, M7 `#265` added schema 5 durable nested-job linkage, and M7 `#276`
+/// adds schema 6 scoped-resolution provenance. The campaign must exercise the
+/// privilege matrix against the current installed schema.
+const SCHEMA_VERSION: u64 = 6;
 
 /// The transport the M5 preview supports in production.
 const TLS_MODE: &str = "verify-full";

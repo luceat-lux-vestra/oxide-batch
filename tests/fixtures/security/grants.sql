@@ -69,6 +69,12 @@ GRANT SELECT, INSERT, UPDATE ON
 -- nested execution creates the linkage, restart reads it, and terminal
 -- observation updates it. Parent-execution retention is handled by the
 -- parent foreign key's cascade; the runtime itself never deletes linkage.
+-- ob_scope_resolution_provenance (#276, schema 6) is immutable once committed:
+-- runtime resolution reads existing provenance and inserts the first committed
+-- record set. It never updates or directly deletes provenance; parent/step
+-- retention removes rows only through schema-owned foreign-key cascades.
+GRANT SELECT, INSERT ON oxide_batch.ob_scope_resolution_provenance
+    TO oxide_batch_m5_runtime;
 -- Creating an attempt locks the instance row for the duration of the
 -- transaction, so that two launches cannot both decide they are the first.
 -- PostgreSQL requires UPDATE on at least one column to take that lock, and the
