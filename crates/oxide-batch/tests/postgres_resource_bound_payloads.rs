@@ -51,6 +51,7 @@ use oxide_batch::{
     ItemListenerSet, JobInstanceKey, JobName, JobParameter, JobParameters, JobRepository,
     LateBoundInput, LateBoundSource, MAX_ACTOR_REF_BYTES, MAX_LATE_BOUND_INPUTS,
     MAX_NESTED_JOB_PARAMETERS, MAX_NODES, MAX_OPERATION_ID_BYTES, MAX_OUTGOING_TRANSITIONS,
+    MAX_SCOPED_DEPENDENCY_DEPTH,
     MAX_PARTITION_CONTEXT_BYTES, MAX_PARTITION_KEY_BYTES, MAX_PATTERN_BYTES, MAX_REASON_CODE_BYTES,
     MAX_SCOPED_COMPONENTS, MAX_SELECTOR_PATH_BYTES, MAX_SELECTOR_PATH_SEGMENTS, MAX_TRANSITIONS,
     MissingParameterPolicy, NestedJobNode, NestedJobParameterMapping, NestedJobParameterSource,
@@ -59,7 +60,9 @@ use oxide_batch::{
     PartitionPlanFactory, PartitionTaskletFactory, PartitionedStepNode, PostgresJobRepository,
     PostgresMigrator, ReadListener, ReasonCode, RecoveryRequest, RetryKey, RetryOrdinal,
     RetryStateLimit, ScopeFactoryKind, ScopeFrameworkSource, ScopeKind, ScopeResolverKind,
-    ScopedComponentDefinition, ScopedComponentId, SelectorPath, SequentialIdGenerator,
+    ScopedCleanupError, ScopedComponentDefinition, ScopedComponentFactory, ScopedComponentHandle,
+    ScopedComponentId, ScopedComponentRegistration, ScopedFactoryContext, ScopedFactoryError,
+    SelectorPath, SequentialIdGenerator,
     StateCodecError, StateLimits, StateSchemaId, StateSchemaUpgrade, StateSchemaVersion,
     StepComponents, StepName, StepNode, StopSource, Tasklet, TaskletContext, TaskletError,
     TaskletOutcome, TaskletStep, TerminalKind, VersionedStateCodec,
@@ -131,6 +134,7 @@ async fn report(runtime: String, migrator: String) -> Result<(), Box<dyn Error>>
     cells.extend(identifier_cells());
     cells.extend(nested_job_mapping_cells());
     cells.extend(scoped_late_binding_cells());
+    cells.extend(scoped_dependency_depth_cells());
 
     let mut violations: Vec<String> = cells.iter().filter_map(Cell::violation).collect();
 
@@ -692,6 +696,104 @@ fn scoped_late_binding_cells() -> Vec<Cell> {
             "components",
         ),
     ]
+}
+
+/// Reports the live scoped-component dependency-depth ceiling.
+fn scoped_dependency_depth_cells() -> Vec<Cell> {
+    let ceiling = MAX_SCOPED_DEPENDENCY_DEPTH as u64;
+    vec![
+        Cell::named(
+            "scoped-component-dependency-depth",
+            "dependency-depth",
+            "at the ceiling",
+            ceiling,
+            ceiling,
+            scoped_dependency_graph_is_valid(MAX_SCOPED_DEPENDENCY_DEPTH),
+            true,
+            "components",
+        ),
+        Cell::named(
+            "scoped-component-dependency-depth",
+            "dependency-depth",
+            "one component past the ceiling",
+            ceiling,
+            ceiling + 1,
+            scoped_dependency_graph_is_valid(MAX_SCOPED_DEPENDENCY_DEPTH + 1),
+            false,
+            "components",
+        ),
+    ]
+}
+
+#[derive(Debug)]
+struct ResourceBoundScopedFactory;
+
+impl ScopedComponentFactory for ResourceBoundScopedFactory {
+    fn create<'a>(
+        &'a self,
+        _context: ScopedFactoryContext<'a>,
+    ) -> BoxFuture<'a, Result<ScopedComponentHandle, ScopedFactoryError>> {
+        Box::pin(async { Ok(ScopedComponentHandle::new(())) })
+    }
+
+    fn cleanup(
+        &self,
+        _component: ScopedComponentHandle,
+    ) -> BoxFuture<'_, Result<(), ScopedCleanupError>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+fn scoped_dependency_graph_is_valid(count: usize) -> bool {
+    scoped_dependency_job(count).is_ok_and(|job| job.validate().is_ok())
+}
+
+fn scoped_dependency_job(count: usize) -> Result<FlowJob, Box<dyn Error>> {
+    let node = NodeId::new("scoped-dependency-boundary-step")?;
+    let step_name = StepName::new("scoped-dependency-boundary-step")?;
+    let mut graph = FlowGraph::new(node.clone())
+        .with_node(FlowNode::step(StepNode::new(
+            node.clone(),
+            step_name.clone(),
+            StepComponents::Tasklet(ComponentRevision::new(
+                "scoped-dependency-tasklet-v1",
+            )?),
+        )))
+        .with_sequence(node.clone(), FlowTarget::Terminal(TerminalKind::Complete))?;
+
+    let ids = (0..count)
+        .map(|index| ScopedComponentId::new(format!("scoped-depth-{index:03}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    for id in &ids {
+        graph = graph.with_scoped_component(ScopedComponentDefinition::new(
+            ScopeKind::Step,
+            id.clone(),
+            ScopeFactoryKind::new("resource-bound-live-factory")?,
+            ComponentRevision::new("resource-bound-live-factory-v1")?,
+            ScopeResolverKind::new("resource-bound-live-resolver")?,
+            ComponentRevision::new("resource-bound-live-resolver-v1")?,
+            Vec::new(),
+        )?);
+    }
+
+    let name = JobName::new("scoped-dependency-boundary-job")?;
+    let plan = graph.compile(&name, DefinitionRevision::new("v1")?)?;
+    let mut job = FlowJob::new(name, plan)?.with_tasklet_step(
+        node,
+        TaskletStep::new(step_name, Arc::new(CompleteTasklet)),
+    )?;
+    for (index, id) in ids.iter().enumerate() {
+        let dependencies = ids.get(index + 1).cloned().into_iter().collect();
+        job = job.with_scoped_component_registration(ScopedComponentRegistration::new(
+            ScopeKind::Step,
+            id.clone(),
+            ScopeFactoryKind::new("resource-bound-live-factory")?,
+            ComponentRevision::new("resource-bound-live-factory-v1")?,
+            dependencies,
+            Arc::new(ResourceBoundScopedFactory),
+        )?)?;
+    }
+    Ok(job)
 }
 
 /// Constructs one job-scoped component with exactly `count` late-bound inputs.

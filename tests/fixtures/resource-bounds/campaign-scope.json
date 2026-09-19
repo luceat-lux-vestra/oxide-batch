@@ -24,8 +24,16 @@
     }
   },
   "support_contract": {
-    "postgres_versions": ["15", "16", "17", "18"],
-    "matrix_endpoints": ["15", "18"],
+    "postgres_versions": [
+      "15",
+      "16",
+      "17",
+      "18"
+    ],
+    "matrix_endpoints": [
+      "15",
+      "18"
+    ],
     "installed_schema_version": 3,
     "resource_classes": [
       "queue",
@@ -189,7 +197,9 @@
         "report": "bounded-shedding",
         "baseline": "one execution read back before the exporter queue saturates",
         "stressed": "the same execution read back while the exporter queue is saturated",
-        "must_agree_on": ["durable-record"],
+        "must_agree_on": [
+          "durable-record"
+        ],
         "must_not_observe": [],
         "note": "A single wholesale comparison of the durable record rather than a per-field breakdown: the shedding report's obligation is that telemetry overload never changes what batch work durably records, not that any one field of it does not, so one field standing for the whole record is the right granularity here rather than a partial list borrowed from the worker-assignment comparison's own fields."
       }
@@ -200,13 +210,17 @@
       "resource": "partitions-per-step",
       "class": "worker-assignment",
       "owner": "PartitionCount",
-      "symbols": ["MAX_PARTITIONS"],
+      "symbols": [
+        "MAX_PARTITIONS"
+      ],
       "ceiling": 1024,
       "unit": "partitions",
       "policy": "fail-closed",
       "report": "worker-assignment",
       "postgres": false,
-      "proofs": ["construction-boundary"],
+      "proofs": [
+        "construction-boundary"
+      ],
       "budget_row": "Partitions per partitioned step",
       "budget_bound": "`1..=1024`"
     },
@@ -214,15 +228,24 @@
       "resource": "concurrent-partition-workers",
       "class": "worker-assignment",
       "owner": "PartitionBudget",
-      "symbols": ["MAX_PARTITION_WORKERS"],
+      "symbols": [
+        "MAX_PARTITION_WORKERS"
+      ],
       "ceiling": 64,
       "unit": "concurrent workers",
       "policy": "bounded-concurrency",
       "report": "worker-assignment",
       "postgres": true,
-      "proofs": ["construction-boundary", "stress-saturation"],
+      "proofs": [
+        "construction-boundary",
+        "stress-saturation"
+      ],
       "additional_boundaries": [
-        { "value": 0, "expected": "refused", "label": "zero workers" }
+        {
+          "value": 0,
+          "expected": "refused",
+          "label": "zero workers"
+        }
       ],
       "budget_row": "Concurrent partition workers",
       "budget_bound": "`1..=64`"
@@ -231,13 +254,17 @@
       "resource": "split-branches-per-node",
       "class": "worker-assignment",
       "owner": "SplitNode",
-      "symbols": ["MAX_SPLIT_BRANCHES"],
+      "symbols": [
+        "MAX_SPLIT_BRANCHES"
+      ],
       "ceiling": 8,
       "unit": "branches",
       "policy": "fail-closed",
       "report": "worker-assignment",
       "postgres": false,
-      "proofs": ["construction-boundary"],
+      "proofs": [
+        "construction-boundary"
+      ],
       "additional_boundaries": [
         {
           "value": 1,
@@ -252,13 +279,19 @@
       "resource": "concurrent-split-branches",
       "class": "worker-assignment",
       "owner": "SplitBudget",
-      "symbols": ["MAX_SPLIT_BRANCHES"],
+      "symbols": [
+        "MAX_SPLIT_BRANCHES"
+      ],
       "ceiling": 8,
       "unit": "concurrent branches",
       "policy": "bounded-concurrency",
       "report": "worker-assignment",
       "postgres": true,
-      "proofs": ["construction-boundary", "stress-saturation", "dual-budget-boundary"],
+      "proofs": [
+        "construction-boundary",
+        "stress-saturation",
+        "dual-budget-boundary"
+      ],
       "budget_row": "Concurrent split branches",
       "budget_bound": "`1..=8`"
     },
@@ -266,13 +299,17 @@
       "resource": "steps-per-split-branch",
       "class": "worker-assignment",
       "owner": "SplitBranch",
-      "symbols": ["MAX_BRANCH_STEPS"],
+      "symbols": [
+        "MAX_BRANCH_STEPS"
+      ],
       "ceiling": 8,
       "unit": "steps",
       "policy": "fail-closed",
       "report": "worker-assignment",
       "postgres": false,
-      "proofs": ["construction-boundary"],
+      "proofs": [
+        "construction-boundary"
+      ],
       "budget_row": "Steps per split branch",
       "budget_bound": "`1..=8`"
     },
@@ -280,13 +317,17 @@
       "resource": "flow-composition-depth",
       "class": "worker-assignment",
       "owner": "AdvancedCompiler",
-      "symbols": ["MAX_FLOW_COMPOSITION_DEPTH"],
+      "symbols": [
+        "MAX_FLOW_COMPOSITION_DEPTH"
+      ],
       "ceiling": 8,
       "unit": "compiled flow scopes",
       "policy": "fail-closed",
       "report": "worker-assignment",
       "postgres": false,
-      "proofs": ["construction-boundary"],
+      "proofs": [
+        "construction-boundary"
+      ],
       "budget_row": null,
       "budget_bound": null,
       "note": "The root scope counts as depth one. The report compiles an exact eight-scope nested-flow chain and refuses a nine-scope chain, proving the M7 compiler ceiling without introducing runtime frame state."
@@ -304,7 +345,10 @@
       "policy": "fail-closed",
       "report": "worker-assignment",
       "postgres": true,
-      "proofs": ["derived-capacity", "stress-saturation"],
+      "proofs": [
+        "derived-capacity",
+        "stress-saturation"
+      ],
       "budget_row": null,
       "budget_bound": null,
       "note": "The one bound in the campaign that is derived rather than declared, so it has no symbol to reconcile against. The extra connection belongs to the parent, which owns planning, the per-child compare-and-swap, and the aggregate commit. bound_kind and parent_connections are the machine-readable form of the same derivation the prose states; the runner re-derives concurrent_children + parent_connections from the report's own raw detail and requires it to equal what the report recorded, rather than trusting the report's arithmetic. The stress-saturation rejection is itself the fail-closed proof: the runner re-derives required_connections from concurrent_children + parent_connections, requires short_pool to be exactly one less, requires the adapter capacity to equal that short pool, and requires zero durable residue."
@@ -313,13 +357,17 @@
       "resource": "repository-pool-size",
       "class": "worker-assignment",
       "owner": "PostgresConfig::with_pool_size",
-      "symbols": ["MAX_POOL_SIZE"],
+      "symbols": [
+        "MAX_POOL_SIZE"
+      ],
       "ceiling": 1024,
       "unit": "connections",
       "policy": "fail-closed",
       "report": "worker-assignment",
       "postgres": true,
-      "proofs": ["construction-boundary"],
+      "proofs": [
+        "construction-boundary"
+      ],
       "budget_row": null,
       "budget_bound": null
     },
@@ -327,15 +375,24 @@
       "resource": "explorer-page-size",
       "class": "page",
       "owner": "PageSize",
-      "symbols": ["MAX_PAGE_SIZE"],
+      "symbols": [
+        "MAX_PAGE_SIZE"
+      ],
       "ceiling": 500,
       "unit": "rows",
       "policy": "fail-closed",
       "report": "bounded-query-paths",
       "postgres": true,
-      "proofs": ["construction-boundary", "stress-saturation"],
+      "proofs": [
+        "construction-boundary",
+        "stress-saturation"
+      ],
       "additional_boundaries": [
-        { "value": 0, "expected": "refused", "label": "an empty page" }
+        {
+          "value": 0,
+          "expected": "refused",
+          "label": "an empty page"
+        }
       ],
       "budget_row": "Explorer page size",
       "budget_bound": "`1..=500` rows"
@@ -344,13 +401,17 @@
       "resource": "explorer-response",
       "class": "result-set",
       "owner": "MAX_RESPONSE_BYTES",
-      "symbols": ["MAX_RESPONSE_BYTES"],
+      "symbols": [
+        "MAX_RESPONSE_BYTES"
+      ],
       "ceiling": 262144,
       "unit": "bytes",
       "policy": "bounded-truncation",
       "report": "bounded-query-paths",
       "postgres": true,
-      "proofs": ["truncation"],
+      "proofs": [
+        "truncation"
+      ],
       "budget_row": "Explorer response",
       "budget_bound": "`256 KiB`"
     },
@@ -358,15 +419,23 @@
       "resource": "explorer-cursor",
       "class": "page",
       "owner": "MAX_CURSOR_BYTES",
-      "symbols": ["MAX_CURSOR_BYTES"],
+      "symbols": [
+        "MAX_CURSOR_BYTES"
+      ],
       "ceiling": 256,
       "unit": "bytes",
       "policy": "fail-closed",
       "report": "bounded-query-paths",
       "postgres": true,
-      "proofs": ["construction-boundary"],
+      "proofs": [
+        "construction-boundary"
+      ],
       "additional_boundaries": [
-        { "value": 0, "expected": "refused", "label": "an empty token" }
+        {
+          "value": 0,
+          "expected": "refused",
+          "label": "an empty token"
+        }
       ],
       "budget_row": "Explorer cursor",
       "budget_bound": "`256` bytes"
@@ -375,15 +444,24 @@
       "resource": "retention-purge-batch",
       "class": "result-set",
       "owner": "PurgeBatchBound",
-      "symbols": ["MAX_PURGE_BATCH"],
+      "symbols": [
+        "MAX_PURGE_BATCH"
+      ],
       "ceiling": 1000,
       "unit": "candidates",
       "policy": "fail-closed",
       "report": "bounded-query-paths",
       "postgres": true,
-      "proofs": ["construction-boundary", "stress-saturation"],
+      "proofs": [
+        "construction-boundary",
+        "stress-saturation"
+      ],
       "additional_boundaries": [
-        { "value": 0, "expected": "refused", "label": "an empty batch" }
+        {
+          "value": 0,
+          "expected": "refused",
+          "label": "an empty batch"
+        }
       ],
       "budget_row": "Purge batch",
       "budget_bound": "`1..=1000` candidates"
@@ -392,13 +470,17 @@
       "resource": "operator-response",
       "class": "result-set",
       "owner": "oxide_batch_cli::MAX_OUTPUT_BYTES",
-      "symbols": ["MAX_OUTPUT_BYTES"],
+      "symbols": [
+        "MAX_OUTPUT_BYTES"
+      ],
       "ceiling": 262144,
       "unit": "bytes",
       "policy": "bounded-truncation",
       "report": "bounded-shedding",
       "postgres": false,
-      "proofs": ["stress-saturation"],
+      "proofs": [
+        "stress-saturation"
+      ],
       "budget_row": null,
       "budget_bound": null
     },
@@ -406,15 +488,23 @@
       "resource": "partition-key",
       "class": "buffer",
       "owner": "PartitionKey",
-      "symbols": ["MAX_PARTITION_KEY_BYTES"],
+      "symbols": [
+        "MAX_PARTITION_KEY_BYTES"
+      ],
       "ceiling": 128,
       "unit": "bytes",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": true,
-      "proofs": ["construction-boundary"],
+      "proofs": [
+        "construction-boundary"
+      ],
       "additional_boundaries": [
-        { "value": 0, "expected": "refused", "label": "an empty key" }
+        {
+          "value": 0,
+          "expected": "refused",
+          "label": "an empty key"
+        }
       ],
       "budget_row": "Partition key",
       "budget_bound": "`128` bytes"
@@ -423,13 +513,17 @@
       "resource": "partition-context",
       "class": "buffer",
       "owner": "PartitionPlanEntry",
-      "symbols": ["MAX_PARTITION_CONTEXT_BYTES"],
+      "symbols": [
+        "MAX_PARTITION_CONTEXT_BYTES"
+      ],
       "ceiling": 4096,
       "unit": "bytes",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": true,
-      "proofs": ["construction-boundary"],
+      "proofs": [
+        "construction-boundary"
+      ],
       "budget_row": "Partition context",
       "budget_bound": "`4 KiB`"
     },
@@ -437,13 +531,17 @@
       "resource": "retry-cache-entries",
       "class": "retry-cache",
       "owner": "FaultStateEnvelope",
-      "symbols": ["MAX_ENTRIES"],
+      "symbols": [
+        "MAX_ENTRIES"
+      ],
       "ceiling": 256,
       "unit": "unresolved retry keys",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": true,
-      "proofs": ["construction-boundary"],
+      "proofs": [
+        "construction-boundary"
+      ],
       "budget_row": "Unresolved retry entries per step",
       "budget_bound": "`256`"
     },
@@ -451,13 +549,17 @@
       "resource": "retry-cache-bytes",
       "class": "retry-cache",
       "owner": "FaultStateEnvelope",
-      "symbols": ["MAX_BYTES"],
+      "symbols": [
+        "MAX_BYTES"
+      ],
       "ceiling": 65536,
       "unit": "bytes",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": true,
-      "proofs": ["search-bounded-construction"],
+      "proofs": [
+        "search-bounded-construction"
+      ],
       "budget_row": "Encoded fault state per step",
       "budget_bound": "`64 KiB`"
     },
@@ -465,17 +567,30 @@
       "resource": "declared-retry-state-capacity",
       "class": "retry-cache",
       "owner": "RetryStateLimit",
-      "symbols": ["MAX_RETRY_STATE", "MIN_RETRY_STATE"],
+      "symbols": [
+        "MAX_RETRY_STATE",
+        "MIN_RETRY_STATE"
+      ],
       "ceiling": null,
       "bounds": {
-        "minimum": { "value": 1, "unit": "unresolved retry keys", "symbol": "MIN_RETRY_STATE" },
-        "maximum": { "value": 256, "unit": "unresolved retry keys", "symbol": "MAX_RETRY_STATE" }
+        "minimum": {
+          "value": 1,
+          "unit": "unresolved retry keys",
+          "symbol": "MIN_RETRY_STATE"
+        },
+        "maximum": {
+          "value": 256,
+          "unit": "unresolved retry keys",
+          "symbol": "MAX_RETRY_STATE"
+        }
       },
       "unit": "unresolved retry keys",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": false,
-      "proofs": ["range-boundary"],
+      "proofs": [
+        "range-boundary"
+      ],
       "budget_row": null,
       "budget_bound": null,
       "note": "The per-definition declaration of how much retry state a step may hold. It cannot exceed the durable format's own entry ceiling, and the report checks that relation rather than the two numbers separately. MIN_RETRY_STATE is a genuine floor of 1, not a degenerate 0 — RetryStateLimit::new checks an inclusive 1..=256 range — so this is a range-boundary resource with both sides independently reachable, not a single ceiling."
@@ -484,13 +599,17 @@
       "resource": "definition-nodes",
       "class": "buffer",
       "owner": "FlowGraph",
-      "symbols": ["MAX_NODES"],
+      "symbols": [
+        "MAX_NODES"
+      ],
       "ceiling": 1024,
       "unit": "nodes",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": false,
-      "proofs": ["search-bounded-construction"],
+      "proofs": [
+        "search-bounded-construction"
+      ],
       "budget_row": null,
       "budget_bound": null
     },
@@ -498,13 +617,17 @@
       "resource": "definition-transitions",
       "class": "buffer",
       "owner": "FlowGraph",
-      "symbols": ["MAX_TRANSITIONS"],
+      "symbols": [
+        "MAX_TRANSITIONS"
+      ],
       "ceiling": 4096,
       "unit": "transitions",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": false,
-      "proofs": ["upper-bound-only"],
+      "proofs": [
+        "upper-bound-only"
+      ],
       "budget_row": null,
       "budget_bound": null
     },
@@ -512,13 +635,17 @@
       "resource": "outgoing-transitions-per-node",
       "class": "buffer",
       "owner": "CompiledExecutionPlan",
-      "symbols": ["MAX_OUTGOING_TRANSITIONS"],
+      "symbols": [
+        "MAX_OUTGOING_TRANSITIONS"
+      ],
       "ceiling": 64,
       "unit": "transitions",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": false,
-      "proofs": ["construction-boundary"],
+      "proofs": [
+        "construction-boundary"
+      ],
       "budget_row": null,
       "budget_bound": null
     },
@@ -526,13 +653,17 @@
       "resource": "definition-manifest",
       "class": "buffer",
       "owner": "DefinitionManifest",
-      "symbols": ["MAX_MANIFEST_BYTES"],
+      "symbols": [
+        "MAX_MANIFEST_BYTES"
+      ],
       "ceiling": 65536,
       "unit": "bytes",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": true,
-      "proofs": ["search-bounded-construction"],
+      "proofs": [
+        "search-bounded-construction"
+      ],
       "budget_row": null,
       "budget_bound": null
     },
@@ -540,13 +671,17 @@
       "resource": "scoped-component-late-bound-inputs",
       "class": "buffer",
       "owner": "ScopedComponentDefinition",
-      "symbols": ["MAX_LATE_BOUND_INPUTS"],
+      "symbols": [
+        "MAX_LATE_BOUND_INPUTS"
+      ],
       "ceiling": 64,
       "unit": "inputs",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": false,
-      "proofs": ["construction-boundary"],
+      "proofs": [
+        "construction-boundary"
+      ],
       "budget_row": null,
       "budget_bound": null,
       "note": "The accepted side constructs one scoped component with exactly 64 distinct typed late-bound inputs; the refused side offers 65 to the same constructor. This proves the public per-component input ceiling rather than only classifying the constant."
@@ -555,28 +690,55 @@
       "resource": "scoped-components-per-scope",
       "class": "buffer",
       "owner": "AdvancedCompiler",
-      "symbols": ["MAX_SCOPED_COMPONENTS"],
+      "symbols": [
+        "MAX_SCOPED_COMPONENTS"
+      ],
       "ceiling": 256,
       "unit": "components",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": false,
-      "proofs": ["construction-boundary"],
+      "proofs": [
+        "construction-boundary"
+      ],
       "budget_row": null,
       "budget_bound": null,
       "note": "The accepted side compiles one scope with exactly 256 distinct component declarations; the refused side adds one more in that same scope. The boundary is per scope rather than a global plan count."
     },
     {
+      "resource": "scoped-component-dependency-depth",
+      "class": "buffer",
+      "owner": "FlowJob live scope registration graph",
+      "symbols": [
+        "MAX_SCOPED_DEPENDENCY_DEPTH"
+      ],
+      "ceiling": 32,
+      "unit": "components",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": false,
+      "proofs": [
+        "construction-boundary"
+      ],
+      "budget_row": null,
+      "budget_bound": null,
+      "note": "The public FlowJob registration boundary accepts a dependency chain of exactly 32 scoped components and refuses a 33-component chain before durable launch or user factory construction. The proof exercises the same canonical graph validation used by live scope construction rather than only classifying the constant."
+    },
+    {
       "resource": "nested-job-parameter-mappings",
       "class": "buffer",
       "owner": "NestedJobNode",
-      "symbols": ["MAX_NESTED_JOB_PARAMETERS"],
+      "symbols": [
+        "MAX_NESTED_JOB_PARAMETERS"
+      ],
       "ceiling": 64,
       "unit": "mappings",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": false,
-      "proofs": ["construction-boundary"],
+      "proofs": [
+        "construction-boundary"
+      ],
       "budget_row": null,
       "budget_bound": null
     },
@@ -584,13 +746,17 @@
       "resource": "nested-job-selector-path-bytes",
       "class": "buffer",
       "owner": "SelectorPath",
-      "symbols": ["MAX_SELECTOR_PATH_BYTES"],
+      "symbols": [
+        "MAX_SELECTOR_PATH_BYTES"
+      ],
       "ceiling": 1024,
       "unit": "bytes",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": false,
-      "proofs": ["construction-boundary"],
+      "proofs": [
+        "construction-boundary"
+      ],
       "budget_row": null,
       "budget_bound": null
     },
@@ -598,13 +764,17 @@
       "resource": "nested-job-selector-path-segments",
       "class": "buffer",
       "owner": "SelectorPath",
-      "symbols": ["MAX_SELECTOR_PATH_SEGMENTS"],
+      "symbols": [
+        "MAX_SELECTOR_PATH_SEGMENTS"
+      ],
       "ceiling": 32,
       "unit": "segments",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": false,
-      "proofs": ["construction-boundary"],
+      "proofs": [
+        "construction-boundary"
+      ],
       "budget_row": null,
       "budget_bound": null
     },
@@ -612,13 +782,17 @@
       "resource": "state-upgrade-chain",
       "class": "buffer",
       "owner": "StateCodec",
-      "symbols": ["MAX_UPGRADE_CHAIN"],
+      "symbols": [
+        "MAX_UPGRADE_CHAIN"
+      ],
       "ceiling": 64,
       "unit": "upgrade edges",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": false,
-      "proofs": ["construction-boundary"],
+      "proofs": [
+        "construction-boundary"
+      ],
       "budget_row": null,
       "budget_bound": null
     },
@@ -637,12 +811,24 @@
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": true,
-      "proofs": ["subject-boundary"],
+      "proofs": [
+        "subject-boundary"
+      ],
       "budget_row": null,
       "budget_bound": null,
       "subjects": [
-        { "subject": "bytes", "symbol": "MAXIMUM_BYTES", "ceiling": 1048576, "unit": "bytes" },
-        { "subject": "depth", "symbol": "MAXIMUM_DEPTH", "ceiling": 64, "unit": "levels" }
+        {
+          "subject": "bytes",
+          "symbol": "MAXIMUM_BYTES",
+          "ceiling": 1048576,
+          "unit": "bytes"
+        },
+        {
+          "subject": "depth",
+          "symbol": "MAXIMUM_DEPTH",
+          "ceiling": 64,
+          "unit": "levels"
+        }
       ],
       "informational_symbols": [
         {
@@ -660,13 +846,17 @@
       "resource": "instance-key-input",
       "class": "buffer",
       "owner": "JobInstanceKey",
-      "symbols": ["MAX_INSTANCE_KEY_INPUT"],
+      "symbols": [
+        "MAX_INSTANCE_KEY_INPUT"
+      ],
       "ceiling": 1048576,
       "unit": "bytes",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": true,
-      "proofs": ["refusal-past-ceiling"],
+      "proofs": [
+        "refusal-past-ceiling"
+      ],
       "budget_row": null,
       "budget_bound": null
     },
@@ -674,13 +864,17 @@
       "resource": "item-listeners",
       "class": "buffer",
       "owner": "ItemListenerRegistry",
-      "symbols": ["MAX_LISTENERS"],
+      "symbols": [
+        "MAX_LISTENERS"
+      ],
       "ceiling": 32,
       "unit": "listeners",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": false,
-      "proofs": ["construction-boundary"],
+      "proofs": [
+        "construction-boundary"
+      ],
       "budget_row": null,
       "budget_bound": null
     },
@@ -707,22 +901,84 @@
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": false,
-      "proofs": ["subject-boundary"],
+      "proofs": [
+        "subject-boundary"
+      ],
       "budget_row": null,
       "budget_bound": null,
       "subjects": [
-        { "subject": "operation-id", "symbol": "MAX_OPERATION_ID_BYTES", "ceiling": 64, "unit": "bytes" },
-        { "subject": "reason-code", "symbol": "MAX_REASON_CODE_BYTES", "ceiling": 64, "unit": "bytes" },
-        { "subject": "actor-ref", "symbol": "MAX_ACTOR_REF_BYTES", "ceiling": 128, "unit": "bytes" },
-        { "subject": "exit-pattern", "symbol": "MAX_PATTERN_BYTES", "ceiling": 64, "unit": "bytes" },
-        { "subject": "exit-code", "symbol": "MAX_EXIT_CODE_BYTES", "ceiling": 64, "unit": "bytes" },
-        { "subject": "parameter-name", "symbol": "MAX_PARAMETER_NAME_BYTES", "ceiling": 128, "unit": "bytes" },
-        { "subject": "parameter-string", "symbol": "MAX_PARAMETER_STRING_BYTES", "ceiling": 65536, "unit": "bytes" },
-        { "subject": "schema-id", "symbol": "MAX_SCHEMA_ID_BYTES", "ceiling": 128, "unit": "bytes" },
-        { "subject": "domain-name", "symbol": "MAX_DOMAIN_NAME_BYTES", "ceiling": 128, "unit": "bytes" },
-        { "subject": "definition-token", "symbol": "MAX_TOKEN_BYTES", "ceiling": 128, "unit": "bytes" },
-        { "subject": "recovery-reason", "symbol": "MAX_RECOVERY_REASON_BYTES", "ceiling": 64, "unit": "bytes" },
-        { "subject": "operator-reference", "symbol": "MAX_OPERATOR_REFERENCE_BYTES", "ceiling": 128, "unit": "bytes" }
+        {
+          "subject": "operation-id",
+          "symbol": "MAX_OPERATION_ID_BYTES",
+          "ceiling": 64,
+          "unit": "bytes"
+        },
+        {
+          "subject": "reason-code",
+          "symbol": "MAX_REASON_CODE_BYTES",
+          "ceiling": 64,
+          "unit": "bytes"
+        },
+        {
+          "subject": "actor-ref",
+          "symbol": "MAX_ACTOR_REF_BYTES",
+          "ceiling": 128,
+          "unit": "bytes"
+        },
+        {
+          "subject": "exit-pattern",
+          "symbol": "MAX_PATTERN_BYTES",
+          "ceiling": 64,
+          "unit": "bytes"
+        },
+        {
+          "subject": "exit-code",
+          "symbol": "MAX_EXIT_CODE_BYTES",
+          "ceiling": 64,
+          "unit": "bytes"
+        },
+        {
+          "subject": "parameter-name",
+          "symbol": "MAX_PARAMETER_NAME_BYTES",
+          "ceiling": 128,
+          "unit": "bytes"
+        },
+        {
+          "subject": "parameter-string",
+          "symbol": "MAX_PARAMETER_STRING_BYTES",
+          "ceiling": 65536,
+          "unit": "bytes"
+        },
+        {
+          "subject": "schema-id",
+          "symbol": "MAX_SCHEMA_ID_BYTES",
+          "ceiling": 128,
+          "unit": "bytes"
+        },
+        {
+          "subject": "domain-name",
+          "symbol": "MAX_DOMAIN_NAME_BYTES",
+          "ceiling": 128,
+          "unit": "bytes"
+        },
+        {
+          "subject": "definition-token",
+          "symbol": "MAX_TOKEN_BYTES",
+          "ceiling": 128,
+          "unit": "bytes"
+        },
+        {
+          "subject": "recovery-reason",
+          "symbol": "MAX_RECOVERY_REASON_BYTES",
+          "ceiling": 64,
+          "unit": "bytes"
+        },
+        {
+          "subject": "operator-reference",
+          "symbol": "MAX_OPERATOR_REFERENCE_BYTES",
+          "ceiling": 128,
+          "unit": "bytes"
+        }
       ],
       "note": "Twelve subjects, one report covers all of them. Every one is a caller-supplied string that becomes part of a durable record or an operator request, each is refused at construction one byte past its own ceiling, and there is nothing to say about any one of them that is not true of all. The reconciliation requires every symbol to be named here, and every subject's own evidence to carry a real ceiling and value rather than a placeholder, reconciled as an exact set against the subjects declared below. Two symbols this class of resource could plausibly have owned are argued out of scope instead, by name, in out_of_scope below."
     },
@@ -730,13 +986,17 @@
       "resource": "ca-certificate",
       "class": "buffer",
       "owner": "CaCertificate",
-      "symbols": ["MAX_CA_CERTIFICATE_BYTES"],
+      "symbols": [
+        "MAX_CA_CERTIFICATE_BYTES"
+      ],
       "ceiling": 1048576,
       "unit": "bytes",
       "policy": "fail-closed",
       "report": "bounded-payloads",
       "postgres": false,
-      "proofs": ["construction-boundary"],
+      "proofs": [
+        "construction-boundary"
+      ],
       "budget_row": null,
       "budget_bound": null
     },
@@ -744,19 +1004,40 @@
       "resource": "cli-configuration-document",
       "class": "buffer",
       "owner": "oxide_batch_cli::Configuration",
-      "symbols": ["MAX_CONFIG_BYTES", "MAX_SECRET_BYTES", "MAX_CONFIG_DEPTH"],
+      "symbols": [
+        "MAX_CONFIG_BYTES",
+        "MAX_SECRET_BYTES",
+        "MAX_CONFIG_DEPTH"
+      ],
       "ceiling": null,
       "unit": "bytes",
       "policy": "fail-closed",
       "report": "bounded-shedding",
       "postgres": false,
-      "proofs": ["subject-boundary"],
+      "proofs": [
+        "subject-boundary"
+      ],
       "budget_row": null,
       "budget_bound": null,
       "subjects": [
-        { "subject": "bytes", "symbol": "MAX_CONFIG_BYTES", "ceiling": 262144, "unit": "bytes" },
-        { "subject": "secret-bytes", "symbol": "MAX_SECRET_BYTES", "ceiling": 65536, "unit": "bytes" },
-        { "subject": "depth", "symbol": "MAX_CONFIG_DEPTH", "ceiling": 4, "unit": "levels" }
+        {
+          "subject": "bytes",
+          "symbol": "MAX_CONFIG_BYTES",
+          "ceiling": 262144,
+          "unit": "bytes"
+        },
+        {
+          "subject": "secret-bytes",
+          "symbol": "MAX_SECRET_BYTES",
+          "ceiling": 65536,
+          "unit": "bytes"
+        },
+        {
+          "subject": "depth",
+          "symbol": "MAX_CONFIG_DEPTH",
+          "ceiling": 4,
+          "unit": "levels"
+        }
       ],
       "note": "Three independent dimensions of the same document, not one: MAX_CONFIG_BYTES bounds the whole file, MAX_SECRET_BYTES bounds one file-indirection secret value inside it (config.rs's read_secret_file, reached through a `<key>__FILE` pointer such as `repository.ca_certificate__FILE`), and MAX_CONFIG_DEPTH bounds how deep the JSON object tree may nest before collect() refuses it. No key this schema recognizes nests as deep as MAX_CONFIG_DEPTH itself, so a document that reaches the depth ceiling necessarily also names an unrecognized key at its deepest point — the report isolates the depth boundary from that separate, expected failure by checking which specific diagnostic collect() raised, not whether the whole document resolved."
     },
@@ -764,18 +1045,32 @@
       "resource": "telemetry-exporter-queue",
       "class": "queue",
       "owner": "ExportQueueBound",
-      "symbols": ["MAX_EXPORT_QUEUE_RECORDS", "MIN_EXPORT_QUEUE_RECORDS"],
+      "symbols": [
+        "MAX_EXPORT_QUEUE_RECORDS",
+        "MIN_EXPORT_QUEUE_RECORDS"
+      ],
       "ceiling": 65536,
       "bounds": {
-        "minimum": { "value": 64, "unit": "records", "symbol": "MIN_EXPORT_QUEUE_RECORDS" },
-        "maximum": { "value": 65536, "unit": "records", "symbol": "MAX_EXPORT_QUEUE_RECORDS" }
+        "minimum": {
+          "value": 64,
+          "unit": "records",
+          "symbol": "MIN_EXPORT_QUEUE_RECORDS"
+        },
+        "maximum": {
+          "value": 65536,
+          "unit": "records",
+          "symbol": "MAX_EXPORT_QUEUE_RECORDS"
+        }
       },
       "unit": "records",
       "policy": "bounded-shedding",
       "shedding_rule": "drop-newest",
       "report": "bounded-shedding",
       "postgres": false,
-      "proofs": ["range-boundary", "stress-saturation"],
+      "proofs": [
+        "range-boundary",
+        "stress-saturation"
+      ],
       "budget_row": "Telemetry exporter queue",
       "budget_bound": "`64..=65536` records",
       "note": "The one resource in the campaign whose contract forbids backpressure. Telemetry may not block batch work, so a full queue drops the newest record and counts the drop. Introducing a wait here to make the campaign uniform would break the accepted contract rather than strengthen it. `ceiling` stays populated alongside `bounds`, not replaced by it: `ceiling` is what the stress-saturation numeric entry is cross-checked against, and `bounds` is what the four construction cells (accepted at the floor and the ceiling, refused one unit past each) are — the same 65536 both ways, checked by two different mechanisms against two different kinds of evidence."
@@ -784,17 +1079,30 @@
       "resource": "telemetry-drop-report-window",
       "class": "queue",
       "owner": "DropReportWindow",
-      "symbols": ["MAX_DROP_REPORT_WINDOW", "MIN_DROP_REPORT_WINDOW"],
+      "symbols": [
+        "MAX_DROP_REPORT_WINDOW",
+        "MIN_DROP_REPORT_WINDOW"
+      ],
       "ceiling": null,
       "bounds": {
-        "minimum": { "value": 1000, "unit": "milliseconds", "symbol": "MIN_DROP_REPORT_WINDOW" },
-        "maximum": { "value": 3600000, "unit": "milliseconds", "symbol": "MAX_DROP_REPORT_WINDOW" }
+        "minimum": {
+          "value": 1000,
+          "unit": "milliseconds",
+          "symbol": "MIN_DROP_REPORT_WINDOW"
+        },
+        "maximum": {
+          "value": 3600000,
+          "unit": "milliseconds",
+          "symbol": "MAX_DROP_REPORT_WINDOW"
+        }
       },
       "unit": "duration",
       "policy": "fail-closed",
       "report": "bounded-shedding",
       "postgres": false,
-      "proofs": ["range-boundary"],
+      "proofs": [
+        "range-boundary"
+      ],
       "budget_row": null,
       "budget_bound": null,
       "note": "The throttle on the drop observation itself, so that a saturated queue reports its drops at a bounded rate rather than emitting one record per drop, which would be an unbounded queue in a different place. bounds is the machine-readable inclusive range the range-boundary proof reconciles against, in canonical milliseconds; ceiling stays null because this resource is a range, not a single ceiling."
@@ -813,7 +1121,10 @@
       "shedding_rule": "evict-oldest",
       "report": "bounded-shedding",
       "postgres": false,
-      "proofs": ["construction-boundary", "stress-saturation"],
+      "proofs": [
+        "construction-boundary",
+        "stress-saturation"
+      ],
       "budget_row": "Retained incident events",
       "budget_bound": "`200` per execution",
       "informational_symbols": [
@@ -828,14 +1139,18 @@
       "resource": "metric-series-per-family",
       "class": "queue",
       "owner": "MetricCardinalityGuard",
-      "symbols": ["METRIC_CARDINALITY_BUDGET"],
+      "symbols": [
+        "METRIC_CARDINALITY_BUDGET"
+      ],
       "ceiling": 200,
       "unit": "series per family",
       "policy": "bounded-shedding",
       "shedding_rule": "collapse-to-reserved-series",
       "report": "bounded-shedding",
       "postgres": false,
-      "proofs": ["stress-saturation"],
+      "proofs": [
+        "stress-saturation"
+      ],
       "budget_row": "Metric series per family",
       "budget_bound": "`200`"
     },
@@ -843,13 +1158,17 @@
       "resource": "metric-name-allowlist",
       "class": "buffer",
       "owner": "MetricCardinalityGuard::new",
-      "symbols": ["MAX_METRIC_NAME_ALLOWLIST"],
+      "symbols": [
+        "MAX_METRIC_NAME_ALLOWLIST"
+      ],
       "ceiling": 50,
       "unit": "names",
       "policy": "fail-closed",
       "report": "bounded-shedding",
       "postgres": false,
-      "proofs": ["construction-boundary"],
+      "proofs": [
+        "construction-boundary"
+      ],
       "budget_row": null,
       "budget_bound": null
     },
@@ -857,13 +1176,17 @@
       "resource": "diagnostic-bundle",
       "class": "buffer",
       "owner": "the diagnostics bundle writer",
-      "symbols": ["MAX_BUNDLE_BYTES"],
+      "symbols": [
+        "MAX_BUNDLE_BYTES"
+      ],
       "ceiling": 4194304,
       "unit": "bytes",
       "policy": "bounded-truncation",
       "report": "bounded-shedding",
       "postgres": false,
-      "proofs": ["upper-bound-only"],
+      "proofs": [
+        "upper-bound-only"
+      ],
       "budget_row": "Diagnostic bundle",
       "budget_bound": "`4 MiB`",
       "note": "The one resource in the campaign whose ceiling no M5 input reaches. A bundle is built from a bounded configuration, a bounded execution projection, and a bounded incident buffer, and all three together come to a few kilobytes, so the report proves the bound as an upper limit that held rather than as a truncation that happened. The campaign records the observed size beside the ceiling instead of claiming a saturation it did not produce."
@@ -872,17 +1195,30 @@
       "resource": "shutdown-deadline",
       "class": "worker-assignment",
       "owner": "ShutdownDeadline",
-      "symbols": ["MAX_SHUTDOWN_DEADLINE", "MIN_SHUTDOWN_DEADLINE"],
+      "symbols": [
+        "MAX_SHUTDOWN_DEADLINE",
+        "MIN_SHUTDOWN_DEADLINE"
+      ],
       "ceiling": null,
       "bounds": {
-        "minimum": { "value": 1000, "unit": "milliseconds", "symbol": "MIN_SHUTDOWN_DEADLINE" },
-        "maximum": { "value": 3600000, "unit": "milliseconds", "symbol": "MAX_SHUTDOWN_DEADLINE" }
+        "minimum": {
+          "value": 1000,
+          "unit": "milliseconds",
+          "symbol": "MIN_SHUTDOWN_DEADLINE"
+        },
+        "maximum": {
+          "value": 3600000,
+          "unit": "milliseconds",
+          "symbol": "MAX_SHUTDOWN_DEADLINE"
+        }
       },
       "unit": "duration",
       "policy": "fail-closed",
       "report": "bounded-shedding",
       "postgres": false,
-      "proofs": ["range-boundary"],
+      "proofs": [
+        "range-boundary"
+      ],
       "budget_row": "Shutdown deadline",
       "budget_bound": "`1 s..=1 h`",
       "note": "A deadline is in the campaign because the capacity budget declares it, and it bounds a resource rather than an operation: it is the ceiling on how long owned tasks may stay unjoined. The coordinator never cancels an in-flight persistence future to meet it, so the deadline is reported as missed rather than enforced by abandoning durable work."
@@ -891,17 +1227,30 @@
       "resource": "telemetry-flush-deadline",
       "class": "queue",
       "owner": "TelemetryFlushDeadline",
-      "symbols": ["MAX_TELEMETRY_FLUSH_DEADLINE", "MIN_TELEMETRY_FLUSH_DEADLINE"],
+      "symbols": [
+        "MAX_TELEMETRY_FLUSH_DEADLINE",
+        "MIN_TELEMETRY_FLUSH_DEADLINE"
+      ],
       "ceiling": null,
       "bounds": {
-        "minimum": { "value": 100, "unit": "milliseconds", "symbol": "MIN_TELEMETRY_FLUSH_DEADLINE" },
-        "maximum": { "value": 60000, "unit": "milliseconds", "symbol": "MAX_TELEMETRY_FLUSH_DEADLINE" }
+        "minimum": {
+          "value": 100,
+          "unit": "milliseconds",
+          "symbol": "MIN_TELEMETRY_FLUSH_DEADLINE"
+        },
+        "maximum": {
+          "value": 60000,
+          "unit": "milliseconds",
+          "symbol": "MAX_TELEMETRY_FLUSH_DEADLINE"
+        }
       },
       "unit": "duration",
       "policy": "fail-closed",
       "report": "bounded-shedding",
       "postgres": false,
-      "proofs": ["range-boundary"],
+      "proofs": [
+        "range-boundary"
+      ],
       "budget_row": "Telemetry flush deadline",
       "budget_bound": "`100 ms..=1 min`"
     }
@@ -923,7 +1272,10 @@
     },
     {
       "resource": "retry and backoff policy limits",
-      "symbols": ["MAX_RETRY", "MAX_BACKOFF"],
+      "symbols": [
+        "MAX_RETRY",
+        "MAX_BACKOFF"
+      ],
       "reason": "The retry attempt ceiling and the backoff ceiling bound a policy a definition declares, not a resource the framework holds. The retry cache those attempts write into is in scope, and is the resource the performance plan names.",
       "covered_by": "crates/oxide-batch/tests/fault_policy.rs"
     },
@@ -942,13 +1294,17 @@
     },
     {
       "resource": "the cursor name-column encoding",
-      "symbols": ["MAX_CURSOR_NAME_BYTES"],
+      "symbols": [
+        "MAX_CURSOR_NAME_BYTES"
+      ],
       "reason": "The bound exists, but the campaign cannot construct past it: it is checked inside CursorKey::encode, a private method on a #[non_exhaustive] enum whose Name variant cannot be constructed outside crates/oxide-batch-repository itself. bounded-identifier-text's other twelve subjects are all reachable through a public constructor this campaign calls directly; this one is not, and the campaign records that honestly rather than adding a thirteenth subject no evidence would ever exercise.",
       "covered_by": null
     },
     {
       "resource": "the interactive confirmation read",
-      "symbols": ["MAX_CONFIRMATION_BYTES"],
+      "symbols": [
+        "MAX_CONFIRMATION_BYTES"
+      ],
       "reason": "The bound is a raw byte cutoff on an interactive io::stdin() read inside a private, non-exported read_confirmation function, not a validated identifier or reference type constructed from a caller-supplied string like bounded-identifier-text's other subjects. It is unreachable from this campaign's non-interactive harness, and no existing test in this repository exercises its limit either.",
       "covered_by": null
     },
@@ -960,7 +1316,10 @@
     },
     {
       "resource": "item-component construction-input validation ceilings",
-      "symbols": ["MAX_RESOURCE_IDENTITY_BYTES", "MAX_OBJECT_KEY_BYTES"],
+      "symbols": [
+        "MAX_RESOURCE_IDENTITY_BYTES",
+        "MAX_OBJECT_KEY_BYTES"
+      ],
       "reason": "These are framework-declared ceilings, but on the byte length of a caller-supplied constructor input string (a resource identity or object key), not on a resource the M0-M4 capacity budget names or the campaign's runtime resource-bound model covers. `MAX_RESOURCE_IDENTITY_BYTES` (`item_components::multi_resource::ResourceIdentity`) and `MAX_OBJECT_KEY_BYTES` (`item_components::object_store::ObjectIdentity`), added in #150, sit in the same category as every other `XxxTooLong` constructor validation in this crate (e.g. `StateSchemaId`'s byte bound): a fixed-string-length input check enforced once at construction, not a bounded operational resource (queue, buffer, connection, cache) whose steady-state behavior this campaign proves.",
       "covered_by": "crates/oxide-batch/src/item_components/multi_resource.rs::tests::resource_identity_rejects_one_byte_past_its_ceiling, crates/oxide-batch/src/item_components/object_store.rs::tests::object_identity_rejects_one_byte_past_its_ceiling"
     },
@@ -972,13 +1331,19 @@
     },
     {
       "resource": "completion-policy time-threshold bounds",
-      "symbols": ["MAX_TIME_THRESHOLD", "MIN_TIME_THRESHOLD"],
+      "symbols": [
+        "MAX_TIME_THRESHOLD",
+        "MIN_TIME_THRESHOLD"
+      ],
       "reason": "ChunkTimeThreshold bounds how long a TimeCompletionPolicy or AdaptiveCompletionPolicy waits before deciding a chunk is complete, not how much of a resource is concurrently held -- the same category as the operation-timeouts entry above, just for a completion decision rather than a database operation. The enclosing ChunkSize ceiling remains the actual buffering resource bound while the threshold has not elapsed. Added in #151/#179.",
       "covered_by": "crates/oxide-batch/src/completion.rs::tests::time_threshold_rejects_out_of_bounds"
     },
     {
       "resource": "completion-policy composition shape ceilings",
-      "symbols": ["MAX_COMPOSITE_MEMBERS", "MAX_COMPOSITE_DEPTH"],
+      "symbols": [
+        "MAX_COMPOSITE_MEMBERS",
+        "MAX_COMPOSITE_DEPTH"
+      ],
       "reason": "These bound the shape of a CompositeCompletionPolicy tree an application constructs -- member count and nesting depth -- not a resource the framework holds at runtime. Both are validated once at CompositeCompletionPolicy::new, in the same category as MAX_RESOURCE_IDENTITY_BYTES/MAX_OBJECT_KEY_BYTES above: a fixed structural check enforced at construction, not a bounded operational resource (queue, buffer, connection, cache) whose steady-state behavior this campaign proves. Added in #151/#179.",
       "covered_by": "crates/oxide-batch/src/completion.rs::tests::composite_rejects_empty_and_oversized, crates/oxide-batch/src/completion.rs::tests::composite_depth_boundary_and_overflow, crates/oxide-batch/src/completion.rs::tests::composite_depth_bounded_via_indirect_nesting"
     }
