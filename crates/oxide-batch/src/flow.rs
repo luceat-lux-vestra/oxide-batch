@@ -1202,6 +1202,13 @@ pub enum FlowFailure {
     },
     /// The compiled flow deliberately selected a `Fail` terminal.
     FailTerminal,
+    /// A live scoped component failed cleanup after otherwise successful work.
+    ScopedCleanup {
+        /// Scope whose reverse cleanup observed failures.
+        scope: ScopeKind,
+        /// Number of components whose cleanup failed.
+        failures: usize,
+    },
 }
 
 /// Final durable observations from one flow attempt.
