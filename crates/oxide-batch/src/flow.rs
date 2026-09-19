@@ -2419,6 +2419,7 @@ impl<'a> FlowLauncher<'a> {
                                     attempt,
                                     parameters,
                                     stop_token,
+                                    job_scope,
                                 )
                                 .await?;
                             listener_failures.extend(run.listener_failures);
@@ -3132,6 +3133,7 @@ impl<'a> FlowLauncher<'a> {
         attempt: ExecutionAttempt,
         parameters: &JobParameters,
         parent_stop: &StopToken,
+        job_scope: Option<&crate::scope_live::LiveScope>,
     ) -> Result<PartitionRun, FlowRuntimeError> {
         let created = self
             .create_step(
@@ -3238,6 +3240,7 @@ impl<'a> FlowLauncher<'a> {
                     attempt,
                     parameters,
                     &partition_stop,
+                    job_scope,
                 )
                 .await
             }
@@ -3397,6 +3400,7 @@ impl<'a> FlowLauncher<'a> {
         attempt: ExecutionAttempt,
         parameters: &JobParameters,
         stop: &StopToken,
+        job_scope: Option<&crate::scope_live::LiveScope>,
     ) -> Result<PartitionWorkerRun, FlowRuntimeError> {
         let (worker, assigned) = self
             .create_and_assign_partition_worker(execution_id, compiled, &partition)
@@ -3424,11 +3428,13 @@ impl<'a> FlowLauncher<'a> {
             match catch_unwind(AssertUnwindSafe(|| binding.worker.create(input))) {
                 Ok(tasklet_step) if tasklet_step.name() == binding.worker.step_name() => {
                     self.run_step(
+                        job,
                         compiled.worker().id(),
                         &tasklet_step,
                         worker,
                         parameters,
                         stop,
+                        job_scope,
                         &correlation,
                     )
                     .await?
