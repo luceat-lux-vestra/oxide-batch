@@ -82,17 +82,22 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     ("oxide_batch_core", 106),
     // #264 adds the reviewed M7 plan surface: CompiledFlowScope, NestedFlow,
     // and MAX_FLOW_COMPOSITION_DEPTH. #265 adds the nested-job declaration
-    // contract: FrameworkParameterSource, MAX_NESTED_JOB_PARAMETERS,
-    // MAX_SELECTOR_PATH_BYTES, MAX_SELECTOR_PATH_SEGMENTS,
-    // MissingParameterPolicy, NestedJobNode, NestedJobParameterMapping,
-    // NestedJobParameterSource, ParameterCoercion, and SelectorPath. #266 adds
-    // CustomLeafKind and CustomLeafNode.
-    ("oxide_batch_plan", 41),
+    // contract. #266 adds CustomLeafKind and CustomLeafNode. #276 adds only
+    // the facade-owned structured scope declaration: LateBindingDefinitionError,
+    // LateBoundInput, LateBoundSource, MAX_LATE_BOUND_INPUTS,
+    // MAX_SCOPED_COMPONENTS, ScopeFactoryKind,
+    // ScopeFrameworkSource, ScopeKind, ScopeResolverKind,
+    // ScopedComponentDefinition, and ScopedComponentId. Durable provenance
+    // remains a repository implementation contract and is not re-exported.
+    ("oxide_batch_plan", 52),
     // #265 adds the durable-link repository contract: NestedJobLink,
     // NestedJobLinkRequest, and NestedJobTerminalObservation.
     ("oxide_batch_repository", 113),
     ("repository", 14),
     ("runtime", 18),
+    // #276 exposes only the value-redacted late-binding failure category;
+    // resolution execution remains internal until sibling scope lifecycle work.
+    ("scope_runtime", 1),
     ("service", 7),
     ("shutdown", 20),
     ("telemetry", 38),

@@ -3,11 +3,19 @@
   "issue": "https://github.com/luceat-lux-vestra/oxide-batch/issues/102",
   "gate": "docs/project/m5-design-gate-evidence.md",
   "plan": "docs/engineering/performance-plan.md",
-  "note": "This document is the campaign's denominator. The runner reads it to decide what must run and what each report must have observed, and the in-process reconciliation in crates/oxide-batch/tests/m5_security_campaign.rs reads it to decide whether it still says what the accepted documents require. M7 #265 adds schema 5 nested-job linkage; the same five privilege classes remain, with the runtime class owning durable nested linkage and a dedicated restricted-role report exercising the new table directly.",
+  "note": "This document is the campaign's denominator. The runner reads it to decide what must run and what each report must have observed, and the in-process reconciliation in crates/oxide-batch/tests/m5_security_campaign.rs reads it to decide whether it still says what the accepted documents require. M7 #265 adds schema 5 nested-job linkage and M7 #276 adds schema 6 value-free scope-resolution provenance. The same five privilege classes remain; each newly durable table has a dedicated restricted-role report.",
   "support_contract": {
-    "postgres_versions": ["15", "16", "17", "18"],
-    "matrix_endpoints": ["15", "18"],
-    "installed_schema_version": 5,
+    "postgres_versions": [
+      "15",
+      "16",
+      "17",
+      "18"
+    ],
+    "matrix_endpoints": [
+      "15",
+      "18"
+    ],
+    "installed_schema_version": 6,
     "tls_mode": "verify-full",
     "privilege_classes": [
       "migration",
@@ -37,7 +45,9 @@
       "OXIDEBATCH_SECURITY_TLS_UNTRUSTED_CA",
       "OXIDEBATCH_SECURITY_PLAINTEXT_TEST_URL"
     ],
-    "postgres-security-roles": ["OXIDEBATCH_POSTGRES_ADMIN_TEST_URL"]
+    "postgres-security-roles": [
+      "OXIDEBATCH_POSTGRES_ADMIN_TEST_URL"
+    ]
   },
   "reports": [
     {
@@ -57,6 +67,16 @@
       "package": "oxide-batch",
       "target": "postgres_nested_job_privileges",
       "name": "nested_job_link_privileges_match_schema5_policy",
+      "fixture": "postgres-security-roles",
+      "database_report": true
+    },
+    {
+      "id": "scope-resolution-privileges",
+      "title": "Schema-6 scope-resolution provenance least-privilege",
+      "owes": "actual PostgreSQL allow/refuse evidence for the schema-6 scope-resolution provenance table under the committed roles and grants",
+      "package": "oxide-batch",
+      "target": "postgres_scope_resolution_privileges",
+      "name": "scope_resolution_provenance_privileges_match_schema6_policy",
       "fixture": "postgres-security-roles",
       "database_report": true
     },
@@ -158,27 +178,96 @@
     "allowed_probes": 6,
     "forbidden_probes": 10,
     "probes": [
-      { "id": "runtime.read-nested-job-link", "role": "oxide_batch_m5_runtime", "expected": "allowed" },
-      { "id": "runtime.create-nested-job-link", "role": "oxide_batch_m5_runtime", "expected": "allowed" },
-      { "id": "runtime.update-nested-job-link", "role": "oxide_batch_m5_runtime", "expected": "allowed" },
-      { "id": "runtime.delete-nested-job-link", "role": "oxide_batch_m5_runtime", "expected": "forbidden" },
-      { "id": "explorer.read-nested-job-link", "role": "oxide_batch_m5_explorer", "expected": "allowed" },
-      { "id": "explorer.create-nested-job-link", "role": "oxide_batch_m5_explorer", "expected": "forbidden" },
-      { "id": "explorer.update-nested-job-link", "role": "oxide_batch_m5_explorer", "expected": "forbidden" },
-      { "id": "explorer.delete-nested-job-link", "role": "oxide_batch_m5_explorer", "expected": "forbidden" },
-      { "id": "operator.read-nested-job-link", "role": "oxide_batch_m5_operator", "expected": "allowed" },
-      { "id": "operator.create-nested-job-link", "role": "oxide_batch_m5_operator", "expected": "forbidden" },
-      { "id": "operator.update-nested-job-link", "role": "oxide_batch_m5_operator", "expected": "forbidden" },
-      { "id": "operator.delete-nested-job-link", "role": "oxide_batch_m5_operator", "expected": "forbidden" },
-      { "id": "retention.read-nested-job-link", "role": "oxide_batch_m5_retention", "expected": "allowed" },
-      { "id": "retention.create-nested-job-link", "role": "oxide_batch_m5_retention", "expected": "forbidden" },
-      { "id": "retention.update-nested-job-link", "role": "oxide_batch_m5_retention", "expected": "forbidden" },
-      { "id": "retention.delete-nested-job-link", "role": "oxide_batch_m5_retention", "expected": "forbidden" }
+      {
+        "id": "runtime.read-nested-job-link",
+        "role": "oxide_batch_m5_runtime",
+        "expected": "allowed"
+      },
+      {
+        "id": "runtime.create-nested-job-link",
+        "role": "oxide_batch_m5_runtime",
+        "expected": "allowed"
+      },
+      {
+        "id": "runtime.update-nested-job-link",
+        "role": "oxide_batch_m5_runtime",
+        "expected": "allowed"
+      },
+      {
+        "id": "runtime.delete-nested-job-link",
+        "role": "oxide_batch_m5_runtime",
+        "expected": "forbidden"
+      },
+      {
+        "id": "explorer.read-nested-job-link",
+        "role": "oxide_batch_m5_explorer",
+        "expected": "allowed"
+      },
+      {
+        "id": "explorer.create-nested-job-link",
+        "role": "oxide_batch_m5_explorer",
+        "expected": "forbidden"
+      },
+      {
+        "id": "explorer.update-nested-job-link",
+        "role": "oxide_batch_m5_explorer",
+        "expected": "forbidden"
+      },
+      {
+        "id": "explorer.delete-nested-job-link",
+        "role": "oxide_batch_m5_explorer",
+        "expected": "forbidden"
+      },
+      {
+        "id": "operator.read-nested-job-link",
+        "role": "oxide_batch_m5_operator",
+        "expected": "allowed"
+      },
+      {
+        "id": "operator.create-nested-job-link",
+        "role": "oxide_batch_m5_operator",
+        "expected": "forbidden"
+      },
+      {
+        "id": "operator.update-nested-job-link",
+        "role": "oxide_batch_m5_operator",
+        "expected": "forbidden"
+      },
+      {
+        "id": "operator.delete-nested-job-link",
+        "role": "oxide_batch_m5_operator",
+        "expected": "forbidden"
+      },
+      {
+        "id": "retention.read-nested-job-link",
+        "role": "oxide_batch_m5_retention",
+        "expected": "allowed"
+      },
+      {
+        "id": "retention.create-nested-job-link",
+        "role": "oxide_batch_m5_retention",
+        "expected": "forbidden"
+      },
+      {
+        "id": "retention.update-nested-job-link",
+        "role": "oxide_batch_m5_retention",
+        "expected": "forbidden"
+      },
+      {
+        "id": "retention.delete-nested-job-link",
+        "role": "oxide_batch_m5_retention",
+        "expected": "forbidden"
+      }
     ]
   },
   "redaction": {
     "report": "redaction-sweep",
-    "surfaces": ["errors", "telemetry", "cli", "bundle"],
+    "surfaces": [
+      "errors",
+      "telemetry",
+      "cli",
+      "bundle"
+    ],
     "value_classes": [
       "password",
       "database-url-endpoint",
@@ -210,5 +299,94 @@
       "run_by_this_campaign": false,
       "note": "The M2 design-gate fixture is kept and keeps running on its own CI axis. It is not this campaign renamed: it predates the adapter, proves what psql and a draft schema did, and covers four roles against a schema that is no longer the installed one."
     }
-  ]
+  ],
+  "scope_resolution_privileges": {
+    "note": "Exact schema-6 probe denominator for `postgres_scope_resolution_privileges.rs`. Runtime may read and insert immutable provenance but may not update or directly delete it. Explorer, operator, and retention may read only; retention deletion is schema-owned cascade behavior rather than a direct grant.",
+    "report": "scope-resolution-privileges",
+    "total_probes": 16,
+    "allowed_probes": 5,
+    "forbidden_probes": 11,
+    "probes": [
+      {
+        "id": "runtime.read-scope-resolution",
+        "role": "oxide_batch_m5_runtime",
+        "expected": "allowed"
+      },
+      {
+        "id": "runtime.create-scope-resolution",
+        "role": "oxide_batch_m5_runtime",
+        "expected": "allowed"
+      },
+      {
+        "id": "runtime.update-scope-resolution",
+        "role": "oxide_batch_m5_runtime",
+        "expected": "forbidden"
+      },
+      {
+        "id": "runtime.delete-scope-resolution",
+        "role": "oxide_batch_m5_runtime",
+        "expected": "forbidden"
+      },
+      {
+        "id": "explorer.read-scope-resolution",
+        "role": "oxide_batch_m5_explorer",
+        "expected": "allowed"
+      },
+      {
+        "id": "explorer.create-scope-resolution",
+        "role": "oxide_batch_m5_explorer",
+        "expected": "forbidden"
+      },
+      {
+        "id": "explorer.update-scope-resolution",
+        "role": "oxide_batch_m5_explorer",
+        "expected": "forbidden"
+      },
+      {
+        "id": "explorer.delete-scope-resolution",
+        "role": "oxide_batch_m5_explorer",
+        "expected": "forbidden"
+      },
+      {
+        "id": "operator.read-scope-resolution",
+        "role": "oxide_batch_m5_operator",
+        "expected": "allowed"
+      },
+      {
+        "id": "operator.create-scope-resolution",
+        "role": "oxide_batch_m5_operator",
+        "expected": "forbidden"
+      },
+      {
+        "id": "operator.update-scope-resolution",
+        "role": "oxide_batch_m5_operator",
+        "expected": "forbidden"
+      },
+      {
+        "id": "operator.delete-scope-resolution",
+        "role": "oxide_batch_m5_operator",
+        "expected": "forbidden"
+      },
+      {
+        "id": "retention.read-scope-resolution",
+        "role": "oxide_batch_m5_retention",
+        "expected": "allowed"
+      },
+      {
+        "id": "retention.create-scope-resolution",
+        "role": "oxide_batch_m5_retention",
+        "expected": "forbidden"
+      },
+      {
+        "id": "retention.update-scope-resolution",
+        "role": "oxide_batch_m5_retention",
+        "expected": "forbidden"
+      },
+      {
+        "id": "retention.delete-scope-resolution",
+        "role": "oxide_batch_m5_retention",
+        "expected": "forbidden"
+      }
+    ]
+  }
 }

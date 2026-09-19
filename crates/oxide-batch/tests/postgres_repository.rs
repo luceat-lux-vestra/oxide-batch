@@ -23,15 +23,18 @@ use oxide_batch::{
     DefinitionUpgrade, DefinitionUpgradeKey, ExecutionContext, FailureCategory, FailureId,
     FailureSummary, FaultAction, FaultClassifier, FaultPhase, FaultPolicy, FaultRule,
     FaultStateError, FaultStateFormatError, FaultStateStore, ItemProcessor, ItemReader, ItemWriter,
-    JobInstanceKey, JobLauncher, JobName, JobParameters, JobRepository, LifecycleTransition,
-    PostgresChunkStateError, PostgresChunkStateProvider, PostgresChunkTransactionManager,
-    PostgresConfig, PostgresConfigError, PostgresExplorer, PostgresFaultState,
-    PostgresJobRepository, PostgresMigrator, ProcessContext, ProcessOutcome, ProcessorError,
-    ReadContext, ReadOutcome, ReaderError, RecoveryRequest, RepositoryError, RetryKey, RetryLimit,
-    RetryOrdinal, RetryReservation, RetryStateLimit, SequentialIdGenerator, SkipCounts, SkipLimit,
-    StateLimits, StateSchemaId, StateSchemaVersion, StepDefinitionUpgrade, StepExecutionId,
-    StepName, StopSource, TlsMode, WriteContext, WriteOutcome, WriterError,
+    JobInstanceKey, JobLauncher, JobName, JobParameter, JobParameters, JobRepository,
+    LifecycleTransition, ParameterName, ParameterRole, ParameterValue, PostgresChunkStateError,
+    PostgresChunkStateProvider, PostgresChunkTransactionManager, PostgresConfig,
+    PostgresConfigError, PostgresExplorer, PostgresFaultState, PostgresJobRepository,
+    PostgresMigrator, ProcessContext, ProcessOutcome, ProcessorError, PurgeBatchBound,
+    PurgePlanRequest, ReadContext, ReadOutcome, ReaderError, RecoveryRequest, RepositoryError,
+    RetryKey, RetryLimit, RetryOrdinal, RetryReservation, RetryStateLimit, ScopeKind,
+    ScopedComponentId, SequentialIdGenerator, SkipCounts, SkipLimit, StateLimits, StateSchemaId,
+    StateSchemaVersion, StepDefinitionUpgrade, StepExecutionId, StepName, StopSource,
+    TerminalStatusSet, TlsMode, WriteContext, WriteOutcome, WriterError,
 };
+use oxide_batch_repository::{ScopeResolutionProvenance, ScopeResolutionSource};
 use sqlx::postgres::PgPoolOptions;
 
 #[derive(Clone, Copy)]
@@ -96,6 +99,15 @@ async fn remove_contract_rows(url: &str) -> Result<(), sqlx::Error> {
 
 async fn remove_job_rows(url: &str, job_name: &str) -> Result<(), sqlx::Error> {
     let pool = PgPoolOptions::new().max_connections(1).connect(url).await?;
+    sqlx::query(
+        "DELETE FROM oxide_batch.ob_scope_resolution_provenance WHERE owner_job_execution_id IN (\
+         SELECT execution.id FROM oxide_batch.ob_job_execution execution \
+         JOIN oxide_batch.ob_job_instance instance ON instance.id = execution.job_instance_id \
+         WHERE instance.job_name = $1)",
+    )
+    .bind(job_name)
+    .execute(&pool)
+    .await?;
     sqlx::query(
         "DELETE FROM oxide_batch.ob_recovery_decision WHERE job_execution_id IN (\
          SELECT execution.id FROM oxide_batch.ob_job_execution execution \
@@ -198,7 +210,7 @@ fn configuration_bounds_and_diagnostics_are_safe() -> Result<(), Box<dyn Error>>
         CaCertificate::new(Vec::new()).err(),
         Some(PostgresConfigError::EmptyCaCertificate)
     );
-    assert_eq!(PostgresMigrator::supported_schema_version(), 5);
+    assert_eq!(PostgresMigrator::supported_schema_version(), 6);
     Ok(())
 }
 
@@ -867,6 +879,270 @@ fn durable_restart_requires_compatible_definition_and_inherits_checkpoint()
         assert_eq!(resumed.checkpoint(), &chunk_checkpoint(2)?);
         assert_eq!(resumed.execution_context(), &chunk_context()?);
         assert_eq!(resumed.step_execution().metadata().counts().committed(), 1);
+
+        repository.close().await?;
+        remove_job_rows(&runtime_url, JOB).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
+
+async fn stop_execution_at(
+    repository: &PostgresJobRepository,
+    execution_id: oxide_batch::JobExecutionId,
+    at: SystemTime,
+) -> Result<(), RepositoryError> {
+    let mut unit = repository.begin().await?;
+    let execution = unit
+        .get_job_execution(execution_id)
+        .await?
+        .ok_or(RepositoryError::JobExecutionNotFound { id: execution_id })?;
+    let started = unit
+        .transition_job_execution(
+            execution.id(),
+            execution.version(),
+            LifecycleTransition::new(BatchStatus::Started, at),
+        )
+        .await?;
+    unit.transition_job_execution(
+        started.id(),
+        started.version(),
+        LifecycleTransition::new(BatchStatus::Stopped, at),
+    )
+    .await?;
+    unit.commit().await
+}
+
+#[test]
+fn retention_excludes_execution_referenced_by_scope_provenance() -> Result<(), Box<dyn Error>> {
+    let Some(runtime_url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        const JOB: &str = "postgres_scope_provenance_retention";
+        let created_at = UNIX_EPOCH + Duration::from_hours(2);
+        remove_job_rows(&runtime_url, JOB).await?;
+        let repository = PostgresJobRepository::connect(
+            plaintext_config(runtime_url.clone())?,
+            Arc::new(FixedClock(created_at)),
+        )
+        .await?;
+        let job_name = JobName::new(JOB)?;
+        let step_name = StepName::new("only")?;
+        let definition = DefinitionIdentity::tasklet(
+            &job_name,
+            &step_name,
+            DefinitionRevision::new("v1")?,
+            &ComponentRevision::new("component-v1")?,
+        )?;
+        let tenant = ParameterName::new("tenant")?;
+        let mut parameters = JobParameters::new();
+        parameters.insert(
+            tenant.clone(),
+            JobParameter::new(
+                ParameterValue::string("stable")?,
+                ParameterRole::Identifying,
+            ),
+        )?;
+        let key = JobInstanceKey::new(job_name.clone(), &parameters);
+
+        let mut first_unit = repository.begin().await?;
+        let instance = first_unit
+            .select_or_create_job_instance(&key)
+            .await?
+            .instance()
+            .clone();
+        let first = first_unit
+            .create_job_execution_with_definition_and_parameters(
+                instance.id(),
+                &definition,
+                &parameters,
+            )
+            .await?;
+        let provenance = ScopeResolutionProvenance::new(
+            ScopeKind::Job,
+            ScopedComponentId::new("client")?,
+            tenant.clone(),
+            first.id(),
+            None,
+            ScopeResolutionSource::JobParameter {
+                job_execution_id: first.id(),
+                parameter: tenant,
+            },
+        )?;
+        first_unit
+            .store_scope_resolution_provenance(std::slice::from_ref(&provenance))
+            .await?;
+        first_unit.commit().await?;
+        stop_execution_at(&repository, first.id(), created_at).await?;
+
+        let mut restart = repository.begin().await?;
+        let second = restart
+            .create_job_execution_with_definition_and_parameters(
+                instance.id(),
+                &definition,
+                &parameters,
+            )
+            .await?;
+        restart.commit().await?;
+        stop_execution_at(&repository, second.id(), created_at).await?;
+        repository.close().await?;
+
+        let later = created_at + Duration::from_hours(2);
+        let repository = PostgresJobRepository::connect(
+            plaintext_config(runtime_url.clone())?,
+            Arc::new(FixedClock(later)),
+        )
+        .await?;
+        let request = PurgePlanRequest::new(
+            job_name,
+            TerminalStatusSet::new([BatchStatus::Stopped])?,
+            Duration::from_hours(1),
+            PurgeBatchBound::new(10)?,
+        )?;
+        let mut survey_unit = repository.begin().await?;
+        let survey = survey_unit.purge_survey(&request).await?;
+        survey_unit.rollback().await?;
+
+        assert!(
+            survey
+                .candidates()
+                .iter()
+                .all(|candidate| candidate.job_execution_id() != first.id()),
+            "a surviving restart provenance source must not be purgeable",
+        );
+        assert!(
+            survey
+                .candidates()
+                .iter()
+                .any(|candidate| candidate.job_execution_id() == second.id()),
+            "the provenance owner remains independently purgeable",
+        );
+
+        repository.close().await?;
+        remove_job_rows(&runtime_url, JOB).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
+
+#[test]
+fn compatible_restart_with_scope_resolution_provenance_fails_closed() -> Result<(), Box<dyn Error>>
+{
+    let Some(runtime_url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        const JOB: &str = "postgres_scope_provenance_compatible_restart";
+        remove_job_rows(&runtime_url, JOB).await?;
+        let repository = PostgresJobRepository::connect(
+            plaintext_config(runtime_url.clone())?,
+            Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(750))),
+        )
+        .await?;
+        let job_name = JobName::new(JOB)?;
+        let step_name = StepName::new("only")?;
+        let v1 = DefinitionIdentity::tasklet(
+            &job_name,
+            &step_name,
+            DefinitionRevision::new("v1")?,
+            &ComponentRevision::new("component-v1")?,
+        )?;
+        let v2 = DefinitionIdentity::tasklet(
+            &job_name,
+            &step_name,
+            DefinitionRevision::new("v2")?,
+            &ComponentRevision::new("component-v2")?,
+        )?;
+        let tenant = ParameterName::new("tenant")?;
+        let mut parameters = JobParameters::new();
+        parameters.insert(
+            tenant.clone(),
+            JobParameter::new(
+                ParameterValue::string("stable")?,
+                ParameterRole::Identifying,
+            ),
+        )?;
+        let key = JobInstanceKey::new(job_name.clone(), &parameters);
+
+        let mut create = repository.begin().await?;
+        let instance = create
+            .select_or_create_job_instance(&key)
+            .await?
+            .instance()
+            .clone();
+        let first = create
+            .create_job_execution_with_definition_and_parameters(instance.id(), &v1, &parameters)
+            .await?;
+        let provenance = ScopeResolutionProvenance::new(
+            ScopeKind::Job,
+            ScopedComponentId::new("client")?,
+            tenant.clone(),
+            first.id(),
+            None,
+            ScopeResolutionSource::JobParameter {
+                job_execution_id: first.id(),
+                parameter: tenant,
+            },
+        )?;
+        create
+            .store_scope_resolution_provenance(std::slice::from_ref(&provenance))
+            .await?;
+        create.commit().await?;
+
+        let at = first.metadata().timestamps().created_at();
+        let mut stop = repository.begin().await?;
+        let started = stop
+            .transition_job_execution(
+                first.id(),
+                first.version(),
+                LifecycleTransition::new(BatchStatus::Started, at),
+            )
+            .await?;
+        stop.transition_job_execution(
+            started.id(),
+            started.version(),
+            LifecycleTransition::new(BatchStatus::Stopped, at),
+        )
+        .await?;
+        stop.commit().await?;
+
+        let upgrade = DefinitionUpgrade::new(
+            DefinitionUpgradeKey::new("scope-v1-to-v2")?,
+            v1,
+            v2.clone(),
+            [StepDefinitionUpgrade::new(
+                step_name.clone(),
+                step_name.clone(),
+            )],
+        )?;
+        let mut register = repository.begin().await?;
+        register
+            .register_definition_upgrade(&job_name, &upgrade)
+            .await?;
+        register.commit().await?;
+
+        let mut restart = repository.begin().await?;
+        assert_eq!(
+            restart
+                .create_job_execution_with_definition_and_parameters(
+                    instance.id(),
+                    &v2,
+                    &parameters,
+                )
+                .await,
+            Err(RepositoryError::IncompatibleDefinition {
+                instance_id: instance.id(),
+            }),
+            "scope provenance has no accepted transform across a changed definition",
+        );
+        restart.rollback().await?;
 
         repository.close().await?;
         remove_job_rows(&runtime_url, JOB).await?;

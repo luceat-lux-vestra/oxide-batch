@@ -29,23 +29,34 @@ is semantically accepted/closed.
 | C — repeat/interceptors | explicit repeat rather than graph cycles; durable ordinal/continue decision; M6 retry/skip/rollback remains inner engine; deterministic interceptor pairing and primary/secondary failure authority; bounded state/depth | #197 |
 | D — registry/evolution | immutable CAS/idempotent registry; exact default; one direct compatible edge with total injective source mapping and atomic deterministic transform; fail-closed drift/newer/corrupt/missing-artifact behavior; fork is new lineage | #198 |
 | E — application/operator | deterministic pure incrementer over an explicitly supplied prior parameter set; non-restartable/start-control semantics; explicit strict/compatible/fork actions; M4 CAS/idempotency/audit/redaction inherited; closed explorer query families | #199 |
-| F — cross-cutting | manifest format 4 retaining the 64 KiB ceiling; PostgreSQL schema 5 over current schema-4 baseline; immutable manifest 1-3; ordered schema 1-4 to 5 migration/restore; structured cancellation; PG15/18 crash/restart matrix | #195-#200; #200 aggregates |
+| F — cross-cutting | manifest format 4 retaining the 64 KiB ceiling; append-only PostgreSQL schema evolution over the schema-4 baseline; immutable manifest 1-3; ordered migration/restore; structured cancellation; PG15/18 crash/restart matrix | #195-#200; #200 aggregates |
 
 Any dependent implementation that needs behavior outside these decisions stops
 and opens a bounded M7 design correction rather than deciding locally.
+
+### Implementation-sequencing reconciliation — 2026-09-19
+
+The design gate authorized one logical M7 schema advance from the schema-4 M6
+baseline. Delivery was subsequently split across durable child issues. #265
+shipped the first immutable M7 migration as schema 5 for nested-job linkage, so
+#276 must not rewrite that migration to add scope-resolution provenance. #276
+therefore appends schema 6. This reconciles physical migration numbering with
+the original fail-closed/versioned semantics; it does not change manifest
+format 4, Gate-B source semantics, or the prohibition on persisted resolved
+values/digests.
 
 ## Impact classification
 
 | Area | Decision / proof obligation |
 | --- | --- |
 | Public API | Only typed M7 families named by the contract, including structured late-bound selectors. No SQLx, runtime ownership, credentials, executable locations, serializer/driver diagnostics, deployment authorization types, or mandatory free-form expression engine crosses the facade. |
-| Durable data | Manifest 4 and repository schema 5. Current schema 4 is M6 component-state baseline and is preserved. Earlier manifest bytes never change. |
+| Durable data | Manifest 4 and an append-only repository schema chain. Schema 4 is the preserved M6 baseline; #265 appends 5 and #276 appends 6. Earlier manifest and migration semantics never change. |
 | Restart | Branch/join/nested-child parameter/link state, scope/repeat state, registry selection, compatible transform, and fork lineage use committed repository state only. |
 | Definition identity | ADR-0009 remains exact: restart-relevant policy/schema/handler/mapping identities enter; capacity/throughput/credentials/telemetry do not. |
 | Failure/recovery | Unknown commit stays unknown; no log/memory inference or blind retry; process loss fabricates no callback, child completion, migration success, upgrade, or fork completion. Interceptor unwind cannot replace an earlier primary failure. |
 | Security | No credential/ambient late binding and no new resolved-value digest; projections/diagnostics carry only allowed bounded metadata/digests; deployment owns auth/RBAC. |
 | Resource | Existing plan/split and 64 KiB manifest bounds; composition/repeat depth 8; finite scope/interceptor counts; M4 explorer limits retained. |
-| Compatibility | Manifest 1-3 readable/immutable; pre-format-4 runtime rejects format 4. Repository schema 1-4 reaches 5 by ordered chain; pre-schema-5 runtime rejects 5 before writes. |
+| Compatibility | Manifest 1-3 readable/immutable; pre-format-4 runtime rejects format 4. Repository schema 1-5 reaches the current schema 6 by the ordered chain; pre-schema-6 runtimes reject 6 before writes. |
 | Scope boundary | No M8 repository portability, M9 integration certification, M10 performance scheduler, M11 remote execution, M12 migration tooling, hosted control plane, or generic distributed exactly-once. |
 
 ## Manifest and repository migration matrix
@@ -55,12 +66,13 @@ and opens a bounded M7 design correction rather than deciding locally.
 | persisted manifest 1/2/3 | same format | preserved byte-for-byte under existing reader |
 | older definition meaning | manifest 4 definition | never rewritten by DB migration; changed identity follows ADR-0004 strict/direct-compatible selection |
 | new M7 definition | manifest 4 | canonical bytes remain at most 64 KiB; only after owner implementation/evidence exists |
-| repository schema 1 | schema 5 | ordered shipped chain `1 -> 2 -> 3 -> 4 -> 5` |
-| repository schema 2 | schema 5 | ordered shipped chain `2 -> 3 -> 4 -> 5` |
-| repository schema 3 | schema 5 | ordered shipped chain `3 -> 4 -> 5` |
-| current repository schema 4 | schema 5 | direct final M7 migration `4 -> 5` |
-| schema 5 opened by pre-schema-5 runtime | none | typed newer-schema rejection before write |
-| successful schema-5 operational rollback | restored source backup | restore-based only; no down-migration claim |
+| repository schema 1 | schema 6 | ordered shipped chain `1 -> 2 -> 3 -> 4 -> 5 -> 6` |
+| repository schema 2 | schema 6 | ordered shipped chain `2 -> 3 -> 4 -> 5 -> 6` |
+| repository schema 3 | schema 6 | ordered shipped chain `3 -> 4 -> 5 -> 6` |
+| repository schema 4 | schema 6 | ordered M7 chain `4 -> 5 -> 6` |
+| repository schema 5 | schema 6 | #276 scoped-resolution provenance migration `5 -> 6` |
+| schema 6 opened by pre-schema-6 runtime | none | typed newer-schema rejection before write |
+| successful schema-6 operational rollback | restored source backup | restore-based only; no down-migration claim |
 
 ## Reviewer-specified adversarial scenarios
 

@@ -7,6 +7,8 @@
 mod memory;
 #[cfg(feature = "postgres")]
 pub(crate) mod postgres;
+#[cfg(feature = "postgres")]
+mod scope_postgres;
 
 pub use memory::{InMemoryExplorer, InMemoryJobRepository};
 #[cfg(feature = "postgres")]

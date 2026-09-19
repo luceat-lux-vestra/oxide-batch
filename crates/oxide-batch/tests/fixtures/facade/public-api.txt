@@ -219,6 +219,9 @@ oxide_batch::JobParameter
 oxide_batch::JobParameters
 oxide_batch::JobRepository
 oxide_batch::JoinNode
+oxide_batch::LateBindingDefinitionError
+oxide_batch::LateBoundInput
+oxide_batch::LateBoundSource
 oxide_batch::LaunchError
 oxide_batch::LaunchReport
 oxide_batch::LifecycleError
@@ -241,6 +244,7 @@ oxide_batch::MAX_CURSOR_BYTES
 oxide_batch::MAX_DROP_REPORT_WINDOW
 oxide_batch::MAX_EXPORT_QUEUE_RECORDS
 oxide_batch::MAX_FLOW_COMPOSITION_DEPTH
+oxide_batch::MAX_LATE_BOUND_INPUTS
 oxide_batch::MAX_METRIC_NAME_ALLOWLIST
 oxide_batch::MAX_NESTED_JOB_PARAMETERS
 oxide_batch::MAX_NODES
@@ -256,6 +260,7 @@ oxide_batch::MAX_PURGE_BATCH
 oxide_batch::MAX_REASON_CODE_BYTES
 oxide_batch::MAX_RESPONSE_BYTES
 oxide_batch::MAX_RETAINED_EVENTS_PER_EXECUTION
+oxide_batch::MAX_SCOPED_COMPONENTS
 oxide_batch::MAX_SELECTOR_PATH_BYTES
 oxide_batch::MAX_SELECTOR_PATH_SEGMENTS
 oxide_batch::MAX_SHUTDOWN_DEADLINE
@@ -401,6 +406,13 @@ oxide_batch::RetryOutcome
 oxide_batch::RetryReservation
 oxide_batch::RetryStateLimit
 oxide_batch::RollbackDisposition
+oxide_batch::ScopeFactoryKind
+oxide_batch::ScopeFrameworkSource
+oxide_batch::ScopeKind
+oxide_batch::ScopeResolutionFailure
+oxide_batch::ScopeResolverKind
+oxide_batch::ScopedComponentDefinition
+oxide_batch::ScopedComponentId
 oxide_batch::SelectorPath
 oxide_batch::SequentialIdGenerator
 oxide_batch::ShutdownCoordinator

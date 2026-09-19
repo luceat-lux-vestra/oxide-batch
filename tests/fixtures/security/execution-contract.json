@@ -6,8 +6,12 @@
   "workflow_git_blob": "aad680e2ac4f18c59a5b23ba4129dd42d7b3a39a",
   "workflow_name": "M5 Security",
   "triggers": {
-    "pull_request": ["main"],
-    "push": ["main"],
+    "pull_request": [
+      "main"
+    ],
+    "push": [
+      "main"
+    ],
     "workflow_dispatch": true
   },
   "permissions": {
@@ -17,7 +21,10 @@
   "script": "./tests/fixtures/security/provision.sh ${{ matrix.postgres }}",
   "script_path": "tests/fixtures/security/provision.sh",
   "script_git_blob": "4d4d2e22af0630ec535de3e24d1c3dbc0442b9c8",
-  "supported_matrix": ["15", "18"],
+  "supported_matrix": [
+    "15",
+    "18"
+  ],
   "matrix_note": "The two ends of the supported PostgreSQL 15-18 range. Evidence is required from both, exactly once each.",
   "no_services_block": true,
   "no_services_block_note": "The campaign needs a server whose certificate was signed by an authority generated for this run, and a `services:` container starts before any step has run and therefore before that certificate exists. provision.sh builds both servers itself, after generating the material. A workflow that added a `services:` postgres block would not replace this fixture — a TLS report run against it would simply never observe the properties this campaign owes — so its absence is a first-class invariant of this contract, not an implementation detail.",
@@ -33,7 +40,14 @@
       "ssl": "off"
     }
   },
-  "command": ["cargo", "run", "--package", "oxide-batch-xtask", "--", "security"],
+  "command": [
+    "cargo",
+    "run",
+    "--package",
+    "oxide-batch-xtask",
+    "--",
+    "security"
+  ],
   "cargo_profile": "debug",
   "profile_note": "Debug, like every M5 campaign except performance, whose denominator requires release for figures comparable to release planning. The security campaign gates correctness and refusal behavior, not a duration, so nothing here depends on the profile.",
   "target_selection": {
@@ -65,7 +79,12 @@
   "artifact_retention": "30 days, on success and on failure alike, because what a failed security campaign is mostly worth reading for is which report, which TLS attempt, which privilege cell, or which surface it lost",
   "timeout_minutes": 45,
   "timeout_note": "The campaign's execution envelope is one TLS report of four attempts, one schema-5 nested-link privilege report, one role matrix of forty-four cells across five classes, and one redaction sweep across four surfaces, a bounded workload rather than a whole-workspace suite. Still a ceiling: a campaign that stopped making progress must fail rather than occupy a runner.",
-  "required_reports": ["verify-full-tls", "nested-job-privileges", "least-privilege-roles", "redaction-sweep"],
+  "required_reports": [
+    "verify-full-tls",
+    "nested-job-privileges",
+    "least-privilege-roles",
+    "redaction-sweep"
+  ],
   "required_scenarios": [
     "verify_full_tls_is_required_in_the_supported_mode",
     "nested_job_link_privileges_match_schema5_policy",
@@ -78,10 +97,33 @@
     "hostname-mismatch",
     "server-without-tls"
   ],
-  "required_privilege_classes": ["migration", "runtime", "explorer", "operator", "retention"],
-  "required_redaction_surfaces": ["errors", "telemetry", "cli", "bundle"],
-  "required_redaction_value_classes": ["password", "database-url-endpoint", "certificate", "payload"],
+  "required_privilege_classes": [
+    "migration",
+    "runtime",
+    "explorer",
+    "operator",
+    "retention"
+  ],
+  "required_redaction_surfaces": [
+    "errors",
+    "telemetry",
+    "cli",
+    "bundle"
+  ],
+  "required_redaction_value_classes": [
+    "password",
+    "database-url-endpoint",
+    "certificate",
+    "payload"
+  ],
   "database_reports_must_self_identify_postgresql_major": true,
-  "database_reports": ["verify-full-tls", "nested-job-privileges", "least-privilege-roles"],
-  "database_free_reports": ["redaction-sweep"]
+  "database_reports": [
+    "verify-full-tls",
+    "nested-job-privileges",
+    "scope-resolution-privileges",
+    "least-privilege-roles"
+  ],
+  "database_free_reports": [
+    "redaction-sweep"
+  ]
 }

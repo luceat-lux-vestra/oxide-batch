@@ -39,10 +39,12 @@ use oxide_batch::{
     ExecutionAttempt, ExecutionContext, ExecutionCorrelation, FlowExecutionOutcome, FlowGraph,
     FlowJob, FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget, InMemoryJobRepository,
     ItemProcessor, ItemReader, ItemWriter, JobExecutionId, JobInstanceId, JobName, JobParameters,
-    JobRepository, NodeId, OwnerToken, PartitionBudget, PartitionCount, PartitionKey,
-    PartitionPlanEntry, PartitionPlanFactory, PartitionTaskletFactory, PartitionedStepNode,
-    ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome, ReaderError,
-    RepositoryCapability, RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork,
+    JobRepository, LateBoundInput, LateBoundSource, MissingParameterPolicy, NodeId, OwnerToken,
+    ParameterCoercion, ParameterName, ParameterValueKind, PartitionBudget, PartitionCount,
+    PartitionKey, PartitionPlanEntry, PartitionPlanFactory, PartitionTaskletFactory,
+    PartitionedStepNode, ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome,
+    ReaderError, RepositoryCapability, RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork,
+    ScopeFactoryKind, ScopeKind, ScopeResolverKind, ScopedComponentDefinition, ScopedComponentId,
     SequentialIdGenerator, StateCodecError, StateLimits, StateSchemaId, StateSchemaVersion,
     StepComponents, StepExecutionId, StepName, StepNode, StopPollInterval, StopSource, SystemClock,
     Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
@@ -64,7 +66,7 @@ fn reference_repository() -> InMemoryJobRepository {
 }
 
 /// Every capability this milestone defines.
-fn all_capabilities() -> [RepositoryCapability; 8] {
+fn all_capabilities() -> [RepositoryCapability; 9] {
     [
         RepositoryCapability::CustomLeafState,
         RepositoryCapability::ExecutionOwnership,
@@ -74,6 +76,7 @@ fn all_capabilities() -> [RepositoryCapability; 8] {
         RepositoryCapability::StepPartitions,
         RepositoryCapability::StopRequests,
         RepositoryCapability::NestedJobs,
+        RepositoryCapability::ScopeResolution,
     ]
 }
 
@@ -276,6 +279,39 @@ fn tasklet_job(name: &JobName) -> Result<FlowJob, Box<dyn Error>> {
     )
 }
 
+fn scoped_tasklet_job(name: &JobName) -> Result<FlowJob, Box<dyn Error>> {
+    let only = NodeId::new("only")?;
+    let parameter = ParameterName::new("tenant")?;
+    let component = ScopedComponentDefinition::new(
+        ScopeKind::Job,
+        ScopedComponentId::new("client")?,
+        ScopeFactoryKind::new("client-factory")?,
+        ComponentRevision::new("factory-v1")?,
+        ScopeResolverKind::new("structured-selector")?,
+        ComponentRevision::new("resolver-v1")?,
+        vec![LateBoundInput::new(
+            parameter.clone(),
+            LateBoundSource::JobParameter(parameter),
+            ParameterValueKind::String,
+            ParameterCoercion::Exact,
+            MissingParameterPolicy::Fail,
+        )],
+    )?;
+    let plan = FlowGraph::new(only.clone())
+        .with_node(FlowNode::step(StepNode::new(
+            only.clone(),
+            StepName::new("only")?,
+            StepComponents::Tasklet(ComponentRevision::new("only-v1")?),
+        )))
+        .with_sequence(only.clone(), FlowTarget::Terminal(TerminalKind::Complete))?
+        .with_scoped_component(component)
+        .compile(name, DefinitionRevision::new("v1")?)?;
+    Ok(FlowJob::new(name.clone(), plan)?.with_tasklet_step(
+        only,
+        TaskletStep::new(StepName::new("only")?, Arc::new(Noop)),
+    )?)
+}
+
 fn owner_control() -> Result<(OwnerToken, StopPollInterval), Box<dyn Error>> {
     Ok((
         OwnerToken::from_bytes([7; 16]),
@@ -316,6 +352,39 @@ async fn undeclared_capability_requirement_is_rejected_with_a_typed_error()
         0,
         "negotiation must reject the launch before it opens a repository \
          transaction, so no instance, execution, or lifecycle row can exist",
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn undeclared_scope_resolution_is_rejected_before_any_repository_transaction()
+-> Result<(), Box<dyn Error>> {
+    let name = JobName::new("scoped")?;
+    let job = scoped_tasklet_job(&name)?;
+    let repository = CountingRepository::lacking(RepositoryCapability::ScopeResolution);
+    let clock = SystemClock;
+    let ids = SequentialIdGenerator::new(NonZeroU64::MIN);
+    let (_source, stop) = StopSource::new();
+
+    let error = FlowLauncher::new(&repository, &clock, &ids)
+        .launch(&job, &JobParameters::new(), &stop)
+        .await
+        .expect_err("a scoped plan requires durable scope-resolution provenance");
+
+    assert!(
+        matches!(
+            error,
+            FlowRuntimeError::UndeclaredCapability {
+                capability: RepositoryCapability::ScopeResolution,
+                ..
+            }
+        ),
+        "expected a typed undeclared-capability rejection naming scope resolution, got {error:?}",
+    );
+    assert_eq!(
+        repository.begin_count(),
+        0,
+        "scope-resolution capability negotiation must fail before a repository transaction",
     );
     Ok(())
 }

@@ -27,7 +27,8 @@ pub const MANIFEST_FORMAT_ONE_STEP: u16 = 1;
 pub const MANIFEST_FORMAT_FLOW: u16 = 2;
 /// The canonical manifest format for bounded M4 local-scale plans.
 pub const MANIFEST_FORMAT_LOCAL_SCALE: u16 = 3;
-/// The canonical manifest format for bounded M7 composed flows.
+/// The canonical manifest format for bounded M7 composed flows, including
+/// additive scoped-component definition identity.
 pub const MANIFEST_FORMAT_ADVANCED_FLOW: u16 = 4;
 /// The newest canonical manifest format this runtime can interpret.
 pub(crate) const SUPPORTED_MANIFEST_FORMAT: u16 = MANIFEST_FORMAT_ADVANCED_FLOW;
@@ -856,6 +857,30 @@ impl DefinitionManifest {
             MANIFEST_FORMAT_ADVANCED_FLOW => {
                 let (nodes, transitions) = advanced_graph_counts(members)?;
                 ensure_graph_bounds(nodes, transitions)?;
+                if let Some(scoped) = members.get("scoped_components") {
+                    let scoped = scoped.as_array().ok_or(ManifestError::MalformedGraph)?;
+                    if scoped.is_empty() {
+                        return Err(ManifestError::MalformedGraph);
+                    }
+                    let mut job_scoped = 0_usize;
+                    let mut step_scoped = 0_usize;
+                    for component in scoped {
+                        let scope = component
+                            .as_object()
+                            .and_then(|object| object.get("scope"))
+                            .and_then(serde_json::Value::as_str)
+                            .ok_or(ManifestError::MalformedGraph)?;
+                        let count = match scope {
+                            "job" => &mut job_scoped,
+                            "step" => &mut step_scoped,
+                            _ => return Err(ManifestError::MalformedGraph),
+                        };
+                        *count += 1;
+                        if *count > crate::MAX_SCOPED_COMPONENTS {
+                            return Err(ManifestError::MalformedGraph);
+                        }
+                    }
+                }
                 (Some(nodes), Some(transitions))
             }
             _ => (None, None),

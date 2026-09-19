@@ -5,25 +5,28 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use oxide_batch_repository::{
-    PartitionMutationError, aggregate_partition_parent, map_partition_aggregation,
-    recovered_execution, recovered_step_execution,
+    PartitionMutationError, ScopeResolutionProvenance, ScopeResolutionSource,
+    aggregate_partition_parent, map_partition_aggregation, recovered_execution,
+    recovered_step_execution,
 };
 
 use crate::{
     ActorRef, BatchStatus, CursorKey, DefinitionDescriptor, DefinitionIdentity, DefinitionRevision,
-    DefinitionUpgrade, DurableStateKind, ExecutionContext, ExecutionCounts, ExecutionMetadata,
-    ExecutionTimestamps, ExecutionVersion, ExitStatus, ExplorerError, ExplorerQuery,
-    ExplorerRepository, FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowStepState,
-    FlowTransitionKind, IdentifierKind, JobExecution, JobExecutionId, JobExecutionProjection,
-    JobInstance, JobInstanceId, JobInstanceKey, JobInstanceProjection, JobName, JobParameters,
-    LifecycleError, LifecycleTransition, MAX_PARTITIONS, NestedJobLink, NestedJobLinkRequest,
-    NestedJobTerminalObservation, NodeId, OperationId, OperatorAction, OperatorRecord,
-    OperatorRecordDraft, OperatorRequestId, OwnerObservation, OwnerToken, ParameterDescriptor,
-    PartitionPlanEntry, PartitionResult, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest,
-    PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecisionId, RecoveryRepository, RecoverySnapshot,
-    RecoveryStepEvidence, RetentionAction, RetentionActionId, RetentionHold, RetentionRecord,
-    RetentionRecordDraft, StartLimit, StateEnvelopeDescriptor, StepExecution, StepExecutionId,
-    StepExecutionProjection, StepName, StepPartition, StepPartitionId, StepPartitionProjection,
+    DefinitionUpgrade, DurableStateKind, ExecutionAttempt, ExecutionContext, ExecutionCounts,
+    ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitStatus, ExplorerError,
+    ExplorerQuery, ExplorerRepository, FlowDecision, FlowDecisionId, FlowDecisionRequest,
+    FlowStepState, FlowTransitionKind, IdentifierKind, JobExecution, JobExecutionId,
+    JobExecutionProjection, JobInstance, JobInstanceId, JobInstanceKey, JobInstanceProjection,
+    JobName, JobParameters, LifecycleError, LifecycleTransition, MAX_PARTITIONS, NestedJobLink,
+    NestedJobLinkRequest, NestedJobTerminalObservation, NodeId, OperationId, OperatorAction,
+    OperatorRecord, OperatorRecordDraft, OperatorRequestId, OwnerObservation, OwnerToken,
+    ParameterDescriptor, ParameterName, PartitionPlanEntry, PartitionResult, PurgeCandidate,
+    PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode,
+    RecoveryDecisionId, RecoveryRepository, RecoverySnapshot, RecoveryStepEvidence,
+    RetentionAction, RetentionActionId, RetentionHold, RetentionRecord, RetentionRecordDraft,
+    ScopeKind, ScopedComponentId, StartLimit, StateEnvelopeDescriptor, StepExecution,
+    StepExecutionId, StepExecutionProjection, StepName, StepPartition, StepPartitionId,
+    StepPartitionProjection,
 };
 use crate::{
     BoxFuture, Clock, IdGenerator, JobInstanceSelection, JobRepository, RecoveryDecision,
@@ -98,6 +101,7 @@ impl JobRepository for InMemoryJobRepository {
                 RepositoryCapability::ExecutionOwnership,
                 RepositoryCapability::InstanceHolds,
                 RepositoryCapability::NestedJobs,
+                RepositoryCapability::ScopeResolution,
                 RepositoryCapability::OperatorRequests,
                 RepositoryCapability::RetentionPurge,
                 RepositoryCapability::StepPartitions,
@@ -135,7 +139,19 @@ struct MemoryState {
     instances_by_id: BTreeMap<JobInstanceId, JobInstance>,
     job_executions: BTreeMap<JobExecutionId, JobExecution>,
     job_executions_by_instance: BTreeMap<JobInstanceId, Vec<JobExecutionId>>,
+    execution_attempts: BTreeMap<JobExecutionId, ExecutionAttempt>,
+    next_execution_attempt_by_instance: BTreeMap<JobInstanceId, u64>,
     job_parameters: BTreeMap<JobExecutionId, JobParameters>,
+    scope_resolution_provenance: BTreeMap<
+        (
+            ScopeKind,
+            ScopedComponentId,
+            ParameterName,
+            JobExecutionId,
+            Option<StepExecutionId>,
+        ),
+        ScopeResolutionProvenance,
+    >,
     nested_job_links: BTreeMap<(JobExecutionId, NodeId), NestedJobLink>,
     nested_job_links_by_instance: BTreeMap<(JobInstanceId, NodeId), Vec<JobExecutionId>>,
     step_executions: BTreeMap<StepExecutionId, StepExecution>,
@@ -177,14 +193,9 @@ impl MemoryState {
     }
 
     fn attempt_of(&self, execution: &JobExecution) -> u32 {
-        self.job_executions_by_instance
-            .get(&execution.job_instance_id())
-            .and_then(|executions| {
-                executions
-                    .iter()
-                    .position(|candidate| *candidate == execution.id())
-            })
-            .and_then(|position| u32::try_from(position.saturating_add(1)).ok())
+        self.execution_attempts
+            .get(&execution.id())
+            .and_then(|attempt| u32::try_from(attempt.get()).ok())
             .unwrap_or(1)
     }
 
@@ -356,6 +367,108 @@ impl InMemoryUnitOfWork<'_> {
             .ok_or(RepositoryError::JobExecutionNotFound { id: execution_id })
     }
 
+    fn validate_scope_provenance_source(
+        &self,
+        entry: &ScopeResolutionProvenance,
+    ) -> Result<(), RepositoryError> {
+        let owner_instance = self.instance_for_execution(entry.owner_job_execution_id())?;
+        let source_instance = match entry.source() {
+            ScopeResolutionSource::JobParameter {
+                job_execution_id, ..
+            }
+            | ScopeResolutionSource::JobContext {
+                job_execution_id, ..
+            } => {
+                if *job_execution_id == entry.owner_job_execution_id() {
+                    None
+                } else {
+                    Some(self.instance_for_execution(*job_execution_id)?)
+                }
+            }
+            ScopeResolutionSource::StepContext {
+                step_execution_id: Some(step_id),
+                ..
+            } => {
+                let step = self
+                    .staged
+                    .step_executions
+                    .get(step_id)
+                    .ok_or(RepositoryError::ScopeResolutionStateCorrupt)?;
+                Some(self.instance_for_execution(step.job_execution_id())?)
+            }
+            ScopeResolutionSource::StepContext {
+                step_execution_id: None,
+                ..
+            }
+            | ScopeResolutionSource::Framework { .. } => None,
+            _ => return Err(RepositoryError::ScopeResolutionStateCorrupt),
+        };
+        if source_instance.is_some_and(|source| source != owner_instance) {
+            return Err(RepositoryError::ScopeResolutionStateCorrupt);
+        }
+        Ok(())
+    }
+
+    fn copy_forward_scope_resolution_provenance(
+        &mut self,
+        source_owner_job: JobExecutionId,
+        source_owner_step: Option<StepExecutionId>,
+        target_owner_job: JobExecutionId,
+        target_owner_step: Option<StepExecutionId>,
+    ) -> Result<(), RepositoryError> {
+        let source_entries = self
+            .staged
+            .scope_resolution_provenance
+            .values()
+            .filter(|entry| {
+                entry.owner_job_execution_id() == source_owner_job
+                    && entry.owner_step_execution_id() == source_owner_step
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        for entry in source_entries {
+            let source = match entry.source() {
+                ScopeResolutionSource::Framework { source, .. } => {
+                    ScopeResolutionSource::Framework {
+                        source: *source,
+                        job_execution_id: target_owner_job,
+                        step_execution_id: target_owner_step,
+                    }
+                }
+                ScopeResolutionSource::JobParameter { .. }
+                | ScopeResolutionSource::JobContext { .. }
+                | ScopeResolutionSource::StepContext { .. } => entry.source().clone(),
+                _ => return Err(RepositoryError::ScopeResolutionStateCorrupt),
+            };
+            let rebound = ScopeResolutionProvenance::new(
+                entry.scope(),
+                entry.component().clone(),
+                entry.input().clone(),
+                target_owner_job,
+                target_owner_step,
+                source,
+            )
+            .map_err(|_| RepositoryError::ScopeResolutionStateCorrupt)?;
+            self.validate_scope_provenance_source(&rebound)?;
+            let key = (
+                rebound.scope(),
+                rebound.component().clone(),
+                rebound.input().clone(),
+                rebound.owner_job_execution_id(),
+                rebound.owner_step_execution_id(),
+            );
+            if self
+                .staged
+                .scope_resolution_provenance
+                .insert(key, rebound)
+                .is_some()
+            {
+                return Err(RepositoryError::ScopeResolutionStateCorrupt);
+            }
+        }
+        Ok(())
+    }
+
     fn matching_nested_job_link(
         &self,
         parent_job_execution_id: JobExecutionId,
@@ -455,6 +568,48 @@ impl InMemoryUnitOfWork<'_> {
         self.staged.step_contexts.remove(&step_execution_id);
     }
 
+    fn scope_source_referenced_by_other_execution(
+        &self,
+        execution_id: JobExecutionId,
+    ) -> Result<bool, RepositoryError> {
+        for provenance in self.staged.scope_resolution_provenance.values() {
+            if provenance.owner_job_execution_id() == execution_id {
+                continue;
+            }
+            let references = match provenance.source() {
+                ScopeResolutionSource::JobParameter {
+                    job_execution_id, ..
+                }
+                | ScopeResolutionSource::JobContext {
+                    job_execution_id, ..
+                }
+                | ScopeResolutionSource::Framework {
+                    job_execution_id, ..
+                } => *job_execution_id == execution_id,
+                ScopeResolutionSource::StepContext {
+                    step_execution_id: Some(step_id),
+                    ..
+                } => {
+                    self.staged
+                        .step_executions
+                        .get(step_id)
+                        .ok_or(RepositoryError::ScopeResolutionStateCorrupt)?
+                        .job_execution_id()
+                        == execution_id
+                }
+                ScopeResolutionSource::StepContext {
+                    step_execution_id: None,
+                    ..
+                } => false,
+                _ => return Err(RepositoryError::ScopeResolutionStateCorrupt),
+            };
+            if references {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     fn purge_eligible(&self, request: &PurgePlanRequest, now: SystemTime) -> Vec<PurgeCandidate> {
         let mut candidates = Vec::new();
         for (instance_id, instance) in &self.staged.instances_by_id {
@@ -486,6 +641,12 @@ impl InMemoryUnitOfWork<'_> {
                     .duration_since(updated_at(execution))
                     .unwrap_or(Duration::ZERO);
                 if age < request.minimum_age() {
+                    continue;
+                }
+                if self
+                    .scope_source_referenced_by_other_execution(execution.id())
+                    .unwrap_or(true)
+                {
                     continue;
                 }
                 candidates.push(PurgeCandidate::new(
@@ -687,7 +848,11 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .job_name()
                 .clone();
             self.ensure_definition(&job_name, &definition)?;
-            if let Some(latest) = self.latest_job_execution(job_instance_id)? {
+            let mut restart_parameters = None;
+            let mut restart_source = None;
+            if let Some(latest) = self.latest_job_execution(job_instance_id)?.cloned() {
+                restart_source = Some(latest.id());
+                restart_parameters = self.staged.job_parameters.get(&latest.id()).cloned();
                 match latest.metadata().status() {
                     BatchStatus::Stopped | BatchStatus::Failed => {}
                     BatchStatus::Completed => {
@@ -714,12 +879,25 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                             instance_id: job_instance_id,
                         },
                     )?;
-                if previous_definition.manifest_digest() != definition.manifest_digest()
+                let definition_changed =
+                    previous_definition.manifest_digest() != definition.manifest_digest();
+                if definition_changed
                     && !self.staged.definition_upgrades.contains_key(&(
-                        job_name,
+                        job_name.clone(),
                         *previous_definition.manifest_digest(),
                         *definition.manifest_digest(),
                     ))
+                {
+                    return Err(RepositoryError::IncompatibleDefinition {
+                        instance_id: job_instance_id,
+                    });
+                }
+                if definition_changed
+                    && self
+                        .staged
+                        .scope_resolution_provenance
+                        .values()
+                        .any(|entry| entry.owner_job_execution_id() == latest.id())
                 {
                     return Err(RepositoryError::IncompatibleDefinition {
                         instance_id: job_instance_id,
@@ -734,13 +912,33 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                     value: id.get(),
                 });
             }
+            let next_attempt = self
+                .staged
+                .next_execution_attempt_by_instance
+                .get(&job_instance_id)
+                .copied()
+                .unwrap_or(0)
+                .checked_add(1)
+                .and_then(std::num::NonZeroU64::new)
+                .ok_or(RepositoryError::ScopeResolutionStateCorrupt)?;
+            let attempt = ExecutionAttempt::new(next_attempt);
             let execution =
                 JobExecution::new(id, job_instance_id, self.create_starting_metadata()?);
             self.staged
                 .execution_updated_at
                 .insert(id, execution.metadata().timestamps().created_at());
             self.staged.job_executions.insert(id, execution.clone());
+            self.staged.execution_attempts.insert(id, attempt);
+            self.staged
+                .next_execution_attempt_by_instance
+                .insert(job_instance_id, attempt.get());
             self.staged.execution_definitions.insert(id, definition);
+            if let Some(parameters) = restart_parameters {
+                self.staged.job_parameters.insert(id, parameters);
+            }
+            if let Some(source_id) = restart_source {
+                self.copy_forward_scope_resolution_provenance(source_id, None, id, None)?;
+            }
             self.staged
                 .job_executions_by_instance
                 .get_mut(&job_instance_id)
@@ -760,6 +958,156 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         Box::pin(async move {
             self.definition_override = Some(definition.clone());
             self.create_job_execution(job_instance_id).await
+        })
+    }
+
+    fn create_job_execution_with_definition_and_parameters<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        definition: &'a DefinitionIdentity,
+        parameters: &'a JobParameters,
+    ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>> {
+        Box::pin(async move {
+            self.definition_override = Some(definition.clone());
+            let execution = self.create_job_execution(job_instance_id).await?;
+            self.staged
+                .job_parameters
+                .insert(execution.id(), parameters.clone());
+            Ok(execution)
+        })
+    }
+
+    fn job_execution_parameters(
+        &mut self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<JobParameters, RepositoryError>> {
+        Box::pin(async move {
+            self.instance_for_execution(job_execution_id)?;
+            self.staged
+                .job_parameters
+                .get(&job_execution_id)
+                .cloned()
+                .ok_or(RepositoryError::ScopeResolutionStateCorrupt)
+        })
+    }
+
+    fn scope_execution_definition(
+        &mut self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<DefinitionIdentity, RepositoryError>> {
+        Box::pin(async move {
+            self.instance_for_execution(job_execution_id)?;
+            self.staged
+                .execution_definitions
+                .get(&job_execution_id)
+                .cloned()
+                .ok_or(RepositoryError::ScopeResolutionStateCorrupt)
+        })
+    }
+
+    fn scope_execution_attempt(
+        &mut self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<std::num::NonZeroU64, RepositoryError>> {
+        Box::pin(async move {
+            self.instance_for_execution(job_execution_id)?;
+            self.staged
+                .execution_attempts
+                .get(&job_execution_id)
+                .and_then(|attempt| std::num::NonZeroU64::new(attempt.get()))
+                .ok_or(RepositoryError::ScopeResolutionStateCorrupt)
+        })
+    }
+
+    fn scope_resolution_provenance<'a>(
+        &'a mut self,
+        scope: ScopeKind,
+        component: &'a ScopedComponentId,
+        owner_job_execution_id: JobExecutionId,
+        owner_step_execution_id: Option<StepExecutionId>,
+    ) -> BoxFuture<'a, Result<Vec<ScopeResolutionProvenance>, RepositoryError>> {
+        Box::pin(async move {
+            self.instance_for_execution(owner_job_execution_id)?;
+            if let Some(step_id) = owner_step_execution_id {
+                let step = self
+                    .staged
+                    .step_executions
+                    .get(&step_id)
+                    .ok_or(RepositoryError::StepExecutionNotFound { id: step_id })?;
+                if step.job_execution_id() != owner_job_execution_id {
+                    return Err(RepositoryError::ScopeResolutionStateCorrupt);
+                }
+            }
+            Ok(self
+                .staged
+                .scope_resolution_provenance
+                .iter()
+                .filter_map(
+                    |((entry_scope, entry_component, _, owner_job, owner_step), entry)| {
+                        (*entry_scope == scope
+                            && entry_component == component
+                            && *owner_job == owner_job_execution_id
+                            && *owner_step == owner_step_execution_id)
+                            .then_some(entry.clone())
+                    },
+                )
+                .collect())
+        })
+    }
+
+    fn store_scope_resolution_provenance<'a>(
+        &'a mut self,
+        entries: &'a [ScopeResolutionProvenance],
+    ) -> BoxFuture<'a, Result<(), RepositoryError>> {
+        Box::pin(async move {
+            if entries.len() > oxide_batch_core::MAX_LATE_BOUND_INPUTS {
+                return Err(RepositoryError::ScopeResolutionStateCorrupt);
+            }
+            let Some(first) = entries.first() else {
+                return Ok(());
+            };
+            let mut inputs = BTreeSet::new();
+            for entry in entries {
+                if entry.scope() != first.scope()
+                    || entry.component() != first.component()
+                    || entry.owner_job_execution_id() != first.owner_job_execution_id()
+                    || entry.owner_step_execution_id() != first.owner_step_execution_id()
+                    || !inputs.insert(entry.input().clone())
+                {
+                    return Err(RepositoryError::ScopeResolutionStateCorrupt);
+                }
+                self.instance_for_execution(entry.owner_job_execution_id())?;
+                if let Some(step_id) = entry.owner_step_execution_id() {
+                    let step = self
+                        .staged
+                        .step_executions
+                        .get(&step_id)
+                        .ok_or(RepositoryError::StepExecutionNotFound { id: step_id })?;
+                    if step.job_execution_id() != entry.owner_job_execution_id() {
+                        return Err(RepositoryError::ScopeResolutionStateCorrupt);
+                    }
+                }
+                self.validate_scope_provenance_source(entry)?;
+                let key = (
+                    entry.scope(),
+                    entry.component().clone(),
+                    entry.input().clone(),
+                    entry.owner_job_execution_id(),
+                    entry.owner_step_execution_id(),
+                );
+                match self.staged.scope_resolution_provenance.get(&key) {
+                    Some(existing) if existing != entry => {
+                        return Err(RepositoryError::ScopeResolutionStateCorrupt);
+                    }
+                    Some(_) => {}
+                    None => {
+                        self.staged
+                            .scope_resolution_provenance
+                            .insert(key, entry.clone());
+                    }
+                }
+            }
+            Ok(())
         })
     }
 
@@ -821,12 +1169,15 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 });
             }
             let prior = self.latest_flow_step_snapshot(instance_id, node_id)?;
+            let source_owner = prior
+                .as_ref()
+                .map(|state| (state.execution().job_execution_id(), state.execution().id()));
             let counts = prior
                 .as_ref()
                 .map_or_else(ExecutionCounts::default, |state| {
                     state.execution().metadata().counts()
                 });
-            let inherited_context = prior.and_then(|state| state.context().cloned());
+            let inherited_context = prior.as_ref().and_then(|state| state.context().cloned());
             let created_at = self.repository.clock.now();
             let metadata = ExecutionMetadata::new(
                 BatchStatus::Starting,
@@ -840,6 +1191,14 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
             self.staged.step_logical_ids.insert(id, node_id.clone());
             if let Some(context) = inherited_context {
                 self.staged.step_contexts.insert(id, context);
+            }
+            if let Some((source_job, source_step)) = source_owner {
+                self.copy_forward_scope_resolution_provenance(
+                    source_job,
+                    Some(source_step),
+                    job_execution_id,
+                    Some(id),
+                )?;
             }
             self.staged
                 .step_executions_by_job
@@ -1044,6 +1403,26 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         Box::pin(async move { self.latest_flow_step_snapshot(job_instance_id, node_id) })
     }
 
+    fn scope_step_state(
+        &mut self,
+        step_execution_id: StepExecutionId,
+    ) -> BoxFuture<'_, Result<Option<FlowStepState>, RepositoryError>> {
+        Box::pin(async move {
+            let Some(execution) = self.staged.step_executions.get(&step_execution_id).cloned()
+            else {
+                return Ok(None);
+            };
+            let node = self
+                .staged
+                .step_logical_ids
+                .get(&step_execution_id)
+                .cloned()
+                .ok_or(RepositoryError::ScopeResolutionStateCorrupt)?;
+            let context = self.staged.step_contexts.get(&step_execution_id).cloned();
+            Ok(Some(FlowStepState::new(node, execution, context)))
+        })
+    }
+
     fn append_flow_decision<'a>(
         &'a mut self,
         request: &'a FlowDecisionRequest,
@@ -1069,8 +1448,12 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .get(&request.job_execution_id())
                 .cloned()
                 .unwrap_or_default();
-            let advanced = manifest.get("format").and_then(serde_json::Value::as_u64)
-                == Some(u64::from(oxide_batch_core::MANIFEST_FORMAT_ADVANCED_FLOW));
+            let advanced = manifest
+                .get("format")
+                .and_then(serde_json::Value::as_u64)
+                .is_some_and(|format| {
+                    format == u64::from(oxide_batch_core::MANIFEST_FORMAT_ADVANCED_FLOW)
+                });
             let duplicate = existing.iter().any(|id| {
                 self.staged.flow_decisions.get(id).is_some_and(|decision| {
                     decision.source_node_id() == request.source_node_id()
@@ -1491,6 +1874,16 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
     }
 
     fn job_execution_context(
+        &mut self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Option<crate::ExecutionContext>, RepositoryError>> {
+        Box::pin(async move {
+            self.instance_for_execution(job_execution_id)?;
+            Ok(None)
+        })
+    }
+
+    fn scope_job_execution_context(
         &mut self,
         job_execution_id: JobExecutionId,
     ) -> BoxFuture<'_, Result<Option<crate::ExecutionContext>, RepositoryError>> {
@@ -2314,6 +2707,11 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                     self.remove_step_execution(step_id);
                 }
                 self.staged.job_executions.remove(&execution_id);
+                self.staged.execution_attempts.remove(&execution_id);
+                self.staged.job_parameters.remove(&execution_id);
+                self.staged
+                    .scope_resolution_provenance
+                    .retain(|(_, _, _, owner_job, _), _| *owner_job != execution_id);
                 self.staged.execution_updated_at.remove(&execution_id);
                 self.staged.owner_tokens.remove(&execution_id);
                 self.staged.execution_definitions.remove(&execution_id);
@@ -2346,6 +2744,9 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 };
                 self.staged.instances_by_key.remove(instance.key());
                 self.staged.job_executions_by_instance.remove(&instance_id);
+                self.staged
+                    .next_execution_attempt_by_instance
+                    .remove(&instance_id);
                 self.staged.instance_created_at.remove(&instance_id);
                 self.staged.holds.remove(&instance_id);
             }

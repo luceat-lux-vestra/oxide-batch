@@ -6,13 +6,14 @@
 use std::error::Error;
 use std::fmt;
 
-use serde_json::Value;
-
+use crate::structured_selector::{
+    SelectorFailure, SourceValue, coerce, context_value, default_value, digest_hex,
+    require_durable_context_source,
+};
 use crate::{
     CompiledExecutionPlan, ExecutionAttempt, FrameworkParameterSource, JobInstanceId, JobParameter,
     JobParameters, JobRepository, NestedJobNode, NestedJobParameterMapping,
-    NestedJobParameterSource, ParameterCoercion, ParameterValue, ParameterValueKind,
-    RepositoryError, RepositoryUnitOfWork,
+    NestedJobParameterSource, ParameterValue, RepositoryError, RepositoryUnitOfWork,
 };
 
 /// Stable, value-redacted nested-job parameter-mapping failure.
@@ -66,9 +67,22 @@ impl From<NestedJobMappingFailure> for NestedJobResolutionError {
     }
 }
 
-enum SourceValue {
-    Parameter(ParameterValue),
-    Json(Value),
+impl From<SelectorFailure> for NestedJobMappingFailure {
+    fn from(error: SelectorFailure) -> Self {
+        match error {
+            SelectorFailure::SourceUnavailable => Self::SourceUnavailable,
+            SelectorFailure::SourceSchemaMismatch => Self::SourceSchemaMismatch,
+            SelectorFailure::SourceTypeMismatch => Self::SourceTypeMismatch,
+            SelectorFailure::CoercionFailed => Self::CoercionFailed,
+            SelectorFailure::InvalidValue => Self::InvalidValue,
+        }
+    }
+}
+
+impl From<SelectorFailure> for NestedJobResolutionError {
+    fn from(error: SelectorFailure) -> Self {
+        Self::Mapping(error.into())
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -181,7 +195,7 @@ async fn resolve_source(
             let Some(context) = unit.job_execution_context(parent_job_execution_id).await? else {
                 return Ok(None);
             };
-            context_value(&context, schema, *schema_version, path)
+            Ok(context_value(&context, schema, *schema_version, path)?)
         }
         NestedJobParameterSource::ParentStepContext {
             node: source_node,
@@ -199,7 +213,7 @@ async fn resolve_source(
             let Some(context) = state.context() else {
                 return Ok(None);
             };
-            context_value(context, schema, *schema_version, path)
+            Ok(context_value(context, schema, *schema_version, path)?)
         }
         NestedJobParameterSource::Framework(source) => {
             let value = match source {
@@ -227,195 +241,5 @@ async fn resolve_source(
             Ok(Some(SourceValue::Parameter(value)))
         }
         _ => Err(NestedJobMappingFailure::InvalidValue.into()),
-    }
-}
-
-fn require_durable_context_source(
-    durable_context_sources: bool,
-) -> Result<(), NestedJobResolutionError> {
-    if durable_context_sources {
-        Ok(())
-    } else {
-        Err(NestedJobMappingFailure::SourceUnavailable.into())
-    }
-}
-
-fn context_value(
-    context: &crate::ExecutionContext,
-    schema: &crate::StateSchemaId,
-    schema_version: crate::StateSchemaVersion,
-    path: &crate::SelectorPath,
-) -> Result<Option<SourceValue>, NestedJobResolutionError> {
-    if context.schema_id() != schema || context.schema_version() != schema_version {
-        return Err(NestedJobMappingFailure::SourceSchemaMismatch.into());
-    }
-    let bytes = context
-        .payload_json()
-        .map_err(|_| NestedJobMappingFailure::InvalidValue)?;
-    let value: Value =
-        serde_json::from_slice(&bytes).map_err(|_| NestedJobMappingFailure::InvalidValue)?;
-    let mut selected = &value;
-    for segment in path.segments() {
-        let Some(next) = selected.as_object().and_then(|object| object.get(segment)) else {
-            return Ok(None);
-        };
-        selected = next;
-    }
-    Ok(Some(SourceValue::Json(selected.clone())))
-}
-
-fn coerce(
-    source: SourceValue,
-    coercion: ParameterCoercion,
-    expected: ParameterValueKind,
-) -> Result<ParameterValue, NestedJobMappingFailure> {
-    let value = match coercion {
-        ParameterCoercion::Exact => exact(source, expected)?,
-        ParameterCoercion::StringToI64 => {
-            let value = source_string(&source)?;
-            ParameterValue::from(
-                value
-                    .parse::<i64>()
-                    .map_err(|_| NestedJobMappingFailure::CoercionFailed)?,
-            )
-        }
-        ParameterCoercion::StringToU64 => {
-            let value = source_string(&source)?;
-            ParameterValue::from(
-                value
-                    .parse::<u64>()
-                    .map_err(|_| NestedJobMappingFailure::CoercionFailed)?,
-            )
-        }
-        ParameterCoercion::StringToBool => {
-            let value = match source_string(&source)? {
-                "true" => true,
-                "false" => false,
-                _ => return Err(NestedJobMappingFailure::CoercionFailed),
-            };
-            ParameterValue::from(value)
-        }
-        ParameterCoercion::I64ToU64 => {
-            let value = source_i64(&source)?;
-            ParameterValue::from(
-                u64::try_from(value).map_err(|_| NestedJobMappingFailure::CoercionFailed)?,
-            )
-        }
-        ParameterCoercion::U64ToI64 => {
-            let value = source_u64(&source)?;
-            ParameterValue::from(
-                i64::try_from(value).map_err(|_| NestedJobMappingFailure::CoercionFailed)?,
-            )
-        }
-        _ => return Err(NestedJobMappingFailure::CoercionFailed),
-    };
-    if value.kind() != expected {
-        return Err(NestedJobMappingFailure::SourceTypeMismatch);
-    }
-    Ok(value)
-}
-
-fn exact(
-    source: SourceValue,
-    expected: ParameterValueKind,
-) -> Result<ParameterValue, NestedJobMappingFailure> {
-    match source {
-        SourceValue::Parameter(value) if value.kind() == expected => Ok(value),
-        SourceValue::Parameter(_) => Err(NestedJobMappingFailure::SourceTypeMismatch),
-        SourceValue::Json(value) => match expected {
-            ParameterValueKind::String => value
-                .as_str()
-                .ok_or(NestedJobMappingFailure::SourceTypeMismatch)
-                .and_then(|value| {
-                    ParameterValue::string(value.to_owned())
-                        .map_err(|_| NestedJobMappingFailure::InvalidValue)
-                }),
-            ParameterValueKind::I64 => value
-                .as_i64()
-                .map(ParameterValue::from)
-                .ok_or(NestedJobMappingFailure::SourceTypeMismatch),
-            ParameterValueKind::U64 => value
-                .as_u64()
-                .map(ParameterValue::from)
-                .ok_or(NestedJobMappingFailure::SourceTypeMismatch),
-            ParameterValueKind::Bool => value
-                .as_bool()
-                .map(ParameterValue::from)
-                .ok_or(NestedJobMappingFailure::SourceTypeMismatch),
-            _ => Err(NestedJobMappingFailure::SourceTypeMismatch),
-        },
-    }
-}
-
-fn source_string(source: &SourceValue) -> Result<&str, NestedJobMappingFailure> {
-    match source {
-        SourceValue::Parameter(value) => value
-            .as_str()
-            .ok_or(NestedJobMappingFailure::SourceTypeMismatch),
-        SourceValue::Json(value) => value
-            .as_str()
-            .ok_or(NestedJobMappingFailure::SourceTypeMismatch),
-    }
-}
-
-fn source_i64(source: &SourceValue) -> Result<i64, NestedJobMappingFailure> {
-    match source {
-        SourceValue::Parameter(value) => value
-            .as_i64()
-            .ok_or(NestedJobMappingFailure::SourceTypeMismatch),
-        SourceValue::Json(value) => value
-            .as_i64()
-            .ok_or(NestedJobMappingFailure::SourceTypeMismatch),
-    }
-}
-
-fn source_u64(source: &SourceValue) -> Result<u64, NestedJobMappingFailure> {
-    match source {
-        SourceValue::Parameter(value) => value
-            .as_u64()
-            .ok_or(NestedJobMappingFailure::SourceTypeMismatch),
-        SourceValue::Json(value) => value
-            .as_u64()
-            .ok_or(NestedJobMappingFailure::SourceTypeMismatch),
-    }
-}
-
-fn default_value(kind: ParameterValueKind) -> Result<ParameterValue, NestedJobMappingFailure> {
-    match kind {
-        ParameterValueKind::String => {
-            ParameterValue::string(String::new()).map_err(|_| NestedJobMappingFailure::InvalidValue)
-        }
-        ParameterValueKind::I64 => Ok(ParameterValue::from(0_i64)),
-        ParameterValueKind::U64 => Ok(ParameterValue::from(0_u64)),
-        ParameterValueKind::Bool => Ok(ParameterValue::from(false)),
-        _ => Err(NestedJobMappingFailure::InvalidValue),
-    }
-}
-
-fn digest_hex(digest: &[u8; 32]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut encoded = String::with_capacity(64);
-    for byte in digest {
-        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
-        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
-    }
-    encoded
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        NestedJobMappingFailure, NestedJobResolutionError, require_durable_context_source,
-    };
-
-    #[test]
-    fn unavailable_durable_context_source_fails_closed() {
-        assert!(matches!(
-            require_durable_context_source(false),
-            Err(NestedJobResolutionError::Mapping(
-                NestedJobMappingFailure::SourceUnavailable
-            ))
-        ));
-        assert!(require_durable_context_source(true).is_ok());
     }
 }

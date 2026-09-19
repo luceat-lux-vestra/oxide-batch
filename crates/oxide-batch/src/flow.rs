@@ -44,7 +44,11 @@ pub(crate) fn decision_matches_manifest(manifest: &Value, request: &FlowDecision
     ) {
         return false;
     }
-    let advanced = format == Some(u64::from(oxide_batch_core::MANIFEST_FORMAT_ADVANCED_FLOW));
+    let advanced = matches!(
+        format,
+        Some(value)
+            if value == u64::from(oxide_batch_core::MANIFEST_FORMAT_ADVANCED_FLOW)
+    );
     let source_is_declared = document
         .get("nodes")
         .and_then(Value::as_array)
@@ -1362,14 +1366,19 @@ impl Error for FlowRuntimeError {
 /// action is applied: a plan that is never purged does not need the deployment
 /// to support purging.
 fn plan_capabilities(plan: &CompiledExecutionPlan) -> BTreeSet<RepositoryCapability> {
-    plan.nodes()
+    let mut required = plan
+        .nodes()
         .filter_map(|(_, node)| match node {
             FlowNode::PartitionedStep(_) => Some(RepositoryCapability::StepPartitions),
             FlowNode::NestedJob(_) => Some(RepositoryCapability::NestedJobs),
             FlowNode::CustomLeaf(_) => Some(RepositoryCapability::CustomLeafState),
             _ => None,
         })
-        .collect()
+        .collect::<BTreeSet<_>>();
+    if plan.scoped_components().len() != 0 {
+        required.insert(RepositoryCapability::ScopeResolution);
+    }
+    required
 }
 
 impl From<RepositoryError> for FlowRuntimeError {
@@ -1486,7 +1495,7 @@ impl<'a> FlowLauncher<'a> {
         let split_tasklets = job.materialize_split_tasklets()?;
         let key = JobInstanceKey::new(job.name.clone(), parameters);
         let (instance, mut execution, attempt) = self
-            .create_job_execution(&key, job.plan.definition_identity())
+            .create_job_execution(&key, &job.plan, parameters)
             .await?;
         execution = self.start_job(&execution).await?;
         self.poll_execution_control(execution.id(), stop_token)
@@ -3483,17 +3492,27 @@ impl<'a> FlowLauncher<'a> {
     async fn create_job_execution(
         &self,
         key: &JobInstanceKey,
-        definition: &crate::DefinitionIdentity,
+        plan: &crate::CompiledExecutionPlan,
+        parameters: &JobParameters,
     ) -> Result<(JobInstance, JobExecution, ExecutionAttempt), FlowRuntimeError> {
+        let definition = plan.definition_identity();
         let mut unit = self.repository.begin().await?;
         let instance = unit
             .select_or_create_job_instance(key)
             .await?
             .instance()
             .clone();
-        let execution = unit
-            .create_job_execution_with_definition(instance.id(), definition)
-            .await?;
+        let execution = if plan.scoped_components().len() != 0 {
+            unit.create_job_execution_with_definition_and_parameters(
+                instance.id(),
+                definition,
+                parameters,
+            )
+            .await?
+        } else {
+            unit.create_job_execution_with_definition(instance.id(), definition)
+                .await?
+        };
         let execution = if let Some((owner, _)) = self.execution_control {
             unit.claim_execution_owner(
                 execution.id(),
@@ -4485,7 +4504,10 @@ fn decision_sequence_for(
     source: &NodeId,
     observed_count: usize,
 ) -> Result<FlowDecisionSequence, FlowRuntimeError> {
-    if plan.manifest_format() == oxide_batch_core::MANIFEST_FORMAT_ADVANCED_FLOW {
+    if matches!(
+        plan.manifest_format(),
+        oxide_batch_core::MANIFEST_FORMAT_ADVANCED_FLOW
+    ) {
         let sequence = plan
             .decision_sequence(source)
             .ok_or(FlowRuntimeError::Repository(

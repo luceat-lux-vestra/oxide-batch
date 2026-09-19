@@ -112,6 +112,18 @@ pub const SCHEMA4_TABLES: &[&str] = &["ob_component_state"];
 /// Empty: see [`SCHEMA4_TABLES`].
 pub const SCHEMA4_COLUMNS: &[(&str, &str)] = &[];
 
+/// The table schema 5 added to schema 4.
+pub const SCHEMA5_TABLES: &[&str] = &["ob_nested_job_link"];
+
+/// Columns schema 5 added to tables schema 4 already declared.
+pub const SCHEMA5_COLUMNS: &[(&str, &str)] = &[];
+
+/// The table schema 6 added to schema 5.
+pub const SCHEMA6_TABLES: &[&str] = &["ob_scope_resolution_provenance"];
+
+/// Columns schema 6 added to tables schema 5 already declared.
+pub const SCHEMA6_COLUMNS: &[(&str, &str)] = &[];
+
 /// Columns schema 2 added to tables schema 1 already declared.
 pub const SCHEMA2_COLUMNS: &[(&str, &str)] = &[
     ("ob_step_execution", "step_logical_id"),
@@ -290,6 +302,8 @@ pub async fn assert_historical_shape(url: &str, version: u32) -> Result<(), Box<
         (version >= 2, SCHEMA2_TABLES, SCHEMA2_COLUMNS),
         (version >= 3, SCHEMA3_TABLES, SCHEMA3_COLUMNS),
         (version >= 4, SCHEMA4_TABLES, SCHEMA4_COLUMNS),
+        (version >= 5, SCHEMA5_TABLES, SCHEMA5_COLUMNS),
+        (version >= 6, SCHEMA6_TABLES, SCHEMA6_COLUMNS),
     ] {
         for table in tables {
             if table_exists(url, table).await? != present {

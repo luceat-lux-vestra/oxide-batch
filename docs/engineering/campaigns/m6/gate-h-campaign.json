@@ -1,13 +1,13 @@
 {
   "binary_size_and_compile_time": {
     "boxed": {
-      "binary_size_bytes": 1810408,
-      "compile_time_seconds": 27.980242511,
+      "binary_size_bytes": 1815128,
+      "compile_time_seconds": 38.597235338,
       "target_directory_isolation": "clean-per-reference"
     },
     "typed": {
-      "binary_size_bytes": 1791336,
-      "compile_time_seconds": 28.808165749,
+      "binary_size_bytes": 1796056,
+      "compile_time_seconds": 38.518093167,
       "target_directory_isolation": "clean-per-reference"
     }
   },
@@ -18,7 +18,7 @@
     "os": "linux",
     "profile": "release",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+    "source_commit": "fefd3732a99b5c89a0f14001824d250742b0b373",
     "source_tree_clean": true
   },
   "hard_invariants": {
@@ -34,7 +34,7 @@
   "no_invented_threshold_note": "Throughput, latency, allocation-delta, binary-size, and compile-time numbers are retained as disclosure evidence per the frozen protocol; none is compared against an invented pass/fail threshold by this runner.",
   "observation": {
     "execution_manifest": {
-      "execution_commit": "6b4ccaf503db504329a2b7323e9ef9fff7b1fda4",
+      "execution_commit": "fefd3732a99b5c89a0f14001824d250742b0b373",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -42,13 +42,13 @@
         "Cargo.lock": "3371d04d0a34097b91eb09e4347030468d703f90",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
-        "crates/oxide-batch-core/src": "30bad9491dc7dd68e877316822e726af7c27ae25",
+        "crates/oxide-batch-core/src": "c86a8e09ee0993d9d3ab2fe6b5ef2899e2c476dd",
         "crates/oxide-batch-plan/Cargo.toml": "6c327e26d3fb6cb0e5572432ea8e0e5b09b36c72",
-        "crates/oxide-batch-plan/src": "65abf01728482850986364ab922ea9b7f97fe0b1",
+        "crates/oxide-batch-plan/src": "7ba3721cb87e6a6067fd626455156a2fa5345c00",
         "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
         "crates/oxide-batch/examples/gate_h_boxed_reference.rs": "8f574d70530b27964063c1d4eb4f0a55abc96b53",
         "crates/oxide-batch/examples/gate_h_typed_reference.rs": "fe4e142d1159876291e609ec9654160d423f7d03",
-        "crates/oxide-batch/src": "c4494e35a82631a5af75d83bd7346a265a7e2f44",
+        "crates/oxide-batch/src": "40868cc9d205116fd6c02a8d0a523f00d644b16a",
         "crates/oxide-batch/tests/gate_h_allocation.rs": "7c39944fb14c2a01d0b7f861bbab3e550a92879b",
         "crates/oxide-batch/tests/gate_h_dispatch.rs": "43864d2adf603de48e11a6d2c26c774b7e42461c",
         "crates/oxide-batch/tests/gate_h_throughput.rs": "54e51ec7bfa119ab45373f4f4ec3cac03e0e6087",
@@ -180,17 +180,17 @@
     {
       "observation": {
         "boxed": {
-          "max_nanoseconds": 215564357,
-          "mean_nanoseconds": 125563470,
-          "min_nanoseconds": 60576552,
+          "max_nanoseconds": 70447323,
+          "mean_nanoseconds": 70014955,
+          "min_nanoseconds": 69428702,
           "raw_latency_nanoseconds": [
-            90808650,
-            120133884,
-            140733908,
-            215564357,
-            60576552
+            69874999,
+            69428702,
+            70334821,
+            70447323,
+            69988932
           ],
-          "throughput_items_per_second": 398204.9874856118
+          "throughput_items_per_second": 714133.1448402702
         },
         "buffer_reuse": {
           "note": "Delimited component internal buffer reuse is not exposed as a counter.",
@@ -204,17 +204,17 @@
           "typed_per_item_future_allocations": 0
         },
         "typed": {
-          "max_nanoseconds": 168298807,
-          "mean_nanoseconds": 134884277,
-          "min_nanoseconds": 86100229,
+          "max_nanoseconds": 71089477,
+          "mean_nanoseconds": 70751270,
+          "min_nanoseconds": 70258549,
           "raw_latency_nanoseconds": [
-            168298807,
-            86100229,
-            152391572,
-            138671263,
-            128959516
+            70815884,
+            71089477,
+            70510902,
+            70258549,
+            71081542
           ],
-          "throughput_items_per_second": 370688.1269786545
+          "throughput_items_per_second": 706701.0952594914
         },
         "workload": {
           "chunk_size": 50000,
