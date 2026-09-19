@@ -4359,6 +4359,21 @@ impl<'a> FlowLauncher<'a> {
             }
         }
 
+        let step_owner = crate::scope_runtime::ScopeStepOwner {
+            execution_id: created.id(),
+            node_id,
+            step_name: step.name(),
+        };
+        let mut step_scope = self
+            .build_live_scope(
+                job,
+                ScopeKind::Step,
+                correlation.job_instance_id(),
+                created.job_execution_id(),
+                correlation.job_attempt(),
+                Some(step_owner),
+            )
+            .await?;
         let started = self.start_step(&created).await?;
         let terminal_rollback = AtomicBool::new(false);
         let tasklet_context = TaskletContext::new_for_flow(
@@ -4368,15 +4383,26 @@ impl<'a> FlowLauncher<'a> {
             stop_token,
             correlation,
             &terminal_rollback,
+            job_scope,
+            step_scope.as_ref(),
         );
-        let invoked = self
+        let invoked = match self
             .invoke_with_execution_control(
                 correlation.job_execution_id(),
                 step.tasklet(),
                 tasklet_context,
                 stop_token,
             )
-            .await?;
+            .await
+        {
+            Ok(invoked) => invoked,
+            Err(error) => {
+                if let Some(scope) = step_scope.as_mut() {
+                    let _ = scope.close().await;
+                }
+                return Err(error);
+            }
+        };
         let (mut outcome, mut exit, tasklet_failure) = match invoked {
             Ok(TaskletOutcome::Completed) if !stop_token.is_stop_requested() => (
                 TaskletExecutionOutcome::Completed,
@@ -4434,10 +4460,24 @@ impl<'a> FlowLauncher<'a> {
             };
             exit = ExitStatus::failed();
         }
+        let cleanup = match step_scope.as_mut() {
+            Some(scope) => scope.close().await,
+            None => crate::scope_live::ScopeCleanupReport::default(),
+        };
+        let cleanup_is_primary = !cleanup.is_clean()
+            && outcome == TaskletExecutionOutcome::Completed;
+        let cleanup_summary = cleanup_is_primary
+            .then(|| self.next_failure_summary(FailureCategory::UserComponent))
+            .transpose()?;
+        if cleanup_is_primary {
+            outcome = TaskletExecutionOutcome::Failed(TaskletFailure::Error);
+            exit = ExitStatus::failed();
+        }
         let failure = failures
             .first()
             .map(|failure| failure.summary())
-            .or(tasklet_summary);
+            .or(tasklet_summary)
+            .or(cleanup_summary);
         let durable = self.reload_step(started.id()).await?;
         let execution = self
             .finish_step(
@@ -4464,18 +4504,25 @@ impl<'a> FlowLauncher<'a> {
             outcome,
             exit_status: exit,
             failure,
-            flow_failure: match outcome {
-                TaskletExecutionOutcome::Failed(value) => Some(
-                    if matches!(
-                        value,
-                        TaskletFailure::ListenerError | TaskletFailure::ListenerPanic
-                    ) {
-                        FlowFailure::Listener(value)
-                    } else {
-                        FlowFailure::Tasklet(value)
-                    },
-                ),
-                _ => None,
+            flow_failure: if cleanup_is_primary {
+                Some(FlowFailure::ScopedCleanup {
+                    scope: ScopeKind::Step,
+                    failures: cleanup.failures().len(),
+                })
+            } else {
+                match outcome {
+                    TaskletExecutionOutcome::Failed(value) => Some(
+                        if matches!(
+                            value,
+                            TaskletFailure::ListenerError | TaskletFailure::ListenerPanic
+                        ) {
+                            FlowFailure::Listener(value)
+                        } else {
+                            FlowFailure::Tasklet(value)
+                        },
+                    ),
+                    _ => None,
+                }
             },
             listener_failures: failures,
         })
