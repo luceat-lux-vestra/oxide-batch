@@ -1908,11 +1908,13 @@ impl<'a> FlowLauncher<'a> {
                             )?;
                             let run = self
                                 .run_step(
+                                    job,
                                     &node_id,
                                     tasklet,
                                     created,
                                     parameters,
                                     stop_token,
+                                    job_scope,
                                     &correlation,
                                 )
                                 .await?;
@@ -2066,6 +2068,7 @@ impl<'a> FlowLauncher<'a> {
                             )?;
                             let run = self
                                 .run_custom_leaf(
+                                    job,
                                     job.plan.fingerprint(),
                                     compiled,
                                     registration,
@@ -2073,6 +2076,7 @@ impl<'a> FlowLauncher<'a> {
                                     created,
                                     parameters,
                                     stop_token,
+                                    job_scope,
                                     &correlation,
                                 )
                                 .await?;
@@ -3078,11 +3082,13 @@ impl<'a> FlowLauncher<'a> {
             )?;
             let run = self
                 .run_step(
+                    job,
                     compiled.id(),
                     tasklet,
                     created,
                     parameters,
                     stop,
+                    job_scope,
                     &correlation,
                 )
                 .await?;
@@ -4073,6 +4079,7 @@ impl<'a> FlowLauncher<'a> {
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     async fn run_custom_leaf(
         &self,
+        job: &FlowJob,
         fingerprint: &[u8; 32],
         compiled: &crate::CustomLeafNode,
         registration: &crate::CustomLeafRegistration,
@@ -4080,6 +4087,7 @@ impl<'a> FlowLauncher<'a> {
         created: StepExecution,
         parameters: &JobParameters,
         stop_token: &StopToken,
+        job_scope: Option<&crate::scope_live::LiveScope>,
         correlation: &ExecutionCorrelation,
     ) -> Result<StepRun, FlowRuntimeError> {
         let context = ListenerContext::new(correlation, parameters, stop_token);
@@ -4292,11 +4300,13 @@ impl<'a> FlowLauncher<'a> {
     #[allow(clippy::too_many_lines)]
     async fn run_step(
         &self,
+        job: &FlowJob,
         node_id: &NodeId,
         step: &TaskletStep,
         created: StepExecution,
         parameters: &JobParameters,
         stop_token: &StopToken,
+        job_scope: Option<&crate::scope_live::LiveScope>,
         correlation: &ExecutionCorrelation,
     ) -> Result<StepRun, FlowRuntimeError> {
         let context = ListenerContext::new(correlation, parameters, stop_token);
