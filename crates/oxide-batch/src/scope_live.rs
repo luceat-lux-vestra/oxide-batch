@@ -244,17 +244,44 @@ impl fmt::Display for ScopeRegistrationError {
 
 impl std::error::Error for ScopeRegistrationError {}
 
+/// Stable, value-redacted live scope construction failure category.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ScopeBuildFailureKind {
+#[non_exhaustive]
+pub enum ScopeBuildFailureKind {
+    /// More registrations were supplied than one scope permits.
     TooManyComponents,
+    /// One logical component was registered more than once.
     DuplicateComponent,
+    /// A registration belongs to the other scope kind.
     WrongScope,
+    /// A declared process-local dependency has no registration.
     MissingDependency,
+    /// The process-local dependency graph contains a cycle.
     DependencyCycle,
+    /// The dependency graph exceeds the public scoped dependency-depth ceiling.
     DependencyDepthExceeded,
+    /// Resolved late-bound inputs are missing for a registration.
     MissingInputs,
+    /// The application factory returned a value-redacted rejection.
     FactoryRejected,
+    /// The application factory panicked at the framework boundary.
     FactoryPanicked,
+}
+
+impl fmt::Display for ScopeBuildFailureKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::TooManyComponents => "too many scoped components",
+            Self::DuplicateComponent => "duplicate scoped component",
+            Self::WrongScope => "scoped component belongs to the wrong scope",
+            Self::MissingDependency => "scoped component dependency is missing",
+            Self::DependencyCycle => "scoped component dependency cycle",
+            Self::DependencyDepthExceeded => "scoped component dependency depth exceeded",
+            Self::MissingInputs => "scoped component resolved inputs are missing",
+            Self::FactoryRejected => "scoped component factory rejected construction",
+            Self::FactoryPanicked => "scoped component factory panicked",
+        })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
