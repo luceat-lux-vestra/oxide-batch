@@ -421,10 +421,6 @@ mod listener;
 mod nested_job_runtime;
 mod repository;
 mod runtime;
-#[allow(
-    dead_code,
-    reason = "#277 live-scope core is validated before launcher integration exposes it"
-)]
 mod scope_live;
 #[allow(
     dead_code,
@@ -565,6 +561,11 @@ pub use runtime::{
     BlockingTasklet, BlockingTaskletAdapter, BlockingTaskletContext, JobLauncher, LaunchError,
     LaunchReport, StopPollInterval, StopSource, StopTiming, StopToken, Tasklet, TaskletContext,
     TaskletError, TaskletExecutionOutcome, TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep,
+};
+pub use scope_live::{
+    MAX_SCOPED_DEPENDENCY_DEPTH, ScopeRegistrationError, ScopedCleanupError,
+    ScopedComponentFactory, ScopedComponentHandle, ScopedComponentRegistration,
+    ScopedFactoryContext, ScopedFactoryError,
 };
 pub use scope_runtime::ScopeResolutionFailure;
 pub use service::{
