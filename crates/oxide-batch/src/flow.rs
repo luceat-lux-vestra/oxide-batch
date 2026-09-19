@@ -1456,6 +1456,8 @@ pub enum FlowRuntimeError {
     ScopeConstruction {
         /// Attempt-local scope that could not be constructed.
         scope: ScopeKind,
+        /// Stable value-redacted construction failure category.
+        failure: crate::ScopeBuildFailureKind,
         /// Logical component nearest the failure, when available.
         component: Option<ScopedComponentId>,
         /// Number of secondary cleanup failures observed while unwinding.
@@ -1509,10 +1511,15 @@ impl fmt::Display for FlowRuntimeError {
             ),
             Self::ScopeConstruction {
                 scope,
+                failure,
                 component,
                 cleanup_failures,
             } => {
-                write!(formatter, "{} live scope construction failed", scope.as_str())?;
+                write!(
+                    formatter,
+                    "{} live scope construction failed: {failure}",
+                    scope.as_str()
+                )?;
                 if let Some(component) = component {
                     write!(formatter, " near {}", component.as_str())?;
                 }
@@ -3773,6 +3780,7 @@ impl<'a> FlowLauncher<'a> {
             .map(Some)
             .map_err(|failure| FlowRuntimeError::ScopeConstruction {
                 scope,
+                failure: failure.kind(),
                 component: failure.component().cloned(),
                 cleanup_failures: failure.cleanup_failures(),
             })
