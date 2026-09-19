@@ -25,9 +25,10 @@ use crate::{
     JobInstanceId, JobInstanceKey, JobName, JobParameters, JobRepository, LifecycleTransition,
     ListenerContext, ListenerFailure, ListenerFailureKind, ListenerPhase, NodeId, PartitionKey,
     PartitionPlanEntry, RepositoryCapability, RepositoryError, RetryOrdinal, RetryReservation,
-    SkipCounts, StartLimit, StepExecution, StepExecutionId, StepName, StepPartition,
-    StopPollInterval, StopTiming, StopToken, TaskletContext, TaskletExecutionOutcome,
-    TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep, TerminalKind,
+    ScopeKind, ScopedComponentId, SkipCounts, StartLimit, StepExecution, StepExecutionId,
+    StepName, StepPartition, StopPollInterval, StopTiming, StopToken, TaskletContext,
+    TaskletExecutionOutcome, TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep,
+    TerminalKind,
 };
 
 pub(crate) fn decision_matches_manifest(manifest: &Value, request: &FlowDecisionRequest) -> bool {
