@@ -20,6 +20,10 @@ use crate::{
 /// Maximum dependency-chain depth accepted for one live component scope.
 pub const MAX_SCOPED_DEPENDENCY_DEPTH: usize = 32;
 
+/// Opaque process-local handle to one live scoped component.
+///
+/// The value is never serialized; applications may recover the concrete type
+/// with [`Self::downcast_ref`].
 #[derive(Clone)]
 pub struct ScopedComponentHandle {
     value: Arc<dyn Any + Send + Sync>,
@@ -60,11 +64,29 @@ impl fmt::Debug for ScopedComponentHandle {
     }
 }
 
+/// Value-redacted application factory failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScopedFactoryError;
 
+impl fmt::Display for ScopedFactoryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("scoped component factory failed")
+    }
+}
+
+impl std::error::Error for ScopedFactoryError {}
+
+/// Value-redacted application cleanup failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScopedCleanupError;
+
+impl fmt::Display for ScopedCleanupError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("scoped component cleanup failed")
+    }
+}
+
+impl std::error::Error for ScopedCleanupError {}
 
 /// Borrowed, process-local inputs supplied to one scoped component factory.
 pub struct ScopedFactoryContext<'a> {
@@ -96,18 +118,30 @@ impl<'a> ScopedFactoryContext<'a> {
     }
 }
 
+/// Application-owned factory and cleanup contract for one live scoped component.
+///
+/// Factories receive only explicit resolved inputs and already-constructed
+/// dependency handles; the framework performs no ambient lookup.
 pub trait ScopedComponentFactory: Send + Sync {
+    /// Constructs one attempt-local component instance.
     fn create<'a>(
         &'a self,
         context: ScopedFactoryContext<'a>,
     ) -> BoxFuture<'a, Result<ScopedComponentHandle, ScopedFactoryError>>;
 
+    /// Releases one successfully constructed component.
+    ///
+    /// Cleanup is invoked at most once by the owning live scope.
     fn cleanup(
         &self,
         component: ScopedComponentHandle,
     ) -> BoxFuture<'_, Result<(), ScopedCleanupError>>;
 }
 
+/// Explicit application registration for one compiled scoped component.
+///
+/// Factory kind and revision are checked against the compiled definition
+/// before durable launch. Dependencies are process-local assembly edges.
 #[derive(Clone)]
 pub struct ScopedComponentRegistration {
     scope: ScopeKind,
@@ -190,10 +224,25 @@ impl fmt::Debug for ScopedComponentRegistration {
     }
 }
 
+/// Stable validation failure for a scoped component registration.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum ScopeRegistrationError {
+    /// The registration names one dependency more than once.
     DuplicateDependency,
 }
+
+impl fmt::Display for ScopeRegistrationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateDependency => formatter.write_str(
+                "scoped component registration contains a duplicate dependency",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ScopeRegistrationError {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ScopeBuildFailureKind {
