@@ -1685,12 +1685,22 @@ impl<'a> FlowLauncher<'a> {
         let (instance, mut execution, attempt) = self
             .create_job_execution(&key, &job.plan, parameters)
             .await?;
+        let mut job_scope = self
+            .build_live_scope(
+                job,
+                ScopeKind::Job,
+                instance.id(),
+                execution.id(),
+                attempt,
+                None,
+            )
+            .await?;
         execution = self.start_job(&execution).await?;
         self.poll_execution_control(execution.id(), stop_token)
             .await?;
         self.observe_process_shutdown(stop_token);
 
-        let run = match self
+        let run_result = self
             .run_scope(
                 job,
                 job.plan.root_scope(),
@@ -1700,10 +1710,16 @@ impl<'a> FlowLauncher<'a> {
                 attempt,
                 parameters,
                 stop_token,
+                job_scope.as_ref(),
                 0,
             )
-            .await
-        {
+            .await;
+        let job_cleanup = match job_scope.as_mut() {
+            Some(scope) => scope.close().await,
+            None => crate::scope_live::ScopeCleanupReport::default(),
+        };
+
+        let mut run = match run_result {
             Ok(run) => run,
             Err(
                 error @ FlowRuntimeError::Repository(RepositoryError::NestedJobChildUnresolved {
@@ -1719,6 +1735,16 @@ impl<'a> FlowLauncher<'a> {
             }
             Err(error) => return Err(error),
         };
+        if !job_cleanup.is_clean() && run.status == BatchStatus::Completed {
+            let failure = self.next_failure_summary(FailureCategory::UserComponent)?;
+            run.status = BatchStatus::Failed;
+            run.exit_status = ExitStatus::failed();
+            run.failure = Some(failure);
+            run.flow_failure = Some(FlowFailure::ScopedCleanup {
+                scope: ScopeKind::Job,
+                failures: job_cleanup.failures().len(),
+            });
+        }
         let outcome = match run.status {
             BatchStatus::Completed => FlowExecutionOutcome::Completed,
             BatchStatus::Stopped => FlowExecutionOutcome::Stopped,
@@ -1756,6 +1782,7 @@ impl<'a> FlowLauncher<'a> {
         attempt: ExecutionAttempt,
         parameters: &'b JobParameters,
         stop_token: &'b StopToken,
+        job_scope: Option<&'b crate::scope_live::LiveScope>,
         ordinal_base: usize,
     ) -> BoxFuture<'b, Result<ScopeRun, FlowRuntimeError>> {
         Box::pin(async move {
