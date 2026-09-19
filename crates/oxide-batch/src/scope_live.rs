@@ -17,7 +17,7 @@ use crate::{
     ScopeFactoryKind, ScopeKind, ScopedComponentId,
 };
 
-pub(crate) const MAX_SCOPED_DEPENDENCY_DEPTH: usize = 32;
+/// Maximum dependency-chain depth accepted for one live component scope.\npub const MAX_SCOPED_DEPENDENCY_DEPTH: usize = 32;
 
 #[derive(Clone)]
 pub(crate) struct ScopedComponentHandle {
@@ -25,7 +25,7 @@ pub(crate) struct ScopedComponentHandle {
 }
 
 impl ScopedComponentHandle {
-    pub(crate) fn new<T>(value: T) -> Self
+    /// Wraps one process-local component value.\n    #[must_use]\n    pub fn new<T>(value: T) -> Self
     where
         T: Any + Send + Sync,
     {
@@ -34,7 +34,7 @@ impl ScopedComponentHandle {
         }
     }
 
-    pub(crate) fn downcast_ref<T>(&self) -> Option<&T>
+    /// Borrows the component when its concrete type is `T`.\n    #[must_use]\n    pub fn downcast_ref<T>(&self) -> Option<&T>
     where
         T: Any + Send + Sync,
     {
@@ -61,7 +61,7 @@ pub(crate) struct ScopedFactoryError;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ScopedCleanupError;
 
-pub(crate) struct ScopedFactoryContext<'a> {
+/// Borrowed, process-local inputs supplied to one scoped component factory.\npub struct ScopedFactoryContext<'a> {
     inputs: &'a BTreeMap<ParameterName, ParameterValue>,
     dependencies: &'a BTreeMap<ScopedComponentId, ScopedComponentHandle>,
 }
@@ -77,11 +77,11 @@ impl<'a> ScopedFactoryContext<'a> {
         }
     }
 
-    pub(crate) const fn inputs(&self) -> &'a BTreeMap<ParameterName, ParameterValue> {
+    /// Borrows the already-resolved late-bound inputs.\n    #[must_use]\n    pub const fn inputs(&self) -> &'a BTreeMap<ParameterName, ParameterValue> {
         self.inputs
     }
 
-    pub(crate) fn dependency(&self, id: &ScopedComponentId) -> Option<&ScopedComponentHandle> {
+    /// Borrows one already-constructed declared dependency.\n    #[must_use]\n    pub fn dependency(&self, id: &ScopedComponentId) -> Option<&ScopedComponentHandle> {
         self.dependencies.get(id)
     }
 }
@@ -109,7 +109,7 @@ pub(crate) struct ScopedComponentRegistration {
 }
 
 impl ScopedComponentRegistration {
-    pub(crate) fn new(
+    /// Creates one explicit factory registration.\n    ///\n    /// # Errors\n    ///\n    /// Rejects duplicate dependency identifiers.\n    pub fn new(
         scope: ScopeKind,
         id: ScopedComponentId,
         factory_kind: ScopeFactoryKind,
@@ -131,23 +131,23 @@ impl ScopedComponentRegistration {
         })
     }
 
-    pub(crate) const fn scope(&self) -> ScopeKind {
+    /// Returns the attempt-local scope kind.\n    #[must_use]\n    pub const fn scope(&self) -> ScopeKind {
         self.scope
     }
 
-    pub(crate) const fn id(&self) -> &ScopedComponentId {
+    /// Borrows the compiled logical component identifier.\n    #[must_use]\n    pub const fn id(&self) -> &ScopedComponentId {
         &self.id
     }
 
-    pub(crate) const fn factory_kind(&self) -> &ScopeFactoryKind {
+    /// Borrows the application factory kind.\n    #[must_use]\n    pub const fn factory_kind(&self) -> &ScopeFactoryKind {
         &self.factory_kind
     }
 
-    pub(crate) const fn factory_revision(&self) -> &ComponentRevision {
+    /// Borrows the restart-relevant factory revision.\n    #[must_use]\n    pub const fn factory_revision(&self) -> &ComponentRevision {
         &self.factory_revision
     }
 
-    pub(crate) fn dependencies(&self) -> &[ScopedComponentId] {
+    /// Borrows process-local dependency identifiers in canonical order.\n    #[must_use]\n    pub fn dependencies(&self) -> &[ScopedComponentId] {
         &self.dependencies
     }
 }
