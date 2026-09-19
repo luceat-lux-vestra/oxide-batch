@@ -92,10 +92,10 @@ pub(crate) trait ScopedComponentFactory: Send + Sync {
         context: ScopedFactoryContext<'a>,
     ) -> BoxFuture<'a, Result<ScopedComponentHandle, ScopedFactoryError>>;
 
-    fn cleanup<'a>(
-        &'a self,
+    fn cleanup(
+        &self,
         component: ScopedComponentHandle,
-    ) -> BoxFuture<'a, Result<(), ScopedCleanupError>>;
+    ) -> BoxFuture<'_, Result<(), ScopedCleanupError>>;
 }
 
 #[derive(Clone)]
@@ -320,11 +320,11 @@ struct ScopeBuilder<'a> {
     order: Vec<ScopedComponentId>,
 }
 
-impl<'a> ScopeBuilder<'a> {
-    fn construct<'b>(
-        &'b mut self,
+impl ScopeBuilder<'_> {
+    fn construct(
+        &mut self,
         id: ScopedComponentId,
-    ) -> BoxFuture<'b, Result<ScopedComponentHandle, ScopeBuildFailure>> {
+    ) -> BoxFuture<'_, Result<ScopedComponentHandle, ScopeBuildFailure>> {
         Box::pin(async move {
             if let Some(entry) = self.entries.get(&id) {
                 return Ok(entry.handle.clone());
@@ -485,7 +485,7 @@ fn validate_node(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
+    #![allow(clippy::expect_used, clippy::panic)]
 
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -535,10 +535,10 @@ mod tests {
             })
         }
 
-        fn cleanup<'a>(
-            &'a self,
+        fn cleanup(
+            &self,
             component: ScopedComponentHandle,
-        ) -> BoxFuture<'a, Result<(), ScopedCleanupError>> {
+        ) -> BoxFuture<'_, Result<(), ScopedCleanupError>> {
             Box::pin(async move {
                 self.cleanups.fetch_add(1, Ordering::SeqCst);
                 let value = component
