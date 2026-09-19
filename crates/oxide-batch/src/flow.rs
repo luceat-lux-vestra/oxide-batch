@@ -4140,6 +4140,21 @@ impl<'a> FlowLauncher<'a> {
             }
         }
 
+        let step_owner = crate::scope_runtime::ScopeStepOwner {
+            execution_id: created.id(),
+            node_id: compiled.id(),
+            step_name: compiled.step_name(),
+        };
+        let mut step_scope = self
+            .build_live_scope(
+                job,
+                ScopeKind::Step,
+                correlation.job_instance_id(),
+                created.job_execution_id(),
+                correlation.job_attempt(),
+                Some(step_owner),
+            )
+            .await?;
         let started = self.start_step(&created).await?;
         let terminal_rollback = AtomicBool::new(false);
         let tasklet_context = TaskletContext::new_for_flow(
@@ -4149,8 +4164,10 @@ impl<'a> FlowLauncher<'a> {
             stop_token,
             correlation,
             &terminal_rollback,
+            job_scope,
+            step_scope.as_ref(),
         );
-        let invoked = self
+        let invoked = match self
             .invoke_custom_leaf_with_fault(
                 fingerprint,
                 compiled,
@@ -4159,7 +4176,16 @@ impl<'a> FlowLauncher<'a> {
                 previous_state,
                 stop_token,
             )
-            .await?;
+            .await
+        {
+            Ok(invoked) => invoked,
+            Err(error) => {
+                if let Some(scope) = step_scope.as_mut() {
+                    let _ = scope.close().await;
+                }
+                return Err(error);
+            }
+        };
 
         let mut candidate_state = None;
         let mut state_failure = false;
@@ -4251,10 +4277,24 @@ impl<'a> FlowLauncher<'a> {
             };
             exit = ExitStatus::failed();
         }
+        let cleanup = match step_scope.as_mut() {
+            Some(scope) => scope.close().await,
+            None => crate::scope_live::ScopeCleanupReport::default(),
+        };
+        let cleanup_is_primary = !cleanup.is_clean()
+            && outcome == TaskletExecutionOutcome::Completed;
+        let cleanup_summary = cleanup_is_primary
+            .then(|| self.next_failure_summary(FailureCategory::UserComponent))
+            .transpose()?;
+        if cleanup_is_primary {
+            outcome = TaskletExecutionOutcome::Failed(TaskletFailure::Error);
+            exit = ExitStatus::failed();
+        }
         let failure = failures
             .first()
             .map(|failure| failure.summary())
-            .or(tasklet_summary);
+            .or(tasklet_summary)
+            .or(cleanup_summary);
         let execution = self
             .finish_step(
                 &durable,
@@ -4286,6 +4326,11 @@ impl<'a> FlowLauncher<'a> {
         } else if state_failure {
             Some(FlowFailure::CustomLeafState {
                 node: compiled.id().clone(),
+            })
+        } else if cleanup_is_primary {
+            Some(FlowFailure::ScopedCleanup {
+                scope: ScopeKind::Step,
+                failures: cleanup.failures().len(),
             })
         } else {
             match outcome {
