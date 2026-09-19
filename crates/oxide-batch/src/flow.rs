@@ -787,6 +787,42 @@ impl FlowJob {
         Ok(self)
     }
 
+    /// Binds one explicit live component factory to its compiled scoped definition.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an undeclared component, factory kind/revision drift, or a second
+    /// registration for the same scope and logical component identifier.
+    pub fn with_scoped_component_registration(
+        mut self,
+        registration: crate::ScopedComponentRegistration,
+    ) -> Result<Self, FlowJobError> {
+        let scope = registration.scope();
+        let component = registration.id().clone();
+        let Some(compiled) = self.plan.scoped_component(scope, &component) else {
+            return Err(FlowJobError::ScopedComponentRegistrationMismatch {
+                scope,
+                component,
+            });
+        };
+        if compiled.factory_kind() != registration.factory_kind()
+            || compiled.factory_revision() != registration.factory_revision()
+        {
+            return Err(FlowJobError::ScopedComponentRegistrationMismatch {
+                scope,
+                component,
+            });
+        }
+        let key = (scope, component.clone());
+        if self.scoped_components.insert(key, registration).is_some() {
+            return Err(FlowJobError::DuplicateScopedComponentBinding {
+                scope,
+                component,
+            });
+        }
+        Ok(self)
+    }
+
     /// Validates that every compiled node has exactly one executable binding.
     ///
     /// # Errors
@@ -826,7 +862,42 @@ impl FlowJob {
                 return Err(FlowJobError::MissingBinding { node: id.clone() });
             }
         }
+
+        for component in self.plan.scoped_components() {
+            let key = (component.scope(), component.id().clone());
+            if !self.scoped_components.contains_key(&key) {
+                return Err(FlowJobError::MissingScopedComponentBinding {
+                    scope: component.scope(),
+                    component: component.id().clone(),
+                });
+            }
+        }
+        for scope in [ScopeKind::Job, ScopeKind::Step] {
+            let registrations = self
+                .scoped_components
+                .values()
+                .filter(|registration| registration.scope() == scope)
+                .cloned()
+                .collect::<Vec<_>>();
+            if let Err(failure) = crate::scope_live::validate_graph(scope, registrations) {
+                return Err(FlowJobError::InvalidScopedComponentGraph {
+                    scope,
+                    component: failure.component().cloned(),
+                });
+            }
+        }
         Ok(())
+    }
+
+    pub(crate) fn scoped_component_registrations(
+        &self,
+        scope: ScopeKind,
+    ) -> Vec<crate::ScopedComponentRegistration> {
+        self.scoped_components
+            .values()
+            .filter(|registration| registration.scope() == scope)
+            .cloned()
+            .collect()
     }
 
     fn materialize_split_tasklets(&self) -> Result<BTreeMap<NodeId, TaskletStep>, FlowJobError> {
@@ -900,6 +971,34 @@ pub enum FlowJobError {
         /// Logical branch step whose factory panicked.
         node: NodeId,
     },
+    /// A live component registration does not match its compiled definition.
+    ScopedComponentRegistrationMismatch {
+        /// Attempt-local scope whose registration mismatched.
+        scope: ScopeKind,
+        /// Logical component whose registration mismatched.
+        component: ScopedComponentId,
+    },
+    /// One scoped component was registered more than once.
+    DuplicateScopedComponentBinding {
+        /// Attempt-local scope containing the duplicate.
+        scope: ScopeKind,
+        /// Logical component registered more than once.
+        component: ScopedComponentId,
+    },
+    /// A compiled scoped component has no application factory registration.
+    MissingScopedComponentBinding {
+        /// Attempt-local scope missing the registration.
+        scope: ScopeKind,
+        /// Logical component without a factory registration.
+        component: ScopedComponentId,
+    },
+    /// The process-local component dependency graph is invalid.
+    InvalidScopedComponentGraph {
+        /// Attempt-local scope whose dependency graph is invalid.
+        scope: ScopeKind,
+        /// Component nearest the detected graph failure, when available.
+        component: Option<ScopedComponentId>,
+    },
 }
 
 impl fmt::Display for FlowJobError {
@@ -960,6 +1059,40 @@ impl fmt::Display for FlowJobError {
                 "node {} component factory panicked",
                 node.as_str()
             ),
+            Self::ScopedComponentRegistrationMismatch { scope, component } => write!(
+                formatter,
+                "{} scoped component {} registration does not match its compiled definition",
+                scope.as_str(),
+                component.as_str()
+            ),
+            Self::DuplicateScopedComponentBinding { scope, component } => write!(
+                formatter,
+                "{} scoped component {} was registered more than once",
+                scope.as_str(),
+                component.as_str()
+            ),
+            Self::MissingScopedComponentBinding { scope, component } => write!(
+                formatter,
+                "{} scoped component {} has no factory registration",
+                scope.as_str(),
+                component.as_str()
+            ),
+            Self::InvalidScopedComponentGraph { scope, component } => {
+                if let Some(component) = component {
+                    write!(
+                        formatter,
+                        "{} scoped component dependency graph is invalid near {}",
+                        scope.as_str(),
+                        component.as_str()
+                    )
+                } else {
+                    write!(
+                        formatter,
+                        "{} scoped component dependency graph is invalid",
+                        scope.as_str()
+                    )
+                }
+            }
         }
     }
 }
