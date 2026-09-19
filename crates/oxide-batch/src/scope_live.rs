@@ -408,10 +408,10 @@ impl<'a> ScopeBuilder<'a> {
 }
 
 async fn cleanup_entry(entry: LiveEntry) -> Result<(), ScopedCleanupError> {
-    let future = catch_unwind(AssertUnwindSafe(|| {
-        entry.factory.cleanup(entry.handle)
-    }))
-    .map_err(|_| ScopedCleanupError)?;
+    let factory = Arc::clone(&entry.factory);
+    let component = entry.handle;
+    let future = catch_unwind(AssertUnwindSafe(|| factory.cleanup(component)))
+        .map_err(|_| ScopedCleanupError)?;
     match AssertUnwindSafe(future).catch_unwind().await {
         Ok(result) => result,
         Err(_) => Err(ScopedCleanupError),
