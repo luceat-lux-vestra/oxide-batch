@@ -1,5 +1,6 @@
 //! Async tasklet execution and cooperative stopping.
 
+use std::any::Any;
 use std::error::Error;
 use std::fmt;
 use std::num::{NonZeroU64, NonZeroUsize};
