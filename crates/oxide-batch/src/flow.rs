@@ -1436,6 +1436,24 @@ pub enum FlowRuntimeError {
         /// Whether the failure crossed a panic boundary.
         panicked: bool,
     },
+    /// Typed late-bound input resolution failed before component construction.
+    ScopeResolution {
+        /// Attempt-local scope that could not resolve.
+        scope: ScopeKind,
+        /// Logical component whose inputs could not resolve.
+        component: ScopedComponentId,
+        /// Value-redacted resolution category.
+        failure: crate::ScopeResolutionFailure,
+    },
+    /// Process-local component construction failed before user work.
+    ScopeConstruction {
+        /// Attempt-local scope that could not be constructed.
+        scope: ScopeKind,
+        /// Logical component nearest the failure, when available.
+        component: Option<ScopedComponentId>,
+        /// Number of secondary cleanup failures observed while unwinding.
+        cleanup_failures: usize,
+    },
 }
 
 impl fmt::Display for FlowRuntimeError {
@@ -1472,6 +1490,33 @@ impl fmt::Display for FlowRuntimeError {
                     formatter.write_str("partition factory rejected the plan")
                 }
             }
+            Self::ScopeResolution {
+                scope,
+                component,
+                failure,
+            } => write!(
+                formatter,
+                "{} scoped component {} input resolution failed: {failure}",
+                scope.as_str(),
+                component.as_str()
+            ),
+            Self::ScopeConstruction {
+                scope,
+                component,
+                cleanup_failures,
+            } => {
+                write!(formatter, "{} live scope construction failed", scope.as_str())?;
+                if let Some(component) = component {
+                    write!(formatter, " near {}", component.as_str())?;
+                }
+                if *cleanup_failures != 0 {
+                    write!(
+                        formatter,
+                        " with {cleanup_failures} secondary cleanup failure(s)"
+                    )?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -1487,7 +1532,9 @@ impl Error for FlowRuntimeError {
             | Self::UndeclaredCapability { .. }
             | Self::InsufficientPoolCapacity { .. }
             | Self::UnresolvedPartitionOutcome { .. }
-            | Self::PartitionerRejected { .. } => None,
+            | Self::PartitionerRejected { .. }
+            | Self::ScopeResolution { .. }
+            | Self::ScopeConstruction { .. } => None,
         }
     }
 }
