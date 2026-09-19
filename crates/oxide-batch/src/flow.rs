@@ -2318,6 +2318,7 @@ impl<'a> FlowLauncher<'a> {
                                 attempt,
                                 parameters,
                                 stop_token,
+                                job_scope,
                                 ordinal_base.saturating_add(steps.len()),
                             )
                             .await?;
@@ -2823,6 +2824,7 @@ impl<'a> FlowLauncher<'a> {
         attempt: ExecutionAttempt,
         parameters: &JobParameters,
         parent_stop: &StopToken,
+        job_scope: Option<&crate::scope_live::LiveScope>,
         correlation_base: usize,
     ) -> Result<SplitRun, FlowRuntimeError> {
         let (split_stop_source, split_stop) = crate::StopSource::new();
@@ -2858,6 +2860,7 @@ impl<'a> FlowLauncher<'a> {
                         attempt,
                         parameters,
                         &split_stop,
+                        job_scope,
                     )
                     .await
                 }
@@ -2969,6 +2972,7 @@ impl<'a> FlowLauncher<'a> {
         attempt: ExecutionAttempt,
         parameters: &JobParameters,
         stop: &StopToken,
+        job_scope: Option<&crate::scope_live::LiveScope>,
     ) -> Result<SplitBranchRun, FlowRuntimeError> {
         if let Some(scope) = scope.as_ref() {
             let run = self
@@ -2981,6 +2985,7 @@ impl<'a> FlowLauncher<'a> {
                     attempt,
                     parameters,
                     stop,
+                    job_scope,
                     ordinal_base,
                 )
                 .await?;
