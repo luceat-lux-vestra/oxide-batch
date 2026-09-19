@@ -13,8 +13,8 @@ use std::sync::Arc;
 use futures_util::FutureExt;
 
 use crate::{
-    BoxFuture, ComponentRevision, ParameterName, ParameterValue, ScopeFactoryKind, ScopeKind,
-    ScopedComponentId, MAX_SCOPED_COMPONENTS,
+    BoxFuture, ComponentRevision, MAX_SCOPED_COMPONENTS, ParameterName, ParameterValue,
+    ScopeFactoryKind, ScopeKind, ScopedComponentId,
 };
 
 pub(crate) const MAX_SCOPED_DEPENDENCY_DEPTH: usize = 32;
@@ -81,10 +81,7 @@ impl<'a> ScopedFactoryContext<'a> {
         self.inputs
     }
 
-    pub(crate) fn dependency(
-        &self,
-        id: &ScopedComponentId,
-    ) -> Option<&ScopedComponentHandle> {
+    pub(crate) fn dependency(&self, id: &ScopedComponentId) -> Option<&ScopedComponentHandle> {
         self.dependencies.get(id)
     }
 }
@@ -292,10 +289,7 @@ impl LiveScope {
         self.scope
     }
 
-    pub(crate) fn component(
-        &self,
-        id: &ScopedComponentId,
-    ) -> Option<&ScopedComponentHandle> {
+    pub(crate) fn component(&self, id: &ScopedComponentId) -> Option<&ScopedComponentHandle> {
         self.entries.get(id).map(|entry| &entry.handle)
     }
 
@@ -336,16 +330,9 @@ impl<'a> ScopeBuilder<'a> {
                 return Ok(entry.handle.clone());
             }
 
-            let registration = self
-                .registrations
-                .get(&id)
-                .cloned()
-                .ok_or_else(|| {
-                    ScopeBuildFailure::new(
-                        ScopeBuildFailureKind::MissingDependency,
-                        Some(id.clone()),
-                    )
-                })?;
+            let registration = self.registrations.get(&id).cloned().ok_or_else(|| {
+                ScopeBuildFailure::new(ScopeBuildFailureKind::MissingDependency, Some(id.clone()))
+            })?;
             debug_assert_eq!(registration.scope(), self.scope);
 
             let mut dependencies = BTreeMap::new();
@@ -360,10 +347,7 @@ impl<'a> ScopeBuilder<'a> {
             let context = ScopedFactoryContext::new(inputs, &dependencies);
             let future = catch_unwind(AssertUnwindSafe(|| registration.factory.create(context)))
                 .map_err(|_| {
-                    ScopeBuildFailure::new(
-                        ScopeBuildFailureKind::FactoryPanicked,
-                        Some(id.clone()),
-                    )
+                    ScopeBuildFailure::new(ScopeBuildFailureKind::FactoryPanicked, Some(id.clone()))
                 })?;
             let handle = match AssertUnwindSafe(future).catch_unwind().await {
                 Ok(Ok(handle)) => handle,
@@ -605,7 +589,9 @@ mod tests {
         .expect("registration")
     }
 
-    fn inputs(ids: &[&str]) -> BTreeMap<ScopedComponentId, BTreeMap<ParameterName, ParameterValue>> {
+    fn inputs(
+        ids: &[&str],
+    ) -> BTreeMap<ScopedComponentId, BTreeMap<ParameterName, ParameterValue>> {
         ids.iter()
             .map(|value| (id(value), BTreeMap::new()))
             .collect()
