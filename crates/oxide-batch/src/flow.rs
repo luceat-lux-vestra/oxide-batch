@@ -3670,6 +3670,63 @@ impl<'a> FlowLauncher<'a> {
         }
     }
 
+    async fn build_live_scope(
+        &self,
+        job: &FlowJob,
+        scope: ScopeKind,
+        instance_id: JobInstanceId,
+        execution_id: JobExecutionId,
+        attempt: ExecutionAttempt,
+        step_owner: Option<crate::scope_runtime::ScopeStepOwner<'_>>,
+    ) -> Result<Option<crate::scope_live::LiveScope>, FlowRuntimeError> {
+        let components = job
+            .plan
+            .scoped_components()
+            .filter(|component| component.scope() == scope)
+            .collect::<Vec<_>>();
+        if components.is_empty() {
+            return Ok(None);
+        }
+
+        let mut inputs = BTreeMap::new();
+        for component in components {
+            let resolved = match crate::scope_runtime::resolve_scoped_component_inputs(
+                self.repository,
+                &job.plan,
+                component,
+                instance_id,
+                execution_id,
+                attempt,
+                step_owner,
+            )
+            .await
+            {
+                Ok(resolved) => resolved,
+                Err(crate::scope_runtime::ScopeResolutionError::Repository(error)) => {
+                    return Err(error.into());
+                }
+                Err(crate::scope_runtime::ScopeResolutionError::Resolution(failure)) => {
+                    return Err(FlowRuntimeError::ScopeResolution {
+                        scope,
+                        component: component.id().clone(),
+                        failure,
+                    });
+                }
+            };
+            inputs.insert(component.id().clone(), resolved);
+        }
+
+        let registrations = job.scoped_component_registrations(scope);
+        crate::scope_live::LiveScope::build(scope, registrations, &inputs)
+            .await
+            .map(Some)
+            .map_err(|failure| FlowRuntimeError::ScopeConstruction {
+                scope,
+                component: failure.component().cloned(),
+                cleanup_failures: failure.cleanup_failures(),
+            })
+    }
+
     async fn create_job_execution(
         &self,
         key: &JobInstanceKey,
