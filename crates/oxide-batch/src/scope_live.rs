@@ -5,7 +5,7 @@
 //! deliberately owns no ambient lookup, repository authority, or executor.
 
 use std::any::Any;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
@@ -441,10 +441,10 @@ fn validate_graph(
         }
     }
 
-    let mut complete = BTreeSet::new();
+    let mut depths = BTreeMap::new();
     let mut stack = Vec::new();
     for id in by_id.keys() {
-        validate_node(id, &by_id, &mut complete, &mut stack)?;
+        validate_node(id, &by_id, &mut depths, &mut stack)?;
     }
     Ok(by_id)
 }
@@ -452,21 +452,15 @@ fn validate_graph(
 fn validate_node(
     id: &ScopedComponentId,
     registrations: &BTreeMap<ScopedComponentId, ScopedComponentRegistration>,
-    complete: &mut BTreeSet<ScopedComponentId>,
+    depths: &mut BTreeMap<ScopedComponentId, usize>,
     stack: &mut Vec<ScopedComponentId>,
-) -> Result<(), ScopeBuildFailure> {
-    if complete.contains(id) {
-        return Ok(());
+) -> Result<usize, ScopeBuildFailure> {
+    if let Some(depth) = depths.get(id) {
+        return Ok(*depth);
     }
     if stack.iter().any(|active| active == id) {
         return Err(ScopeBuildFailure::new(
             ScopeBuildFailureKind::DependencyCycle,
-            Some(id.clone()),
-        ));
-    }
-    if stack.len() >= MAX_SCOPED_DEPENDENCY_DEPTH {
-        return Err(ScopeBuildFailure::new(
-            ScopeBuildFailureKind::DependencyDepthExceeded,
             Some(id.clone()),
         ));
     }
@@ -475,12 +469,22 @@ fn validate_node(
     let registration = registrations.get(id).ok_or_else(|| {
         ScopeBuildFailure::new(ScopeBuildFailureKind::MissingDependency, Some(id.clone()))
     })?;
+    let mut depth = 1_usize;
     for dependency in registration.dependencies() {
-        validate_node(dependency, registrations, complete, stack)?;
+        let dependency_depth = validate_node(dependency, registrations, depths, stack)?;
+        depth = depth.max(dependency_depth.saturating_add(1));
     }
     stack.pop();
-    complete.insert(id.clone());
-    Ok(())
+
+    if depth > MAX_SCOPED_DEPENDENCY_DEPTH {
+        return Err(ScopeBuildFailure::new(
+            ScopeBuildFailureKind::DependencyDepthExceeded,
+            Some(id.clone()),
+        ));
+    }
+
+    depths.insert(id.clone(), depth);
+    Ok(depth)
 }
 
 #[cfg(test)]
