@@ -179,6 +179,55 @@ faster number.
   public documentation/examples, migration or runbook material, changelog, and
   milestone evidence when applicable.
 
+## Failure classification before remediation
+
+A failing CI check, conformance result, evidence gate, hardening audit, or other
+red signal is an **observation**, not a remediation instruction. Before a
+non-trivial remediation, classify the observed failure as exactly one of:
+
+- `implementation defect` — OxideBatch implementation violates the accepted
+  contract;
+- `test defect` — a unit/integration/conformance test, harness, oracle,
+  fixture, or assertion is wrong for the accepted contract;
+- `evidence defect` — compatibility/conformance evidence capture, provenance,
+  attribution, freshness, parsing, or proof construction is wrong or
+  insufficient;
+- `workflow-policy drift` — checked-in workflow, hardening/review policy, live
+  repository settings, or their assumed contract have diverged;
+- `environment failure` — runner, toolchain, service, network, resource, or
+  other execution environment caused the failure;
+- `UNKNOWN` — available evidence does not justify any of the five classes.
+
+`UNKNOWN`, `UNVERIFIED`, and `INSUFFICIENT EVIDENCE` are fail-closed.
+Classification is itself a proof obligation; do not pick a convenient owner to
+unblock work. For any failure that can affect merge, compatibility, hardening,
+or evidence judgment, preserve at least:
+
+```text
+Observed:
+Classification:
+Basis:
+Root cause:
+Remediation:
+Proof:
+```
+
+The `Basis` must explain why the selected responsibility layer is supported
+and which plausible alternatives were rejected or remain unresolved. When CI,
+evidence, and hardening checks are red at the same time, do not patch each red
+surface independently; classify the observations first and repair the proven
+owning layer.
+
+A deterministic/reproducible failure does not become an
+`environment failure` merely because a rerun later passes. Never weaken a
+valid test, verifier, conformance requirement, evidence obligation, or
+hardening/review policy merely to obtain green.
+
+If remediation changes product code, the relevant test/oracle, an evidence
+collector or provenance premise, workflow/policy, or another premise of an
+exact-HEAD proof, invalidate the affected evidence. Re-run the relevant
+targeted proof and required CI on the new exact final HEAD before merge.
+
 ## Validation and definition of done
 
 ### Local validation
