@@ -39,7 +39,7 @@
     },
     {
       "pattern": ".github/workflows/failure-triage.yml",
-      "classification": "advisory"
+      "classification": "required"
     }
   ],
   "job_overrides": [
@@ -84,5 +84,5 @@
       ]
     }
   ],
-  "pending_ruleset_contexts": []
+  "pending_ruleset_contexts": ["failure-triage"]
 }
