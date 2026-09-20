@@ -36,6 +36,10 @@
     {
       "pattern": ".github/workflows/pr-labeler.yml",
       "classification": "advisory"
+    },
+    {
+      "pattern": ".github/workflows/failure-triage.yml",
+      "classification": "advisory"
     }
   ],
   "job_overrides": [
