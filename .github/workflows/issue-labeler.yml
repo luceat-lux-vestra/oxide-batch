@@ -32,7 +32,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       # The job only creates/updates repository labels and issue labels.
-      issues: write
+      issues: write # Required only to create/update canonical issue labels during trusted reconciliation.
     steps:
       - name: Classify issues
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
