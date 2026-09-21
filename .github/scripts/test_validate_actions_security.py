@@ -301,6 +301,10 @@ ISSUE_LABELER_CONTRACT = textwrap.dedent(
               BACKFILL: true
             with:
               script: |
+                const defaultBranchRef = `refs/heads/${context.payload.repository.default_branch}`;
+                if (context.eventName === 'workflow_dispatch' && backfill && !dryRun && context.ref !== defaultBranchRef) {
+                  console.log("Mutating backfill must run from");
+                }
                 if (!dryRun) {
                   github.rest.issues.updateLabel
                   github.rest.issues.createLabel
@@ -311,7 +315,6 @@ ISSUE_LABELER_CONTRACT = textwrap.dedent(
                 if (!dryRun && uniqueAdd.length) {
                   github.rest.issues.addLabels
                 }
-                console.log("Mutating backfill must run from");
     """
 ).lstrip()
 
@@ -352,10 +355,17 @@ observed = MODULE.check_issue_labeler_contract_text(unguarded_remove)
 assert any("safety contract missing" in item for item in observed), observed
 
 missing_default_branch_guard = ISSUE_LABELER_CONTRACT.replace(
-    'console.log("Mutating backfill must run from");',
-    'console.log("bulk mutation allowed");',
+    "context.eventName === 'workflow_dispatch' && backfill && !dryRun && context.ref !== defaultBranchRef",
+    "context.eventName === 'workflow_dispatch' && !dryRun",
 )
 observed = MODULE.check_issue_labeler_contract_text(missing_default_branch_guard)
-assert any("Mutating backfill must run from" in item for item in observed), observed
+assert any("issue reconciliation safety contract missing" in item for item in observed), observed
+
+missing_default_branch_ref = ISSUE_LABELER_CONTRACT.replace(
+    "const defaultBranchRef = `refs/heads/${context.payload.repository.default_branch}`;",
+    "const defaultBranchRef = context.ref;",
+)
+observed = MODULE.check_issue_labeler_contract_text(missing_default_branch_ref)
+assert any("issue reconciliation safety contract missing" in item for item in observed), observed
 
 print("GitHub Actions security policy negative fixtures: PASS")
