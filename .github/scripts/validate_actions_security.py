@@ -254,8 +254,8 @@ def check_issue_labeler_contract_text(
     if not re.search(r"(?m)^permissions:\s*\{\}\s*$", text):
         violations.append(f"{path}: workflow-level permissions must remain empty")
 
-    writes = re.findall(r"(?m)^\s+[A-Za-z0-9_-]+:\s*write\s*(?:#.*)?$", text)
-    if writes != ["      issues: write"]:
+    writes = re.findall(r"(?m)^\s+([A-Za-z0-9_-]+):\s*write\s*(?:#.*)?$", text)
+    if writes != ["issues"]:
         violations.append(
             f"{path}: write authority must be exactly one job-local issues:write grant; got {writes!r}"
         )
