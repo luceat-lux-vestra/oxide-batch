@@ -279,4 +279,69 @@ require_rejection(
     "exact checked-in PostgreSQL 15/18 digest mapping",
 )
 
+ISSUE_LABELER_CONTRACT = textwrap.dedent(
+    """
+    name: Issue labels
+    on:
+      workflow_dispatch:
+        inputs:
+          dry_run:
+            default: true
+          backfill:
+            default: true
+    permissions: {}
+    jobs:
+      classify:
+        permissions:
+          issues: write
+        steps:
+          - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+            env:
+              DRY_RUN: true
+              BACKFILL: true
+            with:
+              script: |
+                if (!dryRun) {
+                  github.rest.issues.updateLabel
+                  github.rest.issues.createLabel
+                }
+                if (name !== explicitType && !dryRun) {
+                  github.rest.issues.removeLabel
+                }
+                if (!dryRun && uniqueAdd.length) {
+                  github.rest.issues.addLabels
+                }
+                console.log("Mutating backfill must run from");
+    """
+).lstrip()
+
+assert not MODULE.check_issue_labeler_contract_text(ISSUE_LABELER_CONTRACT), (
+    "safe issue labeler contract fixture must pass"
+)
+
+missing_dry_run = ISSUE_LABELER_CONTRACT.replace("      dry_run:\n        default: true\n", "")
+observed = MODULE.check_issue_labeler_contract_text(missing_dry_run)
+assert any("dry_run" in item for item in observed), observed
+
+broad_write = ISSUE_LABELER_CONTRACT.replace(
+    "permissions: {}",
+    "permissions:\n  issues: write",
+)
+observed = MODULE.check_issue_labeler_contract_text(broad_write)
+assert any("workflow-level permissions" in item or "write authority" in item for item in observed), observed
+
+extra_mutation = ISSUE_LABELER_CONTRACT.replace(
+    "github.rest.issues.updateLabel",
+    "github.rest.issues.updateLabel\n              github.rest.issues.updateLabel",
+)
+observed = MODULE.check_issue_labeler_contract_text(extra_mutation)
+assert any("mutation surface drifted" in item for item in observed), observed
+
+unguarded_remove = ISSUE_LABELER_CONTRACT.replace(
+    "name !== explicitType && !dryRun",
+    "name !== explicitType",
+)
+observed = MODULE.check_issue_labeler_contract_text(unguarded_remove)
+assert any("safety contract missing" in item for item in observed), observed
+
 print("GitHub Actions security policy negative fixtures: PASS")
