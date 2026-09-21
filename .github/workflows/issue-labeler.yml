@@ -45,7 +45,7 @@ jobs:
             const backfill = process.env.BACKFILL === 'true';
             const defaultBranchRef = `refs/heads/${context.payload.repository.default_branch}`;
 
-            if (context.eventName === 'workflow_dispatch' && !dryRun && context.ref !== defaultBranchRef) {
+            if (context.eventName === 'workflow_dispatch' && backfill && !dryRun && context.ref !== defaultBranchRef) {
               core.setFailed(`Mutating backfill must run from ${defaultBranchRef}; got ${context.ref}`);
               return;
             }
