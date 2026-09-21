@@ -84,5 +84,5 @@
       ]
     }
   ],
-  "pending_ruleset_contexts": ["failure-triage"]
+  "pending_ruleset_contexts": []
 }
