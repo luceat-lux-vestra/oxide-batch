@@ -248,6 +248,8 @@ def check_issue_labeler_contract_text(
 
     if not re.search(r"(?ms)^      dry_run:\n.*?^        default: true\s*$", text):
         violations.append(f"{path}: dry_run must default to true")
+    if not re.search(r"(?ms)^      backfill:\n.*?^        default: false\s*$", text):
+        violations.append(f"{path}: backfill must default to false")
 
     if not re.search(r"(?m)^permissions:\s*\{\}\s*$", text):
         violations.append(f"{path}: workflow-level permissions must remain empty")
