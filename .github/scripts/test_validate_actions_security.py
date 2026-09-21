@@ -293,7 +293,7 @@ ISSUE_LABELER_CONTRACT = textwrap.dedent(
     jobs:
       classify:
         permissions:
-          issues: write
+          issues: write # trusted metadata mutation only
         steps:
           - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
             env:
@@ -350,5 +350,12 @@ unguarded_remove = ISSUE_LABELER_CONTRACT.replace(
 )
 observed = MODULE.check_issue_labeler_contract_text(unguarded_remove)
 assert any("safety contract missing" in item for item in observed), observed
+
+missing_default_branch_guard = ISSUE_LABELER_CONTRACT.replace(
+    'console.log("Mutating backfill must run from");',
+    'console.log("bulk mutation allowed");',
+)
+observed = MODULE.check_issue_labeler_contract_text(missing_default_branch_guard)
+assert any("Mutating backfill must run from" in item for item in observed), observed
 
 print("GitHub Actions security policy negative fixtures: PASS")
