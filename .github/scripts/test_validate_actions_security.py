@@ -288,7 +288,7 @@ ISSUE_LABELER_CONTRACT = textwrap.dedent(
           dry_run:
             default: true
           backfill:
-            default: true
+            default: false
     permissions: {}
     jobs:
       classify:
@@ -322,6 +322,13 @@ assert not MODULE.check_issue_labeler_contract_text(ISSUE_LABELER_CONTRACT), (
 missing_dry_run = ISSUE_LABELER_CONTRACT.replace("      dry_run:\n        default: true\n", "")
 observed = MODULE.check_issue_labeler_contract_text(missing_dry_run)
 assert any("dry_run" in item for item in observed), observed
+
+unsafe_backfill_default = ISSUE_LABELER_CONTRACT.replace(
+    "      backfill:\n        default: false\n",
+    "      backfill:\n        default: true\n",
+)
+observed = MODULE.check_issue_labeler_contract_text(unsafe_backfill_default)
+assert any("backfill must default to false" in item for item in observed), observed
 
 broad_write = ISSUE_LABELER_CONTRACT.replace(
     "permissions: {}",
