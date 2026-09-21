@@ -226,6 +226,62 @@ def validate(root: Path) -> list[str]:
     return violations
 
 
+def check_issue_labeler_contract_text(
+    text: str, path: Path = Path(".github/workflows/issue-labeler.yml")
+) -> list[str]:
+    """Validate the repository-specific mutation boundary for backlog reconciliation."""
+    violations: list[str] = []
+    required_fragments = (
+        "workflow_dispatch:",
+        "dry_run:",
+        "backfill:",
+        "DRY_RUN:",
+        "BACKFILL:",
+        "if (!dryRun)",
+        "name !== explicitType && !dryRun",
+        "if (!dryRun && uniqueAdd.length)",
+        "Mutating backfill must run from",
+    )
+    for fragment in required_fragments:
+        if fragment not in text:
+            violations.append(f"{path}: issue reconciliation safety contract missing: {fragment}")
+
+    if not re.search(r"(?ms)^      dry_run:\n.*?^        default: true\s*$", text):
+        violations.append(f"{path}: dry_run must default to true")
+
+    if not re.search(r"(?m)^permissions:\s*\{\}\s*$", text):
+        violations.append(f"{path}: workflow-level permissions must remain empty")
+
+    writes = re.findall(r"(?m)^\s+[A-Za-z0-9_-]+:\s*write\s*(?:#.*)?$", text)
+    if writes != ["      issues: write"]:
+        violations.append(
+            f"{path}: write authority must be exactly one job-local issues:write grant; got {writes!r}"
+        )
+
+    expected_mutations = {
+        "github.rest.issues.updateLabel": 1,
+        "github.rest.issues.createLabel": 1,
+        "github.rest.issues.removeLabel": 1,
+        "github.rest.issues.addLabels": 1,
+    }
+    for call, expected in expected_mutations.items():
+        observed = text.count(call)
+        if observed != expected:
+            violations.append(
+                f"{path}: mutation surface drifted for {call}: expected {expected}, got {observed}"
+            )
+    return violations
+
+
+def check_issue_labeler_contract(root: Path) -> list[str]:
+    path = root / ".github" / "workflows" / "issue-labeler.yml"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [f"{path}: cannot read issue labeler: {exc}"]
+    return check_issue_labeler_contract_text(text, path.relative_to(root))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -236,7 +292,9 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    violations = validate(args.root.resolve())
+    root = args.root.resolve()
+    violations = validate(root)
+    violations.extend(check_issue_labeler_contract(root))
     if violations:
         print("GitHub Actions security policy violations:", file=sys.stderr)
         for violation in violations:
