@@ -240,6 +240,8 @@ def check_issue_labeler_contract_text(
         "if (!dryRun)",
         "name !== explicitType && !dryRun",
         "if (!dryRun && uniqueAdd.length)",
+        "const defaultBranchRef = `refs/heads/${context.payload.repository.default_branch}`;",
+        "context.eventName === 'workflow_dispatch' && backfill && !dryRun && context.ref !== defaultBranchRef",
         "Mutating backfill must run from",
     )
     for fragment in required_fragments:
