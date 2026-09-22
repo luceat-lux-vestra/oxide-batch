@@ -90,39 +90,56 @@ would have become had it been carried rather than removed.
 
 ## The delivered surface
 
-The preview claims exactly one crate. `oxide-batch` exports **426 names**:
-414 always, and 12 more under the optional `postgres` feature. The committed
-snapshot at `crates/oxide-batch/tests/fixtures/facade/public-api.txt` is the
-authoritative list; this table is the enumeration by the group each name is
-delivered through, and
-`public_api_snapshot_matches_the_reviewed_preview_surface` holds the two
-against each other so the surface cannot move without this record moving with
-it.
+The current facade claims exactly one crate. `oxide-batch` exports **515
+names**: 503 always and 12 more under the optional `postgres` feature. The
+committed snapshot at
+`crates/oxide-batch/tests/fixtures/facade/public-api.txt` is the authoritative
+name list; this table is the reviewed enumeration by the `src/lib.rs`
+re-export group that delivers each name.
+`public_api_snapshot_matches_the_reviewed_preview_surface` holds both the
+per-group counts and the total against that snapshot, so a public name cannot
+be added or moved without revisiting this record.
 
 | Group | Names | What it delivers |
-| --- | --- | --- |
-| `oxide_batch_repository` | 110 | repository, explorer, operator, recovery, retention, and paging ports and their values |
-| `oxide_batch_core` | 89 | durable domain values, definition identity, durable state, and fault-policy values |
-| `telemetry` | 38 | the framework-owned event, metric, span, and export contracts |
-| `chunk` | 29 | chunk component contracts, business transaction ports, and their outcomes |
-| `oxide_batch_plan` | 26 | the flow graph, compiled plan, and bounded local-scale nodes |
-| `flow` | 20 | multi-step runtime, deciders, and partition/split factories |
+| --- | ---: | --- |
+| `oxide_batch_repository` | 113 | repository, explorer, operator, recovery, retention, paging, and M7 durable-link ports/values |
+| `oxide_batch_core` | 106 | durable domain values, definition identity, state, parameters, and fault-policy values |
+| `oxide_batch_plan` | 52 | compiled flow/plan declarations, M7 composition and structured scope/late-binding definition values |
+| `telemetry` | 38 | framework-owned event, metric, span, and export contracts |
+| `chunk` | 32 | chunk component contracts, business transaction ports, outcomes, and bounded execution values |
+| `flow` | 20 | multi-step runtime, deciders, flow factories, and M7 execution assembly |
 | `shutdown` | 20 | shutdown coordination, deadlines, and drain reporting |
-| `runtime` | 18 | the launcher, tasklet contracts, and cooperative stop |
-| `repository` | 14 | the in-memory adapters, plus 12 optional `postgres` names |
-| `chunk_runtime` | 14 | chunk step execution, its report, chunk listeners, and the completion-policy revision helper a `FlowJob` bind must declare up front |
-| `item_listener` | 12 | the read, process, write, retry, and skip listener families |
+| `runtime` | 18 | launcher, tasklet contracts, execution context, and cooperative stop |
+| `repository` | 14 | in-memory adapters plus the 12 optional `postgres` names |
+| `chunk_runtime` | 14 | chunk step execution, report/listener contracts, and completion-policy revision binding |
+| `item_listener` | 12 | read/process/write/retry/skip listener families |
+| `completion` | 11 | bounded completion policy contracts and outcomes |
 | `fault_state` | 11 | bounded retry-state storage and its envelope |
+| `item_stream` | 11 | restartable stream lifecycle and versioned component-state contracts |
 | `diagnostics` | 9 | lifecycle events, correlation, and metric labels |
+| `scope_live` | 9 | #277 process-local scoped factories, registrations, opaque handles, value-redacted errors, and the dependency-depth ceiling |
 | `listener` | 7 | job and step execution listeners |
-| `service` | 7 | the explorer, operator, recovery, and retention services |
-| `fault` | 2 | the injected backoff sleeper and its outcome |
+| `service` | 7 | explorer, operator, recovery, and retention services |
+| `custom_leaf` | 4 | M7 custom-leaf execution/registration contracts |
+| `chunk_builder` | 2 | bounded chunk-pipeline construction helpers |
+| `fault` | 2 | injected backoff sleeper and its outcome |
+| `nested_job_runtime` | 1 | facade-owned bounded nested-job mapping diagnostic |
+| `scope_runtime` | 1 | #276 value-redacted late-bound resolution failure category |
 | crate root | 1 | `VERSION` |
 
-The three implementation crates are published in lockstep as internal crates
-under [ADR-0010](../architecture/decisions/0010-extracted-crate-publication.md)
-and remain outside the claim. Their paths are not compatibility promises even
-though Cargo can resolve them.
+The #277 `scope_live` group is deliberately process-local. The public handle
+is opaque and downcast-based; factories receive only already-resolved values
+and declared dependency handles. The group exports no Tokio executor/handle,
+SQLx type, repository implementation, credential value, socket/connection
+type, or durable serialization form. That keeps the M5 disclosure and general
+public-boundary rules intact while making the M7 live-scope lifecycle an
+explicit application integration contract.
+
+The extracted implementation crates are published in lockstep as internal
+crates under
+[ADR-0010](../architecture/decisions/0010-extracted-crate-publication.md) and
+remain outside the facade claim. Their paths are not compatibility promises
+even though Cargo can resolve them.
 
 ## Two rules, audited separately
 

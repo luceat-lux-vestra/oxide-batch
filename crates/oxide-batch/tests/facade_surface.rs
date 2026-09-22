@@ -148,8 +148,11 @@ mod resolves {
 
     pub use oxide_batch::{
         LateBindingDefinitionError, LateBoundInput, LateBoundSource, MAX_LATE_BOUND_INPUTS,
-        MAX_SCOPED_COMPONENTS, ScopeFactoryKind, ScopeFrameworkSource, ScopeKind,
-        ScopeResolverKind, ScopedComponentDefinition, ScopedComponentId,
+        MAX_SCOPED_COMPONENTS, MAX_SCOPED_DEPENDENCY_DEPTH, ScopeBuildFailureKind,
+        ScopeFactoryKind, ScopeFrameworkSource, ScopeKind, ScopeRegistrationError,
+        ScopeResolverKind, ScopedCleanupError, ScopedComponentDefinition, ScopedComponentFactory,
+        ScopedComponentHandle, ScopedComponentId, ScopedComponentRegistration,
+        ScopedFactoryContext, ScopedFactoryError,
     };
 
     #[cfg(feature = "postgres")]

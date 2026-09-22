@@ -1,5 +1,6 @@
 //! Async tasklet execution and cooperative stopping.
 
+use std::any::Any;
 use std::error::Error;
 use std::fmt;
 use std::num::{NonZeroU64, NonZeroUsize};
@@ -273,6 +274,8 @@ pub struct TaskletContext<'a> {
     correlation: &'a ExecutionCorrelation,
     event_sink: Option<&'a dyn LifecycleEventSink>,
     terminal_rollback: &'a AtomicBool,
+    job_scope: Option<&'a crate::scope_live::LiveScope>,
+    step_scope: Option<&'a crate::scope_live::LiveScope>,
 }
 
 impl<'a> TaskletContext<'a> {
@@ -283,6 +286,8 @@ impl<'a> TaskletContext<'a> {
         stop: &'a StopToken,
         correlation: &'a ExecutionCorrelation,
         terminal_rollback: &'a AtomicBool,
+        job_scope: Option<&'a crate::scope_live::LiveScope>,
+        step_scope: Option<&'a crate::scope_live::LiveScope>,
     ) -> Self {
         Self {
             parameters,
@@ -292,6 +297,8 @@ impl<'a> TaskletContext<'a> {
             correlation,
             event_sink: None,
             terminal_rollback,
+            job_scope,
+            step_scope,
         }
     }
 
@@ -323,6 +330,37 @@ impl<'a> TaskletContext<'a> {
     #[must_use]
     pub const fn correlation(&self) -> &'a ExecutionCorrelation {
         self.correlation
+    }
+
+    /// Borrows one process-local scoped component visible to this tasklet.
+    ///
+    /// Job and step scopes are separate namespaces even when they reuse the
+    /// same logical component identifier.
+    #[must_use]
+    pub fn scoped_component(
+        &self,
+        scope: crate::ScopeKind,
+        id: &crate::ScopedComponentId,
+    ) -> Option<&crate::ScopedComponentHandle> {
+        match scope {
+            crate::ScopeKind::Job => self.job_scope.and_then(|live| live.component(id)),
+            crate::ScopeKind::Step => self.step_scope.and_then(|live| live.component(id)),
+            _ => None,
+        }
+    }
+
+    /// Borrows one scoped component as its concrete application type.
+    #[must_use]
+    pub fn scoped_component_as<T>(
+        &self,
+        scope: crate::ScopeKind,
+        id: &crate::ScopedComponentId,
+    ) -> Option<&T>
+    where
+        T: Any + Send + Sync,
+    {
+        self.scoped_component(scope, id)
+            .and_then(crate::ScopedComponentHandle::downcast_ref::<T>)
     }
 
     pub(crate) fn emit_chunk_event(&self, kind: LifecycleEventKind, sequence: crate::ChunkCount) {
@@ -1010,6 +1048,8 @@ impl<'a> JobLauncher<'a> {
             correlation: &graph.correlation,
             event_sink: self.event_sink,
             terminal_rollback: &terminal_rollback,
+            job_scope: None,
+            step_scope: None,
         };
         let invocation = self
             .invoke_with_execution_control(

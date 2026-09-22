@@ -567,6 +567,21 @@
       "note": "The accepted side compiles one scope with exactly 256 distinct component declarations; the refused side adds one more in that same scope. The boundary is per scope rather than a global plan count."
     },
     {
+      "resource": "scoped-component-dependency-depth",
+      "class": "buffer",
+      "owner": "FlowJob live scope registration graph",
+      "symbols": ["MAX_SCOPED_DEPENDENCY_DEPTH"],
+      "ceiling": 32,
+      "unit": "components",
+      "policy": "fail-closed",
+      "report": "bounded-payloads",
+      "postgres": false,
+      "proofs": ["construction-boundary"],
+      "budget_row": null,
+      "budget_bound": null,
+      "note": "The public FlowJob registration boundary accepts a dependency chain of exactly 32 scoped components and refuses a 33-component chain before durable launch or user factory construction. The proof exercises the same canonical graph validation used by live scope construction rather than only classifying the constant."
+    },
+    {
       "resource": "nested-job-parameter-mappings",
       "class": "buffer",
       "owner": "NestedJobNode",
