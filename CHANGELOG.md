@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-No changes yet.
+### Added
+
+- M7 Gate-B live job/step scope runtime on top of the #276 structured
+  late-binding/provenance contract. `ScopedComponentFactory` registrations
+  create attempt-local components with bounded same-scope dependencies,
+  one-instance memoization, typed or erased access, panic containment, and
+  reverse exactly-once cleanup across completion, failure, stop/cancellation,
+  restart, and partial-construction unwind. Live resources and credentials
+  remain process-local and are never serialized as scoped state.
+
+### Changed
+
+- `SCOPE-JOB-001` and `SCOPE-STEP-001` are now unreleased
+  `Implemented` candidate capabilities. This is not a released `Verified`
+  claim; named-release promotion remains governed by the compatibility ledger.
 
 ## [0.6.0] - 2026-08-31
 

@@ -112,8 +112,8 @@ the [compatibility contract](spring-batch.md).
 | FLOW-DECIDER-001 | 6.0.4 [flow-control] | Decision | A decision node maps durable inputs to flow outcome | Typed decider node and persisted trace | Behavioral | Partial | M3/M7 | Native side-effect-free API; committed result is restart authority | R/R/R/R/R/J | [M3 flow runtime](../project/m3-flow-runtime-evidence.md), [M3 exit evidence](../project/m3-exit-evidence.md) | [Basic flow](../architecture/basic-flow.md) | Basic M3 decider, restart reuse, and decision-commit crash boundary implemented; complete M7 coverage remains |
 | FLOW-SPLIT-001 | 6.0.4 [job] | Split/parallel | Branches execute concurrently and aggregate deterministically | Structured split node | Behavioral | Planned | M7/M10 | Bounded concurrency required | R/R/R/R/R/R | — | [Execution plan](../architecture/execution-plan.md) | Local execution M10 |
 | FLOW-NESTED-001 | 6.0.4 [job] | Nested flow/job | Nested composition preserves restart and outcome mapping | Nested flow/job nodes with lineage | Behavioral | Planned | M7 | Rust plan model | R/R/R/R/R/J | — | [Execution plan](../architecture/execution-plan.md) | — |
-| SCOPE-JOB-001 | 6.0.4 [step] | Job scope | Component instance and late binding live for a job execution | `JobComponentFactory` and typed resolver | Native equivalent | Planned | M7 | No proxy/DI container | R/R/R/R/R/J | — | [Execution plan](../architecture/execution-plan.md) | Explicit close |
-| SCOPE-STEP-001 | 6.0.4 [step] | Step scope | Component instance and late binding live for a step execution | `StepComponentFactory` and typed resolver | Native equivalent | Planned | M7 | No proxy/SpEL requirement | R/R/R/R/R/J | — | [Execution plan](../architecture/execution-plan.md) | Optional expression DSL |
+| SCOPE-JOB-001 | 6.0.4 [step] | Job scope | Component instance and late binding live for a job execution | `ScopedComponentFactory` + typed structured resolver/provenance | Native equivalent | Implemented | M7 | No proxy/DI container | R/R/R/R/R/J | [`live_scope_runtime`](../../crates/oxide-batch/tests/live_scope_runtime.rs), [`scope_live`](../../crates/oxide-batch/src/scope_live.rs), #276 PostgreSQL scope-resolution crash/restart evidence | [M7 Gate B](../architecture/m7-advanced-flow-scope-repeat-and-evolution.md#gate-b--jobstep-scope-and-late-binding) | #276 supplies durable typed resolution/provenance; #277 supplies attempt-local construction, memoization, typed access and reverse cleanup. Candidate implementation only; `Verified` requires a named release. |
+| SCOPE-STEP-001 | 6.0.4 [step] | Step scope | Component instance and late binding live for a step execution | `ScopedComponentFactory` + typed structured resolver/provenance | Native equivalent | Implemented | M7 | No proxy/SpEL requirement | R/R/R/R/R/J | [`live_scope_runtime`](../../crates/oxide-batch/tests/live_scope_runtime.rs), [`scope_live`](../../crates/oxide-batch/src/scope_live.rs), #276 PostgreSQL scope-resolution crash/restart evidence | [M7 Gate B](../architecture/m7-advanced-flow-scope-repeat-and-evolution.md#gate-b--jobstep-scope-and-late-binding) | #276 supplies durable typed resolution/provenance; #277 supplies one-instance-per-attempt lifetime, bounded dependencies and cleanup. Candidate implementation only; no expression DSL is required by the accepted structured-selector contract; `Verified` requires a named release. |
 
 ## Repository, operator, testing, and observability
 
@@ -273,10 +273,13 @@ the architecture spike, closing the gap [M6 Gate C](../project/m6-design-gate-ev
 named. Promotion to `Verified` is still deferred to the next named release
 that links this evidence, following the ledger's own promotion rule.
 
-**Current post-M6 population and unreviewed rows.** After the M6 dispositions
-above, the current 83-row population is `28` `Verified`, `13` `Implemented`,
-`14` `Partial`, `26` `Planned`, and `2` `Unknown`. The `26` `Planned` rows keep
-their accepted milestone. The `2` `Unknown` rows, `DB-MONGO-001` and
+**Current candidate population and unreviewed rows.** After the M6 dispositions
+above and #277's M7 Gate-B live-scope delivery, the current 83-row population is
+`28` `Verified`, `15` `Implemented`, `14` `Partial`, `24` `Planned`, and
+`2` `Unknown`. The two additional `Implemented` rows are `SCOPE-JOB-001`
+and `SCOPE-STEP-001`; they are unreleased candidate capabilities and therefore
+are not promoted to `Verified`. The `24` `Planned` rows keep their accepted
+milestone. The `2` `Unknown` rows, `DB-MONGO-001` and
 `IO-MAILLDAP-001`, remain visible until their reviewed decision gates in the
 [M7-M14 roadmap and feature-ledger reconciliation](../project/m7-m14-ledger-reconciliation.md);
 they cannot be silently dropped or treated as compatibility passes.

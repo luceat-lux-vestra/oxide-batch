@@ -63,9 +63,11 @@ new user is likely to look for:
   input/output, and test-kit rows are published in `0.6.0` with retained
   campaign and post-publish evidence; promoting them to ledger `Verified`
   status is a separate governance decision, not yet made;
-- nested/split job flow, job/step scope and late binding, the definition
-  registry (`FLOW-SPLIT-001`, `FLOW-NESTED-001`, `SCOPE-JOB-001`,
-  `SCOPE-STEP-001`, `REPO-REGISTRY-001`) — M7;
+- M7 job/step scope and structured late binding (`SCOPE-JOB-001`,
+  `SCOPE-STEP-001`) are implemented by #276/#277 but remain unreleased and
+  therefore are not ledger-`Verified`;
+- nested/split job flow and the definition registry (`FLOW-SPLIT-001`,
+  `FLOW-NESTED-001`, `REPO-REGISTRY-001`) remain M7 work;
 - additional relational databases and messaging/streaming adapters
   (`DB-MYSQL-001`, `DB-SQLITE-001`, `DB-SQLSERVER-001`, `MSG-KAFKA-001`,
   `MSG-AMQP-001`, and related rows) — M8/M9;

@@ -25,9 +25,9 @@ use crate::{
     JobInstanceId, JobInstanceKey, JobName, JobParameters, JobRepository, LifecycleTransition,
     ListenerContext, ListenerFailure, ListenerFailureKind, ListenerPhase, NodeId, PartitionKey,
     PartitionPlanEntry, RepositoryCapability, RepositoryError, RetryOrdinal, RetryReservation,
-    SkipCounts, StartLimit, StepExecution, StepExecutionId, StepName, StepPartition,
-    StopPollInterval, StopTiming, StopToken, TaskletContext, TaskletExecutionOutcome,
-    TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep, TerminalKind,
+    ScopeKind, ScopedComponentId, SkipCounts, StartLimit, StepExecution, StepExecutionId, StepName,
+    StepPartition, StopPollInterval, StopTiming, StopToken, TaskletContext,
+    TaskletExecutionOutcome, TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep, TerminalKind,
 };
 
 pub(crate) fn decision_matches_manifest(manifest: &Value, request: &FlowDecisionRequest) -> bool {
@@ -536,6 +536,8 @@ pub struct FlowJob {
     partitioned_tasklets: BTreeMap<NodeId, PartitionedTaskletBinding>,
     nested_jobs: BTreeMap<NodeId, NestedJobBinding>,
     custom_leaves: BTreeMap<NodeId, crate::CustomLeafRegistration>,
+    scoped_components:
+        BTreeMap<(ScopeKind, crate::ScopedComponentId), crate::ScopedComponentRegistration>,
 }
 
 impl fmt::Debug for FlowJob {
@@ -553,6 +555,7 @@ impl fmt::Debug for FlowJob {
             )
             .field("nested_job_count", &self.nested_jobs.len())
             .field("custom_leaf_count", &self.custom_leaves.len())
+            .field("scoped_component_count", &self.scoped_components.len())
             .finish()
     }
 }
@@ -586,6 +589,7 @@ impl FlowJob {
             partitioned_tasklets: BTreeMap::new(),
             nested_jobs: BTreeMap::new(),
             custom_leaves: BTreeMap::new(),
+            scoped_components: BTreeMap::new(),
         })
     }
 
@@ -787,6 +791,33 @@ impl FlowJob {
         Ok(self)
     }
 
+    /// Binds one explicit live component factory to its compiled scoped definition.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an undeclared component, factory kind/revision drift, or a second
+    /// registration for the same scope and logical component identifier.
+    pub fn with_scoped_component_registration(
+        mut self,
+        registration: crate::ScopedComponentRegistration,
+    ) -> Result<Self, FlowJobError> {
+        let scope = registration.scope();
+        let component = registration.id().clone();
+        let Some(compiled) = self.plan.scoped_component(scope, &component) else {
+            return Err(FlowJobError::ScopedComponentRegistrationMismatch { scope, component });
+        };
+        if compiled.factory_kind() != registration.factory_kind()
+            || compiled.factory_revision() != registration.factory_revision()
+        {
+            return Err(FlowJobError::ScopedComponentRegistrationMismatch { scope, component });
+        }
+        let key = (scope, component.clone());
+        if self.scoped_components.insert(key, registration).is_some() {
+            return Err(FlowJobError::DuplicateScopedComponentBinding { scope, component });
+        }
+        Ok(self)
+    }
+
     /// Validates that every compiled node has exactly one executable binding.
     ///
     /// # Errors
@@ -826,7 +857,42 @@ impl FlowJob {
                 return Err(FlowJobError::MissingBinding { node: id.clone() });
             }
         }
+
+        for component in self.plan.scoped_components() {
+            let key = (component.scope(), component.id().clone());
+            if !self.scoped_components.contains_key(&key) {
+                return Err(FlowJobError::MissingScopedComponentBinding {
+                    scope: component.scope(),
+                    component: component.id().clone(),
+                });
+            }
+        }
+        for scope in [ScopeKind::Job, ScopeKind::Step] {
+            let registrations = self
+                .scoped_components
+                .values()
+                .filter(|registration| registration.scope() == scope)
+                .cloned()
+                .collect::<Vec<_>>();
+            if let Err(failure) = crate::scope_live::validate_graph(scope, registrations) {
+                return Err(FlowJobError::InvalidScopedComponentGraph {
+                    scope,
+                    component: failure.component().cloned(),
+                });
+            }
+        }
         Ok(())
+    }
+
+    pub(crate) fn scoped_component_registrations(
+        &self,
+        scope: ScopeKind,
+    ) -> Vec<crate::ScopedComponentRegistration> {
+        self.scoped_components
+            .values()
+            .filter(|registration| registration.scope() == scope)
+            .cloned()
+            .collect()
     }
 
     fn materialize_split_tasklets(&self) -> Result<BTreeMap<NodeId, TaskletStep>, FlowJobError> {
@@ -900,6 +966,34 @@ pub enum FlowJobError {
         /// Logical branch step whose factory panicked.
         node: NodeId,
     },
+    /// A live component registration does not match its compiled definition.
+    ScopedComponentRegistrationMismatch {
+        /// Attempt-local scope whose registration mismatched.
+        scope: ScopeKind,
+        /// Logical component whose registration mismatched.
+        component: ScopedComponentId,
+    },
+    /// One scoped component was registered more than once.
+    DuplicateScopedComponentBinding {
+        /// Attempt-local scope containing the duplicate.
+        scope: ScopeKind,
+        /// Logical component registered more than once.
+        component: ScopedComponentId,
+    },
+    /// A compiled scoped component has no application factory registration.
+    MissingScopedComponentBinding {
+        /// Attempt-local scope missing the registration.
+        scope: ScopeKind,
+        /// Logical component without a factory registration.
+        component: ScopedComponentId,
+    },
+    /// The process-local component dependency graph is invalid.
+    InvalidScopedComponentGraph {
+        /// Attempt-local scope whose dependency graph is invalid.
+        scope: ScopeKind,
+        /// Component nearest the detected graph failure, when available.
+        component: Option<ScopedComponentId>,
+    },
 }
 
 impl fmt::Display for FlowJobError {
@@ -960,6 +1054,40 @@ impl fmt::Display for FlowJobError {
                 "node {} component factory panicked",
                 node.as_str()
             ),
+            Self::ScopedComponentRegistrationMismatch { scope, component } => write!(
+                formatter,
+                "{} scoped component {} registration does not match its compiled definition",
+                scope.as_str(),
+                component.as_str()
+            ),
+            Self::DuplicateScopedComponentBinding { scope, component } => write!(
+                formatter,
+                "{} scoped component {} was registered more than once",
+                scope.as_str(),
+                component.as_str()
+            ),
+            Self::MissingScopedComponentBinding { scope, component } => write!(
+                formatter,
+                "{} scoped component {} has no factory registration",
+                scope.as_str(),
+                component.as_str()
+            ),
+            Self::InvalidScopedComponentGraph { scope, component } => {
+                if let Some(component) = component {
+                    write!(
+                        formatter,
+                        "{} scoped component dependency graph is invalid near {}",
+                        scope.as_str(),
+                        component.as_str()
+                    )
+                } else {
+                    write!(
+                        formatter,
+                        "{} scoped component dependency graph is invalid",
+                        scope.as_str()
+                    )
+                }
+            }
         }
     }
 }
@@ -1068,6 +1196,13 @@ pub enum FlowFailure {
     },
     /// The compiled flow deliberately selected a `Fail` terminal.
     FailTerminal,
+    /// A live scoped component failed cleanup after otherwise successful work.
+    ScopedCleanup {
+        /// Scope whose reverse cleanup observed failures.
+        scope: ScopeKind,
+        /// Number of components whose cleanup failed.
+        failures: usize,
+    },
 }
 
 /// Final durable observations from one flow attempt.
@@ -1302,6 +1437,26 @@ pub enum FlowRuntimeError {
         /// Whether the failure crossed a panic boundary.
         panicked: bool,
     },
+    /// Typed late-bound input resolution failed before component construction.
+    ScopeResolution {
+        /// Attempt-local scope that could not resolve.
+        scope: ScopeKind,
+        /// Logical component whose inputs could not resolve.
+        component: ScopedComponentId,
+        /// Value-redacted resolution category.
+        failure: crate::ScopeResolutionFailure,
+    },
+    /// Process-local component construction failed before user work.
+    ScopeConstruction {
+        /// Attempt-local scope that could not be constructed.
+        scope: ScopeKind,
+        /// Stable value-redacted construction failure category.
+        failure: crate::ScopeBuildFailureKind,
+        /// Logical component nearest the failure, when available.
+        component: Option<ScopedComponentId>,
+        /// Number of secondary cleanup failures observed while unwinding.
+        cleanup_failures: usize,
+    },
 }
 
 impl fmt::Display for FlowRuntimeError {
@@ -1338,6 +1493,38 @@ impl fmt::Display for FlowRuntimeError {
                     formatter.write_str("partition factory rejected the plan")
                 }
             }
+            Self::ScopeResolution {
+                scope,
+                component,
+                failure,
+            } => write!(
+                formatter,
+                "{} scoped component {} input resolution failed: {failure}",
+                scope.as_str(),
+                component.as_str()
+            ),
+            Self::ScopeConstruction {
+                scope,
+                failure,
+                component,
+                cleanup_failures,
+            } => {
+                write!(
+                    formatter,
+                    "{} live scope construction failed: {failure}",
+                    scope.as_str()
+                )?;
+                if let Some(component) = component {
+                    write!(formatter, " near {}", component.as_str())?;
+                }
+                if *cleanup_failures != 0 {
+                    write!(
+                        formatter,
+                        " with {cleanup_failures} secondary cleanup failure(s)"
+                    )?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -1353,7 +1540,9 @@ impl Error for FlowRuntimeError {
             | Self::UndeclaredCapability { .. }
             | Self::InsufficientPoolCapacity { .. }
             | Self::UnresolvedPartitionOutcome { .. }
-            | Self::PartitionerRejected { .. } => None,
+            | Self::PartitionerRejected { .. }
+            | Self::ScopeResolution { .. }
+            | Self::ScopeConstruction { .. } => None,
         }
     }
 }
@@ -1497,12 +1686,47 @@ impl<'a> FlowLauncher<'a> {
         let (instance, mut execution, attempt) = self
             .create_job_execution(&key, &job.plan, parameters)
             .await?;
-        execution = self.start_job(&execution).await?;
-        self.poll_execution_control(execution.id(), stop_token)
-            .await?;
+        let mut job_scope = match self
+            .build_live_scope(
+                job,
+                ScopeKind::Job,
+                instance.id(),
+                execution.id(),
+                attempt,
+                None,
+            )
+            .await
+        {
+            Ok(scope) => scope,
+            Err(error) if is_scope_assembly_failure(&error) => {
+                let summary = self.next_failure_summary(FailureCategory::UserComponent)?;
+                self.finish_job(&execution, BatchStatus::Failed, Some(summary))
+                    .await?;
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        };
+        execution = match self.start_job(&execution).await {
+            Ok(started) => started,
+            Err(error) => {
+                if let Some(scope) = job_scope.as_mut() {
+                    let _ = scope.close().await;
+                }
+                return Err(error);
+            }
+        };
+        if let Err(error) = self
+            .poll_execution_control(execution.id(), stop_token)
+            .await
+        {
+            if let Some(scope) = job_scope.as_mut() {
+                let _ = scope.close().await;
+            }
+            return Err(error);
+        }
         self.observe_process_shutdown(stop_token);
 
-        let run = match self
+        let run_result = self
             .run_scope(
                 job,
                 job.plan.root_scope(),
@@ -1512,10 +1736,16 @@ impl<'a> FlowLauncher<'a> {
                 attempt,
                 parameters,
                 stop_token,
+                job_scope.as_ref(),
                 0,
             )
-            .await
-        {
+            .await;
+        let job_cleanup = match job_scope.as_mut() {
+            Some(scope) => scope.close().await,
+            None => crate::scope_live::ScopeCleanupReport::default(),
+        };
+
+        let mut run = match run_result {
             Ok(run) => run,
             Err(
                 error @ FlowRuntimeError::Repository(RepositoryError::NestedJobChildUnresolved {
@@ -1529,8 +1759,24 @@ impl<'a> FlowLauncher<'a> {
                     .await?;
                 return Err(error);
             }
+            Err(error) if is_scope_assembly_failure(&error) => {
+                let summary = self.next_failure_summary(FailureCategory::UserComponent)?;
+                self.finish_job(&execution, BatchStatus::Failed, Some(summary))
+                    .await?;
+                return Err(error);
+            }
             Err(error) => return Err(error),
         };
+        if !job_cleanup.is_clean() && run.status == BatchStatus::Completed {
+            let failure = self.next_failure_summary(FailureCategory::UserComponent)?;
+            run.status = BatchStatus::Failed;
+            run.exit_status = ExitStatus::failed();
+            run.failure = Some(failure);
+            run.flow_failure = Some(FlowFailure::ScopedCleanup {
+                scope: ScopeKind::Job,
+                failures: job_cleanup.failures().len(),
+            });
+        }
         let outcome = match run.status {
             BatchStatus::Completed => FlowExecutionOutcome::Completed,
             BatchStatus::Stopped => FlowExecutionOutcome::Stopped,
@@ -1568,6 +1814,7 @@ impl<'a> FlowLauncher<'a> {
         attempt: ExecutionAttempt,
         parameters: &'b JobParameters,
         stop_token: &'b StopToken,
+        job_scope: Option<&'b crate::scope_live::LiveScope>,
         ordinal_base: usize,
     ) -> BoxFuture<'b, Result<ScopeRun, FlowRuntimeError>> {
         Box::pin(async move {
@@ -1693,11 +1940,13 @@ impl<'a> FlowLauncher<'a> {
                             )?;
                             let run = self
                                 .run_step(
+                                    job,
                                     &node_id,
                                     tasklet,
                                     created,
                                     parameters,
                                     stop_token,
+                                    job_scope,
                                     &correlation,
                                 )
                                 .await?;
@@ -1851,6 +2100,7 @@ impl<'a> FlowLauncher<'a> {
                             )?;
                             let run = self
                                 .run_custom_leaf(
+                                    job,
                                     job.plan.fingerprint(),
                                     compiled,
                                     registration,
@@ -1858,6 +2108,7 @@ impl<'a> FlowLauncher<'a> {
                                     created,
                                     parameters,
                                     stop_token,
+                                    job_scope,
                                     &correlation,
                                 )
                                 .await?;
@@ -2103,6 +2354,7 @@ impl<'a> FlowLauncher<'a> {
                                 attempt,
                                 parameters,
                                 stop_token,
+                                job_scope,
                                 ordinal_base.saturating_add(steps.len()),
                             )
                             .await?;
@@ -2199,6 +2451,7 @@ impl<'a> FlowLauncher<'a> {
                                     attempt,
                                     parameters,
                                     stop_token,
+                                    job_scope,
                                 )
                                 .await?;
                             listener_failures.extend(run.listener_failures);
@@ -2608,6 +2861,7 @@ impl<'a> FlowLauncher<'a> {
         attempt: ExecutionAttempt,
         parameters: &JobParameters,
         parent_stop: &StopToken,
+        job_scope: Option<&crate::scope_live::LiveScope>,
         correlation_base: usize,
     ) -> Result<SplitRun, FlowRuntimeError> {
         let (split_stop_source, split_stop) = crate::StopSource::new();
@@ -2643,6 +2897,7 @@ impl<'a> FlowLauncher<'a> {
                         attempt,
                         parameters,
                         &split_stop,
+                        job_scope,
                     )
                     .await
                 }
@@ -2754,6 +3009,7 @@ impl<'a> FlowLauncher<'a> {
         attempt: ExecutionAttempt,
         parameters: &JobParameters,
         stop: &StopToken,
+        job_scope: Option<&crate::scope_live::LiveScope>,
     ) -> Result<SplitBranchRun, FlowRuntimeError> {
         if let Some(scope) = scope.as_ref() {
             let run = self
@@ -2766,6 +3022,7 @@ impl<'a> FlowLauncher<'a> {
                     attempt,
                     parameters,
                     stop,
+                    job_scope,
                     ordinal_base,
                 )
                 .await?;
@@ -2858,11 +3115,13 @@ impl<'a> FlowLauncher<'a> {
             )?;
             let run = self
                 .run_step(
+                    job,
                     compiled.id(),
                     tasklet,
                     created,
                     parameters,
                     stop,
+                    job_scope,
                     &correlation,
                 )
                 .await?;
@@ -2906,6 +3165,7 @@ impl<'a> FlowLauncher<'a> {
         attempt: ExecutionAttempt,
         parameters: &JobParameters,
         parent_stop: &StopToken,
+        job_scope: Option<&crate::scope_live::LiveScope>,
     ) -> Result<PartitionRun, FlowRuntimeError> {
         let created = self
             .create_step(
@@ -3012,6 +3272,7 @@ impl<'a> FlowLauncher<'a> {
                     attempt,
                     parameters,
                     &partition_stop,
+                    job_scope,
                 )
                 .await
             }
@@ -3171,6 +3432,7 @@ impl<'a> FlowLauncher<'a> {
         attempt: ExecutionAttempt,
         parameters: &JobParameters,
         stop: &StopToken,
+        job_scope: Option<&crate::scope_live::LiveScope>,
     ) -> Result<PartitionWorkerRun, FlowRuntimeError> {
         let (worker, assigned) = self
             .create_and_assign_partition_worker(execution_id, compiled, &partition)
@@ -3198,11 +3460,13 @@ impl<'a> FlowLauncher<'a> {
             match catch_unwind(AssertUnwindSafe(|| binding.worker.create(input))) {
                 Ok(tasklet_step) if tasklet_step.name() == binding.worker.step_name() => {
                     self.run_step(
+                        job,
                         compiled.worker().id(),
                         &tasklet_step,
                         worker,
                         parameters,
                         stop,
+                        job_scope,
                         &correlation,
                     )
                     .await?
@@ -3487,6 +3751,64 @@ impl<'a> FlowLauncher<'a> {
                 }
             }
         }
+    }
+
+    async fn build_live_scope(
+        &self,
+        job: &FlowJob,
+        scope: ScopeKind,
+        instance_id: JobInstanceId,
+        execution_id: JobExecutionId,
+        attempt: ExecutionAttempt,
+        step_owner: Option<crate::scope_runtime::ScopeStepOwner<'_>>,
+    ) -> Result<Option<crate::scope_live::LiveScope>, FlowRuntimeError> {
+        let components = job
+            .plan
+            .scoped_components()
+            .filter(|component| component.scope() == scope)
+            .collect::<Vec<_>>();
+        if components.is_empty() {
+            return Ok(None);
+        }
+
+        let mut inputs = BTreeMap::new();
+        for component in components {
+            let resolved = match crate::scope_runtime::resolve_scoped_component_inputs(
+                self.repository,
+                &job.plan,
+                component,
+                instance_id,
+                execution_id,
+                attempt,
+                step_owner,
+            )
+            .await
+            {
+                Ok(resolved) => resolved,
+                Err(crate::scope_runtime::ScopeResolutionError::Repository(error)) => {
+                    return Err(error.into());
+                }
+                Err(crate::scope_runtime::ScopeResolutionError::Resolution(failure)) => {
+                    return Err(FlowRuntimeError::ScopeResolution {
+                        scope,
+                        component: component.id().clone(),
+                        failure,
+                    });
+                }
+            };
+            inputs.insert(component.id().clone(), resolved);
+        }
+
+        let registrations = job.scoped_component_registrations(scope);
+        crate::scope_live::LiveScope::build(scope, registrations, &inputs)
+            .await
+            .map(Some)
+            .map_err(|failure| FlowRuntimeError::ScopeConstruction {
+                scope,
+                failure: failure.kind(),
+                component: failure.component().cloned(),
+                cleanup_failures: failure.cleanup_failures(),
+            })
     }
 
     async fn create_job_execution(
@@ -3796,6 +4118,7 @@ impl<'a> FlowLauncher<'a> {
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     async fn run_custom_leaf(
         &self,
+        job: &FlowJob,
         fingerprint: &[u8; 32],
         compiled: &crate::CustomLeafNode,
         registration: &crate::CustomLeafRegistration,
@@ -3803,6 +4126,7 @@ impl<'a> FlowLauncher<'a> {
         created: StepExecution,
         parameters: &JobParameters,
         stop_token: &StopToken,
+        job_scope: Option<&crate::scope_live::LiveScope>,
         correlation: &ExecutionCorrelation,
     ) -> Result<StepRun, FlowRuntimeError> {
         let context = ListenerContext::new(correlation, parameters, stop_token);
@@ -3849,7 +4173,39 @@ impl<'a> FlowLauncher<'a> {
             }
         }
 
-        let started = self.start_step(&created).await?;
+        let step_owner = crate::scope_runtime::ScopeStepOwner {
+            execution_id: created.id(),
+            node_id: compiled.id(),
+            step_name: compiled.step_name(),
+        };
+        let mut step_scope = match self
+            .build_live_scope(
+                job,
+                ScopeKind::Step,
+                correlation.job_instance_id(),
+                created.job_execution_id(),
+                correlation.job_attempt(),
+                Some(step_owner),
+            )
+            .await
+        {
+            Ok(scope) => scope,
+            Err(error) if is_scope_assembly_failure(&error) => {
+                self.fail_unstarted_scope_step(&created, correlation, compiled.id())
+                    .await?;
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        };
+        let started = match self.start_step(&created).await {
+            Ok(started) => started,
+            Err(error) => {
+                if let Some(scope) = step_scope.as_mut() {
+                    let _ = scope.close().await;
+                }
+                return Err(error);
+            }
+        };
         let terminal_rollback = AtomicBool::new(false);
         let tasklet_context = TaskletContext::new_for_flow(
             parameters,
@@ -3858,8 +4214,10 @@ impl<'a> FlowLauncher<'a> {
             stop_token,
             correlation,
             &terminal_rollback,
+            job_scope,
+            step_scope.as_ref(),
         );
-        let invoked = self
+        let invoked = match self
             .invoke_custom_leaf_with_fault(
                 fingerprint,
                 compiled,
@@ -3868,7 +4226,16 @@ impl<'a> FlowLauncher<'a> {
                 previous_state,
                 stop_token,
             )
-            .await?;
+            .await
+        {
+            Ok(invoked) => invoked,
+            Err(error) => {
+                if let Some(scope) = step_scope.as_mut() {
+                    let _ = scope.close().await;
+                }
+                return Err(error);
+            }
+        };
 
         let mut candidate_state = None;
         let mut state_failure = false;
@@ -3925,25 +4292,51 @@ impl<'a> FlowLauncher<'a> {
             ),
         };
 
-        let tasklet_summary = tasklet_failure
+        let tasklet_summary = match tasklet_failure
             .map(|_| self.next_failure_summary(FailureCategory::UserComponent))
-            .transpose()?;
+            .transpose()
+        {
+            Ok(summary) => summary,
+            Err(error) => {
+                if let Some(scope) = step_scope.as_mut() {
+                    let _ = scope.close().await;
+                }
+                return Err(error);
+            }
+        };
         let mut durable = started;
         if let Some(state) = candidate_state.as_ref() {
-            durable = self
+            durable = match self
                 .commit_custom_leaf_state(
                     correlation.job_instance_id(),
                     compiled.id(),
                     &durable,
                     state,
                 )
-                .await?;
+                .await
+            {
+                Ok(durable) => durable,
+                Err(error) => {
+                    if let Some(scope) = step_scope.as_mut() {
+                        let _ = scope.close().await;
+                    }
+                    return Err(error);
+                }
+            };
         }
 
         let mut failures = Vec::new();
         for (index, (_, listener)) in registration.listeners().iter().enumerate().rev() {
             if let Err(kind) = invoke_after_step(listener.as_ref(), context, outcome).await {
-                let summary = self.next_failure_summary(FailureCategory::UserComponent)?;
+                let summary = match self.next_failure_summary(FailureCategory::UserComponent) {
+                    Ok(summary) => summary,
+                    Err(error) => {
+                        if let Some(scope) = step_scope.as_mut() {
+                            let _ = scope.close().await;
+                        }
+                        return Err(error);
+                    }
+                };
                 failures.push(ListenerFailure::new(
                     ListenerPhase::AfterStep,
                     index,
@@ -3960,10 +4353,24 @@ impl<'a> FlowLauncher<'a> {
             };
             exit = ExitStatus::failed();
         }
+        let cleanup = match step_scope.as_mut() {
+            Some(scope) => scope.close().await,
+            None => crate::scope_live::ScopeCleanupReport::default(),
+        };
+        let cleanup_is_primary =
+            !cleanup.is_clean() && outcome == TaskletExecutionOutcome::Completed;
+        let cleanup_summary = cleanup_is_primary
+            .then(|| self.next_failure_summary(FailureCategory::UserComponent))
+            .transpose()?;
+        if cleanup_is_primary {
+            outcome = TaskletExecutionOutcome::Failed(TaskletFailure::Error);
+            exit = ExitStatus::failed();
+        }
         let failure = failures
             .first()
             .map(|failure| failure.summary())
-            .or(tasklet_summary);
+            .or(tasklet_summary)
+            .or(cleanup_summary);
         let execution = self
             .finish_step(
                 &durable,
@@ -3996,6 +4403,11 @@ impl<'a> FlowLauncher<'a> {
             Some(FlowFailure::CustomLeafState {
                 node: compiled.id().clone(),
             })
+        } else if cleanup_is_primary {
+            Some(FlowFailure::ScopedCleanup {
+                scope: ScopeKind::Step,
+                failures: cleanup.failures().len(),
+            })
         } else {
             match outcome {
                 TaskletExecutionOutcome::Failed(value) => Some(FlowFailure::Tasklet(value)),
@@ -4015,11 +4427,13 @@ impl<'a> FlowLauncher<'a> {
     #[allow(clippy::too_many_lines)]
     async fn run_step(
         &self,
+        job: &FlowJob,
         node_id: &NodeId,
         step: &TaskletStep,
         created: StepExecution,
         parameters: &JobParameters,
         stop_token: &StopToken,
+        job_scope: Option<&crate::scope_live::LiveScope>,
         correlation: &ExecutionCorrelation,
     ) -> Result<StepRun, FlowRuntimeError> {
         let context = ListenerContext::new(correlation, parameters, stop_token);
@@ -4066,7 +4480,39 @@ impl<'a> FlowLauncher<'a> {
             }
         }
 
-        let started = self.start_step(&created).await?;
+        let step_owner = crate::scope_runtime::ScopeStepOwner {
+            execution_id: created.id(),
+            node_id,
+            step_name: step.name(),
+        };
+        let mut step_scope = match self
+            .build_live_scope(
+                job,
+                ScopeKind::Step,
+                correlation.job_instance_id(),
+                created.job_execution_id(),
+                correlation.job_attempt(),
+                Some(step_owner),
+            )
+            .await
+        {
+            Ok(scope) => scope,
+            Err(error) if is_scope_assembly_failure(&error) => {
+                self.fail_unstarted_scope_step(&created, correlation, node_id)
+                    .await?;
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        };
+        let started = match self.start_step(&created).await {
+            Ok(started) => started,
+            Err(error) => {
+                if let Some(scope) = step_scope.as_mut() {
+                    let _ = scope.close().await;
+                }
+                return Err(error);
+            }
+        };
         let terminal_rollback = AtomicBool::new(false);
         let tasklet_context = TaskletContext::new_for_flow(
             parameters,
@@ -4075,15 +4521,26 @@ impl<'a> FlowLauncher<'a> {
             stop_token,
             correlation,
             &terminal_rollback,
+            job_scope,
+            step_scope.as_ref(),
         );
-        let invoked = self
+        let invoked = match self
             .invoke_with_execution_control(
                 correlation.job_execution_id(),
                 step.tasklet(),
                 tasklet_context,
                 stop_token,
             )
-            .await?;
+            .await
+        {
+            Ok(invoked) => invoked,
+            Err(error) => {
+                if let Some(scope) = step_scope.as_mut() {
+                    let _ = scope.close().await;
+                }
+                return Err(error);
+            }
+        };
         let (mut outcome, mut exit, tasklet_failure) = match invoked {
             Ok(TaskletOutcome::Completed) if !stop_token.is_stop_requested() => (
                 TaskletExecutionOutcome::Completed,
@@ -4118,13 +4575,30 @@ impl<'a> FlowLauncher<'a> {
                 Some(failure),
             ),
         };
-        let tasklet_summary = tasklet_failure
+        let tasklet_summary = match tasklet_failure
             .map(|_| self.next_failure_summary(FailureCategory::UserComponent))
-            .transpose()?;
+            .transpose()
+        {
+            Ok(summary) => summary,
+            Err(error) => {
+                if let Some(scope) = step_scope.as_mut() {
+                    let _ = scope.close().await;
+                }
+                return Err(error);
+            }
+        };
         let mut failures = Vec::new();
         for (index, listener) in step.listeners().iter().enumerate().rev() {
             if let Err(kind) = invoke_after_step(listener.as_ref(), context, outcome).await {
-                let summary = self.next_failure_summary(FailureCategory::UserComponent)?;
+                let summary = match self.next_failure_summary(FailureCategory::UserComponent) {
+                    Ok(summary) => summary,
+                    Err(error) => {
+                        if let Some(scope) = step_scope.as_mut() {
+                            let _ = scope.close().await;
+                        }
+                        return Err(error);
+                    }
+                };
                 failures.push(ListenerFailure::new(
                     ListenerPhase::AfterStep,
                     index,
@@ -4141,10 +4615,24 @@ impl<'a> FlowLauncher<'a> {
             };
             exit = ExitStatus::failed();
         }
+        let cleanup = match step_scope.as_mut() {
+            Some(scope) => scope.close().await,
+            None => crate::scope_live::ScopeCleanupReport::default(),
+        };
+        let cleanup_is_primary =
+            !cleanup.is_clean() && outcome == TaskletExecutionOutcome::Completed;
+        let cleanup_summary = cleanup_is_primary
+            .then(|| self.next_failure_summary(FailureCategory::UserComponent))
+            .transpose()?;
+        if cleanup_is_primary {
+            outcome = TaskletExecutionOutcome::Failed(TaskletFailure::Error);
+            exit = ExitStatus::failed();
+        }
         let failure = failures
             .first()
             .map(|failure| failure.summary())
-            .or(tasklet_summary);
+            .or(tasklet_summary)
+            .or(cleanup_summary);
         let durable = self.reload_step(started.id()).await?;
         let execution = self
             .finish_step(
@@ -4171,21 +4659,58 @@ impl<'a> FlowLauncher<'a> {
             outcome,
             exit_status: exit,
             failure,
-            flow_failure: match outcome {
-                TaskletExecutionOutcome::Failed(value) => Some(
-                    if matches!(
-                        value,
-                        TaskletFailure::ListenerError | TaskletFailure::ListenerPanic
-                    ) {
-                        FlowFailure::Listener(value)
-                    } else {
-                        FlowFailure::Tasklet(value)
-                    },
-                ),
-                _ => None,
+            flow_failure: if cleanup_is_primary {
+                Some(FlowFailure::ScopedCleanup {
+                    scope: ScopeKind::Step,
+                    failures: cleanup.failures().len(),
+                })
+            } else {
+                match outcome {
+                    TaskletExecutionOutcome::Failed(value) => Some(
+                        if matches!(
+                            value,
+                            TaskletFailure::ListenerError | TaskletFailure::ListenerPanic
+                        ) {
+                            FlowFailure::Listener(value)
+                        } else {
+                            FlowFailure::Tasklet(value)
+                        },
+                    ),
+                    _ => None,
+                }
             },
             listener_failures: failures,
         })
+    }
+
+    async fn fail_unstarted_scope_step(
+        &self,
+        step: &StepExecution,
+        correlation: &ExecutionCorrelation,
+        node_id: &NodeId,
+    ) -> Result<(), FlowRuntimeError> {
+        let summary = self.next_failure_summary(FailureCategory::UserComponent)?;
+        let execution = self
+            .finish_step(
+                step,
+                TaskletExecutionOutcome::Failed(TaskletFailure::Error),
+                &ExitStatus::failed(),
+                Some(summary),
+                false,
+            )
+            .await?;
+        self.emit_flow_event(&FlowEvent::new(
+            FlowEventKind::StepResultCommitted,
+            correlation.job_name().clone(),
+            correlation.job_instance_id(),
+            correlation.job_execution_id(),
+            correlation.job_attempt(),
+            node_id.clone(),
+            Some(execution.id()),
+            None,
+            self.clock.now(),
+        ));
+        Ok(())
     }
 
     async fn start_step(&self, step: &StepExecution) -> Result<StepExecution, FlowRuntimeError> {
@@ -4554,6 +5079,13 @@ fn correlation(
         step_execution_id,
         step_attempt,
     ))
+}
+
+const fn is_scope_assembly_failure(error: &FlowRuntimeError) -> bool {
+    matches!(
+        error,
+        FlowRuntimeError::ScopeResolution { .. } | FlowRuntimeError::ScopeConstruction { .. }
+    )
 }
 
 fn status_for_tasklet(outcome: TaskletExecutionOutcome) -> BatchStatus {

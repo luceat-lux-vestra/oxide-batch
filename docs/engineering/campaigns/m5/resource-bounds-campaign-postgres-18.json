@@ -1,6 +1,6 @@
 {
   "campaign": "M5 PostgreSQL resource bounds",
-  "declared_resources": 42,
+  "declared_resources": 43,
   "durable_equivalence": [
     {
       "observation": {
@@ -128,7 +128,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "fefd3732a99b5c89a0f14001824d250742b0b373",
+    "source_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -143,7 +143,7 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "fefd3732a99b5c89a0f14001824d250742b0b373",
+      "execution_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -162,13 +162,13 @@
         "crates/oxide-batch-repository/src": "c2b9bf7c2729ab218aec08def17a8b315b661e98",
         "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
         "crates/oxide-batch/migrations": "cd942c54a89a46bedfa78f51aef78b47e27c48ee",
-        "crates/oxide-batch/src": "40868cc9d205116fd6c02a8d0a523f00d644b16a",
-        "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "f2058f8a963a7ebdaf91f25a6a62e3933a079493",
+        "crates/oxide-batch/src": "666d99cfd5190a60873d23d6c56f584765cfc6ca",
+        "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "03d250b8ec50d47438c87ae3e0e5c76f4e968e78",
         "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "1bbb800be11c7ada42b16be604313ccdf5ba96fc",
         "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "651fce7aa3002c2d32897ce5a57ab72a3971b54c",
         "crates/oxide-batch/tests/resource_bounds": "3e90ae5015649f6f8086e86082cee17d97b71006",
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
-        "tests/fixtures/resource-bounds/campaign-scope.json": "3d03691ebaf6dce8adfcfab05326988c061fe553",
+        "tests/fixtures/resource-bounds/campaign-scope.json": "193511ddb45f904537f2b42abd9385527e6b83e5",
         "tests/fixtures/resource-bounds/campaign-semantics.json": "47e677ff95774ac67204adcd1821f8a8d9f707a8",
         "tests/fixtures/resource-bounds/execution-contract.json": "8071fba867357d876bcdddb3b8ca67af3d550add",
         "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
@@ -182,7 +182,7 @@
       "tree_clean": true
     }
   },
-  "observed_resources": 42,
+  "observed_resources": 43,
   "observed_scenarios": [
     "declared_ceilings_hold_under_stress_with_backpressure",
     "bounded_query_paths_stay_bounded_as_history_grows",
@@ -558,7 +558,7 @@
           "violations": []
         },
         "execution_manifest": {
-          "execution_commit": "fefd3732a99b5c89a0f14001824d250742b0b373",
+          "execution_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -577,13 +577,13 @@
             "crates/oxide-batch-repository/src": "c2b9bf7c2729ab218aec08def17a8b315b661e98",
             "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
             "crates/oxide-batch/migrations": "cd942c54a89a46bedfa78f51aef78b47e27c48ee",
-            "crates/oxide-batch/src": "40868cc9d205116fd6c02a8d0a523f00d644b16a",
-            "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "f2058f8a963a7ebdaf91f25a6a62e3933a079493",
+            "crates/oxide-batch/src": "666d99cfd5190a60873d23d6c56f584765cfc6ca",
+            "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "03d250b8ec50d47438c87ae3e0e5c76f4e968e78",
             "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "1bbb800be11c7ada42b16be604313ccdf5ba96fc",
             "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "651fce7aa3002c2d32897ce5a57ab72a3971b54c",
             "crates/oxide-batch/tests/resource_bounds": "3e90ae5015649f6f8086e86082cee17d97b71006",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
-            "tests/fixtures/resource-bounds/campaign-scope.json": "3d03691ebaf6dce8adfcfab05326988c061fe553",
+            "tests/fixtures/resource-bounds/campaign-scope.json": "193511ddb45f904537f2b42abd9385527e6b83e5",
             "tests/fixtures/resource-bounds/campaign-semantics.json": "47e677ff95774ac67204adcd1821f8a8d9f707a8",
             "tests/fixtures/resource-bounds/execution-contract.json": "8071fba867357d876bcdddb3b8ca67af3d550add",
             "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
@@ -778,7 +778,7 @@
           }
         ],
         "execution_manifest": {
-          "execution_commit": "fefd3732a99b5c89a0f14001824d250742b0b373",
+          "execution_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -797,13 +797,13 @@
             "crates/oxide-batch-repository/src": "c2b9bf7c2729ab218aec08def17a8b315b661e98",
             "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
             "crates/oxide-batch/migrations": "cd942c54a89a46bedfa78f51aef78b47e27c48ee",
-            "crates/oxide-batch/src": "40868cc9d205116fd6c02a8d0a523f00d644b16a",
-            "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "f2058f8a963a7ebdaf91f25a6a62e3933a079493",
+            "crates/oxide-batch/src": "666d99cfd5190a60873d23d6c56f584765cfc6ca",
+            "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "03d250b8ec50d47438c87ae3e0e5c76f4e968e78",
             "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "1bbb800be11c7ada42b16be604313ccdf5ba96fc",
             "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "651fce7aa3002c2d32897ce5a57ab72a3971b54c",
             "crates/oxide-batch/tests/resource_bounds": "3e90ae5015649f6f8086e86082cee17d97b71006",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
-            "tests/fixtures/resource-bounds/campaign-scope.json": "3d03691ebaf6dce8adfcfab05326988c061fe553",
+            "tests/fixtures/resource-bounds/campaign-scope.json": "193511ddb45f904537f2b42abd9385527e6b83e5",
             "tests/fixtures/resource-bounds/campaign-semantics.json": "47e677ff95774ac67204adcd1821f8a8d9f707a8",
             "tests/fixtures/resource-bounds/execution-contract.json": "8071fba867357d876bcdddb3b8ca67af3d550add",
             "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
@@ -1533,6 +1533,26 @@
             "subject": "component-count",
             "unit": "components",
             "value": 257
+          },
+          {
+            "case": "at the ceiling",
+            "declared_ceiling": 32,
+            "expected": "accepted",
+            "observed": "accepted",
+            "resource": "scoped-component-dependency-depth",
+            "subject": "dependency-depth",
+            "unit": "components",
+            "value": 32
+          },
+          {
+            "case": "one component past the ceiling",
+            "declared_ceiling": 32,
+            "expected": "refused",
+            "observed": "refused",
+            "resource": "scoped-component-dependency-depth",
+            "subject": "dependency-depth",
+            "unit": "components",
+            "value": 33
           }
         ],
         "definition_bound": {
@@ -1553,7 +1573,7 @@
           "violations": []
         },
         "execution_manifest": {
-          "execution_commit": "fefd3732a99b5c89a0f14001824d250742b0b373",
+          "execution_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -1572,13 +1592,13 @@
             "crates/oxide-batch-repository/src": "c2b9bf7c2729ab218aec08def17a8b315b661e98",
             "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
             "crates/oxide-batch/migrations": "cd942c54a89a46bedfa78f51aef78b47e27c48ee",
-            "crates/oxide-batch/src": "40868cc9d205116fd6c02a8d0a523f00d644b16a",
-            "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "f2058f8a963a7ebdaf91f25a6a62e3933a079493",
+            "crates/oxide-batch/src": "666d99cfd5190a60873d23d6c56f584765cfc6ca",
+            "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "03d250b8ec50d47438c87ae3e0e5c76f4e968e78",
             "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "1bbb800be11c7ada42b16be604313ccdf5ba96fc",
             "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "651fce7aa3002c2d32897ce5a57ab72a3971b54c",
             "crates/oxide-batch/tests/resource_bounds": "3e90ae5015649f6f8086e86082cee17d97b71006",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
-            "tests/fixtures/resource-bounds/campaign-scope.json": "3d03691ebaf6dce8adfcfab05326988c061fe553",
+            "tests/fixtures/resource-bounds/campaign-scope.json": "193511ddb45f904537f2b42abd9385527e6b83e5",
             "tests/fixtures/resource-bounds/campaign-semantics.json": "47e677ff95774ac67204adcd1821f8a8d9f707a8",
             "tests/fixtures/resource-bounds/execution-contract.json": "8071fba867357d876bcdddb3b8ca67af3d550add",
             "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
@@ -1866,6 +1886,20 @@
             "passed": true,
             "rejections": 1,
             "resource": "scoped-components-per-scope",
+            "summarizes_construction": true,
+            "violations": [],
+            "waits": 0
+          },
+          {
+            "accepted_at_boundary": 1,
+            "configured_ceiling": 32,
+            "drops": 0,
+            "observed_peak_occupancy": 32,
+            "offered_load": 33,
+            "overload_policy": "fail-closed",
+            "passed": true,
+            "rejections": 1,
+            "resource": "scoped-component-dependency-depth",
             "summarizes_construction": true,
             "violations": [],
             "waits": 0
@@ -2175,7 +2209,7 @@
           "violations": []
         },
         "execution_manifest": {
-          "execution_commit": "fefd3732a99b5c89a0f14001824d250742b0b373",
+          "execution_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -2194,13 +2228,13 @@
             "crates/oxide-batch-repository/src": "c2b9bf7c2729ab218aec08def17a8b315b661e98",
             "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
             "crates/oxide-batch/migrations": "cd942c54a89a46bedfa78f51aef78b47e27c48ee",
-            "crates/oxide-batch/src": "40868cc9d205116fd6c02a8d0a523f00d644b16a",
-            "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "f2058f8a963a7ebdaf91f25a6a62e3933a079493",
+            "crates/oxide-batch/src": "666d99cfd5190a60873d23d6c56f584765cfc6ca",
+            "crates/oxide-batch/tests/postgres_resource_bound_payloads.rs": "03d250b8ec50d47438c87ae3e0e5c76f4e968e78",
             "crates/oxide-batch/tests/postgres_resource_bound_queries.rs": "1bbb800be11c7ada42b16be604313ccdf5ba96fc",
             "crates/oxide-batch/tests/postgres_resource_bound_workers.rs": "651fce7aa3002c2d32897ce5a57ab72a3971b54c",
             "crates/oxide-batch/tests/resource_bounds": "3e90ae5015649f6f8086e86082cee17d97b71006",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
-            "tests/fixtures/resource-bounds/campaign-scope.json": "3d03691ebaf6dce8adfcfab05326988c061fe553",
+            "tests/fixtures/resource-bounds/campaign-scope.json": "193511ddb45f904537f2b42abd9385527e6b83e5",
             "tests/fixtures/resource-bounds/campaign-semantics.json": "47e677ff95774ac67204adcd1821f8a8d9f707a8",
             "tests/fixtures/resource-bounds/execution-contract.json": "8071fba867357d876bcdddb3b8ca67af3d550add",
             "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
@@ -2888,6 +2922,31 @@
       "postgres": false,
       "proving_report": "bounded-payloads",
       "resource": "scoped-components-per-scope"
+    },
+    {
+      "class": "buffer",
+      "covered": true,
+      "declared_ceiling": 32,
+      "informational_symbols": [],
+      "observation": {
+        "accepted_at_boundary": 1,
+        "configured_ceiling": 32,
+        "drops": 0,
+        "observed_peak_occupancy": 32,
+        "offered_load": 33,
+        "overload_policy": "fail-closed",
+        "passed": true,
+        "rejections": 1,
+        "resource": "scoped-component-dependency-depth",
+        "summarizes_construction": true,
+        "violations": [],
+        "waits": 0
+      },
+      "observed_by": "bounded-payloads",
+      "overload_policy": "fail-closed",
+      "postgres": false,
+      "proving_report": "bounded-payloads",
+      "resource": "scoped-component-dependency-depth"
     },
     {
       "class": "buffer",

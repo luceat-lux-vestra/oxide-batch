@@ -421,6 +421,7 @@ mod listener;
 mod nested_job_runtime;
 mod repository;
 mod runtime;
+mod scope_live;
 #[allow(
     dead_code,
     reason = "#276 delivers typed resolution/provenance before sibling live-scope construction wires it"
@@ -560,6 +561,11 @@ pub use runtime::{
     BlockingTasklet, BlockingTaskletAdapter, BlockingTaskletContext, JobLauncher, LaunchError,
     LaunchReport, StopPollInterval, StopSource, StopTiming, StopToken, Tasklet, TaskletContext,
     TaskletError, TaskletExecutionOutcome, TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep,
+};
+pub use scope_live::{
+    MAX_SCOPED_DEPENDENCY_DEPTH, ScopeBuildFailureKind, ScopeRegistrationError, ScopedCleanupError,
+    ScopedComponentFactory, ScopedComponentHandle, ScopedComponentRegistration,
+    ScopedFactoryContext, ScopedFactoryError,
 };
 pub use scope_runtime::ScopeResolutionFailure;
 pub use service::{

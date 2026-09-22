@@ -95,8 +95,13 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     ("oxide_batch_repository", 113),
     ("repository", 14),
     ("runtime", 18),
+    // #277 exposes only process-local live-scope assembly contracts: opaque
+    // handles, explicit factories/registrations, value-redacted errors, and the
+    // dependency-depth ceiling. No resource, credential, executor, repository,
+    // or implementation pointer type crosses the facade.
+    ("scope_live", 9),
     // #276 exposes only the value-redacted late-binding failure category;
-    // resolution execution remains internal until sibling scope lifecycle work.
+    // resolution execution remains internal and feeds #277's live-scope runtime.
     ("scope_runtime", 1),
     ("service", 7),
     ("shutdown", 20),

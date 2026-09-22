@@ -44,11 +44,13 @@ use oxide_batch::{
     PartitionKey, PartitionPlanEntry, PartitionPlanFactory, PartitionTaskletFactory,
     PartitionedStepNode, ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome,
     ReaderError, RepositoryCapability, RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork,
-    ScopeFactoryKind, ScopeKind, ScopeResolverKind, ScopedComponentDefinition, ScopedComponentId,
-    SequentialIdGenerator, StateCodecError, StateLimits, StateSchemaId, StateSchemaVersion,
-    StepComponents, StepExecutionId, StepName, StepNode, StopPollInterval, StopSource, SystemClock,
-    Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
-    VersionedStateCodec, WriteContext, WriteOutcome, WriterError,
+    ScopeFactoryKind, ScopeKind, ScopeResolverKind, ScopedCleanupError, ScopedComponentDefinition,
+    ScopedComponentFactory, ScopedComponentHandle, ScopedComponentId, ScopedComponentRegistration,
+    ScopedFactoryContext, ScopedFactoryError, SequentialIdGenerator, StateCodecError, StateLimits,
+    StateSchemaId, StateSchemaVersion, StepComponents, StepExecutionId, StepName, StepNode,
+    StopPollInterval, StopSource, SystemClock, Tasklet, TaskletContext, TaskletError,
+    TaskletOutcome, TaskletStep, TerminalKind, VersionedStateCodec, WriteContext, WriteOutcome,
+    WriterError,
 };
 
 // ---------------------------------------------------------------------------
@@ -238,6 +240,24 @@ impl Tasklet for Noop {
     }
 }
 
+struct NoopScopedFactory;
+
+impl ScopedComponentFactory for NoopScopedFactory {
+    fn create<'a>(
+        &'a self,
+        _context: ScopedFactoryContext<'a>,
+    ) -> BoxFuture<'a, Result<ScopedComponentHandle, ScopedFactoryError>> {
+        Box::pin(async { Ok(ScopedComponentHandle::new(())) })
+    }
+
+    fn cleanup(
+        &self,
+        _component: ScopedComponentHandle,
+    ) -> BoxFuture<'_, Result<(), ScopedCleanupError>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
 /// One partition plan entry carrying its key as bounded durable context.
 fn partition_entry(key: &str) -> Result<PartitionPlanEntry, Box<dyn Error>> {
     let context = ExecutionContext::from_json(
@@ -306,10 +326,20 @@ fn scoped_tasklet_job(name: &JobName) -> Result<FlowJob, Box<dyn Error>> {
         .with_sequence(only.clone(), FlowTarget::Terminal(TerminalKind::Complete))?
         .with_scoped_component(component)
         .compile(name, DefinitionRevision::new("v1")?)?;
-    Ok(FlowJob::new(name.clone(), plan)?.with_tasklet_step(
-        only,
-        TaskletStep::new(StepName::new("only")?, Arc::new(Noop)),
-    )?)
+    let registration = ScopedComponentRegistration::new(
+        ScopeKind::Job,
+        ScopedComponentId::new("client")?,
+        ScopeFactoryKind::new("client-factory")?,
+        ComponentRevision::new("factory-v1")?,
+        Vec::new(),
+        Arc::new(NoopScopedFactory),
+    )?;
+    Ok(FlowJob::new(name.clone(), plan)?
+        .with_tasklet_step(
+            only,
+            TaskletStep::new(StepName::new("only")?, Arc::new(Noop)),
+        )?
+        .with_scoped_component_registration(registration)?)
 }
 
 fn owner_control() -> Result<(OwnerToken, StopPollInterval), Box<dyn Error>> {

@@ -116,6 +116,12 @@ completion.
 
 ## Gate B — job/step scope and late binding
 
+**Implementation status:** the durable selector, value-free provenance, and
+restart-resolution half is delivered by #276. The attempt-local live factory,
+memoization, dependency, typed-access, and reverse-cleanup half is delivered by
+#277 / PR #279 on the same compiled-plan authority. These are one Gate-B
+contract split by proof boundary, not two resolver or execution models.
+
 ### Lifetime and factories
 
 Job scope belongs to one `JobExecution` attempt; step scope belongs to one

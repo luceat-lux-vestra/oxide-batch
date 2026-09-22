@@ -77,11 +77,15 @@ use serde_json::Value;
 /// completion-policy slice only; the M7 flow-level repeat-context/interceptor
 /// architecture remains `Planned`) in
 /// [#151](https://github.com/luceat-lux-vestra/oxide-batch/issues/151).
+/// `SCOPE-JOB-001` and `SCOPE-STEP-001` move `Planned` to `Implemented`
+/// in #277 after the accepted #276/#277 Gate-B durable-resolution/live-lifecycle
+/// split is delivered. They remain outside the frozen M5 scope document; only
+/// the current whole-ledger aggregate changes here.
 const CLOSED_DISPOSITION: &[(&str, usize)] = &[
     ("Verified", 28),
-    ("Implemented", 13),
+    ("Implemented", 15),
     ("Partial", 14),
-    ("Planned", 26),
+    ("Planned", 24),
     ("Unknown", 2),
 ];
 
