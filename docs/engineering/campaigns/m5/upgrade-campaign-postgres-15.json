@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "fefd3732a99b5c89a0f14001824d250742b0b373",
+    "source_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -20,7 +20,7 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "fefd3732a99b5c89a0f14001824d250742b0b373",
+      "execution_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -35,7 +35,7 @@
         "crates/oxide-batch-repository/src": "c2b9bf7c2729ab218aec08def17a8b315b661e98",
         "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
         "crates/oxide-batch/migrations": "cd942c54a89a46bedfa78f51aef78b47e27c48ee",
-        "crates/oxide-batch/src": "40868cc9d205116fd6c02a8d0a523f00d644b16a",
+        "crates/oxide-batch/src": "666d99cfd5190a60873d23d6c56f584765cfc6ca",
         "crates/oxide-batch/tests/postgres_schema_rejection.rs": "ae495d4d6694357c86889f681e7293feef8abe41",
         "crates/oxide-batch/tests/postgres_schema_upgrade.rs": "0d68e367ab9d5fc19e694b5867023ef43b780309",
         "crates/oxide-batch/tests/postgres_upgrade_rollback.rs": "31cfd04d8396a1c2564fc0a7e1b360f74ac63cc9",
@@ -162,7 +162,7 @@
       "name": "schema1_and_schema2_upgrade_directly_to_schema3",
       "observation": {
         "execution_manifest": {
-          "execution_commit": "fefd3732a99b5c89a0f14001824d250742b0b373",
+          "execution_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -177,7 +177,7 @@
             "crates/oxide-batch-repository/src": "c2b9bf7c2729ab218aec08def17a8b315b661e98",
             "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
             "crates/oxide-batch/migrations": "cd942c54a89a46bedfa78f51aef78b47e27c48ee",
-            "crates/oxide-batch/src": "40868cc9d205116fd6c02a8d0a523f00d644b16a",
+            "crates/oxide-batch/src": "666d99cfd5190a60873d23d6c56f584765cfc6ca",
             "crates/oxide-batch/tests/postgres_schema_rejection.rs": "ae495d4d6694357c86889f681e7293feef8abe41",
             "crates/oxide-batch/tests/postgres_schema_upgrade.rs": "0d68e367ab9d5fc19e694b5867023ef43b780309",
             "crates/oxide-batch/tests/postgres_upgrade_rollback.rs": "31cfd04d8396a1c2564fc0a7e1b360f74ac63cc9",
@@ -492,7 +492,7 @@
         "current_schema_version": 6,
         "durable_state_unchanged": true,
         "execution_manifest": {
-          "execution_commit": "fefd3732a99b5c89a0f14001824d250742b0b373",
+          "execution_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -507,7 +507,7 @@
             "crates/oxide-batch-repository/src": "c2b9bf7c2729ab218aec08def17a8b315b661e98",
             "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
             "crates/oxide-batch/migrations": "cd942c54a89a46bedfa78f51aef78b47e27c48ee",
-            "crates/oxide-batch/src": "40868cc9d205116fd6c02a8d0a523f00d644b16a",
+            "crates/oxide-batch/src": "666d99cfd5190a60873d23d6c56f584765cfc6ca",
             "crates/oxide-batch/tests/postgres_schema_rejection.rs": "ae495d4d6694357c86889f681e7293feef8abe41",
             "crates/oxide-batch/tests/postgres_schema_upgrade.rs": "0d68e367ab9d5fc19e694b5867023ef43b780309",
             "crates/oxide-batch/tests/postgres_upgrade_rollback.rs": "31cfd04d8396a1c2564fc0a7e1b360f74ac63cc9",
@@ -630,7 +630,7 @@
       "name": "every_source_backup_restores_its_prior_schema",
       "observation": {
         "execution_manifest": {
-          "execution_commit": "fefd3732a99b5c89a0f14001824d250742b0b373",
+          "execution_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -645,7 +645,7 @@
             "crates/oxide-batch-repository/src": "c2b9bf7c2729ab218aec08def17a8b315b661e98",
             "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
             "crates/oxide-batch/migrations": "cd942c54a89a46bedfa78f51aef78b47e27c48ee",
-            "crates/oxide-batch/src": "40868cc9d205116fd6c02a8d0a523f00d644b16a",
+            "crates/oxide-batch/src": "666d99cfd5190a60873d23d6c56f584765cfc6ca",
             "crates/oxide-batch/tests/postgres_schema_rejection.rs": "ae495d4d6694357c86889f681e7293feef8abe41",
             "crates/oxide-batch/tests/postgres_schema_upgrade.rs": "0d68e367ab9d5fc19e694b5867023ef43b780309",
             "crates/oxide-batch/tests/postgres_upgrade_rollback.rs": "31cfd04d8396a1c2564fc0a7e1b360f74ac63cc9",
@@ -724,7 +724,7 @@
           },
           {
             "backup": {
-              "archive_bytes": 46171,
+              "archive_bytes": 46170,
               "format": "custom",
               "rows_covered": {
                 "ob_definition_upgrade": 1,

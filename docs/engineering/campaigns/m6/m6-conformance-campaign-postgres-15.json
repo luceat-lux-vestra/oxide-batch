@@ -6,12 +6,12 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "fefd3732a99b5c89a0f14001824d250742b0b373",
+    "source_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
     "source_tree_clean": true
   },
   "observation": {
     "execution_manifest": {
-      "execution_commit": "fefd3732a99b5c89a0f14001824d250742b0b373",
+      "execution_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
       "execution_commit_note": "The tree this run actually executed against; in CI this is the pull-request merge commit.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -28,8 +28,8 @@
         "crates/oxide-batch-test/src": "aff891fc18dfb4331304a5c8cd9cc3ebb0be650a",
         "crates/oxide-batch-test/tests": "8d913629efca6a0e80be6b8e10211a34ad1c0f0a",
         "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
-        "crates/oxide-batch/src": "40868cc9d205116fd6c02a8d0a523f00d644b16a",
-        "crates/oxide-batch/tests": "4cc8fadcdcf56d4017469cd78de1f7fbb2cc9bac",
+        "crates/oxide-batch/src": "666d99cfd5190a60873d23d6c56f584765cfc6ca",
+        "crates/oxide-batch/tests": "0f8d99322dc52dc91f9bce8c5d719eaaf71e5cb6",
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
         "tests/fixtures/m6-conformance/campaign-semantics.json": "025340def56776fcb42d9f2855a957f389bbdd99",
         "tests/fixtures/m6-conformance/execution-contract.json": "df49c9ebecc9d05073e8278c84aeeba949961280",
@@ -135,6 +135,10 @@
         "item_components::postgres_paging::tests::page_query_sql_omits_the_predicate_on_initial_execution": "ok",
         "item_components::postgres_paging::tests::page_query_sql_places_limit_after_the_composite_predicate": "ok",
         "repository::postgres::tests::canonical_instance_key_matches_version_one_golden_vector": "ok",
+        "scope_live::tests::construction_failure_unwinds_all_successful_components_and_keeps_primary": "ok",
+        "scope_live::tests::dependencies_construct_once_and_cleanup_in_reverse_order": "ok",
+        "scope_live::tests::factory_and_cleanup_panics_are_contained": "ok",
+        "scope_live::tests::graph_rejects_duplicate_missing_cycle_depth_and_capacity_before_construction": "ok",
         "scope_runtime::tests::caller_attempt_must_match_the_durable_execution_attempt": "ok",
         "scope_runtime::tests::coercion_failure_rolls_back_provenance": "ok",
         "scope_runtime::tests::compatible_restart_with_existing_provenance_fails_closed": "ok",
@@ -166,7 +170,7 @@
       ],
       "succeeded": true,
       "target": "__lib",
-      "tests": 107
+      "tests": 111
     },
     {
       "ignored": 0,
