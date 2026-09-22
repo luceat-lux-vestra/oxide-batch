@@ -14,6 +14,15 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # syn is a dev-only parser used by a retained M5 campaign. Cargo.lock is
+      # deliberately bound into retained-evidence provenance, so routine syn
+      # churn invalidates official evidence and requires campaign promotion.
+      # Keep major migrations visible and keep security updates eligible.
+      - dependency-name: "syn"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
     labels:
       - dependencies
 
