@@ -6,7 +6,7 @@ The policy exists so merge authority is not inferred from workflow names or from
 
 ## Classifications
 
-- `required`: the job is part of merge authority and must emit a status on every applicable pull request. Required workflows may not use top-level path filters, and required jobs may not use conditions that can suppress their status.
+- `required`: the job is part of merge authority and must emit a status on every applicable pull request. Required workflows must use the unprivileged `pull_request` event, may not use `pull_request_target`, and may not use top-level path filters; required jobs may not use conditions that can suppress their status.
 - `advisory`: useful PR-time feedback that is intentionally outside direct ruleset authority.
 - `optional`: explicitly path/scenario-scoped PR work that is allowed to disappear. Use this only when absence is intentional and documented by the policy.
 

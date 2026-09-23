@@ -1,0 +1,61 @@
+name: Failure classification
+
+on:
+  workflow_run: # zizmor: ignore[dangerous-triggers] trusted reporter only; never checkout/execute PR code or artifacts
+    workflows:
+      - M5 Crash and Restore
+      - M6 Gate H P-002 Performance
+      - M5 Conformance
+      - Evidence
+      - M5 Performance
+      - Rust
+      - M5 Soak
+      - Dependency review
+      - M5 Resource Bounds
+      - M5 Upgrade
+      - M5 Security
+      - Hardening drift audit policy
+      - M5 Cancellation
+      - Supply chain
+      - M6 Full Component Conformance
+      - M6 Gate B Transaction/Restart Equivalence
+      - Failure triage
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  group: failure-classification-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
+
+jobs:
+  classify:
+    permissions:
+      actions: read # Read workflow metadata and bounded logs for exact-HEAD reconstruction.
+      pull-requests: write # Upsert the single sticky classification report on the PR conversation.
+    if: github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'pull_request_target'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Rebuild exact-HEAD failure classification report
+        uses: luceat-lux-vestra/.github/actions/failure-classifier@1845ae0daeac8b899f92040d089a31b1c88f257a
+        with:
+          github-token: ${{ github.token }}
+          tracked-workflows: |
+            M5 Crash and Restore
+            M6 Gate H P-002 Performance
+            M5 Conformance
+            Evidence
+            M5 Performance
+            Rust
+            M5 Soak
+            Dependency review
+            M5 Resource Bounds
+            M5 Upgrade
+            M5 Security
+            Hardening drift audit policy
+            M5 Cancellation
+            Supply chain
+            M6 Full Component Conformance
+            M6 Gate B Transaction/Restart Equivalence
+            Failure triage
