@@ -38,7 +38,7 @@
       "classification": "advisory"
     },
     {
-      "pattern": ".github/workflows/failure-triage.yml",
+      "pattern": ".github/workflows/failure-declaration.yml",
       "classification": "required"
     }
   ],

@@ -30,6 +30,14 @@ module MergeGateVerifier
     events.key?('pull_request') || events.key?('pull_request_target')
   end
 
+  def pull_request_target_trigger?(doc)
+    events = event_map(doc)
+    return events.any? { |name| name.to_s == 'pull_request_target' } if events.is_a?(Array)
+    return events.to_s == 'pull_request_target' unless events.is_a?(Hash)
+
+    events.key?('pull_request_target')
+  end
+
   def pr_event_configs(doc)
     events = event_map(doc)
     return [] unless events.is_a?(Hash)
@@ -111,6 +119,7 @@ module MergeGateVerifier
 
       default = default_classification(policy, workflow)
       jobs = doc['jobs']
+      required_workflow = false
       unless jobs.is_a?(Hash)
         violations << "#{workflow} is PR-triggered but has no jobs object"
         next
@@ -131,6 +140,7 @@ module MergeGateVerifier
         classified_jobs << [workflow, job_id, classification]
         next unless classification == 'required'
 
+        required_workflow = true
         pr_event_configs(doc).each do |event_name, config|
           next unless config.is_a?(Hash)
           if config.key?('paths') || config.key?('paths-ignore')
@@ -149,6 +159,10 @@ module MergeGateVerifier
         rescue StandardError => e
           violations << "#{workflow}##{job_id}: #{e.message}"
         end
+      end
+
+      if required_workflow && pull_request_target_trigger?(doc)
+        violations << "required workflow #{workflow} must not use pull_request_target"
       end
 
       if default.nil? && jobs.keys.none? do |job_id|

@@ -215,6 +215,17 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
+  def test_required_workflow_pull_request_target_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/ci.yml')
+      original = File.read(path)
+      body = original.sub('pull_request:', 'pull_request_target:')
+      refute_equal original, body
+      write(root, '.github/workflows/ci.yml', body)
+      assert_includes verify(root).join('\n'), 'must not use pull_request_target'
+    end
+  end
+
   def test_required_job_condition_is_rejected
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/ci.yml')

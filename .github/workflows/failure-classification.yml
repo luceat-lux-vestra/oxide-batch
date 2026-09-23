@@ -1,7 +1,7 @@
 name: Failure classification
 
 on:
-  workflow_run: # trusted reporter only; never checkout/execute PR code or artifacts
+  workflow_run: # zizmor: ignore[dangerous-triggers] trusted reporter only; never checkout/execute PR code or artifacts
     workflows:
       - M5 Crash and Restore
       - M6 Gate H P-002 Performance
@@ -31,7 +31,9 @@ concurrency:
 jobs:
   classify:
     permissions:
+      # Read workflow metadata and bounded logs for exact-HEAD reconstruction.
       actions: read
+      # Upsert the single sticky classification report on the PR conversation.
       pull-requests: write
     if: github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'pull_request_target'
     runs-on: ubuntu-latest
