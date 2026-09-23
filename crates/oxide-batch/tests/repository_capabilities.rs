@@ -31,26 +31,25 @@ use std::time::Duration;
 
 use oxide_batch::{
     BoxFuture, BusinessStatement, BusinessTransaction, BusinessTransactionError, BusinessValue,
-    BusinessWriteResult, Checkpoint, ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext,
-    ChunkCompletionError, ChunkCompletionOutcome, ChunkComponentRevisions, ChunkCounts,
+    BusinessWriteResult, Checkpoint, ChunkCommitReceipt, ChunkComponentRevisions, ChunkCounts,
     ChunkDeliveryMode, ChunkExecutionOutcome, ChunkFailure, ChunkFaultProgress,
     ChunkRestartContract, ChunkSize, ChunkStep, ChunkTransaction, ChunkTransactionError,
     ChunkTransactionManager, CompiledExecutionPlan, ComponentRevision, DefinitionRevision,
     ExecutionAttempt, ExecutionContext, ExecutionCorrelation, FlowExecutionOutcome, FlowGraph,
     FlowJob, FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget, InMemoryJobRepository,
     ItemProcessor, ItemReader, ItemWriter, JobExecutionId, JobInstanceId, JobName, JobParameters,
-    JobRepository, LateBoundInput, LateBoundSource, MissingParameterPolicy, NodeId, OwnerToken,
-    ParameterCoercion, ParameterName, ParameterValueKind, PartitionBudget, PartitionCount,
-    PartitionKey, PartitionPlanEntry, PartitionPlanFactory, PartitionTaskletFactory,
-    PartitionedStepNode, ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome,
-    ReaderError, RepositoryCapability, RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork,
-    ScopeFactoryKind, ScopeKind, ScopeResolverKind, ScopedCleanupError, ScopedComponentDefinition,
-    ScopedComponentFactory, ScopedComponentHandle, ScopedComponentId, ScopedComponentRegistration,
-    ScopedFactoryContext, ScopedFactoryError, SequentialIdGenerator, StateCodecError, StateLimits,
-    StateSchemaId, StateSchemaVersion, StepComponents, StepExecutionId, StepName, StepNode,
-    StopPollInterval, StopSource, SystemClock, Tasklet, TaskletContext, TaskletError,
-    TaskletOutcome, TaskletStep, TerminalKind, VersionedStateCodec, WriteContext, WriteOutcome,
-    WriterError,
+    JobRepository, LateBoundInput, LateBoundSource, MissingParameterPolicy, NodeId,
+    NoopChunkCompletion, OwnerToken, ParameterCoercion, ParameterName, ParameterValueKind,
+    PartitionBudget, PartitionCount, PartitionKey, PartitionPlanEntry, PartitionPlanFactory,
+    PartitionTaskletFactory, PartitionedStepNode, ProcessContext, ProcessOutcome, ProcessorError,
+    ReadContext, ReadOutcome, ReaderError, RepositoryCapability, RepositoryDescriptor,
+    RepositoryError, RepositoryUnitOfWork, ScopeFactoryKind, ScopeKind, ScopeResolverKind,
+    ScopedCleanupError, ScopedComponentDefinition, ScopedComponentFactory, ScopedComponentHandle,
+    ScopedComponentId, ScopedComponentRegistration, ScopedFactoryContext, ScopedFactoryError,
+    SequentialIdGenerator, StateCodecError, StateLimits, StateSchemaId, StateSchemaVersion,
+    StepComponents, StepExecutionId, StepName, StepNode, StopPollInterval, StopSource, SystemClock,
+    Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
+    VersionedStateCodec, WriteContext, WriteOutcome, WriterError,
 };
 
 // ---------------------------------------------------------------------------
@@ -807,17 +806,6 @@ impl ItemWriter<i64> for EnlistedWriter {
     }
 }
 
-struct NoCompletion;
-
-impl ChunkCompletion for NoCompletion {
-    fn after_commit<'a>(
-        &'a self,
-        _context: ChunkCompletionContext<'a>,
-    ) -> BoxFuture<'a, Result<ChunkCompletionOutcome, ChunkCompletionError>> {
-        Box::pin(async { Ok(ChunkCompletionOutcome::Acknowledged) })
-    }
-}
-
 fn chunk_correlation() -> ExecutionCorrelation {
     let attempt =
         |value: u64| ExecutionAttempt::new(NonZeroU64::new(value).expect("attempt is nonzero"));
@@ -850,7 +838,7 @@ async fn run_enlisted_chunk(outcome: CommitOutcome) -> (ChunkExecutionOutcome, A
             outcome,
             cursor: 2,
         }),
-        Arc::new(NoCompletion),
+        Arc::new(NoopChunkCompletion),
     );
     let (_source, stop_token) = StopSource::new();
     let report = step.execute(&chunk_correlation(), &stop_token).await;

@@ -41,9 +41,9 @@ use oxide_batch::{
     ChunkStep, ChunkTransaction, ChunkTransactionError, ChunkTransactionManager,
     ClassifierRevision, ComponentStreamIdentity, ExecutionAttempt, ExecutionCorrelation,
     FailureCategory, FaultAction, FaultClassifier, FaultPhase, FaultPolicy, FaultRule,
-    FaultRuntime, InMemoryFaultState, JobExecutionId, JobInstanceId, JobName, PostgresConfig,
-    PostgresConfigError, RetryLimit, RetryStateLimit, SkipLimit, StepExecutionId, StepName,
-    StopSource, StopToken, TlsMode, WriteContext, WriteOutcome, WriterError,
+    FaultRuntime, InMemoryFaultState, JobExecutionId, JobInstanceId, JobName, NoopChunkCompletion,
+    PostgresConfig, PostgresConfigError, RetryLimit, RetryStateLimit, SkipLimit, StepExecutionId,
+    StepName, StopSource, StopToken, TlsMode, WriteContext, WriteOutcome, WriterError,
 };
 use sqlx::postgres::PgPoolOptions;
 
@@ -224,18 +224,6 @@ fn receipt() -> ChunkCommitReceipt {
     ChunkCommitReceipt::new(checkpoint, context)
 }
 
-struct Completion;
-
-impl oxide_batch::ChunkCompletion for Completion {
-    fn after_commit<'a>(
-        &'a self,
-        _context: oxide_batch::ChunkCompletionContext<'a>,
-    ) -> BoxFuture<'a, Result<oxide_batch::ChunkCompletionOutcome, oxide_batch::ChunkCompletionError>>
-    {
-        Box::pin(async { Ok(oxide_batch::ChunkCompletionOutcome::Acknowledged) })
-    }
-}
-
 /// Records every item id this writer ever received, in delivery order --
 /// direct proof of no skip and no duplicate across the induced failure and
 /// its retry.
@@ -324,7 +312,7 @@ fn fetch_level_transient_failure_recovers_without_skip_or_duplicate_through_faul
             IdentityProcessor,
             RecordingWriter(Arc::clone(&recorded)),
             Arc::new(Transactions),
-            Arc::new(Completion),
+            Arc::new(NoopChunkCompletion),
         )
         .with_fault_runtime(retry_transient_infrastructure_runtime());
         let (_source, stop) = StopSource::new();

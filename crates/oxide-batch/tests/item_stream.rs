@@ -40,12 +40,13 @@ use oxide_batch::{
     ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager, CodecId, CodecVersion,
     ComponentRevision, ComponentStateEnvelope, ComponentStreamIdentity, DefaultComponentCodec,
     DefinitionRevision, ExecutionContext, InMemoryJobRepository, ItemProcessor, ItemReader,
-    ItemStream, ItemWriter, JobLauncher, JobName, JobParameters, ProcessContext, ProcessOutcome,
-    ProcessorError, ReadContext, ReadOutcome, ReaderError, RestartabilityDeclaration,
-    StateCodecError, StateLimits, StateSchemaId, StateSchemaVersion, StepName, StopSource,
-    StreamCloseContext, StreamCloseError, StreamCloseOutcome, StreamOpenContext, StreamOpenError,
-    StreamOpenOutcome, StreamStateContract, StreamUpdateContext, StreamUpdateError,
-    VersionedStateCodec, WriteContext, WriteOutcome, WriterError,
+    ItemStream, ItemWriter, JobLauncher, JobName, JobParameters, NoopChunkCompletion,
+    ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome, ReaderError,
+    RestartabilityDeclaration, StateCodecError, StateLimits, StateSchemaId, StateSchemaVersion,
+    StepName, StopSource, StreamCloseContext, StreamCloseError, StreamCloseOutcome,
+    StreamOpenContext, StreamOpenError, StreamOpenOutcome, StreamStateContract,
+    StreamUpdateContext, StreamUpdateError, VersionedStateCodec, WriteContext, WriteOutcome,
+    WriterError,
 };
 
 type Trace = Arc<Mutex<Vec<String>>>;
@@ -448,7 +449,7 @@ async fn item_stream_opens_before_item_work() {
             receipt: receipt(),
             trace: Arc::clone(&trace),
         }),
-        Arc::new(NoopCompletion),
+        Arc::new(NoopChunkCompletion),
     )
     .with_item_stream(
         ComponentStreamIdentity::new("stream").expect("valid namespace"),
@@ -490,7 +491,7 @@ async fn item_stream_update_prepares_state_before_accepting_commit() {
             receipt: receipt(),
             trace: Arc::clone(&trace),
         }),
-        Arc::new(NoopCompletion),
+        Arc::new(NoopChunkCompletion),
     )
     .with_item_stream(
         ComponentStreamIdentity::new("stream").expect("valid namespace"),
@@ -539,7 +540,7 @@ async fn item_stream_close_runs_after_runtime_completion() {
             receipt: receipt(),
             trace: Arc::clone(&trace),
         }),
-        Arc::new(NoopCompletion),
+        Arc::new(NoopChunkCompletion),
     )
     .with_item_stream(
         ComponentStreamIdentity::new("stream").expect("valid namespace"),
@@ -573,7 +574,7 @@ async fn multiple_streams_open_in_registration_order() {
             receipt: receipt(),
             trace: Arc::clone(&trace),
         }),
-        Arc::new(NoopCompletion),
+        Arc::new(NoopChunkCompletion),
     )
     .with_item_stream(
         ComponentStreamIdentity::new("stream_a").expect("valid namespace"),
@@ -615,7 +616,7 @@ async fn multiple_streams_close_in_reverse_successful_open_order() {
             receipt: receipt(),
             trace: Arc::clone(&trace),
         }),
-        Arc::new(NoopCompletion),
+        Arc::new(NoopChunkCompletion),
     )
     .with_item_stream(
         ComponentStreamIdentity::new("stream_a").expect("valid namespace"),
@@ -666,7 +667,7 @@ async fn open_failure_closes_only_previously_opened_streams() {
             receipt: receipt(),
             trace: Arc::clone(&trace),
         }),
-        Arc::new(NoopCompletion),
+        Arc::new(NoopChunkCompletion),
     )
     .with_item_stream(
         ComponentStreamIdentity::new("stream_a").expect("valid namespace"),
@@ -716,7 +717,7 @@ async fn open_failure_preserves_cleanup_close_failure() {
             receipt: receipt(),
             trace: Arc::clone(&trace),
         }),
-        Arc::new(NoopCompletion),
+        Arc::new(NoopChunkCompletion),
     )
     .with_item_stream(
         ComponentStreamIdentity::new("stream_a").expect("valid namespace"),
@@ -758,7 +759,7 @@ async fn open_failure_cleanup_closes_all_previously_opened_streams() {
             receipt: receipt(),
             trace: Arc::clone(&trace),
         }),
-        Arc::new(NoopCompletion),
+        Arc::new(NoopChunkCompletion),
     )
     .with_item_stream(
         ComponentStreamIdentity::new("stream_a").expect("valid namespace"),
@@ -809,7 +810,7 @@ async fn validation_failure_preserves_cleanup_close_failure() {
             trace: Arc::clone(&trace),
             inherited: vec![envelope_with_schema("stream_b", "test.other")],
         }),
-        Arc::new(NoopCompletion),
+        Arc::new(NoopChunkCompletion),
     )
     .with_item_stream(
         ComponentStreamIdentity::new("stream_a").expect("valid namespace"),
@@ -866,7 +867,7 @@ async fn close_failure_does_not_skip_remaining_closes() {
             receipt: receipt(),
             trace: Arc::clone(&trace),
         }),
-        Arc::new(NoopCompletion),
+        Arc::new(NoopChunkCompletion),
     )
     .with_item_stream(
         ComponentStreamIdentity::new("stream_a").expect("valid namespace"),
@@ -917,7 +918,7 @@ async fn close_failure_does_not_erase_primary_failure() {
         Arc::new(FailingWriteTransactions {
             trace: Arc::clone(&trace),
         }),
-        Arc::new(NoopCompletion),
+        Arc::new(NoopChunkCompletion),
     )
     .with_item_stream(
         ComponentStreamIdentity::new("stream").expect("valid namespace"),
@@ -954,7 +955,7 @@ async fn close_failure_does_not_erase_committed_chunks() {
             receipt: receipt(),
             trace: Arc::clone(&trace),
         }),
-        Arc::new(NoopCompletion),
+        Arc::new(NoopChunkCompletion),
     )
     .with_item_stream(
         ComponentStreamIdentity::new("stream").expect("valid namespace"),
@@ -995,7 +996,7 @@ async fn stream_update_namespace_mismatch_is_rejected() {
             receipt: receipt(),
             trace: Arc::clone(&trace),
         }),
-        Arc::new(NoopCompletion),
+        Arc::new(NoopChunkCompletion),
     )
     .with_item_stream(
         ComponentStreamIdentity::new("stream_a").expect("valid namespace"),
@@ -1030,7 +1031,7 @@ async fn stream_update_namespace_mismatch_does_not_commit_checkpoint() {
             receipt: receipt(),
             trace: Arc::clone(&trace),
         }),
-        Arc::new(NoopCompletion),
+        Arc::new(NoopChunkCompletion),
     )
     .with_item_stream(
         ComponentStreamIdentity::new("stream_a").expect("valid namespace"),
@@ -1070,7 +1071,7 @@ async fn stream_update_namespace_mismatch_does_not_replace_other_stream_state() 
             receipt: receipt(),
             trace: Arc::clone(&trace),
         }),
-        Arc::new(NoopCompletion),
+        Arc::new(NoopChunkCompletion),
     )
     .with_item_stream(
         ComponentStreamIdentity::new("stream_b").expect("valid namespace"),
@@ -1100,18 +1101,6 @@ async fn stream_update_namespace_mismatch_does_not_replace_other_stream_state() 
         "a's namespace-mismatched candidate must discard b's legitimate candidate too, \
          never partially commit or let a overwrite b: {events:?}"
     );
-}
-
-struct NoopCompletion;
-
-impl oxide_batch::ChunkCompletion for NoopCompletion {
-    fn after_commit<'a>(
-        &'a self,
-        _context: oxide_batch::ChunkCompletionContext<'a>,
-    ) -> BoxFuture<'a, Result<oxide_batch::ChunkCompletionOutcome, oxide_batch::ChunkCompletionError>>
-    {
-        Box::pin(async { Ok(oxide_batch::ChunkCompletionOutcome::Acknowledged) })
-    }
 }
 
 fn correlation() -> oxide_batch::ExecutionCorrelation {
