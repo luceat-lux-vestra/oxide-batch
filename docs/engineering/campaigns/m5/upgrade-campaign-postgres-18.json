@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "47e034482fdbc1c313e37ce4e59ce26d7018dd47",
+    "source_commit": "4ee0b889cdcb48ea90b2bffbe1b7744f1025c937",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -20,7 +20,7 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "47e034482fdbc1c313e37ce4e59ce26d7018dd47",
+      "execution_commit": "4ee0b889cdcb48ea90b2bffbe1b7744f1025c937",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -52,7 +52,7 @@
         "tests/fixtures/upgrade/schema-3/seed.sql": "c1beb7005d70fb95274be8ab4f5cc1adc3b268c8",
         "tests/fixtures/upgrade/verify-ci-contract.sh": "4802f911995d97d4e5e73e5e9d16ed5fe66fdb75",
         "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
-        "xtask/src/dependency_closure.rs": "56d71ba005939a123a750aa66fbeb8be75cbee17",
+        "xtask/src/dependency_closure.rs": "f88c23a6c48623c2b8070ba93ac38aee600ee8c8",
         "xtask/src/evidence.rs": "bcbbada67e25aaacef13d447ae7d3fc709d736b2",
         "xtask/src/main.rs": "daadb20a70106a1e539e2f6c8952291fdff5a3bd",
         "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6",
@@ -163,7 +163,7 @@
       "name": "schema1_and_schema2_upgrade_directly_to_schema3",
       "observation": {
         "execution_manifest": {
-          "execution_commit": "47e034482fdbc1c313e37ce4e59ce26d7018dd47",
+          "execution_commit": "4ee0b889cdcb48ea90b2bffbe1b7744f1025c937",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -195,7 +195,7 @@
             "tests/fixtures/upgrade/schema-3/seed.sql": "c1beb7005d70fb95274be8ab4f5cc1adc3b268c8",
             "tests/fixtures/upgrade/verify-ci-contract.sh": "4802f911995d97d4e5e73e5e9d16ed5fe66fdb75",
             "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
-            "xtask/src/dependency_closure.rs": "56d71ba005939a123a750aa66fbeb8be75cbee17",
+            "xtask/src/dependency_closure.rs": "f88c23a6c48623c2b8070ba93ac38aee600ee8c8",
             "xtask/src/evidence.rs": "bcbbada67e25aaacef13d447ae7d3fc709d736b2",
             "xtask/src/main.rs": "daadb20a70106a1e539e2f6c8952291fdff5a3bd",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6",
@@ -494,7 +494,7 @@
         "current_schema_version": 6,
         "durable_state_unchanged": true,
         "execution_manifest": {
-          "execution_commit": "47e034482fdbc1c313e37ce4e59ce26d7018dd47",
+          "execution_commit": "4ee0b889cdcb48ea90b2bffbe1b7744f1025c937",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -526,7 +526,7 @@
             "tests/fixtures/upgrade/schema-3/seed.sql": "c1beb7005d70fb95274be8ab4f5cc1adc3b268c8",
             "tests/fixtures/upgrade/verify-ci-contract.sh": "4802f911995d97d4e5e73e5e9d16ed5fe66fdb75",
             "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
-            "xtask/src/dependency_closure.rs": "56d71ba005939a123a750aa66fbeb8be75cbee17",
+            "xtask/src/dependency_closure.rs": "f88c23a6c48623c2b8070ba93ac38aee600ee8c8",
             "xtask/src/evidence.rs": "bcbbada67e25aaacef13d447ae7d3fc709d736b2",
             "xtask/src/main.rs": "daadb20a70106a1e539e2f6c8952291fdff5a3bd",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6",
@@ -633,7 +633,7 @@
       "name": "every_source_backup_restores_its_prior_schema",
       "observation": {
         "execution_manifest": {
-          "execution_commit": "47e034482fdbc1c313e37ce4e59ce26d7018dd47",
+          "execution_commit": "4ee0b889cdcb48ea90b2bffbe1b7744f1025c937",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -665,7 +665,7 @@
             "tests/fixtures/upgrade/schema-3/seed.sql": "c1beb7005d70fb95274be8ab4f5cc1adc3b268c8",
             "tests/fixtures/upgrade/verify-ci-contract.sh": "4802f911995d97d4e5e73e5e9d16ed5fe66fdb75",
             "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
-            "xtask/src/dependency_closure.rs": "56d71ba005939a123a750aa66fbeb8be75cbee17",
+            "xtask/src/dependency_closure.rs": "f88c23a6c48623c2b8070ba93ac38aee600ee8c8",
             "xtask/src/evidence.rs": "bcbbada67e25aaacef13d447ae7d3fc709d736b2",
             "xtask/src/main.rs": "daadb20a70106a1e539e2f6c8952291fdff5a3bd",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6",
@@ -680,7 +680,7 @@
         "paths": [
           {
             "backup": {
-              "archive_bytes": 36174,
+              "archive_bytes": 36176,
               "format": "custom",
               "rows_covered": {
                 "ob_definition_upgrade": 1,
@@ -728,7 +728,7 @@
           },
           {
             "backup": {
-              "archive_bytes": 46517,
+              "archive_bytes": 46518,
               "format": "custom",
               "rows_covered": {
                 "ob_definition_upgrade": 1,

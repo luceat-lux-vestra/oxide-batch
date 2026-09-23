@@ -6,12 +6,12 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "47e034482fdbc1c313e37ce4e59ce26d7018dd47",
+    "source_commit": "4ee0b889cdcb48ea90b2bffbe1b7744f1025c937",
     "source_tree_clean": true
   },
   "observation": {
     "execution_manifest": {
-      "execution_commit": "47e034482fdbc1c313e37ce4e59ce26d7018dd47",
+      "execution_commit": "4ee0b889cdcb48ea90b2bffbe1b7744f1025c937",
       "execution_commit_note": "The tree this run actually executed against; in CI this is the pull-request merge commit.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -36,7 +36,7 @@
         "tests/fixtures/m6-conformance/run-ci-campaign.sh": "4de1cec80294d8f2b799ecf9e30c683f2b36f784",
         "tests/fixtures/m6-conformance/verify-ci-contract.sh": "415db8ddfd8624eccad1510477af8b3ce6c532ea",
         "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
-        "xtask/src/dependency_closure.rs": "56d71ba005939a123a750aa66fbeb8be75cbee17",
+        "xtask/src/dependency_closure.rs": "f88c23a6c48623c2b8070ba93ac38aee600ee8c8",
         "xtask/src/evidence.rs": "bcbbada67e25aaacef13d447ae7d3fc709d736b2",
         "xtask/src/m6_conformance.rs": "ee7b727c5c266e71c02a6bb07d42a52a3634dd06",
         "xtask/src/main.rs": "daadb20a70106a1e539e2f6c8952291fdff5a3bd",

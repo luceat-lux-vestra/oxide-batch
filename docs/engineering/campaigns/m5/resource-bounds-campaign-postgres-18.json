@@ -128,7 +128,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "47e034482fdbc1c313e37ce4e59ce26d7018dd47",
+    "source_commit": "4ee0b889cdcb48ea90b2bffbe1b7744f1025c937",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -143,7 +143,7 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "47e034482fdbc1c313e37ce4e59ce26d7018dd47",
+      "execution_commit": "4ee0b889cdcb48ea90b2bffbe1b7744f1025c937",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -174,7 +174,7 @@
         "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
         "tests/fixtures/resource-bounds/verify-ci-contract.sh": "f980d37a1fa70a79a27994e07625e17f4a87bd7e",
         "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
-        "xtask/src/dependency_closure.rs": "56d71ba005939a123a750aa66fbeb8be75cbee17",
+        "xtask/src/dependency_closure.rs": "f88c23a6c48623c2b8070ba93ac38aee600ee8c8",
         "xtask/src/evidence.rs": "bcbbada67e25aaacef13d447ae7d3fc709d736b2",
         "xtask/src/main.rs": "daadb20a70106a1e539e2f6c8952291fdff5a3bd",
         "xtask/src/resource_bounds.rs": "3ca7d595fa399b27a1bd50f8852e87063cb0c443",
@@ -559,7 +559,7 @@
           "violations": []
         },
         "execution_manifest": {
-          "execution_commit": "47e034482fdbc1c313e37ce4e59ce26d7018dd47",
+          "execution_commit": "4ee0b889cdcb48ea90b2bffbe1b7744f1025c937",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -590,7 +590,7 @@
             "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
             "tests/fixtures/resource-bounds/verify-ci-contract.sh": "f980d37a1fa70a79a27994e07625e17f4a87bd7e",
             "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
-            "xtask/src/dependency_closure.rs": "56d71ba005939a123a750aa66fbeb8be75cbee17",
+            "xtask/src/dependency_closure.rs": "f88c23a6c48623c2b8070ba93ac38aee600ee8c8",
             "xtask/src/evidence.rs": "bcbbada67e25aaacef13d447ae7d3fc709d736b2",
             "xtask/src/main.rs": "daadb20a70106a1e539e2f6c8952291fdff5a3bd",
             "xtask/src/resource_bounds.rs": "3ca7d595fa399b27a1bd50f8852e87063cb0c443",
@@ -780,7 +780,7 @@
           }
         ],
         "execution_manifest": {
-          "execution_commit": "47e034482fdbc1c313e37ce4e59ce26d7018dd47",
+          "execution_commit": "4ee0b889cdcb48ea90b2bffbe1b7744f1025c937",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -811,7 +811,7 @@
             "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
             "tests/fixtures/resource-bounds/verify-ci-contract.sh": "f980d37a1fa70a79a27994e07625e17f4a87bd7e",
             "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
-            "xtask/src/dependency_closure.rs": "56d71ba005939a123a750aa66fbeb8be75cbee17",
+            "xtask/src/dependency_closure.rs": "f88c23a6c48623c2b8070ba93ac38aee600ee8c8",
             "xtask/src/evidence.rs": "bcbbada67e25aaacef13d447ae7d3fc709d736b2",
             "xtask/src/main.rs": "daadb20a70106a1e539e2f6c8952291fdff5a3bd",
             "xtask/src/resource_bounds.rs": "3ca7d595fa399b27a1bd50f8852e87063cb0c443",
@@ -1576,7 +1576,7 @@
           "violations": []
         },
         "execution_manifest": {
-          "execution_commit": "47e034482fdbc1c313e37ce4e59ce26d7018dd47",
+          "execution_commit": "4ee0b889cdcb48ea90b2bffbe1b7744f1025c937",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -1607,7 +1607,7 @@
             "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
             "tests/fixtures/resource-bounds/verify-ci-contract.sh": "f980d37a1fa70a79a27994e07625e17f4a87bd7e",
             "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
-            "xtask/src/dependency_closure.rs": "56d71ba005939a123a750aa66fbeb8be75cbee17",
+            "xtask/src/dependency_closure.rs": "f88c23a6c48623c2b8070ba93ac38aee600ee8c8",
             "xtask/src/evidence.rs": "bcbbada67e25aaacef13d447ae7d3fc709d736b2",
             "xtask/src/main.rs": "daadb20a70106a1e539e2f6c8952291fdff5a3bd",
             "xtask/src/resource_bounds.rs": "3ca7d595fa399b27a1bd50f8852e87063cb0c443",
@@ -2213,7 +2213,7 @@
           "violations": []
         },
         "execution_manifest": {
-          "execution_commit": "47e034482fdbc1c313e37ce4e59ce26d7018dd47",
+          "execution_commit": "4ee0b889cdcb48ea90b2bffbe1b7744f1025c937",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -2244,7 +2244,7 @@
             "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
             "tests/fixtures/resource-bounds/verify-ci-contract.sh": "f980d37a1fa70a79a27994e07625e17f4a87bd7e",
             "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
-            "xtask/src/dependency_closure.rs": "56d71ba005939a123a750aa66fbeb8be75cbee17",
+            "xtask/src/dependency_closure.rs": "f88c23a6c48623c2b8070ba93ac38aee600ee8c8",
             "xtask/src/evidence.rs": "bcbbada67e25aaacef13d447ae7d3fc709d736b2",
             "xtask/src/main.rs": "daadb20a70106a1e539e2f6c8952291fdff5a3bd",
             "xtask/src/resource_bounds.rs": "3ca7d595fa399b27a1bd50f8852e87063cb0c443",
