@@ -50,9 +50,9 @@
       ]
     },
     "dependency resolution": {
-      "why": "The exact dependency graph every target the campaign runs was built from.",
+      "why": "The campaign-scoped resolved package graph derived from Cargo.lock for the exact workspace package roots this campaign executes. Unrelated workspace lock movement does not change this sidecar; a reachable resolved package/version/source/checksum change does.",
       "paths": [
-        "Cargo.lock"
+        "tests/fixtures/security/dependency-closure.json"
       ]
     },
     "toolchain and build configuration": {
@@ -90,8 +90,23 @@
         "xtask/src/main.rs",
         "xtask/src/security.rs",
         "xtask/src/evidence.rs",
-        "xtask/src/suite.rs"
+        "xtask/src/suite.rs",
+        "xtask/src/dependency_closure.rs"
       ]
     }
-  }
+  },
+  "dependency_roots": [
+    {
+      "package": "oxide-batch",
+      "kind": "test"
+    },
+    {
+      "package": "oxide-batch-cli",
+      "kind": "test"
+    },
+    {
+      "package": "oxide-batch-xtask",
+      "kind": "run"
+    }
+  ]
 }

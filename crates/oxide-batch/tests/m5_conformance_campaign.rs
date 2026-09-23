@@ -698,7 +698,8 @@ fn the_semantic_closure_covers_what_the_campaign_runs() -> Result<(), Box<dyn Er
         "xtask/src/evidence.rs",
         // The resolved dependency graph, and the toolchain the suite is
         // built with.
-        "Cargo.lock",
+        "tests/fixtures/conformance/dependency-closure.json",
+        "xtask/src/dependency_closure.rs",
         "rust-toolchain.toml",
         // How the dedicated workflow runs it.
         ".github/workflows/m5-conformance.yml",
@@ -717,6 +718,11 @@ fn the_semantic_closure_covers_what_the_campaign_runs() -> Result<(), Box<dyn Er
         !paths.iter().any(|path| path == ".github/workflows/ci.yml"),
         "ci.yml is unrelated to the dedicated conformance campaign and must not invalidate its \
          evidence",
+    );
+
+    assert!(
+        !paths.iter().any(|path| path == "Cargo.lock"),
+        "the workspace-wide Cargo.lock must not be bound directly; the campaign-scoped dependency closure is the resolved dependency identity",
     );
 
     for path in &paths {

@@ -35,9 +35,9 @@
       ]
     },
     "dependency resolution": {
-      "why": "The exact dependency graph the run was built from. This campaign measures throughput and latency, and the async runtime's scheduler and the PostgreSQL driver are resolved here: a version change can move every number in the report without touching a line of framework source.",
+      "why": "The campaign-scoped resolved package graph derived from Cargo.lock for the exact workspace package roots this campaign executes. Unrelated workspace lock movement does not change this sidecar; a reachable resolved package/version/source/checksum change does.",
       "paths": [
-        "Cargo.lock"
+        "tests/fixtures/performance/dependency-closure.json"
       ]
     },
     "toolchain and build configuration": {
@@ -76,8 +76,19 @@
         "xtask/src/main.rs",
         "xtask/src/performance.rs",
         "xtask/src/evidence.rs",
-        "xtask/src/suite.rs"
+        "xtask/src/suite.rs",
+        "xtask/src/dependency_closure.rs"
       ]
     }
-  }
+  },
+  "dependency_roots": [
+    {
+      "package": "oxide-batch",
+      "kind": "test"
+    },
+    {
+      "package": "oxide-batch-xtask",
+      "kind": "run"
+    }
+  ]
 }

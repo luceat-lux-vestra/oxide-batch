@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
+    "source_commit": "47e034482fdbc1c313e37ce4e59ce26d7018dd47",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -20,12 +20,11 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
+      "execution_commit": "47e034482fdbc1c313e37ce4e59ce26d7018dd47",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
         ".github/workflows/m5-upgrade.yml": "00d414bd6254e57f0d06aecf2fa4f2d87e0080e3",
-        "Cargo.lock": "3371d04d0a34097b91eb09e4347030468d703f90",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
         "crates/oxide-batch-core/src": "c86a8e09ee0993d9d3ab2fe6b5ef2899e2c476dd",
@@ -42,7 +41,8 @@
         "crates/oxide-batch/tests/upgrade": "39a072e7a209c07867517cc7bd134944d88d8451",
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
         "tests/fixtures/upgrade/campaign-scope.json": "e1db26e058182aef27ae20420c61d0d1e7259f3e",
-        "tests/fixtures/upgrade/campaign-semantics.json": "f793661720e907fe88bee73e0287b4829fbaea4b",
+        "tests/fixtures/upgrade/campaign-semantics.json": "a66e90c38460e16cf6c6dcd862e4170b9cc6987a",
+        "tests/fixtures/upgrade/dependency-closure.json": "394cf1f1e2f8f441336bd816ae36f02d4a2765c9",
         "tests/fixtures/upgrade/execution-contract.json": "27d7d00ff17108107711656defa31a6f91806e4f",
         "tests/fixtures/upgrade/run-ci-campaign.sh": "f10774dc3a88644577159354cf44f79abbe3a62d",
         "tests/fixtures/upgrade/schema-1/seed.sql": "aaba54dd66ce9de0fff776c2b0881d42f49f6bc1",
@@ -52,8 +52,9 @@
         "tests/fixtures/upgrade/schema-3/seed.sql": "c1beb7005d70fb95274be8ab4f5cc1adc3b268c8",
         "tests/fixtures/upgrade/verify-ci-contract.sh": "4802f911995d97d4e5e73e5e9d16ed5fe66fdb75",
         "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
-        "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
-        "xtask/src/main.rs": "72f3559415985647a8b1e3dbdb2d3f35a699cc77",
+        "xtask/src/dependency_closure.rs": "56d71ba005939a123a750aa66fbeb8be75cbee17",
+        "xtask/src/evidence.rs": "bcbbada67e25aaacef13d447ae7d3fc709d736b2",
+        "xtask/src/main.rs": "daadb20a70106a1e539e2f6c8952291fdff5a3bd",
         "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6",
         "xtask/src/upgrade.rs": "973ec814e2d6ea70035db21c4d925f4ba0082ccb"
       },
@@ -162,12 +163,11 @@
       "name": "schema1_and_schema2_upgrade_directly_to_schema3",
       "observation": {
         "execution_manifest": {
-          "execution_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
+          "execution_commit": "47e034482fdbc1c313e37ce4e59ce26d7018dd47",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-upgrade.yml": "00d414bd6254e57f0d06aecf2fa4f2d87e0080e3",
-            "Cargo.lock": "3371d04d0a34097b91eb09e4347030468d703f90",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
             "crates/oxide-batch-core/src": "c86a8e09ee0993d9d3ab2fe6b5ef2899e2c476dd",
@@ -184,7 +184,8 @@
             "crates/oxide-batch/tests/upgrade": "39a072e7a209c07867517cc7bd134944d88d8451",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
             "tests/fixtures/upgrade/campaign-scope.json": "e1db26e058182aef27ae20420c61d0d1e7259f3e",
-            "tests/fixtures/upgrade/campaign-semantics.json": "f793661720e907fe88bee73e0287b4829fbaea4b",
+            "tests/fixtures/upgrade/campaign-semantics.json": "a66e90c38460e16cf6c6dcd862e4170b9cc6987a",
+            "tests/fixtures/upgrade/dependency-closure.json": "394cf1f1e2f8f441336bd816ae36f02d4a2765c9",
             "tests/fixtures/upgrade/execution-contract.json": "27d7d00ff17108107711656defa31a6f91806e4f",
             "tests/fixtures/upgrade/run-ci-campaign.sh": "f10774dc3a88644577159354cf44f79abbe3a62d",
             "tests/fixtures/upgrade/schema-1/seed.sql": "aaba54dd66ce9de0fff776c2b0881d42f49f6bc1",
@@ -194,8 +195,9 @@
             "tests/fixtures/upgrade/schema-3/seed.sql": "c1beb7005d70fb95274be8ab4f5cc1adc3b268c8",
             "tests/fixtures/upgrade/verify-ci-contract.sh": "4802f911995d97d4e5e73e5e9d16ed5fe66fdb75",
             "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
-            "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
-            "xtask/src/main.rs": "72f3559415985647a8b1e3dbdb2d3f35a699cc77",
+            "xtask/src/dependency_closure.rs": "56d71ba005939a123a750aa66fbeb8be75cbee17",
+            "xtask/src/evidence.rs": "bcbbada67e25aaacef13d447ae7d3fc709d736b2",
+            "xtask/src/main.rs": "daadb20a70106a1e539e2f6c8952291fdff5a3bd",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6",
             "xtask/src/upgrade.rs": "973ec814e2d6ea70035db21c4d925f4ba0082ccb"
           },
@@ -492,12 +494,11 @@
         "current_schema_version": 6,
         "durable_state_unchanged": true,
         "execution_manifest": {
-          "execution_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
+          "execution_commit": "47e034482fdbc1c313e37ce4e59ce26d7018dd47",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-upgrade.yml": "00d414bd6254e57f0d06aecf2fa4f2d87e0080e3",
-            "Cargo.lock": "3371d04d0a34097b91eb09e4347030468d703f90",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
             "crates/oxide-batch-core/src": "c86a8e09ee0993d9d3ab2fe6b5ef2899e2c476dd",
@@ -514,7 +515,8 @@
             "crates/oxide-batch/tests/upgrade": "39a072e7a209c07867517cc7bd134944d88d8451",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
             "tests/fixtures/upgrade/campaign-scope.json": "e1db26e058182aef27ae20420c61d0d1e7259f3e",
-            "tests/fixtures/upgrade/campaign-semantics.json": "f793661720e907fe88bee73e0287b4829fbaea4b",
+            "tests/fixtures/upgrade/campaign-semantics.json": "a66e90c38460e16cf6c6dcd862e4170b9cc6987a",
+            "tests/fixtures/upgrade/dependency-closure.json": "394cf1f1e2f8f441336bd816ae36f02d4a2765c9",
             "tests/fixtures/upgrade/execution-contract.json": "27d7d00ff17108107711656defa31a6f91806e4f",
             "tests/fixtures/upgrade/run-ci-campaign.sh": "f10774dc3a88644577159354cf44f79abbe3a62d",
             "tests/fixtures/upgrade/schema-1/seed.sql": "aaba54dd66ce9de0fff776c2b0881d42f49f6bc1",
@@ -524,8 +526,9 @@
             "tests/fixtures/upgrade/schema-3/seed.sql": "c1beb7005d70fb95274be8ab4f5cc1adc3b268c8",
             "tests/fixtures/upgrade/verify-ci-contract.sh": "4802f911995d97d4e5e73e5e9d16ed5fe66fdb75",
             "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
-            "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
-            "xtask/src/main.rs": "72f3559415985647a8b1e3dbdb2d3f35a699cc77",
+            "xtask/src/dependency_closure.rs": "56d71ba005939a123a750aa66fbeb8be75cbee17",
+            "xtask/src/evidence.rs": "bcbbada67e25aaacef13d447ae7d3fc709d736b2",
+            "xtask/src/main.rs": "daadb20a70106a1e539e2f6c8952291fdff5a3bd",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6",
             "xtask/src/upgrade.rs": "973ec814e2d6ea70035db21c4d925f4ba0082ccb"
           },
@@ -630,12 +633,11 @@
       "name": "every_source_backup_restores_its_prior_schema",
       "observation": {
         "execution_manifest": {
-          "execution_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
+          "execution_commit": "47e034482fdbc1c313e37ce4e59ce26d7018dd47",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-upgrade.yml": "00d414bd6254e57f0d06aecf2fa4f2d87e0080e3",
-            "Cargo.lock": "3371d04d0a34097b91eb09e4347030468d703f90",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
             "crates/oxide-batch-core/src": "c86a8e09ee0993d9d3ab2fe6b5ef2899e2c476dd",
@@ -652,7 +654,8 @@
             "crates/oxide-batch/tests/upgrade": "39a072e7a209c07867517cc7bd134944d88d8451",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
             "tests/fixtures/upgrade/campaign-scope.json": "e1db26e058182aef27ae20420c61d0d1e7259f3e",
-            "tests/fixtures/upgrade/campaign-semantics.json": "f793661720e907fe88bee73e0287b4829fbaea4b",
+            "tests/fixtures/upgrade/campaign-semantics.json": "a66e90c38460e16cf6c6dcd862e4170b9cc6987a",
+            "tests/fixtures/upgrade/dependency-closure.json": "394cf1f1e2f8f441336bd816ae36f02d4a2765c9",
             "tests/fixtures/upgrade/execution-contract.json": "27d7d00ff17108107711656defa31a6f91806e4f",
             "tests/fixtures/upgrade/run-ci-campaign.sh": "f10774dc3a88644577159354cf44f79abbe3a62d",
             "tests/fixtures/upgrade/schema-1/seed.sql": "aaba54dd66ce9de0fff776c2b0881d42f49f6bc1",
@@ -662,8 +665,9 @@
             "tests/fixtures/upgrade/schema-3/seed.sql": "c1beb7005d70fb95274be8ab4f5cc1adc3b268c8",
             "tests/fixtures/upgrade/verify-ci-contract.sh": "4802f911995d97d4e5e73e5e9d16ed5fe66fdb75",
             "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
-            "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
-            "xtask/src/main.rs": "72f3559415985647a8b1e3dbdb2d3f35a699cc77",
+            "xtask/src/dependency_closure.rs": "56d71ba005939a123a750aa66fbeb8be75cbee17",
+            "xtask/src/evidence.rs": "bcbbada67e25aaacef13d447ae7d3fc709d736b2",
+            "xtask/src/main.rs": "daadb20a70106a1e539e2f6c8952291fdff5a3bd",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6",
             "xtask/src/upgrade.rs": "973ec814e2d6ea70035db21c4d925f4ba0082ccb"
           },
@@ -724,7 +728,7 @@
           },
           {
             "backup": {
-              "archive_bytes": 46170,
+              "archive_bytes": 46169,
               "format": "custom",
               "rows_covered": {
                 "ob_definition_upgrade": 1,
@@ -773,7 +777,7 @@
           },
           {
             "backup": {
-              "archive_bytes": 69524,
+              "archive_bytes": 69522,
               "format": "custom",
               "rows_covered": {
                 "ob_definition_upgrade": 1,

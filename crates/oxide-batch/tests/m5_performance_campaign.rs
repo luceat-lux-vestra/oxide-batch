@@ -1430,7 +1430,8 @@ fn the_semantic_closure_covers_what_the_campaign_runs() -> Result<(), Box<dyn Er
         // The verifier, whose verdicts are part of the result.
         "xtask/src/performance.rs",
         // The resolved dependency graph: this campaign measures durations.
-        "Cargo.lock",
+        "tests/fixtures/performance/dependency-closure.json",
+        "xtask/src/dependency_closure.rs",
         // How the dedicated workflow runs it, in release profile.
         ".github/workflows/m5-performance.yml",
         "tests/fixtures/performance/execution-contract.json",
@@ -1448,6 +1449,11 @@ fn the_semantic_closure_covers_what_the_campaign_runs() -> Result<(), Box<dyn Er
         !paths.iter().any(|path| path == ".github/workflows/ci.yml"),
         "ci.yml is unrelated to the dedicated performance campaign and must not invalidate its \
          evidence",
+    );
+
+    assert!(
+        !paths.iter().any(|path| path == "Cargo.lock"),
+        "the workspace-wide Cargo.lock must not be bound directly; the campaign-scoped dependency closure is the resolved dependency identity",
     );
 
     for path in &paths {

@@ -6,17 +6,16 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
+    "source_commit": "47e034482fdbc1c313e37ce4e59ce26d7018dd47",
     "source_tree_clean": true
   },
   "observation": {
     "execution_manifest": {
-      "execution_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
+      "execution_commit": "47e034482fdbc1c313e37ce4e59ce26d7018dd47",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
         ".github/workflows/m6-gate-b.yml": "eb0aed038a370c4719e98ae438be9d3af6558f51",
-        "Cargo.lock": "3371d04d0a34097b91eb09e4347030468d703f90",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
         "crates/oxide-batch-core/src": "c86a8e09ee0993d9d3ab2fe6b5ef2899e2c476dd",
@@ -40,14 +39,16 @@
         "crates/oxide-batch/tests/support/chunk_fixture.rs": "e8b203440b0e074c2f6155391cff79c012e4dc7f",
         "crates/oxide-batch/tests/support/gate_b.rs": "cf495c15aef80c6974c44943b4866e41bd6da07d",
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
-        "tests/fixtures/gate-b/campaign-semantics.json": "d4e35ddbc1ae6265deee1973f1e8cea9f28f5475",
+        "tests/fixtures/gate-b/campaign-semantics.json": "5b83bc3d3fae268842f51311ac620443125d54d1",
+        "tests/fixtures/gate-b/dependency-closure.json": "1cad7042434aca1e49d7f0e8155bf524ea4eaa1a",
         "tests/fixtures/gate-b/execution-contract.json": "7b5c3ae4abd3d950610336d9b800fd37fe34aadd",
         "tests/fixtures/gate-b/run-ci-campaign.sh": "fba2f2abe3afd9f65079ef1b09d41a9d47931e66",
         "tests/fixtures/gate-b/verify-ci-contract.sh": "da370f20a9bff83563c08a4759d4e9379d33aa83",
         "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
-        "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
+        "xtask/src/dependency_closure.rs": "56d71ba005939a123a750aa66fbeb8be75cbee17",
+        "xtask/src/evidence.rs": "bcbbada67e25aaacef13d447ae7d3fc709d736b2",
         "xtask/src/gate_b.rs": "0504b2cb789c6792735db79595323d940d43f838",
-        "xtask/src/main.rs": "72f3559415985647a8b1e3dbdb2d3f35a699cc77",
+        "xtask/src/main.rs": "daadb20a70106a1e539e2f6c8952291fdff5a3bd",
         "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
       },
       "tree_clean": true

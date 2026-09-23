@@ -21,17 +21,17 @@
       ]
     },
     "cargo and toolchain": {
-      "why": "Feature selection, dependency resolution, compiler, and cargo configuration are part of the reproducible test environment.",
+      "why": "Feature selection, the campaign-scoped resolved dependency graph, compiler, and cargo configuration are part of the reproducible test environment.",
       "paths": [
         "Cargo.toml",
-        "Cargo.lock",
         "crates/oxide-batch/Cargo.toml",
         "crates/oxide-batch-core/Cargo.toml",
         "crates/oxide-batch-plan/Cargo.toml",
         "crates/oxide-batch-repository/Cargo.toml",
         "crates/oxide-batch-test/Cargo.toml",
         "rust-toolchain.toml",
-        ".cargo/config.toml"
+        ".cargo/config.toml",
+        "xtask/Cargo.toml"
       ]
     },
     "campaign execution": {
@@ -50,8 +50,29 @@
         "xtask/src/main.rs",
         "xtask/src/m6_conformance.rs",
         "xtask/src/evidence.rs",
-        "xtask/src/suite.rs"
+        "xtask/src/suite.rs",
+        "xtask/src/dependency_closure.rs"
+      ]
+    },
+    "dependency resolution": {
+      "why": "The campaign-scoped resolved package graph derived from Cargo.lock for the exact workspace package roots this campaign executes. Unrelated workspace lock movement does not change this sidecar; a reachable resolved package/version/source/checksum change does.",
+      "paths": [
+        "tests/fixtures/m6-conformance/dependency-closure.json"
       ]
     }
-  }
+  },
+  "dependency_roots": [
+    {
+      "package": "oxide-batch",
+      "kind": "test"
+    },
+    {
+      "package": "oxide-batch-test",
+      "kind": "test"
+    },
+    {
+      "package": "oxide-batch-xtask",
+      "kind": "run"
+    }
+  ]
 }

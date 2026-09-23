@@ -6,17 +6,16 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
+    "source_commit": "47e034482fdbc1c313e37ce4e59ce26d7018dd47",
     "source_tree_clean": true
   },
   "observation": {
     "execution_manifest": {
-      "execution_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
+      "execution_commit": "47e034482fdbc1c313e37ce4e59ce26d7018dd47",
       "execution_commit_note": "The tree this run actually executed against; in CI this is the pull-request merge commit.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
         ".github/workflows/m6-conformance.yml": "80f5347ed73bcfc8cddd1728d0006d12418c953f",
-        "Cargo.lock": "3371d04d0a34097b91eb09e4347030468d703f90",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
         "crates/oxide-batch-core/src": "c86a8e09ee0993d9d3ab2fe6b5ef2899e2c476dd",
@@ -29,15 +28,18 @@
         "crates/oxide-batch-test/tests": "8d913629efca6a0e80be6b8e10211a34ad1c0f0a",
         "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
         "crates/oxide-batch/src": "666d99cfd5190a60873d23d6c56f584765cfc6ca",
-        "crates/oxide-batch/tests": "0f8d99322dc52dc91f9bce8c5d719eaaf71e5cb6",
+        "crates/oxide-batch/tests": "5757d4fa29326536f1d9e02cf033cf73a59afca8",
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
-        "tests/fixtures/m6-conformance/campaign-semantics.json": "025340def56776fcb42d9f2855a957f389bbdd99",
+        "tests/fixtures/m6-conformance/campaign-semantics.json": "43daa39e89cee46773c7f870b6cf8000d05e744b",
+        "tests/fixtures/m6-conformance/dependency-closure.json": "8524d3d337b2863243827d2f465aee74c27258fe",
         "tests/fixtures/m6-conformance/execution-contract.json": "df49c9ebecc9d05073e8278c84aeeba949961280",
         "tests/fixtures/m6-conformance/run-ci-campaign.sh": "4de1cec80294d8f2b799ecf9e30c683f2b36f784",
         "tests/fixtures/m6-conformance/verify-ci-contract.sh": "415db8ddfd8624eccad1510477af8b3ce6c532ea",
-        "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
+        "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
+        "xtask/src/dependency_closure.rs": "56d71ba005939a123a750aa66fbeb8be75cbee17",
+        "xtask/src/evidence.rs": "bcbbada67e25aaacef13d447ae7d3fc709d736b2",
         "xtask/src/m6_conformance.rs": "ee7b727c5c266e71c02a6bb07d42a52a3634dd06",
-        "xtask/src/main.rs": "72f3559415985647a8b1e3dbdb2d3f35a699cc77",
+        "xtask/src/main.rs": "daadb20a70106a1e539e2f6c8952291fdff5a3bd",
         "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
       },
       "tree_clean": true

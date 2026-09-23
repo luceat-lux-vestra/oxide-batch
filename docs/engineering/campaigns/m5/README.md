@@ -70,9 +70,14 @@ the upgrade campaign's is
 [`upgrade/campaign-semantics.json`](../../../../tests/fixtures/upgrade/campaign-semantics.json),
 and the security campaign's is
 [`security/campaign-semantics.json`](../../../../tests/fixtures/security/campaign-semantics.json).
-All seven cover framework source, migrations, cargo manifests, `Cargo.lock`,
+All seven cover framework source, migrations, cargo manifests, a canonical
+campaign-scoped `dependency-closure.json` derived from the locked Cargo graph,
 toolchain and build configuration, the campaign implementation and fixtures,
-the execution contract, and the verifier. The security campaign's closure
+the execution contract, and the verifier. `Cargo.lock` remains the resolver
+authority, but unrelated workspace lock movement no longer invalidates a
+campaign whose reachable package closure is unchanged. A reachable package
+version, source, or checksum change changes the sidecar and therefore
+invalidates that campaign's retained evidence. The security campaign's closure
 additionally binds the committed least-privilege policy —
 `tests/fixtures/security/roles.sql` and `tests/fixtures/security/grants.sql`
 — as its own category, distinct from the campaign fixtures that declare which

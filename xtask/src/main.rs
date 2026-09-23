@@ -3,6 +3,7 @@
 mod cancellation;
 mod conformance;
 mod crash_restore;
+mod dependency_closure;
 mod deps;
 mod evidence;
 mod gate_b;
@@ -126,6 +127,7 @@ fn main() -> ExitCode {
         Some("check") => {
             run_all(QUALITY)
                 && run_dependency_check()
+                && run_dependency_closure_check()
                 && run_surface_check()
                 && run_release_crates_check()
                 && run_evidence_check()
@@ -133,6 +135,8 @@ fn main() -> ExitCode {
         }
         Some("conformance") => run_conformance_campaign(),
         Some("crash-restore") => run_crash_restore_campaign(),
+        Some("dependency-closures") => run_dependency_closure_check(),
+        Some("dependency-closures-write") => write_dependency_closures(),
         Some("deps") => run_dependency_check(),
         Some("doctor") => run_all(DOCTOR),
         Some("evidence") => run_evidence_check(),
@@ -195,6 +199,58 @@ fn run_cancellation_campaign() -> bool {
         }
         Err(error) => {
             eprintln!("could not run the cancellation campaign: {error}");
+            false
+        }
+    }
+}
+
+/// Reports whether every campaign dependency sidecar matches the exact Cargo graph.
+fn run_dependency_closure_check() -> bool {
+    eprintln!("==> campaign dependency closures");
+
+    let root = match suite::workspace_root() {
+        Ok(root) => root,
+        Err(error) => {
+            eprintln!("could not locate workspace root: {error}");
+            return false;
+        }
+    };
+    match dependency_closure::check_all(&root) {
+        Ok(violations) if violations.is_empty() => {
+            eprintln!("campaign dependency closures match the locked Cargo graph");
+            true
+        }
+        Ok(violations) => {
+            for violation in &violations {
+                eprintln!("dependency closure violation: {violation}");
+            }
+            false
+        }
+        Err(error) => {
+            eprintln!("could not verify campaign dependency closures: {error}");
+            false
+        }
+    }
+}
+
+/// Deliberately refreshes the checked-in campaign dependency sidecars.
+fn write_dependency_closures() -> bool {
+    let root = match suite::workspace_root() {
+        Ok(root) => root,
+        Err(error) => {
+            eprintln!("could not locate workspace root: {error}");
+            return false;
+        }
+    };
+    match dependency_closure::write_all(&root) {
+        Ok(paths) => {
+            for path in paths {
+                eprintln!("wrote {}", path.display());
+            }
+            true
+        }
+        Err(error) => {
+            eprintln!("could not write campaign dependency closures: {error}");
             false
         }
     }

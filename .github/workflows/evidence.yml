@@ -48,5 +48,13 @@ jobs:
       - name: Verify repository-wide retained evidence policy
         run: cargo run --package oxide-batch-xtask --bin retained_evidence_policy
 
+      # The permanent verifier resolves campaign-specific graphs offline. A fresh
+      # hosted runner has only the xtask's tiny dependency set cached after the
+      # policy command, so hydrate the exact committed lock graph once before
+      # the offline derivation. --locked prevents this step from changing what
+      # is being verified.
+      - name: Hydrate locked dependency graph for offline provenance verification
+        run: cargo fetch --locked
+
       - name: Verify retained campaign evidence against its provenance
         run: cargo run --package oxide-batch-xtask -- evidence

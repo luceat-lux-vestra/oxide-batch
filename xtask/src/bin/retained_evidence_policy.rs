@@ -543,13 +543,7 @@ fn verify_report_identity(name: &str, entry: &Value, report: &Value) -> Vec<Stri
         violations.push(format!("{name} records no execution-manifest object map"));
         return violations;
     };
-    for required in ["Cargo.lock", "rust-toolchain.toml", "xtask/src/evidence.rs"] {
-        if !objects.contains_key(required) {
-            violations.push(format!(
-                "{name} execution manifest does not bind required identity {required}"
-            ));
-        }
-    }
+    violations.extend(verify_dependency_identity(name, objects));
     if let Some(workflow) = string_at(entry, "/workflow_run/workflow_file")
         && !objects.contains_key(workflow)
     {
@@ -582,6 +576,35 @@ fn verify_report_identity(name: &str, entry: &Value, report: &Value) -> Vec<Stri
     if !has_semantics || !has_execution_contract {
         violations.push(format!(
             "{name} execution manifest does not bind both campaign semantics and execution contract"
+        ));
+    }
+    violations
+}
+
+fn verify_dependency_identity(name: &str, objects: &serde_json::Map<String, Value>) -> Vec<String> {
+    let mut violations = Vec::new();
+    for required in [
+        "rust-toolchain.toml",
+        "xtask/src/evidence.rs",
+        "xtask/src/dependency_closure.rs",
+    ] {
+        if !objects.contains_key(required) {
+            violations.push(format!(
+                "{name} execution manifest does not bind required identity {required}"
+            ));
+        }
+    }
+    if objects.contains_key("Cargo.lock") {
+        violations.push(format!(
+            "{name} execution manifest still binds workspace-wide Cargo.lock instead of only the campaign-scoped resolved dependency closure"
+        ));
+    }
+    let has_dependency_closure = objects.keys().any(|path| {
+        path.starts_with("tests/fixtures/") && path.ends_with("/dependency-closure.json")
+    });
+    if !has_dependency_closure {
+        violations.push(format!(
+            "{name} execution manifest binds no campaign-scoped dependency closure"
         ));
     }
     violations
@@ -933,6 +956,115 @@ mod tests {
             violations
                 .iter()
                 .any(|violation| violation.contains("producer verdict is not sufficient proof"))
+        );
+    }
+
+    #[test]
+    fn report_identity_accepts_campaign_scoped_dependency_closure() {
+        let commit = "a".repeat(40);
+        let entry = json!({
+            "producer": {
+                "execution_commit": commit,
+                "rustc": "rustc-test",
+                "os": "linux",
+                "arch": "x86_64"
+            },
+            "matrix_point": "postgres-15",
+            "postgres_major_version": "15",
+            "workflow_run": {
+                "workflow_file": ".github/workflows/m5-cancellation.yml"
+            }
+        });
+        let report = json!({
+            "environment": {
+                "source_commit": "a".repeat(40),
+                "source_tree_clean": true,
+                "matrix": "postgres-15",
+                "rustc": "rustc-test",
+                "os": "linux",
+                "arch": "x86_64"
+            },
+            "postgresql_major_version": "15",
+            "observation": {
+                "execution_manifest": {
+                    "execution_commit": "a".repeat(40),
+                    "tree_clean": true,
+                    "objects": {
+                        ".github/workflows/m5-cancellation.yml": "object",
+                        "rust-toolchain.toml": "object",
+                        "xtask/src/evidence.rs": "object",
+                        "xtask/src/dependency_closure.rs": "object",
+                        "xtask/src/cancellation.rs": "object",
+                        "tests/fixtures/cancellation/campaign-semantics.json": "object",
+                        "tests/fixtures/cancellation/dependency-closure.json": "object",
+                        "tests/fixtures/cancellation/execution-contract.json": "object"
+                    }
+                }
+            }
+        });
+
+        let violations = super::verify_report_identity("report.json", &entry, &report);
+        assert!(violations.is_empty(), "{violations:#?}");
+    }
+
+    #[test]
+    fn report_identity_rejects_workspace_lock_without_scoped_dependency_closure() {
+        let commit = "a".repeat(40);
+        let entry = json!({
+            "producer": {
+                "execution_commit": commit,
+                "rustc": "rustc-test",
+                "os": "linux",
+                "arch": "x86_64"
+            },
+            "matrix_point": "postgres-15",
+            "postgres_major_version": "15",
+            "workflow_run": {
+                "workflow_file": ".github/workflows/m5-cancellation.yml"
+            }
+        });
+        let report = json!({
+            "environment": {
+                "source_commit": "a".repeat(40),
+                "source_tree_clean": true,
+                "matrix": "postgres-15",
+                "rustc": "rustc-test",
+                "os": "linux",
+                "arch": "x86_64"
+            },
+            "postgresql_major_version": "15",
+            "observation": {
+                "execution_manifest": {
+                    "execution_commit": "a".repeat(40),
+                    "tree_clean": true,
+                    "objects": {
+                        ".github/workflows/m5-cancellation.yml": "object",
+                        "Cargo.lock": "object",
+                        "rust-toolchain.toml": "object",
+                        "xtask/src/evidence.rs": "object",
+                        "xtask/src/cancellation.rs": "object",
+                        "tests/fixtures/cancellation/campaign-semantics.json": "object",
+                        "tests/fixtures/cancellation/execution-contract.json": "object"
+                    }
+                }
+            }
+        });
+
+        let violations = super::verify_report_identity("report.json", &entry, &report);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("workspace-wide Cargo.lock"))
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("xtask/src/dependency_closure.rs"))
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("campaign-scoped dependency closure"))
         );
     }
 
