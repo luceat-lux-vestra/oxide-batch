@@ -6,12 +6,12 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "4ee0b889cdcb48ea90b2bffbe1b7744f1025c937",
+    "source_commit": "e752ca5e6d4c205ffd630a51cfbb685ba79a1b89",
     "source_tree_clean": true
   },
   "observation": {
     "execution_manifest": {
-      "execution_commit": "4ee0b889cdcb48ea90b2bffbe1b7744f1025c937",
+      "execution_commit": "e752ca5e6d4c205ffd630a51cfbb685ba79a1b89",
       "execution_commit_note": "The tree this run actually executed against; in CI this is the pull-request merge commit.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -28,7 +28,7 @@
         "crates/oxide-batch-test/tests": "8d913629efca6a0e80be6b8e10211a34ad1c0f0a",
         "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
         "crates/oxide-batch/src": "666d99cfd5190a60873d23d6c56f584765cfc6ca",
-        "crates/oxide-batch/tests": "5757d4fa29326536f1d9e02cf033cf73a59afca8",
+        "crates/oxide-batch/tests": "be5ff8eab94b0bde602aa1f27771d224ba234cfe",
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
         "tests/fixtures/m6-conformance/campaign-semantics.json": "43daa39e89cee46773c7f870b6cf8000d05e744b",
         "tests/fixtures/m6-conformance/dependency-closure.json": "8524d3d337b2863243827d2f465aee74c27258fe",

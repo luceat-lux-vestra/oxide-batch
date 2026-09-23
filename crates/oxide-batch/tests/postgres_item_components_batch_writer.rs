@@ -35,16 +35,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use oxide_batch::item_components::{PostgresBatchMode, PostgresBatchWriter, postgres_batch_writer};
 use oxide_batch::{
-    BoxFuture, BusinessValue, ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext,
-    ChunkCompletionError, ChunkCompletionOutcome, ChunkComponentRevisions, ChunkCounts,
-    ChunkDeliveryMode, ChunkExecutionOutcome, ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep,
+    BusinessValue, ChunkCommitReceipt, ChunkComponentRevisions, ChunkCounts, ChunkDeliveryMode,
+    ChunkExecutionOutcome, ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep,
     ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager, Clock,
     ComponentRevision, DefinitionRevision, ExecutionContext, FailureCategory, ItemProcessor,
-    ItemReader, JobLauncher, JobName, JobParameters, JobRepository, PostgresChunkStateError,
-    PostgresChunkStateProvider, PostgresChunkTransactionManager, PostgresConfig,
-    PostgresConfigError, PostgresJobRepository, ProcessContext, ProcessOutcome, ProcessorError,
-    ReadContext, ReadOutcome, ReaderError, SequentialIdGenerator, StateLimits, StateSchemaId,
-    StateSchemaVersion, StepName, StopSource, TlsMode, WriteContext, WriteOutcome,
+    ItemReader, JobLauncher, JobName, JobParameters, JobRepository, NoopChunkCompletion,
+    PostgresChunkStateError, PostgresChunkStateProvider, PostgresChunkTransactionManager,
+    PostgresConfig, PostgresConfigError, PostgresJobRepository, ProcessContext, ProcessOutcome,
+    ProcessorError, ReadContext, ReadOutcome, ReaderError, SequentialIdGenerator, StateLimits,
+    StateSchemaId, StateSchemaVersion, StepName, StopSource, TlsMode, WriteContext, WriteOutcome,
 };
 use sqlx::AssertSqlSafe;
 use sqlx::postgres::PgPoolOptions;
@@ -162,17 +161,6 @@ impl ItemProcessor<i64, i64> for IdentityProcessor {
     }
 }
 
-struct NoCompletion;
-
-impl ChunkCompletion for NoCompletion {
-    fn after_commit<'a>(
-        &'a self,
-        _context: ChunkCompletionContext<'a>,
-    ) -> BoxFuture<'a, Result<ChunkCompletionOutcome, ChunkCompletionError>> {
-        Box::pin(async { Ok(ChunkCompletionOutcome::Acknowledged) })
-    }
-}
-
 fn chunk_checkpoint(position: u64) -> Result<oxide_batch::Checkpoint, Box<dyn Error>> {
     let bytes = serde_json::to_vec(&serde_json::json!({
         "format": "oxide-batch.checkpoint",
@@ -248,7 +236,7 @@ async fn launch_postgres_chunk(
         IdentityProcessor,
         business_writer_for(job_name, mode),
         Arc::new(transactions.clone()),
-        Arc::new(NoCompletion),
+        Arc::new(NoopChunkCompletion),
     );
     let mut job = ChunkJob::new(
         JobName::new(job_name)?,
