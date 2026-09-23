@@ -24,7 +24,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
+    "source_commit": "4ee0b889cdcb48ea90b2bffbe1b7744f1025c937",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -37,12 +37,11 @@
   },
   "observation": {
     "execution_manifest": {
-      "execution_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
+      "execution_commit": "4ee0b889cdcb48ea90b2bffbe1b7744f1025c937",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
         ".github/workflows/m5-cancellation.yml": "531ce3ab8517ce8efa2cf029f7c6bda8800acdb9",
-        "Cargo.lock": "3371d04d0a34097b91eb09e4347030468d703f90",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
         "crates/oxide-batch-core/src": "c86a8e09ee0993d9d3ab2fe6b5ef2899e2c476dd",
@@ -57,14 +56,16 @@
         "crates/oxide-batch/tests/postgres_cancellation.rs": "70954e6a69df2ce7d09e7825a47fe43c3e2a49f8",
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
         "tests/fixtures/cancellation/campaign-scope.json": "738d288ac153eb19c3d19168feb4be638283a55c",
-        "tests/fixtures/cancellation/campaign-semantics.json": "ecca18867cd876e657d5097f6bfab9921ae5b86b",
+        "tests/fixtures/cancellation/campaign-semantics.json": "b7479eecb5154bacffc4588e8ae676b2a422b5ea",
+        "tests/fixtures/cancellation/dependency-closure.json": "a6f8222b9f94592e160ab23b9ea89a2c874257a8",
         "tests/fixtures/cancellation/execution-contract.json": "b87d02a2b073510c0a712beba70763e0825771a8",
         "tests/fixtures/cancellation/run-ci-campaign.sh": "d0c08fdb841c5e6c92f85f384484ce2888f35d28",
         "tests/fixtures/cancellation/verify-ci-contract.sh": "18a9b13e833e61becea9a2dffce2b3ce62c600f1",
         "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
         "xtask/src/cancellation.rs": "92880a22cf70ff09162967e6b259160d6b3ff16f",
-        "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
-        "xtask/src/main.rs": "72f3559415985647a8b1e3dbdb2d3f35a699cc77",
+        "xtask/src/dependency_closure.rs": "f88c23a6c48623c2b8070ba93ac38aee600ee8c8",
+        "xtask/src/evidence.rs": "bcbbada67e25aaacef13d447ae7d3fc709d736b2",
+        "xtask/src/main.rs": "daadb20a70106a1e539e2f6c8952291fdff5a3bd",
         "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
       },
       "tree_clean": true
@@ -86,13 +87,13 @@
           "path": "request_execution_stop under compare-and-swap, committed before the clock starts"
         },
         "checkpoint": {
-          "committed_partitions_after_cancellation": 2,
+          "committed_partitions_after_cancellation": 4,
           "committed_partitions_before_cancellation": 1,
           "partition_statuses": {
-            "partition-0000": "STOPPED",
+            "partition-0000": "COMPLETED",
             "partition-0001": "COMPLETED",
             "partition-0002": "COMPLETED",
-            "partition-0003": "STOPPED",
+            "partition-0003": "COMPLETED",
             "partition-0004": "STOPPED",
             "partition-0005": "STOPPED",
             "partition-0006": "STOPPED",
@@ -163,12 +164,11 @@
           "watched_status": "STOPPED"
         },
         "execution_manifest": {
-          "execution_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
+          "execution_commit": "4ee0b889cdcb48ea90b2bffbe1b7744f1025c937",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-cancellation.yml": "531ce3ab8517ce8efa2cf029f7c6bda8800acdb9",
-            "Cargo.lock": "3371d04d0a34097b91eb09e4347030468d703f90",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
             "crates/oxide-batch-core/src": "c86a8e09ee0993d9d3ab2fe6b5ef2899e2c476dd",
@@ -183,14 +183,16 @@
             "crates/oxide-batch/tests/postgres_cancellation.rs": "70954e6a69df2ce7d09e7825a47fe43c3e2a49f8",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
             "tests/fixtures/cancellation/campaign-scope.json": "738d288ac153eb19c3d19168feb4be638283a55c",
-            "tests/fixtures/cancellation/campaign-semantics.json": "ecca18867cd876e657d5097f6bfab9921ae5b86b",
+            "tests/fixtures/cancellation/campaign-semantics.json": "b7479eecb5154bacffc4588e8ae676b2a422b5ea",
+            "tests/fixtures/cancellation/dependency-closure.json": "a6f8222b9f94592e160ab23b9ea89a2c874257a8",
             "tests/fixtures/cancellation/execution-contract.json": "b87d02a2b073510c0a712beba70763e0825771a8",
             "tests/fixtures/cancellation/run-ci-campaign.sh": "d0c08fdb841c5e6c92f85f384484ce2888f35d28",
             "tests/fixtures/cancellation/verify-ci-contract.sh": "18a9b13e833e61becea9a2dffce2b3ce62c600f1",
             "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
             "xtask/src/cancellation.rs": "92880a22cf70ff09162967e6b259160d6b3ff16f",
-            "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
-            "xtask/src/main.rs": "72f3559415985647a8b1e3dbdb2d3f35a699cc77",
+            "xtask/src/dependency_closure.rs": "f88c23a6c48623c2b8070ba93ac38aee600ee8c8",
+            "xtask/src/evidence.rs": "bcbbada67e25aaacef13d447ae7d3fc709d736b2",
+            "xtask/src/main.rs": "daadb20a70106a1e539e2f6c8952291fdff5a3bd",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
           },
           "tree_clean": true
@@ -198,9 +200,9 @@
         "latency": {
           "ordering_holds": true,
           "request_to_durable_terminal_means": "from the committed operator request to the durable STOPPED status being first readable",
-          "request_to_durable_terminal_micros": 943255,
+          "request_to_durable_terminal_micros": 2221926,
           "request_to_intake_stop_means": "from the committed operator request to the durable STOPPING transition being first readable",
-          "request_to_intake_stop_micros": 18225,
+          "request_to_intake_stop_micros": 563486,
           "status": "observational",
           "status_note": "No accepted document states a cancellation budget. These are measurements and nothing in this campaign compares them against a limit."
         },
@@ -210,7 +212,7 @@
           "os": "linux",
           "profile": "debug",
           "profile_note": "Every M5 campaign runs debug so the matrix points are comparable with each other. The absolute latencies below are therefore debug-build latencies and are not release figures.",
-          "resident_kib": 16360,
+          "resident_kib": 16688,
           "tokio_worker_threads": 4,
           "watch_interval_millis": 5,
           "watch_interval_note": "The campaign's own sampling floor. Every duration measured by reading a durable status back carries this as quantisation: a transition that happened immediately is reported as having taken up to one interval."
@@ -222,7 +224,7 @@
         "violations": [],
         "workers": {
           "active_after_return": 0,
-          "admitted": 5,
+          "admitted": 6,
           "peak": 4
         },
         "workload": {
@@ -247,12 +249,11 @@
       "name": "cancellation_latency_is_measured_separately_per_phase",
       "observation": {
         "execution_manifest": {
-          "execution_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
+          "execution_commit": "4ee0b889cdcb48ea90b2bffbe1b7744f1025c937",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-cancellation.yml": "531ce3ab8517ce8efa2cf029f7c6bda8800acdb9",
-            "Cargo.lock": "3371d04d0a34097b91eb09e4347030468d703f90",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
             "crates/oxide-batch-core/src": "c86a8e09ee0993d9d3ab2fe6b5ef2899e2c476dd",
@@ -267,14 +268,16 @@
             "crates/oxide-batch/tests/postgres_cancellation.rs": "70954e6a69df2ce7d09e7825a47fe43c3e2a49f8",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
             "tests/fixtures/cancellation/campaign-scope.json": "738d288ac153eb19c3d19168feb4be638283a55c",
-            "tests/fixtures/cancellation/campaign-semantics.json": "ecca18867cd876e657d5097f6bfab9921ae5b86b",
+            "tests/fixtures/cancellation/campaign-semantics.json": "b7479eecb5154bacffc4588e8ae676b2a422b5ea",
+            "tests/fixtures/cancellation/dependency-closure.json": "a6f8222b9f94592e160ab23b9ea89a2c874257a8",
             "tests/fixtures/cancellation/execution-contract.json": "b87d02a2b073510c0a712beba70763e0825771a8",
             "tests/fixtures/cancellation/run-ci-campaign.sh": "d0c08fdb841c5e6c92f85f384484ce2888f35d28",
             "tests/fixtures/cancellation/verify-ci-contract.sh": "18a9b13e833e61becea9a2dffce2b3ce62c600f1",
             "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
             "xtask/src/cancellation.rs": "92880a22cf70ff09162967e6b259160d6b3ff16f",
-            "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
-            "xtask/src/main.rs": "72f3559415985647a8b1e3dbdb2d3f35a699cc77",
+            "xtask/src/dependency_closure.rs": "f88c23a6c48623c2b8070ba93ac38aee600ee8c8",
+            "xtask/src/evidence.rs": "bcbbada67e25aaacef13d447ae7d3fc709d736b2",
+            "xtask/src/main.rs": "daadb20a70106a1e539e2f6c8952291fdff5a3bd",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
           },
           "tree_clean": true
@@ -289,7 +292,7 @@
           "os": "linux",
           "profile": "debug",
           "profile_note": "Every M5 campaign runs debug so the matrix points are comparable with each other. The absolute latencies below are therefore debug-build latencies and are not release figures.",
-          "resident_kib": 16576,
+          "resident_kib": 16892,
           "tokio_worker_threads": 4,
           "watch_interval_millis": 5,
           "watch_interval_note": "The campaign's own sampling floor. Every duration measured by reading a durable status back carries this as quantisation: a transition that happened immediately is reported as having taken up to one interval."
@@ -309,8 +312,8 @@
             "exit_status": "STOPPED",
             "outcome": "Stopped",
             "phase": "async",
-            "request_to_durable_terminal_micros": 563288,
-            "request_to_intake_stop_micros": 94440,
+            "request_to_durable_terminal_micros": 541736,
+            "request_to_intake_stop_micros": 97930,
             "stop_timing_contract": "DuringExecution for a worker already running, BeforeStart for one not yet reached",
             "stop_timing_contract_note": "A static description of what the accepted StopTiming contract promises for this mechanism, not a measurement of this run. See cancellation_point for what this run actually observed.",
             "workers_active_after_return": 0
@@ -321,14 +324,14 @@
               "mechanism": "a test-only PhaseGate the target-phase worker marks synchronously on reaching the phase; the cancel side polls the sticky mark, never occupancy, before requesting a stop, and the worker cannot leave the phase again except by observing the very stop about to be requested (async, transaction) or an explicit release granted only after that request durably commits (blocking)",
               "target_phase_entered_before_request": true,
               "target_worker_in_flight_at_request": true,
-              "workers_in_flight_at_request": 3
+              "workers_in_flight_at_request": 4
             },
             "delivered_mechanism": "BlockingTaskletAdapter, whose synchronous body runs to completion and reports the stop afterwards",
             "exit_status": "STOPPED",
             "outcome": "Stopped",
             "phase": "blocking",
-            "request_to_durable_terminal_micros": 901174,
-            "request_to_intake_stop_micros": 100204,
+            "request_to_durable_terminal_micros": 1460196,
+            "request_to_intake_stop_micros": 43764,
             "stop_timing_contract": "AfterBlockingWork for a worker already inside its synchronous body",
             "stop_timing_contract_note": "A static description of what the accepted StopTiming contract promises for this mechanism, not a measurement of this run. See cancellation_point for what this run actually observed.",
             "workers_active_after_return": 0
@@ -345,8 +348,8 @@
             "exit_status": "STOPPED",
             "outcome": "Stopped",
             "phase": "transaction",
-            "request_to_durable_terminal_micros": 542981,
-            "request_to_intake_stop_micros": 88937,
+            "request_to_durable_terminal_micros": 465273,
+            "request_to_intake_stop_micros": 32010,
             "stop_timing_contract": "DuringExecution for a worker already running, BeforeStart for one not yet reached",
             "stop_timing_contract_note": "A static description of what the accepted StopTiming contract promises for this mechanism, not a measurement of this run. See cancellation_point for what this run actually observed.",
             "workers_active_after_return": 0
@@ -357,7 +360,7 @@
           "first_request": "Initiated",
           "note": "An atomic state transition rather than a committed transaction, and measured by spinning on the accepted intake predicate rather than by polling a database. It shares no mechanism with the durable operator path and is reported separately for that reason.",
           "path": "ShutdownSignal::request_shutdown then ensure_accepting",
-          "request_to_intake_stop_micros": 2
+          "request_to_intake_stop_micros": 3
         },
         "report": "phase-separation",
         "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
@@ -384,7 +387,7 @@
               "drain_complete": true,
               "note": "The tasks finish well before the deadline, so this measures the coordinator's join cost rather than the deadline.",
               "panicked_tasks": 0,
-              "request_to_drain_complete_micros": 70374,
+              "request_to_drain_complete_micros": 37735,
               "unjoined_tasks": 0
             },
             "deadline": "minimum",
@@ -409,7 +412,7 @@
                 }
               ],
               "unjoined_tasks": 3,
-              "waited_micros": 1000686
+              "waited_micros": 1000579
             },
             "held_tasks": 3
           },
@@ -419,7 +422,7 @@
               "drain_complete": true,
               "note": "The tasks finish well before the deadline, so this measures the coordinator's join cost rather than the deadline.",
               "panicked_tasks": 0,
-              "request_to_drain_complete_micros": 61135,
+              "request_to_drain_complete_micros": 36320,
               "unjoined_tasks": 0
             },
             "deadline": "intermediate",
@@ -444,7 +447,7 @@
                 }
               ],
               "unjoined_tasks": 5,
-              "waited_micros": 5001475
+              "waited_micros": 5000872
             },
             "held_tasks": 5
           },
@@ -454,7 +457,7 @@
               "drain_complete": true,
               "note": "The tasks finish well before the deadline, so this measures the coordinator's join cost rather than the deadline.",
               "panicked_tasks": 0,
-              "request_to_drain_complete_micros": 5906,
+              "request_to_drain_complete_micros": 3022,
               "unjoined_tasks": 0
             },
             "deadline": "default",
@@ -479,7 +482,7 @@
                 }
               ],
               "unjoined_tasks": 7,
-              "waited_micros": 30000598
+              "waited_micros": 30001867
             },
             "held_tasks": 7
           }
@@ -504,16 +507,15 @@
               "phase": "Transaction"
             }
           ],
-          "request_to_escalated_report_micros": 48,
+          "request_to_escalated_report_micros": 35,
           "unjoined_tasks": 4
         },
         "execution_manifest": {
-          "execution_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
+          "execution_commit": "4ee0b889cdcb48ea90b2bffbe1b7744f1025c937",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-cancellation.yml": "531ce3ab8517ce8efa2cf029f7c6bda8800acdb9",
-            "Cargo.lock": "3371d04d0a34097b91eb09e4347030468d703f90",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
             "crates/oxide-batch-core/src": "c86a8e09ee0993d9d3ab2fe6b5ef2899e2c476dd",
@@ -528,14 +530,16 @@
             "crates/oxide-batch/tests/postgres_cancellation.rs": "70954e6a69df2ce7d09e7825a47fe43c3e2a49f8",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
             "tests/fixtures/cancellation/campaign-scope.json": "738d288ac153eb19c3d19168feb4be638283a55c",
-            "tests/fixtures/cancellation/campaign-semantics.json": "ecca18867cd876e657d5097f6bfab9921ae5b86b",
+            "tests/fixtures/cancellation/campaign-semantics.json": "b7479eecb5154bacffc4588e8ae676b2a422b5ea",
+            "tests/fixtures/cancellation/dependency-closure.json": "a6f8222b9f94592e160ab23b9ea89a2c874257a8",
             "tests/fixtures/cancellation/execution-contract.json": "b87d02a2b073510c0a712beba70763e0825771a8",
             "tests/fixtures/cancellation/run-ci-campaign.sh": "d0c08fdb841c5e6c92f85f384484ce2888f35d28",
             "tests/fixtures/cancellation/verify-ci-contract.sh": "18a9b13e833e61becea9a2dffce2b3ce62c600f1",
             "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
             "xtask/src/cancellation.rs": "92880a22cf70ff09162967e6b259160d6b3ff16f",
-            "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
-            "xtask/src/main.rs": "72f3559415985647a8b1e3dbdb2d3f35a699cc77",
+            "xtask/src/dependency_closure.rs": "f88c23a6c48623c2b8070ba93ac38aee600ee8c8",
+            "xtask/src/evidence.rs": "bcbbada67e25aaacef13d447ae7d3fc709d736b2",
+            "xtask/src/main.rs": "daadb20a70106a1e539e2f6c8952291fdff5a3bd",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
           },
           "tree_clean": true
@@ -546,7 +550,7 @@
           "os": "linux",
           "profile": "debug",
           "profile_note": "Every M5 campaign runs debug so the matrix points are comparable with each other. The absolute latencies below are therefore debug-build latencies and are not release figures.",
-          "resident_kib": 15268,
+          "resident_kib": 15500,
           "tokio_worker_threads": 4,
           "watch_interval_millis": 5,
           "watch_interval_note": "The campaign's own sampling floor. Every duration measured by reading a durable status back carries this as quantisation: a transition that happened immediately is reported as having taken up to one interval."
@@ -581,16 +585,15 @@
       "observation": {
         "cancelled_attempt": {
           "batch_status": "STOPPED",
-          "committed_partitions": 2,
+          "committed_partitions": 4,
           "exit_status": "STOPPED"
         },
         "execution_manifest": {
-          "execution_commit": "d4cbb038a78b37fa286bc92fa848db41e8671f4c",
+          "execution_commit": "4ee0b889cdcb48ea90b2bffbe1b7744f1025c937",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
             ".github/workflows/m5-cancellation.yml": "531ce3ab8517ce8efa2cf029f7c6bda8800acdb9",
-            "Cargo.lock": "3371d04d0a34097b91eb09e4347030468d703f90",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
             "crates/oxide-batch-core/src": "c86a8e09ee0993d9d3ab2fe6b5ef2899e2c476dd",
@@ -605,14 +608,16 @@
             "crates/oxide-batch/tests/postgres_cancellation.rs": "70954e6a69df2ce7d09e7825a47fe43c3e2a49f8",
             "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
             "tests/fixtures/cancellation/campaign-scope.json": "738d288ac153eb19c3d19168feb4be638283a55c",
-            "tests/fixtures/cancellation/campaign-semantics.json": "ecca18867cd876e657d5097f6bfab9921ae5b86b",
+            "tests/fixtures/cancellation/campaign-semantics.json": "b7479eecb5154bacffc4588e8ae676b2a422b5ea",
+            "tests/fixtures/cancellation/dependency-closure.json": "a6f8222b9f94592e160ab23b9ea89a2c874257a8",
             "tests/fixtures/cancellation/execution-contract.json": "b87d02a2b073510c0a712beba70763e0825771a8",
             "tests/fixtures/cancellation/run-ci-campaign.sh": "d0c08fdb841c5e6c92f85f384484ce2888f35d28",
             "tests/fixtures/cancellation/verify-ci-contract.sh": "18a9b13e833e61becea9a2dffce2b3ce62c600f1",
             "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
             "xtask/src/cancellation.rs": "92880a22cf70ff09162967e6b259160d6b3ff16f",
-            "xtask/src/evidence.rs": "5badb55e4d882859a4ca25edb6dd9e730aaa6713",
-            "xtask/src/main.rs": "72f3559415985647a8b1e3dbdb2d3f35a699cc77",
+            "xtask/src/dependency_closure.rs": "f88c23a6c48623c2b8070ba93ac38aee600ee8c8",
+            "xtask/src/evidence.rs": "bcbbada67e25aaacef13d447ae7d3fc709d736b2",
+            "xtask/src/main.rs": "daadb20a70106a1e539e2f6c8952291fdff5a3bd",
             "xtask/src/suite.rs": "2370d0e2524de286e0c49530873a7e8f33876cd6"
           },
           "tree_clean": true
@@ -623,7 +628,7 @@
           "os": "linux",
           "profile": "debug",
           "profile_note": "Every M5 campaign runs debug so the matrix points are comparable with each other. The absolute latencies below are therefore debug-build latencies and are not release figures.",
-          "resident_kib": 16704,
+          "resident_kib": 16844,
           "tokio_worker_threads": 4,
           "watch_interval_millis": 5,
           "watch_interval_note": "The campaign's own sampling floor. Every duration measured by reading a durable status back carries this as quantisation: a transition that happened immediately is reported as having taken up to one interval."
@@ -636,7 +641,7 @@
           "committed_partitions_re_run": [],
           "exit_status": "COMPLETED",
           "new_execution": true,
-          "partitions_re_run": 62,
+          "partitions_re_run": 60,
           "recovery_path": "a second launch of the same job and identifying parameters after the cancelled attempt, with no stop request outstanding",
           "same_instance": true
         },
@@ -644,7 +649,7 @@
         "violations": [],
         "workers": {
           "active_after_return": 0,
-          "admitted": 67,
+          "admitted": 68,
           "peak": 4
         }
       },

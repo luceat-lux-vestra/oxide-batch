@@ -130,6 +130,13 @@ others:
 - Major updates receive an issue and compatibility review.
 - Dependency-update pull requests are never merged solely because CI is green;
   behavior, MSRV, features, changelog, and supply-chain impact are reviewed.
+- Retained campaign evidence binds a generated campaign-scoped resolved package
+  closure rather than the whole workspace lockfile object. `Cargo.lock` remains
+  the authoritative resolver input. A reviewed dependency update that changes a
+  campaign's reachable version/source/checksum invalidates that campaign's
+  retained evidence; unrelated lock movement must not. Closure refresh is
+  deliberate through `cargo xtask dependency-closures-write`, never an
+  automatic way to make a dependency PR green.
 
 Response objectives:
 

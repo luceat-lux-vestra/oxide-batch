@@ -289,7 +289,8 @@ fn the_semantic_closure_covers_what_the_campaign_runs() -> Result<(), Box<dyn Er
         "tests/fixtures/crash-restore/campaign-scope.json",
         "xtask/src/crash_restore.rs",
         "xtask/src/evidence.rs",
-        "Cargo.lock",
+        "tests/fixtures/crash-restore/dependency-closure.json",
+        "xtask/src/dependency_closure.rs",
         "rust-toolchain.toml",
         ".github/workflows/m5-crash-restore.yml",
         "tests/fixtures/crash-restore/execution-contract.json",
@@ -307,6 +308,11 @@ fn the_semantic_closure_covers_what_the_campaign_runs() -> Result<(), Box<dyn Er
         !paths.iter().any(|path| path == ".github/workflows/ci.yml"),
         "ci.yml is unrelated to the dedicated crash-restore campaign and must not invalidate its \
          evidence",
+    );
+
+    assert!(
+        !paths.iter().any(|path| path == "Cargo.lock"),
+        "the workspace-wide Cargo.lock must not be bound directly; the campaign-scoped dependency closure is the resolved dependency identity",
     );
 
     for path in &paths {

@@ -1,7 +1,7 @@
 {
   "document": "The executable closure of the M5 PostgreSQL soak campaign",
-  "note": "The single source of truth for what the soak campaign is made of. The producer reads it to record the object identity of every path at the tree it actually ran on; the verifier reads it to require those identities to still hold. Neither restates the list, because a list kept in two places is a list that will disagree \u2014 the first version of this closure lived in the provenance document and was assembled by hand from the code the campaign obviously touches, which is how it came to omit the resolved dependency graph, the schema the run migrates to, and the compiler it is built with.",
-  "rule": "A change to anything here changes what the evidence is evidence of, so retained reports produced before the change may not be promoted after it: the campaign has to be run again. A change to anything not here \u2014 documentation, the changelog, unrelated xtask commands, or unrelated jobs in `.github/workflows/ci.yml` \u2014 leaves retained evidence valid. The dedicated `.github/workflows/m5-soak.yml` is bound as one object, so changes to the soak provisioning or call layer invalidate soak evidence without binding the rest of CI.",
+  "note": "The single source of truth for what the soak campaign is made of. The producer reads it to record the object identity of every path at the tree it actually ran on; the verifier reads it to require those identities to still hold. Neither restates the list, because a list kept in two places is a list that will disagree — the first version of this closure lived in the provenance document and was assembled by hand from the code the campaign obviously touches, which is how it came to omit the resolved dependency graph, the schema the run migrates to, and the compiler it is built with.",
+  "rule": "A change to anything here changes what the evidence is evidence of, so retained reports produced before the change may not be promoted after it: the campaign has to be run again. A change to anything not here — documentation, the changelog, unrelated xtask commands, or unrelated jobs in `.github/workflows/ci.yml` — leaves retained evidence valid. The dedicated `.github/workflows/m5-soak.yml` is bound as one object, so changes to the soak provisioning or call layer invalidate soak evidence without binding the rest of CI.",
   "categories": {
     "framework source": {
       "why": "The code under test. Its behaviour is what every observation in the report is about.",
@@ -35,9 +35,9 @@
       ]
     },
     "dependency resolution": {
-      "why": "The exact dependency graph the run was built from. A resolved version change can move any observation in the report \u2014 the pool implementation and the async runtime are both here \u2014 and the manifests alone do not pin it.",
+      "why": "The campaign-scoped resolved package graph derived from Cargo.lock for the exact workspace package roots this campaign executes. Unrelated workspace lock movement does not change this sidecar; a reachable resolved package/version/source/checksum change does.",
       "paths": [
-        "Cargo.lock"
+        "tests/fixtures/soak/dependency-closure.json"
       ]
     },
     "toolchain and build configuration": {
@@ -55,7 +55,7 @@
       ]
     },
     "campaign fixtures": {
-      "why": "The declared denominator \u2014 the window, the workload, the obligations, the rules \u2014 and this closure itself. The rate vectors belong here rather than beside either implementation: they are the statement of what the memory statistic is, and the report and the verifier are each held to them separately. A change to them changes what both are required to mean, which is exactly what this closure is for.",
+      "why": "The declared denominator — the window, the workload, the obligations, the rules — and this closure itself. The rate vectors belong here rather than beside either implementation: they are the statement of what the memory statistic is, and the report and the verifier are each held to them separately. A change to them changes what both are required to mean, which is exactly what this closure is for.",
       "paths": [
         "tests/fixtures/soak/campaign-scope.json",
         "tests/fixtures/soak/campaign-semantics.json",
@@ -78,8 +78,19 @@
         "xtask/src/soak.rs",
         "xtask/src/soak_evidence.rs",
         "xtask/src/evidence.rs",
-        "xtask/src/suite.rs"
+        "xtask/src/suite.rs",
+        "xtask/src/dependency_closure.rs"
       ]
     }
-  }
+  },
+  "dependency_roots": [
+    {
+      "package": "oxide-batch",
+      "kind": "test"
+    },
+    {
+      "package": "oxide-batch-xtask",
+      "kind": "run"
+    }
+  ]
 }

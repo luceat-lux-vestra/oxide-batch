@@ -47,7 +47,7 @@ use std::process::Command;
 
 use serde_json::Value;
 
-use crate::suite;
+use crate::{dependency_closure, suite};
 
 /// The M5 milestone's retained-evidence directory.
 ///
@@ -569,6 +569,15 @@ fn verify_semantics(root: &Path, document: &Value, reports: &[(String, Value)]) 
     let mut closures = BTreeMap::new();
     let mut union = BTreeSet::new();
     for (name, campaign) in &campaigns {
+        match dependency_closure::check_one(root, &campaign.semantics) {
+            Ok(gaps) => violations.extend(
+                gaps.into_iter()
+                    .map(|gap| format!("{name} dependency closure: {gap}")),
+            ),
+            Err(error) => violations.push(format!(
+                "{name} dependency closure could not be verified: {error}"
+            )),
+        }
         match semantics_paths(root, &campaign.semantics) {
             Ok(paths) => {
                 union.extend(paths.iter().cloned());
@@ -1305,18 +1314,19 @@ mod tests {
 
     #[test]
     fn rejects_a_manifest_missing_a_declared_path() {
+        let path = "tests/fixtures/soak/dependency-closure.json";
         let mut reports = reports();
         for (_, report) in &mut reports {
             report["observation"]["execution_manifest"]["objects"]
                 .as_object_mut()
                 .expect("objects")
-                .remove("Cargo.lock");
+                .remove(path);
         }
         let violations = semantics_of(&provenance(), &reports);
         assert!(
             violations
                 .iter()
-                .any(|violation| violation.contains("ran without recording Cargo.lock")),
+                .any(|violation| violation.contains(&format!("ran without recording {path}"))),
             "{violations:?}",
         );
     }
@@ -1333,8 +1343,19 @@ mod tests {
     }
 
     #[test]
-    fn rejects_changed_cargo_lock() {
-        rejects_a_changed_semantics_path("Cargo.lock");
+    fn rejects_changed_campaign_dependency_closure() {
+        rejects_a_changed_semantics_path("tests/fixtures/soak/dependency-closure.json");
+    }
+
+    #[test]
+    fn rejects_workspace_wide_lockfile_binding() {
+        let reports = with_manifest("Cargo.lock", &json!("0".repeat(40)));
+        let violations = semantics_of(&provenance(), &reports);
+        assert!(
+            violations.iter().any(|violation| violation
+                .contains("records Cargo.lock, which the campaign does not declare")),
+            "{violations:?}",
+        );
     }
 
     #[test]

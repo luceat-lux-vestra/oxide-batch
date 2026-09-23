@@ -495,7 +495,8 @@ fn the_semantic_closure_covers_what_the_campaign_runs() -> Result<(), Box<dyn Er
         "tests/fixtures/upgrade/schema-3-runtime/probe.rs",
         "xtask/src/upgrade.rs",
         "xtask/src/evidence.rs",
-        "Cargo.lock",
+        "tests/fixtures/upgrade/dependency-closure.json",
+        "xtask/src/dependency_closure.rs",
         "rust-toolchain.toml",
         ".github/workflows/m5-upgrade.yml",
         "tests/fixtures/upgrade/execution-contract.json",
@@ -513,6 +514,11 @@ fn the_semantic_closure_covers_what_the_campaign_runs() -> Result<(), Box<dyn Er
         !paths.iter().any(|path| path == ".github/workflows/ci.yml"),
         "ci.yml is unrelated to the dedicated upgrade campaign and must not invalidate its \
          evidence",
+    );
+
+    assert!(
+        !paths.iter().any(|path| path == "Cargo.lock"),
+        "the workspace-wide Cargo.lock must not be bound directly; the campaign-scoped dependency closure is the resolved dependency identity",
     );
 
     for path in &paths {
