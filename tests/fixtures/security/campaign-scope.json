@@ -3,7 +3,7 @@
   "issue": "https://github.com/luceat-lux-vestra/oxide-batch/issues/102",
   "gate": "docs/project/m5-design-gate-evidence.md",
   "plan": "docs/engineering/performance-plan.md",
-  "note": "This document is the campaign's denominator. The runner reads it to decide what must run and what each report must have observed, and the in-process reconciliation in crates/oxide-batch/tests/m5_security_campaign.rs reads it to decide whether it still says what the accepted documents require. M7 #265 adds schema 5 nested-job linkage and M7 #276 adds schema 6 value-free scope-resolution provenance. The same five privilege classes remain; each newly durable table has a dedicated restricted-role report.",
+  "note": "This document is the campaign's denominator. The runner reads it to decide what must run and what each report must have observed, and the in-process reconciliation in crates/oxide-batch/tests/m5_security_campaign.rs reads it to decide whether it still says what the accepted documents require. M7 #265 adds schema 5 nested-job linkage, M7 #276 adds schema 6 value-free scope-resolution provenance, and M7 #300 adds schema 7 durable repeat state. The same five privilege classes remain; each newly durable table has a dedicated restricted-role report.",
   "support_contract": {
     "postgres_versions": [
       "15",
@@ -15,7 +15,7 @@
       "15",
       "18"
     ],
-    "installed_schema_version": 6,
+    "installed_schema_version": 7,
     "tls_mode": "verify-full",
     "privilege_classes": [
       "migration",
@@ -77,6 +77,16 @@
       "package": "oxide-batch",
       "target": "postgres_scope_resolution_privileges",
       "name": "scope_resolution_provenance_privileges_match_schema6_policy",
+      "fixture": "postgres-security-roles",
+      "database_report": true
+    },
+    {
+      "id": "repeat-state-privileges",
+      "title": "Schema-7 repeat-state least-privilege",
+      "owes": "actual PostgreSQL allow/refuse evidence for the schema-7 repeat execution table under the committed roles and grants",
+      "package": "oxide-batch",
+      "target": "postgres_repeat_state_privileges",
+      "name": "repeat_state_privileges_match_schema7_policy",
       "fixture": "postgres-security-roles",
       "database_report": true
     },
@@ -384,6 +394,95 @@
       },
       {
         "id": "retention.delete-scope-resolution",
+        "role": "oxide_batch_m5_retention",
+        "expected": "forbidden"
+      }
+    ]
+  },
+  "repeat_state_privileges": {
+    "note": "Exact schema-7 probe denominator for `postgres_repeat_state_privileges.rs`. Runtime may read, insert, and update the bounded repeat row but may not directly delete it. Explorer, operator, and retention may read only; retention deletion is schema-owned step-execution cascade behavior rather than a direct grant.",
+    "report": "repeat-state-privileges",
+    "total_probes": 16,
+    "allowed_probes": 6,
+    "forbidden_probes": 10,
+    "probes": [
+      {
+        "id": "runtime.read-repeat-state",
+        "role": "oxide_batch_m5_runtime",
+        "expected": "allowed"
+      },
+      {
+        "id": "runtime.create-repeat-state",
+        "role": "oxide_batch_m5_runtime",
+        "expected": "allowed"
+      },
+      {
+        "id": "runtime.update-repeat-state",
+        "role": "oxide_batch_m5_runtime",
+        "expected": "allowed"
+      },
+      {
+        "id": "runtime.delete-repeat-state",
+        "role": "oxide_batch_m5_runtime",
+        "expected": "forbidden"
+      },
+      {
+        "id": "explorer.read-repeat-state",
+        "role": "oxide_batch_m5_explorer",
+        "expected": "allowed"
+      },
+      {
+        "id": "explorer.create-repeat-state",
+        "role": "oxide_batch_m5_explorer",
+        "expected": "forbidden"
+      },
+      {
+        "id": "explorer.update-repeat-state",
+        "role": "oxide_batch_m5_explorer",
+        "expected": "forbidden"
+      },
+      {
+        "id": "explorer.delete-repeat-state",
+        "role": "oxide_batch_m5_explorer",
+        "expected": "forbidden"
+      },
+      {
+        "id": "operator.read-repeat-state",
+        "role": "oxide_batch_m5_operator",
+        "expected": "allowed"
+      },
+      {
+        "id": "operator.create-repeat-state",
+        "role": "oxide_batch_m5_operator",
+        "expected": "forbidden"
+      },
+      {
+        "id": "operator.update-repeat-state",
+        "role": "oxide_batch_m5_operator",
+        "expected": "forbidden"
+      },
+      {
+        "id": "operator.delete-repeat-state",
+        "role": "oxide_batch_m5_operator",
+        "expected": "forbidden"
+      },
+      {
+        "id": "retention.read-repeat-state",
+        "role": "oxide_batch_m5_retention",
+        "expected": "allowed"
+      },
+      {
+        "id": "retention.create-repeat-state",
+        "role": "oxide_batch_m5_retention",
+        "expected": "forbidden"
+      },
+      {
+        "id": "retention.update-repeat-state",
+        "role": "oxide_batch_m5_retention",
+        "expected": "forbidden"
+      },
+      {
+        "id": "retention.delete-repeat-state",
         "role": "oxide_batch_m5_retention",
         "expected": "forbidden"
       }

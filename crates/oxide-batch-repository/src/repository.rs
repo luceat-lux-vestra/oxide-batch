@@ -14,16 +14,17 @@ use oxide_batch_core::{
     ExecutionContext, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitStatus,
     FailureCategory, FailureId, FailureSummary, IdentifierKind, JobExecution, JobExecutionId,
     JobInstance, JobInstanceId, JobInstanceKey, JobName, JobParameters, LifecycleError,
-    LifecycleTransition, NodeId, RecoveryDecisionId, ScopeKind, ScopedComponentId, StartLimit,
-    StepExecution, StepExecutionId, StepName, StepPartitionId,
+    LifecycleTransition, NodeId, RecoveryDecisionId, RepeatId, ScopeKind, ScopedComponentId,
+    StartLimit, StepExecution, StepExecutionId, StepName, StepPartitionId,
 };
 
 use crate::{
     ActorRef, FlowDecision, FlowDecisionRequest, FlowStepState, FlowTransitionKind, NestedJobLink,
     NestedJobLinkRequest, OperationId, OperatorAction, OperatorRecord, OperatorRecordDraft,
     OwnerToken, PartitionAggregate, PartitionAggregationError, PartitionPlanEntry, PurgeCounts,
-    PurgePlan, PurgePlanRequest, PurgeSurvey, ReasonCode, RetentionAction, RetentionHold,
-    RetentionRecord, RetentionRecordDraft, ScopeResolutionProvenance, StepPartition,
+    PurgePlan, PurgePlanRequest, PurgeSurvey, ReasonCode, RepeatCommitRequest, RepeatExecution,
+    RetentionAction, RetentionHold, RetentionRecord, RetentionRecordDraft,
+    ScopeResolutionProvenance, StepPartition,
 };
 
 const MAX_RECOVERY_REASON_BYTES: usize = 64;
@@ -1046,6 +1047,49 @@ pub trait RepositoryUnitOfWork: Send {
         Box::pin(async { Err(RepositoryError::FlowStateCorrupt) })
     }
 
+    /// Loads the current committed repeat record for one concrete step attempt.
+    fn repeat_execution<'a>(
+        &'a mut self,
+        _step_execution_id: StepExecutionId,
+        _repeat_id: &'a RepeatId,
+    ) -> BoxFuture<'a, Result<Option<RepeatExecution>, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::RepeatState,
+            })
+        })
+    }
+
+    /// Loads the newest committed repeat record for one logical step lineage.
+    fn latest_repeat_execution<'a>(
+        &'a mut self,
+        _job_instance_id: JobInstanceId,
+        _node_id: &'a NodeId,
+        _repeat_id: &'a RepeatId,
+    ) -> BoxFuture<'a, Result<Option<RepeatExecution>, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::RepeatState,
+            })
+        })
+    }
+
+    /// Commits one accepted repeat iteration.
+    ///
+    /// Exact replay is idempotent. A new commit must advance exactly one
+    /// ordinal from the newest committed lineage record and may never advance
+    /// after a committed complete decision.
+    fn commit_repeat_iteration<'a>(
+        &'a mut self,
+        _request: &'a RepeatCommitRequest,
+    ) -> BoxFuture<'a, Result<RepeatExecution, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::RepeatState,
+            })
+        })
+    }
+
     /// Reads the current parent-attempt link for one nested-job node.
     fn nested_job_link<'a>(
         &'a mut self,
@@ -1481,6 +1525,8 @@ pub enum RepositoryCapability {
     NestedJobs,
     /// Durable scoped-selector source identity and value-free resolution provenance.
     ScopeResolution,
+    /// Durable bounded Gate-C repeat ordinal, state, and committed decision.
+    RepeatState,
 }
 
 impl RepositoryCapability {
@@ -1497,6 +1543,7 @@ impl RepositoryCapability {
             Self::CustomLeafState => "custom leaf state",
             Self::NestedJobs => "nested job linkage",
             Self::ScopeResolution => "scope resolution provenance",
+            Self::RepeatState => "durable repeat state",
         }
     }
 }
@@ -1782,6 +1829,17 @@ pub enum RepositoryError {
     NestedJobStateCorrupt,
     /// Scoped-selector authoritative source or provenance state is contradictory.
     ScopeResolutionStateCorrupt,
+    /// Durable repeat state is missing, contradictory, unsupported, or corrupt.
+    RepeatStateCorrupt,
+    /// A repeat commit did not advance exactly one ordinal from durable authority.
+    RepeatOrdinalConflict {
+        /// Ordinal required by the current committed lineage state.
+        expected: u32,
+        /// Ordinal supplied by the rejected commit.
+        actual: u32,
+    },
+    /// A committed complete decision forbids a later repeat iteration.
+    RepeatAlreadyComplete,
     /// The linked child is active or ambiguous and cannot be silently duplicated.
     NestedJobChildUnresolved {
         /// Linked child attempt that requires completion or explicit recovery.
@@ -1996,6 +2054,15 @@ impl fmt::Display for RepositoryError {
             Self::ScopeResolutionStateCorrupt => formatter.write_str(
                 "durable scope-resolution state is unusable and no scoped work may begin",
             ),
+            Self::RepeatStateCorrupt => formatter
+                .write_str("durable repeat state is unusable and no repeated work may begin"),
+            Self::RepeatOrdinalConflict { expected, actual } => write!(
+                formatter,
+                "repeat commit ordinal {actual} does not match required ordinal {expected}"
+            ),
+            Self::RepeatAlreadyComplete => {
+                formatter.write_str("repeat is already durably complete and cannot advance")
+            }
             Self::NestedJobChildUnresolved {
                 child_execution_id,
                 status,

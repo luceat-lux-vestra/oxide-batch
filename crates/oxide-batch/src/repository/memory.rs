@@ -23,10 +23,10 @@ use crate::{
     ParameterDescriptor, ParameterName, PartitionPlanEntry, PartitionResult, PurgeCandidate,
     PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode,
     RecoveryDecisionId, RecoveryRepository, RecoverySnapshot, RecoveryStepEvidence,
-    RetentionAction, RetentionActionId, RetentionHold, RetentionRecord, RetentionRecordDraft,
-    ScopeKind, ScopedComponentId, StartLimit, StateEnvelopeDescriptor, StepExecution,
-    StepExecutionId, StepExecutionProjection, StepName, StepPartition, StepPartitionId,
-    StepPartitionProjection,
+    RepeatCommitRequest, RepeatDecision, RepeatExecution, RepeatId, RepeatOrdinal, RetentionAction,
+    RetentionActionId, RetentionHold, RetentionRecord, RetentionRecordDraft, ScopeKind,
+    ScopedComponentId, StartLimit, StateEnvelopeDescriptor, StepExecution, StepExecutionId,
+    StepExecutionProjection, StepName, StepPartition, StepPartitionId, StepPartitionProjection,
 };
 use crate::{
     BoxFuture, Clock, IdGenerator, JobInstanceSelection, JobRepository, RecoveryDecision,
@@ -46,6 +46,7 @@ pub struct InMemoryJobRepository {
     clock: Arc<dyn Clock>,
     ids: Arc<dyn IdGenerator>,
     fail_next_partition_aggregate_commit: Arc<AtomicBool>,
+    fail_next_repeat_commit: Arc<AtomicBool>,
 }
 
 impl InMemoryJobRepository {
@@ -57,6 +58,7 @@ impl InMemoryJobRepository {
             clock,
             ids,
             fail_next_partition_aggregate_commit: Arc::new(AtomicBool::new(false)),
+            fail_next_repeat_commit: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -67,6 +69,13 @@ impl InMemoryJobRepository {
     pub fn inject_next_partition_aggregate_commit_unknown(&self) {
         self.fail_next_partition_aggregate_commit
             .store(true, Ordering::Release);
+    }
+
+    /// Injects one lost commit response after the next repeat iteration is published.
+    ///
+    /// A fresh unit of work must inspect durable repeat state before retrying.
+    pub fn inject_next_repeat_commit_unknown(&self) {
+        self.fail_next_repeat_commit.store(true, Ordering::Release);
     }
 }
 
@@ -102,6 +111,7 @@ impl JobRepository for InMemoryJobRepository {
                 RepositoryCapability::InstanceHolds,
                 RepositoryCapability::NestedJobs,
                 RepositoryCapability::ScopeResolution,
+                RepositoryCapability::RepeatState,
                 RepositoryCapability::OperatorRequests,
                 RepositoryCapability::RetentionPurge,
                 RepositoryCapability::StepPartitions,
@@ -127,6 +137,7 @@ impl JobRepository for InMemoryJobRepository {
                 definition_override: None,
                 created_partition_plans: BTreeSet::new(),
                 aggregated_partition_parent: false,
+                committed_repeat_iteration: false,
             }) as Box<dyn RepositoryUnitOfWork + 'a>)
         })
     }
@@ -162,6 +173,7 @@ struct MemoryState {
     step_partitions_by_step: BTreeMap<StepExecutionId, Vec<StepPartitionId>>,
     flow_decisions: BTreeMap<FlowDecisionId, FlowDecision>,
     flow_decisions_by_job: BTreeMap<JobExecutionId, Vec<FlowDecisionId>>,
+    repeat_executions: BTreeMap<(StepExecutionId, RepeatId), RepeatExecution>,
     recovery_decisions: BTreeMap<JobExecutionId, Vec<RecoveryDecision>>,
     definitions: BTreeMap<(JobName, DefinitionRevision), DefinitionIdentity>,
     execution_definitions: BTreeMap<JobExecutionId, DefinitionIdentity>,
@@ -297,6 +309,7 @@ struct InMemoryUnitOfWork<'repository> {
     definition_override: Option<DefinitionIdentity>,
     created_partition_plans: BTreeSet<StepExecutionId>,
     aggregated_partition_parent: bool,
+    committed_repeat_iteration: bool,
 }
 
 impl InMemoryUnitOfWork<'_> {
@@ -563,6 +576,9 @@ impl InMemoryUnitOfWork<'_> {
         {
             self.staged.step_partitions.remove(&partition_id);
         }
+        self.staged
+            .repeat_executions
+            .retain(|(step_id, _), _| *step_id != step_execution_id);
         self.staged.step_executions.remove(&step_execution_id);
         self.staged.step_logical_ids.remove(&step_execution_id);
         self.staged.step_contexts.remove(&step_execution_id);
@@ -726,6 +742,75 @@ impl InMemoryUnitOfWork<'_> {
             .next_back()
             .map_or(1, |id| id.get().checked_add(1).unwrap_or(0));
         FlowDecisionId::new(next).map_err(RepositoryError::from)
+    }
+
+    fn latest_repeat_snapshot(
+        &self,
+        instance_id: JobInstanceId,
+        node_id: &NodeId,
+        repeat_id: &RepeatId,
+    ) -> Result<Option<RepeatExecution>, RepositoryError> {
+        let executions = self
+            .staged
+            .job_executions_by_instance
+            .get(&instance_id)
+            .ok_or(RepositoryError::JobInstanceNotFound { id: instance_id })?;
+        for execution_id in executions.iter().rev() {
+            for step_id in self
+                .staged
+                .step_executions_by_job
+                .get(execution_id)
+                .into_iter()
+                .flatten()
+                .rev()
+            {
+                if self.staged.step_logical_ids.get(step_id) == Some(node_id)
+                    && let Some(record) = self
+                        .staged
+                        .repeat_executions
+                        .get(&(*step_id, repeat_id.clone()))
+                {
+                    return Ok(Some(record.clone()));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    fn validate_repeat_request(
+        &self,
+        request: &RepeatCommitRequest,
+    ) -> Result<(), RepositoryError> {
+        let step = self
+            .staged
+            .step_executions
+            .get(&request.step_execution_id())
+            .ok_or(RepositoryError::StepExecutionNotFound {
+                id: request.step_execution_id(),
+            })?;
+        if self
+            .staged
+            .step_logical_ids
+            .get(&request.step_execution_id())
+            != Some(request.node_id())
+            || self.instance_for_execution(step.job_execution_id())? != request.job_instance_id()
+        {
+            return Err(RepositoryError::RepeatStateCorrupt);
+        }
+        let definition = self
+            .staged
+            .execution_definitions
+            .get(&step.job_execution_id())
+            .ok_or(RepositoryError::RepeatStateCorrupt)?;
+        if definition.manifest_digest() != request.plan_fingerprint() {
+            return Err(RepositoryError::RepeatStateCorrupt);
+        }
+        let manifest: serde_json::Value = serde_json::from_slice(definition.canonical_manifest())
+            .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+        if !super::repeat_request_matches_manifest(&manifest, request) {
+            return Err(RepositoryError::RepeatStateCorrupt);
+        }
+        Ok(())
     }
 
     fn latest_flow_step_snapshot(
@@ -1602,6 +1687,109 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .collect::<Result<Vec<_>, _>>()?;
             decisions.sort_by_key(|decision| (decision.sequence(), decision.id()));
             Ok(decisions)
+        })
+    }
+
+    fn repeat_execution<'a>(
+        &'a mut self,
+        step_execution_id: StepExecutionId,
+        repeat_id: &'a RepeatId,
+    ) -> BoxFuture<'a, Result<Option<RepeatExecution>, RepositoryError>> {
+        Box::pin(async move {
+            if !self.staged.step_executions.contains_key(&step_execution_id) {
+                return Err(RepositoryError::StepExecutionNotFound {
+                    id: step_execution_id,
+                });
+            }
+            Ok(self
+                .staged
+                .repeat_executions
+                .get(&(step_execution_id, repeat_id.clone()))
+                .cloned())
+        })
+    }
+
+    fn latest_repeat_execution<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        node_id: &'a NodeId,
+        repeat_id: &'a RepeatId,
+    ) -> BoxFuture<'a, Result<Option<RepeatExecution>, RepositoryError>> {
+        Box::pin(async move { self.latest_repeat_snapshot(job_instance_id, node_id, repeat_id) })
+    }
+
+    fn commit_repeat_iteration<'a>(
+        &'a mut self,
+        request: &'a RepeatCommitRequest,
+    ) -> BoxFuture<'a, Result<RepeatExecution, RepositoryError>> {
+        Box::pin(async move {
+            self.validate_repeat_request(request)?;
+            let key = (request.step_execution_id(), request.repeat_id().clone());
+            if let Some(existing) = self.staged.repeat_executions.get(&key).cloned() {
+                let exact_replay = existing.job_instance_id() == request.job_instance_id()
+                    && existing.node_id() == request.node_id()
+                    && existing.ordinal() == request.ordinal()
+                    && existing.state() == request.state()
+                    && existing.decision() == request.decision()
+                    && existing.plan_fingerprint() == request.plan_fingerprint();
+                if exact_replay {
+                    return Ok(existing);
+                }
+                if existing.ordinal() == request.ordinal() {
+                    return Err(RepositoryError::RepeatStateCorrupt);
+                }
+                if existing.decision() == RepeatDecision::Complete {
+                    return Err(RepositoryError::RepeatAlreadyComplete);
+                }
+                let expected = existing
+                    .ordinal()
+                    .checked_next()
+                    .ok_or(RepositoryError::RepeatStateCorrupt)?;
+                if request.ordinal() != expected {
+                    return Err(RepositoryError::RepeatOrdinalConflict {
+                        expected: expected.get(),
+                        actual: request.ordinal().get(),
+                    });
+                }
+            } else {
+                let prior = self.latest_repeat_snapshot(
+                    request.job_instance_id(),
+                    request.node_id(),
+                    request.repeat_id(),
+                )?;
+                let expected = match prior {
+                    Some(prior) if prior.plan_fingerprint() != request.plan_fingerprint() => {
+                        return Err(RepositoryError::RepeatStateCorrupt);
+                    }
+                    Some(prior) if prior.decision() == RepeatDecision::Complete => {
+                        return Err(RepositoryError::RepeatAlreadyComplete);
+                    }
+                    Some(prior) => prior
+                        .ordinal()
+                        .checked_next()
+                        .ok_or(RepositoryError::RepeatStateCorrupt)?,
+                    None => RepeatOrdinal::INITIAL,
+                };
+                if request.ordinal() != expected {
+                    return Err(RepositoryError::RepeatOrdinalConflict {
+                        expected: expected.get(),
+                        actual: request.ordinal().get(),
+                    });
+                }
+            }
+            let record = RepeatExecution::new(
+                request.job_instance_id(),
+                request.node_id().clone(),
+                request.step_execution_id(),
+                request.repeat_id().clone(),
+                request.ordinal(),
+                request.state().clone(),
+                request.decision(),
+                *request.plan_fingerprint(),
+            );
+            self.staged.repeat_executions.insert(key, record.clone());
+            self.committed_repeat_iteration = true;
+            Ok(record)
         })
     }
 
@@ -2773,12 +2961,17 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .checked_add(1)
                 .ok_or(RepositoryError::ConcurrentModification)?;
             *current = staged;
-            if self.aggregated_partition_parent
+            let partition_unknown = self.aggregated_partition_parent
                 && self
                     .repository
                     .fail_next_partition_aggregate_commit
-                    .swap(false, Ordering::AcqRel)
-            {
+                    .swap(false, Ordering::AcqRel);
+            let repeat_unknown = self.committed_repeat_iteration
+                && self
+                    .repository
+                    .fail_next_repeat_commit
+                    .swap(false, Ordering::AcqRel);
+            if partition_unknown || repeat_unknown {
                 return Err(RepositoryError::CommitOutcomeUnknown);
             }
             Ok(())

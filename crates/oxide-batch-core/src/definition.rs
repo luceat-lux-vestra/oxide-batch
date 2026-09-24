@@ -113,6 +113,11 @@ definition_token!(
     DefinitionTokenKind::Upgrade,
     "An application-owned key for one directed definition compatibility edge."
 );
+definition_token!(
+    RepeatId,
+    DefinitionTokenKind::Repeat,
+    "A stable logical identifier for one repeat definition."
+);
 
 /// One source-to-target durable step mapping for a compatible restart.
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -217,6 +217,16 @@ bash "${fixture_root}/design-gate/run-schema6-upgrade-gate.sh" \
   "${fixture_root}" \
   "${temporary_root}"
 
+# Schema-6 to schema-7 evidence starts from the populated schema-6 shape,
+# applies only the bounded repeat-state migration, proves that prior executions
+# do not gain invented repeat rows, and dump/restores one representative
+# committed repeat record.
+bash "${fixture_root}/design-gate/run-schema7-upgrade-gate.sh" \
+  "${container_name}" \
+  "${repository_root}" \
+  "${fixture_root}" \
+  "${temporary_root}"
+
 (
   cd "${repository_root}"
   OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL="postgres://oxide_batch_migrator:fixture-migrator-only@localhost:${database_port}/oxide_batch_design" \
@@ -298,13 +308,13 @@ docker exec \
   --command \
   "SELECT version FROM oxide_batch.ob_schema_version WHERE singleton = true" \
   | tr -d '[:space:]' \
-  | grep -qx '6'
+  | grep -qx '7'
 docker exec \
   --env PGPASSWORD=fixture-migrator-only \
   "${container_name}" \
   psql \
   "host=localhost dbname=oxide_batch_restore user=oxide_batch_migrator sslmode=verify-full sslrootcert=/tls/ca.crt" \
-  --command "UPDATE oxide_batch.ob_schema_version SET version = 7" \
+  --command "UPDATE oxide_batch.ob_schema_version SET version = 8" \
   >/dev/null
 
 set +e
@@ -323,7 +333,7 @@ if [[ ${newer_schema_status} -eq 0 ]]; then
   echo "newer metadata schema was not rejected" >&2
   exit 1
 fi
-if [[ "${newer_schema_output}" != *"newer than supported version 6"* ]]; then
+if [[ "${newer_schema_output}" != *"newer than supported version 7"* ]]; then
   echo "${newer_schema_output}" >&2
   echo "newer-schema rejection returned an unexpected diagnostic" >&2
   exit 1

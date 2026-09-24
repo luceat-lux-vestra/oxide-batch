@@ -1567,6 +1567,20 @@ fn plan_capabilities(plan: &CompiledExecutionPlan) -> BTreeSet<RepositoryCapabil
     if plan.scoped_components().len() != 0 {
         required.insert(RepositoryCapability::ScopeResolution);
     }
+    if plan.nodes().any(|(_, node)| match node {
+        FlowNode::Step(step) => step.repeat_definition().is_some(),
+        FlowNode::PartitionedStep(partitioned) => {
+            partitioned.worker().repeat_definition().is_some()
+        }
+        FlowNode::Split(split) => split
+            .branches()
+            .iter()
+            .flat_map(crate::SplitBranch::steps)
+            .any(|step| step.repeat_definition().is_some()),
+        _ => false,
+    }) {
+        required.insert(RepositoryCapability::RepeatState);
+    }
     required
 }
 

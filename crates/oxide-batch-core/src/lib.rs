@@ -42,7 +42,7 @@ pub use definition::{
     ChunkComponentRevisions, ChunkDeliveryMode, ChunkRestartContract, ClassifierRevision,
     ComponentRevision, ComponentStreamIdentity, DefinitionError, DefinitionIdentity,
     DefinitionManifest, DefinitionRevision, DefinitionTokenKind, DefinitionUpgrade,
-    DefinitionUpgradeKey, InFlightPolicy, ManifestError, StepDefinitionUpgrade,
+    DefinitionUpgradeKey, InFlightPolicy, ManifestError, RepeatId, StepDefinitionUpgrade,
 };
 pub use definition::{
     MANIFEST_FORMAT_ADVANCED_FLOW, MANIFEST_FORMAT_FLOW, MANIFEST_FORMAT_LOCAL_SCALE,

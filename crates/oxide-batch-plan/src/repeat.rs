@@ -4,15 +4,11 @@ use std::fmt;
 
 use oxide_batch_core::{
     ComponentRevision, DefinitionError, DefinitionTokenKind, MAX_REPEAT_INTERCEPTORS,
-    MAX_REPEAT_NESTING_DEPTH, StateSchemaId, StateSchemaVersion, definition_token, validate_token,
+    MAX_REPEAT_NESTING_DEPTH, RepeatId, StateSchemaId, StateSchemaVersion, definition_token,
+    validate_token,
 };
 use serde_json::{Value, json};
 
-definition_token!(
-    RepeatId,
-    DefinitionTokenKind::Repeat,
-    "A stable logical identifier for one repeat definition."
-);
 definition_token!(
     RepeatPolicyKind,
     DefinitionTokenKind::RepeatPolicy,

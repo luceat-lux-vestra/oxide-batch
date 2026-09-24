@@ -90,8 +90,8 @@ would have become had it been carried rather than removed.
 
 ## The delivered surface
 
-The current facade claims exactly one crate. `oxide-batch` exports **527
-names**: 515 always and 12 more under the optional `postgres` feature. The
+The current facade claims exactly one crate. `oxide-batch` exports **531
+names**: 519 always and 12 more under the optional `postgres` feature. The
 committed snapshot at
 `crates/oxide-batch/tests/fixtures/facade/public-api.txt` is the authoritative
 name list; this table is the reviewed enumeration by the `src/lib.rs`
@@ -102,9 +102,9 @@ be added or moved without revisiting this record.
 
 | Group | Names | What it delivers |
 | --- | ---: | --- |
-| `oxide_batch_repository` | 113 | repository, explorer, operator, recovery, retention, paging, and M7 durable-link ports/values |
-| `oxide_batch_core` | 108 | durable domain values, definition identity, state, parameters, fault-policy values, and the two M7 repeat capacity ceilings |
-| `oxide_batch_plan` | 62 | compiled flow/plan declarations, M7 composition, structured scope/late-binding values, and #299 bounded repeat definition identity |
+| `oxide_batch_repository` | 117 | repository, explorer, operator, recovery, retention, paging, M7 durable-link ports/values, and #300 bounded durable repeat authority |
+| `oxide_batch_core` | 109 | durable domain values, definition identity, state, parameters, fault-policy values, the two M7 repeat capacity ceilings, and #300's shared `RepeatId` ownership |
+| `oxide_batch_plan` | 61 | compiled flow/plan declarations, M7 composition, structured scope/late-binding values, and #299 bounded repeat definition identity other than `RepeatId`, whose facade path is unchanged after #300 moves its ownership to core |
 | `telemetry` | 38 | framework-owned event, metric, span, and export contracts |
 | `chunk` | 32 | chunk component contracts, business transaction ports, outcomes, and bounded execution values |
 | `flow` | 20 | multi-step runtime, deciders, flow factories, and M7 execution assembly |
@@ -126,6 +126,14 @@ be added or moved without revisiting this record.
 | `nested_job_runtime` | 1 | facade-owned bounded nested-job mapping diagnostic |
 | `scope_runtime` | 1 | #276 value-redacted late-bound resolution failure category |
 | crate root | 1 | `VERSION` |
+
+The #300 repeat-state addition is deliberately value-oriented at the facade boundary. It also moves `RepeatId` from the plan crate to the shared core value layer while preserving the existing `oxide_batch::RepeatId` facade path; the reviewed group counts record that ownership move explicitly.
+`RepeatOrdinal`, `RepeatDecision`, `RepeatExecution`, and
+`RepeatCommitRequest` are bounded framework-owned durable values. They expose
+no SQLx row/pool/transaction type, serializer document, credential, executor,
+or repository implementation handle. The repository capability and failure
+surface remains the existing facade-owned negotiation/error boundary; the four
+new names only make the accepted repeat-state authority explicit.
 
 The #277 `scope_live` group is deliberately process-local. The public handle
 is opaque and downcast-based; factories receive only already-resolved values

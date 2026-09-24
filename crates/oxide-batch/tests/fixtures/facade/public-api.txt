@@ -383,12 +383,16 @@ oxide_batch::RecoveryRequestError
 oxide_batch::RecoveryResult
 oxide_batch::RecoverySnapshot
 oxide_batch::RecoveryStepEvidence
+oxide_batch::RepeatCommitRequest
+oxide_batch::RepeatDecision
 oxide_batch::RepeatDefinition
 oxide_batch::RepeatDefinitionError
+oxide_batch::RepeatExecution
 oxide_batch::RepeatId
 oxide_batch::RepeatInterceptorDefinition
 oxide_batch::RepeatInterceptorId
 oxide_batch::RepeatInterceptorKind
+oxide_batch::RepeatOrdinal
 oxide_batch::RepeatPolicyConfiguration
 oxide_batch::RepeatPolicyDefinition
 oxide_batch::RepeatPolicyKind

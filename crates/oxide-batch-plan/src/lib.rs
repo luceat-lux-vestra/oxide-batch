@@ -63,10 +63,11 @@ pub use nested_job::{
     MAX_SELECTOR_PATH_SEGMENTS, MissingParameterPolicy, NestedJobNode, NestedJobParameterMapping,
     NestedJobParameterSource, ParameterCoercion, SelectorPath,
 };
+pub use oxide_batch_core::RepeatId;
 pub use repeat::{
-    RepeatDefinition, RepeatDefinitionError, RepeatId, RepeatInterceptorDefinition,
-    RepeatInterceptorId, RepeatInterceptorKind, RepeatPolicyConfiguration, RepeatPolicyDefinition,
-    RepeatPolicyKind, RepeatStateSchema,
+    RepeatDefinition, RepeatDefinitionError, RepeatInterceptorDefinition, RepeatInterceptorId,
+    RepeatInterceptorKind, RepeatPolicyConfiguration, RepeatPolicyDefinition, RepeatPolicyKind,
+    RepeatStateSchema,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
