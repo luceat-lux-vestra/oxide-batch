@@ -41,7 +41,8 @@ use crate::{
     ParameterName, ParameterRole, ParameterValue, ParameterValueKind, PartitionKey,
     PartitionPlanEntry, PartitionResult, PurgeBatchBound, PurgeCandidate, PurgeCounts, PurgePlan,
     PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecision, RecoveryDecisionId,
-    RecoveryRequest, RecoveryResult, RepositoryCapability, RepositoryDescriptor, RepositoryError,
+    RecoveryRequest, RecoveryResult, RepeatCommitRequest, RepeatDecision, RepeatExecution,
+    RepeatId, RepeatOrdinal, RepositoryCapability, RepositoryDescriptor, RepositoryError,
     RepositoryUnitOfWork, RequestDigest, RetentionAction, RetentionActionId, RetentionHold,
     RetentionOutcome, RetentionRecord, RetentionRecordDraft, RetryCounts, RetryKey, RetryLimit,
     RetryOrdinal, RetryReservation, RetryStateLimit, ScopeKind, ScopedComponentId, SkipCounts,
@@ -50,7 +51,7 @@ use crate::{
     StepPartitionId, StepPartitionProjection, TerminalKind,
 };
 
-const SUPPORTED_SCHEMA_VERSION: u32 = 6;
+const SUPPORTED_SCHEMA_VERSION: u32 = 7;
 const MAX_INSTANCE_KEY_INPUT: usize = 1024 * 1024;
 const MAX_POOL_SIZE: u32 = 1024;
 const MAX_SHORT_TIMEOUT: Duration = Duration::from_mins(5);
@@ -863,6 +864,7 @@ impl JobRepository for PostgresJobRepository {
                 RepositoryCapability::InstanceHolds,
                 RepositoryCapability::NestedJobs,
                 RepositoryCapability::ScopeResolution,
+                RepositoryCapability::RepeatState,
                 RepositoryCapability::OperatorRequests,
                 RepositoryCapability::RetentionPurge,
                 RepositoryCapability::StepPartitions,
@@ -2953,6 +2955,265 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
             rows.iter().map(decode_flow_decision).collect()
+        })
+    }
+
+    fn repeat_execution<'a>(
+        &'a mut self,
+        step_execution_id: StepExecutionId,
+        repeat_id: &'a RepeatId,
+    ) -> BoxFuture<'a, Result<Option<RepeatExecution>, RepositoryError>> {
+        Box::pin(async move {
+            let row = sqlx::query(AssertSqlSafe(repeat_execution_select(
+                "WHERE repeat.step_execution_id = $1 AND repeat.repeat_id = $2",
+            )))
+            .bind(database_id(
+                step_execution_id.get(),
+                IdentifierKind::StepExecution,
+            )?)
+            .bind(repeat_id.as_str())
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            if row.is_none() {
+                let step_exists: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_step_execution WHERE id = $1)",
+                )
+                .bind(database_id(
+                    step_execution_id.get(),
+                    IdentifierKind::StepExecution,
+                )?)
+                .fetch_one(&mut **self.transaction()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
+                if !step_exists {
+                    return Err(RepositoryError::StepExecutionNotFound {
+                        id: step_execution_id,
+                    });
+                }
+            }
+            row.as_ref().map(decode_repeat_execution).transpose()
+        })
+    }
+
+    fn latest_repeat_execution<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        node_id: &'a NodeId,
+        repeat_id: &'a RepeatId,
+    ) -> BoxFuture<'a, Result<Option<RepeatExecution>, RepositoryError>> {
+        Box::pin(async move {
+            let instance_id = database_id(job_instance_id.get(), IdentifierKind::JobInstance)?;
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_job_instance WHERE id = $1)",
+            )
+            .bind(instance_id)
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            if !exists {
+                return Err(RepositoryError::JobInstanceNotFound {
+                    id: job_instance_id,
+                });
+            }
+            let row = sqlx::query(AssertSqlSafe(repeat_execution_select(
+                "WHERE job.job_instance_id = $1 AND step.step_logical_id = $2                  AND repeat.repeat_id = $3                  ORDER BY job.attempt DESC, repeat.step_execution_id DESC LIMIT 1",
+            )))
+            .bind(instance_id)
+            .bind(node_id.as_str())
+            .bind(repeat_id.as_str())
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            row.as_ref().map(decode_repeat_execution).transpose()
+        })
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn commit_repeat_iteration<'a>(
+        &'a mut self,
+        request: &'a RepeatCommitRequest,
+    ) -> BoxFuture<'a, Result<RepeatExecution, RepositoryError>> {
+        Box::pin(async move {
+            let step_id = database_id(
+                request.step_execution_id().get(),
+                IdentifierKind::StepExecution,
+            )?;
+            let row = sqlx::query(
+                "SELECT job.job_instance_id, step.step_logical_id,                  definition.manifest_digest, definition.manifest                  FROM oxide_batch.ob_step_execution step                  JOIN oxide_batch.ob_job_execution job ON job.id = step.job_execution_id                  JOIN oxide_batch.ob_job_definition definition ON definition.id = job.definition_id                  WHERE step.id = $1 FOR UPDATE OF step",
+            )
+            .bind(step_id)
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .ok_or(RepositoryError::StepExecutionNotFound {
+                id: request.step_execution_id(),
+            })?;
+            let instance_id = JobInstanceId::new(read_u64(&row, "job_instance_id")?)?;
+            let node_id = NodeId::new(read_text(&row, "step_logical_id")?)
+                .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+            let fingerprint: [u8; 32] = row
+                .try_get::<Vec<u8>, _>("manifest_digest")
+                .map_err(|_| RepositoryError::RepeatStateCorrupt)?
+                .try_into()
+                .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+            let Json(manifest): Json<Value> = row
+                .try_get("manifest")
+                .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+            if instance_id != request.job_instance_id()
+                || &node_id != request.node_id()
+                || &fingerprint != request.plan_fingerprint()
+                || !super::repeat_request_matches_manifest(&manifest, request)
+            {
+                return Err(RepositoryError::RepeatStateCorrupt);
+            }
+
+            let current_row = sqlx::query(AssertSqlSafe(repeat_execution_select(
+                "WHERE repeat.step_execution_id = $1 AND repeat.repeat_id = $2 FOR UPDATE OF repeat",
+            )))
+            .bind(step_id)
+            .bind(request.repeat_id().as_str())
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            let current = current_row
+                .as_ref()
+                .map(decode_repeat_execution)
+                .transpose()?;
+
+            if let Some(existing) = &current {
+                let exact_replay = existing.job_instance_id() == request.job_instance_id()
+                    && existing.node_id() == request.node_id()
+                    && existing.ordinal() == request.ordinal()
+                    && existing.state() == request.state()
+                    && existing.decision() == request.decision()
+                    && existing.plan_fingerprint() == request.plan_fingerprint();
+                if exact_replay {
+                    return Ok(existing.clone());
+                }
+                if existing.ordinal() == request.ordinal() {
+                    return Err(RepositoryError::RepeatStateCorrupt);
+                }
+                if existing.decision() == RepeatDecision::Complete {
+                    return Err(RepositoryError::RepeatAlreadyComplete);
+                }
+                let expected = existing
+                    .ordinal()
+                    .checked_next()
+                    .ok_or(RepositoryError::RepeatStateCorrupt)?;
+                if request.ordinal() != expected {
+                    return Err(RepositoryError::RepeatOrdinalConflict {
+                        expected: expected.get(),
+                        actual: request.ordinal().get(),
+                    });
+                }
+            } else {
+                let prior_row = sqlx::query(AssertSqlSafe(repeat_execution_select(
+                    "WHERE job.job_instance_id = $1 AND step.step_logical_id = $2                      AND repeat.repeat_id = $3                      ORDER BY job.attempt DESC, repeat.step_execution_id DESC LIMIT 1",
+                )))
+                .bind(database_id(
+                    request.job_instance_id().get(),
+                    IdentifierKind::JobInstance,
+                )?)
+                .bind(request.node_id().as_str())
+                .bind(request.repeat_id().as_str())
+                .fetch_optional(&mut **self.transaction()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
+                let prior = prior_row
+                    .as_ref()
+                    .map(decode_repeat_execution)
+                    .transpose()?;
+                let expected = match prior {
+                    Some(prior) if prior.plan_fingerprint() != request.plan_fingerprint() => {
+                        return Err(RepositoryError::RepeatStateCorrupt);
+                    }
+                    Some(prior) if prior.decision() == RepeatDecision::Complete => {
+                        return Err(RepositoryError::RepeatAlreadyComplete);
+                    }
+                    Some(prior) => prior
+                        .ordinal()
+                        .checked_next()
+                        .ok_or(RepositoryError::RepeatStateCorrupt)?,
+                    None => RepeatOrdinal::INITIAL,
+                };
+                if request.ordinal() != expected {
+                    return Err(RepositoryError::RepeatOrdinalConflict {
+                        expected: expected.get(),
+                        actual: request.ordinal().get(),
+                    });
+                }
+            }
+
+            let payload: Value = serde_json::from_slice(
+                &request
+                    .state()
+                    .payload_json()
+                    .map_err(|_| RepositoryError::RepeatStateCorrupt)?,
+            )
+            .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+            let checksum: [u8; 32] = Sha256::digest(
+                request
+                    .state()
+                    .to_json()
+                    .map_err(|_| RepositoryError::RepeatStateCorrupt)?,
+            )
+            .into();
+            let format = i16::try_from(request.state().format_version())
+                .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+            let schema_version = i32::try_from(request.state().schema_version().get())
+                .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+            let ordinal = i64::from(request.ordinal().get());
+
+            if current.is_some() {
+                let affected = sqlx::query(
+                    "UPDATE oxide_batch.ob_repeat_execution SET ordinal = $1,                      state_format = $2, state_schema = $3, state_schema_version = $4,                      state_payload = $5, state_checksum = $6, decision = $7,                      plan_fingerprint = $8, updated_at = CURRENT_TIMESTAMP                      WHERE step_execution_id = $9 AND repeat_id = $10",
+                )
+                .bind(ordinal)
+                .bind(format)
+                .bind(request.state().schema_id().as_str())
+                .bind(schema_version)
+                .bind(Json(payload))
+                .bind(&checksum[..])
+                .bind(request.decision().as_str())
+                .bind(request.plan_fingerprint().as_slice())
+                .bind(step_id)
+                .bind(request.repeat_id().as_str())
+                .execute(&mut **self.transaction()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
+                if affected.rows_affected() != 1 {
+                    return Err(RepositoryError::ConcurrentModification);
+                }
+            } else {
+                sqlx::query(
+                    "INSERT INTO oxide_batch.ob_repeat_execution                      (step_execution_id, repeat_id, ordinal, state_format, state_schema,                       state_schema_version, state_payload, state_checksum, decision, plan_fingerprint)                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                )
+                .bind(step_id)
+                .bind(request.repeat_id().as_str())
+                .bind(ordinal)
+                .bind(format)
+                .bind(request.state().schema_id().as_str())
+                .bind(schema_version)
+                .bind(Json(payload))
+                .bind(&checksum[..])
+                .bind(request.decision().as_str())
+                .bind(request.plan_fingerprint().as_slice())
+                .execute(&mut **self.transaction()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
+            }
+
+            Ok(RepeatExecution::new(
+                request.job_instance_id(),
+                request.node_id().clone(),
+                request.step_execution_id(),
+                request.repeat_id().clone(),
+                request.ordinal(),
+                request.state().clone(),
+                request.decision(),
+                *request.plan_fingerprint(),
+            ))
         })
     }
 
@@ -5556,6 +5817,12 @@ fn durable_step_select(suffix: &str) -> String {
     )
 }
 
+fn repeat_execution_select(suffix: &str) -> String {
+    format!(
+        "SELECT repeat.step_execution_id, repeat.repeat_id, repeat.ordinal,          repeat.state_format, repeat.state_schema, repeat.state_schema_version,          repeat.state_payload, repeat.state_checksum, repeat.decision,          repeat.plan_fingerprint, step.step_logical_id, job.job_instance_id,          definition.manifest_digest AS definition_fingerprint,          definition.manifest AS definition_manifest          FROM oxide_batch.ob_repeat_execution repeat          JOIN oxide_batch.ob_step_execution step ON step.id = repeat.step_execution_id          JOIN oxide_batch.ob_job_execution job ON job.id = step.job_execution_id          JOIN oxide_batch.ob_job_definition definition ON definition.id = job.definition_id {suffix}"
+    )
+}
+
 fn flow_decision_select(suffix: &str) -> String {
     format!(
         "SELECT decision.id, decision.job_execution_id, \
@@ -6262,6 +6529,103 @@ fn decode_flow_decision(row: &PgRow) -> Result<FlowDecision, RepositoryError> {
         reused_decision_id,
         millis_system_time(read_i64(row, "decided_ms")?)?,
     ))
+}
+
+fn decode_repeat_execution(row: &PgRow) -> Result<RepeatExecution, RepositoryError> {
+    let step_execution_id = StepExecutionId::new(read_u64(row, "step_execution_id")?)?;
+    let job_instance_id = JobInstanceId::new(read_u64(row, "job_instance_id")?)?;
+    let node_id = NodeId::new(read_text(row, "step_logical_id")?)
+        .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+    let repeat_id = RepeatId::new(read_text(row, "repeat_id")?)
+        .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+    let ordinal = u32::try_from(read_u64(row, "ordinal")?)
+        .map(RepeatOrdinal::new)
+        .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+    let format_version = u16::try_from(
+        row.try_get::<i16, _>("state_format")
+            .map_err(|_| RepositoryError::RepeatStateCorrupt)?,
+    )
+    .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+    let schema = read_text(row, "state_schema").map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+    let schema_version = u32::try_from(
+        row.try_get::<i32, _>("state_schema_version")
+            .map_err(|_| RepositoryError::RepeatStateCorrupt)?,
+    )
+    .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+    let Json(payload): Json<Value> = row
+        .try_get("state_payload")
+        .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+    let envelope = json!({
+        "format": "oxide-batch.execution-context",
+        "format_version": format_version,
+        "schema": schema,
+        "schema_version": schema_version,
+        "payload": payload,
+    });
+    let bytes = serde_json::to_vec(&envelope).map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+    let state = ExecutionContext::from_json(
+        &bytes,
+        StateLimits::new(1024 * 1024, 64).map_err(|_| RepositoryError::RepeatStateCorrupt)?,
+    )
+    .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+    let expected_checksum: [u8; 32] = row
+        .try_get::<Vec<u8>, _>("state_checksum")
+        .map_err(|_| RepositoryError::RepeatStateCorrupt)?
+        .try_into()
+        .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+    let actual_checksum: [u8; 32] = Sha256::digest(
+        state
+            .to_json()
+            .map_err(|_| RepositoryError::RepeatStateCorrupt)?,
+    )
+    .into();
+    if expected_checksum != actual_checksum {
+        return Err(RepositoryError::RepeatStateCorrupt);
+    }
+    let decision = RepeatDecision::from_str(
+        &read_text(row, "decision").map_err(|_| RepositoryError::RepeatStateCorrupt)?,
+    )
+    .ok_or(RepositoryError::RepeatStateCorrupt)?;
+    let plan_fingerprint: [u8; 32] = row
+        .try_get::<Vec<u8>, _>("plan_fingerprint")
+        .map_err(|_| RepositoryError::RepeatStateCorrupt)?
+        .try_into()
+        .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+    let definition_fingerprint: [u8; 32] = row
+        .try_get::<Vec<u8>, _>("definition_fingerprint")
+        .map_err(|_| RepositoryError::RepeatStateCorrupt)?
+        .try_into()
+        .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+    let Json(definition_manifest): Json<Value> = row
+        .try_get("definition_manifest")
+        .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+    if plan_fingerprint != definition_fingerprint {
+        return Err(RepositoryError::RepeatStateCorrupt);
+    }
+    let record = RepeatExecution::new(
+        job_instance_id,
+        node_id,
+        step_execution_id,
+        repeat_id,
+        ordinal,
+        state,
+        decision,
+        plan_fingerprint,
+    );
+    let request = RepeatCommitRequest::new(
+        record.job_instance_id(),
+        record.node_id().clone(),
+        record.step_execution_id(),
+        record.repeat_id().clone(),
+        record.ordinal(),
+        record.state().clone(),
+        record.decision(),
+        *record.plan_fingerprint(),
+    );
+    if !super::repeat_request_matches_manifest(&definition_manifest, &request) {
+        return Err(RepositoryError::RepeatStateCorrupt);
+    }
+    Ok(record)
 }
 
 fn decode_durable_step_state(row: &PgRow) -> Result<PostgresDurableStepState, RepositoryError> {

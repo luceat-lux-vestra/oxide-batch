@@ -17,3 +17,56 @@ pub use postgres::{
     PostgresChunkTransactionManager, PostgresConfig, PostgresConfigError, PostgresDurableStepState,
     PostgresExplorer, PostgresFaultState, PostgresJobRepository, PostgresMigrator, TlsMode,
 };
+
+pub(crate) fn repeat_request_matches_manifest(
+    manifest: &serde_json::Value,
+    request: &crate::RepeatCommitRequest,
+) -> bool {
+    fn repeat_matches(
+        repeat: &serde_json::Value,
+        repeat_id: &crate::RepeatId,
+        state: &crate::ExecutionContext,
+    ) -> bool {
+        let matches = repeat.as_object().is_some_and(|object| {
+            object.get("id").and_then(serde_json::Value::as_str) == Some(repeat_id.as_str())
+                && object
+                    .get("state")
+                    .and_then(serde_json::Value::as_object)
+                    .is_some_and(|state_manifest| {
+                        state_manifest
+                            .get("schema")
+                            .and_then(serde_json::Value::as_str)
+                            == Some(state.schema_id().as_str())
+                            && state_manifest
+                                .get("version")
+                                .and_then(serde_json::Value::as_u64)
+                                == Some(u64::from(state.schema_version().get()))
+                    })
+        });
+        matches
+            || repeat
+                .get("nested")
+                .is_some_and(|nested| repeat_matches(nested, repeat_id, state))
+    }
+
+    fn visit(value: &serde_json::Value, request: &crate::RepeatCommitRequest) -> bool {
+        match value {
+            serde_json::Value::Object(object) => {
+                if object.get("kind").and_then(serde_json::Value::as_str) == Some("step")
+                    && object.get("id").and_then(serde_json::Value::as_str)
+                        == Some(request.node_id().as_str())
+                    && object.get("repeat").is_some_and(|repeat| {
+                        repeat_matches(repeat, request.repeat_id(), request.state())
+                    })
+                {
+                    return true;
+                }
+                object.values().any(|child| visit(child, request))
+            }
+            serde_json::Value::Array(values) => values.iter().any(|child| visit(child, request)),
+            _ => false,
+        }
+    }
+
+    visit(manifest, request)
+}

@@ -10,8 +10,8 @@
 //!   committed scope document, and the targets this workspace declares. It runs
 //!   here, in an ordinary `cargo test`, so a shrinking denominator is caught in
 //!   review rather than in the campaign.
-//! - **whether the campaign passes.** Three of its four reports need a real
-//!   database and return green without one, because they skip. That half is
+//! - **whether the campaign passes.** Every report except the redaction sweep needs a real
+//!   database and returns green without one, because it skips. That half is
 //!   `cargo xtask security`, which requires the fixtures, runs the targets,
 //!   requires each declared property to have been observed, and writes the
 //!   retained report.
@@ -27,7 +27,7 @@
 //! certificate at all — the server that offers no TLS — because a campaign made
 //! only of certificate refusals would pass against a client that fell back to
 //! plaintext whenever TLS was unavailable. And the committed least-privilege
-//! policy must still be the two SQL files the matrix and schema-5 linkage report
+//! policy must still be the two SQL files the matrix and schema-specific durable-state reports
 //! are checked against, and must still deny every class the cluster-level
 //! privileges that would put it outside every grant.
 
@@ -44,6 +44,7 @@ const REQUIRED_REPORTS: &[&str] = &[
     "verify-full-tls",
     "nested-job-privileges",
     "scope-resolution-privileges",
+    "repeat-state-privileges",
     "least-privilege-roles",
     "redaction-sweep",
 ];
@@ -82,10 +83,11 @@ const DENIED_ATTRIBUTES: &[&str] = &["NOSUPERUSER", "NOCREATEDB", "NOCREATEROLE"
 /// The schema the privilege matrix is checked on.
 ///
 /// The M5 preview installed schema 3; M6 `#144` added schema 4 component
-/// state, M7 `#265` added schema 5 durable nested-job linkage, and M7 `#276`
-/// adds schema 6 scoped-resolution provenance. The campaign must exercise the
-/// privilege matrix against the current installed schema.
-const SCHEMA_VERSION: u64 = 6;
+/// state, M7 `#265` added schema 5 durable nested-job linkage, M7 `#276`
+/// added schema 6 scoped-resolution provenance, and M7 `#300` adds schema 7
+/// durable repeat state. The campaign must exercise the privilege matrix against
+/// the current installed schema.
+const SCHEMA_VERSION: u64 = 7;
 
 /// The transport the M5 preview supports in production.
 const TLS_MODE: &str = "verify-full";

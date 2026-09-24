@@ -42,14 +42,15 @@ use oxide_batch::{
     NoopChunkCompletion, OwnerToken, ParameterCoercion, ParameterName, ParameterValueKind,
     PartitionBudget, PartitionCount, PartitionKey, PartitionPlanEntry, PartitionPlanFactory,
     PartitionTaskletFactory, PartitionedStepNode, ProcessContext, ProcessOutcome, ProcessorError,
-    ReadContext, ReadOutcome, ReaderError, RepositoryCapability, RepositoryDescriptor,
-    RepositoryError, RepositoryUnitOfWork, ScopeFactoryKind, ScopeKind, ScopeResolverKind,
-    ScopedCleanupError, ScopedComponentDefinition, ScopedComponentFactory, ScopedComponentHandle,
-    ScopedComponentId, ScopedComponentRegistration, ScopedFactoryContext, ScopedFactoryError,
-    SequentialIdGenerator, StateCodecError, StateLimits, StateSchemaId, StateSchemaVersion,
-    StepComponents, StepExecutionId, StepName, StepNode, StopPollInterval, StopSource, SystemClock,
-    Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
-    VersionedStateCodec, WriteContext, WriteOutcome, WriterError,
+    ReadContext, ReadOutcome, ReaderError, RepeatDefinition, RepeatId, RepeatPolicyConfiguration,
+    RepeatPolicyDefinition, RepeatPolicyKind, RepeatStateSchema, RepositoryCapability,
+    RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork, ScopeFactoryKind, ScopeKind,
+    ScopeResolverKind, ScopedCleanupError, ScopedComponentDefinition, ScopedComponentFactory,
+    ScopedComponentHandle, ScopedComponentId, ScopedComponentRegistration, ScopedFactoryContext,
+    ScopedFactoryError, SequentialIdGenerator, StateCodecError, StateLimits, StateSchemaId,
+    StateSchemaVersion, StepComponents, StepExecutionId, StepName, StepNode, StopPollInterval,
+    StopSource, SystemClock, Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep,
+    TerminalKind, VersionedStateCodec, WriteContext, WriteOutcome, WriterError,
 };
 
 // ---------------------------------------------------------------------------
@@ -67,7 +68,7 @@ fn reference_repository() -> InMemoryJobRepository {
 }
 
 /// Every capability this milestone defines.
-fn all_capabilities() -> [RepositoryCapability; 9] {
+fn all_capabilities() -> [RepositoryCapability; 10] {
     [
         RepositoryCapability::CustomLeafState,
         RepositoryCapability::ExecutionOwnership,
@@ -78,6 +79,7 @@ fn all_capabilities() -> [RepositoryCapability; 9] {
         RepositoryCapability::StopRequests,
         RepositoryCapability::NestedJobs,
         RepositoryCapability::ScopeResolution,
+        RepositoryCapability::RepeatState,
     ]
 }
 
@@ -215,6 +217,34 @@ fn partitioned_plan(name: &JobName) -> Result<CompiledExecutionPlan, Box<dyn Err
 }
 
 /// A compiled plan with one ordinary tasklet step and no partitioning.
+fn repeat_tasklet_plan(name: &JobName) -> Result<CompiledExecutionPlan, Box<dyn Error>> {
+    let only = NodeId::new("only")?;
+    let repeat = RepeatDefinition::new(
+        RepeatId::new("batch-window")?,
+        RepeatPolicyDefinition::new(
+            RepeatPolicyKind::new("bounded-count")?,
+            ComponentRevision::new("policy-v1")?,
+            RepeatPolicyConfiguration::new("limit-3")?,
+        ),
+        Vec::new(),
+        RepeatStateSchema::new(
+            StateSchemaId::new("repeat.state")?,
+            StateSchemaVersion::new(1)?,
+        ),
+    )?;
+    Ok(FlowGraph::new(only.clone())
+        .with_node(FlowNode::step(
+            StepNode::new(
+                only.clone(),
+                StepName::new("only")?,
+                StepComponents::Tasklet(ComponentRevision::new("only-v1")?),
+            )
+            .with_repeat_definition(repeat),
+        ))
+        .with_sequence(only, FlowTarget::Terminal(TerminalKind::Complete))?
+        .compile(name, DefinitionRevision::new("v1")?)?)
+}
+
 fn tasklet_plan(name: &JobName) -> Result<CompiledExecutionPlan, Box<dyn Error>> {
     let only = NodeId::new("only")?;
     Ok(FlowGraph::new(only.clone())
@@ -285,6 +315,15 @@ fn partitioned_job(name: &JobName) -> Result<FlowJob, Box<dyn Error>> {
             PartitionTaskletFactory::new(worker_name, move |_input| {
                 TaskletStep::new(factory_name.clone(), Arc::new(Noop))
             }),
+        )?,
+    )
+}
+
+fn repeat_tasklet_job(name: &JobName) -> Result<FlowJob, Box<dyn Error>> {
+    Ok(
+        FlowJob::new(name.clone(), repeat_tasklet_plan(name)?)?.with_tasklet_step(
+            NodeId::new("only")?,
+            TaskletStep::new(StepName::new("only")?, Arc::new(Noop)),
         )?,
     )
 }
@@ -414,6 +453,39 @@ async fn undeclared_scope_resolution_is_rejected_before_any_repository_transacti
         repository.begin_count(),
         0,
         "scope-resolution capability negotiation must fail before a repository transaction",
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn undeclared_repeat_state_is_rejected_before_any_repository_transaction()
+-> Result<(), Box<dyn Error>> {
+    let name = JobName::new("repeat-capability")?;
+    let job = repeat_tasklet_job(&name)?;
+    let repository = CountingRepository::lacking(RepositoryCapability::RepeatState);
+    let clock = SystemClock;
+    let ids = SequentialIdGenerator::new(NonZeroU64::MIN);
+    let (_source, stop) = StopSource::new();
+
+    let error = FlowLauncher::new(&repository, &clock, &ids)
+        .launch(&job, &JobParameters::new(), &stop)
+        .await
+        .expect_err("a repeat-bearing plan requires durable repeat state");
+
+    assert!(
+        matches!(
+            error,
+            FlowRuntimeError::UndeclaredCapability {
+                capability: RepositoryCapability::RepeatState,
+                ..
+            }
+        ),
+        "expected a typed repeat-state capability rejection, got {error:?}",
+    );
+    assert_eq!(
+        repository.begin_count(),
+        0,
+        "repeat capability negotiation must fail before a repository transaction",
     );
     Ok(())
 }

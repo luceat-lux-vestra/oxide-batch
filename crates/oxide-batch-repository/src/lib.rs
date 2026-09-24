@@ -41,6 +41,7 @@ mod nested_job;
 mod operator;
 mod partition;
 mod recovery;
+mod repeat;
 mod repository;
 mod request;
 mod retention;
@@ -76,6 +77,7 @@ pub use recovery::{
     RecoveryProposal, RecoveryRepository, RecoverySnapshot, RecoveryStepEvidence, StaleThreshold,
     SystemMonotonicClock,
 };
+pub use repeat::{RepeatCommitRequest, RepeatDecision, RepeatExecution, RepeatOrdinal};
 pub use repository::{
     BoxFuture, Clock, ExecutionControl, IdGenerationError, IdGenerator, JobInstanceSelection,
     JobRepository, RecoveryDecision, RecoveryDisposition, RecoveryField, RecoveryRequest,

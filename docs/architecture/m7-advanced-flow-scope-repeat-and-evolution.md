@@ -356,7 +356,8 @@ durability. M7 repository migrations are append-only: once a child ships one
 version, a later child does not rewrite or reinterpret that migration.
 
 #265 appends schema `5` for durable nested-job linkage. #276 appends schema `6`
-for bounded, value-free scope-resolution provenance. This physical version split
+for bounded, value-free scope-resolution provenance. #300 appends schema `7`
+for the bounded current repeat ordinal/state/decision record. This physical version split
 preserves the Gate-F semantics: each newly durable boundary is versioned, older
 state is not rewritten, and a newer runtime reaches the current schema only
 through the ordered migration chain.

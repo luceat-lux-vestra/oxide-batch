@@ -58,7 +58,8 @@ GRANT SELECT, INSERT, UPDATE ON
     oxide_batch.ob_step_partition,
     oxide_batch.ob_flow_decision,
     oxide_batch.ob_component_state,
-    oxide_batch.ob_nested_job_link
+    oxide_batch.ob_nested_job_link,
+    oxide_batch.ob_repeat_execution
     TO oxide_batch_m5_runtime;
 -- ob_component_state (M6 #144, schema 4) is the ItemStream restart-state side
 -- table. The runtime reads it to restore state on open, UPSERTs a candidate
@@ -69,6 +70,9 @@ GRANT SELECT, INSERT, UPDATE ON
 -- nested execution creates the linkage, restart reads it, and terminal
 -- observation updates it. Parent-execution retention is handled by the
 -- parent foreign key's cascade; the runtime itself never deletes linkage.
+-- ob_repeat_execution (#300, schema 7) is runtime-owned bounded state. The
+-- runtime reads restart authority and inserts/updates the single current row
+-- per step/repeat identity; retention removes it through the step FK cascade.
 -- ob_scope_resolution_provenance (#276, schema 6) is immutable once committed:
 -- runtime resolution reads existing provenance and inserts the first committed
 -- record set. It never updates or directly deletes provenance; parent/step
