@@ -6,29 +6,29 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "e752ca5e6d4c205ffd630a51cfbb685ba79a1b89",
+    "source_commit": "883973e031e8bfbcded8870b310ed4fb5789bdeb",
     "source_tree_clean": true
   },
   "observation": {
     "execution_manifest": {
-      "execution_commit": "e752ca5e6d4c205ffd630a51cfbb685ba79a1b89",
+      "execution_commit": "883973e031e8bfbcded8870b310ed4fb5789bdeb",
       "execution_commit_note": "The tree this run actually executed against; in CI this is the pull-request merge commit.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
         ".github/workflows/m6-conformance.yml": "80f5347ed73bcfc8cddd1728d0006d12418c953f",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
-        "crates/oxide-batch-core/src": "c86a8e09ee0993d9d3ab2fe6b5ef2899e2c476dd",
+        "crates/oxide-batch-core/src": "8bd97f8446fae843773754ddc528fbc104bb4e39",
         "crates/oxide-batch-plan/Cargo.toml": "6c327e26d3fb6cb0e5572432ea8e0e5b09b36c72",
-        "crates/oxide-batch-plan/src": "7ba3721cb87e6a6067fd626455156a2fa5345c00",
+        "crates/oxide-batch-plan/src": "be76cdb6922aca54a19d7b4323a3b430c80dbe09",
         "crates/oxide-batch-repository/Cargo.toml": "d6148373ea81b843d5bc2590bc6264ea5fc3e657",
         "crates/oxide-batch-repository/src": "c2b9bf7c2729ab218aec08def17a8b315b661e98",
         "crates/oxide-batch-test/Cargo.toml": "0a74527ceb16f35febc4cb5a2f7a791345d5add9",
         "crates/oxide-batch-test/src": "aff891fc18dfb4331304a5c8cd9cc3ebb0be650a",
         "crates/oxide-batch-test/tests": "8d913629efca6a0e80be6b8e10211a34ad1c0f0a",
         "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
-        "crates/oxide-batch/src": "666d99cfd5190a60873d23d6c56f584765cfc6ca",
-        "crates/oxide-batch/tests": "be5ff8eab94b0bde602aa1f27771d224ba234cfe",
+        "crates/oxide-batch/src": "b8a61e59db5955f1a0f284eec71e364b00bbd695",
+        "crates/oxide-batch/tests": "0fee28667c138e267776a24d76e987c1756380d1",
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
         "tests/fixtures/m6-conformance/campaign-semantics.json": "43daa39e89cee46773c7f870b6cf8000d05e744b",
         "tests/fixtures/m6-conformance/dependency-closure.json": "8524d3d337b2863243827d2f465aee74c27258fe",
@@ -66,6 +66,7 @@
         "completion::tests::composite_depth_bounded_via_indirect_nesting": "ok",
         "completion::tests::composite_end_panic_still_ends_every_remaining_member": "ok",
         "completion::tests::composite_fingerprint_encoding_is_injective_across_member_splits": "ok",
+        "completion::tests::composite_propagates_missing_custom_fingerprint": "ok",
         "completion::tests::composite_rejects_empty_and_oversized": "ok",
         "completion::tests::count_policy_boundaries": "ok",
         "completion::tests::fingerprint_changes_with_configuration": "ok",
@@ -172,7 +173,7 @@
       ],
       "succeeded": true,
       "target": "__lib",
-      "tests": 111
+      "tests": 112
     },
     {
       "ignored": 0,
@@ -270,6 +271,8 @@
         "adaptive_completion_policy_integration::completion_policy_fingerprint_panic_is_contained_at_definition_construction": "ok",
         "adaptive_completion_policy_integration::completion_policy_panic_is_typed_and_contained": "ok",
         "adaptive_completion_policy_integration::composite_child_panic_is_contained_through_composite_dispatch": "ok",
+        "adaptive_completion_policy_integration::custom_completion_policy_configuration_changes_restart_revision": "ok",
+        "adaptive_completion_policy_integration::custom_completion_policy_without_restart_identity_is_rejected": "ok",
         "adaptive_completion_policy_integration::flow_job_binds_and_executes_adaptive_completion_policy_when_revision_is_declared_up_front": "ok",
         "adaptive_completion_policy_integration::flow_job_rejects_completion_policy_without_declared_revision": "ok",
         "adaptive_completion_policy_integration::nested_composite_structure_changes_the_definition_fingerprint": "ok",
@@ -325,7 +328,7 @@
       ],
       "succeeded": true,
       "target": "chunk_runtime",
-      "tests": 56
+      "tests": 58
     },
     {
       "ignored": 0,
