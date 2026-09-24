@@ -5,6 +5,7 @@ on:
     branches:
       - main
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches:
       - main
 
@@ -22,7 +23,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Review dependency changes
-        if: github.event_name == 'pull_request'
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name == 'pull_request') }}
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: moderate
@@ -34,11 +35,11 @@ jobs:
           allow-dependencies-licenses: pkg:cargo/unicode-properties@0.1.4
 
       - name: Emit stable dependency-review context on main push
-        if: github.event_name == 'push'
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name == 'push') }}
         run: echo "dependency review is PR-diff-only; stable context emitted for main push"
 
       - name: Reject unsupported trigger for dependency review
-        if: github.event_name != 'pull_request' && github.event_name != 'push'
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'pull_request' && github.event_name != 'push') }}
         run: |
           echo "::error::unsupported dependency-review trigger" >&2
           exit 1

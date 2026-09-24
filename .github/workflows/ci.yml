@@ -5,6 +5,7 @@ on:
     branches:
       - main
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches:
       - main
 
@@ -126,11 +127,13 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out repository
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Package and dry-run every publishable crate
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo run --package oxide-batch-xtask -- package
 
   msrv:
@@ -139,14 +142,17 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out repository
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Install minimum supported Rust
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: rustup toolchain install 1.95.0 --profile minimal
 
       - name: Check workspace on minimum supported Rust
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo +1.95.0 check --workspace --all-targets --all-features --locked
 
   postgres-spike:
@@ -170,11 +176,13 @@ jobs:
       OXIDEBATCH_SPIKE_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_spike
     steps:
       - name: Check out repository
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Run real-PostgreSQL architecture spike
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo test -p oxide-batch-m0-spikes --test postgres -- --nocapture --test-threads=1
 
   postgres-design-gate:
@@ -187,11 +195,13 @@ jobs:
         postgres: ["15", "16", "17", "18"]
     steps:
       - name: Check out repository
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Run TLS, roles, schema, and restore fixture
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         # matrix.postgres is the checked-in 15-18 allowlist above, not event input.
         run: ./tests/fixtures/postgres/run-design-gate.sh ${{ matrix.postgres }} # zizmor: ignore[template-injection]
 
@@ -224,11 +234,13 @@ jobs:
       OXIDEBATCH_POSTGRES_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_repository
     steps:
       - name: Check out repository
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Apply and reapply immutable migrations
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_repository
@@ -236,6 +248,7 @@ jobs:
           -- --nocapture --test-threads=1
 
       - name: Run shared PostgreSQL repository contract
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: |
           cargo test -p oxide-batch --features postgres \
             --test postgres_repository \
@@ -259,6 +272,7 @@ jobs:
             -- --nocapture --test-threads=1
 
       - name: Run shared PostgreSQL operator, explorer, and retention contract
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_repository
@@ -266,6 +280,7 @@ jobs:
           -- --nocapture --test-threads=1
 
       - name: Verify durable fault-tolerance state
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: |
           cargo test -p oxide-batch --features postgres \
             --test postgres_repository \
@@ -281,24 +296,28 @@ jobs:
             -- --nocapture --test-threads=1
 
       - name: Verify durable flow traversal
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_flow
           -- --nocapture --test-threads=1
 
       - name: Verify PostgreSQL nested-job durable linkage
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_nested_job
           -- --nocapture --test-threads=1
 
       - name: Verify scoped job-context late binding
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres --lib
           scope_runtime::tests::postgres_job_context_source_resolves_and_records_provenance
           -- --nocapture --test-threads=1
 
       - name: Verify scope-provenance compatible restart refusal
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_repository
@@ -306,6 +325,7 @@ jobs:
           -- --nocapture --test-threads=1
 
       - name: Verify scope-provenance retention protection
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_repository
@@ -313,6 +333,7 @@ jobs:
           -- --nocapture --test-threads=1
 
       - name: Verify disconnect and schema-version classifications
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: |
           cargo test -p oxide-batch --features postgres \
             --test postgres_repository \
@@ -328,6 +349,7 @@ jobs:
             -- --nocapture --test-threads=1
 
       - name: Run process-kill crash and restart matrix
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: |
           cargo test -p oxide-batch --features postgres \
             --test postgres_crash_recovery \
@@ -358,12 +380,14 @@ jobs:
             -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL M6 #144 item-stream component-state crash/restart evidence
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_item_stream_crash_recovery
           -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL M6 #144 retention component-state evidence
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_retention_component_state
@@ -398,11 +422,13 @@ jobs:
       OXIDEBATCH_POSTGRES_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_item_components
     steps:
       - name: Check out repository
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Apply migrations
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_repository
@@ -410,6 +436,7 @@ jobs:
           -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL cursor and keyset paging reader evidence (#149)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: |
           cargo test -p oxide-batch --features postgres \
             --test postgres_item_components_cursor \
@@ -419,60 +446,70 @@ jobs:
             -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL SQL batch/enlisted writer evidence (#149)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_item_components_batch_writer
           -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL cursor/paging real process-kill crash/restart evidence (#149)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_item_components_crash_recovery
           -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL cursor FETCH-level fault-runtime retry evidence (#149)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_item_components_cursor_fault
           -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL item-component restart fixtures (#149)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch-test --features postgres
           --test postgres_item_components_db_restart
           -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL flat-file component restart evidence (#170)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch-test --features postgres
           --test postgres_flat_file_restart
           -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL JSON/JSONL component restart evidence (#170)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch-test --features postgres
           --test postgres_json_restart
           -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL peek-decorated reader restart evidence (#170)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch-test --features postgres
           --test postgres_item_components_restart
           -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL multi-resource restart evidence (#150)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch-test --features postgres
           --test postgres_multi_resource_restart
           -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL Gate G restart harness (#172)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch-test --features postgres
           --test restart_harness
           -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL Gate G repository fixture cleanup (#172)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch-test --features postgres
           --test postgres_fixture
@@ -493,11 +530,13 @@ jobs:
       contents: read # Read the verifier script from the reviewed tree.
     steps:
       - name: Check out repository
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Evaluate selective-rerun-safe PostgreSQL aggregate
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: ruby .github/scripts/evaluate-aggregate-run.rb postgresql
