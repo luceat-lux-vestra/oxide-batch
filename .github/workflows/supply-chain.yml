@@ -5,6 +5,7 @@ on:
     branches:
       - main
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches:
       - main
   schedule:
@@ -24,17 +25,21 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out repository
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Test supply-chain exception policy
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: python3 .github/scripts/test_validate_supply_chain_exceptions.py
 
       - name: Validate supply-chain exception registry
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: python3 .github/scripts/validate_supply_chain_exceptions.py
 
       - name: Check advisories, licenses, bans, and sources
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
 
   report-failure:
@@ -47,9 +52,8 @@ jobs:
     runs-on: ubuntu-slim
     timeout-minutes: 5
     permissions:
-      # The reporting job reads repository metadata and writes only its owned issue.
-      contents: read
-      issues: write
+      contents: read # Read repository metadata needed to locate the owned report issue.
+      issues: write # Create or update only the scheduled supply-chain failure issue.
     steps:
       - name: Create or update the owned failure issue
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
