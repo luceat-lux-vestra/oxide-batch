@@ -3,8 +3,8 @@ use super::{
     DefinitionIdentity, DefinitionRevision, ExitCode, FlowGraph, FlowNode, FlowTarget,
     FlowTransition, JobName, MAX_BRANCH_STEPS, MAX_FLOW_COMPOSITION_DEPTH, MAX_NODES,
     MAX_OUTGOING_TRANSITIONS, MAX_SCOPED_COMPONENTS, MAX_SPLIT_BRANCHES, MAX_TRANSITIONS,
-    NestedFlow, NodeId, PlanError, ScopeKind, ScopedComponentDefinition, ScopedComponentId,
-    StepNode, TerminalKind, Value, check_unambiguous, json,
+    NestedFlow, NodeId, PlanError, RepeatId, ScopeKind, ScopedComponentDefinition,
+    ScopedComponentId, StepNode, TerminalKind, Value, check_unambiguous, json,
 };
 
 #[derive(Clone, Debug)]
@@ -65,6 +65,7 @@ struct AdvancedCompiler {
     structural_branches: usize,
     declared_transitions: usize,
     scoped_components: BTreeMap<(ScopeKind, ScopedComponentId), ScopedComponentDefinition>,
+    repeat_ids: BTreeSet<RepeatId>,
 }
 
 impl AdvancedCompiler {
@@ -136,6 +137,9 @@ impl AdvancedCompiler {
                 });
             }
         }
+        for node in local_nodes.values() {
+            self.register_node_repeats(node)?;
+        }
         let mut nested = BTreeMap::new();
         for flow in graph.nested_flows {
             let id = flow.id().clone();
@@ -154,6 +158,30 @@ impl AdvancedCompiler {
         Ok((declared_entry, local_nodes, nested, graph.transitions))
     }
 
+    fn register_node_repeats(&mut self, node: &FlowNode) -> Result<(), PlanError> {
+        match node {
+            FlowNode::Step(step) => self.register_step_repeat(step)?,
+            FlowNode::PartitionedStep(partitioned) => {
+                self.register_step_repeat(partitioned.worker())?;
+            }
+            FlowNode::Split(split) => {
+                for step in split.branches().iter().flat_map(super::SplitBranch::steps) {
+                    self.register_step_repeat(step)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn register_step_repeat(&mut self, step: &StepNode) -> Result<(), PlanError> {
+        let Some(repeat) = step.repeat_definition() else {
+            return Ok(());
+        };
+        repeat
+            .register_ids(&mut self.repeat_ids)
+            .map_err(|repeat| PlanError::DuplicateRepeatId { repeat })
+    }
     fn compile_nested_scopes(
         &mut self,
         nested: BTreeMap<NodeId, NestedFlow>,

@@ -2725,6 +2725,68 @@ mod adaptive_completion_policy_integration {
         );
     }
 
+    struct MissingFingerprintPolicy;
+
+    impl CompletionPolicy for MissingFingerprintPolicy {
+        fn is_complete(&self, _items_read: ChunkCount) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn custom_completion_policy_without_restart_identity_is_rejected() {
+        let (writer, _batches) = Writer::new(Boundary::Normal);
+        let (completion, _calls) = Completion::new(Boundary::Normal);
+        let transactions = ToggleTransactions {
+            receipt: receipt(),
+            attempt: Arc::new(AtomicUsize::new(0)),
+            fail_at: 0,
+            evidence: Arc::new(ToggleEvidence::default()),
+        };
+        let step = ChunkStep::new(
+            StepName::new("fingerprint_missing").expect("valid step name"),
+            ChunkSize::new(2).expect("valid chunk size"),
+            Reader::new([1]),
+            Processor::normal(),
+            writer,
+            Arc::new(transactions),
+            Arc::new(completion),
+        )
+        .with_completion_policy(Arc::new(MissingFingerprintPolicy));
+
+        let result = ChunkJob::new(
+            JobName::new("fingerprint_missing_job").expect("valid job name"),
+            step,
+            DefinitionRevision::new("v1").expect("valid revision"),
+            &chunk_revisions(),
+        );
+
+        assert!(matches!(
+            result,
+            Err(DefinitionError::CompletionPolicyFingerprintMissing)
+        ));
+    }
+    struct ConfiguredFingerprintPolicy(u64);
+
+    impl CompletionPolicy for ConfiguredFingerprintPolicy {
+        fn is_complete(&self, _items_read: ChunkCount) -> bool {
+            false
+        }
+
+        fn fingerprint(&self) -> String {
+            format!("configured/{}", self.0)
+        }
+    }
+
+    #[test]
+    fn custom_completion_policy_configuration_changes_restart_revision() {
+        let first = completion_policy_revision(&ConfiguredFingerprintPolicy(10))
+            .expect("explicit custom fingerprint");
+        let second = completion_policy_revision(&ConfiguredFingerprintPolicy(11))
+            .expect("explicit custom fingerprint");
+
+        assert_ne!(first, second);
+    }
     struct PanickingFingerprintPolicy;
 
     impl CompletionPolicy for PanickingFingerprintPolicy {

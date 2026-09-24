@@ -79,7 +79,7 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     ("listener", 7),
     // #265 adds the facade-owned bounded mapping diagnostic.
     ("nested_job_runtime", 1),
-    ("oxide_batch_core", 106),
+    ("oxide_batch_core", 108),
     // #264 adds the reviewed M7 plan surface: CompiledFlowScope, NestedFlow,
     // and MAX_FLOW_COMPOSITION_DEPTH. #265 adds the nested-job declaration
     // contract. #266 adds CustomLeafKind and CustomLeafNode. #276 adds only
@@ -87,9 +87,11 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     // LateBoundInput, LateBoundSource, MAX_LATE_BOUND_INPUTS,
     // MAX_SCOPED_COMPONENTS, ScopeFactoryKind,
     // ScopeFrameworkSource, ScopeKind, ScopeResolverKind,
-    // ScopedComponentDefinition, and ScopedComponentId. Durable provenance
-    // remains a repository implementation contract and is not re-exported.
-    ("oxide_batch_plan", 52),
+    // ScopedComponentDefinition, and ScopedComponentId. #299 adds the ten
+    // repeat-definition identity values; the two repeat capacity ceilings
+    // are core constants. Durable repeat state/runtime authority remains
+    // outside this proof boundary.
+    ("oxide_batch_plan", 62),
     // #265 adds the durable-link repository contract: NestedJobLink,
     // NestedJobLinkRequest, and NestedJobTerminalObservation.
     ("oxide_batch_repository", 113),

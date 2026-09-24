@@ -48,6 +48,7 @@ mod advanced;
 mod custom_leaf;
 mod late_binding;
 mod nested_job;
+mod repeat;
 
 pub use custom_leaf::{CustomLeafKind, CustomLeafNode};
 
@@ -61,6 +62,11 @@ pub use nested_job::{
     FrameworkParameterSource, MAX_NESTED_JOB_PARAMETERS, MAX_SELECTOR_PATH_BYTES,
     MAX_SELECTOR_PATH_SEGMENTS, MissingParameterPolicy, NestedJobNode, NestedJobParameterMapping,
     NestedJobParameterSource, ParameterCoercion, SelectorPath,
+};
+pub use repeat::{
+    RepeatDefinition, RepeatDefinitionError, RepeatId, RepeatInterceptorDefinition,
+    RepeatInterceptorId, RepeatInterceptorKind, RepeatPolicyConfiguration, RepeatPolicyDefinition,
+    RepeatPolicyKind, RepeatStateSchema,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -495,6 +501,7 @@ pub struct StepNode {
     start: StartControls,
     fault: Option<FaultPolicy>,
     listeners: Vec<ComponentRevision>,
+    repeat: Option<RepeatDefinition>,
 }
 
 impl StepNode {
@@ -508,6 +515,7 @@ impl StepNode {
             start: StartControls::default(),
             fault: None,
             listeners: Vec::new(),
+            repeat: None,
         }
     }
 
@@ -530,6 +538,19 @@ impl StepNode {
     pub fn with_listener_revision(mut self, revision: ComponentRevision) -> Self {
         self.listeners.push(revision);
         self
+    }
+
+    /// Declares restart-relevant Gate-C repeat metadata around this step.
+    #[must_use]
+    pub fn with_repeat_definition(mut self, repeat: RepeatDefinition) -> Self {
+        self.repeat = Some(repeat);
+        self
+    }
+
+    /// Borrows the repeat definition attached to this step, when present.
+    #[must_use]
+    pub const fn repeat_definition(&self) -> Option<&RepeatDefinition> {
+        self.repeat.as_ref()
     }
 
     /// Borrows the stable node identifier.
@@ -569,7 +590,7 @@ impl StepNode {
     }
 
     fn manifest_value(&self) -> Value {
-        json!({
+        let mut value = json!({
             "id": self.id.as_str(),
             "kind": "step",
             "listeners": self
@@ -584,7 +605,13 @@ impl StepNode {
                 "kind": self.components.kind_name(),
                 "name": self.step_name.as_str()
             }
-        })
+        });
+        if let Some(repeat) = &self.repeat
+            && let Some(object) = value.as_object_mut()
+        {
+            object.insert("repeat".to_owned(), repeat.manifest_value());
+        }
+        value
     }
 }
 
@@ -1041,6 +1068,21 @@ pub enum FlowNode {
 }
 
 impl FlowNode {
+    fn has_repeat_definition(&self) -> bool {
+        match self {
+            Self::Step(step) => step.repeat_definition().is_some(),
+            Self::PartitionedStep(partitioned) => {
+                partitioned.worker().repeat_definition().is_some()
+            }
+            Self::Split(split) => split
+                .branches()
+                .iter()
+                .flat_map(SplitBranch::steps)
+                .any(|step| step.repeat_definition().is_some()),
+            _ => false,
+        }
+    }
+
     /// Declares a step node.
     #[must_use]
     pub fn step(node: StepNode) -> Self {
@@ -1215,12 +1257,15 @@ impl FlowGraph {
     fn requires_advanced_format(&self) -> bool {
         !self.scoped_components.is_empty()
             || !self.nested_flows.is_empty()
-            || self.nodes.iter().any(|node| match node {
-                FlowNode::NestedJob(_) | FlowNode::CustomLeaf(_) => true,
-                FlowNode::Split(split) => {
-                    split.branches().iter().any(|branch| branch.flow.is_some())
-                }
-                _ => false,
+            || self.nodes.iter().any(|node| {
+                node.has_repeat_definition()
+                    || match node {
+                        FlowNode::NestedJob(_) | FlowNode::CustomLeaf(_) => true,
+                        FlowNode::Split(split) => {
+                            split.branches().iter().any(|branch| branch.flow.is_some())
+                        }
+                        _ => false,
+                    }
             })
     }
 
@@ -2018,6 +2063,11 @@ pub enum PlanError {
         /// Repeated logical component identifier.
         component: ScopedComponentId,
     },
+    /// Two repeat declarations reused one logical repeat identity.
+    DuplicateRepeatId {
+        /// Repeated repeat identity.
+        repeat: RepeatId,
+    },
     /// A nested job declared more child parameters than the M7 ceiling.
     TooManyNestedJobParameters {
         /// Nested-job node over the limit.
@@ -2189,6 +2239,11 @@ impl fmt::Display for PlanError {
                 "{} scope component {} is declared more than once",
                 scope.as_str(),
                 component.as_str()
+            ),
+            Self::DuplicateRepeatId { repeat } => write!(
+                formatter,
+                "repeat {} is declared more than once in the compiled plan",
+                repeat.as_str()
             ),
             Self::TooManyNestedJobParameters { node, max } => write!(
                 formatter,

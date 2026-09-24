@@ -20,6 +20,14 @@ pub const MAX_NODES: usize = 1_024;
 ///
 /// The bound is a framework capability, on the same terms as [`MAX_NODES`].
 pub const MAX_TRANSITIONS: usize = 4_096;
+/// Maximum interceptors declared by one M7 repeat definition.
+///
+/// This capacity ceiling is not definition-fingerprint material.
+pub const MAX_REPEAT_INTERCEPTORS: usize = 32;
+/// Maximum nested M7 repeat-wrapper depth.
+///
+/// This capacity ceiling is not definition-fingerprint material.
+pub const MAX_REPEAT_NESTING_DEPTH: usize = 8;
 pub(crate) const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 /// The canonical manifest format for a one-step tasklet or chunk definition.
 pub const MANIFEST_FORMAT_ONE_STEP: u16 = 1;
@@ -849,7 +857,11 @@ impl DefinitionManifest {
             .map_err(|_| ManifestError::InvalidJobName)?;
         let (node_count, transition_count) = match format {
             MANIFEST_FORMAT_FLOW | MANIFEST_FORMAT_LOCAL_SCALE => {
-                let nodes = array_len(members.get("nodes"))?;
+                let nodes_value = members.get("nodes").ok_or(ManifestError::MalformedGraph)?;
+                if contains_object_key(nodes_value, "repeat") {
+                    return Err(ManifestError::MalformedGraph);
+                }
+                let nodes = array_len(Some(nodes_value))?;
                 let transitions = array_len(members.get("transitions"))?;
                 ensure_graph_bounds(nodes, transitions)?;
                 (Some(nodes), Some(transitions))
@@ -881,6 +893,7 @@ impl DefinitionManifest {
                         }
                     }
                 }
+                validate_repeat_manifests(members)?;
                 (Some(nodes), Some(transitions))
             }
             _ => (None, None),
@@ -936,6 +949,18 @@ impl DefinitionManifest {
     #[must_use]
     pub const fn transition_count(&self) -> Option<usize> {
         self.transition_count
+    }
+}
+
+fn contains_object_key(value: &serde_json::Value, key: &str) -> bool {
+    match value {
+        serde_json::Value::Object(object) => object
+            .iter()
+            .any(|(member, value)| member == key || contains_object_key(value, key)),
+        serde_json::Value::Array(values) => {
+            values.iter().any(|value| contains_object_key(value, key))
+        }
+        _ => false,
     }
 }
 
@@ -1045,6 +1070,184 @@ fn advanced_graph_counts(
     Ok((materialized_nodes, materialized_transitions))
 }
 
+fn validate_repeat_manifests(
+    members: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), ManifestError> {
+    let nodes = members
+        .get("nodes")
+        .and_then(serde_json::Value::as_array)
+        .ok_or(ManifestError::MalformedGraph)?;
+    let mut repeat_ids = BTreeSet::new();
+    for node in nodes {
+        validate_node_repeat(node, &mut repeat_ids)?;
+    }
+    Ok(())
+}
+
+fn validate_node_repeat(
+    node: &serde_json::Value,
+    repeat_ids: &mut BTreeSet<String>,
+) -> Result<(), ManifestError> {
+    let object = node.as_object().ok_or(ManifestError::MalformedGraph)?;
+    let kind = object.get("kind").and_then(serde_json::Value::as_str);
+    if kind != Some("step") && object.contains_key("repeat") {
+        return Err(ManifestError::MalformedGraph);
+    }
+    match kind {
+        Some("step") => {
+            if let Some(repeat) = object.get("repeat") {
+                validate_repeat_definition(repeat, repeat_ids, 1)?;
+            }
+        }
+        Some("partitioned_step") => {
+            validate_node_repeat(
+                object.get("worker").ok_or(ManifestError::MalformedGraph)?,
+                repeat_ids,
+            )?;
+        }
+        Some("split") => {
+            let branches = object
+                .get("branches")
+                .and_then(serde_json::Value::as_array)
+                .ok_or(ManifestError::MalformedGraph)?;
+            for branch in branches {
+                let branch = branch.as_object().ok_or(ManifestError::MalformedGraph)?;
+                if branch.get("kind").and_then(serde_json::Value::as_str) == Some("linear") {
+                    let steps = branch
+                        .get("steps")
+                        .and_then(serde_json::Value::as_array)
+                        .ok_or(ManifestError::MalformedGraph)?;
+                    for step in steps {
+                        validate_node_repeat(step, repeat_ids)?;
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn validate_repeat_definition(
+    value: &serde_json::Value,
+    repeat_ids: &mut BTreeSet<String>,
+    depth: usize,
+) -> Result<(), ManifestError> {
+    if depth > MAX_REPEAT_NESTING_DEPTH {
+        return Err(ManifestError::MalformedGraph);
+    }
+    let object = value.as_object().ok_or(ManifestError::MalformedGraph)?;
+    let allowed = ["id", "interceptors", "nested", "policy", "state"];
+    if object.keys().any(|key| !allowed.contains(&key.as_str())) {
+        return Err(ManifestError::MalformedGraph);
+    }
+    let id = object
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(ManifestError::MalformedGraph)?;
+    validate_token(id, DefinitionTokenKind::Repeat).map_err(|_| ManifestError::MalformedGraph)?;
+    if !repeat_ids.insert(id.to_owned()) {
+        return Err(ManifestError::MalformedGraph);
+    }
+    validate_repeat_policy(object.get("policy").ok_or(ManifestError::MalformedGraph)?)?;
+    validate_repeat_state(object.get("state").ok_or(ManifestError::MalformedGraph)?)?;
+    let interceptors = object
+        .get("interceptors")
+        .and_then(serde_json::Value::as_array)
+        .ok_or(ManifestError::MalformedGraph)?;
+    if interceptors.len() > MAX_REPEAT_INTERCEPTORS {
+        return Err(ManifestError::MalformedGraph);
+    }
+    let mut interceptor_ids = BTreeSet::new();
+    for interceptor in interceptors {
+        validate_repeat_interceptor(interceptor, &mut interceptor_ids)?;
+    }
+    if let Some(nested) = object.get("nested") {
+        validate_repeat_definition(nested, repeat_ids, depth.saturating_add(1))?;
+    }
+    Ok(())
+}
+
+fn validate_repeat_policy(value: &serde_json::Value) -> Result<(), ManifestError> {
+    let object = value.as_object().ok_or(ManifestError::MalformedGraph)?;
+    let required = ["configuration", "kind", "revision"];
+    if object.len() != required.len() || object.keys().any(|key| !required.contains(&key.as_str()))
+    {
+        return Err(ManifestError::MalformedGraph);
+    }
+    let configuration = object
+        .get("configuration")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(ManifestError::MalformedGraph)?;
+    validate_token(configuration, DefinitionTokenKind::RepeatPolicy)
+        .map_err(|_| ManifestError::MalformedGraph)?;
+    let kind = object
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(ManifestError::MalformedGraph)?;
+    validate_token(kind, DefinitionTokenKind::RepeatPolicy)
+        .map_err(|_| ManifestError::MalformedGraph)?;
+    let revision = object
+        .get("revision")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(ManifestError::MalformedGraph)?;
+    ComponentRevision::new(revision.to_owned()).map_err(|_| ManifestError::MalformedGraph)?;
+    Ok(())
+}
+
+fn validate_repeat_interceptor(
+    value: &serde_json::Value,
+    ids: &mut BTreeSet<String>,
+) -> Result<(), ManifestError> {
+    let object = value.as_object().ok_or(ManifestError::MalformedGraph)?;
+    let required = ["id", "kind", "revision"];
+    if object.len() != required.len() || object.keys().any(|key| !required.contains(&key.as_str()))
+    {
+        return Err(ManifestError::MalformedGraph);
+    }
+    let id = object
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(ManifestError::MalformedGraph)?;
+    validate_token(id, DefinitionTokenKind::RepeatInterceptor)
+        .map_err(|_| ManifestError::MalformedGraph)?;
+    if !ids.insert(id.to_owned()) {
+        return Err(ManifestError::MalformedGraph);
+    }
+    let kind = object
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(ManifestError::MalformedGraph)?;
+    validate_token(kind, DefinitionTokenKind::RepeatInterceptor)
+        .map_err(|_| ManifestError::MalformedGraph)?;
+    let revision = object
+        .get("revision")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(ManifestError::MalformedGraph)?;
+    ComponentRevision::new(revision.to_owned()).map_err(|_| ManifestError::MalformedGraph)?;
+    Ok(())
+}
+
+fn validate_repeat_state(value: &serde_json::Value) -> Result<(), ManifestError> {
+    let object = value.as_object().ok_or(ManifestError::MalformedGraph)?;
+    let required = ["schema", "version"];
+    if object.len() != required.len() || object.keys().any(|key| !required.contains(&key.as_str()))
+    {
+        return Err(ManifestError::MalformedGraph);
+    }
+    let schema = object
+        .get("schema")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(ManifestError::MalformedGraph)?;
+    StateSchemaId::new(schema.to_owned()).map_err(|_| ManifestError::MalformedGraph)?;
+    let version = object
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or(ManifestError::MalformedGraph)?;
+    StateSchemaVersion::new(version).map_err(|_| ManifestError::MalformedGraph)?;
+    Ok(())
+}
 fn validate_nested_job_manifest(
     object: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), ManifestError> {
@@ -1180,6 +1383,12 @@ pub enum DefinitionTokenKind {
     Node,
     /// Bounded decider revision.
     Decider,
+    /// Stable repeat definition identity.
+    Repeat,
+    /// Repeat policy kind or configuration identity.
+    RepeatPolicy,
+    /// Repeat interceptor registration or kind identity.
+    RepeatInterceptor,
 }
 
 /// Failure to construct a bounded restart definition.
@@ -1270,6 +1479,8 @@ pub enum DefinitionError {
     /// other definition-construction failure is, rather than unwinding out
     /// of a constructor with a `Result` return type.
     CompletionPolicyFingerprintPanic,
+    /// A custom completion policy did not provide restart-relevant identity.
+    CompletionPolicyFingerprintMissing,
     /// A chunk step's live completion-policy fingerprint does not match the
     /// completion-policy revision already declared in the
     /// [`ChunkComponentRevisions`] a compiled flow node was bound against.
@@ -1340,6 +1551,8 @@ impl fmt::Display for DefinitionError {
             Self::CompletionPolicyFingerprintPanic => {
                 formatter.write_str("completion policy fingerprint() panicked")
             }
+            Self::CompletionPolicyFingerprintMissing => formatter
+                .write_str("custom completion policy must provide a restart-relevant fingerprint"),
             Self::CompletionPolicyRevisionMismatch => formatter.write_str(
                 "the step's live completion-policy fingerprint does not match the \
                  completion-policy revision declared in the bound component revisions",

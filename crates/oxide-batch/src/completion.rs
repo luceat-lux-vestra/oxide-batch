@@ -142,24 +142,16 @@ pub trait CompletionPolicy: Send + Sync {
     /// far, and a configuration change that changes completion behavior must
     /// change this string.
     ///
-    /// # Restart-safety guarantee is only as strong as this override
+    /// # Custom policies must provide restart identity
     ///
-    /// The framework cannot itself detect a semantic change inside an
-    /// arbitrary application-supplied policy: it can only hash whatever this
-    /// method returns. The default falls back to this policy's concrete type
-    /// name, which distinguishes different policy *kinds* but not different
-    /// *configurations* of the same kind -- so a custom policy that changes
-    /// a configuration value (a threshold, a bound, anything that alters
-    /// which chunks it completes) without overriding this method keeps the
-    /// same fingerprint across that change, and the framework will treat the
-    /// two configurations as the same restart-compatible definition even
-    /// though their completion behavior differs. This is a deliberately
-    /// narrow guarantee (not a compatibility break enforced by the type
-    /// system): every policy in this module overrides it with its actual
-    /// configuration, and a custom policy is responsible for doing the same
-    /// whenever a configuration change must invalidate restart metadata.
+    /// The framework cannot infer configuration from an arbitrary
+    /// application-supplied implementation. The default therefore returns an
+    /// empty sentinel. `completion_policy_revision` rejects that sentinel
+    /// instead of silently treating two configurations of one Rust type as
+    /// restart-compatible. Custom policies used in restartable definitions
+    /// must override this with deterministic configuration identity.
     fn fingerprint(&self) -> String {
-        std::any::type_name::<Self>().to_owned()
+        String::new()
     }
 
     /// Returns this policy's own required [`ItemStream`] registration(s),
@@ -511,6 +503,9 @@ impl CompletionPolicy for CompositeCompletionPolicy {
         let mut members = String::new();
         for member in &self.members {
             let fingerprint = member.fingerprint();
+            if fingerprint.is_empty() {
+                return String::new();
+            }
             let _ = write!(members, "{}:{fingerprint}", fingerprint.len());
         }
         format!("composite/{:?}/[{members}]", self.mode)
@@ -1024,6 +1019,29 @@ mod tests {
         assert!(ChunkTimeThreshold::new(Duration::ZERO).is_err());
         assert!(ChunkTimeThreshold::new(Duration::from_hours(25)).is_err());
         assert!(ChunkTimeThreshold::new(Duration::from_secs(1)).is_ok());
+    }
+
+    struct MissingFingerprintPolicy;
+
+    impl CompletionPolicy for MissingFingerprintPolicy {
+        fn is_complete(&self, _items_read: ChunkCount) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    #[allow(
+        clippy::unwrap_used,
+        reason = "test constructs a known-valid composite"
+    )]
+    fn composite_propagates_missing_custom_fingerprint() {
+        let member: Arc<dyn CompletionPolicy> = Arc::new(MissingFingerprintPolicy);
+        let composite = CompositeCompletionPolicy::new(CompositeMode::Any, vec![member]).unwrap();
+
+        assert!(
+            composite.fingerprint().is_empty(),
+            "a custom member without restart identity must fail closed through the composite"
+        );
     }
 
     #[test]

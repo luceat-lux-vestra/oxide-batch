@@ -178,10 +178,16 @@ pub trait CompletionPolicy: Send + Sync {
 contract in its own doc comment, `REPEAT-POLICY-001`, is precise about
 exactly when `begin_chunk`/`end_chunk` fire, including for a replayed
 attempt — don't assume). Most custom policies are stateless thresholds like
-first-party `ItemCountCompletionPolicy`/`TimeCompletionPolicy`. If yours
-persists a decision across restarts the way `AdaptiveCompletionPolicy`
-does, it owns that state's namespace and revision the same way a stateful
-reader/writer does — see [Restart and State § Policy-owned state/revision
+first-party `ItemCountCompletionPolicy`/`TimeCompletionPolicy`.
+
+A custom policy must also override `fingerprint()` with deterministic,
+restart-relevant configuration identity. The trait default is deliberately
+empty and `completion_policy_revision` rejects it fail closed; a Rust type
+name is not enough to distinguish two configurations of the same policy.
+Built-in policies supply their own deterministic identity. If yours persists
+a decision across restarts the way `AdaptiveCompletionPolicy` does, it owns
+that state's namespace and revision the same way a stateful reader/writer
+does — see [Restart and State § Policy-owned state/revision
 semantics](restart-and-state.md#policy-owned-staterevision-semantics).
 
 ## Failure classification
