@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- M7 Gate-C repeat definition identity for #299: bounded repeat IDs, policy
+  kind/revision/configuration identity, ordered interceptor identity, nested
+  repeat depth, and state-schema identity now participate in canonical
+  format-4 compiled-plan fingerprints without introducing graph cycles or a
+  second execution engine.
+
 - M7 Gate-B live job/step scope runtime on top of the #276 structured
   late-binding/provenance contract. `ScopedComponentFactory` registrations
   create attempt-local components with bounded same-scope dependencies,
@@ -19,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Custom `CompletionPolicy` implementations must now override
+  `fingerprint()` before they can be bound into a restart-compatible
+  definition. The trait default is fail-closed and
+  `completion_policy_revision` returns
+  `CompletionPolicyFingerprintMissing` instead of silently hashing only the
+  Rust type name; built-in policies already provide deterministic
+  configuration identity.
 - `SCOPE-JOB-001` and `SCOPE-STEP-001` are now unreleased
   `Implemented` candidate capabilities. This is not a released `Verified`
   claim; named-release promotion remains governed by the compatibility ledger.

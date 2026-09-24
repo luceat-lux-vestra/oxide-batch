@@ -258,6 +258,8 @@ oxide_batch::MAX_PARTITION_WORKERS
 oxide_batch::MAX_PATTERN_BYTES
 oxide_batch::MAX_PURGE_BATCH
 oxide_batch::MAX_REASON_CODE_BYTES
+oxide_batch::MAX_REPEAT_INTERCEPTORS
+oxide_batch::MAX_REPEAT_NESTING_DEPTH
 oxide_batch::MAX_RESPONSE_BYTES
 oxide_batch::MAX_RETAINED_EVENTS_PER_EXECUTION
 oxide_batch::MAX_SCOPED_COMPONENTS
@@ -381,6 +383,16 @@ oxide_batch::RecoveryRequestError
 oxide_batch::RecoveryResult
 oxide_batch::RecoverySnapshot
 oxide_batch::RecoveryStepEvidence
+oxide_batch::RepeatDefinition
+oxide_batch::RepeatDefinitionError
+oxide_batch::RepeatId
+oxide_batch::RepeatInterceptorDefinition
+oxide_batch::RepeatInterceptorId
+oxide_batch::RepeatInterceptorKind
+oxide_batch::RepeatPolicyConfiguration
+oxide_batch::RepeatPolicyDefinition
+oxide_batch::RepeatPolicyKind
+oxide_batch::RepeatStateSchema
 oxide_batch::RepositoryCapability
 oxide_batch::RepositoryDescriptor
 oxide_batch::RepositoryError

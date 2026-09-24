@@ -363,8 +363,9 @@ fn validate_stream_registrations<I, O, R, P, W>(
 /// # Errors
 ///
 /// Returns [`DefinitionError::CompletionPolicyFingerprintPanic`] if the
-/// application-supplied [`CompletionPolicy::fingerprint`] panics, and
-/// [`DefinitionError`] if the computed digest somehow failed
+/// application-supplied [`CompletionPolicy::fingerprint`] panics,
+/// [`DefinitionError::CompletionPolicyFingerprintMissing`] if a custom policy
+/// kept the fail-closed empty default, and [`DefinitionError`] if the computed digest somehow failed
 /// [`ComponentRevision`]'s token validation, which cannot happen for a fixed
 /// hex-digest shape.
 pub fn completion_policy_revision(
@@ -372,6 +373,9 @@ pub fn completion_policy_revision(
 ) -> Result<ComponentRevision, DefinitionError> {
     let fingerprint = catch_unwind(AssertUnwindSafe(|| policy.fingerprint()))
         .map_err(|_| DefinitionError::CompletionPolicyFingerprintPanic)?;
+    if fingerprint.is_empty() {
+        return Err(DefinitionError::CompletionPolicyFingerprintMissing);
+    }
     let digest: [u8; 32] = Sha256::digest(fingerprint.as_bytes()).into();
     let hex = digest.iter().fold(String::new(), |mut hex, byte| {
         use std::fmt::Write as _;

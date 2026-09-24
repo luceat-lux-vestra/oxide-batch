@@ -90,8 +90,8 @@ would have become had it been carried rather than removed.
 
 ## The delivered surface
 
-The current facade claims exactly one crate. `oxide-batch` exports **515
-names**: 503 always and 12 more under the optional `postgres` feature. The
+The current facade claims exactly one crate. `oxide-batch` exports **527
+names**: 515 always and 12 more under the optional `postgres` feature. The
 committed snapshot at
 `crates/oxide-batch/tests/fixtures/facade/public-api.txt` is the authoritative
 name list; this table is the reviewed enumeration by the `src/lib.rs`
@@ -103,8 +103,8 @@ be added or moved without revisiting this record.
 | Group | Names | What it delivers |
 | --- | ---: | --- |
 | `oxide_batch_repository` | 113 | repository, explorer, operator, recovery, retention, paging, and M7 durable-link ports/values |
-| `oxide_batch_core` | 106 | durable domain values, definition identity, state, parameters, and fault-policy values |
-| `oxide_batch_plan` | 52 | compiled flow/plan declarations, M7 composition and structured scope/late-binding definition values |
+| `oxide_batch_core` | 108 | durable domain values, definition identity, state, parameters, fault-policy values, and the two M7 repeat capacity ceilings |
+| `oxide_batch_plan` | 62 | compiled flow/plan declarations, M7 composition, structured scope/late-binding values, and #299 bounded repeat definition identity |
 | `telemetry` | 38 | framework-owned event, metric, span, and export contracts |
 | `chunk` | 32 | chunk component contracts, business transaction ports, outcomes, and bounded execution values |
 | `flow` | 20 | multi-step runtime, deciders, flow factories, and M7 execution assembly |

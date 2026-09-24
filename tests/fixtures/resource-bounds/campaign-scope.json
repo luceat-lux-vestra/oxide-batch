@@ -996,6 +996,12 @@
       "symbols": ["MAX_COMPOSITE_MEMBERS", "MAX_COMPOSITE_DEPTH"],
       "reason": "These bound the shape of a CompositeCompletionPolicy tree an application constructs -- member count and nesting depth -- not a resource the framework holds at runtime. Both are validated once at CompositeCompletionPolicy::new, in the same category as MAX_RESOURCE_IDENTITY_BYTES/MAX_OBJECT_KEY_BYTES above: a fixed structural check enforced at construction, not a bounded operational resource (queue, buffer, connection, cache) whose steady-state behavior this campaign proves. Added in #151/#179.",
       "covered_by": "crates/oxide-batch/src/completion.rs::tests::composite_rejects_empty_and_oversized, crates/oxide-batch/src/completion.rs::tests::composite_depth_boundary_and_overflow, crates/oxide-batch/src/completion.rs::tests::composite_depth_bounded_via_indirect_nesting"
+    },
+    {
+      "resource": "repeat-definition composition shape ceilings",
+      "symbols": ["MAX_REPEAT_INTERCEPTORS", "MAX_REPEAT_NESTING_DEPTH"],
+      "reason": "These bound the shape of Gate-C repeat metadata an application compiles -- interceptor count and nested repeat-wrapper depth -- not a resource the framework holds at runtime. Both are validated while compiling/canonicalizing the repeat definition, in the same category as the completion-policy composition limits above: a fixed structural check enforced before execution, not a bounded operational resource (queue, buffer, connection, cache) whose steady-state behavior this M5 campaign proves. Added in M7/#299.",
+      "covered_by": "crates/oxide-batch/tests/repeat_definition_plan.rs::repeat_bounds_are_exact"
     }
   ],
   "related": [
