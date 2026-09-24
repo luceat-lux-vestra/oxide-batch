@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "883973e031e8bfbcded8870b310ed4fb5789bdeb",
+    "source_commit": "9f04f7f194a073661a2d1939cbb42de0f202fd6e",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -20,7 +20,7 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "883973e031e8bfbcded8870b310ed4fb5789bdeb",
+      "execution_commit": "9f04f7f194a073661a2d1939cbb42de0f202fd6e",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
@@ -31,14 +31,14 @@
         "crates/oxide-batch-cli/tests/operator_cli.rs": "e52729fb6d792a495388dc2541fc1713d787e8bf",
         "crates/oxide-batch-cli/tests/support": "54529b16ee9ab48eb2b32b197aaa2aabb6d4c25a",
         "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
-        "crates/oxide-batch-core/src": "8bd97f8446fae843773754ddc528fbc104bb4e39",
+        "crates/oxide-batch-core/src": "b94076fee2630ca682c1b8d6302ed4334b404998",
         "crates/oxide-batch-plan/Cargo.toml": "6c327e26d3fb6cb0e5572432ea8e0e5b09b36c72",
-        "crates/oxide-batch-plan/src": "be76cdb6922aca54a19d7b4323a3b430c80dbe09",
+        "crates/oxide-batch-plan/src": "55fa0141b713fa7dc4e5301e9a6607ed6ea0b77f",
         "crates/oxide-batch-repository/Cargo.toml": "d6148373ea81b843d5bc2590bc6264ea5fc3e657",
-        "crates/oxide-batch-repository/src": "c2b9bf7c2729ab218aec08def17a8b315b661e98",
+        "crates/oxide-batch-repository/src": "c1d4e25e81dd29c85430ec0a891187e212f33059",
         "crates/oxide-batch/Cargo.toml": "3f149b7fc1423748d5738f997cc6341274688ba7",
-        "crates/oxide-batch/migrations": "cd942c54a89a46bedfa78f51aef78b47e27c48ee",
-        "crates/oxide-batch/src": "b8a61e59db5955f1a0f284eec71e364b00bbd695",
+        "crates/oxide-batch/migrations": "7f95c7d568a4ca0aa2b0698b4ad0542fade38ee4",
+        "crates/oxide-batch/src": "09879fd3b9ea11f53f459566a31ae3d708acf06f",
         "crates/oxide-batch/tests/chunk_fault_runtime.rs": "ef2b2cb511c38ab8bfddee9bad23e58041ea292a",
         "crates/oxide-batch/tests/chunk_runtime.rs": "85e841a3b51dc4eb4174fea27761ebaae52decef",
         "crates/oxide-batch/tests/conformance": "2ca0aff137df4c70c755ed7a41edf39e3b01a7fe",
@@ -69,7 +69,7 @@
         "crates/oxide-batch/tests/postgres_flow_crash_recovery.rs": "c5d4a354b2a4ae2fc026319a8873bd01f811a133",
         "crates/oxide-batch/tests/postgres_local_partition_crash_recovery.rs": "e8fe4d8894f119f4e8ce743eed83c7d04610bbf6",
         "crates/oxide-batch/tests/postgres_local_split_crash_recovery.rs": "d5ce0a17c7d1834bee44ee759b16cbfa226ac59f",
-        "crates/oxide-batch/tests/postgres_repository.rs": "4434ee21f25b64f4b126d2322f16a42747121bbf",
+        "crates/oxide-batch/tests/postgres_repository.rs": "7d6df666175b11c4dbcefe070a71a4c733f69f5f",
         "crates/oxide-batch/tests/repository.rs": "7dc0cea1f5cdf5961f5619b1a99c0d1cfa159bfd",
         "crates/oxide-batch/tests/services.rs": "6c7475a6cecb5cf6bbd6e0e07ed4ba843292897e",
         "crates/oxide-batch/tests/support": "4529f4e3cdb1e598708980cd2e8a98e5d1f40474",
