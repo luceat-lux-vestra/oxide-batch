@@ -6,16 +6,16 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "9f04f7f194a073661a2d1939cbb42de0f202fd6e",
+    "source_commit": "354b80bfff290e1c0a90337e7e46c3f7ca7eab5c",
     "source_tree_clean": true
   },
   "observation": {
     "execution_manifest": {
-      "execution_commit": "9f04f7f194a073661a2d1939cbb42de0f202fd6e",
+      "execution_commit": "354b80bfff290e1c0a90337e7e46c3f7ca7eab5c",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-        ".github/workflows/m6-gate-b.yml": "eb0aed038a370c4719e98ae438be9d3af6558f51",
+        ".github/workflows/m6-gate-b.yml": "5cf6f85989eb95606228fc11f8e2e78a58058c69",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
         "crates/oxide-batch-core/src": "b94076fee2630ca682c1b8d6302ed4334b404998",
@@ -41,7 +41,7 @@
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
         "tests/fixtures/gate-b/campaign-semantics.json": "5b83bc3d3fae268842f51311ac620443125d54d1",
         "tests/fixtures/gate-b/dependency-closure.json": "1cad7042434aca1e49d7f0e8155bf524ea4eaa1a",
-        "tests/fixtures/gate-b/execution-contract.json": "7b5c3ae4abd3d950610336d9b800fd37fe34aadd",
+        "tests/fixtures/gate-b/execution-contract.json": "e4e24ebac7d8285439f14614c98ed3894d1a85ab",
         "tests/fixtures/gate-b/run-ci-campaign.sh": "fba2f2abe3afd9f65079ef1b09d41a9d47931e66",
         "tests/fixtures/gate-b/verify-ci-contract.sh": "da370f20a9bff83563c08a4759d4e9379d33aa83",
         "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",

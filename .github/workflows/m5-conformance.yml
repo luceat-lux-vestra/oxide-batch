@@ -5,6 +5,7 @@ on:
     branches:
       - main
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches:
       - main
   workflow_dispatch:
@@ -18,6 +19,7 @@ concurrency:
 
 jobs:
   conformance-campaign:
+    # Required context producer: always emit; draft PRs only run the placeholder.
     name: postgres-${{ matrix.postgres }}-conformance-campaign
     runs-on: ubuntu-24.04
     # The campaign's execution envelope is 30 test targets derived from the
@@ -54,17 +56,24 @@ jobs:
       OXIDEBATCH_CAMPAIGN_DIR: target/m5-campaigns
       OXIDEBATCH_CAMPAIGN_MATRIX: postgres-${{ matrix.postgres }}
     steps:
+      - name: Draft final-gate placeholder
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
+        run: echo "M5 conformance is deferred until the pull request is ready for review"
+
       - name: Check out repository
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Fail closed if the execution contract drifts
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: ./tests/fixtures/conformance/verify-ci-contract.sh .github/workflows/m5-conformance.yml
 
       - name: Run the full embedded conformance suite over the accepted scope
         id: conformance-campaign # zizmor: ignore[template-injection] matrix.postgres is the checked-in 15/18 matrix above.
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: ./tests/fixtures/conformance/run-ci-campaign.sh ${{ matrix.postgres }}
 
       # Retained on failure as well as on success. A failed conformance
@@ -72,7 +81,7 @@ jobs:
       # target it lost, and a job that uploaded only green reports would
       # discard exactly that.
       - name: Retain the campaign report
-        if: always()
+        if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: conformance-campaign-postgres-${{ matrix.postgres }}

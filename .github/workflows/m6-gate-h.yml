@@ -5,6 +5,7 @@ on:
     branches:
       - main
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches:
       - main
   workflow_dispatch:
@@ -18,6 +19,8 @@ concurrency:
 
 jobs:
   gate-h-campaign:
+    # Heavy final evidence: keep draft development on Fast branch CI only.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     name: gate-h-campaign
     runs-on: ubuntu-24.04
     timeout-minutes: 30

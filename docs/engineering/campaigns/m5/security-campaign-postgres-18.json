@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "9f04f7f194a073661a2d1939cbb42de0f202fd6e",
+    "source_commit": "354b80bfff290e1c0a90337e7e46c3f7ca7eab5c",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -21,11 +21,11 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "9f04f7f194a073661a2d1939cbb42de0f202fd6e",
+      "execution_commit": "354b80bfff290e1c0a90337e7e46c3f7ca7eab5c",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-        ".github/workflows/m5-security.yml": "aad680e2ac4f18c59a5b23ba4129dd42d7b3a39a",
+        ".github/workflows/m5-security.yml": "664927678b39cb07090355e6dbd5f901d4501713",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-cli/Cargo.toml": "7a3b0f3e1540d0091a4d34b020a578ac70b16195",
         "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
@@ -48,7 +48,7 @@
         "tests/fixtures/security/campaign-scope.json": "690fcb086bf65c61b093042de249a508293f73d7",
         "tests/fixtures/security/campaign-semantics.json": "4aeb7fdb8519cfec723d158451dc07da308cfd69",
         "tests/fixtures/security/dependency-closure.json": "e36005f753a828a430f5fe1718aa791daba69fba",
-        "tests/fixtures/security/execution-contract.json": "950bf931f5fcf559f6704794230d0c522d18ab05",
+        "tests/fixtures/security/execution-contract.json": "8df3f319eb77728605e269bb070ab2b3dab825e8",
         "tests/fixtures/security/grants.sql": "2993215766bf0a55594be6982aa072d30d67886b",
         "tests/fixtures/security/provision.sh": "4d4d2e22af0630ec535de3e24d1c3dbc0442b9c8",
         "tests/fixtures/security/role-matrix.json": "e6f62ce1734faf0289eef51b2666bf64240e1561",
@@ -231,11 +231,11 @@
         ],
         "certificate_validation_result": "refused",
         "execution_manifest": {
-          "execution_commit": "9f04f7f194a073661a2d1939cbb42de0f202fd6e",
+          "execution_commit": "354b80bfff290e1c0a90337e7e46c3f7ca7eab5c",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-            ".github/workflows/m5-security.yml": "aad680e2ac4f18c59a5b23ba4129dd42d7b3a39a",
+            ".github/workflows/m5-security.yml": "664927678b39cb07090355e6dbd5f901d4501713",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-cli/Cargo.toml": "7a3b0f3e1540d0091a4d34b020a578ac70b16195",
             "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
@@ -258,7 +258,7 @@
             "tests/fixtures/security/campaign-scope.json": "690fcb086bf65c61b093042de249a508293f73d7",
             "tests/fixtures/security/campaign-semantics.json": "4aeb7fdb8519cfec723d158451dc07da308cfd69",
             "tests/fixtures/security/dependency-closure.json": "e36005f753a828a430f5fe1718aa791daba69fba",
-            "tests/fixtures/security/execution-contract.json": "950bf931f5fcf559f6704794230d0c522d18ab05",
+            "tests/fixtures/security/execution-contract.json": "8df3f319eb77728605e269bb070ab2b3dab825e8",
             "tests/fixtures/security/grants.sql": "2993215766bf0a55594be6982aa072d30d67886b",
             "tests/fixtures/security/provision.sh": "4d4d2e22af0630ec535de3e24d1c3dbc0442b9c8",
             "tests/fixtures/security/role-matrix.json": "e6f62ce1734faf0289eef51b2666bf64240e1561",
@@ -306,11 +306,11 @@
       "name": "nested_job_link_privileges_match_schema5_policy",
       "observation": {
         "execution_manifest": {
-          "execution_commit": "9f04f7f194a073661a2d1939cbb42de0f202fd6e",
+          "execution_commit": "354b80bfff290e1c0a90337e7e46c3f7ca7eab5c",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-            ".github/workflows/m5-security.yml": "aad680e2ac4f18c59a5b23ba4129dd42d7b3a39a",
+            ".github/workflows/m5-security.yml": "664927678b39cb07090355e6dbd5f901d4501713",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-cli/Cargo.toml": "7a3b0f3e1540d0091a4d34b020a578ac70b16195",
             "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
@@ -333,7 +333,7 @@
             "tests/fixtures/security/campaign-scope.json": "690fcb086bf65c61b093042de249a508293f73d7",
             "tests/fixtures/security/campaign-semantics.json": "4aeb7fdb8519cfec723d158451dc07da308cfd69",
             "tests/fixtures/security/dependency-closure.json": "e36005f753a828a430f5fe1718aa791daba69fba",
-            "tests/fixtures/security/execution-contract.json": "950bf931f5fcf559f6704794230d0c522d18ab05",
+            "tests/fixtures/security/execution-contract.json": "8df3f319eb77728605e269bb070ab2b3dab825e8",
             "tests/fixtures/security/grants.sql": "2993215766bf0a55594be6982aa072d30d67886b",
             "tests/fixtures/security/provision.sh": "4d4d2e22af0630ec535de3e24d1c3dbc0442b9c8",
             "tests/fixtures/security/role-matrix.json": "e6f62ce1734faf0289eef51b2666bf64240e1561",
@@ -515,11 +515,11 @@
       "name": "scope_resolution_provenance_privileges_match_schema6_policy",
       "observation": {
         "execution_manifest": {
-          "execution_commit": "9f04f7f194a073661a2d1939cbb42de0f202fd6e",
+          "execution_commit": "354b80bfff290e1c0a90337e7e46c3f7ca7eab5c",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-            ".github/workflows/m5-security.yml": "aad680e2ac4f18c59a5b23ba4129dd42d7b3a39a",
+            ".github/workflows/m5-security.yml": "664927678b39cb07090355e6dbd5f901d4501713",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-cli/Cargo.toml": "7a3b0f3e1540d0091a4d34b020a578ac70b16195",
             "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
@@ -542,7 +542,7 @@
             "tests/fixtures/security/campaign-scope.json": "690fcb086bf65c61b093042de249a508293f73d7",
             "tests/fixtures/security/campaign-semantics.json": "4aeb7fdb8519cfec723d158451dc07da308cfd69",
             "tests/fixtures/security/dependency-closure.json": "e36005f753a828a430f5fe1718aa791daba69fba",
-            "tests/fixtures/security/execution-contract.json": "950bf931f5fcf559f6704794230d0c522d18ab05",
+            "tests/fixtures/security/execution-contract.json": "8df3f319eb77728605e269bb070ab2b3dab825e8",
             "tests/fixtures/security/grants.sql": "2993215766bf0a55594be6982aa072d30d67886b",
             "tests/fixtures/security/provision.sh": "4d4d2e22af0630ec535de3e24d1c3dbc0442b9c8",
             "tests/fixtures/security/role-matrix.json": "e6f62ce1734faf0289eef51b2666bf64240e1561",
@@ -724,11 +724,11 @@
       "name": "repeat_state_privileges_match_schema7_policy",
       "observation": {
         "execution_manifest": {
-          "execution_commit": "9f04f7f194a073661a2d1939cbb42de0f202fd6e",
+          "execution_commit": "354b80bfff290e1c0a90337e7e46c3f7ca7eab5c",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-            ".github/workflows/m5-security.yml": "aad680e2ac4f18c59a5b23ba4129dd42d7b3a39a",
+            ".github/workflows/m5-security.yml": "664927678b39cb07090355e6dbd5f901d4501713",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-cli/Cargo.toml": "7a3b0f3e1540d0091a4d34b020a578ac70b16195",
             "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
@@ -751,7 +751,7 @@
             "tests/fixtures/security/campaign-scope.json": "690fcb086bf65c61b093042de249a508293f73d7",
             "tests/fixtures/security/campaign-semantics.json": "4aeb7fdb8519cfec723d158451dc07da308cfd69",
             "tests/fixtures/security/dependency-closure.json": "e36005f753a828a430f5fe1718aa791daba69fba",
-            "tests/fixtures/security/execution-contract.json": "950bf931f5fcf559f6704794230d0c522d18ab05",
+            "tests/fixtures/security/execution-contract.json": "8df3f319eb77728605e269bb070ab2b3dab825e8",
             "tests/fixtures/security/grants.sql": "2993215766bf0a55594be6982aa072d30d67886b",
             "tests/fixtures/security/provision.sh": "4d4d2e22af0630ec535de3e24d1c3dbc0442b9c8",
             "tests/fixtures/security/role-matrix.json": "e6f62ce1734faf0289eef51b2666bf64240e1561",
@@ -1002,11 +1002,11 @@
           }
         ],
         "execution_manifest": {
-          "execution_commit": "9f04f7f194a073661a2d1939cbb42de0f202fd6e",
+          "execution_commit": "354b80bfff290e1c0a90337e7e46c3f7ca7eab5c",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-            ".github/workflows/m5-security.yml": "aad680e2ac4f18c59a5b23ba4129dd42d7b3a39a",
+            ".github/workflows/m5-security.yml": "664927678b39cb07090355e6dbd5f901d4501713",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-cli/Cargo.toml": "7a3b0f3e1540d0091a4d34b020a578ac70b16195",
             "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
@@ -1029,7 +1029,7 @@
             "tests/fixtures/security/campaign-scope.json": "690fcb086bf65c61b093042de249a508293f73d7",
             "tests/fixtures/security/campaign-semantics.json": "4aeb7fdb8519cfec723d158451dc07da308cfd69",
             "tests/fixtures/security/dependency-closure.json": "e36005f753a828a430f5fe1718aa791daba69fba",
-            "tests/fixtures/security/execution-contract.json": "950bf931f5fcf559f6704794230d0c522d18ab05",
+            "tests/fixtures/security/execution-contract.json": "8df3f319eb77728605e269bb070ab2b3dab825e8",
             "tests/fixtures/security/grants.sql": "2993215766bf0a55594be6982aa072d30d67886b",
             "tests/fixtures/security/provision.sh": "4d4d2e22af0630ec535de3e24d1c3dbc0442b9c8",
             "tests/fixtures/security/role-matrix.json": "e6f62ce1734faf0289eef51b2666bf64240e1561",
@@ -1607,11 +1607,11 @@
           "parameter_types_preserved": true
         },
         "execution_manifest": {
-          "execution_commit": "9f04f7f194a073661a2d1939cbb42de0f202fd6e",
+          "execution_commit": "354b80bfff290e1c0a90337e7e46c3f7ca7eab5c",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-            ".github/workflows/m5-security.yml": "aad680e2ac4f18c59a5b23ba4129dd42d7b3a39a",
+            ".github/workflows/m5-security.yml": "664927678b39cb07090355e6dbd5f901d4501713",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-cli/Cargo.toml": "7a3b0f3e1540d0091a4d34b020a578ac70b16195",
             "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
@@ -1634,7 +1634,7 @@
             "tests/fixtures/security/campaign-scope.json": "690fcb086bf65c61b093042de249a508293f73d7",
             "tests/fixtures/security/campaign-semantics.json": "4aeb7fdb8519cfec723d158451dc07da308cfd69",
             "tests/fixtures/security/dependency-closure.json": "e36005f753a828a430f5fe1718aa791daba69fba",
-            "tests/fixtures/security/execution-contract.json": "950bf931f5fcf559f6704794230d0c522d18ab05",
+            "tests/fixtures/security/execution-contract.json": "8df3f319eb77728605e269bb070ab2b3dab825e8",
             "tests/fixtures/security/grants.sql": "2993215766bf0a55594be6982aa072d30d67886b",
             "tests/fixtures/security/provision.sh": "4d4d2e22af0630ec535de3e24d1c3dbc0442b9c8",
             "tests/fixtures/security/role-matrix.json": "e6f62ce1734faf0289eef51b2666bf64240e1561",
