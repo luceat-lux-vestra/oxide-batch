@@ -89,7 +89,7 @@ evidence.
 ## Verification
 
 `.github/workflows/hardening-drift-audit-policy.yml` runs the audit-level
-orchestration tests on every PR and `main` push. Those tests deliberately stub
+orchestration tests on pull requests; manual dispatch remains available for recovery. Those tests deliberately stub
 leaf command outcomes: they prove that a rejection from each composed canonical
 checker reaches the final `policy-drift` classification without copying the
 leaf policy into the audit layer. Tooling failure reaches
