@@ -49,17 +49,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Draft final-gate placeholder
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
+        run: echo "Actions security analysis is deferred until the pull request is ready for review"
+
       - name: Check out repository
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Test deterministic Actions security policy
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         id: policy-tests
         continue-on-error: true
         run: python3 .github/scripts/test_validate_actions_security.py
 
       - name: Install pinned static-analysis binaries
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         id: install-scanners
         continue-on-error: true
         shell: bash
@@ -93,7 +100,7 @@ jobs:
 
       - name: Run actionlint
         id: actionlint
-        if: always() && steps.install-scanners.outcome == 'success'
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() && steps.install-scanners.outcome == 'success' }}
         continue-on-error: true
         shell: bash
         run: |
@@ -101,7 +108,7 @@ jobs:
 
       - name: Run zizmor full audit
         id: zizmor
-        if: always() && steps.install-scanners.outcome == 'success'
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() && steps.install-scanners.outcome == 'success' }}
         continue-on-error: true
         shell: bash
         run: |
@@ -113,12 +120,12 @@ jobs:
 
       - name: Validate deterministic Actions security policy
         id: policy
-        if: always()
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() }}
         continue-on-error: true
         run: python3 .github/scripts/validate_actions_security.py
 
       - name: Enforce complete static-audit result
-        if: always()
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() }}
         env:
           ACTIONLINT_OUTCOME: ${{ steps.actionlint.outcome }}
           INSTALL_SCANNERS_OUTCOME: ${{ steps.install-scanners.outcome }}
