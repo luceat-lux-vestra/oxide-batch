@@ -128,7 +128,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "9f04f7f194a073661a2d1939cbb42de0f202fd6e",
+    "source_commit": "354b80bfff290e1c0a90337e7e46c3f7ca7eab5c",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -143,11 +143,11 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "9f04f7f194a073661a2d1939cbb42de0f202fd6e",
+      "execution_commit": "354b80bfff290e1c0a90337e7e46c3f7ca7eab5c",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-        ".github/workflows/m5-resource-bounds.yml": "21efef485dd5dc1e8191a8cfab8d969a5b407619",
+        ".github/workflows/m5-resource-bounds.yml": "8611b5f241a37ae76e04ae359f6c425f297fb93a",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-cli/Cargo.toml": "7a3b0f3e1540d0091a4d34b020a578ac70b16195",
         "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
@@ -170,7 +170,7 @@
         "tests/fixtures/resource-bounds/campaign-scope.json": "22744569dd2ad1e8e80fe381a7e243b7db7c3738",
         "tests/fixtures/resource-bounds/campaign-semantics.json": "9eecd23bcb53e6e38f19983831a720f787a9c320",
         "tests/fixtures/resource-bounds/dependency-closure.json": "38a8181326acda58690968f66e84d1322177daf2",
-        "tests/fixtures/resource-bounds/execution-contract.json": "8071fba867357d876bcdddb3b8ca67af3d550add",
+        "tests/fixtures/resource-bounds/execution-contract.json": "48cbc181e35c630ccd08da42f76215adad54a8a9",
         "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
         "tests/fixtures/resource-bounds/verify-ci-contract.sh": "f980d37a1fa70a79a27994e07625e17f4a87bd7e",
         "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
@@ -568,11 +568,11 @@
           "violations": []
         },
         "execution_manifest": {
-          "execution_commit": "9f04f7f194a073661a2d1939cbb42de0f202fd6e",
+          "execution_commit": "354b80bfff290e1c0a90337e7e46c3f7ca7eab5c",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-            ".github/workflows/m5-resource-bounds.yml": "21efef485dd5dc1e8191a8cfab8d969a5b407619",
+            ".github/workflows/m5-resource-bounds.yml": "8611b5f241a37ae76e04ae359f6c425f297fb93a",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-cli/Cargo.toml": "7a3b0f3e1540d0091a4d34b020a578ac70b16195",
             "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
@@ -595,7 +595,7 @@
             "tests/fixtures/resource-bounds/campaign-scope.json": "22744569dd2ad1e8e80fe381a7e243b7db7c3738",
             "tests/fixtures/resource-bounds/campaign-semantics.json": "9eecd23bcb53e6e38f19983831a720f787a9c320",
             "tests/fixtures/resource-bounds/dependency-closure.json": "38a8181326acda58690968f66e84d1322177daf2",
-            "tests/fixtures/resource-bounds/execution-contract.json": "8071fba867357d876bcdddb3b8ca67af3d550add",
+            "tests/fixtures/resource-bounds/execution-contract.json": "48cbc181e35c630ccd08da42f76215adad54a8a9",
             "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
             "tests/fixtures/resource-bounds/verify-ci-contract.sh": "f980d37a1fa70a79a27994e07625e17f4a87bd7e",
             "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
@@ -789,11 +789,11 @@
           }
         ],
         "execution_manifest": {
-          "execution_commit": "9f04f7f194a073661a2d1939cbb42de0f202fd6e",
+          "execution_commit": "354b80bfff290e1c0a90337e7e46c3f7ca7eab5c",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-            ".github/workflows/m5-resource-bounds.yml": "21efef485dd5dc1e8191a8cfab8d969a5b407619",
+            ".github/workflows/m5-resource-bounds.yml": "8611b5f241a37ae76e04ae359f6c425f297fb93a",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-cli/Cargo.toml": "7a3b0f3e1540d0091a4d34b020a578ac70b16195",
             "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
@@ -816,7 +816,7 @@
             "tests/fixtures/resource-bounds/campaign-scope.json": "22744569dd2ad1e8e80fe381a7e243b7db7c3738",
             "tests/fixtures/resource-bounds/campaign-semantics.json": "9eecd23bcb53e6e38f19983831a720f787a9c320",
             "tests/fixtures/resource-bounds/dependency-closure.json": "38a8181326acda58690968f66e84d1322177daf2",
-            "tests/fixtures/resource-bounds/execution-contract.json": "8071fba867357d876bcdddb3b8ca67af3d550add",
+            "tests/fixtures/resource-bounds/execution-contract.json": "48cbc181e35c630ccd08da42f76215adad54a8a9",
             "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
             "tests/fixtures/resource-bounds/verify-ci-contract.sh": "f980d37a1fa70a79a27994e07625e17f4a87bd7e",
             "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
@@ -1585,11 +1585,11 @@
           "violations": []
         },
         "execution_manifest": {
-          "execution_commit": "9f04f7f194a073661a2d1939cbb42de0f202fd6e",
+          "execution_commit": "354b80bfff290e1c0a90337e7e46c3f7ca7eab5c",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-            ".github/workflows/m5-resource-bounds.yml": "21efef485dd5dc1e8191a8cfab8d969a5b407619",
+            ".github/workflows/m5-resource-bounds.yml": "8611b5f241a37ae76e04ae359f6c425f297fb93a",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-cli/Cargo.toml": "7a3b0f3e1540d0091a4d34b020a578ac70b16195",
             "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
@@ -1612,7 +1612,7 @@
             "tests/fixtures/resource-bounds/campaign-scope.json": "22744569dd2ad1e8e80fe381a7e243b7db7c3738",
             "tests/fixtures/resource-bounds/campaign-semantics.json": "9eecd23bcb53e6e38f19983831a720f787a9c320",
             "tests/fixtures/resource-bounds/dependency-closure.json": "38a8181326acda58690968f66e84d1322177daf2",
-            "tests/fixtures/resource-bounds/execution-contract.json": "8071fba867357d876bcdddb3b8ca67af3d550add",
+            "tests/fixtures/resource-bounds/execution-contract.json": "48cbc181e35c630ccd08da42f76215adad54a8a9",
             "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
             "tests/fixtures/resource-bounds/verify-ci-contract.sh": "f980d37a1fa70a79a27994e07625e17f4a87bd7e",
             "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
@@ -2222,11 +2222,11 @@
           "violations": []
         },
         "execution_manifest": {
-          "execution_commit": "9f04f7f194a073661a2d1939cbb42de0f202fd6e",
+          "execution_commit": "354b80bfff290e1c0a90337e7e46c3f7ca7eab5c",
           "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
           "objects": {
             ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-            ".github/workflows/m5-resource-bounds.yml": "21efef485dd5dc1e8191a8cfab8d969a5b407619",
+            ".github/workflows/m5-resource-bounds.yml": "8611b5f241a37ae76e04ae359f6c425f297fb93a",
             "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
             "crates/oxide-batch-cli/Cargo.toml": "7a3b0f3e1540d0091a4d34b020a578ac70b16195",
             "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
@@ -2249,7 +2249,7 @@
             "tests/fixtures/resource-bounds/campaign-scope.json": "22744569dd2ad1e8e80fe381a7e243b7db7c3738",
             "tests/fixtures/resource-bounds/campaign-semantics.json": "9eecd23bcb53e6e38f19983831a720f787a9c320",
             "tests/fixtures/resource-bounds/dependency-closure.json": "38a8181326acda58690968f66e84d1322177daf2",
-            "tests/fixtures/resource-bounds/execution-contract.json": "8071fba867357d876bcdddb3b8ca67af3d550add",
+            "tests/fixtures/resource-bounds/execution-contract.json": "48cbc181e35c630ccd08da42f76215adad54a8a9",
             "tests/fixtures/resource-bounds/run-ci-campaign.sh": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
             "tests/fixtures/resource-bounds/verify-ci-contract.sh": "f980d37a1fa70a79a27994e07625e17f4a87bd7e",
             "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",

@@ -2,12 +2,12 @@
   "binary_size_and_compile_time": {
     "boxed": {
       "binary_size_bytes": 1835008,
-      "compile_time_seconds": 40.915380858,
+      "compile_time_seconds": 32.411743014,
       "target_directory_isolation": "clean-per-reference"
     },
     "typed": {
       "binary_size_bytes": 1817360,
-      "compile_time_seconds": 41.254351654,
+      "compile_time_seconds": 31.84398621,
       "target_directory_isolation": "clean-per-reference"
     }
   },
@@ -18,7 +18,7 @@
     "os": "linux",
     "profile": "release",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "9f04f7f194a073661a2d1939cbb42de0f202fd6e",
+    "source_commit": "354b80bfff290e1c0a90337e7e46c3f7ca7eab5c",
     "source_tree_clean": true
   },
   "hard_invariants": {
@@ -34,11 +34,11 @@
   "no_invented_threshold_note": "Throughput, latency, allocation-delta, binary-size, and compile-time numbers are retained as disclosure evidence per the frozen protocol; none is compared against an invented pass/fail threshold by this runner.",
   "observation": {
     "execution_manifest": {
-      "execution_commit": "9f04f7f194a073661a2d1939cbb42de0f202fd6e",
+      "execution_commit": "354b80bfff290e1c0a90337e7e46c3f7ca7eab5c",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-        ".github/workflows/m6-gate-h.yml": "236dab3d9c0f8e84e07477b1b57dfcd02eb66db0",
+        ".github/workflows/m6-gate-h.yml": "6bd901a943b44f6ba1c759b2244e7552e6fbd5bc",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
         "crates/oxide-batch-core/src": "b94076fee2630ca682c1b8d6302ed4334b404998",
@@ -59,7 +59,7 @@
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
         "tests/fixtures/gate-h/campaign-semantics.json": "9be33452e1744d997d2f1d09040c567a2c8cb7b8",
         "tests/fixtures/gate-h/dependency-closure.json": "758adc36643f98f79fed6da11df90a9d8f0f0bea",
-        "tests/fixtures/gate-h/execution-contract.json": "8fb241fbe893f1911e38f524708d024c25371390",
+        "tests/fixtures/gate-h/execution-contract.json": "160c20a45bd7e5c557b9150a1ae4fabc75939cbc",
         "tests/fixtures/gate-h/run-ci-campaign.sh": "1d1fece72f6363461471a15a417113798a8e1f11",
         "tests/fixtures/gate-h/verify-ci-contract.sh": "b2081b8ba3cb7953c6698b82fc3e6ae1e285b3eb",
         "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
@@ -183,17 +183,17 @@
     {
       "observation": {
         "boxed": {
-          "max_nanoseconds": 69076211,
-          "mean_nanoseconds": 68516079,
-          "min_nanoseconds": 67939486,
+          "max_nanoseconds": 79856992,
+          "mean_nanoseconds": 59428165,
+          "min_nanoseconds": 54149142,
           "raw_latency_nanoseconds": [
-            67939486,
-            68563462,
-            68155330,
-            68845910,
-            69076211
+            54299494,
+            79856992,
+            54149142,
+            54477820,
+            54357380
           ],
-          "throughput_items_per_second": 729755.7117943075
+          "throughput_items_per_second": 841351.9078033118
         },
         "buffer_reuse": {
           "note": "Delimited component internal buffer reuse is not exposed as a counter.",
@@ -207,17 +207,17 @@
           "typed_per_item_future_allocations": 0
         },
         "typed": {
-          "max_nanoseconds": 70461500,
-          "mean_nanoseconds": 69862943,
-          "min_nanoseconds": 69089104,
+          "max_nanoseconds": 57215687,
+          "mean_nanoseconds": 55422547,
+          "min_nanoseconds": 54719578,
           "raw_latency_nanoseconds": [
-            70353749,
-            69672155,
-            70461500,
-            69089104,
-            69738209
+            54719578,
+            55097147,
+            55042817,
+            57215687,
+            55037509
           ],
-          "throughput_items_per_second": 715686.9987569805
+          "throughput_items_per_second": 902159.9097565832
         },
         "workload": {
           "chunk_size": 50000,

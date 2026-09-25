@@ -317,3 +317,8 @@ candidate selects package version `0.6.0` and prospective tag `v0.6.0`, but
 neither exists yet. The retained M6 campaign PASS remains candidate evidence:
 no M6 ledger row is promoted to released `Verified` until the named release,
 packaged artifacts, provenance, and post-publication consumers are verified.
+
+
+## CI tier migration retention (PR #305)
+
+The CI tier migration changed scheduling/required-context wiring without relaxing campaign semantics. Fresh M6 retained evidence was independently promoted from successful PR #305 producer runs. The complete producer run set used by this retention is: `36084945066, 36086053875, 36084945084, 36084945105, 36084945049, 36084945173, 36084945042, 36084944998, 36084944996, 36084945053, 36084945082`. Each provenance entry records its own exact producer branch head, synthetic execution tree, job, artifact ID/digest/size, retained git blob, and remote byte-for-byte verification.
