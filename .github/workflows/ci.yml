@@ -10,6 +10,7 @@ on:
       - main
 
 permissions:
+  checks: read # Needed to inspect prior exact-SHA check results for Fast evidence reuse.
   contents: read
 
 concurrency:
@@ -22,13 +23,60 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - name: Draft final-gate placeholder
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
+        run: echo "full quality validation is deferred until the pull request is ready for review"
+      - name: Resolve exact-SHA Fast evidence
+        id: fast-evidence
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_CHECK: fast
+          SAME_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "$SAME_REPOSITORY" != "true" ]; then
+            echo "reuse=false" >> "$GITHUB_OUTPUT"
+            echo "Fork PR has no trusted base-repository branch Fast run; Final will execute the local checks."
+            exit 0
+          fi
+          for _ in $(seq 1 60); do
+            checks="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/commits/$EXPECTED_SHA/check-runs?filter=all&per_page=100")"
+            latest="$(jq -c --arg name "$EXPECTED_CHECK" '
+              [.check_runs[]
+               | select(.name == $name and .app.slug == "github-actions")]
+              | if length == 0 then empty else max_by(.id) end
+            ' <<<"$checks")"
+            if [ -z "$latest" ]; then
+              sleep 5
+              continue
+            fi
+            status="$(jq -r '.status' <<<"$latest")"
+            conclusion="$(jq -r '.conclusion // ""' <<<"$latest")"
+            if [ "$status" != "completed" ]; then
+              sleep 5
+              continue
+            fi
+            if [ "$conclusion" != "success" ]; then
+              echo "::error::Latest Fast evidence for exact HEAD $EXPECTED_SHA concluded '$conclusion'; classify/remediate it instead of overwriting it in Final."
+              exit 1
+            fi
+            echo "reuse=true" >> "$GITHUB_OUTPUT"
+            echo "Reusing latest successful branch Fast evidence for exact HEAD $EXPECTED_SHA."
+            exit 0
+          done
+          echo "::error::Timed out waiting for exact-SHA Fast evidence at $EXPECTED_SHA; refusing duplicate fallback on a same-repository PR."
+          exit 1
       - name: Check out repository
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Check diff hygiene
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
@@ -39,12 +87,15 @@ jobs:
           fi
 
       - name: Show toolchain
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: rustup show
 
       - name: Check formatting
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.reuse != 'true' }}
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.reuse != 'true' }}
         run: >-
           cargo clippy --workspace --all-targets --all-features --
           -D warnings
@@ -52,6 +103,7 @@ jobs:
           -A clippy::too_many_lines
 
       - name: Verify narrow audit-shape Clippy exceptions
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         shell: bash
         run: |
           set -euo pipefail
@@ -99,26 +151,33 @@ jobs:
           PY
 
       - name: Run tests
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo test --workspace --all-features
 
       - name: Check facade without optional adapters
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo check -p oxide-batch --no-default-features
 
       - name: Check operator CLI without optional adapters
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo check -p oxide-batch-cli --no-default-features --all-targets
 
       - name: Build documentation
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --all-features --no-deps
 
       - name: Check extraction boundaries and workspace cycles
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo run --package oxide-batch-xtask -- deps
 
       - name: Inspect the facade surface for disclosed dependencies
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo run --package oxide-batch-xtask -- surface
 
       - name: Verify the canonical publishable-crate release set
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo run --package oxide-batch-xtask -- release-crates
 
   packaging:

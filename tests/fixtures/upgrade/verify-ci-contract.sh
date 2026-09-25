@@ -59,7 +59,9 @@ require_literal "database image" "image: $(expand_matrix "$(jq -er '.database.im
 require_literal "database name" "POSTGRES_DB: $(jq -er '.database.database_name' "${contract}")"
 require_literal "health check" "$(jq -er '.database.health_check' "${contract}")"
 require_literal "maintenance database URL" "postgres://postgres:postgres@127.0.0.1:5432/$(jq -er '.database.maintenance_database' "${contract}")"
-require_literal "client tool package" "postgresql-client-\${{ matrix.postgres }}"
+require_literal "client tool matrix env" 'POSTGRES_VERSION: ${{ matrix.postgres }}'
+require_literal "client tool package" 'postgresql-client-${POSTGRES_VERSION}'
+require_literal "client tool path" '/usr/lib/postgresql/${POSTGRES_VERSION}/bin'
 require_literal "full-history checkout" "fetch-depth: $(jq -er '.checkout.fetch_depth' "${contract}")"
 require_literal "timeout" "timeout-minutes: $(jq -er '.timeout_minutes' "${contract}")"
 require_literal "campaign script" "run: $(expand_matrix "$(jq -er '.script' "${contract}")")"

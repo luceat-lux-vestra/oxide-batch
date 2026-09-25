@@ -5,6 +5,7 @@ on:
     branches:
       - main
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches:
       - main
   workflow_dispatch:
@@ -18,6 +19,8 @@ concurrency:
 
 jobs:
   performance-campaign:
+    # Heavy final evidence: keep draft development on Fast branch CI only.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     name: postgres-${{ matrix.postgres }}-performance-campaign
     runs-on: ubuntu-24.04
     # A release build of the whole crate dominates this ceiling, not the
