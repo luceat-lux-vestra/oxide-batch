@@ -3,11 +3,12 @@
   "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow is a thin provisioning and call layer, and its contract-check step fails closed when the workflow drifts from these values. Only the dedicated crash-restore workflow is in this campaign's semantic closure, so unrelated quality or build changes in ci.yml do not invalidate retained crash-restore evidence.",
   "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script — an added trigger, a job-level permission override, a widened matrix, a changed command, an appended line — moves the identity and fails the contract check, whether or not every literal field below still happens to read true. The literal fields exist for a readable diagnostic, not as the boundary. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
   "workflow_path": ".github/workflows/m5-crash-restore.yml",
-  "workflow_git_blob": "75c6cc753077e593f13b59f5f21d66ccbcd4c00d",
+  "workflow_git_blob": "70cfff6f2739e0e7dcd96ef59163a298ac600396",
   "workflow_name": "M5 Crash and Restore",
   "triggers": {
-    "pull_request": ["main"],
-    "push": ["main"],
+    "pull_request": [
+      "main"
+    ],
     "workflow_dispatch": true
   },
   "permissions": {
@@ -17,7 +18,10 @@
   "script": "./tests/fixtures/crash-restore/run-ci-campaign.sh ${{ matrix.postgres }}",
   "script_path": "tests/fixtures/crash-restore/run-ci-campaign.sh",
   "script_git_blob": "6537ee1543f50f9c0373049af13b192a3592f250",
-  "supported_matrix": ["15", "18"],
+  "supported_matrix": [
+    "15",
+    "18"
+  ],
   "matrix_note": "The two ends of the supported PostgreSQL 15-18 range. Evidence is required from both, exactly once each.",
   "database": {
     "image": "postgres:{major}",
@@ -35,7 +39,14 @@
     "installed_from": "the PGDG apt repository",
     "package": "postgresql-client-{major}"
   },
-  "command": ["cargo", "run", "--package", "oxide-batch-xtask", "--", "crash-restore"],
+  "command": [
+    "cargo",
+    "run",
+    "--package",
+    "oxide-batch-xtask",
+    "--",
+    "crash-restore"
+  ],
   "cargo_profile": "debug",
   "profile_note": "Debug, like every M5 campaign except performance, whose denominator requires release for figures comparable to release planning. The crash-restore campaign gates correctness — every commit phase killed a live process and recovered without a forged status, and every reused M2-M4 scenario still passes — not a duration, so nothing here depends on the profile.",
   "target_selection": {

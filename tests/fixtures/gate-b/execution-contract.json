@@ -3,11 +3,12 @@
   "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow is a thin provisioning and call layer, and its contract-check step fails closed when the workflow drifts from these values. Only the dedicated Gate B workflow is in this campaign's semantic closure, so unrelated quality or build changes in ci.yml do not invalidate retained Gate B evidence.",
   "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script moves the identity and fails the contract check, whether or not every literal field below still happens to read true. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
   "workflow_path": ".github/workflows/m6-gate-b.yml",
-  "workflow_git_blob": "5cf6f85989eb95606228fc11f8e2e78a58058c69",
+  "workflow_git_blob": "b5943de735c304764796d153012f8d61f535fc24",
   "workflow_name": "M6 Gate B Transaction/Restart Equivalence",
   "triggers": {
-    "pull_request": ["main"],
-    "push": ["main"],
+    "pull_request": [
+      "main"
+    ],
     "workflow_dispatch": true
   },
   "permissions": {
@@ -17,7 +18,10 @@
   "script": "./tests/fixtures/gate-b/run-ci-campaign.sh ${{ matrix.postgres }}",
   "script_path": "tests/fixtures/gate-b/run-ci-campaign.sh",
   "script_git_blob": "fba2f2abe3afd9f65079ef1b09d41a9d47931e66",
-  "supported_matrix": ["15", "18"],
+  "supported_matrix": [
+    "15",
+    "18"
+  ],
   "matrix_note": "The two ends of the supported PostgreSQL 15-18 release-blocking matrix. Evidence is required from both, exactly once each.",
   "database": {
     "image": "postgres:{major}",
@@ -27,7 +31,14 @@
     "port": 5432,
     "health_check": "pg_isready --username postgres --dbname oxide_batch_gate_b"
   },
-  "command": ["cargo", "run", "--package", "oxide-batch-xtask", "--", "gate-b"],
+  "command": [
+    "cargo",
+    "run",
+    "--package",
+    "oxide-batch-xtask",
+    "--",
+    "gate-b"
+  ],
   "cargo_profile": "debug",
   "profile_note": "Gate B gates correctness -- durable observation equivalence between the typed and Boxed representations -- not a duration, so nothing here depends on profile.",
   "target_selection": {

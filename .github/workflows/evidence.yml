@@ -18,8 +18,6 @@ name: Evidence
 # evidence check keeps its own, honest, red state until retention lands.
 
 on:
-  push:
-    branches: [main]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 

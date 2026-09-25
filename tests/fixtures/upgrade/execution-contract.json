@@ -3,11 +3,12 @@
   "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow is a thin provisioning and call layer, and its contract-check step fails closed when the workflow drifts from these values. Only the dedicated upgrade workflow is in this campaign's semantic closure, so unrelated quality or build changes in ci.yml do not invalidate retained upgrade evidence.",
   "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script — an added trigger, a job-level permission override, a widened matrix, a changed command, an appended line — moves the identity and fails the contract check, whether or not every literal field below still happens to read true. The literal fields exist for a readable diagnostic, not as the boundary. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
   "workflow_path": ".github/workflows/m5-upgrade.yml",
-  "workflow_git_blob": "2f0081b04b4c3f3f6ef86685ce37d877d014e7a6",
+  "workflow_git_blob": "694b31e4023601357c9e4127af5da7e8ef100f7c",
   "workflow_name": "M5 Upgrade",
   "triggers": {
-    "pull_request": ["main"],
-    "push": ["main"],
+    "pull_request": [
+      "main"
+    ],
     "workflow_dispatch": true
   },
   "permissions": {
@@ -17,7 +18,10 @@
   "script": "./tests/fixtures/upgrade/run-ci-campaign.sh ${{ matrix.postgres }}",
   "script_path": "tests/fixtures/upgrade/run-ci-campaign.sh",
   "script_git_blob": "f10774dc3a88644577159354cf44f79abbe3a62d",
-  "supported_matrix": ["15", "18"],
+  "supported_matrix": [
+    "15",
+    "18"
+  ],
   "matrix_note": "The two ends of the supported PostgreSQL 15-18 range. Evidence is required from both, exactly once each.",
   "database": {
     "image": "postgres:{major}",
@@ -46,7 +50,14 @@
     "installed_from": "the PGDG apt repository",
     "package": "postgresql-client-{major}"
   },
-  "command": ["cargo", "run", "--package", "oxide-batch-xtask", "--", "upgrade"],
+  "command": [
+    "cargo",
+    "run",
+    "--package",
+    "oxide-batch-xtask",
+    "--",
+    "upgrade"
+  ],
   "cargo_profile": "debug",
   "profile_note": "Debug, like every M5 campaign except performance, whose denominator requires release for figures comparable to release planning. The upgrade campaign gates correctness — every declared schema path was observed doing what the support contract promises — not a duration, so nothing here depends on the profile.",
   "target_selection": {
