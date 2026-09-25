@@ -6,16 +6,16 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "354b80bfff290e1c0a90337e7e46c3f7ca7eab5c",
+    "source_commit": "b98ed1f2049e4197454e7a0691d1b19d2b615c75",
     "source_tree_clean": true
   },
   "observation": {
     "execution_manifest": {
-      "execution_commit": "354b80bfff290e1c0a90337e7e46c3f7ca7eab5c",
+      "execution_commit": "b98ed1f2049e4197454e7a0691d1b19d2b615c75",
       "execution_commit_note": "The tree this run actually executed against; in CI this is the pull-request merge commit.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-        ".github/workflows/m6-conformance.yml": "8b576f7c91015ca0b1fa8a9ea99b76d7b23efb01",
+        ".github/workflows/m6-conformance.yml": "1e7bdc3bb396ccb2dc1df2d9c08d10939b6ec5e6",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-core/Cargo.toml": "ac0df0382dfc028d4c79e88257c558bebc3ab775",
         "crates/oxide-batch-core/src": "b94076fee2630ca682c1b8d6302ed4334b404998",
@@ -32,9 +32,9 @@
         "rust-toolchain.toml": "3caff2a7c8054117b0c69401d38fbb47ba2241a2",
         "tests/fixtures/m6-conformance/campaign-semantics.json": "43daa39e89cee46773c7f870b6cf8000d05e744b",
         "tests/fixtures/m6-conformance/dependency-closure.json": "8524d3d337b2863243827d2f465aee74c27258fe",
-        "tests/fixtures/m6-conformance/execution-contract.json": "df49c9ebecc9d05073e8278c84aeeba949961280",
+        "tests/fixtures/m6-conformance/execution-contract.json": "c1bc85fb893fd4262eb7a8d7fb02f5435ef635e5",
         "tests/fixtures/m6-conformance/run-ci-campaign.sh": "4de1cec80294d8f2b799ecf9e30c683f2b36f784",
-        "tests/fixtures/m6-conformance/verify-ci-contract.sh": "415db8ddfd8624eccad1510477af8b3ce6c532ea",
+        "tests/fixtures/m6-conformance/verify-ci-contract.sh": "09dd3c31835685f6cfbb3f7f9b231016f22c4621",
         "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
         "xtask/src/dependency_closure.rs": "f88c23a6c48623c2b8070ba93ac38aee600ee8c8",
         "xtask/src/evidence.rs": "bcbbada67e25aaacef13d447ae7d3fc709d736b2",

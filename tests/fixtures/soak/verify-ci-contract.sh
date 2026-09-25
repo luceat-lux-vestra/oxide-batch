@@ -47,7 +47,6 @@ test -f "${script_path}" || fail "campaign script is missing"
 
 require_literal "workflow name" "name: $(jq -er '.workflow_name' "${contract}")"
 require_literal "pull_request trigger" "  pull_request:"
-require_literal "push trigger" "  push:"
 require_literal "workflow_dispatch trigger" "  workflow_dispatch:"
 require_literal "pull_request main branch" "      - main"
 require_literal "contents permission" "  contents: read"

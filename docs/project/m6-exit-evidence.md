@@ -322,3 +322,12 @@ packaged artifacts, provenance, and post-publication consumers are verified.
 ## CI tier migration retention (PR #305)
 
 The CI tier migration changed scheduling/required-context wiring without relaxing campaign semantics. Fresh M6 retained evidence was independently promoted from successful PR #305 producer runs. The complete producer run set used by this retention is: `36084945066, 36086053875, 36084945084, 36084945105, 36084945049, 36084945173, 36084945042, 36084944998, 36084944996, 36084945053, 36084945082`. Each provenance entry records its own exact producer branch head, synthetic execution tree, job, artifact ID/digest/size, retained git blob, and remote byte-for-byte verification.
+
+
+## Final/post-merge CI dedup retention (PR #306)
+
+PR #306 removes `push: main` from Final/exhaustive validation producers without relaxing any declared campaign semantics. Because the dedicated campaign workflow and execution-contract bytes are part of each campaign's semantic closure, fresh PR #306 evidence was retained before merge rather than reusing PR #305 reports.
+
+The retained set contains 21 passing reports from exact producer branch HEAD `ad4534d1c07e59d76623321986a1db134eb5a9c3` and synthetic execution tree `b98ed1f2049e4197454e7a0691d1b19d2b615c75`. Every producer run/job succeeded, each Actions artifact archive SHA-256 matched the GitHub API digest, extracted report bytes were retained byte-for-byte, and the repository-wide retained-evidence policy plus offline provenance verifier both passed before retention. Exact run, job, artifact, digest, retained-blob, and remote-verification identities remain recorded per report in the M5/M6 provenance manifests.
+
+This documentation-only follow-up is outside every declared campaign semantic closure and exists to make the final PR HEAD produce a fresh synchronize/Final CI run after the one-shot retention commit.

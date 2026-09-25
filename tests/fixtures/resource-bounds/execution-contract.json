@@ -3,11 +3,12 @@
   "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow is a thin provisioning and call layer, and its contract-check step fails closed when the workflow drifts from these values. Only the dedicated resource-bounds workflow is in this campaign's semantic closure, so unrelated quality or build changes in ci.yml do not invalidate retained resource-bounds evidence.",
   "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script — an added trigger, a job-level permission override, a widened matrix, a changed command, an appended line, a max_connections override — moves the identity and fails the contract check, whether or not every literal field below still happens to read true. The literal fields exist for a readable diagnostic, not as the boundary. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
   "workflow_path": ".github/workflows/m5-resource-bounds.yml",
-  "workflow_git_blob": "8611b5f241a37ae76e04ae359f6c425f297fb93a",
+  "workflow_git_blob": "666c6f1d2d11fd1f1fd1f6aea866e301a5364502",
   "workflow_name": "M5 Resource Bounds",
   "triggers": {
-    "pull_request": ["main"],
-    "push": ["main"],
+    "pull_request": [
+      "main"
+    ],
     "workflow_dispatch": true
   },
   "permissions": {
@@ -17,7 +18,10 @@
   "script": "./tests/fixtures/resource-bounds/run-ci-campaign.sh ${{ matrix.postgres }}",
   "script_path": "tests/fixtures/resource-bounds/run-ci-campaign.sh",
   "script_git_blob": "e26138788c3d9e8d3be9f2af8ea1d3c691981d6e",
-  "supported_matrix": ["15", "18"],
+  "supported_matrix": [
+    "15",
+    "18"
+  ],
   "matrix_note": "The two ends of the supported PostgreSQL 15-18 range. Evidence is required from both, exactly once each.",
   "database": {
     "image": "postgres:{major}",
@@ -29,7 +33,14 @@
   },
   "no_max_connections_override": true,
   "no_max_connections_override_note": "The worker report saturates a partition budget of 64, which needs 65 connections plus the parent's own pool and the fixture's. The server image's default max_connections is enough; a -c max_connections=... override, or any equivalent server-capacity override, would make the campaign prove a ceiling the image does not otherwise offer, so the service configuration is itself part of what this evidence proves and the contract check rejects any such override appearing in the workflow.",
-  "command": ["cargo", "run", "--package", "oxide-batch-xtask", "--", "resource-bounds"],
+  "command": [
+    "cargo",
+    "run",
+    "--package",
+    "oxide-batch-xtask",
+    "--",
+    "resource-bounds"
+  ],
   "cargo_profile": "debug",
   "profile_note": "Debug, like every M5 campaign except performance, whose denominator requires release for figures comparable to release planning. The resource-bounds campaign gates correctness — every declared ceiling holds and every live ceiling is reached under stress — not a duration, so nothing here depends on the profile.",
   "target_selection": {
@@ -66,7 +77,12 @@
   "artifact_retention": "30 days, on success and on failure alike, because what a failed resource-bounds campaign is mostly worth reading for is which resource, which report, or which stress requirement it lost",
   "timeout_minutes": 45,
   "timeout_note": "The campaign's execution envelope is four reports proving 36 declared resources, a bounded workload rather than a whole-workspace suite. Still a ceiling: a campaign that stopped making progress must fail rather than occupy a runner.",
-  "required_reports": ["worker-assignment", "bounded-query-paths", "bounded-payloads", "bounded-shedding"],
+  "required_reports": [
+    "worker-assignment",
+    "bounded-query-paths",
+    "bounded-payloads",
+    "bounded-shedding"
+  ],
   "required_scenarios": [
     "declared_ceilings_hold_under_stress_with_backpressure",
     "bounded_query_paths_stay_bounded_as_history_grows",
@@ -74,6 +90,12 @@
     "bounded_queues_shed_under_overload_without_blocking_batch_work"
   ],
   "database_reports_must_self_identify_postgresql_major": true,
-  "database_reports": ["worker-assignment", "bounded-query-paths", "bounded-payloads"],
-  "database_free_reports": ["bounded-shedding"]
+  "database_reports": [
+    "worker-assignment",
+    "bounded-query-paths",
+    "bounded-payloads"
+  ],
+  "database_free_reports": [
+    "bounded-shedding"
+  ]
 }

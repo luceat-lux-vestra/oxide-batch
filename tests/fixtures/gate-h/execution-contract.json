@@ -3,11 +3,12 @@
   "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow is a thin provisioning and call layer, and its contract-check step fails closed when the workflow drifts from these values. Only the dedicated Gate H workflow is in this campaign's semantic closure, so unrelated quality or build changes in ci.yml do not invalidate retained Gate H evidence.",
   "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script moves the identity and fails the contract check, whether or not every literal field below still happens to read true. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
   "workflow_path": ".github/workflows/m6-gate-h.yml",
-  "workflow_git_blob": "6bd901a943b44f6ba1c759b2244e7552e6fbd5bc",
+  "workflow_git_blob": "e5ce7dc9a746085cf5dba3d33210b1a43da4e388",
   "workflow_name": "M6 Gate H P-002 Performance",
   "triggers": {
-    "pull_request": ["main"],
-    "push": ["main"],
+    "pull_request": [
+      "main"
+    ],
     "workflow_dispatch": true
   },
   "permissions": {
@@ -17,7 +18,14 @@
   "script": "./tests/fixtures/gate-h/run-ci-campaign.sh",
   "script_path": "tests/fixtures/gate-h/run-ci-campaign.sh",
   "script_git_blob": "1d1fece72f6363461471a15a417113798a8e1f11",
-  "command": ["cargo", "run", "--package", "oxide-batch-xtask", "--", "gate-h"],
+  "command": [
+    "cargo",
+    "run",
+    "--package",
+    "oxide-batch-xtask",
+    "--",
+    "gate-h"
+  ],
   "cargo_profile": "release",
   "profile_note": "The frozen P-002 protocol requires release profile: a debug-build throughput/latency figure is not comparable to anything release planning could use. This is the second M6/M5 campaign (after the M5 performance campaign) to run release rather than the workspace default debug.",
   "target_selection": {
