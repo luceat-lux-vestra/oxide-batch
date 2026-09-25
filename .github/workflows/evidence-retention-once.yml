@@ -1,0 +1,208 @@
+name: One-time retained evidence promotion
+
+on:
+  push:
+    branches:
+      - ci/reuse-exact-sha-evidence
+    paths:
+      - ".github/workflows/evidence-retention-once.yml"
+
+permissions: {}
+
+concurrency:
+  group: evidence-retention-once
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    if: github.repository == 'luceat-lux-vestra/oxide-batch' && github.ref == 'refs/heads/ci/reuse-exact-sha-evidence'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Check out promotion branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ci/reuse-exact-sha-evidence
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Promote and remotely verify fresh campaign artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import datetime, hashlib, json, os, pathlib, re, shutil, subprocess, tempfile, zipfile
+          
+          REPO = os.environ["GITHUB_REPOSITORY"]
+          RUNS = [{"id":36084945066,"artifacts":["cancellation-campaign-postgres-15","cancellation-campaign-postgres-18"]},{"id":36086053875,"artifacts":["conformance-campaign-postgres-15","conformance-campaign-postgres-18"]},{"id":36084945084,"artifacts":["crash-restore-campaign-postgres-15","crash-restore-campaign-postgres-18"]},{"id":36084945105,"artifacts":["performance-campaign-postgres-15","performance-campaign-postgres-18"]},{"id":36084945049,"artifacts":["resource-bounds-campaign-postgres-15","resource-bounds-campaign-postgres-18"]},{"id":36084945173,"artifacts":["security-campaign-postgres-15","security-campaign-postgres-18"]},{"id":36084945042,"artifacts":["soak-campaign-postgres-15","soak-campaign-postgres-18"]},{"id":36084944998,"artifacts":["upgrade-campaign-postgres-15","upgrade-campaign-postgres-18"]},{"id":36084944996,"artifacts":["gate-b-campaign-postgres-15","gate-b-campaign-postgres-18"]},{"id":36084945053,"artifacts":["gate-h-campaign"]},{"id":36084945082,"artifacts":["m6-conformance-campaign-postgres-15","m6-conformance-campaign-postgres-18"]}]
+          M6 = {"gate-b-campaign-postgres-15","gate-b-campaign-postgres-18","gate-h-campaign","m6-conformance-campaign-postgres-15","m6-conformance-campaign-postgres-18"}
+          ROOT = pathlib.Path(".")
+          M5_PROV = ROOT / "docs/engineering/campaigns/m5/evidence-provenance.json"
+          M6_PROV = ROOT / "docs/engineering/campaigns/m6/evidence-provenance.json"
+          
+          def gh_json(path):
+              return json.loads(subprocess.check_output(["gh","api",path], text=True))
+          
+          def load(path):
+              return json.loads(path.read_text())
+          
+          def save(path, obj):
+              path.write_text(json.dumps(obj, indent=2) + "\n")
+          
+          provs = {"m5": load(M5_PROV), "m6": load(M6_PROV)}
+          entries = {}
+          for milestone, prov in provs.items():
+              for entry in prov["evidence"]:
+                  key = entry["report"]
+                  if key in entries:
+                      raise SystemExit(f"duplicate provenance report {key}")
+                  entries[key] = (milestone, entry)
+          
+          expected = {name for group in RUNS for name in group['artifacts']}
+          if len(expected) != 21:
+              raise SystemExit(f"expected 21 artifacts, got {len(expected)}")
+          
+          verified_at = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00","Z")
+          seen = set()
+          
+          with tempfile.TemporaryDirectory() as td:
+              tmp = pathlib.Path(td)
+              for group in RUNS:
+                  run_id = group['id']
+                  run = gh_json(f"repos/{REPO}/actions/runs/{run_id}")
+                  if run.get("status") != "completed" or run.get("conclusion") != "success":
+                      raise SystemExit(f"run {run_id} is not successful: {run.get('status')}/{run.get('conclusion')}")
+                  if run.get("event") != "pull_request":
+                      raise SystemExit(f"run {run_id} is not a pull_request producer")
+                  branch_head = run.get("head_sha")
+                  if not isinstance(branch_head, str) or not re.fullmatch(r"[0-9a-f]{40}", branch_head):
+                      raise SystemExit(f"run {run_id} has invalid head_sha {branch_head!r}")
+                  artifacts = gh_json(f"repos/{REPO}/actions/runs/{run_id}/artifacts?per_page=100")["artifacts"]
+                  by_name = {a["name"]: a for a in artifacts}
+                  jobs = gh_json(f"repos/{REPO}/actions/runs/{run_id}/jobs?per_page=100")["jobs"]
+                  for artifact_name in group["artifacts"]:
+                      if artifact_name in seen:
+                          raise SystemExit(f"artifact selected twice: {artifact_name}")
+                      seen.add(artifact_name)
+                      artifact = by_name.get(artifact_name)
+                      if artifact is None or artifact.get("expired"):
+                          raise SystemExit(f"missing/expired artifact {artifact_name} in run {run_id}")
+                      report_name = artifact_name + ".json"
+                      if report_name not in entries:
+                          raise SystemExit(f"no provenance entry for {report_name}")
+                      milestone, entry = entries[report_name]
+                      expected_milestone = "m6" if artifact_name in M6 else "m5"
+                      if milestone != expected_milestone:
+                          raise SystemExit(f"milestone mismatch for {report_name}: {milestone} vs {expected_milestone}")
+                      expected_job = entry["producing_job"]["name"]
+                      matches = [j for j in jobs if j.get("name") == expected_job]
+                      if len(matches) != 1 or matches[0].get("conclusion") != "success":
+                          raise SystemExit(f"producer job mismatch for {report_name}: {[(j.get('name'),j.get('conclusion')) for j in matches]}")
+                      job = matches[0]
+                      zip_path = tmp / (artifact_name + ".zip")
+                      with zip_path.open("wb") as fh:
+                          subprocess.run(["gh","api",f"repos/{REPO}/actions/artifacts/{artifact['id']}/zip"], stdout=fh, check=True)
+                      digest = "sha256:" + hashlib.sha256(zip_path.read_bytes()).hexdigest()
+                      if digest != artifact.get("digest"):
+                          raise SystemExit(f"artifact digest mismatch for {artifact_name}: {digest} != {artifact.get('digest')}")
+                      with zipfile.ZipFile(zip_path) as zf:
+                          files = [i for i in zf.infolist() if not i.is_dir()]
+                          if len(files) != 1:
+                              raise SystemExit(f"{artifact_name} contains {len(files)} files, expected exactly one")
+                          report_bytes = zf.read(files[0])
+                      report = json.loads(report_bytes)
+                      violations = report.get("violations")
+                      if violations is not None and violations != []:
+                          raise SystemExit(f"{artifact_name} reports violations: {violations}")
+                      if "passed" in report and report["passed"] is not True:
+                          raise SystemExit(f"{artifact_name} is not passed")
+                      env = report.get("environment") or {}
+                      manifest = ((report.get("observation") or {}).get("execution_manifest") or {})
+                      execution_commit = env.get("source_commit")
+                      if execution_commit != manifest.get("execution_commit") or not re.fullmatch(r"[0-9a-f]{40}", execution_commit or ""):
+                          raise SystemExit(f"{artifact_name} execution commit disagreement")
+                      if env.get("source_tree_clean") is not True or manifest.get("tree_clean") is not True:
+                          raise SystemExit(f"{artifact_name} does not bind a clean tree")
+                      target_dir = ROOT / f"docs/engineering/campaigns/{milestone}"
+                      target = target_dir / report_name
+                      target.write_bytes(report_bytes)
+                      retained_blob = subprocess.check_output(["git","hash-object",str(target)], text=True).strip()
+                      entry["matrix_point"] = env.get("matrix")
+                      if report.get("postgresql_major_version") is not None:
+                          entry["postgres_major_version"] = str(report["postgresql_major_version"])
+                      entry["producer"]["execution_commit"] = execution_commit
+                      entry["producer"]["execution_commit_note"] = "Exact PR #305 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification."
+                      entry["producer"]["branch_head_sha"] = branch_head
+                      entry["producer"]["branch_head_note"] = "Exact PR #305 source candidate that triggered the successful producer run; recorded separately from the synthetic execution tree."
+                      entry["producer"]["source_tree_clean"] = True
+                      entry["producer"]["rustc"] = env.get("rustc")
+                      entry["producer"]["os"] = env.get("os")
+                      entry["producer"]["arch"] = env.get("arch")
+                      entry["workflow_run"]["workflow"] = run.get("name")
+                      entry["workflow_run"]["id"] = run_id
+                      entry["workflow_run"]["attempt"] = run.get("run_attempt")
+                      entry["workflow_run"]["event"] = run.get("event")
+                      entry["workflow_run"]["conclusion"] = run.get("conclusion")
+                      entry["producing_job"]["id"] = job["id"]
+                      entry["producing_job"]["conclusion"] = job.get("conclusion")
+                      entry["artifact"]["name"] = artifact_name
+                      entry["artifact"]["id"] = artifact["id"]
+                      entry["artifact"]["digest"] = artifact["digest"]
+                      entry["artifact"]["size_bytes"] = artifact["size_in_bytes"]
+                      entry["retained_report_git_blob"] = retained_blob
+                      entry["remote_verification"] = {
+                          "verified": True,
+                          "verified_at": verified_at,
+                          "run_id": run_id,
+                          "workflow_run_identity": True,
+                          "workflow_run_conclusion": True,
+                          "producing_job_identity": True,
+                          "producing_job_conclusion": True,
+                          "artifact_digest": True,
+                          "artifact_bytes_match_retained_report": True,
+                          "execution_commit_matches_report": True,
+                          "note": "PR #305 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
+                      }
+          
+          if seen != expected:
+              raise SystemExit(f"artifact set mismatch missing={sorted(expected-seen)} extra={sorted(seen-expected)}")
+          
+          save(M5_PROV, provs['m5'])
+          save(M6_PROV, provs['m6'])
+          
+          run_summary = ", ".join(str(g["id"]) for g in RUNS)
+          for doc_path, marker, label in [
+              (ROOT/"docs/project/m5-campaign-evidence.md", "## CI tier migration retention (PR #305)", "M5"),
+              (ROOT/"docs/project/m6-exit-evidence.md", "## CI tier migration retention (PR #305)", "M6"),
+          ]:
+              text = doc_path.read_text()
+              if marker not in text:
+                  text += f"\n\n{marker}\n\nThe CI tier migration changed scheduling/required-context wiring without relaxing campaign semantics. Fresh {label} retained evidence was independently promoted from successful PR #305 producer runs. The complete producer run set used by this retention is: `{run_summary}`. Each provenance entry records its own exact producer branch head, synthetic execution tree, job, artifact ID/digest/size, retained git blob, and remote byte-for-byte verification.\n"
+                  doc_path.write_text(text)
+          
+          print(f"retained {len(seen)} verified reports")
+          PY
+
+      - name: Verify retained evidence locally
+        run: |
+          set -euo pipefail
+          cargo run --package oxide-batch-xtask --bin retained_evidence_policy
+          cargo fetch --locked
+          cargo run --package oxide-batch-xtask -- evidence
+
+      - name: Commit retention
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/engineering/campaigns/m5 docs/engineering/campaigns/m6 docs/project/m5-campaign-evidence.md docs/project/m6-exit-evidence.md
+          if git diff --cached --quiet; then
+            echo "::error::Retention produced no tracked changes."
+            exit 1
+          fi
+          git commit -m "ci: retain refreshed campaign evidence"
+          git push origin HEAD:ci/reuse-exact-sha-evidence
