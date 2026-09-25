@@ -60,7 +60,9 @@ require_literal "timeout" "timeout-minutes: $(jq -er '.timeout_minutes' "${contr
 require_literal "campaign script" "run: $(expand_matrix "$(jq -er '.script' "${contract}")")"
 require_literal "report path" "path: $(jq -er '.report_path' "${contract}")"
 require_literal "artifact name" "name: $(expand_matrix "$(jq -er '.artifact_name' "${contract}")")"
-require_literal "failure retention" "if: always()"
+require_literal "draft placeholder" "M5 conformance is deferred until the pull request is ready for review"
+require_literal "final-only campaign" "if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}"
+require_literal "failure retention" "if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}"
 require_literal "missing report failure" "if-no-files-found: error"
 
 while IFS=$'\t' read -r key value; do
