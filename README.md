@@ -156,6 +156,8 @@ Completed implementation milestones:
 - **M5 — Embedded Core Production Preview** (`0.5.0`)
 - **M6 — Complete Item Processing and User Test Kit** (`0.6.0`)
 
+Current development is **M7 — Advanced Flow, Scope, Repeat, and Composition**. The design gate, nested/split-flow slice, and job/step-scope slice are implemented on `main`; repeat/interceptor integration, definition evolution, and launcher/operator semantics remain active work. M7 is unreleased and does not change the published `0.6.0`/M6 support baseline. See the [roadmap](docs/roadmap.md) for the authoritative milestone contract.
+
 The detailed exit evidence, compatibility ledger, failure campaigns, and milestone records intentionally live under `docs/` rather than in this landing page.
 
 Start with:
