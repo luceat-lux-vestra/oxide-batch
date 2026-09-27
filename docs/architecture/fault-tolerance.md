@@ -2,17 +2,18 @@
 
 **State:** Accepted
 
-**Scope:** The bounded, single-threaded M3 chunk runtime on the current
-ADR-0002 boxed component boundary.
+**Scope:** The M3 fault-tolerance semantics originally established on the
+bounded, single-threaded ADR-0002 chunk/component boundary.
 
 This document is the canonical owner for M3 retry, backoff, skip,
 rollback/no-rollback, stable failure classification, and item/retry/skip
-listener behavior. The complete component model is decided
-([RFC-0005](../rfcs/0005-static-and-erased-components.md), accepted
-2026-08-03 and recorded as
-[ADR-0008](decisions/0008-item-component-contract.md)) but not yet
-implemented in production; that migration is M6 scope, starting with
-[#143](https://github.com/luceat-lux-vestra/oxide-batch/issues/143).
+listener behavior. The complete item-component model was later accepted by
+[RFC-0005](../rfcs/0005-static-and-erased-components.md) and
+[ADR-0008](decisions/0008-item-component-contract.md), implemented through M6,
+and published in `0.6.0`. The current component/lifecycle structure is owned by
+the [item-processing model](item-processing-model.md); this document remains the
+authority for the M3 fault semantics rather than freezing the superseded
+component shape.
 
 ## Compatibility baseline and deliberate differences
 
