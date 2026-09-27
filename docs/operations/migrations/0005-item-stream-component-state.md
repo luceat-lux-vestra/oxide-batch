@@ -1,7 +1,7 @@
 # Schema 4 Item-Stream Component-State Migration
 
-**State:** Candidate release guidance for `oxide-batch` `0.6.0`; not yet
-published
+**State:** Released guidance for `oxide-batch` `0.6.0` (published
+2026-08-31)
 
 **Source schema:** `3`
 
