@@ -57,14 +57,13 @@ The trusted-classifier foundation is already on `main`. The current migration st
 
 ## PostgreSQL aggregate decision
 
-#223 evaluated all eleven current `postgres-*` required contexts rather than assuming that every PostgreSQL-looking check should be hidden behind one cosmetic status.
+#223 originally evaluated all eleven then-current `postgres-*` required contexts rather than assuming that every PostgreSQL-looking check should be hidden behind one cosmetic status. #323 later retired the completed M0 `postgres-spike` experiment from merge-time CI after its production invariants had moved to the repository/crash-recovery suites.
 
-The accepted boundary is one native GitHub Actions aggregate context, `postgresql`, over the nine PostgreSQL jobs emitted by `.github/workflows/ci.yml`:
+The accepted current boundary is one native GitHub Actions aggregate context, `postgresql`, over the eight production PostgreSQL jobs emitted by `.github/workflows/ci.yml`:
 
 - four PostgreSQL design-gate matrix contexts;
-- two item-component matrix contexts;
-- two repository matrix contexts; and
-- `postgres-spike`.
+- two item-component matrix contexts; and
+- two repository matrix contexts.
 
 The two M5 conformance contexts remain independently required:
 
@@ -85,13 +84,13 @@ The job uses `if: ${{ always() }}` so it still executes after a failed/cancelled
 
 ### Why raw `needs.<job>.result` is not selective-rerun-safe
 
-The aggregate's four `needs` job ids each back a matrix (four PostgreSQL versions for the design gate, two each for item-components and repository). GitHub Actions' `needs.<job-id>.result` collapses an entire matrix job into a single result for the *current* workflow attempt. When a PR author uses "re-run failed jobs" to rerun only one failed matrix child (say, `postgres-15-design-gate`), GitHub bumps the run's `run_attempt` and re-executes only that child and its dependents (including the aggregate); a sibling matrix child that was never rerun (say, `postgres-18-design-gate`) keeps its result from the earlier, lower `run_attempt`. A workflow-level `needs.postgres-design-gate.result` check re-evaluated on the new attempt cannot see per-matrix-child history closely enough to distinguish "every canonical context's latest execution succeeded" from "the matrix job merely ran again" — it can read back a success even though an unrepaired sibling failure from an earlier attempt is still the last word for that context. A raw `needs.*.result == success` check is therefore not sufficient on its own to prove every one of the nine canonical PostgreSQL contexts is actually green.
+The aggregate's four `needs` job ids each back a matrix (four PostgreSQL versions for the design gate, two each for item-components and repository). GitHub Actions' `needs.<job-id>.result` collapses an entire matrix job into a single result for the *current* workflow attempt. When a PR author uses "re-run failed jobs" to rerun only one failed matrix child (say, `postgres-15-design-gate`), GitHub bumps the run's `run_attempt` and re-executes only that child and its dependents (including the aggregate); a sibling matrix child that was never rerun (say, `postgres-18-design-gate`) keeps its result from the earlier, lower `run_attempt`. A workflow-level `needs.postgres-design-gate.result` check re-evaluated on the new attempt cannot see per-matrix-child history closely enough to distinguish "every canonical context's latest execution succeeded" from "the matrix job merely ran again" — it can read back a success even though an unrepaired sibling failure from an earlier attempt is still the last word for that context. A raw `needs.*.result == success` check is therefore not sufficient on its own to prove every one of the eight canonical PostgreSQL contexts is actually green.
 
 ### How the aggregate proves it instead
 
 The final authority is `.github/scripts/evaluate-aggregate-run.rb`, invoked as the aggregate producer's only substantive step. It:
 
-1. Reads the nine canonical member context names exclusively from `merge-gate-policy.json`'s `postgresql` aggregate entry — there is no second, manually duplicated list of the nine names anywhere in the workflow or scripts.
+1. Reads the eight canonical member context names exclusively from `merge-gate-policy.json`'s `postgresql` aggregate entry — there is no second, manually duplicated list of the nine names anywhere in the workflow or scripts.
 2. Calls the GitHub Actions Jobs API (`GET /repos/{owner}/{repo}/actions/runs/{run_id}/jobs?filter=all&per_page=100`, paginated to exhaustion) to read every job execution recorded for the current run, across **every** workflow attempt — `filter=all`, not `filter=latest`, because a `latest`-only read would miss exactly the un-rerun sibling's earlier execution.
 3. For each canonical member context independently, matches Jobs API entries by exact job `name`, finds that member's own maximum `run_attempt`, and requires that one specific execution to be `status == "completed"` and `conclusion == "success"`.
 
@@ -192,7 +191,7 @@ The current expected required contexts are exactly:
 as advisory. Its absence from this list is not evidence that Rust is unsupported
 or unscanned.
 
-The nine Rust PostgreSQL child jobs continue to run as aggregate members; only their direct ruleset surface is replaced. The two conformance contexts continue to run and remain directly required as independent evidence authority.
+The eight production Rust PostgreSQL child jobs continue to run as aggregate members; only their direct ruleset surface is replaced. The historical M0 PostgreSQL spike remains reproducible source evidence but is no longer a merge-time aggregate member. The two conformance contexts continue to run and remain directly required as independent evidence authority.
 
 #233 may compose this verifier for scheduled hardening drift auditing. Advisory Rust CodeQL remains outside direct merge authority until a separate explicit policy migration promotes it.
 
