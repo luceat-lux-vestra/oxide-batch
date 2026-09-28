@@ -645,7 +645,7 @@ class MergeGateVerifierTest < Minitest::Test
   def test_campaign_orchestrator_missing_advisory_producer_is_rejected
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/campaign-orchestrator.yml')
-      block = "  m5_soak:\n    if: ${{ github.event.pull_request.draft == false }}\n    uses: ./.github/workflows/m5-soak.yml\n\n"
+      block = "  m5_soak:\n    if: ${{ github.event.pull_request.draft == false }}\n    uses: ./.github/workflows/m5-soak.yml\n"
       original = File.read(path)
       body = original.sub(block, '')
       refute_equal original, body
