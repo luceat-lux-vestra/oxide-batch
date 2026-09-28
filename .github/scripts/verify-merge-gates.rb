@@ -303,7 +303,8 @@ module MergeGateVerifier
   CAMPAIGN_ROUTE_JOB = 'route'
   CAMPAIGN_ROUTE_CLASSIFY_STEP = 'classify'
   CAMPAIGN_ROUTE_CHECKOUT_STEP = 'trusted-base'
-  M5_CONFORMANCE_DEEP_JOB = 'conformance-deep'
+  M5_CONFORMANCE_SHARD_JOBS = {'15' => 'conformance-shard-15', '18' => 'conformance-shard-18'}.freeze
+  M5_CONFORMANCE_DEEP_JOBS = {'15' => 'conformance-deep-15', '18' => 'conformance-deep-18'}.freeze
   M5_CONFORMANCE_CONTEXT_JOB = 'conformance-campaign'
   QUALITY_WORKFLOW = '.github/workflows/ci.yml'
   QUALITY_AGGREGATE_JOB = 'quality'
@@ -599,24 +600,104 @@ module MergeGateVerifier
       expected_if: "${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}"
     ))
 
-    deep = jobs[M5_CONFORMANCE_DEEP_JOB]
-    unless deep.is_a?(Hash)
-      violations << "#{M5_CONFORMANCE_WORKFLOW} must declare #{M5_CONFORMANCE_DEEP_JOB}"
-    else
-      violations << "#{M5_CONFORMANCE_WORKFLOW} deep job must be advisory" unless job_policy(policy, M5_CONFORMANCE_WORKFLOW, M5_CONFORMANCE_DEEP_JOB).first == 'advisory'
-      violations << "#{M5_CONFORMANCE_WORKFLOW} deep job must depend only on the trusted route" unless normalize_needs(deep) == [CAMPAIGN_ROUTE_JOB]
-      expected_if = "${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-conformance.yml')))) }}"
+    expected_if = "${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-conformance.yml')))) }}"
+
+    if jobs.key?('conformance-deep')
+      violations << "#{M5_CONFORMANCE_WORKFLOW} must not retain the obsolete unsharded conformance-deep job"
+    end
+
+    M5_CONFORMANCE_SHARD_JOBS.each do |major, job_id|
+      shard = jobs[job_id]
+      unless shard.is_a?(Hash)
+        violations << "#{M5_CONFORMANCE_WORKFLOW} must declare #{job_id}"
+        next
+      end
+      unless job_policy(policy, M5_CONFORMANCE_WORKFLOW, job_id).first == 'advisory'
+        violations << "#{M5_CONFORMANCE_WORKFLOW} #{job_id} must remain advisory"
+      end
+      unless normalize_needs(shard) == [CAMPAIGN_ROUTE_JOB]
+        violations << "#{M5_CONFORMANCE_WORKFLOW} #{job_id} must depend only on the trusted route"
+      end
+      unless normalized_shell(shard['if']) == normalized_shell(expected_if)
+        violations << "#{M5_CONFORMANCE_WORKFLOW} #{job_id} must run for manual/direct proof and fail closed on routing ambiguity"
+      end
+      expected_name = "deep-postgres-#{major}-conformance-shard-${{ matrix.shard }}"
+      unless shard['name'] == expected_name
+        violations << "#{M5_CONFORMANCE_WORKFLOW} #{job_id} must keep the internal shard context name"
+      end
+      unless shard.dig('strategy', 'matrix', 'shard') == [0, 1]
+        violations << "#{M5_CONFORMANCE_WORKFLOW} #{job_id} must retain the exact two-way shard matrix [0, 1]"
+      end
+      unless shard.dig('services', 'postgres').is_a?(Hash)
+        violations << "#{M5_CONFORMANCE_WORKFLOW} #{job_id} must own PostgreSQL service provisioning"
+      end
+      body = Array(shard['steps']).filter_map { |step| step.is_a?(Hash) ? step['run'] : nil }.join("\n")
+      required_tokens = [
+        "./tests/fixtures/conformance/verify-ci-contract.sh .github/workflows/m5-conformance.yml",
+        "./tests/fixtures/conformance/run-ci-campaign.sh #{major} ${{ matrix.shard }} 2"
+      ]
+      missing = required_tokens.reject { |token| body.include?(token) }
+      unless missing.empty?
+        violations << "#{M5_CONFORMANCE_WORKFLOW} #{job_id} is missing shard proof commands: #{missing.join(', ')}"
+      end
+      upload = Array(shard['steps']).find do |step|
+        step.is_a?(Hash) && step.dig('with', 'name') == "conformance-shard-postgres-#{major}-${{ matrix.shard }}"
+      end
+      unless upload.is_a?(Hash) &&
+             upload.dig('with', 'path') == 'target/m5-campaigns/conformance-shard-${{ matrix.shard }}.json' &&
+             upload.dig('with', 'if-no-files-found') == 'error'
+        violations << "#{M5_CONFORMANCE_WORKFLOW} #{job_id} must retain each shard report fail closed"
+      end
+    end
+
+    M5_CONFORMANCE_DEEP_JOBS.each do |major, job_id|
+      shard_job = M5_CONFORMANCE_SHARD_JOBS.fetch(major)
+      deep = jobs[job_id]
+      unless deep.is_a?(Hash)
+        violations << "#{M5_CONFORMANCE_WORKFLOW} must declare #{job_id}"
+        next
+      end
+      unless job_policy(policy, M5_CONFORMANCE_WORKFLOW, job_id).first == 'advisory'
+        violations << "#{M5_CONFORMANCE_WORKFLOW} #{job_id} must remain advisory"
+      end
+      unless normalize_needs(deep).sort == [CAMPAIGN_ROUTE_JOB, shard_job].sort
+        violations << "#{M5_CONFORMANCE_WORKFLOW} #{job_id} must depend on routing and only its PostgreSQL shard family"
+      end
       unless normalized_shell(deep['if']) == normalized_shell(expected_if)
-        violations << "#{M5_CONFORMANCE_WORKFLOW} deep job must run for manual/direct proof and fail closed on routing ambiguity"
+        violations << "#{M5_CONFORMANCE_WORKFLOW} #{job_id} must run for manual/direct proof and fail closed on routing ambiguity"
       end
-      unless deep['name'] == 'deep-postgres-${{ matrix.postgres }}-conformance-campaign'
-        violations << "#{M5_CONFORMANCE_WORKFLOW} deep job must not reuse required context names"
+      unless deep['name'] == "deep-postgres-#{major}-conformance-campaign"
+        violations << "#{M5_CONFORMANCE_WORKFLOW} #{job_id} must not reuse required context names"
       end
-      unless deep.dig('strategy', 'matrix', 'postgres') == ['15', '18']
-        violations << "#{M5_CONFORMANCE_WORKFLOW} deep job must retain PostgreSQL 15/18 matrix"
+      if deep.key?('services')
+        violations << "#{M5_CONFORMANCE_WORKFLOW} #{job_id} canonical merge must not provision PostgreSQL"
       end
-      unless deep.dig('services', 'postgres').is_a?(Hash)
-        violations << "#{M5_CONFORMANCE_WORKFLOW} deep job must own PostgreSQL service provisioning"
+      steps = Array(deep['steps'])
+      download = steps.find do |step|
+        step.is_a?(Hash) &&
+          step.dig('with', 'pattern') == "conformance-shard-postgres-#{major}-*"
+      end
+      unless download.is_a?(Hash) &&
+             download.dig('with', 'path') == 'target/m5-campaign-shards' &&
+             download.dig('with', 'merge-multiple') == true
+        violations << "#{M5_CONFORMANCE_WORKFLOW} #{job_id} must download and merge the complete shard artifact family"
+      end
+      body = steps.filter_map { |step| step.is_a?(Hash) ? step['run'] : nil }.join("\n")
+      required_tokens = [
+        "./tests/fixtures/conformance/verify-ci-contract.sh .github/workflows/m5-conformance.yml",
+        "bash ./tests/fixtures/conformance/merge-ci-campaign.sh #{major} 2 target/m5-campaign-shards"
+      ]
+      missing = required_tokens.reject { |token| body.include?(token) }
+      unless missing.empty?
+        violations << "#{M5_CONFORMANCE_WORKFLOW} #{job_id} is missing canonical merge commands: #{missing.join(', ')}"
+      end
+      upload = steps.find do |step|
+        step.is_a?(Hash) && step.dig('with', 'name') == "conformance-campaign-postgres-#{major}"
+      end
+      unless upload.is_a?(Hash) &&
+             upload.dig('with', 'path') == 'target/m5-campaigns/conformance-campaign.json' &&
+             upload.dig('with', 'if-no-files-found') == 'error'
+        violations << "#{M5_CONFORMANCE_WORKFLOW} #{job_id} must retain one canonical report"
       end
     end
 
@@ -625,8 +706,9 @@ module MergeGateVerifier
       violations << "#{M5_CONFORMANCE_WORKFLOW} must declare #{M5_CONFORMANCE_CONTEXT_JOB}"
     else
       violations << "#{M5_CONFORMANCE_WORKFLOW} context emitter must remain required" unless job_policy(policy, M5_CONFORMANCE_WORKFLOW, M5_CONFORMANCE_CONTEXT_JOB).first == 'required'
-      unless normalize_needs(emitter).sort == [CAMPAIGN_ROUTE_JOB, M5_CONFORMANCE_DEEP_JOB].sort
-        violations << "#{M5_CONFORMANCE_WORKFLOW} context emitter must depend on routing and deep proof"
+      expected_needs = [CAMPAIGN_ROUTE_JOB] + M5_CONFORMANCE_DEEP_JOBS.values
+      unless normalize_needs(emitter).sort == expected_needs.sort
+        violations << "#{M5_CONFORMANCE_WORKFLOW} context emitter must depend on routing and both per-PostgreSQL canonical proofs"
       end
       violations << "#{M5_CONFORMANCE_WORKFLOW} context emitter must use always()" unless always_condition?(emitter['if'])
       unless emitter['name'] == 'postgres-${{ matrix.postgres }}-conformance-campaign'
@@ -638,13 +720,26 @@ module MergeGateVerifier
       if emitter.key?('services')
         violations << "#{M5_CONFORMANCE_WORKFLOW} required context emitter must not declare services"
       end
+      env = Array(emitter['steps']).find { |step| step.is_a?(Hash) && step['name'] == 'Emit required conformance context' }&.fetch('env', {})
+      expected_bindings = {
+        'POSTGRES' => '${{ matrix.postgres }}',
+        'DEEP_15_RESULT' => '${{ needs.conformance-deep-15.result }}',
+        'DEEP_18_RESULT' => '${{ needs.conformance-deep-18.result }}'
+      }
+      expected_bindings.each do |key, value|
+        unless env[key] == value
+          violations << "#{M5_CONFORMANCE_WORKFLOW} context emitter must bind #{key} to #{value}"
+        end
+      end
       emitter_run = Array(emitter['steps']).filter_map { |step| step.is_a?(Hash) ? step['run'] : nil }.join("\n")
       required_tokens = [
         'M5 conformance is deferred until the pull request is ready for review',
         'ROUTE_RESULT',
         'CLASSIFICATION_OUTCOME',
         'DIRECT_REQUIRED',
-        'DEEP_RESULT',
+        'case "$POSTGRES" in',
+        'DEEP_RESULT="$DEEP_15_RESULT"',
+        'DEEP_RESULT="$DEEP_18_RESULT"',
         '!= "success"',
         '!= "skipped"'
       ]
