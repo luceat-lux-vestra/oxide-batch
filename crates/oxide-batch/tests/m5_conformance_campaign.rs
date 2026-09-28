@@ -920,6 +920,10 @@ fn the_canonical_contract_describes_the_real_producer_behavior() -> Result<(), B
         "canonical merge no longer rejects duplicated documentation proof from another shard",
     );
     assert!(
+        producer.contains("\"documentation_tests_passed\": suite.documentation"),
+        "shard reports must preserve None for non-owner documentation evidence instead of          serializing it as false and forging duplicate ownership",
+    );
+    assert!(
         producer.contains("violations.extend(reconcile(&scope, &merged));"),
         "the 133-scenario reconciliation must remain after exact-cover shard merge",
     );
