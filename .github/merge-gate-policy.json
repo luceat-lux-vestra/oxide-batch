@@ -121,9 +121,7 @@
       ]
     }
   ],
-  "pending_ruleset_contexts": [
-    "merge-gate"
-  ],
+  "pending_ruleset_contexts": [],
   "pr_scope": {
     "docs_only": {
       "exact_paths": [
@@ -158,7 +156,7 @@
   },
   "repository_merge_gate": {
     "context": "merge-gate",
-    "state": "cutover",
+    "state": "active",
     "producer": {
       "workflow": ".github/workflows/pr-labeler.yml",
       "job": "merge-gate"
