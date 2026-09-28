@@ -218,10 +218,10 @@
       "postgres_major_version": "15",
       "server_version": null,
       "producer": {
-        "execution_commit": "b98ed1f2049e4197454e7a0691d1b19d2b615c75",
-        "execution_commit_note": "Exact PR #306 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "ad4534d1c07e59d76623321986a1db134eb5a9c3",
-        "branch_head_note": "Exact PR #306 source candidate that triggered the successful producer run; recorded separately from the synthetic execution tree.",
+        "execution_commit": "cb5cdf8b23eddb503b4fd859714b26d6bbca603c",
+        "execution_commit_note": "Exact PR #339 synthetic merge execution tree recorded by the successful deep producer report; object-manifest identities are the authority for later local verification.",
+        "branch_head_sha": "1c7693341d8e740ec78b6a90a213163bb6bb68bd",
+        "branch_head_note": "Exact PR #339 source candidate that triggered the successful producer run; recorded separately from the synthetic execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
         "os": "linux",
@@ -230,27 +230,27 @@
       "workflow_run": {
         "workflow": "M5 Conformance",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 36094533232,
+        "id": 36461176852,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
-        "name": "postgres-15-conformance-campaign",
-        "id": 107943889150,
+        "name": "deep-postgres-15-conformance-campaign",
+        "id": 109059891004,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-15",
-        "id": 10847451265,
-        "digest": "sha256:3473e456acf5dfea2ea384f83449ed84b76ba2bdcd00f8adac42910f9467b801",
-        "size_bytes": 7171
+        "id": 10987667300,
+        "digest": "sha256:b95b3d66fbb3ae3f741234f9c1069306ed985e309c18cfa3293c51ce67259a6b",
+        "size_bytes": 7173
       },
-      "retained_report_git_blob": "ec0d6509ffb3b70eb332b9cbac6b079118ed0998",
+      "retained_report_git_blob": "e2daf622a6193704a41982a556663399bef47322",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-25T06:00:49Z",
-        "run_id": 36094533232,
+        "verified_at": "2026-09-28T21:06:47Z",
+        "run_id": 36461176852,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -258,7 +258,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "PR #306 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
+        "note": "PR #339 successful deep M5 Conformance artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis, and execution commit were verified before targeted #340 retention. Comparing the producer execution tree with current main changes only .github/merge-gate-policy.json, which is outside the declared M5 Conformance semantic closure."
       }
     },
     {
@@ -268,10 +268,10 @@
       "postgres_major_version": "18",
       "server_version": null,
       "producer": {
-        "execution_commit": "b98ed1f2049e4197454e7a0691d1b19d2b615c75",
-        "execution_commit_note": "Exact PR #306 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "ad4534d1c07e59d76623321986a1db134eb5a9c3",
-        "branch_head_note": "Exact PR #306 source candidate that triggered the successful producer run; recorded separately from the synthetic execution tree.",
+        "execution_commit": "cb5cdf8b23eddb503b4fd859714b26d6bbca603c",
+        "execution_commit_note": "Exact PR #339 synthetic merge execution tree recorded by the successful deep producer report; object-manifest identities are the authority for later local verification.",
+        "branch_head_sha": "1c7693341d8e740ec78b6a90a213163bb6bb68bd",
+        "branch_head_note": "Exact PR #339 source candidate that triggered the successful producer run; recorded separately from the synthetic execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
         "os": "linux",
@@ -280,27 +280,27 @@
       "workflow_run": {
         "workflow": "M5 Conformance",
         "workflow_file": ".github/workflows/m5-conformance.yml",
-        "id": 36094533232,
+        "id": 36461176852,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
-        "name": "postgres-18-conformance-campaign",
-        "id": 107943889079,
+        "name": "deep-postgres-18-conformance-campaign",
+        "id": 109059890999,
         "conclusion": "success"
       },
       "artifact": {
         "name": "conformance-campaign-postgres-18",
-        "id": 10846484761,
-        "digest": "sha256:51343f682f613d9cf19dc738f4c24f37312795631feb237239a62399161898cd",
-        "size_bytes": 7171
+        "id": 10987642376,
+        "digest": "sha256:6fa3ae6b3e8fcb7bbe2f203627d9c0409c1ea68fcbc036742c513ddbf62d96e6",
+        "size_bytes": 7173
       },
-      "retained_report_git_blob": "277b227286383c6d4981e496a690d985e372393e",
+      "retained_report_git_blob": "3fccc5a3ee0df1a3793586a118daf9e8b22e2d90",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-25T06:00:49Z",
-        "run_id": 36094533232,
+        "verified_at": "2026-09-28T21:06:47Z",
+        "run_id": 36461176852,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -308,7 +308,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "PR #306 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
+        "note": "PR #339 successful deep M5 Conformance artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis, and execution commit were verified before targeted #340 retention. Comparing the producer execution tree with current main changes only .github/merge-gate-policy.json, which is outside the declared M5 Conformance semantic closure."
       }
     },
     {
