@@ -382,7 +382,10 @@ class MergeGateVerifierTest < Minitest::Test
                 image: postgres:15
             steps:
               - run: ./tests/fixtures/conformance/verify-ci-contract.sh .github/workflows/m5-conformance.yml
-              - run: ./tests/fixtures/conformance/run-ci-campaign.sh 15 ${{ matrix.shard }} 2
+              - name: Run PostgreSQL 15 conformance shard
+                env:
+                  SHARD_INDEX: ${{ matrix.shard }}
+                run: ./tests/fixtures/conformance/run-ci-campaign.sh 15 "$SHARD_INDEX" 2
               - uses: actions/upload-artifact@0000000000000000000000000000000000000003
                 with:
                   name: conformance-shard-postgres-15-${{ matrix.shard }}
@@ -401,7 +404,10 @@ class MergeGateVerifierTest < Minitest::Test
                 image: postgres:18
             steps:
               - run: ./tests/fixtures/conformance/verify-ci-contract.sh .github/workflows/m5-conformance.yml
-              - run: ./tests/fixtures/conformance/run-ci-campaign.sh 18 ${{ matrix.shard }} 2
+              - name: Run PostgreSQL 18 conformance shard
+                env:
+                  SHARD_INDEX: ${{ matrix.shard }}
+                run: ./tests/fixtures/conformance/run-ci-campaign.sh 18 "$SHARD_INDEX" 2
               - uses: actions/upload-artifact@0000000000000000000000000000000000000003
                 with:
                   name: conformance-shard-postgres-18-${{ matrix.shard }}
@@ -1273,6 +1279,17 @@ class MergeGateVerifierTest < Minitest::Test
       refute_equal original, body
       write(root, '.github/workflows/m5-conformance.yml', body)
       assert_includes verify(root).join("\n"), 'must retain the exact two-way shard matrix [0, 1]'
+    end
+  end
+
+  def test_m5_conformance_shard_env_binding_removal_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/m5-conformance.yml')
+      original = File.read(path)
+      body = original.sub('SHARD_INDEX: ${{ matrix.shard }}', 'SHARD_INDEX: weakened')
+      refute_equal original, body
+      write(root, '.github/workflows/m5-conformance.yml', body)
+      assert_includes verify(root).join("\n"), 'must pass the checked-in shard index through env before shell execution'
     end
   end
 
