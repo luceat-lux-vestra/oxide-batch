@@ -15,7 +15,7 @@
   "runner": "ubuntu-24.04",
   "script": "./tests/fixtures/gate-h/run-ci-campaign.sh",
   "script_path": "tests/fixtures/gate-h/run-ci-campaign.sh",
-  "script_git_blob": "c05c8d10f03d2a7d7993ba67d3d5d5f196edd39f",
+  "script_git_blob": "1d1fece72f6363461471a15a417113798a8e1f11",
   "command": [
     "cargo",
     "run",

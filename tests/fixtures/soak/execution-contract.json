@@ -15,7 +15,7 @@
   "runner": "ubuntu-24.04",
   "script": "./tests/fixtures/soak/run-ci-campaign.sh ${{ matrix.postgres }}",
   "script_path": "tests/fixtures/soak/run-ci-campaign.sh",
-  "script_git_blob": "c1e9f8db37226224022d0843657f223cd850f2bd",
+  "script_git_blob": "dc995a3ba36e68417bee03d172e37c7623e8c401",
   "supported_matrix": [
     "15",
     "18"

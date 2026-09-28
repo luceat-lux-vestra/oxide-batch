@@ -30,7 +30,6 @@
     "18"
   ],
   "workflow_git_blob": "15e2b5c9e5b8a3baf9f30ecdd6eb3fcf106f6bd3",
-  "script_git_blob": "daf838775c6ab047b6d9413ee0d60d53b2cd179b",
   "triggers": {
     "workflow_call": true,
     "workflow_dispatch": true
