@@ -1,7 +1,9 @@
 //! Repository-wide retained-evidence governance verifier.
 //!
-//! `cargo xtask evidence` remains the byte-identity and semantic-closure
-//! authority for promoted campaign evidence. This companion verifier checks
+//! `cargo xtask evidence` remains the merge-time integrity/provenance
+//! authority for promoted campaign evidence, while `cargo xtask
+//! evidence-freshness` owns current-HEAD semantic freshness. This companion
+//! verifier checks
 //! the cross-milestone contract around that mechanism: complete inventory,
 //! minimum provenance fields, canonical verdict semantics, and bounded Git /
 //! GitHub Actions retention.
@@ -202,8 +204,8 @@ fn read_limits(policy: &Value) -> Result<Limits, String> {
 
 fn verify_policy_contract(policy: &Value, limits: &Limits) -> Vec<String> {
     let mut violations = Vec::new();
-    if policy.get("schema_version").and_then(Value::as_u64) != Some(1) {
-        violations.push("retained-evidence policy schema_version must be 1".to_owned());
+    if policy.get("schema_version").and_then(Value::as_u64) != Some(2) {
+        violations.push("retained-evidence policy schema_version must be 2".to_owned());
     }
     if string_at(policy, "/contract/canonical_verdict") != Some("violations") {
         violations.push("canonical verdict must remain the violations collection".to_owned());
@@ -217,6 +219,68 @@ fn verify_policy_contract(policy: &Value, limits: &Limits) -> Vec<String> {
     }
     if string_at(policy, "/retention/git_age_policy") != Some("semantic-closure") {
         violations.push("Git-retained evidence age must remain semantic-closure-bound".to_owned());
+    }
+    if string_at(
+        policy,
+        "/verification_authorities/merge_time_integrity/command",
+    ) != Some("cargo xtask evidence")
+    {
+        violations.push(
+            "merge-time retained-evidence integrity authority must be cargo xtask evidence"
+                .to_owned(),
+        );
+    }
+    if string_at(
+        policy,
+        "/verification_authorities/merge_time_integrity/required_context",
+    ) != Some("evidence-provenance")
+    {
+        violations.push(
+            "merge-time retained-evidence integrity must own required context evidence-provenance"
+                .to_owned(),
+        );
+    }
+    if policy
+        .pointer(
+            "/verification_authorities/merge_time_integrity/current_head_semantic_freshness",
+        )
+        .and_then(Value::as_bool)
+        != Some(false)
+    {
+        violations.push(
+            "merge-time retained-evidence integrity must not require current-HEAD semantic freshness"
+                .to_owned(),
+        );
+    }
+    if string_at(
+        policy,
+        "/verification_authorities/current_head_freshness/command",
+    ) != Some("cargo xtask evidence-freshness")
+    {
+        violations.push(
+            "current-HEAD retained-evidence freshness authority must be cargo xtask evidence-freshness"
+                .to_owned(),
+        );
+    }
+    if policy
+        .pointer("/verification_authorities/current_head_freshness/required_context")
+        .is_none_or(|value| !value.is_null())
+    {
+        violations.push(
+            "current-HEAD freshness must not become a live required context in this migration"
+                .to_owned(),
+        );
+    }
+    if policy
+        .pointer(
+            "/verification_authorities/current_head_freshness/current_head_semantic_freshness",
+        )
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        violations.push(
+            "current-HEAD freshness authority must explicitly verify semantic freshness".to_owned(),
+        );
     }
     if limits.artifact_days == 0 || limits.artifact_days > ACTION_RETENTION_CEILING_DAYS {
         violations.push(format!(
