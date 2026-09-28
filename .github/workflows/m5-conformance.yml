@@ -304,4 +304,3 @@ jobs:
             exit 1
           fi
           echo "M5 conformance direct proof is not required for this pull request"
-
