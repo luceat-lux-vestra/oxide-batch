@@ -140,6 +140,7 @@ fn main() -> ExitCode {
         Some("deps") => run_dependency_check(),
         Some("doctor") => run_all(DOCTOR),
         Some("evidence") => run_evidence_check(),
+        Some("evidence-freshness") => run_evidence_freshness_check(),
         Some("gate-b") => run_gate_b_campaign(),
         Some("gate-h") => run_gate_h_campaign(),
         Some("m6-conformance") => run_m6_conformance_campaign(),
@@ -537,9 +538,9 @@ fn run_security_campaign() -> bool {
     }
 }
 
-/// Reports whether the retained evidence is still what it says it is.
+/// Reports whether retained evidence still has trustworthy bytes and provenance.
 fn run_evidence_check() -> bool {
-    eprintln!("==> retained evidence provenance");
+    eprintln!("==> retained evidence integrity");
 
     match evidence::run() {
         Ok(verification) => {
@@ -552,9 +553,9 @@ fn run_evidence_check() -> bool {
             if verification.violations.is_empty() {
                 eprintln!(
                     "{} retained report(s) across {directories} are byte-identical to what was \
-                     recorded, name the run and the producer commit they came from, cover the \
-                     required matrix, passed with no violations, and describe the campaign this \
-                     tree still runs",
+                     recorded, name the run and producer tree they came from, cover the required \
+                     matrix, passed with no violations, and carry structurally valid execution \
+                     manifests",
                     verification.reports,
                 );
                 return true;
@@ -570,6 +571,42 @@ fn run_evidence_check() -> bool {
         }
         Err(error) => {
             eprintln!("could not verify the retained evidence: {error}");
+            false
+        }
+    }
+}
+
+/// Reports whether retained campaign semantics are current for this checkout.
+fn run_evidence_freshness_check() -> bool {
+    eprintln!("==> retained evidence current-HEAD freshness");
+
+    match evidence::run_freshness() {
+        Ok(verification) => {
+            let directories = verification
+                .directories
+                .iter()
+                .map(|directory| directory.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            if verification.violations.is_empty() {
+                eprintln!(
+                    "{} retained report(s) across {directories} still describe the exact campaign \
+                     semantics this checkout would execute",
+                    verification.reports,
+                );
+                return true;
+            }
+            for violation in &verification.violations {
+                eprintln!("evidence freshness gap: {violation}");
+            }
+            eprintln!(
+                "retained evidence is intact but not current for this semantic closure; rerun and \
+                 re-promote the affected campaign before claiming current-HEAD freshness"
+            );
+            false
+        }
+        Err(error) => {
+            eprintln!("could not verify retained evidence freshness: {error}");
             false
         }
     }
@@ -771,7 +808,8 @@ fn usage() {
            crash-restore    run the crash, restart, and logical restore campaign\n\
            deps             check extraction boundaries and workspace cycles\n\
            doctor           show required local tool versions\n\
-           evidence         verify retained campaign evidence against its provenance\n\
+           evidence         verify retained campaign evidence integrity/provenance\n\
+           evidence-freshness verify retained evidence against current campaign semantics\n\
            gate-b           run the Gate B typed-vs-Boxed transaction/restart equivalence campaign\n\
            gate-h           run the Gate H P-002 real-component performance campaign\n\
            m6-conformance   run the full shipped-component M6 conformance campaign\n\

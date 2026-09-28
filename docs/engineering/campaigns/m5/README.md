@@ -44,7 +44,11 @@ which run it came from.
 ## Provenance
 
 [`evidence-provenance.json`](evidence-provenance.json) records where each
-retained report came from; `cargo xtask evidence` checks it on every CI run.
+retained report came from. Required `cargo xtask evidence` continuously checks
+the retained bytes, provenance, matrix/verdict contract, and execution-manifest
+integrity. `cargo xtask evidence-freshness` separately compares the recorded
+campaign semantic objects with current HEAD when semantic-impact, deep, or
+release validation requires a current-tree proof.
 
 The root of trust is the tree that actually executed. Each run records the git
 object identity of every path in the campaign's declared closure from inside its
@@ -68,9 +72,11 @@ the crash and restore campaign's is
 [`crash-restore/campaign-semantics.json`](../../../../tests/fixtures/crash-restore/campaign-semantics.json),
 the upgrade campaign's is
 [`upgrade/campaign-semantics.json`](../../../../tests/fixtures/upgrade/campaign-semantics.json),
-and the security campaign's is
-[`security/campaign-semantics.json`](../../../../tests/fixtures/security/campaign-semantics.json).
-All seven cover framework source, migrations, cargo manifests, a canonical
+the security campaign's is
+[`security/campaign-semantics.json`](../../../../tests/fixtures/security/campaign-semantics.json),
+and the resource-bounds campaign's is
+[`resource-bounds/campaign-semantics.json`](../../../../tests/fixtures/resource-bounds/campaign-semantics.json).
+All eight cover framework source, migrations, cargo manifests, a canonical
 campaign-scoped `dependency-closure.json` derived from the locked Cargo graph,
 toolchain and build configuration, the campaign implementation and fixtures,
 the execution contract, and the verifier. `Cargo.lock` remains the resolver
@@ -111,9 +117,10 @@ is recorded as a corrected defect (F37) in
 [`m5-campaign-evidence.md`](../../../project/m5-campaign-evidence.md). The one
 obligation that does stay whole-workspace is the documentation tests, because
 they execute only committed rustdoc examples and read nothing dynamic. If any
-closure path differs from what a report recorded, that report describes a
-campaign this tree no longer runs and may not be promoted — the campaign has
-to be run again.
+closure path differs from what a report recorded, the freshness authority marks
+that report stale for current-HEAD claims. Its historical bytes and provenance
+remain intact, but the affected campaign has to run again before fresh evidence
+can be promoted for the new semantic closure.
 
 Which closure applies to which report is decided by the campaign the report
 belongs to, recorded in `campaigns.declared` in the provenance document along
@@ -152,8 +159,10 @@ report path, artifact name, and failure-retention policy — against the JSON
 contract and fail closed before the campaign runs. This keeps the workflow
 boundary narrow without relaxing the evidence verifier.
 
-The permanent verifier is offline: no commit resolution, no fetch, nothing but
-the retained report, the closure and the working tree. The one-time remote check
+Both permanent authorities are offline after the locked dependency graph is
+hydrated: no producer-commit resolution and no history fetch. Integrity reads
+the retained report/provenance; freshness additionally reads the declared
+closure and current working tree. The one-time remote check
 — workflow run and producing job identity and conclusion, artifact digest, and a
 byte-for-byte comparison of the downloaded artifact against the retained file —
 runs once at promotion and is recorded as machine-readable booleans the verifier

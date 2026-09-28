@@ -1,44 +1,37 @@
-//! The retained-evidence provenance verifier.
+//! Retained-evidence integrity and freshness verification.
 //!
-//! A campaign runner decides whether a run proved what it owed. This decides
-//! something narrower and separate: whether the reports committed to
-//! `docs/engineering/campaigns/m5/` are still the untouched output of a
-//! recorded CI run over a tree whose campaign still means what it meant.
+//! A campaign runner decides whether a run proved what it owed. This module
+//! preserves two separate questions about the promoted reports:
 //!
-//! It exists because retained evidence has a failure mode that has nothing to
-//! do with the campaign that produced it. A report is a file in a repository.
-//! It can be edited after the fact, it can be kept beside a campaign that has
-//! since been changed, and the commit it names can be quietly reinterpreted —
-//! all of which leave a green campaign record describing a run that no longer
-//! corresponds to anything.
+//! - [`run`] is the always-required integrity authority. It proves that the
+//!   committed report bytes, provenance, producer/run identities, matrix and
+//!   canonical verdict are internally trustworthy, and that each report carries
+//!   a structurally valid execution manifest.
+//! - [`run_freshness`] adds the current-HEAD question: whether every object in
+//!   that recorded campaign semantic closure is still the object this checkout
+//!   would execute.
+//!
+//! The distinction is intentional. A historical retained artifact does not
+//! become forged when ordinary product development moves a bound source object;
+//! it becomes semantically stale. Integrity therefore stays merge-blocking on
+//! every pull request, while semantic-impact/deep/release validation decides
+//! when freshness must be re-established by a direct campaign run and promotion.
 //!
 //! ## Why the producer commit is not required to resolve
 //!
-//! The obvious check — resolve the commit the report names and diff it against
-//! today — cannot be the binding one, for a reason that only shows up once:
-//! the identifier a report carries is the pull-request *merge ref*, an
-//! ephemeral commit GitHub creates by merging the branch head into the base and
-//! replaces on the next push. It is absent from every later clone. Requiring it
-//! to resolve would make the verifier fail permanently the moment the branch
-//! moved, and treating an unresolvable one as acceptable would make the check
-//! decide nothing.
+//! The identifier a report carries is the pull-request synthetic merge commit,
+//! which GitHub may replace and later stop resolving. The branch head is a
+//! different tree and cannot truthfully substitute for it. The report therefore
+//! records the execution commit and the git object identity of every path in its
+//! semantic closure from inside the checkout that actually executed.
 //!
-//! So the merge-ref SHA is recorded and compared against what the artifact
-//! itself says, and never resolved; the branch head is recorded separately and
-//! never conflated with it; and the binding is content instead. Two content
-//! checks, both of which work from the retained files alone:
+//! Integrity verifies that this manifest exists and is well formed. Freshness
+//! compares those recorded identities with current HEAD. Neither mode rewrites
+//! historical evidence to make it fit a newer tree.
 //!
-//! - each report's git blob identity, which detects any edit after retention;
-//! - the git object identity of every path that defines what the campaign
-//!   executes, taken at the producer commit. If one differs today, the report
-//!   describes a campaign this tree no longer runs, and it may not be promoted.
-//!
-//! The second is the one that carries weight, and it is what stops the
-//! genuinely tempting mistake: keeping last week's green report while quietly
-//! changing the rule that made it green.
-//!
-//! The contract is `docs/engineering/campaigns/m5/evidence-provenance.json`,
-//! and this reads it rather than restating it.
+//! The retained provenance contracts live under
+//! `docs/engineering/campaigns/{m5,m6}/evidence-provenance.json`; this module
+//! reads them instead of restating their inventory.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -90,6 +83,20 @@ pub struct Verification {
 /// all, such as no milestone directory existing, or one that exists holding
 /// an unreadable or malformed provenance document.
 pub fn run() -> Result<Verification, String> {
+    run_mode(false)
+}
+
+/// Verifies retained evidence and also requires the recorded campaign semantics
+/// to be current for this exact checkout.
+///
+/// This is deliberately separate from [`run`]. Retained bytes/provenance stay
+/// merge-blocking on every pull request, while current-HEAD semantic freshness
+/// is required only by semantic-impact/deep/release validation.
+pub fn run_freshness() -> Result<Verification, String> {
+    run_mode(true)
+}
+
+fn run_mode(require_freshness: bool) -> Result<Verification, String> {
     let root = suite::workspace_root()?;
 
     let mut violations = Vec::new();
@@ -100,7 +107,7 @@ pub fn run() -> Result<Verification, String> {
         if !directory.is_dir() {
             continue;
         }
-        let milestone = run_directory(&root, &directory)?;
+        let milestone = run_directory(&root, &directory, require_freshness)?;
         violations.extend(milestone.violations);
         reports += milestone.reports;
         directories.push(PathBuf::from(name));
@@ -117,7 +124,11 @@ pub fn run() -> Result<Verification, String> {
 }
 
 /// Verifies every retained report in one milestone directory.
-fn run_directory(root: &Path, directory: &Path) -> Result<Verification, String> {
+fn run_directory(
+    root: &Path,
+    directory: &Path,
+    require_freshness: bool,
+) -> Result<Verification, String> {
     let path = directory.join(PROVENANCE);
     let source = fs::read_to_string(&path)
         .map_err(|error| format!("could not read {}: {error}", path.display()))?;
@@ -138,7 +149,10 @@ fn run_directory(root: &Path, directory: &Path) -> Result<Verification, String> 
         }
     }
     violations.extend(verify_matrix(&document, entries));
-    violations.extend(verify_semantics(root, &document, &reports));
+    violations.extend(verify_manifest_integrity(&document, &reports));
+    if require_freshness {
+        violations.extend(verify_semantics(root, &document, &reports));
+    }
 
     Ok(Verification {
         violations,
@@ -540,6 +554,95 @@ fn verify_unique<'a>(
             )
         })
         .collect()
+}
+
+/// Verifies the retained execution manifests without asking whether their
+/// recorded semantic objects still equal the current checkout.
+///
+/// This is the permanent merge-time trust boundary: the report must identify a
+/// declared campaign, carry a clean execution manifest with Git object
+/// identities, agree with provenance about the execution tree, and represent
+/// every declared campaign. Exact object equality with current HEAD belongs to
+/// [`verify_semantics`] and is intentionally not checked here.
+fn verify_manifest_integrity(document: &Value, reports: &[(String, Value)]) -> Vec<String> {
+    let mut violations = Vec::new();
+    let campaigns = match campaign_closures(document) {
+        Ok(campaigns) => campaigns,
+        Err(error) => return vec![error],
+    };
+    let belongs = report_campaigns(document);
+
+    for (name, report) in reports {
+        let Some(campaign) = belongs.get(name) else {
+            violations.push(format!(
+                "{name} is retained evidence and names no campaign, so nothing says what it is evidence of"
+            ));
+            continue;
+        };
+        if !campaigns.contains_key(campaign) {
+            violations.push(format!(
+                "{name} belongs to {campaign}, which is not a declared retained campaign"
+            ));
+        }
+
+        let Some(objects) = report
+            .pointer("/observation/execution_manifest/objects")
+            .and_then(Value::as_object)
+        else {
+            violations.push(format!(
+                "{name} records no execution manifest, so its executed tree is not structurally bound"
+            ));
+            continue;
+        };
+        if report
+            .pointer("/observation/execution_manifest/execution_commit")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+        {
+            violations.push(format!("{name} records no execution commit"));
+        }
+        if report
+            .pointer("/observation/execution_manifest/tree_clean")
+            .and_then(Value::as_bool)
+            != Some(true)
+        {
+            violations.push(format!("{name} ran against a tree that was not clean"));
+        }
+        if objects.is_empty() {
+            violations.push(format!(
+                "{name} records an empty execution manifest object set"
+            ));
+        }
+        for (path, identity) in objects {
+            if path.trim().is_empty() {
+                violations.push(format!(
+                    "{name} records an execution-manifest object with an empty path"
+                ));
+            }
+            match identity.as_str() {
+                Some(value) if is_git_object_id(value) => {}
+                _ => violations.push(format!(
+                    "{name} records a malformed git object identity for {path}"
+                )),
+            }
+        }
+    }
+
+    violations.extend(verify_one_execution(document, reports));
+
+    for campaign in campaigns.keys() {
+        if !belongs.values().any(|name| name == campaign) {
+            violations.push(format!(
+                "{campaign} is declared and no retained report belongs to it"
+            ));
+        }
+    }
+
+    violations
+}
+
+fn is_git_object_id(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// Requires the campaign the reports describe to be the campaign this tree runs.
@@ -1249,6 +1352,50 @@ mod tests {
             report["observation"]["execution_manifest"]["objects"][path] = object.clone();
         }
         reports
+    }
+
+    fn provenance_for_current_reports() -> Value {
+        let root = crate::suite::workspace_root().expect("workspace root");
+        let commit = super::git(&root, &["rev-parse", "HEAD"]).expect("HEAD");
+        let mut document = provenance();
+        for entry in document["evidence"].as_array_mut().expect("evidence") {
+            entry["producer"]["execution_commit"] = json!(commit.clone());
+        }
+        document
+    }
+
+    #[test]
+    fn integrity_accepts_a_well_formed_historical_object_identity() {
+        let document = provenance_for_current_reports();
+        let reports = with_manifest("xtask/src/evidence.rs", &json!("0".repeat(40)));
+
+        assert_eq!(
+            super::verify_manifest_integrity(&document, &reports),
+            Vec::<String>::new()
+        );
+
+        let freshness = semantics_of(&document, &reports);
+        assert!(
+            freshness
+                .iter()
+                .any(|violation| violation.starts_with("xtask/src/evidence.rs was ")),
+            "{freshness:?}",
+        );
+    }
+
+    #[test]
+    fn integrity_rejects_a_malformed_execution_object_identity() {
+        let document = provenance_for_current_reports();
+        let reports = with_manifest("xtask/src/evidence.rs", &json!("not-a-git-object"));
+
+        let violations = super::verify_manifest_integrity(&document, &reports);
+        assert!(
+            violations.iter().any(|violation| {
+                violation
+                    .contains("records a malformed git object identity for xtask/src/evidence.rs")
+            }),
+            "{violations:?}",
+        );
     }
 
     #[test]

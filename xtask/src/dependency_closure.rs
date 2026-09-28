@@ -72,9 +72,10 @@ pub fn write_all(root: &Path) -> Result<Vec<PathBuf>, String> {
 
 /// Verifies one campaign's committed dependency closure.
 ///
-/// The retained-evidence verifier calls this using the same semantics file the
-/// producer report names. This keeps producer/verifier dependency boundaries
-/// anchored in one checked-in declaration.
+/// The retained-evidence freshness verifier calls this using the same semantics
+/// file the producer report names; the always-required integrity workflow uses
+/// [`check_all`] to keep current dependency-closure metadata deterministic.
+/// Both paths therefore stay anchored in the same checked-in declaration.
 ///
 /// # Errors
 ///

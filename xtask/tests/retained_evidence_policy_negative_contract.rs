@@ -5,6 +5,9 @@
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Output};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static FIXTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
     source_root: PathBuf,
@@ -18,8 +21,9 @@ impl Fixture {
             .parent()
             .expect("xtask must live directly under the workspace root")
             .to_path_buf();
+        let sequence = FIXTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!(
-            "oxide-batch-retained-evidence-policy-{}",
+            "oxide-batch-retained-evidence-policy-{}-{sequence}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);
@@ -98,5 +102,35 @@ fn rejects_canonical_verdict_authority_drift() {
     rejected(
         &fixture.run_policy_check(),
         "canonical verdict must remain the violations collection",
+    );
+}
+
+#[test]
+fn rejects_integrity_authority_drift() {
+    let fixture = Fixture::new();
+    fixture.replace_once(
+        "docs/engineering/retained-evidence-policy.json",
+        "\"integrity_authority\": \"cargo xtask evidence\"",
+        "\"integrity_authority\": \"cargo xtask evidence-freshness\"",
+    );
+
+    rejected(
+        &fixture.run_policy_check(),
+        "retained evidence integrity authority must remain cargo xtask evidence",
+    );
+}
+
+#[test]
+fn rejects_freshness_merge_policy_drift() {
+    let fixture = Fixture::new();
+    fixture.replace_once(
+        "docs/engineering/retained-evidence-policy.json",
+        "\"freshness_merge_policy\": \"semantic-impact\"",
+        "\"freshness_merge_policy\": \"always-required\"",
+    );
+
+    rejected(
+        &fixture.run_policy_check(),
+        "retained-evidence freshness merge policy must remain semantic-impact",
     );
 }
