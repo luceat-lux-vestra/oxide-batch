@@ -90,6 +90,20 @@ pub struct Verification {
 /// all, such as no milestone directory existing, or one that exists holding
 /// an unreadable or malformed provenance document.
 pub fn run() -> Result<Verification, String> {
+    run_mode(false)
+}
+
+/// Verifies retained evidence and also requires the recorded campaign semantics
+/// to be current for this exact checkout.
+///
+/// This is deliberately separate from [`run`]. Retained bytes/provenance stay
+/// merge-blocking on every pull request, while current-HEAD semantic freshness
+/// is required only by semantic-impact/deep/release validation.
+pub fn run_freshness() -> Result<Verification, String> {
+    run_mode(true)
+}
+
+fn run_mode(require_freshness: bool) -> Result<Verification, String> {
     let root = suite::workspace_root()?;
 
     let mut violations = Vec::new();
@@ -100,7 +114,7 @@ pub fn run() -> Result<Verification, String> {
         if !directory.is_dir() {
             continue;
         }
-        let milestone = run_directory(&root, &directory)?;
+        let milestone = run_directory(&root, &directory, require_freshness)?;
         violations.extend(milestone.violations);
         reports += milestone.reports;
         directories.push(PathBuf::from(name));
@@ -117,7 +131,11 @@ pub fn run() -> Result<Verification, String> {
 }
 
 /// Verifies every retained report in one milestone directory.
-fn run_directory(root: &Path, directory: &Path) -> Result<Verification, String> {
+fn run_directory(
+    root: &Path,
+    directory: &Path,
+    require_freshness: bool,
+) -> Result<Verification, String> {
     let path = directory.join(PROVENANCE);
     let source = fs::read_to_string(&path)
         .map_err(|error| format!("could not read {}: {error}", path.display()))?;
@@ -138,7 +156,11 @@ fn run_directory(root: &Path, directory: &Path) -> Result<Verification, String> 
         }
     }
     violations.extend(verify_matrix(&document, entries));
-    violations.extend(verify_semantics(root, &document, &reports));
+    if require_freshness {
+        violations.extend(verify_semantics(root, &document, &reports));
+    } else {
+        violations.extend(verify_manifest_integrity(&document, &reports));
+    }
 
     Ok(Verification {
         violations,
@@ -540,6 +562,98 @@ fn verify_unique<'a>(
             )
         })
         .collect()
+}
+
+/// Verifies the retained execution manifests without asking whether their
+/// recorded semantic objects still equal the current checkout.
+///
+/// This is the permanent merge-time trust boundary: the report must identify a
+/// declared campaign, carry a clean execution manifest with Git object
+/// identities, agree with provenance about the execution tree, and represent
+/// every declared campaign. Exact object equality with current HEAD belongs to
+/// [`verify_semantics`] and is intentionally not checked here.
+fn verify_manifest_integrity(
+    document: &Value,
+    reports: &[(String, Value)],
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    let campaigns = match campaign_closures(document) {
+        Ok(campaigns) => campaigns,
+        Err(error) => return vec![error],
+    };
+    let belongs = report_campaigns(document);
+
+    for (name, report) in reports {
+        let Some(campaign) = belongs.get(name) else {
+            violations.push(format!(
+                "{name} is retained evidence and names no campaign, so nothing says what it is evidence of"
+            ));
+            continue;
+        };
+        if !campaigns.contains_key(campaign) {
+            violations.push(format!(
+                "{name} belongs to {campaign}, which is not a declared retained campaign"
+            ));
+        }
+
+        let Some(objects) = report
+            .pointer("/observation/execution_manifest/objects")
+            .and_then(Value::as_object)
+        else {
+            violations.push(format!(
+                "{name} records no execution manifest, so its executed tree is not structurally bound"
+            ));
+            continue;
+        };
+        if report
+            .pointer("/observation/execution_manifest/execution_commit")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+        {
+            violations.push(format!("{name} records no execution commit"));
+        }
+        if report
+            .pointer("/observation/execution_manifest/tree_clean")
+            .and_then(Value::as_bool)
+            != Some(true)
+        {
+            violations.push(format!("{name} ran against a tree that was not clean"));
+        }
+        if objects.is_empty() {
+            violations.push(format!(
+                "{name} records an empty execution manifest object set"
+            ));
+        }
+        for (path, identity) in objects {
+            if path.trim().is_empty() {
+                violations.push(format!(
+                    "{name} records an execution-manifest object with an empty path"
+                ));
+            }
+            match identity.as_str() {
+                Some(value) if is_git_object_id(value) => {}
+                _ => violations.push(format!(
+                    "{name} records a malformed git object identity for {path}"
+                )),
+            }
+        }
+    }
+
+    violations.extend(verify_one_execution(document, reports));
+
+    for campaign in campaigns.keys() {
+        if !belongs.values().any(|name| name == campaign) {
+            violations.push(format!(
+                "{campaign} is declared and no retained report belongs to it"
+            ));
+        }
+    }
+
+    violations
+}
+
+fn is_git_object_id(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// Requires the campaign the reports describe to be the campaign this tree runs.
