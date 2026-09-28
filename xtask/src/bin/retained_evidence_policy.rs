@@ -227,10 +227,11 @@ fn verify_policy_contract(policy: &Value, limits: &Limits) -> Vec<String> {
         violations.push("producer passed=true must remain explicitly non-authoritative".to_owned());
     }
     if string_at(policy, "/contract/integrity_authority") != Some("cargo xtask evidence") {
-        violations.push("retained evidence integrity authority must remain cargo xtask evidence".to_owned());
+        violations.push(
+            "retained evidence integrity authority must remain cargo xtask evidence".to_owned(),
+        );
     }
-    if string_at(policy, "/contract/freshness_authority")
-        != Some("cargo xtask evidence-freshness")
+    if string_at(policy, "/contract/freshness_authority") != Some("cargo xtask evidence-freshness")
     {
         violations.push(
             "retained evidence freshness authority must remain cargo xtask evidence-freshness"
