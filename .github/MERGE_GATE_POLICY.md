@@ -197,17 +197,38 @@ The eight production Rust PostgreSQL child jobs continue to run as aggregate mem
 
 #233 may compose this verifier for scheduled hardening drift auditing. Advisory Rust CodeQL remains outside direct merge authority until a separate explicit policy migration promotes it.
 
-## Advisory campaign orchestration
+## Trusted campaign routing
 
-Advisory retained-evidence campaigns are PR-triggered only through
-`.github/workflows/campaign-orchestrator.yml`. Their individual producer
-workflows remain manually dispatchable and reusable via `workflow_call`, but
-must not independently subscribe to `pull_request`.
+Pull-request deep campaign execution is selected only from the exact trusted base tree.
+Both `.github/workflows/campaign-orchestrator.yml` and the required M5 Conformance
+workflow use a bounded routing job that:
 
-The orchestrator inventory is not a hand-maintained campaign list. The
-merge-gate verifier derives the retained artifact producers from
-`docs/engineering/retained-evidence-policy.json`, excludes producers that own
-required jobs (currently M5 Conformance), and requires the orchestrator's local
-reusable-workflow calls to match the remaining advisory producer set exactly.
-Missing, duplicate, unknown, directly PR-triggered, or non-reusable advisory
-producers fail closed.
+1. checks out `github.event.pull_request.base.sha` into a separate `.trusted-base` tree;
+2. re-reads the live pull request and requires its base SHA, head SHA, and base repository
+   to match the event that started the run;
+3. paginates the complete changed-file API and passes status, filename, and
+   `previous_filename` records to the trusted-base `.github/scripts/pr-scope.py`;
+4. requires the classifier's exact changed-file count and deterministic
+   `direct_proof_campaign_workflows` output.
+
+Routing is fail-closed. Checkout, API, pagination, metadata, parser, classifier, or
+route-job ambiguity never means "skip": the consumer condition selects the deep
+campaign instead. Advisory producers are otherwise invoked only when their workflow
+is present in the trusted base's direct-proof set.
+
+The orchestrator inventory is still derived from
+`docs/engineering/retained-evidence-policy.json`. The merge-gate verifier excludes
+producers that own required jobs (currently M5 Conformance) and requires the
+orchestrator's routed local reusable-workflow calls to match the remaining advisory
+producer set exactly. Missing, duplicate, unknown, directly PR-triggered,
+non-reusable, or fail-open producer routing is rejected.
+
+M5 Conformance preserves the live required contexts
+`postgres-15-conformance-campaign` and `postgres-18-conformance-campaign` without
+unconditionally starting PostgreSQL. A separate `conformance-deep` matrix owns the
+PostgreSQL service and executes for direct-proof changes, manual dispatch, or any
+routing ambiguity. The required `conformance-campaign` matrix is a lightweight
+context emitter with no services: it succeeds without deep execution only when a
+valid trusted classification says M5 Conformance is not direct-proof, and otherwise
+requires the deep matrix to have succeeded. The live ruleset context names therefore
+do not change during this migration.

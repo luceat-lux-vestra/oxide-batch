@@ -8,52 +8,141 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read # Read live PR identity and complete changed-file metadata for trusted routing.
 
 concurrency:
   group: campaign-orchestrator-${{ github.ref }}
   cancel-in-progress: true
 
-# Advisory M5/M6 producers are called from one PR workflow so the next
-# migration can make execution impact-aware at one trusted routing boundary.
-# Required M5 Conformance intentionally remains an independent required
-# workflow until its required-context migration is performed.
+# Advisory M5/M6 producers are routed from the exact trusted PR base.
+# Classification failures are fail-closed: every producer runs.
 jobs:
-  m5_cancellation:
+  route:
     if: ${{ github.event.pull_request.draft == false }}
+    name: trusted-campaign-route
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      classification_outcome: ${{ steps.classify.outcome }}
+      direct_workflows: ${{ steps.classify.outputs.direct_workflows }}
+    steps:
+      - name: Check out exact trusted base
+        id: trusted-base
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-base
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Classify direct-proof campaigns from trusted base
+        id: classify
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TRUSTED_CHECKOUT: ${{ steps.trusted-base.outcome }}
+        shell: bash
+        run: |
+          echo 'direct_workflows=[]' >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          test "$TRUSTED_CHECKOUT" = "success"
+
+          pr_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          jq -e \
+            --arg base "$BASE_SHA" \
+            --arg head "$HEAD_SHA" \
+            --arg repo "$GITHUB_REPOSITORY" \
+            '.base.sha == $base and .head.sha == $head and .base.repo.full_name == $repo and ((.changed_files | type) == "number" and .changed_files > 0)' \
+            <<<"$pr_json" >/dev/null
+          expected_count="$(jq -er '.changed_files' <<<"$pr_json")"
+
+          pages="$(gh api --paginate --slurp -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"
+          jq -e 'type == "array" and all(.[]; type == "array")' <<<"$pages" >/dev/null
+          changed_file_records="$(mktemp)"
+          jq -r '.[][] | [.status, .filename, (.previous_filename // "")] | @tsv' <<<"$pages" >"$changed_file_records"
+
+          classification="$(
+            python3 .trusted-base/.github/scripts/pr-scope.py \
+              --repo-root .trusted-base \
+              --policy .github/merge-gate-policy.json \
+              --expected-count "$expected_count" \
+              --trusted-base-sha "$BASE_SHA" \
+              <"$changed_file_records"
+          )"
+          direct_workflows="$(
+            jq -cer '
+              if .classification_valid == true and
+                 (.direct_proof_campaign_workflows | type) == "array" and
+                 all(.direct_proof_campaign_workflows[]; type == "string") and
+                 ((.direct_proof_campaign_workflows | unique | length) ==
+                  (.direct_proof_campaign_workflows | length))
+              then .direct_proof_campaign_workflows
+              else error("invalid direct-proof campaign output")
+              end
+            ' <<<"$classification"
+          )"
+          echo "direct_workflows=$direct_workflows" >> "$GITHUB_OUTPUT"
+
+  m5_cancellation:
+    needs: route
+    if: >-
+      ${{ always() && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-cancellation.yml')) }}
     uses: ./.github/workflows/m5-cancellation.yml
 
   m5_crash_restore:
-    if: ${{ github.event.pull_request.draft == false }}
+    needs: route
+    if: >-
+      ${{ always() && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-crash-restore.yml')) }}
     uses: ./.github/workflows/m5-crash-restore.yml
 
   m5_performance:
-    if: ${{ github.event.pull_request.draft == false }}
+    needs: route
+    if: >-
+      ${{ always() && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-performance.yml')) }}
     uses: ./.github/workflows/m5-performance.yml
 
   m5_resource_bounds:
-    if: ${{ github.event.pull_request.draft == false }}
+    needs: route
+    if: >-
+      ${{ always() && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-resource-bounds.yml')) }}
     uses: ./.github/workflows/m5-resource-bounds.yml
 
   m5_security:
-    if: ${{ github.event.pull_request.draft == false }}
+    needs: route
+    if: >-
+      ${{ always() && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-security.yml')) }}
     uses: ./.github/workflows/m5-security.yml
 
   m5_soak:
-    if: ${{ github.event.pull_request.draft == false }}
+    needs: route
+    if: >-
+      ${{ always() && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-soak.yml')) }}
     uses: ./.github/workflows/m5-soak.yml
 
   m5_upgrade:
-    if: ${{ github.event.pull_request.draft == false }}
+    needs: route
+    if: >-
+      ${{ always() && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-upgrade.yml')) }}
     uses: ./.github/workflows/m5-upgrade.yml
 
   m6_conformance:
-    if: ${{ github.event.pull_request.draft == false }}
+    needs: route
+    if: >-
+      ${{ always() && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m6-conformance.yml')) }}
     uses: ./.github/workflows/m6-conformance.yml
 
   m6_gate_b:
-    if: ${{ github.event.pull_request.draft == false }}
+    needs: route
+    if: >-
+      ${{ always() && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m6-gate-b.yml')) }}
     uses: ./.github/workflows/m6-gate-b.yml
 
   m6_gate_h:
-    if: ${{ github.event.pull_request.draft == false }}
+    needs: route
+    if: >-
+      ${{ always() && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m6-gate-h.yml')) }}
     uses: ./.github/workflows/m6-gate-h.yml
