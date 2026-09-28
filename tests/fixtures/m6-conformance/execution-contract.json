@@ -29,5 +29,9 @@
     "15",
     "18"
   ],
-  "workflow_git_blob": "1e7bdc3bb396ccb2dc1df2d9c08d10939b6ec5e6"
+  "workflow_git_blob": "15e2b5c9e5b8a3baf9f30ecdd6eb3fcf106f6bd3",
+  "triggers": {
+    "workflow_call": true,
+    "workflow_dispatch": true
+  }
 }
