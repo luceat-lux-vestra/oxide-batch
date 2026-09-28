@@ -3,19 +3,14 @@ name: Evidence
 # The retained-evidence verifier lives in its own workflow, and the separation
 # is structural rather than tidiness.
 #
-# It answers a question about the *repository's current state* — are the
-# retained reports still the untouched output of a recorded run over a tree
-# whose campaign still means what it meant — and the answer is legitimately
-# "no" for the whole window between a commit that changes campaign semantics
-# and the retention commit that records the rerun.
+# It answers the merge-time integrity question: are the retained reports still
+# the untouched output of the recorded successful producers, with internally
+# consistent provenance and execution manifests?
 #
-# Inside the Rust workflow that window would make the workflow run fail, and
-# official evidence may only be promoted from a producer run that wholly
-# succeeded. A campaign could then never produce evidence on the very commit
-# that needed it: the check would fail the run, the failed run could not be
-# promoted, and the evidence would stay stale. Keeping it separate lets the
-# producer run mean "this tree builds, tests and campaigns pass" while the
-# evidence check keeps its own, honest, red state until retention lands.
+# Current-HEAD semantic freshness is intentionally a separate authority exposed
+# by cargo xtask evidence-freshness. Semantic-impact/deep/release orchestration
+# may require that stronger check without making expected retained-evidence
+# staleness fail every ordinary source pull request.
 
 on:
   pull_request:
@@ -54,15 +49,13 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo run --package oxide-batch-xtask --bin retained_evidence_policy
 
-      # The permanent verifier resolves campaign-specific graphs offline. A fresh
-      # hosted runner has only the xtask's tiny dependency set cached after the
-      # policy command, so hydrate the exact committed lock graph once before
-      # the offline derivation. --locked prevents this step from changing what
-      # is being verified.
+      # The integrity verifier does not compare current semantic objects, but
+      # building the xtask still consumes the exact committed dependency graph.
+      # Hydrate it once so the final command can remain locked and deterministic.
       - name: Hydrate locked dependency graph for offline provenance verification
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo fetch --locked
 
-      - name: Verify retained campaign evidence against its provenance
+      - name: Verify retained campaign evidence integrity and provenance
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo run --package oxide-batch-xtask -- evidence
