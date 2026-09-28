@@ -30,7 +30,11 @@
     "user": "postgres",
     "password": "postgres",
     "port": 5432,
-    "health_check": "pg_isready --username postgres --dbname oxide_batch_campaign"
+    "health_check": "pg_isready --username postgres --dbname oxide_batch_campaign",
+    "images": {
+      "15": "postgres:15@sha256:926f8799aef36e00001cfe15fba7abbd37d3c5224ea57e4c858e4bb670f10561",
+      "18": "postgres:18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280"
+    }
   },
   "command": [
     "cargo",
