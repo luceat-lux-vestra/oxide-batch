@@ -3,7 +3,7 @@
   "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow owns both fail-closed pull-request routing and the PostgreSQL-backed deep execution. Required PR contexts are emitted by lightweight jobs when direct proof is not required; routing ambiguity selects the deep campaign rather than suppressing it.",
   "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script — an added trigger, a job-level permission override, a widened matrix, a changed command, an appended line — moves the identity and fails the contract check, whether or not every literal field below still happens to read true. The literal fields exist for a readable diagnostic, not as the boundary. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
   "workflow_path": ".github/workflows/m5-conformance.yml",
-  "workflow_git_blob": "62d9ad4d1964ef488415d4810d78833309acea7b",
+  "workflow_git_blob": "e4d684f8830cd794a6cc0f06230291a5c162020d",
   "workflow_name": "M5 Conformance",
   "triggers": {
     "pull_request": [
