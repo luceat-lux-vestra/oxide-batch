@@ -62,6 +62,26 @@
       "workflow": ".github/workflows/codeql.yml",
       "job": "analyze-actions",
       "classification": "required"
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "quality-fast",
+      "classification": "advisory"
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "quality-integration",
+      "classification": "advisory"
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "quality-bin-doc",
+      "classification": "advisory"
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "quality-contracts",
+      "classification": "advisory"
     }
   ],
   "managed_required_contexts": [],

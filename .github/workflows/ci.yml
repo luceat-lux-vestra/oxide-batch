@@ -15,14 +15,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  quality:
-    name: quality
+  quality-fast:
+    name: quality-fast-internal
+    if: ${{ github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Draft final-gate placeholder
-        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
-        run: echo "full quality validation is deferred until the pull request is ready for review"
       - name: Resolve exact-SHA Fast evidence
         id: fast-evidence
         if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}
@@ -113,13 +111,6 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: rustup show
 
-      - name: Test trusted PR scope classifier
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
-        run: >-
-          python3 .github/scripts/pr-scope.py
-          --repo-root .
-          --policy .github/merge-gate-policy.json
-          --self-test
 
       - name: Check formatting
         if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.reuse != 'true' }}
@@ -181,38 +172,110 @@ jobs:
               raise SystemExit(f'expected only {sorted(expected)}, observed {sorted(seen)}')
           PY
 
-      - name: Run final-only non-library tests
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
-        run: |
-          cargo test --workspace --all-features --bins
-          cargo test --workspace --all-features --test '*'
-          cargo test --workspace --all-features --doc
+
+  quality-integration:
+    name: quality-integration-internal
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run final-only integration tests
+        run: cargo test --workspace --all-features --test '*'
+
+  quality-bin-doc:
+    name: quality-bin-doc-internal
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run final-only binary tests
+        run: cargo test --workspace --all-features --bins
+
+      - name: Run final-only documentation tests
+        run: cargo test --workspace --all-features --doc
+
+  quality-contracts:
+    name: quality-contracts-internal
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Check facade without optional adapters
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo check -p oxide-batch --no-default-features
 
       - name: Check operator CLI without optional adapters
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo check -p oxide-batch-cli --no-default-features --all-targets
 
       - name: Build documentation
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --all-features --no-deps
 
       - name: Check extraction boundaries and workspace cycles
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo run --package oxide-batch-xtask -- deps
 
       - name: Inspect the facade surface for disclosed dependencies
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo run --package oxide-batch-xtask -- surface
 
       - name: Verify the canonical publishable-crate release set
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo run --package oxide-batch-xtask -- release-crates
+
+  quality:
+    name: quality
+    needs: [quality-fast, quality-integration, quality-bin-doc, quality-contracts]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Draft final-gate placeholder
+        if: ${{ github.event.pull_request.draft }}
+        run: echo "full quality validation is deferred until the pull request is ready for review"
+
+      - name: Check out repository
+        if: ${{ github.event.pull_request.draft == false }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test trusted PR scope classifier
+        if: ${{ github.event.pull_request.draft == false }}
+        run: >-
+          python3 .github/scripts/pr-scope.py
+          --repo-root .
+          --policy .github/merge-gate-policy.json
+          --self-test
+
+      - name: Require all quality components
+        if: ${{ github.event.pull_request.draft == false }}
+        env:
+          FAST_RESULT: ${{ needs.quality-fast.result }}
+          INTEGRATION_RESULT: ${{ needs.quality-integration.result }}
+          BIN_DOC_RESULT: ${{ needs.quality-bin-doc.result }}
+          CONTRACTS_RESULT: ${{ needs.quality-contracts.result }}
+        run: |
+          set -euo pipefail
+          for result in "$FAST_RESULT" "$INTEGRATION_RESULT" "$BIN_DOC_RESULT" "$CONTRACTS_RESULT"; do
+            if [ "$result" != "success" ]; then
+              echo "::error::quality component concluded '$result'; refusing to emit a successful aggregate"
+              exit 1
+            fi
+          done
+          echo "All parallel quality components completed successfully."
 
   packaging:
     name: packaging
