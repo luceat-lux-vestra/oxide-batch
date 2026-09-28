@@ -74,9 +74,9 @@ The two M5 conformance contexts remain independently required:
 
 That is an intentional **decline** to aggregate the conformance campaign, not omitted evaluation. GitHub Actions `needs` is workflow-local, so a native conformance aggregate would have to modify `.github/workflows/m5-conformance.yml`. That workflow's exact Git object identity is part of the retained M5 conformance evidence provenance contract. Changing it solely to reduce the ruleset surface invalidates the currently retained campaign evidence and requires a new campaign/evidence promotion even though the conformance obligation itself did not change. The conformance checks therefore retain useful independent evidence authority and stay outside this aggregate.
 
-Cross-workflow polling or custom commit-status publication was also evaluated and declined. It adds lifecycle/rerun races and elevated status-publishing machinery that a workflow-local native dependency graph does not need.
+#223 correctly declined cross-workflow polling for the PostgreSQL-only aggregate because a workflow-local dependency graph was sufficient. The repository-level gate has a different boundary: it composes already-distinct authorities from multiple workflows. It therefore uses protected-base `pull_request_target` authority, not a PR-head poller and not custom commit-status publication. The gate never checks out PR code, loads its member inventory from the exact base SHA, binds each member to its canonical source workflow and exact PR head, reconciles selective reruns per member, and fails closed on missing, duplicate, malformed, or non-success evidence.
 
-The design also deliberately leaves `dependency-review`, `supply-chain`, `msrv`, `packaging`, `quality`, `evidence-provenance`, and required CodeQL Actions analysis independently required because those controls have distinct dependency, security, compatibility, release, repository-quality, evidence-integrity, or static-analysis authority. Advisory Rust CodeQL adds another static-security signal without replacing or weakening any of those controls.
+Those controls remain distinct child authorities with their own visible check results and failure semantics. The current redesign adds a repository-level `merge-gate` above them; aggregation changes only the future ruleset surface, not whether the child controls execute or remain diagnosable. Advisory Rust CodeQL remains outside merge authority unless separately promoted.
 
 ## Native aggregate contract
 
@@ -127,6 +127,55 @@ Aggregate membership lives only in `merge-gate-policy.json`. The verifier maps e
 A removed/renamed member, matrix drift, dependency omission, weakened permissions, an unpinned or diverging checkout SHA, an altered/missing evaluator invocation, duplicate context, producer suppression, or producer reclassification therefore fails closed in required `quality` CI.
 
 The two M5 PostgreSQL conformance contexts (`postgres-15-conformance-campaign`, `postgres-18-conformance-campaign`) are produced by a different workflow (`.github/workflows/m5-conformance.yml`) and are not members of this aggregate; they remain independently required, unchanged by this evaluator.
+
+## Repository merge gate bootstrap
+
+The repository-level `merge-gate` is hosted as a separate read-only job inside
+`.github/workflows/pr-labeler.yml`. Reusing that path is deliberate: the live
+Actions event policy already authorizes `pull_request_target` for this audited
+path, and the workflow already enforces job-local write authority. The label job
+retains its label-only writes; `merge-gate` receives only `actions: read`,
+`contents: read`, and `pull-requests: read`.
+
+Unlike ordinary required producers, the repository gate must be base-trusted. A
+PR that edits `pr-labeler.yml` cannot weaken the gate evaluating that same PR:
+`pull_request_target` executes the protected-base workflow definition. The gate
+never checks out, imports, sources, builds, or executes the PR head.
+
+The runtime contract is:
+
+1. re-read the live PR and require base SHA, head SHA, and base repository to
+   match the triggering event;
+2. fetch `.github/merge-gate-policy.json` from the exact base SHA;
+3. read `repository_merge_gate.members` as the only runtime member inventory;
+4. group members by canonical source workflow and query that workflow's
+   `pull_request` runs for the exact PR head SHA;
+5. fetch all Jobs API attempts for the latest exact-head workflow run;
+6. for each member select its maximum integer `run_attempt`, require exactly
+   one job at that attempt, and require `status == completed` and
+   `conclusion == success`;
+7. wait only for missing/in-progress exact-head evidence within the bounded
+   timeout, and fail immediately on a completed missing member, duplicate latest
+   member, failure, cancellation, skip, malformed schema, API error, or identity
+   mismatch.
+
+This preserves selective-rerun semantics while avoiding context-name-only
+cross-workflow matching. Member source mappings are statically reconciled
+against checked-in required producers and native aggregate producers.
+
+Repository-gate states are `candidate -> cutover -> active`:
+
+- `candidate`: the existing child ruleset topology remains authoritative and
+  `merge-gate` is pending promotion;
+- `cutover`: policy accepts either the complete child topology or exactly the
+  single `merge-gate` topology during one administrative ruleset replacement;
+- `active`: only `merge-gate` is directly required by the live ruleset;
+  every child producer remains merge-authoritative behind it and still runs.
+
+The bootstrap PR only installs the candidate. Because target-context workflow
+code comes from the base branch, the newly added job cannot execute on its own
+bootstrap PR. Runtime promotion is intentionally deferred until a subsequent
+real PR proves the candidate from the merged protected base.
 
 ## Aggregate lifecycle and atomic cutover
 
