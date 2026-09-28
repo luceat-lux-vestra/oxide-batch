@@ -83,7 +83,8 @@
       "campaign": "M5 PostgreSQL conformance",
       "storage": "github-actions",
       "classification": "informational",
-      "promotes_to": "m5"
+      "promotes_to": "m5",
+      "expected_upload_invocations": 4
     },
     {
       "workflow": ".github/workflows/m5-crash-restore.yml",
