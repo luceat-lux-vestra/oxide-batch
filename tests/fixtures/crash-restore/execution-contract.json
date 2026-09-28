@@ -15,7 +15,7 @@
   "runner": "ubuntu-24.04",
   "script": "./tests/fixtures/crash-restore/run-ci-campaign.sh ${{ matrix.postgres }}",
   "script_path": "tests/fixtures/crash-restore/run-ci-campaign.sh",
-  "script_git_blob": "35a6fd631719010ee918c9557194b3a9cb90c1ae",
+  "script_git_blob": "6537ee1543f50f9c0373049af13b192a3592f250",
   "supported_matrix": [
     "15",
     "18"

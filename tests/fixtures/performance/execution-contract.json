@@ -15,7 +15,7 @@
   "runner": "ubuntu-24.04",
   "script": "./tests/fixtures/performance/run-ci-campaign.sh ${{ matrix.postgres }}",
   "script_path": "tests/fixtures/performance/run-ci-campaign.sh",
-  "script_git_blob": "117f93f6f0d80cee6b671d4ad832031c0da3cfc4",
+  "script_git_blob": "906a49cbcbb6ac2df485fdf011ad26342b45093b",
   "supported_matrix": [
     "15",
     "18"

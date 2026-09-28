@@ -15,7 +15,7 @@
   "runner": "ubuntu-24.04",
   "script": "./tests/fixtures/security/provision.sh ${{ matrix.postgres }}",
   "script_path": "tests/fixtures/security/provision.sh",
-  "script_git_blob": "a46c94da4e61c5d7399b4eb4eb85da2110585cbf",
+  "script_git_blob": "4d4d2e22af0630ec535de3e24d1c3dbc0442b9c8",
   "supported_matrix": [
     "15",
     "18"
