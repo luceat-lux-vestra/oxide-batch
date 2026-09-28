@@ -9,22 +9,89 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: m5-conformance-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  conformance-campaign:
-    # Required context producer: always emit; draft PRs only run the placeholder.
-    name: postgres-${{ matrix.postgres }}-conformance-campaign
+  route:
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}
+    name: trusted-campaign-route
     runs-on: ubuntu-24.04
-    # The campaign's execution envelope is 30 test targets derived from the
-    # accepted-scope document, each run in full, plus the workspace
-    # documentation tests as a separate obligation — not one bounded
-    # workload, so its ceiling is wider than the other M5 campaigns'. Still a
-    # ceiling: a campaign that stopped making progress must fail rather than
-    # occupy a runner.
+    timeout-minutes: 5
+    outputs:
+      classification_outcome: ${{ steps.classify.outcome }}
+      direct_workflows: ${{ steps.classify.outputs.direct_workflows }}
+    steps:
+      - name: Check out exact trusted base
+        id: trusted-base
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-base
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Classify direct-proof campaigns from trusted base
+        id: classify
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TRUSTED_CHECKOUT: ${{ steps.trusted-base.outcome }}
+        shell: bash
+        run: |
+          echo 'direct_workflows=[]' >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          test "$TRUSTED_CHECKOUT" = "success"
+
+          pr_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          jq -e \
+            --arg base "$BASE_SHA" \
+            --arg head "$HEAD_SHA" \
+            --arg repo "$GITHUB_REPOSITORY" \
+            '.base.sha == $base and .head.sha == $head and .base.repo.full_name == $repo and ((.changed_files | type) == "number" and .changed_files > 0)' \
+            <<<"$pr_json" >/dev/null
+          expected_count="$(jq -er '.changed_files' <<<"$pr_json")"
+
+          pages="$(gh api --paginate --slurp -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"
+          jq -e 'type == "array" and all(.[]; type == "array")' <<<"$pages" >/dev/null
+          changed_file_records="$(mktemp)"
+          jq -r '.[][] | [.status, .filename, (.previous_filename // "")] | @tsv' <<<"$pages" >"$changed_file_records"
+
+          classification="$(
+            python3 .trusted-base/.github/scripts/pr-scope.py \
+              --repo-root .trusted-base \
+              --policy .github/merge-gate-policy.json \
+              --expected-count "$expected_count" \
+              --trusted-base-sha "$BASE_SHA" \
+              <"$changed_file_records"
+          )"
+          direct_workflows="$(
+            jq -cer '
+              if .classification_valid == true and
+                 (.direct_proof_campaign_workflows | type) == "array" and
+                 all(.direct_proof_campaign_workflows[]; type == "string") and
+                 ((.direct_proof_campaign_workflows | unique | length) ==
+                  (.direct_proof_campaign_workflows | length))
+              then .direct_proof_campaign_workflows
+              else error("invalid direct-proof campaign output")
+              end
+            ' <<<"$classification"
+          )"
+          echo "direct_workflows=$direct_workflows" >> "$GITHUB_OUTPUT"
+
+  conformance-deep:
+    name: deep-postgres-${{ matrix.postgres }}-conformance-campaign
+    needs: route
+    if: >-
+      ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-conformance.yml')))) }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 55
     strategy:
       fail-fast: false
@@ -32,9 +99,6 @@ jobs:
         postgres: ["15", "18"]
     services:
       postgres:
-        # matrix.postgres is a checked-in 15/18 allowlist. The matching official
-        # multi-arch image digests are immutable; an unsupported value resolves
-        # to a deliberately invalid digest and fails before campaign execution.
         image: postgres:${{ matrix.postgres }}@sha256:${{ matrix.postgres == '15' && '926f8799aef36e00001cfe15fba7abbd37d3c5224ea57e4c858e4bb670f10561' || matrix.postgres == '18' && '4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280' || 'unsupported' }} # zizmor: ignore[unpinned-images]
         env:
           POSTGRES_PASSWORD: postgres
@@ -53,35 +117,66 @@ jobs:
       OXIDEBATCH_CAMPAIGN_DIR: target/m5-campaigns
       OXIDEBATCH_CAMPAIGN_MATRIX: postgres-${{ matrix.postgres }}
     steps:
-      - name: Draft final-gate placeholder
-        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
-        run: echo "M5 conformance is deferred until the pull request is ready for review"
-
       - name: Check out repository
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Fail closed if the execution contract drifts
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: ./tests/fixtures/conformance/verify-ci-contract.sh .github/workflows/m5-conformance.yml
 
       - name: Run the full embedded conformance suite over the accepted scope
         id: conformance-campaign # zizmor: ignore[template-injection] matrix.postgres is the checked-in 15/18 matrix above.
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: ./tests/fixtures/conformance/run-ci-campaign.sh ${{ matrix.postgres }}
 
-      # Retained on failure as well as on success. A failed conformance
-      # campaign is mostly worth reading for which accepted row or which
-      # target it lost, and a job that uploaded only green reports would
-      # discard exactly that.
       - name: Retain the campaign report
-        if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: conformance-campaign-postgres-${{ matrix.postgres }}
           path: target/m5-campaigns/conformance-campaign.json
           if-no-files-found: error
           retention-days: 30
+
+  conformance-campaign:
+    name: postgres-${{ matrix.postgres }}-conformance-campaign
+    needs: [route, conformance-deep]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["15", "18"]
+    steps:
+      - name: Emit required conformance context
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          IS_DRAFT: ${{ github.event.pull_request.draft }}
+          ROUTE_RESULT: ${{ needs.route.result }}
+          CLASSIFICATION_OUTCOME: ${{ needs.route.outputs.classification_outcome }}
+          DIRECT_REQUIRED: ${{ contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-conformance.yml') }}
+          DEEP_RESULT: ${{ needs.conformance-deep.result }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == "pull_request" && "$IS_DRAFT" == "true" ]]; then
+            echo "M5 conformance is deferred until the pull request is ready for review"
+            exit 0
+          fi
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" || "$ROUTE_RESULT" != "success" || "$CLASSIFICATION_OUTCOME" != "success" || "$DIRECT_REQUIRED" == "true" ]]; then
+            if [[ "$DEEP_RESULT" != "success" ]]; then
+              echo "M5 conformance deep proof was required but concluded: $DEEP_RESULT" >&2
+              exit 1
+            fi
+            echo "M5 conformance deep proof completed successfully"
+            exit 0
+          fi
+
+          if [[ "$DEEP_RESULT" != "skipped" ]]; then
+            echo "M5 conformance deep proof was not required but concluded: $DEEP_RESULT" >&2
+            exit 1
+          fi
+          echo "M5 conformance direct proof is not required for this pull request"
