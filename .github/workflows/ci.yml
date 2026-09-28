@@ -113,6 +113,14 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: rustup show
 
+      - name: Test trusted PR scope classifier
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          python3 .github/scripts/pr-scope.py
+          --repo-root .
+          --policy .github/merge-gate-policy.json
+          --self-test
+
       - name: Check formatting
         if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.reuse != 'true' }}
         run: cargo fmt --all -- --check
