@@ -146,16 +146,84 @@ class MergeGateVerifierTest < Minitest::Test
         on:
           pull_request:
             branches: [main]
+          workflow_dispatch:
+        permissions:
+          contents: read
+          pull-requests: read
         jobs:
-          conformance-campaign:
-            name: postgres-${{ matrix.postgres }}-conformance-campaign
+          route:
+            if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}
+            name: trusted-campaign-route
+            runs-on: ubuntu-24.04
+            timeout-minutes: 5
+            outputs:
+              classification_outcome: ${{ steps.classify.outcome }}
+              direct_workflows: ${{ steps.classify.outputs.direct_workflows }}
+            steps:
+              - name: Check out exact trusted base
+                id: trusted-base
+                continue-on-error: true
+                uses: actions/checkout@0000000000000000000000000000000000000002
+                with:
+                  ref: ${{ github.event.pull_request.base.sha }}
+                  path: .trusted-base
+                  fetch-depth: 1
+                  persist-credentials: false
+              - name: Classify direct-proof campaigns from trusted base
+                id: classify
+                continue-on-error: true
+                env:
+                  GH_TOKEN: ${{ github.token }}
+                  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+                  HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+                  PR_NUMBER: ${{ github.event.pull_request.number }}
+                  TRUSTED_CHECKOUT: ${{ steps.trusted-base.outcome }}
+                run: |
+                  echo 'direct_workflows=[]' >> "$GITHUB_OUTPUT"
+                  set -euo pipefail
+                  test "$TRUSTED_CHECKOUT" = "success"
+                  gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"
+                  echo '.base.sha == $base .head.sha == $head .base.repo.full_name == $repo .changed_files > 0'
+                  gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100"
+                  echo '@tsv'
+                  python3 .trusted-base/.github/scripts/pr-scope.py \
+                    --repo-root .trusted-base \
+                    --policy .github/merge-gate-policy.json \
+                    --expected-count "$expected_count" \
+                    --trusted-base-sha "$BASE_SHA"
+                  echo '.direct_proof_campaign_workflows'
+                  echo "direct_workflows=$direct_workflows" >> "$GITHUB_OUTPUT"
+          conformance-deep:
+            name: deep-postgres-${{ matrix.postgres }}-conformance-campaign
+            needs: route
+            if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-conformance.yml')))) }}
+            runs-on: ubuntu-latest
             strategy:
               matrix:
                 postgres: ["15", "18"]
-            runs-on: ubuntu-latest
+            services:
+              postgres:
+                image: postgres:15
             steps:
-              - name: Check out repository
-                uses: actions/checkout@0000000000000000000000000000000000000002
+              - run: echo deep
+          conformance-campaign:
+            name: postgres-${{ matrix.postgres }}-conformance-campaign
+            needs: [route, conformance-deep]
+            if: ${{ always() }}
+            runs-on: ubuntu-latest
+            strategy:
+              matrix:
+                postgres: ["15", "18"]
+            steps:
+              - name: Emit required conformance context
+                run: |
+                  ROUTE_RESULT=x
+                  CLASSIFICATION_OUTCOME=x
+                  DIRECT_REQUIRED=x
+                  DEEP_RESULT=x
+                  echo "M5 conformance is deferred until the pull request is ready for review"
+                  if [[ "$DEEP_RESULT" != "success" ]]; then exit 1; fi
+                  if [[ "$DEEP_RESULT" != "skipped" ]]; then exit 1; fi
           postgresql-conformance-merge-gate:
             name: postgresql-conformance
             if: ${{ always() }}
@@ -196,9 +264,53 @@ class MergeGateVerifierTest < Minitest::Test
             branches: [main]
         permissions:
           contents: read
+          pull-requests: read
         jobs:
-          m5_soak:
+          route:
             if: ${{ github.event.pull_request.draft == false }}
+            name: trusted-campaign-route
+            runs-on: ubuntu-24.04
+            timeout-minutes: 5
+            outputs:
+              classification_outcome: ${{ steps.classify.outcome }}
+              direct_workflows: ${{ steps.classify.outputs.direct_workflows }}
+            steps:
+              - name: Check out exact trusted base
+                id: trusted-base
+                continue-on-error: true
+                uses: actions/checkout@0000000000000000000000000000000000000001
+                with:
+                  ref: ${{ github.event.pull_request.base.sha }}
+                  path: .trusted-base
+                  fetch-depth: 1
+                  persist-credentials: false
+              - name: Classify direct-proof campaigns from trusted base
+                id: classify
+                continue-on-error: true
+                env:
+                  GH_TOKEN: ${{ github.token }}
+                  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+                  HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+                  PR_NUMBER: ${{ github.event.pull_request.number }}
+                  TRUSTED_CHECKOUT: ${{ steps.trusted-base.outcome }}
+                run: |
+                  echo 'direct_workflows=[]' >> "$GITHUB_OUTPUT"
+                  set -euo pipefail
+                  test "$TRUSTED_CHECKOUT" = "success"
+                  gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"
+                  echo '.base.sha == $base .head.sha == $head .base.repo.full_name == $repo .changed_files > 0'
+                  gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100"
+                  echo '@tsv'
+                  python3 .trusted-base/.github/scripts/pr-scope.py \
+                    --repo-root .trusted-base \
+                    --policy .github/merge-gate-policy.json \
+                    --expected-count "$expected_count" \
+                    --trusted-base-sha "$BASE_SHA"
+                  echo '.direct_proof_campaign_workflows'
+                  echo "direct_workflows=$direct_workflows" >> "$GITHUB_OUTPUT"
+          m5_soak:
+            needs: route
+            if: ${{ always() && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-soak.yml')) }}
             uses: ./.github/workflows/m5-soak.yml
       YAML
       write(root, '.github/workflows/deep-soak.yml', <<~YAML)
@@ -675,15 +787,13 @@ class MergeGateVerifierTest < Minitest::Test
   def test_campaign_orchestrator_missing_advisory_producer_is_rejected
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/campaign-orchestrator.yml')
-      block = "  m5_soak:\n    if: ${{ github.event.pull_request.draft == false }}\n    uses: ./.github/workflows/m5-soak.yml\n"
       original = File.read(path)
-      body = original.sub("jobs:\n#{block}", "jobs: {}\n")
+      body = original.sub(/\n  m5_soak:\n.*?uses: \.\/\.github\/workflows\/m5-soak\.yml\n/m, "\n")
       refute_equal original, body
       write(root, '.github/workflows/campaign-orchestrator.yml', body)
       assert_includes verify(root).join('\n'), 'misses advisory producers'
     end
   end
-
   def test_advisory_campaign_direct_pr_trigger_is_rejected
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/m5-soak.yml')
@@ -705,6 +815,30 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
+  def test_campaign_orchestrator_fail_closed_classifier_fallback_removal_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/campaign-orchestrator.yml')
+      original = File.read(path)
+      body = original.sub("needs.route.outputs.classification_outcome != 'success' || ", '')
+      refute_equal original, body
+      write(root, '.github/workflows/campaign-orchestrator.yml', body)
+      assert_includes verify(root).join('\n'), 'must route direct proof and fail closed to execution'
+    end
+  end
+
+  def test_m5_conformance_required_context_emitter_services_are_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/m5-conformance.yml')
+      original = File.read(path)
+      body = original.sub(
+        "  conformance-campaign:\n    name: postgres-${{ matrix.postgres }}-conformance-campaign\n",
+        "  conformance-campaign:\n    name: postgres-${{ matrix.postgres }}-conformance-campaign\n    services:\n      postgres:\n        image: postgres:15\n"
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/m5-conformance.yml', body)
+      assert_includes verify(root).join('\n'), 'required context emitter must not declare services'
+    end
+  end
   private
 
   def write(root, relative, content)
