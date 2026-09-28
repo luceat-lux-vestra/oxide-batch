@@ -586,7 +586,6 @@ jobs:
       - postgres-design-gate
       - postgres-item-components
       - postgres-repository
-      - postgres-spike
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
