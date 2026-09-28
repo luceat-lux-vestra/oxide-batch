@@ -3,7 +3,8 @@
 //! A campaign runner decides whether a run proved what it owed. This decides
 //! something narrower and separate: whether the reports committed to
 //! `docs/engineering/campaigns/m5/` are still the untouched output of a
-//! recorded CI run over a tree whose campaign still means what it meant.
+//! recorded CI run with internally consistent producer provenance and execution
+//! manifests. Current-tree semantic freshness is a stronger, separate check.
 //!
 //! It exists because retained evidence has a failure mode that has nothing to
 //! do with the campaign that produced it. A report is a file in a repository.
@@ -565,12 +566,13 @@ fn verify_unique<'a>(
         .collect()
 }
 
-/// Requires the campaign the reports describe to be the campaign this tree runs.
+/// Verifies retained execution-manifest integrity and optional current freshness.
 ///
-/// The identities compared here are the ones the producer recorded *from inside
-/// its own checkout*, in the report, at the moment it ran. That is the root of
-/// trust, and it replaces an earlier arrangement that re-derived them from a
-/// commit name.
+/// The identities recorded here are the ones the producer captured *from inside
+/// its own checkout*, in the report, at the moment it ran. Integrity mode keeps
+/// that retained manifest self-consistent without requiring current HEAD to
+/// match it. Freshness mode additionally proves that the current semantic
+/// closure and object identities are still the ones that produced the report.
 ///
 /// The reason is not preference. A pull-request run executes against an
 /// ephemeral merge commit no later clone can resolve, and the branch head is a
