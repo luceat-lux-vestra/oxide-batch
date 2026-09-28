@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "ruleset": {
     "id": 19905142,
     "name": "Protect main"
@@ -109,5 +109,9 @@
       "Cargo.lock"
     ],
     "trusted_tree_contract": "exact-git-base-sha"
+  },
+  "post_main": {
+    "default_branch": "main",
+    "allowed_push_workflows": []
   }
 }
