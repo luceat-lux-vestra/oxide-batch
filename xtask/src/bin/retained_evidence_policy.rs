@@ -29,6 +29,7 @@ const REPORT_SIZE_CEILING_BYTES: u64 = 6 * 1024 * 1024;
 const REPORT_COUNT_CEILING: usize = 64;
 const EXPECTED_COMMITTED_SIZE_CEILING_BYTES: u64 = 14 * 1024 * 1024;
 const COMMITTED_SIZE_CEILING_BYTES: u64 = 16 * 1024 * 1024;
+const UPLOAD_INVOCATION_CEILING: usize = 8;
 
 struct Verification {
     violations: Vec<String>,
@@ -732,10 +733,30 @@ fn verify_artifact_producers(
         let path = root.join(workflow);
         let source = fs::read_to_string(&path)
             .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+        let expected_uploads = match producer.get("expected_upload_invocations") {
+            None => 1,
+            Some(Value::Number(value)) => value
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .filter(|value| *value > 0 && *value <= UPLOAD_INVOCATION_CEILING)
+                .unwrap_or_else(|| {
+                    violations.push(format!(
+                        "artifact producer {workflow} expected_upload_invocations must be an integer in 1..={UPLOAD_INVOCATION_CEILING}"
+                    ));
+                    1
+                }),
+            Some(_) => {
+                violations.push(format!(
+                    "artifact producer {workflow} expected_upload_invocations must be an integer"
+                ));
+                1
+            }
+        };
         violations.extend(verify_upload_workflow(
             workflow,
             &source,
             limits.artifact_days,
+            expected_uploads,
         ));
     }
 
@@ -754,15 +775,20 @@ fn verify_artifact_producers(
     Ok((violations, producers.len(), campaigns))
 }
 
-fn verify_upload_workflow(workflow: &str, source: &str, retention_days: u64) -> Vec<String> {
+fn verify_upload_workflow(
+    workflow: &str,
+    source: &str,
+    retention_days: u64,
+    expected_uploads: usize,
+) -> Vec<String> {
     let upload_lines = source
         .lines()
         .filter(|line| line.trim().starts_with(UPLOAD_ACTION))
         .collect::<Vec<_>>();
     let mut violations = Vec::new();
-    if upload_lines.len() != 1 {
+    if upload_lines.len() != expected_uploads {
         violations.push(format!(
-            "{workflow} has {} upload-artifact invocation(s); inventory expects exactly one evidence artifact producer",
+            "{workflow} has {} upload-artifact invocation(s); inventory expects exactly {expected_uploads}",
             upload_lines.len()
         ));
     }
@@ -777,9 +803,13 @@ fn verify_upload_workflow(workflow: &str, source: &str, retention_days: u64) -> 
     }
 
     let required = format!("retention-days: {retention_days}");
-    if !source.lines().any(|line| line.trim() == required) {
+    let retention_lines = source
+        .lines()
+        .filter(|line| line.trim() == required)
+        .count();
+    if retention_lines != expected_uploads {
         violations.push(format!(
-            "{workflow} does not set the required literal Actions artifact {required}"
+            "{workflow} has {retention_lines} literal Actions artifact {required} declaration(s); inventory expects exactly {expected_uploads}"
         ));
     }
     violations
@@ -1127,7 +1157,23 @@ mod tests {
     #[test]
     fn exact_upload_artifact_contract_is_accepted() {
         let source = "uses: actions/upload-artifact@0123456789012345678901234567890123456789\nwith:\n  retention-days: 30\n";
-        assert!(super::verify_upload_workflow("workflow.yml", source, 30).is_empty());
+        assert!(super::verify_upload_workflow("workflow.yml", source, 30, 1).is_empty());
+    }
+
+    #[test]
+    fn explicit_multi_upload_contract_is_exact() {
+        let source = concat!(
+            "uses: actions/upload-artifact@0123456789012345678901234567890123456789\n",
+            "  retention-days: 30\n",
+            "uses: actions/upload-artifact@abcdefabcdefabcdefabcdefabcdefabcdefabcd\n",
+            "  retention-days: 30\n",
+        );
+        assert!(super::verify_upload_workflow("workflow.yml", source, 30, 2).is_empty());
+        assert!(
+            super::verify_upload_workflow("workflow.yml", source, 30, 1)
+                .iter()
+                .any(|violation| violation.contains("inventory expects exactly 1"))
+        );
     }
 
     #[test]
