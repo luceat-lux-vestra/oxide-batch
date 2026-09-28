@@ -225,7 +225,7 @@ fn run_shard(index: &str, count: &str) -> Result<Campaign, String> {
 ///
 /// The merge recomputes the target partition from the accepted scope and
 /// rejects partial evidence that is missing, duplicated, from another
-/// PostgreSQL major/tree/environment, or claims a target outside its exact
+/// `PostgreSQL` major/tree/environment, or claims a target outside its exact
 /// shard. Only after that exact-cover proof does ordinary 133-scenario
 /// reconciliation run.
 fn merge_shards(count: &str, directory: &Path) -> Result<Campaign, String> {
@@ -252,7 +252,7 @@ fn merge_shards(count: &str, directory: &Path) -> Result<Campaign, String> {
         })?
         .filter_map(Result::ok)
         .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|name| name.starts_with(SHARD_REPORT_PREFIX) && name.ends_with(".json"))
+        .filter(|name| name.starts_with(SHARD_REPORT_PREFIX))
         .collect::<BTreeSet<_>>();
     let expected_files = (0..count).map(shard_report_name).collect::<BTreeSet<_>>();
     if observed_files != expected_files {
