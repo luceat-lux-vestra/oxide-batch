@@ -298,6 +298,12 @@ module MergeGateVerifier
   PR_SCOPE_SEMANTICS_GLOB = 'tests/fixtures/**/campaign-semantics.json'
   PR_SCOPE_RETAINED_POLICY = 'docs/engineering/retained-evidence-policy.json'
   CAMPAIGN_ORCHESTRATOR_WORKFLOW = '.github/workflows/campaign-orchestrator.yml'
+  M5_CONFORMANCE_WORKFLOW = '.github/workflows/m5-conformance.yml'
+  CAMPAIGN_ROUTE_JOB = 'route'
+  CAMPAIGN_ROUTE_CLASSIFY_STEP = 'classify'
+  CAMPAIGN_ROUTE_CHECKOUT_STEP = 'trusted-base'
+  M5_CONFORMANCE_DEEP_JOB = 'conformance-deep'
+  M5_CONFORMANCE_CONTEXT_JOB = 'conformance-campaign'
   PR_SCOPE_GLOBAL_DIRECT_PROOF_PATHS = [
     PR_SCOPE_SCRIPT,
     '.github/merge-gate-policy.json',
@@ -369,6 +375,97 @@ module MergeGateVerifier
     present
   end
 
+  def trusted_campaign_route_contract(workflow:, job:, expected_if:)
+    violations = []
+    unless job.is_a?(Hash)
+      return ["#{workflow} must declare #{CAMPAIGN_ROUTE_JOB} as the trusted routing job"]
+    end
+
+    unless normalized_shell(job['if']) == normalized_shell(expected_if)
+      violations << "#{workflow} trusted route must run only under the canonical pull-request condition"
+    end
+    violations << "#{workflow} trusted route must run on ubuntu-24.04" unless job['runs-on'] == 'ubuntu-24.04'
+    violations << "#{workflow} trusted route timeout must remain 5 minutes" unless job['timeout-minutes'] == 5
+
+    expected_outputs = {
+      'classification_outcome' => '${{ steps.classify.outcome }}',
+      'direct_workflows' => '${{ steps.classify.outputs.direct_workflows }}'
+    }
+    unless job['outputs'] == expected_outputs
+      violations << "#{workflow} trusted route must expose classifier outcome and direct workflow output"
+    end
+
+    steps = job['steps']
+    unless steps.is_a?(Array)
+      return violations + ["#{workflow} trusted route must declare steps"]
+    end
+
+    checkout = steps.find { |step| step.is_a?(Hash) && step['id'] == CAMPAIGN_ROUTE_CHECKOUT_STEP }
+    unless checkout.is_a?(Hash)
+      violations << "#{workflow} trusted route is missing exact-base checkout"
+    else
+      checkout_uses = checkout['uses'].to_s
+      unless checkout_uses.match?(/\Aactions\/checkout@[0-9a-f]{40}\z/)
+        violations << "#{workflow} trusted route checkout must use a SHA-pinned actions/checkout"
+      end
+      violations << "#{workflow} trusted route checkout must continue on error for fail-closed fallback" unless checkout['continue-on-error'] == true
+      expected_with = {
+        'ref' => '${{ github.event.pull_request.base.sha }}',
+        'path' => '.trusted-base',
+        'fetch-depth' => 1,
+        'persist-credentials' => false
+      }
+      unless checkout['with'] == expected_with
+        violations << "#{workflow} trusted route checkout must target only the exact PR base SHA in .trusted-base"
+      end
+    end
+
+    classify = steps.find { |step| step.is_a?(Hash) && step['id'] == CAMPAIGN_ROUTE_CLASSIFY_STEP }
+    unless classify.is_a?(Hash)
+      violations << "#{workflow} trusted route is missing classifier step"
+      return violations
+    end
+    violations << "#{workflow} classifier step must continue on error so consumers can fall back to full execution" unless classify['continue-on-error'] == true
+    expected_env = {
+      'GH_TOKEN' => '${{ github.token }}',
+      'BASE_SHA' => '${{ github.event.pull_request.base.sha }}',
+      'HEAD_SHA' => '${{ github.event.pull_request.head.sha }}',
+      'PR_NUMBER' => '${{ github.event.pull_request.number }}',
+      'TRUSTED_CHECKOUT' => '${{ steps.trusted-base.outcome }}'
+    }
+    unless classify['env'] == expected_env
+      violations << "#{workflow} classifier step must bind canonical PR/base/head/token inputs"
+    end
+
+    command = classify['run'].to_s
+    required_tokens = [
+      "echo 'direct_workflows=[]' >> \"$GITHUB_OUTPUT\"",
+      'set -euo pipefail',
+      'test "$TRUSTED_CHECKOUT" = "success"',
+      'repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}',
+      '.base.sha == $base',
+      '.head.sha == $head',
+      '.base.repo.full_name == $repo',
+      '.changed_files > 0',
+      '--paginate --slurp',
+      'pulls/${PR_NUMBER}/files?per_page=100',
+      '@tsv',
+      '.trusted-base/.github/scripts/pr-scope.py',
+      '--repo-root .trusted-base',
+      '--policy .github/merge-gate-policy.json',
+      '--expected-count "$expected_count"',
+      '--trusted-base-sha "$BASE_SHA"',
+      '.direct_proof_campaign_workflows',
+      'direct_workflows=$direct_workflows'
+    ]
+    missing = required_tokens.reject { |token| command.include?(token) }
+    unless missing.empty?
+      violations << "#{workflow} classifier step is missing trusted routing tokens: #{missing.join(', ')}"
+    end
+
+    violations
+  end
+
   def campaign_orchestrator_contract(root:, policy:, producer_summary:)
     violations = []
     workflow_docs = producer_summary.fetch('workflow_docs')
@@ -383,8 +480,9 @@ module MergeGateVerifier
     if pull_request_target_trigger?(orchestrator)
       violations << "#{CAMPAIGN_ORCHESTRATOR_WORKFLOW} must not use pull_request_target"
     end
-    unless orchestrator['permissions'] == {'contents' => 'read'}
-      violations << "#{CAMPAIGN_ORCHESTRATOR_WORKFLOW} must keep top-level permissions at contents: read"
+    expected_permissions = {'contents' => 'read', 'pull-requests' => 'read'}
+    unless orchestrator['permissions'] == expected_permissions
+      violations << "#{CAMPAIGN_ORCHESTRATOR_WORKFLOW} must keep only contents/pull-requests read permissions"
     end
 
     retained_path = policy.dig('pr_scope', 'retained_evidence_policy')
@@ -403,21 +501,35 @@ module MergeGateVerifier
       return violations + ["#{CAMPAIGN_ORCHESTRATOR_WORKFLOW} must declare jobs"]
     end
 
+    route = jobs[CAMPAIGN_ROUTE_JOB]
+    violations.concat(trusted_campaign_route_contract(
+      workflow: CAMPAIGN_ORCHESTRATOR_WORKFLOW,
+      job: route,
+      expected_if: '${{ github.event.pull_request.draft == false }}'
+    ))
+
     calls = []
     jobs.each do |job_id, job|
+      next if job_id.to_s == CAMPAIGN_ROUTE_JOB
       unless job.is_a?(Hash) && job['uses'].is_a?(String)
         violations << "#{CAMPAIGN_ORCHESTRATOR_WORKFLOW} job #{job_id} must be a reusable-workflow call"
         next
-      end
-      unless job['if'].to_s.gsub(/\s+/, '') == '${{github.event.pull_request.draft==false}}'
-        violations << "#{CAMPAIGN_ORCHESTRATOR_WORKFLOW} job #{job_id} must skip draft pull requests"
       end
       uses = job['uses']
       unless uses.start_with?('./.github/workflows/')
         violations << "#{CAMPAIGN_ORCHESTRATOR_WORKFLOW} job #{job_id} must call a local checked-in workflow"
         next
       end
-      calls << uses.delete_prefix('./')
+      workflow = uses.delete_prefix('./')
+      calls << workflow
+
+      unless normalize_needs(job) == [CAMPAIGN_ROUTE_JOB]
+        violations << "#{CAMPAIGN_ORCHESTRATOR_WORKFLOW} job #{job_id} must depend only on the trusted route"
+      end
+      expected_if = "${{ always() && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '#{workflow}')) }}"
+      unless normalized_shell(job['if']) == normalized_shell(expected_if)
+        violations << "#{CAMPAIGN_ORCHESTRATOR_WORKFLOW} job #{job_id} must route direct proof and fail closed to execution"
+      end
     end
 
     duplicates = calls.group_by(&:itself).select { |_workflow, entries| entries.length > 1 }.keys
@@ -446,6 +558,89 @@ module MergeGateVerifier
     ["campaign orchestrator contract could not be evaluated: #{e.message}"]
   end
 
+  def m5_conformance_routing_contract(policy:, producer_summary:)
+    violations = []
+    workflow = producer_summary.fetch('workflow_docs')[M5_CONFORMANCE_WORKFLOW]
+    unless workflow.is_a?(Hash)
+      return ["#{M5_CONFORMANCE_WORKFLOW} is missing"]
+    end
+    unless pr_trigger?(workflow) && workflow_event?(workflow, 'workflow_dispatch')
+      violations << "#{M5_CONFORMANCE_WORKFLOW} must retain pull_request and workflow_dispatch triggers"
+    end
+    expected_permissions = {'contents' => 'read', 'pull-requests' => 'read'}
+    unless workflow['permissions'] == expected_permissions
+      violations << "#{M5_CONFORMANCE_WORKFLOW} must keep only contents/pull-requests read permissions"
+    end
+
+    jobs = workflow['jobs']
+    unless jobs.is_a?(Hash)
+      return violations + ["#{M5_CONFORMANCE_WORKFLOW} must declare jobs"]
+    end
+
+    route = jobs[CAMPAIGN_ROUTE_JOB]
+    violations.concat(trusted_campaign_route_contract(
+      workflow: M5_CONFORMANCE_WORKFLOW,
+      job: route,
+      expected_if: "${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}"
+    ))
+
+    deep = jobs[M5_CONFORMANCE_DEEP_JOB]
+    unless deep.is_a?(Hash)
+      violations << "#{M5_CONFORMANCE_WORKFLOW} must declare #{M5_CONFORMANCE_DEEP_JOB}"
+    else
+      violations << "#{M5_CONFORMANCE_WORKFLOW} deep job must be advisory" unless job_policy(policy, M5_CONFORMANCE_WORKFLOW, M5_CONFORMANCE_DEEP_JOB).first == 'advisory'
+      violations << "#{M5_CONFORMANCE_WORKFLOW} deep job must depend only on the trusted route" unless normalize_needs(deep) == [CAMPAIGN_ROUTE_JOB]
+      expected_if = "${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-conformance.yml')))) }}"
+      unless normalized_shell(deep['if']) == normalized_shell(expected_if)
+        violations << "#{M5_CONFORMANCE_WORKFLOW} deep job must run for manual/direct proof and fail closed on routing ambiguity"
+      end
+      unless deep['name'] == 'deep-postgres-${{ matrix.postgres }}-conformance-campaign'
+        violations << "#{M5_CONFORMANCE_WORKFLOW} deep job must not reuse required context names"
+      end
+      unless deep.dig('strategy', 'matrix', 'postgres') == ['15', '18']
+        violations << "#{M5_CONFORMANCE_WORKFLOW} deep job must retain PostgreSQL 15/18 matrix"
+      end
+      unless deep.dig('services', 'postgres').is_a?(Hash)
+        violations << "#{M5_CONFORMANCE_WORKFLOW} deep job must own PostgreSQL service provisioning"
+      end
+    end
+
+    emitter = jobs[M5_CONFORMANCE_CONTEXT_JOB]
+    unless emitter.is_a?(Hash)
+      violations << "#{M5_CONFORMANCE_WORKFLOW} must declare #{M5_CONFORMANCE_CONTEXT_JOB}"
+    else
+      violations << "#{M5_CONFORMANCE_WORKFLOW} context emitter must remain required" unless job_policy(policy, M5_CONFORMANCE_WORKFLOW, M5_CONFORMANCE_CONTEXT_JOB).first == 'required'
+      unless normalize_needs(emitter).sort == [CAMPAIGN_ROUTE_JOB, M5_CONFORMANCE_DEEP_JOB].sort
+        violations << "#{M5_CONFORMANCE_WORKFLOW} context emitter must depend on routing and deep proof"
+      end
+      violations << "#{M5_CONFORMANCE_WORKFLOW} context emitter must use always()" unless always_condition?(emitter['if'])
+      unless emitter['name'] == 'postgres-${{ matrix.postgres }}-conformance-campaign'
+        violations << "#{M5_CONFORMANCE_WORKFLOW} context emitter must preserve required PostgreSQL context names"
+      end
+      unless emitter.dig('strategy', 'matrix', 'postgres') == ['15', '18']
+        violations << "#{M5_CONFORMANCE_WORKFLOW} context emitter must retain PostgreSQL 15/18 matrix"
+      end
+      if emitter.key?('services')
+        violations << "#{M5_CONFORMANCE_WORKFLOW} required context emitter must not declare services"
+      end
+      emitter_run = Array(emitter['steps']).filter_map { |step| step.is_a?(Hash) ? step['run'] : nil }.join("\n")
+      required_tokens = [
+        'M5 conformance is deferred until the pull request is ready for review',
+        'ROUTE_RESULT',
+        'CLASSIFICATION_OUTCOME',
+        'DIRECT_REQUIRED',
+        'DEEP_RESULT',
+        '!= "success"',
+        '!= "skipped"'
+      ]
+      missing = required_tokens.reject { |token| emitter_run.include?(token) }
+      unless missing.empty?
+        violations << "#{M5_CONFORMANCE_WORKFLOW} context emitter is missing fail-closed proof checks: #{missing.join(', ')}"
+      end
+    end
+
+    violations
+  end
   EVALUATOR_SCRIPT = '.github/scripts/evaluate-aggregate-run.rb'
   AGGREGATE_PRODUCER_PERMISSIONS = {'actions' => 'read', 'contents' => 'read'}.freeze
   TOKEN_ENV_EXPR = /\A\$\{\{\s*github\.token\s*\}\}\z/
@@ -680,6 +875,7 @@ module MergeGateVerifier
 
     violations.concat(pr_scope_contract(root: root, policy: policy, producer_summary: producer_summary))
     violations.concat(campaign_orchestrator_contract(root: root, policy: policy, producer_summary: producer_summary))
+    violations.concat(m5_conformance_routing_contract(policy: policy, producer_summary: producer_summary))
     violations.concat(post_main_contract(policy: policy, producer_summary: producer_summary))
 
     required_contexts = producer_summary.fetch('required_contexts') + aggregates.map { |gate| gate['context'] }
