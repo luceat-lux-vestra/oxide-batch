@@ -64,7 +64,7 @@ module MergeGateVerifier
 
   def post_main_contract(policy:, producer_summary:)
     config = policy['post_main']
-    return ['schema v4 policy must declare post_main'] unless config.is_a?(Hash)
+    return ['schema v5 policy must declare post_main'] unless config.is_a?(Hash)
 
     branch = config['default_branch']
     allowed = config['allowed_push_workflows']
@@ -298,6 +298,12 @@ module MergeGateVerifier
   PR_SCOPE_SEMANTICS_GLOB = 'tests/fixtures/**/campaign-semantics.json'
   PR_SCOPE_RETAINED_POLICY = 'docs/engineering/retained-evidence-policy.json'
   CAMPAIGN_ORCHESTRATOR_WORKFLOW = '.github/workflows/campaign-orchestrator.yml'
+  PR_SCOPE_GLOBAL_DIRECT_PROOF_PATHS = [
+    PR_SCOPE_SCRIPT,
+    '.github/merge-gate-policy.json',
+    CAMPAIGN_ORCHESTRATOR_WORKFLOW,
+    PR_SCOPE_RETAINED_POLICY
+  ].freeze
 
   def normalized_shell(command)
     command.to_s.split.join(' ')
@@ -307,7 +313,7 @@ module MergeGateVerifier
     violations = []
     scope = policy['pr_scope']
     unless scope.is_a?(Hash)
-      return ['schema v3 policy must declare pr_scope']
+      return ['schema v5 policy must declare pr_scope']
     end
 
     unless scope['trusted_tree_contract'] == PR_SCOPE_TRUST_CONTRACT
@@ -318,6 +324,21 @@ module MergeGateVerifier
     end
     unless scope['retained_evidence_policy'] == PR_SCOPE_RETAINED_POLICY
       violations << "pr_scope retained_evidence_policy must be #{PR_SCOPE_RETAINED_POLICY.inspect}"
+    end
+
+    global_direct = scope['global_direct_proof_paths']
+    unless global_direct.is_a?(Array) &&
+           global_direct.all? { |entry| entry.is_a?(String) && !entry.empty? } &&
+           global_direct.uniq.length == global_direct.length &&
+           global_direct.sort == PR_SCOPE_GLOBAL_DIRECT_PROOF_PATHS.sort
+      violations << 'pr_scope global_direct_proof_paths must exactly match canonical routing control-plane paths'
+    end
+    global_campaign = scope['global_campaign_paths']
+    if global_campaign.is_a?(Array) && global_direct.is_a?(Array)
+      overlap = global_campaign & global_direct
+      unless overlap.empty?
+        violations << "pr_scope global_direct_proof_paths must not overlap global_campaign_paths: #{overlap.sort.join(', ')}"
+      end
     end
 
     script = Pathname(root).join(PR_SCOPE_SCRIPT)
@@ -647,7 +668,7 @@ module MergeGateVerifier
     ruleset = JSON.parse(File.read(ruleset_path))
     violations = []
 
-    violations << "unsupported policy schema_version #{policy['schema_version'].inspect}" unless policy['schema_version'] == 4
+    violations << "unsupported policy schema_version #{policy['schema_version'].inspect}" unless policy['schema_version'] == 5
     violations << "ruleset id mismatch: expected #{policy.dig('ruleset', 'id')}, got #{ruleset['id']}" unless ruleset['id'] == policy.dig('ruleset', 'id')
     violations << "ruleset name mismatch: expected #{policy.dig('ruleset', 'name').inspect}, got #{ruleset['name'].inspect}" unless ruleset['name'] == policy.dig('ruleset', 'name')
     violations << 'ruleset is not active' unless ruleset['enforcement'] == 'active'

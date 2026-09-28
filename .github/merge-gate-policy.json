@@ -1,5 +1,5 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "ruleset": {
     "id": 19905142,
     "name": "Protect main"
@@ -107,7 +107,13 @@
     "global_campaign_paths": [
       "Cargo.lock"
     ],
-    "trusted_tree_contract": "exact-git-base-sha"
+    "trusted_tree_contract": "exact-git-base-sha",
+    "global_direct_proof_paths": [
+      ".github/scripts/pr-scope.py",
+      ".github/merge-gate-policy.json",
+      ".github/workflows/campaign-orchestrator.yml",
+      "docs/engineering/retained-evidence-policy.json"
+    ]
   },
   "post_main": {
     "default_branch": "main",

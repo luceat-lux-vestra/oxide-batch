@@ -50,6 +50,7 @@ class ScopePolicy:
     semantics_glob: str
     retained_evidence_policy: str
     global_campaign_paths: tuple[str, ...]
+    global_direct_proof_paths: tuple[str, ...]
     trusted_tree_contract: str
 
 
@@ -125,6 +126,23 @@ def load_policy(path: Path) -> ScopePolicy:
     if len(set(global_paths)) != len(global_paths):
         raise ValueError("global campaign paths contain duplicates")
 
+    global_direct_raw = raw.get("global_direct_proof_paths")
+    if not isinstance(global_direct_raw, list) or not global_direct_raw:
+        raise ValueError(
+            "pr_scope.global_direct_proof_paths must be a non-empty list"
+        )
+    global_direct_paths = tuple(
+        _require_path(v, "global direct-proof path") for v in global_direct_raw
+    )
+    if len(set(global_direct_paths)) != len(global_direct_paths):
+        raise ValueError("global direct-proof paths contain duplicates")
+    overlap = sorted(set(global_paths) & set(global_direct_paths))
+    if overlap:
+        raise ValueError(
+            "global campaign paths and global direct-proof paths overlap: "
+            + ", ".join(overlap)
+        )
+
     trusted_tree_contract = raw.get("trusted_tree_contract")
     if trusted_tree_contract != "exact-git-base-sha":
         raise ValueError(
@@ -136,6 +154,7 @@ def load_policy(path: Path) -> ScopePolicy:
         semantics_glob=semantics_glob,
         retained_evidence_policy=retained,
         global_campaign_paths=global_paths,
+        global_direct_proof_paths=global_direct_paths,
         trusted_tree_contract=trusted_tree_contract,
     )
 
@@ -352,6 +371,15 @@ def classify(
             )
         }
     )
+    global_direct_hits = sorted(
+        {
+            declared
+            for declared in policy.global_direct_proof_paths
+            if any(
+                path_matches_declared(path, declared) for path in all_paths
+            )
+        }
+    )
 
     campaign_results: dict[str, dict[str, object]] = {}
     affected: list[str] = []
@@ -362,6 +390,12 @@ def classify(
         direct_reasons: list[str] = []
         if global_hits:
             reasons.extend(f"global:{path}" for path in global_hits)
+        if global_direct_hits:
+            direct_entries = [
+                f"global-direct:{path}" for path in global_direct_hits
+            ]
+            reasons.extend(direct_entries)
+            direct_reasons.extend(direct_entries)
         for changed in all_paths:
             matched = [
                 declared
@@ -476,6 +510,18 @@ def self_test(
     assert set(result["affected_campaign_workflows"]) == workflows
     assert result["direct_proof_campaign_workflows"] == []
     assert set(result["stale_only_campaign_workflows"]) == workflows
+
+    for control_path in policy.global_direct_proof_paths:
+        result = classify(
+            [Change("modified", control_path)],
+            1,
+            policy,
+            campaigns,
+        )
+        assert result is not None
+        assert set(result["affected_campaign_workflows"]) == workflows
+        assert set(result["direct_proof_campaign_workflows"]) == workflows
+        assert result["stale_only_campaign_workflows"] == []
 
     semantics_change = [
         Change(
