@@ -1135,7 +1135,7 @@ mod tests {
     #[test]
     fn upload_artifact_requires_literal_bounded_retention() {
         let source = "uses: actions/upload-artifact@0123456789012345678901234567890123456789\nwith:\n  name: evidence\n";
-        let violations = super::verify_upload_workflow("workflow.yml", source, 30);
+        let violations = super::verify_upload_workflow("workflow.yml", source, 30, 1);
         assert!(
             violations
                 .iter()
@@ -1146,7 +1146,7 @@ mod tests {
     #[test]
     fn upload_artifact_rejects_movable_action_reference() {
         let source = "uses: actions/upload-artifact@v7\nwith:\n  retention-days: 30\n";
-        let violations = super::verify_upload_workflow("workflow.yml", source, 30);
+        let violations = super::verify_upload_workflow("workflow.yml", source, 30, 1);
         assert!(
             violations
                 .iter()
