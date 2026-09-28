@@ -100,3 +100,33 @@ fn rejects_canonical_verdict_authority_drift() {
         "canonical verdict must remain the violations collection",
     );
 }
+
+#[test]
+fn rejects_integrity_authority_drift() {
+    let fixture = Fixture::new();
+    fixture.replace_once(
+        "docs/engineering/retained-evidence-policy.json",
+        "\"integrity_authority\": \"cargo xtask evidence\"",
+        "\"integrity_authority\": \"cargo xtask evidence-freshness\"",
+    );
+
+    rejected(
+        &fixture.run_policy_check(),
+        "retained evidence integrity authority must remain cargo xtask evidence",
+    );
+}
+
+#[test]
+fn rejects_freshness_merge_policy_drift() {
+    let fixture = Fixture::new();
+    fixture.replace_once(
+        "docs/engineering/retained-evidence-policy.json",
+        "\"freshness_merge_policy\": \"semantic-impact\"",
+        "\"freshness_merge_policy\": \"always-required\"",
+    );
+
+    rejected(
+        &fixture.run_policy_check(),
+        "retained-evidence freshness merge policy must remain semantic-impact",
+    );
+}
