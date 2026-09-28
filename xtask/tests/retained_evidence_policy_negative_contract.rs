@@ -5,6 +5,9 @@
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Output};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static FIXTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
     source_root: PathBuf,
@@ -18,8 +21,9 @@ impl Fixture {
             .parent()
             .expect("xtask must live directly under the workspace root")
             .to_path_buf();
+        let sequence = FIXTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!(
-            "oxide-batch-retained-evidence-policy-{}",
+            "oxide-batch-retained-evidence-policy-{}-{sequence}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);
