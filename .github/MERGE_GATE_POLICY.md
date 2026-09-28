@@ -28,6 +28,20 @@ not be added while default setup is the accepted authority.
 
 Matrix jobs are expanded from their literal matrix axes and their checked-in `name`. A changed matrix therefore changes the required context set and must agree with the canonical policy and live topology.
 
+## Trusted PR scope and campaign applicability
+
+The next CI topology uses one fail-closed scope model rather than separate path lists for documentation and each M5/M6 campaign.
+
+`.github/scripts/pr-scope.py` is designed to run from the pull request's **trusted base SHA**. A pull request may change the classifier, this policy, a semantic-closure document, or a campaign workflow, but those PR-head changes do not get to decide whether their own validation is applicable. If the base classifier/policy cannot be loaded or changed-file metadata cannot be reconciled exactly, callers must fall back to full validation and all campaigns.
+
+Documentation-only scope is intentionally narrow: only the explicitly listed root documentation files and Markdown under `docs/**` qualify. Rename/copy provenance is evaluated on both source and destination.
+
+Campaign applicability does **not** duplicate M5/M6 path lists here. The classifier discovers `tests/fixtures/**/campaign-semantics.json`, validates every closure, derives its dedicated workflow from that closure, and requires the resulting workflow inventory to match `docs/engineering/retained-evidence-policy.json`'s artifact producers exactly. A changed path intersects a campaign when it equals a declared semantic path or is below a declared semantic directory.
+
+`Cargo.lock` is intentionally conservative in this first model: any lockfile change marks every retained-evidence campaign applicable. The retained-evidence system already narrows dependency identity through campaign-scoped `dependency-closure.json` files; a future optimization may compare those derived closures before campaign execution, but absence of that proof is not treated as non-impact.
+
+This foundation PR only lands and tests the trusted classifier. It does not yet suppress campaign execution, change campaign workflow identity, invalidate retained evidence, or alter the live required-context topology. Subsequent migration PRs may consume this base classifier to consolidate advisory campaigns, make M5 Conformance semantic-impact-driven, refresh retained evidence after workflow-identity changes, and build the final native Merge Gate.
+
 ## PostgreSQL aggregate decision
 
 #223 evaluated all eleven current `postgres-*` required contexts rather than assuming that every PostgreSQL-looking check should be hidden behind one cosmetic status.
