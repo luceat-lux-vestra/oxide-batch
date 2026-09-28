@@ -308,6 +308,7 @@ class MergeGateVerifierTest < Minitest::Test
                   echo 'actions/workflows/{workflow_id}/runs'
                   echo '"event": "pull_request"'
                   echo '"head_sha": head_sha'
+                  echo 'linked_pr.get("number") == pr_number_int'
                   echo 'actions/runs/{run_id}/jobs'
                   echo '"filter": "all"'
                   echo 'run_attempt'
@@ -825,6 +826,31 @@ class MergeGateVerifierTest < Minitest::Test
       write_json(root, '.github/merge-gate-policy.json', policy)
       write_json(root, 'ruleset.json', ruleset_with(*FINAL))
       assert_includes verify(root).join("\n"), 'live ruleset requires stale/unaccepted contexts'
+    end
+  end
+
+  def test_repository_merge_gate_context_spoof_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/ci.yml')
+      original = File.read(path)
+      body = original.sub(
+        "  quality-fast:\n    name: quality-fast-internal",
+        "  quality-fast:\n    name: merge-gate"
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/ci.yml', body)
+      assert_includes verify(root).join("\n"), 'repository merge gate context must have exactly one canonical producer'
+    end
+  end
+
+  def test_repository_merge_gate_pr_identity_binding_removal_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/pr-labeler.yml')
+      original = File.read(path)
+      body = original.sub("                  echo 'linked_pr.get(\"number\") == pr_number_int'\n", '')
+      refute_equal original, body
+      write(root, '.github/workflows/pr-labeler.yml', body)
+      assert_includes verify(root).join("\n"), 'is missing fail-closed contract tokens'
     end
   end
 
