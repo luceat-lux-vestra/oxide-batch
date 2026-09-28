@@ -85,8 +85,8 @@ class MergeGateVerifierTest < Minitest::Test
           'retained_evidence_policy' => 'docs/engineering/retained-evidence-policy.json',
           'global_campaign_paths' => ['Cargo.lock'],
           'trusted_tree_contract' => 'exact-git-base-sha'
-        }
-,        'post_main' => {
+        },
+        'post_main' => {
           'default_branch' => 'main',
           'allowed_push_workflows' => []
         }
