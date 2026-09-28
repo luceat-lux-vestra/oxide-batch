@@ -72,9 +72,11 @@ the crash and restore campaign's is
 [`crash-restore/campaign-semantics.json`](../../../../tests/fixtures/crash-restore/campaign-semantics.json),
 the upgrade campaign's is
 [`upgrade/campaign-semantics.json`](../../../../tests/fixtures/upgrade/campaign-semantics.json),
-and the security campaign's is
-[`security/campaign-semantics.json`](../../../../tests/fixtures/security/campaign-semantics.json).
-All seven cover framework source, migrations, cargo manifests, a canonical
+the security campaign's is
+[`security/campaign-semantics.json`](../../../../tests/fixtures/security/campaign-semantics.json),
+and the resource-bounds campaign's is
+[`resource-bounds/campaign-semantics.json`](../../../../tests/fixtures/resource-bounds/campaign-semantics.json).
+All eight cover framework source, migrations, cargo manifests, a canonical
 campaign-scoped `dependency-closure.json` derived from the locked Cargo graph,
 toolchain and build configuration, the campaign implementation and fixtures,
 the execution contract, and the verifier. `Cargo.lock` remains the resolver
