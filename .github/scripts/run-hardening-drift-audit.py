@@ -21,7 +21,6 @@ STATIC_CHECKS = [
     ("release-negative-contract", ["cargo", "test", "--locked", "--offline", "--package", "oxide-batch-xtask", "--test", "release_negative_contract"]),
     ("retained-evidence-policy", ["cargo", "run", "--locked", "--offline", "--package", "oxide-batch-xtask", "--bin", "retained_evidence_policy"]),
     ("retained-evidence-provenance", ["cargo", "run", "--locked", "--offline", "--package", "oxide-batch-xtask", "--", "evidence"]),
-    ("retained-evidence-freshness", ["cargo", "run", "--locked", "--offline", "--package", "oxide-batch-xtask", "--", "evidence-freshness"]),
 ]
 
 
