@@ -10,6 +10,7 @@ module MergeGateVerifier
 
   VALID_CLASSIFICATIONS = %w[required advisory optional].freeze
   AGGREGATE_STATES = %w[candidate cutover active].freeze
+  REPOSITORY_MERGE_GATE_STATES = AGGREGATE_STATES
   MATRIX_EXPR = /\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}/
 
   def event_config(doc, name)
@@ -64,7 +65,7 @@ module MergeGateVerifier
 
   def post_main_contract(policy:, producer_summary:)
     config = policy['post_main']
-    return ['schema v5 policy must declare post_main'] unless config.is_a?(Hash)
+    return ['schema v6 policy must declare post_main'] unless config.is_a?(Hash)
 
     branch = config['default_branch']
     allowed = config['allowed_push_workflows']
@@ -309,6 +310,15 @@ module MergeGateVerifier
   QUALITY_INTEGRATION_SHARD_SCRIPT = '.github/scripts/run-integration-shard.py'
   QUALITY_INTEGRATION_JOBS = %w[quality-integration-0 quality-integration-1 quality-integration-2 quality-integration-3].freeze
   QUALITY_COMPONENT_JOBS = (%w[quality-fast quality-bin-doc quality-contracts] + QUALITY_INTEGRATION_JOBS).freeze
+  REPOSITORY_MERGE_GATE_CONTEXT = 'merge-gate'
+  REPOSITORY_MERGE_GATE_WORKFLOW = '.github/workflows/pr-labeler.yml'
+  REPOSITORY_MERGE_GATE_JOB = 'merge-gate'
+  REPOSITORY_MERGE_GATE_PERMISSIONS = {
+    'actions' => 'read',
+    'contents' => 'read',
+    'pull-requests' => 'read'
+  }.freeze
+  REPOSITORY_MERGE_GATE_EVENT_TYPES = %w[opened edited synchronize reopened ready_for_review].freeze
   PR_SCOPE_GLOBAL_DIRECT_PROOF_PATHS = [
     PR_SCOPE_SCRIPT,
     '.github/merge-gate-policy.json',
@@ -324,7 +334,7 @@ module MergeGateVerifier
     violations = []
     scope = policy['pr_scope']
     unless scope.is_a?(Hash)
-      return ['schema v5 policy must declare pr_scope']
+      return ['schema v6 policy must declare pr_scope']
     end
 
     unless scope['trusted_tree_contract'] == PR_SCOPE_TRUST_CONTRACT
@@ -783,6 +793,189 @@ module MergeGateVerifier
     violations
   end
 
+
+  def repository_authority_members(producer_summary:, aggregates:)
+    contexts = producer_summary.fetch('required_contexts').dup
+    sources = producer_summary.fetch('context_sources').dup
+
+    aggregates.each do |gate|
+      contexts = ((contexts - gate.fetch('members')) + [gate.fetch('context')]).uniq
+      sources[gate.fetch('context')] = {
+        'kind' => 'aggregate',
+        'workflow' => gate.dig('producer', 'workflow'),
+        'job' => gate.dig('producer', 'job')
+      }
+    end
+
+    contexts.sort.map do |context|
+      source = sources[context]
+      {
+        'context' => context,
+        'workflow' => source.is_a?(Hash) ? source['workflow'] : nil
+      }
+    end
+  end
+
+  def repository_merge_gate_contract(policy:, producer_summary:, aggregates:)
+    violations = []
+    gate = policy['repository_merge_gate']
+    unless gate.is_a?(Hash)
+      return ['schema v6 policy must declare repository_merge_gate'], nil
+    end
+
+    context = gate['context']
+    state = gate['state']
+    producer = gate['producer']
+    members = gate['members']
+
+    violations << "repository merge gate context must be #{REPOSITORY_MERGE_GATE_CONTEXT.inspect}" unless context == REPOSITORY_MERGE_GATE_CONTEXT
+    unless REPOSITORY_MERGE_GATE_STATES.include?(state)
+      violations << "repository merge gate has unsupported state #{state.inspect}"
+    end
+    unless producer == {'workflow' => REPOSITORY_MERGE_GATE_WORKFLOW, 'job' => REPOSITORY_MERGE_GATE_JOB}
+      violations << 'repository merge gate producer must be the audited pr-labeler merge-gate job'
+    end
+
+    unless members.is_a?(Array) && !members.empty? && members.all? { |member| member.is_a?(Hash) }
+      violations << 'repository merge gate members must be a non-empty object array'
+      members = []
+    end
+
+    member_contexts = members.filter_map { |member| member['context'] }
+    duplicate_contexts = member_contexts.group_by(&:itself).select { |_context, entries| entries.length > 1 }.keys
+    violations << "repository merge gate duplicates members: #{duplicate_contexts.sort.join(', ')}" unless duplicate_contexts.empty?
+
+    canonical = repository_authority_members(producer_summary: producer_summary, aggregates: aggregates)
+    canonical_contexts = canonical.map { |member| member['context'] }
+    unless member_contexts.sort == canonical_contexts.sort
+      missing = canonical_contexts - member_contexts
+      extra = member_contexts - canonical_contexts
+      violations << "repository merge gate member inventory mismatch: missing=#{missing.sort.inspect} extra=#{extra.sort.inspect}"
+    end
+
+    canonical_by_context = canonical.to_h { |member| [member['context'], member] }
+    members.each do |member|
+      context_name = member['context']
+      workflow = member['workflow']
+      unless context_name.is_a?(String) && !context_name.empty? &&
+             workflow.is_a?(String) && workflow.start_with?('.github/workflows/')
+        violations << "repository merge gate has malformed member #{member.inspect}"
+        next
+      end
+      expected = canonical_by_context[context_name]
+      next unless expected
+      expected_workflow = expected['workflow']
+      if expected_workflow && workflow != expected_workflow
+        violations << "repository merge gate member #{context_name} must bind source workflow #{expected_workflow}, got #{workflow}"
+      end
+    end
+
+    if state != 'candidate'
+      non_active = aggregates.reject { |aggregate| aggregate['state'] == 'active' }.map { |aggregate| aggregate['context'] }
+      unless non_active.empty?
+        violations << "repository merge gate #{state} requires all child aggregates active: #{non_active.sort.join(', ')}"
+      end
+    end
+
+    workflow = producer_summary.fetch('workflow_docs')[REPOSITORY_MERGE_GATE_WORKFLOW]
+    unless workflow.is_a?(Hash)
+      return violations + ["repository merge gate workflow #{REPOSITORY_MERGE_GATE_WORKFLOW} is missing"], gate
+    end
+    unless pull_request_target_trigger?(workflow)
+      violations << 'repository merge gate must execute from protected-base pull_request_target authority'
+    end
+    present_pr, = event_config(workflow, 'pull_request')
+    violations << 'repository merge gate workflow must not also use pull_request' if present_pr
+    target_present, target_config = event_config(workflow, 'pull_request_target')
+    unless target_present && target_config.is_a?(Hash)
+      violations << 'repository merge gate pull_request_target trigger must be explicitly configured'
+    else
+      types = Array(target_config['types']).map(&:to_s)
+      unless types.sort == REPOSITORY_MERGE_GATE_EVENT_TYPES.sort
+        violations << "repository merge gate pull_request_target types must exactly match #{REPOSITORY_MERGE_GATE_EVENT_TYPES.sort.inspect}"
+      end
+    end
+    violations << 'repository merge gate host workflow must keep workflow-level permissions empty' unless workflow['permissions'] == {}
+
+    jobs = workflow['jobs']
+    job = jobs.is_a?(Hash) ? jobs[REPOSITORY_MERGE_GATE_JOB] : nil
+    unless job.is_a?(Hash)
+      return violations + ['repository merge gate job is missing'], gate
+    end
+    violations << 'repository merge gate job must emit exact context merge-gate' unless job['name'] == REPOSITORY_MERGE_GATE_CONTEXT
+    violations << 'repository merge gate job must run on ubuntu-latest' unless job['runs-on'] == 'ubuntu-latest'
+    violations << 'repository merge gate timeout must remain 20 minutes' unless job['timeout-minutes'] == 20
+    violations << 'repository merge gate job cannot be conditional' if job.key?('if')
+    violations << 'repository merge gate job cannot use a matrix' if job.key?('strategy')
+    violations << 'repository merge gate job cannot continue on error' if job['continue-on-error']
+    unless job['permissions'] == REPOSITORY_MERGE_GATE_PERMISSIONS
+      violations << "repository merge gate job must keep exact read-only permissions #{REPOSITORY_MERGE_GATE_PERMISSIONS.inspect}"
+    end
+
+    steps = job['steps']
+    unless steps.is_a?(Array) && steps.length == 1
+      violations << 'repository merge gate job must contain exactly one inline evaluator step'
+      return violations, gate
+    end
+    step = steps.first
+    if step.is_a?(Hash) && step.key?('uses')
+      violations << 'repository merge gate must not execute external actions or checkout repository code'
+    end
+
+    expected_env = {
+      'GITHUB_TOKEN' => '${{ github.token }}',
+      'BASE_SHA' => '${{ github.event.pull_request.base.sha }}',
+      'HEAD_SHA' => '${{ github.event.pull_request.head.sha }}',
+      'PR_NUMBER' => '${{ github.event.pull_request.number }}',
+      'PR_DRAFT' => '${{ github.event.pull_request.draft }}'
+    }
+    unless step.is_a?(Hash) && step['env'] == expected_env
+      violations << 'repository merge gate evaluator must bind canonical token/base/head/PR inputs'
+    end
+
+    body = step.is_a?(Hash) ? step['run'].to_s : ''
+    required_tokens = [
+      'contents/.github/merge-gate-policy.json',
+      '{"ref": base_sha}',
+      'repository_merge_gate',
+      'pr.get("base", {}).get("sha") != base_sha',
+      'pr.get("head", {}).get("sha") != head_sha',
+      'pr.get("base", {}).get("repo", {}).get("full_name") != repository',
+      'actions/workflows/{workflow_id}/runs',
+      '"event": "pull_request"',
+      '"head_sha": head_sha',
+      'actions/runs/{run_id}/jobs',
+      '"filter": "all"',
+      'run_attempt',
+      'duplicate member jobs at latest run_attempt',
+      'status != "completed"',
+      'conclusion != "success"',
+      'timed out waiting for exact-head merge authority'
+    ]
+    missing = required_tokens.reject { |token| body.include?(token) }
+    unless missing.empty?
+      violations << "repository merge gate evaluator is missing fail-closed contract tokens: #{missing.join(', ')}"
+    end
+
+    [violations, gate]
+  end
+
+  def repository_merge_gate_live_sets(child_live_sets:, gate:)
+    return child_live_sets unless gate.is_a?(Hash)
+
+    context = gate['context']
+    case gate['state']
+    when 'candidate'
+      child_live_sets
+    when 'cutover'
+      (child_live_sets + [[context]]).uniq
+    when 'active'
+      [[context]]
+    else
+      child_live_sets
+    end
+  end
+
   EVALUATOR_SCRIPT = '.github/scripts/evaluate-aggregate-run.rb'
   AGGREGATE_PRODUCER_PERMISSIONS = {'actions' => 'read', 'contents' => 'read'}.freeze
   TOKEN_ENV_EXPR = /\A\$\{\{\s*github\.token\s*\}\}\z/
@@ -1005,7 +1198,7 @@ module MergeGateVerifier
     ruleset = JSON.parse(File.read(ruleset_path))
     violations = []
 
-    violations << "unsupported policy schema_version #{policy['schema_version'].inspect}" unless policy['schema_version'] == 5
+    violations << "unsupported policy schema_version #{policy['schema_version'].inspect}" unless policy['schema_version'] == 6
     violations << "ruleset id mismatch: expected #{policy.dig('ruleset', 'id')}, got #{ruleset['id']}" unless ruleset['id'] == policy.dig('ruleset', 'id')
     violations << "ruleset name mismatch: expected #{policy.dig('ruleset', 'name').inspect}, got #{ruleset['name'].inspect}" unless ruleset['name'] == policy.dig('ruleset', 'name')
     violations << 'ruleset is not active' unless ruleset['enforcement'] == 'active'
@@ -1019,11 +1212,14 @@ module MergeGateVerifier
     violations.concat(campaign_orchestrator_contract(root: root, policy: policy, producer_summary: producer_summary))
     violations.concat(m5_conformance_routing_contract(policy: policy, producer_summary: producer_summary))
     violations.concat(quality_parallel_contract(root: root, policy: policy, producer_summary: producer_summary))
+    repository_gate_violations, repository_gate = repository_merge_gate_contract(policy: policy, producer_summary: producer_summary, aggregates: aggregates)
+    violations.concat(repository_gate_violations)
     violations.concat(post_main_contract(policy: policy, producer_summary: producer_summary))
 
     required_contexts = producer_summary.fetch('required_contexts') + aggregates.map { |gate| gate['context'] }
     pending = policy.fetch('pending_ruleset_contexts', [])
-    unknown_pending = pending - required_contexts
+    known_pending_contexts = required_contexts + [repository_gate&.dig('context')].compact
+    unknown_pending = pending - known_pending_contexts
     unless unknown_pending.empty?
       violations << "pending ruleset contexts are not required producers: #{unknown_pending.sort.join(', ')}"
     end
@@ -1038,10 +1234,24 @@ module MergeGateVerifier
       end
     end
 
-    accepted_live = accepted_live_context_sets(
+    if repository_gate.is_a?(Hash)
+      context = repository_gate['context']
+      case repository_gate['state']
+      when 'candidate', 'cutover'
+        violations << "#{repository_gate['state']} repository merge gate #{context} must be pending ruleset promotion" unless pending.include?(context)
+      when 'active'
+        violations << "active repository merge gate #{context} cannot remain pending ruleset promotion" if pending.include?(context)
+      end
+    end
+
+    child_live = accepted_live_context_sets(
       required_contexts: required_contexts,
       aggregates: aggregates,
       pending: pending
+    )
+    accepted_live = repository_merge_gate_live_sets(
+      child_live_sets: child_live,
+      gate: repository_gate
     )
     actual_live = live_required_contexts(ruleset).sort
     unless accepted_live.include?(actual_live)
@@ -1057,6 +1267,7 @@ module MergeGateVerifier
     [violations, {
       'required_contexts' => required_contexts.sort,
       'aggregate_gates' => aggregates,
+      'repository_merge_gate' => repository_gate,
       'pending_ruleset_contexts' => pending.sort,
       'accepted_live_required_contexts' => accepted_live,
       'live_required_contexts' => actual_live,
