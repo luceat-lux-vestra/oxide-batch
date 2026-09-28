@@ -140,6 +140,7 @@ fn main() -> ExitCode {
         Some("deps") => run_dependency_check(),
         Some("doctor") => run_all(DOCTOR),
         Some("evidence") => run_evidence_check(),
+        Some("evidence-freshness") => run_evidence_freshness_check(),
         Some("gate-b") => run_gate_b_campaign(),
         Some("gate-h") => run_gate_h_campaign(),
         Some("m6-conformance") => run_m6_conformance_campaign(),
@@ -575,6 +576,42 @@ fn run_evidence_check() -> bool {
     }
 }
 
+/// Reports whether retained evidence still matches the current campaign semantics.
+fn run_evidence_freshness_check() -> bool {
+    eprintln!("==> retained evidence current-HEAD freshness");
+
+    match evidence::run_freshness() {
+        Ok(verification) => {
+            let directories = verification
+                .directories
+                .iter()
+                .map(|directory| directory.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            if verification.violations.is_empty() {
+                eprintln!(
+                    "{} retained report(s) across {directories} are intact and their recorded \
+                     campaign semantic objects still match current HEAD",
+                    verification.reports,
+                );
+                return true;
+            }
+            for violation in &verification.violations {
+                eprintln!("evidence freshness gap: {violation}");
+            }
+            eprintln!(
+                "retained evidence is intact but stale until affected campaigns are rerun and \
+                 promoted: {directories}"
+            );
+            false
+        }
+        Err(error) => {
+            eprintln!("could not verify retained evidence freshness: {error}");
+            false
+        }
+    }
+}
+
 /// Reports whether the #102 reconciliation document still agrees with the
 /// repository it describes.
 fn run_reconciliation_check() -> bool {
@@ -771,7 +808,8 @@ fn usage() {
            crash-restore    run the crash, restart, and logical restore campaign\n\
            deps             check extraction boundaries and workspace cycles\n\
            doctor           show required local tool versions\n\
-           evidence         verify retained campaign evidence against its provenance\n\
+           evidence         verify retained campaign evidence integrity and provenance\n\
+           evidence-freshness verify retained evidence against current campaign semantics\n\
            gate-b           run the Gate B typed-vs-Boxed transaction/restart equivalence campaign\n\
            gate-h           run the Gate H P-002 real-component performance campaign\n\
            m6-conformance   run the full shipped-component M6 conformance campaign\n\
