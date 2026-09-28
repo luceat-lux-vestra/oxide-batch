@@ -1357,6 +1357,51 @@ mod tests {
         reports
     }
 
+    fn provenance_for_current_reports() -> Value {
+        let root = crate::suite::workspace_root().expect("workspace root");
+        let commit = super::git(&root, &["rev-parse", "HEAD"]).expect("HEAD");
+        let mut document = provenance();
+        for entry in document["evidence"].as_array_mut().expect("evidence") {
+            entry["producer"]["execution_commit"] = json!(commit);
+        }
+        document
+    }
+
+    #[test]
+    fn integrity_accepts_a_well_formed_historical_object_identity() {
+        let document = provenance_for_current_reports();
+        let reports = with_manifest("xtask/src/evidence.rs", &json!("0".repeat(40)));
+
+        assert_eq!(
+            super::verify_manifest_integrity(&document, &reports),
+            Vec::<String>::new()
+        );
+
+        let freshness = semantics_of(&document, &reports);
+        assert!(
+            freshness
+                .iter()
+                .any(|violation| violation.starts_with("xtask/src/evidence.rs was ")),
+            "{freshness:?}",
+        );
+    }
+
+    #[test]
+    fn integrity_rejects_a_malformed_execution_object_identity() {
+        let document = provenance_for_current_reports();
+        let reports = with_manifest("xtask/src/evidence.rs", &json!("not-a-git-object"));
+
+        let violations = super::verify_manifest_integrity(&document, &reports);
+        assert!(
+            violations.iter().any(|violation| {
+                violation.contains(
+                    "records a malformed git object identity for xtask/src/evidence.rs",
+                )
+            }),
+            "{violations:?}",
+        );
+    }
+
     #[test]
     fn rejects_provenance_rewritten_to_current_head() {
         // The substitution the manifest exists to prevent: provenance that
