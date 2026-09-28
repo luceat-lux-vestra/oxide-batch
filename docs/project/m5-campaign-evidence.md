@@ -142,13 +142,16 @@ test process.
 
 ### Where it runs
 
-`postgres-15-conformance-campaign` and `postgres-18-conformance-campaign` in
-the dedicated [`.github/workflows/m5-conformance.yml`](../../.github/workflows/m5-conformance.yml),
-on the two ends of the supported PostgreSQL `15`-`18` range, matching the
-existing `postgres-repository` matrix. Each job retains its report as a build
-artifact on success and failure alike, and the committed copies in
+The dedicated [`.github/workflows/m5-conformance.yml`](../../.github/workflows/m5-conformance.yml)
+runs `deep-postgres-15-conformance-campaign` and
+`deep-postgres-18-conformance-campaign` on the two ends of the supported
+PostgreSQL `15`-`18` range. Those deep jobs retain the reports as build
+artifacts on success and failure alike. Lightweight
+`postgres-15-conformance-campaign` / `postgres-18-conformance-campaign`
+emitters preserve the merge-authority context names without provisioning a
+database when deep proof is not required. The committed copies in
 [`docs/engineering/campaigns/m5`](../engineering/campaigns/m5/README.md) come
-from those jobs. See F36 below: the campaign was originally a job inside
+from the deep jobs. See F36 below: the campaign was originally a job inside
 `.github/workflows/ci.yml` and has since been extracted into this dedicated
 workflow, with the same fail-closed retained-evidence provenance model the
 soak, cancellation, and performance campaigns already use.
@@ -170,27 +173,27 @@ campaign this one no longer is.
 
 | Report | Matrix | Targets | Tests | Outcomes | Result |
 | --- | --- | --- | --- | --- | --- |
-| [`conformance-campaign-postgres-15.json`](../engineering/campaigns/m5/conformance-campaign-postgres-15.json) | PostgreSQL 15 | 30 | 291 | 291 `ok` | Passed |
-| [`conformance-campaign-postgres-18.json`](../engineering/campaigns/m5/conformance-campaign-postgres-18.json) | PostgreSQL 18 | 30 | 291 | 291 `ok` | Passed |
+| [`conformance-campaign-postgres-15.json`](../engineering/campaigns/m5/conformance-campaign-postgres-15.json) | PostgreSQL 15 | 30 | 339 | 339 `ok` | Passed |
+| [`conformance-campaign-postgres-18.json`](../engineering/campaigns/m5/conformance-campaign-postgres-18.json) | PostgreSQL 18 | 30 | 339 | 339 `ok` | Passed |
 
-Both were produced by dedicated workflow run
-[32415848557](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/32415848557),
-which executed tree `6532a549537be67bf34e1b61266be53d1cf874fd` — the
-pull-request merge commit the workflow checked out — from branch head
-`6a5e2573fce0e0c0ac4cdd077a0c5310b80b962b`. The execution tree is the
-provenance root and the branch head is recorded beside it as metadata; they
-are different commits and are never used interchangeably. The reports record
-`rustc 1.97.1` and Linux `x86_64`, and a clean source tree. The command is
-`./tests/fixtures/conformance/run-ci-campaign.sh <major>`, which the dedicated
-workflow calls and which runs `cargo xtask conformance` — so the independent
-recomputation is what the producing job itself executed. Each artifact's own
-sha256 digest was computed directly over the downloaded ZIP bytes at
-promotion, matched the GitHub API's recorded digest, and the extracted report
-matched the retained bytes exactly before retention:
-PostgreSQL 15's job `96576687918` produced artifact `9423949825`;
-PostgreSQL 18's job `96576687522` produced artifact `9423952173`. Both matrix
-points again select the same `30`-target envelope and observe `291` tests,
-confirming the envelope itself did not change.
+Both current retained reports were produced by dedicated workflow run
+[36461176852](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/36461176852),
+which ran from branch head `1c7693341d8e740ec78b6a90a213163bb6bb68bd`
+and executed synthetic pull-request tree
+`cb5cdf8b23eddb503b4fd859714b26d6bbca603c`. The execution tree is the
+provenance root and the branch head is recorded separately as metadata. The
+reports record `rustc 1.97.1`, Linux `x86_64`, a clean source tree, the
+same 30-target execution envelope, and 339 observed tests/339 `ok` outcomes.
+PostgreSQL 15 deep job `109059891004` produced artifact `10987667300`
+(`sha256:b95b3d66fbb3ae3f741234f9c1069306ed985e309c18cfa3293c51ce67259a6b`);
+PostgreSQL 18 deep job `109059890999` produced artifact `10987642376`
+(`sha256:6fa3ae6b3e8fcb7bbe2f203627d9c0409c1ea68fcbc036742c513ddbf62d96e6`).
+Both archives were independently downloaded for #340, their ZIP SHA-256
+digests matched the GitHub API, and the extracted report bytes reproduced the
+retained Git blobs exactly. Comparing the producer execution tree with current
+`main` changes only `.github/merge-gate-policy.json`, which is outside the
+declared M5 Conformance semantic closure; the retained reports are therefore
+fresh for the current conformance campaign.
 
 **Sixth retention: PR #160.** `crates/oxide-batch/src` (the ADR-0008 item
 component contract closure for issue #143) and `crates/oxide-batch/Cargo.toml`
@@ -3509,3 +3512,20 @@ PR #306 removes `push: main` from Final/exhaustive validation producers without 
 The retained set contains 21 passing reports from exact producer branch HEAD `ad4534d1c07e59d76623321986a1db134eb5a9c3` and synthetic execution tree `b98ed1f2049e4197454e7a0691d1b19d2b615c75`. Every producer run/job succeeded, each Actions artifact archive SHA-256 matched the GitHub API digest, extracted report bytes were retained byte-for-byte, and the repository-wide retained-evidence policy plus offline provenance verifier both passed before retention. Exact run, job, artifact, digest, retained-blob, and remote-verification identities remain recorded per report in the M5/M6 provenance manifests.
 
 This documentation-only follow-up is outside every declared campaign semantic closure and exists to make the final PR HEAD produce a fresh synchronize/Final CI run after the one-shot retention commit.
+
+
+## Targeted M5 Conformance routing-retention refresh (#340)
+
+PR #330 changed the dedicated M5 Conformance execution contract and workflow
+identity by separating PostgreSQL-backed deep proof from lightweight required
+context emitters. Under the semantic-impact freshness model this invalidated
+only M5 Conformance retained freshness, not all M5/M6 evidence.
+
+Issue #340 promotes only the PostgreSQL 15/18 Conformance artifacts from
+successful PR #339 run `36461176852`. The other fourteen M5 retained reports
+and all five M6 reports remain untouched. The producer execution tree
+`cb5cdf8b23eddb503b4fd859714b26d6bbca603c` differs from current `main`
+only in `.github/merge-gate-policy.json`, outside the Conformance semantic
+closure. Artifact archive digests, extracted report bytes, producer run/job
+identity, execution commit, retained Git blob identity, and the current
+semantic closure were independently checked before promotion.

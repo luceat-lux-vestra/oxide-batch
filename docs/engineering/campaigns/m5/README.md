@@ -35,9 +35,11 @@ a pass or failure that does not.
 | [`cancellation-campaign-postgres-15.json`](cancellation-campaign-postgres-15.json) | Cancellation | The declared deadline set, the request-to-intake-stop and request-to-durable-terminal latencies, those latencies separated by phase, the unjoined task count and its per-phase attribution at every deadline and at escalation, and the durable record a cancelled attempt left and a restart resumed from, on PostgreSQL 15 |
 | [`cancellation-campaign-postgres-18.json`](cancellation-campaign-postgres-18.json) | Cancellation | The same, on PostgreSQL 18 |
 
-A file carries the matrix point in its name because one run produces one
-report: the runner always writes `conformance-campaign.json`, and the two jobs
-that produce it differ only in the database behind the fixture. The point is
+A file carries the matrix point in its name because one deep run produces one
+report: the runner always writes `conformance-campaign.json`, and the two
+`deep-postgres-*-conformance-campaign` jobs differ only in the database behind
+the fixture. The lightweight required-context emitters do not produce retained
+reports. The point is
 also inside the file, as `environment.matrix`, so a copied report still says
 which run it came from.
 
