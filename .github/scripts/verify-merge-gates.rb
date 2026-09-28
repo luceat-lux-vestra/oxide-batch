@@ -631,10 +631,17 @@ module MergeGateVerifier
       unless shard.dig('services', 'postgres').is_a?(Hash)
         violations << "#{M5_CONFORMANCE_WORKFLOW} #{job_id} must own PostgreSQL service provisioning"
       end
+      shard_step = Array(shard['steps']).find do |step|
+        step.is_a?(Hash) && step['name'] == "Run PostgreSQL #{major} conformance shard"
+      end
+      unless shard_step.is_a?(Hash) &&
+             shard_step.dig('env', 'SHARD_INDEX') == "${{ matrix.shard }}" &&
+             shard_step['run'] == "./tests/fixtures/conformance/run-ci-campaign.sh #{major} \"$SHARD_INDEX\" 2"
+        violations << "#{M5_CONFORMANCE_WORKFLOW} #{job_id} must pass the checked-in shard index through env before shell execution"
+      end
       body = Array(shard['steps']).filter_map { |step| step.is_a?(Hash) ? step['run'] : nil }.join("\n")
       required_tokens = [
-        "./tests/fixtures/conformance/verify-ci-contract.sh .github/workflows/m5-conformance.yml",
-        "./tests/fixtures/conformance/run-ci-campaign.sh #{major} ${{ matrix.shard }} 2"
+        "./tests/fixtures/conformance/verify-ci-contract.sh .github/workflows/m5-conformance.yml"
       ]
       missing = required_tokens.reject { |token| body.include?(token) }
       unless missing.empty?
