@@ -156,10 +156,9 @@ fn run_directory(
         }
     }
     violations.extend(verify_matrix(&document, entries));
+    violations.extend(verify_manifest_integrity(&document, &reports));
     if require_freshness {
         violations.extend(verify_semantics(root, &document, &reports));
-    } else {
-        violations.extend(verify_manifest_integrity(&document, &reports));
     }
 
     Ok(Verification {
