@@ -41,6 +41,7 @@ class Campaign:
     semantics_path: str
     workflow: str
     paths: tuple[str, ...]
+    direct_paths: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -191,6 +192,7 @@ def discover_campaigns(repo_root: Path, policy: ScopePolicy) -> tuple[Campaign, 
             )
 
         declared: list[str] = []
+        direct_declared: list[str] = []
         for category, value in categories.items():
             if not isinstance(category, str) or not category:
                 raise ValueError(
@@ -200,6 +202,12 @@ def discover_campaigns(repo_root: Path, policy: ScopePolicy) -> tuple[Campaign, 
                 raise ValueError(
                     f"{semantics_rel}: category {category!r} must be an object"
                 )
+            proof_mode = value.get("pr_proof")
+            if proof_mode not in {"direct", "stale-only"}:
+                raise ValueError(
+                    f"{semantics_rel}: category {category!r} pr_proof "
+                    "must be 'direct' or 'stale-only'"
+                )
             paths = value.get("paths")
             if not isinstance(paths, list) or not paths:
                 raise ValueError(
@@ -207,12 +215,13 @@ def discover_campaigns(repo_root: Path, policy: ScopePolicy) -> tuple[Campaign, 
                     "must be a non-empty list"
                 )
             for raw_path in paths:
-                declared.append(
-                    _require_path(
-                        raw_path,
-                        f"{semantics_rel}:{category} path",
-                    )
+                declared_path = _require_path(
+                    raw_path,
+                    f"{semantics_rel}:{category} path",
                 )
+                declared.append(declared_path)
+                if proof_mode == "direct":
+                    direct_declared.append(declared_path)
 
         if len(set(declared)) != len(declared):
             raise ValueError(
@@ -243,8 +252,17 @@ def discover_campaigns(repo_root: Path, policy: ScopePolicy) -> tuple[Campaign, 
                 f"campaign workflow {workflow} is owned by multiple semantic closures"
             )
         workflows_seen.add(workflow)
+        if not direct_declared:
+            raise ValueError(
+                f"{semantics_rel}: semantic closure declares no direct PR proof paths"
+            )
         campaigns.append(
-            Campaign(semantics_rel, workflow, tuple(sorted(declared)))
+            Campaign(
+                semantics_rel,
+                workflow,
+                tuple(sorted(declared)),
+                tuple(sorted(direct_declared)),
+            )
         )
 
     retained_path = repo_root / policy.retained_evidence_policy
@@ -337,8 +355,11 @@ def classify(
 
     campaign_results: dict[str, dict[str, object]] = {}
     affected: list[str] = []
+    direct_proof: list[str] = []
+    stale_only: list[str] = []
     for campaign in campaigns:
         reasons: list[str] = []
+        direct_reasons: list[str] = []
         if global_hits:
             reasons.extend(f"global:{path}" for path in global_hits)
         for changed in all_paths:
@@ -347,21 +368,37 @@ def classify(
                 for declared in campaign.paths
                 if path_matches_declared(changed, declared)
             ]
+            direct_matched = [
+                declared
+                for declared in campaign.direct_paths
+                if path_matches_declared(changed, declared)
+            ]
             for declared in matched:
                 reasons.append(f"{changed} -> {declared}")
+            for declared in direct_matched:
+                direct_reasons.append(f"{changed} -> {declared}")
         applicable = bool(reasons)
+        requires_direct_proof = bool(direct_reasons)
         if applicable:
             affected.append(campaign.workflow)
+            if requires_direct_proof:
+                direct_proof.append(campaign.workflow)
+            else:
+                stale_only.append(campaign.workflow)
         campaign_results[campaign.workflow] = {
             "applicable": applicable,
+            "direct_proof": requires_direct_proof,
             "semantics": campaign.semantics_path,
             "reasons": sorted(set(reasons)),
+            "direct_proof_reasons": sorted(set(direct_reasons)),
         }
 
     return {
         "classification_valid": True,
         "docs_only": docs_only,
         "affected_campaign_workflows": affected,
+        "direct_proof_campaign_workflows": direct_proof,
+        "stale_only_campaign_workflows": stale_only,
         "campaigns": campaign_results,
     }
 
@@ -406,6 +443,8 @@ def self_test(
     result = classify(docs, 1, policy, campaigns)
     assert result is not None and result["docs_only"] is True
     assert result["affected_campaign_workflows"] == []
+    assert result["direct_proof_campaign_workflows"] == []
+    assert result["stale_only_campaign_workflows"] == []
 
     docs_rename = [
         Change("renamed", "docs/new.md", "docs/old.md")
@@ -422,11 +461,21 @@ def self_test(
         ".github/workflows/m5-conformance.yml"
         in result["affected_campaign_workflows"]
     )
+    assert (
+        ".github/workflows/m5-conformance.yml"
+        not in result["direct_proof_campaign_workflows"]
+    )
+    assert (
+        ".github/workflows/m5-conformance.yml"
+        in result["stale_only_campaign_workflows"]
+    )
 
     lock = [Change("modified", "Cargo.lock")]
     result = classify(lock, 1, policy, campaigns)
     assert result is not None
     assert set(result["affected_campaign_workflows"]) == workflows
+    assert result["direct_proof_campaign_workflows"] == []
+    assert set(result["stale_only_campaign_workflows"]) == workflows
 
     semantics_change = [
         Change(
@@ -440,6 +489,20 @@ def self_test(
         ".github/workflows/m5-conformance.yml"
         in result["affected_campaign_workflows"]
     )
+    assert (
+        ".github/workflows/m5-conformance.yml"
+        in result["direct_proof_campaign_workflows"]
+    )
+    assert (
+        ".github/workflows/m5-conformance.yml"
+        not in result["stale_only_campaign_workflows"]
+    )
+
+    verifier_change = [Change("modified", "xtask/src/evidence.rs")]
+    result = classify(verifier_change, 1, policy, campaigns)
+    assert result is not None
+    assert set(result["direct_proof_campaign_workflows"]) == workflows
+    assert result["stale_only_campaign_workflows"] == []
 
     boundary_move = [
         Change(
@@ -453,6 +516,14 @@ def self_test(
     assert (
         ".github/workflows/m5-conformance.yml"
         in result["affected_campaign_workflows"]
+    )
+    assert (
+        ".github/workflows/m5-conformance.yml"
+        not in result["direct_proof_campaign_workflows"]
+    )
+    assert (
+        ".github/workflows/m5-conformance.yml"
+        in result["stale_only_campaign_workflows"]
     )
 
     assert parse_record("changed\tREADME.md\t\n") is None

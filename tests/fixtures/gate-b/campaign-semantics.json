@@ -10,13 +10,15 @@
         "crates/oxide-batch-core/src",
         "crates/oxide-batch-plan/src",
         "crates/oxide-batch-repository/src"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "migrations": {
       "why": "The durable schema every Gate B scenario migrates the fixture database to before it runs.",
       "paths": [
         "crates/oxide-batch/migrations"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "campaign implementation": {
       "why": "The exact test targets Gate B's frozen protocol names, plus the shared support module they all build on and the local crash-restore module that support reuses. A workspace test file not listed here is outside the campaign: it is not selected, so it is neither run nor able to affect the campaign's result.",
@@ -33,7 +35,8 @@
         "crates/oxide-batch/tests/support/gate_b.rs",
         "crates/oxide-batch/tests/support/chunk_fixture.rs",
         "crates/oxide-batch/tests/crash_restore"
-      ]
+      ],
+      "pr_proof": "direct"
     },
     "cargo manifests": {
       "why": "Feature selection and dependency ranges for every crate the campaign builds and runs. A campaign built with different features is a different campaign.",
@@ -44,26 +47,30 @@
         "crates/oxide-batch-plan/Cargo.toml",
         "crates/oxide-batch-repository/Cargo.toml",
         "xtask/Cargo.toml"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "dependency resolution": {
       "why": "The campaign-scoped resolved package graph derived from Cargo.lock for the exact workspace package roots this campaign executes. Unrelated workspace lock movement does not change this sidecar; a reachable resolved package/version/source/checksum change does.",
       "paths": [
         "tests/fixtures/gate-b/dependency-closure.json"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "toolchain and build configuration": {
       "why": "The compiler the campaign is built with, and the cargo configuration it is built under.",
       "paths": [
         "rust-toolchain.toml",
         ".cargo/config.toml"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "campaign fixtures": {
       "why": "This closure document itself. Gate B's declared target/test scope is not a separate document (unlike the M5 crash-restore campaign's campaign-scope.json) -- it is the fixed constants xtask/src/gate_b.rs itself declares, already covered under \"independent verifier\" below, since Gate B's frozen eight-scenario protocol does not evolve the way an M5 multi-report campaign's accepted scope does.",
       "paths": [
         "tests/fixtures/gate-b/campaign-semantics.json"
-      ]
+      ],
+      "pr_proof": "direct"
     },
     "Gate B execution contract": {
       "why": "How CI actually runs the campaign: the supported PostgreSQL matrix, the database and maintenance connection it is given, the command, and the environment. The dedicated workflow is included with them, and its contract-check step fails closed if the workflow drifts from the contract. An unrelated CI job in ci.yml does not invalidate retained Gate B evidence, while any change to the dedicated Gate B workflow does.",
@@ -72,7 +79,8 @@
         "tests/fixtures/gate-b/run-ci-campaign.sh",
         "tests/fixtures/gate-b/verify-ci-contract.sh",
         ".github/workflows/m6-gate-b.yml"
-      ]
+      ],
+      "pr_proof": "direct"
     },
     "independent verifier": {
       "why": "The program that decides whether a run proved what it owed and whether retained evidence is still what it says. Its verdicts are part of the campaign result, so a report produced under a different verifier is a result under a different standard. Listed as the specific files that implement it, matching every M5 campaign's own closure: `main.rs` dispatches the command, `gate_b.rs` runs the fixed target/test scope and computes the execution manifest, `evidence.rs` is the permanent offline verifier, and `suite.rs` is the target-running and libtest-parsing mechanics every runner shares.",
@@ -82,7 +90,8 @@
         "xtask/src/evidence.rs",
         "xtask/src/suite.rs",
         "xtask/src/dependency_closure.rs"
-      ]
+      ],
+      "pr_proof": "direct"
     }
   },
   "dependency_roots": [
@@ -94,5 +103,6 @@
       "package": "oxide-batch-xtask",
       "kind": "run"
     }
-  ]
+  ],
+  "pr_proof_rule": "Categories marked direct define executable proof machinery and require same-PR campaign execution when changed. Categories marked stale-only still invalidate current retained-evidence freshness, but ordinary product/runtime/dependency changes rely on bounded Final CI and are refreshed by later deep/scheduled/release campaign execution."
 }
