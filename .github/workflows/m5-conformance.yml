@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  # Read live PR identity and complete changed-file metadata for trusted routing.
   pull-requests: read
 
 concurrency:
