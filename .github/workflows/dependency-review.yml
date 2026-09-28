@@ -1,9 +1,6 @@
 name: Dependency review
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     branches:
@@ -23,7 +20,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Review dependency changes
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name == 'pull_request') }}
+        if: ${{ github.event.pull_request.draft == false }}
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: moderate
@@ -33,16 +30,6 @@ jobs:
           # manifest uses the legacy non-SPDX spelling `MIT/Apache-2.0`.
           # cargo-deny remains the authoritative full-graph license check.
           allow-dependencies-licenses: pkg:cargo/unicode-properties@0.1.4
-
-      - name: Emit stable dependency-review context on main push
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name == 'push') }}
-        run: echo "dependency review is PR-diff-only; stable context emitted for main push"
-
-      - name: Reject unsupported trigger for dependency review
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'pull_request' && github.event_name != 'push') }}
-        run: |
-          echo "::error::unsupported dependency-review trigger" >&2
-          exit 1
 
   actions-security:
     name: actions-security
@@ -54,19 +41,19 @@ jobs:
         run: echo "Actions security analysis is deferred until the pull request is ready for review"
 
       - name: Check out repository
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        if: ${{ github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Test deterministic Actions security policy
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        if: ${{ github.event.pull_request.draft == false }}
         id: policy-tests
         continue-on-error: true
         run: python3 .github/scripts/test_validate_actions_security.py
 
       - name: Install pinned static-analysis binaries
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        if: ${{ github.event.pull_request.draft == false }}
         id: install-scanners
         continue-on-error: true
         shell: bash
@@ -100,7 +87,7 @@ jobs:
 
       - name: Run actionlint
         id: actionlint
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() && steps.install-scanners.outcome == 'success' }}
+        if: ${{ github.event.pull_request.draft == false && always() && steps.install-scanners.outcome == 'success' }}
         continue-on-error: true
         shell: bash
         run: |
@@ -108,12 +95,12 @@ jobs:
 
       - name: Run zizmor full audit
         id: zizmor
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() && steps.install-scanners.outcome == 'success' }}
+        if: ${{ github.event.pull_request.draft == false && always() && steps.install-scanners.outcome == 'success' }}
         continue-on-error: true
         shell: bash
         run: |
           # Low is deliberately binding: any scanner finding not explicitly
-          # and narrowly suppressed must fail this stable PR/main context.
+          # and narrowly suppressed must fail this stable PR context.
           # The checked-in config is the suppression inventory; repository-
           # specific policy independently proves its static trust boundaries.
           "${ZIZMOR}" --config .github/zizmor.yml --persona auditor --min-severity low .github/workflows
