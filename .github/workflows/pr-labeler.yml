@@ -148,6 +148,10 @@ jobs:
           base_sha = os.environ["BASE_SHA"]
           head_sha = os.environ["HEAD_SHA"]
           pr_number = os.environ["PR_NUMBER"]
+          try:
+              pr_number_int = int(pr_number)
+          except ValueError as exc:
+              raise SystemExit(f"merge-gate: FAIL: invalid PR number: {pr_number!r}") from exc
           draft = os.environ["PR_DRAFT"].lower() == "true"
 
           class GateError(RuntimeError):
@@ -244,7 +248,13 @@ jobs:
                           raise GateError(f"{workflow}: workflow-runs response is missing workflow_runs")
                       exact = [
                           run for run in runs
-                          if run.get("head_sha") == head_sha and run.get("event") == "pull_request"
+                          if run.get("head_sha") == head_sha
+                          and run.get("event") == "pull_request"
+                          and any(
+                              isinstance(linked_pr, dict)
+                              and linked_pr.get("number") == pr_number_int
+                              for linked_pr in (run.get("pull_requests") or [])
+                          )
                       ]
                       if not exact:
                           next_pending[workflow] = contexts
