@@ -6,7 +6,7 @@ auto-remediate GitHub settings.
 
 ## Architecture
 
-`.github/workflows/hardening-drift-audit.yml` runs weekly or by explicit manual dispatch. Policy-relevant changes are proved on the pull request exact final HEAD by `.github/workflows/hardening-drift-audit-policy.yml`; merging that already-proved tree does not trigger the audit a second time. The `detect` job has read-only repository contents permission and emits one bounded machine-readable job output with exactly one classification:
+`.github/workflows/hardening-drift-audit.yml` runs weekly or by explicit manual dispatch. Policy-relevant changes are proved on the pull request exact final HEAD inside the required `actions-security` job in `.github/workflows/dependency-review.yml`; merging that already-proved tree does not trigger the audit a second time. The `detect` job has read-only repository contents permission and emits one bounded machine-readable job output with exactly one classification:
 
 - `clean`
 - `policy-drift`
@@ -83,8 +83,7 @@ periodic hardening reviews must still perform the explicit admin readback.
 
 ## Verification
 
-`.github/workflows/hardening-drift-audit-policy.yml` runs the audit-level
-orchestration tests on pull requests. Those tests deliberately stub
+The required `actions-security` job runs the audit-level orchestration tests and validates `.github/repository-settings-policy.json` on pull requests. Those tests deliberately stub
 leaf command outcomes: they prove that a rejection from each composed canonical
 checker reaches the final `policy-drift` classification without copying the
 leaf policy into the audit layer. Tooling failure reaches
