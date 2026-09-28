@@ -36,10 +36,6 @@
     {
       "pattern": ".github/workflows/pr-labeler.yml",
       "classification": "advisory"
-    },
-    {
-      "pattern": ".github/workflows/failure-declaration.yml",
-      "classification": "required"
     }
   ],
   "job_overrides": [
