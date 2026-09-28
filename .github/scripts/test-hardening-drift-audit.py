@@ -243,6 +243,7 @@ class WorkflowContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn('cron: "37 18 * * 1"', source)
+        self.assertNotIn("\n  push:", source)
         self.assertIn("result: ${{ steps.publish-result.outputs.result }}", source)
         self.assertIn("AUDIT_RESULT: ${{ needs.detect.outputs.result }}", source)
         self.assertIn("--result-json \"$AUDIT_RESULT\"", source)
