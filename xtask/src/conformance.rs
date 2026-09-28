@@ -239,18 +239,22 @@ fn merge_shards(count: &str, directory: &Path) -> Result<Campaign, String> {
     let manifest = execution_manifest(&root)?;
     let targets = suite_targets(&scope)?;
     let partitions = partition_targets(&targets, count)?;
-    let expected_major = expected_matrix_major()
-        .ok_or_else(|| "canonical conformance merge requires OXIDEBATCH_CAMPAIGN_MATRIX".to_owned())?;
+    let expected_major = expected_matrix_major().ok_or_else(|| {
+        "canonical conformance merge requires OXIDEBATCH_CAMPAIGN_MATRIX".to_owned()
+    })?;
 
     let observed_files = fs::read_dir(directory)
-        .map_err(|error| format!("could not read shard directory {}: {error}", directory.display()))?
+        .map_err(|error| {
+            format!(
+                "could not read shard directory {}: {error}",
+                directory.display()
+            )
+        })?
         .filter_map(Result::ok)
         .filter_map(|entry| entry.file_name().into_string().ok())
         .filter(|name| name.starts_with(SHARD_REPORT_PREFIX) && name.ends_with(".json"))
         .collect::<BTreeSet<_>>();
-    let expected_files = (0..count)
-        .map(shard_report_name)
-        .collect::<BTreeSet<_>>();
+    let expected_files = (0..count).map(shard_report_name).collect::<BTreeSet<_>>();
     if observed_files != expected_files {
         return Err(format!(
             "conformance shard report set is not exact: expected={expected_files:?} observed={observed_files:?}"
@@ -551,7 +555,10 @@ fn read_shard_report(path: &Path) -> Result<ShardReport, String> {
     if document.get("report").and_then(Value::as_str) != Some("conformance-shard")
         || document.get("schema_version").and_then(Value::as_u64) != Some(1)
     {
-        return Err(format!("{} is not a conformance shard v1 report", path.display()));
+        return Err(format!(
+            "{} is not a conformance shard v1 report",
+            path.display()
+        ));
     }
 
     let shard = document
@@ -649,8 +656,7 @@ fn read_shard_report(path: &Path) -> Result<ShardReport, String> {
         .and_then(Value::as_str)
         .ok_or_else(|| format!("{} has no PostgreSQL major", path.display()))?
         .to_owned();
-    let preflight_violations =
-        string_array(document.get("violations"), "violations", path)?;
+    let preflight_violations = string_array(document.get("violations"), "violations", path)?;
 
     Ok(ShardReport {
         index,
@@ -909,11 +915,7 @@ fn selector(name: &str, kinds: &[Value]) -> Option<Vec<String>> {
 /// directory, and running its binary directly fails for a reason that has
 /// nothing to do with the facade. One at a time, because that is what
 /// attributes a result: several scenario names exist in more than one target.
-fn run_suite(
-    root: &Path,
-    targets: &[Target],
-    run_documentation: bool,
-) -> Result<Suite, String> {
+fn run_suite(root: &Path, targets: &[Target], run_documentation: bool) -> Result<Suite, String> {
     let mut suite = Suite::default();
 
     for target in targets {
