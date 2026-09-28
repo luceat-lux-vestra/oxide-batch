@@ -20,6 +20,30 @@ errors, and structured concurrency. Treat “production-ready,” “compatible,
 “high performance,” and “beyond Spring” as evidence claims, never as design
 adjectives.
 
+## Current execution phase
+
+The published boundary remains M6 / `0.6.0`. The active development milestone
+is **M7 — Advanced Flow, Repeat, Scope, and Composition**, owned by umbrella
+#192 and native milestone #8. M7 was activated after the accepted
+[ADR-0013](docs/architecture/decisions/0013-m7-advanced-flow-scope-repeat-and-evolution.md)
+and its canonical
+[architecture contract](docs/architecture/m7-advanced-flow-scope-repeat-and-evolution.md).
+
+Current owner state on this baseline:
+
+- #195 advanced compiled flow/custom-step ownership — completed;
+- #196 job/step scope, factories, and late binding — completed;
+- #197 repeat/interceptors and flow-level fault semantics — open;
+- #198 definition registry/evolution/fork lineage — open;
+- #199 launcher/operator/explorer and incrementer semantics — open and blocked
+  by #198;
+- #200 M7 conformance/restart/docs exit gate — open and blocked until delivery
+  owners complete.
+
+Do not treat merged M7 implementation as a released or `Verified` compatibility
+claim. M8-M14 remain later milestones, and historical M0-M6/M7 gate records stay
+point-in-time evidence rather than current status documents.
+
 ## Authority and required reading
 
 For any non-trivial work, start with `docs/README.md` and follow its reading

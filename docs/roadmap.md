@@ -6,7 +6,7 @@
 2026-08-03 and is recorded as ADR-0008. RFC-0009 remains an evidence gate for
 its specific architecture.
 
-**Last reviewed:** 2026-08-19
+**Last reviewed:** 2026-09-28
 
 Milestones are capability and evidence gates, not calendar promises. M0-M5
 record accepted history, closed by the release of `oxide-batch` `0.5.0`; M6
@@ -313,6 +313,23 @@ separate governance decision.
 
 ## M7 — Advanced Flow, Repeat, Scope, and Composition
 
+**Status:** In progress — activated 2026-09-07 after #194 closed the design
+gate and ADR-0013 became the binding M7 architecture decision.
+
+The active execution boundary is issue #192 / native milestone #8. #195
+(advanced compiled flow/custom-step ownership) and #196 (scope/factories/late
+binding) are complete. #197 and #198 remain active delivery owners; #199 is
+blocked by #198; #200 remains the conformance/restart/documentation exit gate
+and does not close until all M7 delivery owners and post-merge evidence are
+complete.
+
+Binding M7 authority is
+[ADR-0013](architecture/decisions/0013-m7-advanced-flow-scope-repeat-and-evolution.md)
+plus the
+[M7 architecture contract](architecture/m7-advanced-flow-scope-repeat-and-evolution.md).
+The kickoff and design-gate records remain historical authorization evidence,
+not current issue-state snapshots.
+
 **Objective:** provide Rust-native equivalents for advanced Spring Batch core
 flow, scope/late binding, repeat, and composition semantics.
 
@@ -334,8 +351,10 @@ operator service boundary.
 **Ledger categories closed:** advanced job/step/flow, repeat/completion, scope,
 late binding, registry, launcher/operator/explorer, and nested-job semantics.
 
-**Dependencies:** M6 component model and accepted
-[RFC-0004](rfcs/0004-compiled-execution-plan.md).
+**Dependencies:** M6 component model, accepted
+[RFC-0004](rfcs/0004-compiled-execution-plan.md), and the accepted M7
+architecture decision in
+[ADR-0013](architecture/decisions/0013-m7-advanced-flow-scope-repeat-and-evolution.md).
 
 **Explicit non-goals:** database portability, broker adapters, remote
 execution, or Java/Spring source compatibility.

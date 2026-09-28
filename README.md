@@ -156,6 +156,16 @@ Completed implementation milestones:
 - **M5 — Embedded Core Production Preview** (`0.5.0`)
 - **M6 — Complete Item Processing and User Test Kit** (`0.6.0`)
 
+Active development milestone:
+
+- **M7 — Advanced Flow, Repeat, Scope, and Composition** — in progress.
+  Advanced compiled flow/custom-step ownership (#195) and job/step
+  scope/late-binding ownership (#196) are complete; repeat/interceptor (#197),
+  definition-evolution (#198), launcher/operator/explorer (#199), and the M7
+  conformance/documentation exit gate (#200) remain open. This unreleased M7
+  work does not change the current published release or promote compatibility
+  rows by itself.
+
 The detailed exit evidence, compatibility ledger, failure campaigns, and milestone records intentionally live under `docs/` rather than in this landing page.
 
 Start with:
