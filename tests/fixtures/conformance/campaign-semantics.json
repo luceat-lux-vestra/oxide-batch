@@ -113,10 +113,11 @@
       "pr_proof": "direct"
     },
     "conformance execution contract": {
-      "why": "How CI actually runs the campaign: the supported matrix, the database it is given, the command, and the environment. The dedicated workflow is included with them, and its contract-check step fails closed if the workflow drifts from the contract. An unrelated CI job in ci.yml does not invalidate retained conformance evidence, while any change to the dedicated conformance workflow does.",
+      "why": "How CI actually runs and canonically merges the campaign: the supported matrix, deterministic target shards, database provisioning, shard/merge commands, and environment. The dedicated workflow plus both scripts are included; exact contract checks fail closed on byte-level workflow/script drift.",
       "paths": [
         "tests/fixtures/conformance/execution-contract.json",
         "tests/fixtures/conformance/run-ci-campaign.sh",
+        "tests/fixtures/conformance/merge-ci-campaign.sh",
         "tests/fixtures/conformance/verify-ci-contract.sh",
         ".github/workflows/m5-conformance.yml"
       ],
