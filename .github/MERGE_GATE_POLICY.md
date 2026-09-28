@@ -22,6 +22,23 @@ The repository settings policy requires CodeQL default setup to remain disabled 
 
 Matrix jobs are expanded from their literal matrix axes and their checked-in `name`. A changed matrix therefore changes the required context set and must agree with the canonical policy and live topology.
 
+## Post-main validation invariant
+
+`main` is not a second validation stage. A squash merge may not trigger the
+same build/test/security/dependency analysis already proven on the exact final
+pull-request HEAD.
+
+`merge-gate-policy.json.post_main` names the default branch and the explicit
+allowlist for workflows that may target ordinary pushes to that branch. The
+current allowlist is empty. The verifier scans every checked-in workflow and
+fails closed if a non-allowlisted workflow can run on `push: main`.
+
+This does not prohibit tag-only release workflows, feature-branch push Fast CI,
+weekly schedules, `workflow_dispatch`, or issue/PR lifecycle automation. A
+future deployment that genuinely requires a main-push event must be added to
+the allowlist by an explicit policy change rather than silently reintroducing
+post-merge validation.
+
 ## Trusted PR scope and campaign applicability
 
 The next CI topology uses one fail-closed scope model rather than separate path lists for documentation and each M5/M6 campaign.
