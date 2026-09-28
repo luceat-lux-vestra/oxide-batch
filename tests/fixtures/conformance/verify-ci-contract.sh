@@ -85,16 +85,16 @@ require_literal "canonical report path" "path: $(jq -er '.report_path' "${contra
 require_literal "trusted route job" "  $(jq -er '.pr_routing.route_job' "${contract}"):"
 require_literal "required context emitter job" "  $(jq -er '.pr_routing.required_context_job' "${contract}"):"
 require_literal "required context matrix" 'postgres: ["15", "18"]'
-require_literal "required emitter PG15 result" 'DEEP_15_RESULT: \${{ needs.conformance-deep-15.result }}'
-require_literal "required emitter PG18 result" 'DEEP_18_RESULT: \${{ needs.conformance-deep-18.result }}'
+require_literal "required emitter PG15 result" 'DEEP_15_RESULT: ${{ needs.conformance-deep-15.result }}'
+require_literal "required emitter PG18 result" 'DEEP_18_RESULT: ${{ needs.conformance-deep-18.result }}'
 require_literal "required emitter selector" 'case "$POSTGRES" in'
-require_literal "trusted base checkout" 'ref: \${{ github.event.pull_request.base.sha }}'
+require_literal "trusted base checkout" 'ref: ${{ github.event.pull_request.base.sha }}'
 require_literal "trusted base directory" "path: .trusted-base"
 require_literal "route-job failure fallback" "needs.route.result != 'success'"
 require_literal "classification failure fallback" "needs.route.outputs.classification_outcome != 'success'"
 require_literal "direct-proof conformance membership" "contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-conformance.yml')"
 require_literal "draft placeholder" "M5 conformance is deferred until the pull request is ready for review"
-require_literal "failure retention" 'if: \${{ always() }}'
+require_literal "failure retention" 'if: ${{ always() }}'
 require_literal "missing report failure" "if-no-files-found: error"
 require_literal "merged partial downloads" "merge-multiple: true"
 
