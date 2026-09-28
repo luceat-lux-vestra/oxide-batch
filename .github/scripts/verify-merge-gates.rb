@@ -908,6 +908,20 @@ module MergeGateVerifier
     violations << 'repository merge gate job cannot be conditional' if job.key?('if')
     violations << 'repository merge gate job cannot use a matrix' if job.key?('strategy')
     violations << 'repository merge gate job cannot continue on error' if job['continue-on-error']
+
+    collisions = producer_summary.fetch('static_job_contexts').select do |entry|
+      entry['context'] == REPOSITORY_MERGE_GATE_CONTEXT
+    end
+    expected_collision = {
+      'workflow' => REPOSITORY_MERGE_GATE_WORKFLOW,
+      'job' => REPOSITORY_MERGE_GATE_JOB,
+      'context' => REPOSITORY_MERGE_GATE_CONTEXT
+    }
+    unless collisions == [expected_collision]
+      labels = collisions.map { |entry| "#{entry['workflow']}##{entry['job']}" }.sort
+      violations << "repository merge gate context must have exactly one canonical producer; got #{labels.join(', ')}"
+    end
+
     unless job['permissions'] == REPOSITORY_MERGE_GATE_PERMISSIONS
       violations << "repository merge gate job must keep exact read-only permissions #{REPOSITORY_MERGE_GATE_PERMISSIONS.inspect}"
     end
@@ -944,6 +958,7 @@ module MergeGateVerifier
       'actions/workflows/{workflow_id}/runs',
       '"event": "pull_request"',
       '"head_sha": head_sha',
+      'linked_pr.get("number") == pr_number_int',
       'actions/runs/{run_id}/jobs',
       '"filter": "all"',
       'run_attempt',
