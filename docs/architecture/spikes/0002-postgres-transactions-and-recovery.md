@@ -51,7 +51,7 @@ Container reproduction:
 ./spikes/m0-architecture/run-postgres-spike.sh
 ```
 
-CI runs the same test target against a PostgreSQL 18 service. To use an existing
+The completed M0 spike remains locally reproducible, but merge-time CI no longer runs it as a separate gate: the production PostgreSQL repository/crash-recovery suites now own these invariants directly. To use an existing
 database:
 
 ```console

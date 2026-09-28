@@ -52,6 +52,18 @@ jobs:
         continue-on-error: true
         run: python3 .github/scripts/test_validate_actions_security.py
 
+      - name: Test hardening drift audit orchestration and issue lifecycle
+        if: ${{ github.event.pull_request.draft == false }}
+        id: hardening-policy-tests
+        continue-on-error: true
+        run: python3 .github/scripts/test-hardening-drift-audit.py
+
+      - name: Validate repository settings policy JSON
+        if: ${{ github.event.pull_request.draft == false }}
+        id: repository-settings-policy
+        continue-on-error: true
+        run: python3 -m json.tool .github/repository-settings-policy.json >/dev/null
+
       - name: Install pinned static-analysis binaries
         if: ${{ github.event.pull_request.draft == false }}
         id: install-scanners
@@ -117,7 +129,9 @@ jobs:
           ACTIONLINT_OUTCOME: ${{ steps.actionlint.outcome }}
           INSTALL_SCANNERS_OUTCOME: ${{ steps.install-scanners.outcome }}
           POLICY_TESTS_OUTCOME: ${{ steps.policy-tests.outcome }}
+          HARDENING_POLICY_TESTS_OUTCOME: ${{ steps.hardening-policy-tests.outcome }}
           POLICY_OUTCOME: ${{ steps.policy.outcome }}
+          REPOSITORY_SETTINGS_POLICY_OUTCOME: ${{ steps.repository-settings-policy.outcome }}
           ZIZMOR_OUTCOME: ${{ steps.zizmor.outcome }}
         shell: bash
         run: |
@@ -125,6 +139,8 @@ jobs:
           failed=0
           for result in \
             "policy-tests:${POLICY_TESTS_OUTCOME}" \
+            "hardening-policy-tests:${HARDENING_POLICY_TESTS_OUTCOME}" \
+            "repository-settings-policy:${REPOSITORY_SETTINGS_POLICY_OUTCOME}" \
             "scanner-install:${INSTALL_SCANNERS_OUTCOME}" \
             "actionlint:${ACTIONLINT_OUTCOME}" \
             "zizmor:${ZIZMOR_OUTCOME}" \
