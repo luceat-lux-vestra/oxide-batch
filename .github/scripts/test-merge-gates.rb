@@ -645,12 +645,10 @@ class MergeGateVerifierTest < Minitest::Test
   def test_campaign_orchestrator_missing_advisory_producer_is_rejected
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/campaign-orchestrator.yml')
-      block = <<~YAML
-          m5_soak:
-            if: ${{ github.event.pull_request.draft == false }}
-            uses: ./.github/workflows/m5-soak.yml
-      YAML
-      body = File.read(path).sub(block, '')
+      block = "  m5_soak:\n    if: ${{ github.event.pull_request.draft == false }}\n    uses: ./.github/workflows/m5-soak.yml\n\n"
+      original = File.read(path)
+      body = original.sub(block, '')
+      refute_equal original, body
       write(root, '.github/workflows/campaign-orchestrator.yml', body)
       assert_includes verify(root).join('\n'), 'misses advisory producers'
     end
@@ -669,15 +667,14 @@ class MergeGateVerifierTest < Minitest::Test
   def test_campaign_orchestrator_unknown_call_is_rejected
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/campaign-orchestrator.yml')
-      body = File.read(path).sub(
-        "    uses: ./.github/workflows/m5-soak.yml\n",
-        <<~YAML
-            uses: ./.github/workflows/m5-soak.yml
+      original = File.read(path)
+      unknown = <<~YAML
+
           unknown:
             if: ${{ github.event.pull_request.draft == false }}
             uses: ./.github/workflows/deep-soak.yml
-        YAML
-      )
+      YAML
+      body = original + unknown
       write(root, '.github/workflows/campaign-orchestrator.yml', body)
       assert_includes verify(root).join('\n'), 'calls non-advisory/unknown producers'
     end
