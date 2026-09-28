@@ -2,19 +2,21 @@
 
 **Issue:** #248
 **Review date:** 2026-09-06
-**Status:** live Rust producer enabled; final PR/main acceptance pending
+**Status:** capability accepted; default-setup authority superseded by #315
 
 ## Decision
 
-Keep GitHub CodeQL **default setup** as the repository's single CodeQL
-authority and add Rust to that managed configuration. Do not add a checked-in
-advanced-setup CodeQL workflow while default setup is enabled.
+#248 established that CodeQL can analyze both GitHub Actions and Rust in this
+repository. Its original producer choice—GitHub-managed default setup—was
+superseded by #315 after the repository adopted exact-final-HEAD PR validation
+as the merge authority and removed duplicate validation on the resulting
+`main` commit.
 
-The existing `Analyze (actions)` context remains required. The new `Analyze
-(rust)` context starts as advisory and is not added to the `Protect main`
-ruleset in this change. Promotion to required needs evidence that the managed
-Rust producer is consistently present and reliable; #233 is the scheduled
-hardening-drift review point for that decision.
+The current authority is checked-in advanced setup in
+`.github/workflows/codeql.yml`. It preserves the existing context names:
+`Analyze (actions)` remains required and `Analyze (rust)` remains advisory.
+Both use `build-mode: none`. Default setup must remain disabled while the
+advanced workflow is active.
 
 ## Capability drift
 
@@ -55,36 +57,24 @@ or runner-capability gap.
 
 Exactly one CodeQL authority is allowed:
 
-1. GitHub default setup owns both `Analyze (actions)` and `Analyze (rust)`.
-2. No checked-in CodeQL advanced-setup workflow is added while default setup is
-   enabled.
-3. `Analyze (actions)` remains represented in
-   `.github/merge-gate-policy.json` as the managed required context.
-4. `Analyze (rust)` is intentionally advisory, so it is documented but is not
-   inserted into the required-context policy or live ruleset yet.
+1. Checked-in advanced setup owns both `Analyze (actions)` and `Analyze (rust)`.
+2. The workflow has no `push: main` trigger; PR exact-final-HEAD analysis is merge-time authority.
+3. Weekly schedule and explicit manual dispatch remain available for query/tool drift and bounded operational proof.
+4. `Analyze (actions)` is represented as a checked-in required producer in merge-gate policy.
+5. `Analyze (rust)` remains advisory.
+6. GitHub default setup must remain `not-configured`; re-enabling it is policy drift.
 
-This avoids duplicate CodeQL analyses and avoids a fake merge authority where a
-required context can disappear because of path or workflow conditions.
+## Migration evidence required by #315
 
-## Acceptance evidence required on this change
+Before the advanced-setup cutover is accepted:
 
-Before #248 may close, all of the following must be observed rather than
-assumed:
+- default setup is disabled through the Administration-scoped API and read back as `not-configured`;
+- a fresh PR branch update after that cutover produces both advanced CodeQL contexts on the exact final HEAD;
+- `Analyze (actions)` and `Analyze (rust)` both succeed from `.github/workflows/codeql.yml`;
+- all live required contexts remain green on that same HEAD;
+- after squash merge, the resulting `main` SHA does not start CodeQL, dependency-review, Actions-security, or hardening-drift validation merely because it was merged.
 
-- the live default setup configuration includes Rust while remaining the single
-  CodeQL authority;
-- `Analyze (rust)` is emitted and succeeds for the exact final pull-request
-  HEAD;
-- the Rust analysis upload reaches GitHub code scanning for that exact HEAD;
-- after squash merge, `Analyze (rust)` is emitted and succeeds again on the
-  exact resulting `main` commit;
-- `Analyze (actions)` remains present and successful throughout;
-- the repository's normal proof-obligation merge gate is green on the exact
-  final PR HEAD.
-
-Exact PR/main run and job identities are ephemeral operational evidence. They
-are recorded in the #248 closure evidence comment after post-merge verification;
-this document records the stable authority, capability, and acceptance contract.
+The historical #248 default-setup run identifiers below remain capability evidence only; they are no longer the current producer contract.
 
 ## Future drift review
 
