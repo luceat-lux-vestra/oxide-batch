@@ -22,10 +22,6 @@
       "classification": "advisory"
     },
     {
-      "pattern": ".github/workflows/hardening-drift-audit-policy.yml",
-      "classification": "advisory"
-    },
-    {
       "pattern": ".github/workflows/supply-chain.yml",
       "classification": "advisory"
     },
@@ -86,8 +82,7 @@
         "postgres-17-design-gate",
         "postgres-18-design-gate",
         "postgres-18-item-components",
-        "postgres-18-repository",
-        "postgres-spike"
+        "postgres-18-repository"
       ]
     }
   ],
