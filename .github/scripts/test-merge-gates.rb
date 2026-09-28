@@ -826,6 +826,22 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
+  def test_m5_conformance_deep_classifier_fallback_removal_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/m5-conformance.yml')
+      original = File.read(path)
+      body = original.sub(
+        "needs.route.outputs.classification_outcome != 'success' || ",
+        ''
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/m5-conformance.yml', body)
+      assert_includes(
+        verify(root).join('\n'),
+        'deep job must run for manual/direct proof and fail closed on routing ambiguity'
+      )
+    end
+  end
   def test_m5_conformance_required_context_emitter_services_are_rejected
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/m5-conformance.yml')
