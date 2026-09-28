@@ -12,6 +12,88 @@ module MergeGateVerifier
   AGGREGATE_STATES = %w[candidate cutover active].freeze
   MATRIX_EXPR = /\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}/
 
+  def event_config(doc, name)
+    events = event_map(doc)
+    if events.is_a?(Hash)
+      return [events.key?(name), events[name]]
+    end
+    if events.is_a?(Array)
+      return [events.map(&:to_s).include?(name), nil]
+    end
+    [events.to_s == name, nil]
+  end
+
+  def pattern_matches_branch?(pattern, branch)
+    value = pattern.to_s
+    return false if value.empty?
+    File.fnmatch?(value, branch, File::FNM_PATHNAME | File::FNM_EXTGLOB)
+  end
+
+  def ordered_branch_filters_include?(patterns, branch)
+    included = false
+    Array(patterns).each do |pattern|
+      value = pattern.to_s
+      if value.start_with?('!')
+        included = false if pattern_matches_branch?(value.delete_prefix('!'), branch)
+      elsif pattern_matches_branch?(value, branch)
+        included = true
+      end
+    end
+    included
+  end
+
+  def push_targets_branch?(doc, branch)
+    present, config = event_config(doc, 'push')
+    return false unless present
+    return true if config.nil? || config == true
+    return true unless config.is_a?(Hash)
+
+    if config.key?('branches')
+      return ordered_branch_filters_include?(config['branches'], branch)
+    end
+    if config.key?('branches-ignore')
+      ignored = Array(config['branches-ignore']).any? { |pattern| pattern_matches_branch?(pattern, branch) }
+      return !ignored
+    end
+
+    # A push trigger constrained only by tag filters does not run for branch pushes.
+    return false if config.key?('tags') || config.key?('tags-ignore')
+
+    true
+  end
+
+  def post_main_contract(policy:, producer_summary:)
+    config = policy['post_main']
+    return ['schema v4 policy must declare post_main'] unless config.is_a?(Hash)
+
+    branch = config['default_branch']
+    allowed = config['allowed_push_workflows']
+    violations = []
+    unless branch.is_a?(String) && !branch.empty?
+      violations << 'post_main.default_branch must be a non-empty string'
+      return violations
+    end
+    unless allowed.is_a?(Array) && allowed.all? { |entry| entry.is_a?(String) && !entry.empty? }
+      violations << 'post_main.allowed_push_workflows must be a string array'
+      return violations
+    end
+    if allowed.uniq.length != allowed.length
+      violations << 'post_main.allowed_push_workflows contains duplicates'
+    end
+
+    workflow_docs = producer_summary.fetch('workflow_docs')
+    unknown = allowed - workflow_docs.keys
+    violations << "post_main allowlist references missing workflows: #{unknown.sort.join(', ')}" unless unknown.empty?
+
+    workflow_docs.each do |workflow, doc|
+      next if allowed.include?(workflow)
+      if push_targets_branch?(doc, branch)
+        violations << "#{workflow} targets push to #{branch}; post-main validation is forbidden unless explicitly allowlisted"
+      end
+    end
+    violations
+  end
+
   def load_yaml(path)
     YAML.safe_load(File.read(path), aliases: true) || {}
   rescue Psych::SyntaxError => e
@@ -482,7 +564,7 @@ module MergeGateVerifier
     ruleset = JSON.parse(File.read(ruleset_path))
     violations = []
 
-    violations << "unsupported policy schema_version #{policy['schema_version'].inspect}" unless policy['schema_version'] == 3
+    violations << "unsupported policy schema_version #{policy['schema_version'].inspect}" unless policy['schema_version'] == 4
     violations << "ruleset id mismatch: expected #{policy.dig('ruleset', 'id')}, got #{ruleset['id']}" unless ruleset['id'] == policy.dig('ruleset', 'id')
     violations << "ruleset name mismatch: expected #{policy.dig('ruleset', 'name').inspect}, got #{ruleset['name'].inspect}" unless ruleset['name'] == policy.dig('ruleset', 'name')
     violations << 'ruleset is not active' unless ruleset['enforcement'] == 'active'
@@ -493,6 +575,7 @@ module MergeGateVerifier
     violations.concat(aggregate_violations)
 
     violations.concat(pr_scope_contract(root: root, policy: policy, producer_summary: producer_summary))
+    violations.concat(post_main_contract(policy: policy, producer_summary: producer_summary))
 
     required_contexts = producer_summary.fetch('required_contexts') + aggregates.map { |gate| gate['context'] }
     pending = policy.fetch('pending_ruleset_contexts', [])
