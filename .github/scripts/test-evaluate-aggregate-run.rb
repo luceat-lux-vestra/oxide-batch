@@ -19,7 +19,6 @@ class AggregateEvaluatorTest < Minitest::Test
     postgres-18-design-gate
     postgres-18-item-components
     postgres-18-repository
-    postgres-spike
   ].freeze
 
   def job(name, attempt, status, conclusion, id: nil)
@@ -38,7 +37,7 @@ class AggregateEvaluatorTest < Minitest::Test
     assert(diagnostics.all? { |d| d['reason'] == 'pass' })
   end
 
-  def test_all_nine_policy_members_latest_success_passes
+  def test_all_policy_members_latest_success_passes
     jobs = POLICY_MEMBERS.map { |name| job(name, 1, 'completed', 'success') }
     passed, = AggregateEvaluator.evaluate(members: POLICY_MEMBERS, jobs: jobs)
     assert passed
