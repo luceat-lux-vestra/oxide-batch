@@ -332,4 +332,3 @@ jobs:
           except GateError as exc:
               fail(str(exc))
           PY
-
