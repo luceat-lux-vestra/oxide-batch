@@ -27,8 +27,9 @@ class MergeGateVerifierTest < Minitest::Test
   def with_repo
     Dir.mktmpdir do |root|
       FileUtils.mkdir_p(File.join(root, '.github/workflows'))
+      FileUtils.mkdir_p(File.join(root, '.github/scripts'))
       policy = {
-        'schema_version' => 2,
+        'schema_version' => 3,
         'ruleset' => {'id' => 7, 'name' => 'Protect main'},
         'workflow_defaults' => [
           {'pattern' => '.github/workflows/ci.yml', 'classification' => 'required'},
@@ -73,9 +74,21 @@ class MergeGateVerifierTest < Minitest::Test
             ]
           }
         ],
-        'pending_ruleset_contexts' => ['postgresql', 'postgresql-conformance']
+        'pending_ruleset_contexts' => ['postgresql', 'postgresql-conformance'],
+        'pr_scope' => {
+          'docs_only' => {
+            'exact_paths' => ['README.md'],
+            'markdown_prefixes' => ['docs/'],
+            'excluded_prefixes' => []
+          },
+          'campaign_semantics_glob' => 'tests/fixtures/**/campaign-semantics.json',
+          'retained_evidence_policy' => 'docs/engineering/retained-evidence-policy.json',
+          'global_campaign_paths' => ['Cargo.lock'],
+          'trusted_tree_contract' => 'exact-git-base-sha'
+        }
       }
       write_json(root, '.github/merge-gate-policy.json', policy)
+      write(root, '.github/scripts/pr-scope.py', "# trusted scope fixture\n")
       write(root, '.github/workflows/ci.yml', <<~YAML)
         name: Rust
         on:
@@ -88,6 +101,12 @@ class MergeGateVerifierTest < Minitest::Test
             steps:
               - name: Check out repository
                 uses: actions/checkout@0000000000000000000000000000000000000001
+              - name: Test trusted PR scope classifier
+                run: >-
+                  python3 .github/scripts/pr-scope.py
+                  --repo-root .
+                  --policy .github/merge-gate-policy.json
+                  --self-test
           postgres:
             name: postgres-${{ matrix.postgres }}-repository
             strategy:
@@ -170,6 +189,35 @@ class MergeGateVerifierTest < Minitest::Test
     with_repo { |root, _policy| assert_empty verify(root) }
   end
 
+  def test_pr_scope_self_test_removal_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/ci.yml')
+      original = File.read(path)
+      body = original.sub(
+        /\n      - name: Test trusted PR scope classifier\n        run: >-\n(?:          .*\n){4}/,
+        "\n"
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/ci.yml', body)
+      assert_includes verify(root).join('\n'), 'canonical self-test'
+    end
+  end
+
+  def test_pr_scope_trusted_tree_contract_drift_is_rejected
+    with_repo do |root, policy|
+      policy['pr_scope']['trusted_tree_contract'] = 'head-tree'
+      write_json(root, '.github/merge-gate-policy.json', policy)
+      assert_includes verify(root).join('\n'), 'trusted_tree_contract'
+    end
+  end
+
+  def test_pr_scope_classifier_file_removal_is_rejected
+    with_repo do |root, _policy|
+      FileUtils.rm(File.join(root, '.github/scripts/pr-scope.py'))
+      assert_includes verify(root).join('\n'), 'classifier .github/scripts/pr-scope.py is missing'
+    end
+  end
+
   def test_required_job_rename_is_detected_as_ruleset_drift
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/ci.yml')
@@ -182,7 +230,7 @@ class MergeGateVerifierTest < Minitest::Test
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/ci.yml')
       body = File.read(path).sub(
-        "\n  quality:\n    name: quality\n    runs-on: ubuntu-latest\n    steps:\n      - name: Check out repository\n        uses: actions/checkout@0000000000000000000000000000000000000001\n",
+        "\n  quality:\n    name: quality\n    runs-on: ubuntu-latest\n    steps:\n      - name: Check out repository\n        uses: actions/checkout@0000000000000000000000000000000000000001\n      - name: Test trusted PR scope classifier\n        run: >-\n          python3 .github/scripts/pr-scope.py\n          --repo-root .\n          --policy .github/merge-gate-policy.json\n          --self-test\n",
         "\n"
       )
       write(root, '.github/workflows/ci.yml', body)
