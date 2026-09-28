@@ -69,7 +69,8 @@ for major in $(jq -er '.supported_matrix[]' "${contract}"); do
   require_literal "PostgreSQL ${major} image" "image: ${image}"
   require_literal "PostgreSQL ${major} shard job" "  conformance-shard-${major}:"
   require_literal "PostgreSQL ${major} deep aggregate" "  conformance-deep-${major}:"
-  require_literal "PostgreSQL ${major} shard command"     "run: ./tests/fixtures/conformance/run-ci-campaign.sh ${major} \${{ matrix.shard }} ${shard_count}"
+  require_literal "PostgreSQL ${major} shard env binding" "SHARD_INDEX: \${{ matrix.shard }}"
+  require_literal "PostgreSQL ${major} shard command"     'run: ./tests/fixtures/conformance/run-ci-campaign.sh '"${major}"' "$SHARD_INDEX" 2'
   require_literal "PostgreSQL ${major} partial artifact"     "name: conformance-shard-postgres-${major}-\${{ matrix.shard }}"
   require_literal "PostgreSQL ${major} partial path"     "path: target/m5-campaigns/conformance-shard-\${{ matrix.shard }}.json"
   require_literal "PostgreSQL ${major} artifact download"     "pattern: conformance-shard-postgres-${major}-*"
