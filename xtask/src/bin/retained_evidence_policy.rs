@@ -1,7 +1,8 @@
 //! Repository-wide retained-evidence governance verifier.
 //!
-//! `cargo xtask evidence` remains the byte-identity and semantic-closure
-//! authority for promoted campaign evidence. This companion verifier checks
+//! `cargo xtask evidence` is the always-required byte/provenance integrity
+//! authority, while `cargo xtask evidence-freshness` compares promoted campaign
+//! semantics with current HEAD. This companion verifier checks
 //! the cross-milestone contract around that mechanism: complete inventory,
 //! minimum provenance fields, canonical verdict semantics, and bounded Git /
 //! GitHub Actions retention.
@@ -111,6 +112,16 @@ fn run() -> Result<Verification, String> {
                 "retained set {id} is not merge-blocking even though evidence-provenance is a required gate"
             ));
         }
+        if string_at(retained_set, "/merge_blocking_scope") != Some("integrity") {
+            violations.push(format!(
+                "retained set {id} merge-blocking scope must be integrity"
+            ));
+        }
+        if string_at(retained_set, "/freshness_classification") != Some("semantic-impact") {
+            violations.push(format!(
+                "retained set {id} freshness classification must be semantic-impact"
+            ));
+        }
 
         match verify_retained_set(&root, retained_set, &limits) {
             Ok(stats) => {
@@ -202,8 +213,8 @@ fn read_limits(policy: &Value) -> Result<Limits, String> {
 
 fn verify_policy_contract(policy: &Value, limits: &Limits) -> Vec<String> {
     let mut violations = Vec::new();
-    if policy.get("schema_version").and_then(Value::as_u64) != Some(1) {
-        violations.push("retained-evidence policy schema_version must be 1".to_owned());
+    if policy.get("schema_version").and_then(Value::as_u64) != Some(2) {
+        violations.push("retained-evidence policy schema_version must be 2".to_owned());
     }
     if string_at(policy, "/contract/canonical_verdict") != Some("violations") {
         violations.push("canonical verdict must remain the violations collection".to_owned());
@@ -214,6 +225,28 @@ fn verify_policy_contract(policy: &Value, limits: &Limits) -> Vec<String> {
         != Some(false)
     {
         violations.push("producer passed=true must remain explicitly non-authoritative".to_owned());
+    }
+    if string_at(policy, "/contract/integrity_authority") != Some("cargo xtask evidence") {
+        violations.push("retained evidence integrity authority must remain cargo xtask evidence".to_owned());
+    }
+    if string_at(policy, "/contract/freshness_authority")
+        != Some("cargo xtask evidence-freshness")
+    {
+        violations.push(
+            "retained evidence freshness authority must remain cargo xtask evidence-freshness"
+                .to_owned(),
+        );
+    }
+    if string_at(policy, "/contract/required_integrity_context") != Some("evidence-provenance") {
+        violations.push(
+            "required retained-evidence integrity context must remain evidence-provenance"
+                .to_owned(),
+        );
+    }
+    if string_at(policy, "/contract/freshness_merge_policy") != Some("semantic-impact") {
+        violations.push(
+            "retained-evidence freshness merge policy must remain semantic-impact".to_owned(),
+        );
     }
     if string_at(policy, "/retention/git_age_policy") != Some("semantic-closure") {
         violations.push("Git-retained evidence age must remain semantic-closure-bound".to_owned());
