@@ -668,12 +668,7 @@ class MergeGateVerifierTest < Minitest::Test
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/campaign-orchestrator.yml')
       original = File.read(path)
-      unknown = <<~YAML
-
-          unknown:
-            if: ${{ github.event.pull_request.draft == false }}
-            uses: ./.github/workflows/deep-soak.yml
-      YAML
+      unknown = "\n  unknown:\n    if: ${{ github.event.pull_request.draft == false }}\n    uses: ./.github/workflows/deep-soak.yml\n"
       body = original + unknown
       write(root, '.github/workflows/campaign-orchestrator.yml', body)
       assert_includes verify(root).join('\n'), 'calls non-advisory/unknown producers'
