@@ -9,8 +9,7 @@ on:
 
 permissions:
   contents: read
-  # Read live PR identity and complete changed-file metadata for trusted routing.
-  pull-requests: read
+  pull-requests: read # Read live PR identity and complete changed-file metadata for trusted routing.
 
 concurrency:
   group: m5-conformance-${{ github.workflow }}-${{ github.ref }}
