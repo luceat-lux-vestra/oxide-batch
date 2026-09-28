@@ -1,44 +1,37 @@
-//! The retained-evidence provenance verifier.
+//! Retained-evidence integrity and freshness verification.
 //!
-//! A campaign runner decides whether a run proved what it owed. This decides
-//! something narrower and separate: whether the reports committed to
-//! `docs/engineering/campaigns/m5/` are still the untouched output of a
-//! recorded CI run over a tree whose campaign still means what it meant.
+//! A campaign runner decides whether a run proved what it owed. This module
+//! preserves two separate questions about the promoted reports:
 //!
-//! It exists because retained evidence has a failure mode that has nothing to
-//! do with the campaign that produced it. A report is a file in a repository.
-//! It can be edited after the fact, it can be kept beside a campaign that has
-//! since been changed, and the commit it names can be quietly reinterpreted —
-//! all of which leave a green campaign record describing a run that no longer
-//! corresponds to anything.
+//! - [`run`] is the always-required integrity authority. It proves that the
+//!   committed report bytes, provenance, producer/run identities, matrix and
+//!   canonical verdict are internally trustworthy, and that each report carries
+//!   a structurally valid execution manifest.
+//! - [`run_freshness`] adds the current-HEAD question: whether every object in
+//!   that recorded campaign semantic closure is still the object this checkout
+//!   would execute.
+//!
+//! The distinction is intentional. A historical retained artifact does not
+//! become forged when ordinary product development moves a bound source object;
+//! it becomes semantically stale. Integrity therefore stays merge-blocking on
+//! every pull request, while semantic-impact/deep/release validation decides
+//! when freshness must be re-established by a direct campaign run and promotion.
 //!
 //! ## Why the producer commit is not required to resolve
 //!
-//! The obvious check — resolve the commit the report names and diff it against
-//! today — cannot be the binding one, for a reason that only shows up once:
-//! the identifier a report carries is the pull-request *merge ref*, an
-//! ephemeral commit GitHub creates by merging the branch head into the base and
-//! replaces on the next push. It is absent from every later clone. Requiring it
-//! to resolve would make the verifier fail permanently the moment the branch
-//! moved, and treating an unresolvable one as acceptable would make the check
-//! decide nothing.
+//! The identifier a report carries is the pull-request synthetic merge commit,
+//! which GitHub may replace and later stop resolving. The branch head is a
+//! different tree and cannot truthfully substitute for it. The report therefore
+//! records the execution commit and the git object identity of every path in its
+//! semantic closure from inside the checkout that actually executed.
 //!
-//! So the merge-ref SHA is recorded and compared against what the artifact
-//! itself says, and never resolved; the branch head is recorded separately and
-//! never conflated with it; and the binding is content instead. Two content
-//! checks, both of which work from the retained files alone:
+//! Integrity verifies that this manifest exists and is well formed. Freshness
+//! compares those recorded identities with current HEAD. Neither mode rewrites
+//! historical evidence to make it fit a newer tree.
 //!
-//! - each report's git blob identity, which detects any edit after retention;
-//! - the git object identity of every path that defines what the campaign
-//!   executes, taken at the producer commit. If one differs today, the report
-//!   describes a campaign this tree no longer runs, and it may not be promoted.
-//!
-//! The second is the one that carries weight, and it is what stops the
-//! genuinely tempting mistake: keeping last week's green report while quietly
-//! changing the rule that made it green.
-//!
-//! The contract is `docs/engineering/campaigns/m5/evidence-provenance.json`,
-//! and this reads it rather than restating it.
+//! The retained provenance contracts live under
+//! `docs/engineering/campaigns/{m5,m6}/evidence-provenance.json`; this module
+//! reads them instead of restating their inventory.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
