@@ -27,8 +27,8 @@ jobs:
       # actions/labeler reads the base repository to classify changed paths.
       contents: read
       # Both steps classify and mutate labels on the pull request/issue record.
-      pull-requests: write
-      issues: write
+      pull-requests: write # Update pull-request labels after classification.
+      issues: write # Create managed labels and apply/remove them through the Issues API.
     steps:
       - name: Ensure managed labels and classify PR type
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -116,9 +116,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
-      actions: read
+      actions: read # Read exact-head workflow runs and all job attempts for child authority.
       contents: read
-      pull-requests: read
+      pull-requests: read # Re-read live PR base/head identity before evaluating child evidence.
     steps:
       - name: Evaluate base-trusted repository merge authority
         env:
