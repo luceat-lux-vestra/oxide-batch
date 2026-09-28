@@ -208,6 +208,58 @@ module MergeGateVerifier
     value.to_s.gsub(/\s+/, '') == '${{always()}}'
   end
 
+  PR_SCOPE_SCRIPT = '.github/scripts/pr-scope.py'
+  PR_SCOPE_WORKFLOW = '.github/workflows/ci.yml'
+  PR_SCOPE_JOB = 'quality'
+  PR_SCOPE_SELF_TEST = 'python3 .github/scripts/pr-scope.py --repo-root . --policy .github/merge-gate-policy.json --self-test'
+  PR_SCOPE_TRUST_CONTRACT = 'exact-git-base-sha'
+  PR_SCOPE_SEMANTICS_GLOB = 'tests/fixtures/**/campaign-semantics.json'
+  PR_SCOPE_RETAINED_POLICY = 'docs/engineering/retained-evidence-policy.json'
+
+  def normalized_shell(command)
+    command.to_s.split.join(' ')
+  end
+
+  def pr_scope_contract(root:, policy:, producer_summary:)
+    violations = []
+    scope = policy['pr_scope']
+    unless scope.is_a?(Hash)
+      return ['schema v3 policy must declare pr_scope']
+    end
+
+    unless scope['trusted_tree_contract'] == PR_SCOPE_TRUST_CONTRACT
+      violations << "pr_scope trusted_tree_contract must be #{PR_SCOPE_TRUST_CONTRACT.inspect}"
+    end
+    unless scope['campaign_semantics_glob'] == PR_SCOPE_SEMANTICS_GLOB
+      violations << "pr_scope campaign_semantics_glob must be #{PR_SCOPE_SEMANTICS_GLOB.inspect}"
+    end
+    unless scope['retained_evidence_policy'] == PR_SCOPE_RETAINED_POLICY
+      violations << "pr_scope retained_evidence_policy must be #{PR_SCOPE_RETAINED_POLICY.inspect}"
+    end
+
+    script = Pathname(root).join(PR_SCOPE_SCRIPT)
+    violations << "trusted PR scope classifier #{PR_SCOPE_SCRIPT} is missing" unless script.file?
+
+    doc = producer_summary.fetch('workflow_docs')[PR_SCOPE_WORKFLOW]
+    job = doc.is_a?(Hash) && doc['jobs'].is_a?(Hash) ? doc['jobs'][PR_SCOPE_JOB] : nil
+    unless job.is_a?(Hash)
+      violations << "trusted PR scope self-test owner #{PR_SCOPE_WORKFLOW}##{PR_SCOPE_JOB} is missing"
+      return violations
+    end
+
+    steps = job['steps']
+    matches = steps.is_a?(Array) ? steps.select do |step|
+      step.is_a?(Hash) && normalized_shell(step['run']) == PR_SCOPE_SELF_TEST
+    end : []
+    if matches.length != 1
+      violations << "trusted PR scope classifier must have exactly one canonical self-test in #{PR_SCOPE_WORKFLOW}##{PR_SCOPE_JOB}"
+    elsif matches.first['continue-on-error']
+      violations << 'trusted PR scope classifier self-test cannot continue on error'
+    end
+
+    violations
+  end
+
   EVALUATOR_SCRIPT = '.github/scripts/evaluate-aggregate-run.rb'
   AGGREGATE_PRODUCER_PERMISSIONS = {'actions' => 'read', 'contents' => 'read'}.freeze
   TOKEN_ENV_EXPR = /\A\$\{\{\s*github\.token\s*\}\}\z/
@@ -430,7 +482,7 @@ module MergeGateVerifier
     ruleset = JSON.parse(File.read(ruleset_path))
     violations = []
 
-    violations << "unsupported policy schema_version #{policy['schema_version'].inspect}" unless policy['schema_version'] == 2
+    violations << "unsupported policy schema_version #{policy['schema_version'].inspect}" unless policy['schema_version'] == 3
     violations << "ruleset id mismatch: expected #{policy.dig('ruleset', 'id')}, got #{ruleset['id']}" unless ruleset['id'] == policy.dig('ruleset', 'id')
     violations << "ruleset name mismatch: expected #{policy.dig('ruleset', 'name').inspect}, got #{ruleset['name'].inspect}" unless ruleset['name'] == policy.dig('ruleset', 'name')
     violations << 'ruleset is not active' unless ruleset['enforcement'] == 'active'
@@ -439,6 +491,8 @@ module MergeGateVerifier
     violations.concat(producer_violations)
     aggregate_violations, aggregates = aggregate_inventory(root: root, policy: policy, producer_summary: producer_summary)
     violations.concat(aggregate_violations)
+
+    violations.concat(pr_scope_contract(root: root, policy: policy, producer_summary: producer_summary))
 
     required_contexts = producer_summary.fetch('required_contexts') + aggregates.map { |gate| gate['context'] }
     pending = policy.fetch('pending_ruleset_contexts', [])
