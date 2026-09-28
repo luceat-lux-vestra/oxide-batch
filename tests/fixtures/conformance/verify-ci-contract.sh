@@ -50,6 +50,7 @@ require_literal "pull_request trigger" "  pull_request:"
 require_literal "workflow_dispatch trigger" "  workflow_dispatch:"
 require_literal "pull_request main branch" "      - main"
 require_literal "contents permission" "  contents: read"
+require_literal "pull-request read permission" "  pull-requests: read"
 require_literal "runner" "runs-on: $(jq -er '.runner' "${contract}")"
 require_literal "matrix" "postgres: [$(jq -er '.supported_matrix | map("\"" + . + "\"") | join(", ")' "${contract}")]"
 require_literal "database image" "image: $(expand_matrix "$(jq -er '.database.image' "${contract}")")"
@@ -59,9 +60,16 @@ require_literal "timeout" "timeout-minutes: $(jq -er '.timeout_minutes' "${contr
 require_literal "campaign script" "run: $(expand_matrix "$(jq -er '.script' "${contract}")")"
 require_literal "report path" "path: $(jq -er '.report_path' "${contract}")"
 require_literal "artifact name" "name: $(expand_matrix "$(jq -er '.artifact_name' "${contract}")")"
+require_literal "trusted route job" "  $(jq -er '.pr_routing.route_job' "${contract}"):"
+require_literal "deep campaign job" "  $(jq -er '.pr_routing.deep_job' "${contract}"):"
+require_literal "required context emitter job" "  $(jq -er '.pr_routing.required_context_job' "${contract}"):"
+require_literal "trusted base checkout" 'ref: ${{ github.event.pull_request.base.sha }}'
+require_literal "trusted base directory" "path: .trusted-base"
+require_literal "route-job failure fallback" "needs.route.result != 'success'"
+require_literal "classification failure fallback" "needs.route.outputs.classification_outcome != 'success'"
+require_literal "direct-proof conformance membership" "contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-conformance.yml')"
 require_literal "draft placeholder" "M5 conformance is deferred until the pull request is ready for review"
-require_literal "final-only campaign" "if: \${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}"
-require_literal "failure retention" "if: \${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}"
+require_literal "failure retention" 'if: ${{ always() }}'
 require_literal "missing report failure" "if-no-files-found: error"
 
 while IFS=$'\t' read -r key value; do
