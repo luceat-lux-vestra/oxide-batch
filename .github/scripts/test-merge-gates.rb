@@ -44,6 +44,41 @@ class MergeGateVerifierTest < Minitest::Test
             'classification' => 'advisory'
           },
           {
+            'workflow' => '.github/workflows/ci.yml',
+            'job' => 'quality-fast',
+            'classification' => 'advisory'
+          },
+          {
+            'workflow' => '.github/workflows/ci.yml',
+            'job' => 'quality-integration-0',
+            'classification' => 'advisory'
+          },
+          {
+            'workflow' => '.github/workflows/ci.yml',
+            'job' => 'quality-integration-1',
+            'classification' => 'advisory'
+          },
+          {
+            'workflow' => '.github/workflows/ci.yml',
+            'job' => 'quality-integration-2',
+            'classification' => 'advisory'
+          },
+          {
+            'workflow' => '.github/workflows/ci.yml',
+            'job' => 'quality-integration-3',
+            'classification' => 'advisory'
+          },
+          {
+            'workflow' => '.github/workflows/ci.yml',
+            'job' => 'quality-bin-doc',
+            'classification' => 'advisory'
+          },
+          {
+            'workflow' => '.github/workflows/ci.yml',
+            'job' => 'quality-contracts',
+            'classification' => 'advisory'
+          },
+          {
             'workflow' => '.github/workflows/m5-conformance.yml',
             'job' => 'conformance-campaign',
             'classification' => 'required'
@@ -100,15 +135,83 @@ class MergeGateVerifierTest < Minitest::Test
       }
       write_json(root, '.github/merge-gate-policy.json', policy)
       write(root, '.github/scripts/pr-scope.py', "# trusted scope fixture\n")
+      write(root, '.github/scripts/run-integration-shard.py', <<~PY)
+        # "cargo", "metadata", "--no-deps", "--format-version", "1"
+        # "test" not in target.get("kind", [])
+        # integration target names must be workspace-unique before name-based sharding
+        # integration shard partition is not an exact one-to-one cover
+        command = ["cargo", "test", "--workspace", "--all-features"]
+        command.extend(["--test", name])
+      PY
       write(root, '.github/workflows/ci.yml', <<~YAML)
         name: Rust
         on:
           pull_request:
             branches: [main]
         jobs:
+          quality-fast:
+            name: quality-fast-internal
+            if: ${{ github.event.pull_request.draft == false }}
+            runs-on: ubuntu-latest
+            steps:
+              - name: Resolve exact-SHA Fast evidence
+                run: echo 'actions/workflows/fast-branch.yml/runs?event=push&head_sha=$EXPECTED_SHA&per_page=100'
+              - name: Check diff hygiene
+                run: git diff --check
+              - name: Check formatting
+                run: cargo fmt --all -- --check
+              - name: Run Clippy
+                run: cargo clippy --workspace --all-targets --all-features --
+              - name: Verify narrow audit-shape Clippy exceptions
+                run: cargo clippy -p oxide-batch-xtask --all-targets --all-features --message-format=json --
+          quality-integration-0:
+            name: quality-integration-0-internal
+            if: ${{ github.event.pull_request.draft == false }}
+            runs-on: ubuntu-latest
+            steps:
+              - run: python3 .github/scripts/run-integration-shard.py 0 4
+          quality-integration-1:
+            name: quality-integration-1-internal
+            if: ${{ github.event.pull_request.draft == false }}
+            runs-on: ubuntu-latest
+            steps:
+              - run: python3 .github/scripts/run-integration-shard.py 1 4
+          quality-integration-2:
+            name: quality-integration-2-internal
+            if: ${{ github.event.pull_request.draft == false }}
+            runs-on: ubuntu-latest
+            steps:
+              - run: python3 .github/scripts/run-integration-shard.py 2 4
+          quality-integration-3:
+            name: quality-integration-3-internal
+            if: ${{ github.event.pull_request.draft == false }}
+            runs-on: ubuntu-latest
+            steps:
+              - run: python3 .github/scripts/run-integration-shard.py 3 4
+          quality-bin-doc:
+            name: quality-bin-doc-internal
+            if: ${{ github.event.pull_request.draft == false }}
+            runs-on: ubuntu-latest
+            steps:
+              - run: cargo test --workspace --all-features --bins
+              - run: cargo test --workspace --all-features --doc
+          quality-contracts:
+            name: quality-contracts-internal
+            if: ${{ github.event.pull_request.draft == false }}
+            runs-on: ubuntu-latest
+            steps:
+              - run: cargo check -p oxide-batch --no-default-features
+              - run: cargo check -p oxide-batch-cli --no-default-features --all-targets
+              - run: cargo doc --workspace --all-features --no-deps
+              - run: cargo run --package oxide-batch-xtask -- deps
+              - run: cargo run --package oxide-batch-xtask -- surface
+              - run: cargo run --package oxide-batch-xtask -- release-crates
           quality:
             name: quality
+            needs: [quality-fast, quality-integration-0, quality-integration-1, quality-integration-2, quality-integration-3, quality-bin-doc, quality-contracts]
+            if: ${{ always() }}
             runs-on: ubuntu-latest
+            timeout-minutes: 5
             steps:
               - name: Check out repository
                 uses: actions/checkout@0000000000000000000000000000000000000001
@@ -118,6 +221,22 @@ class MergeGateVerifierTest < Minitest::Test
                   --repo-root .
                   --policy .github/merge-gate-policy.json
                   --self-test
+              - name: Require all quality components
+                env:
+                  FAST_RESULT: ${{ needs.quality-fast.result }}
+                  INTEGRATION_0_RESULT: ${{ needs.quality-integration-0.result }}
+                  INTEGRATION_1_RESULT: ${{ needs.quality-integration-1.result }}
+                  INTEGRATION_2_RESULT: ${{ needs.quality-integration-2.result }}
+                  INTEGRATION_3_RESULT: ${{ needs.quality-integration-3.result }}
+                  BIN_DOC_RESULT: ${{ needs.quality-bin-doc.result }}
+                  CONTRACTS_RESULT: ${{ needs.quality-contracts.result }}
+                run: |
+                  results=( "$FAST_RESULT" "$INTEGRATION_0_RESULT" "$INTEGRATION_1_RESULT" "$INTEGRATION_2_RESULT" "$INTEGRATION_3_RESULT" "$BIN_DOC_RESULT" "$CONTRACTS_RESULT" )
+                  for result in "${results[@]}"; do
+                    if [ "$result" != "success" ]; then
+                      exit 1
+                    fi
+                  done
           postgres:
             name: postgres-${{ matrix.postgres }}-repository
             strategy:
@@ -441,7 +560,11 @@ class MergeGateVerifierTest < Minitest::Test
   def test_required_job_rename_is_detected_as_ruleset_drift
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/ci.yml')
-      write(root, '.github/workflows/ci.yml', File.read(path).sub('name: quality', 'name: quality-renamed'))
+      write(
+        root,
+        '.github/workflows/ci.yml',
+        File.read(path).sub("\n  quality:\n    name: quality\n", "\n  quality:\n    name: quality-renamed\n")
+      )
       assert_includes verify(root).join('\n'), 'quality-renamed'
     end
   end
@@ -449,10 +572,7 @@ class MergeGateVerifierTest < Minitest::Test
   def test_required_job_removal_makes_live_context_stale
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/ci.yml')
-      body = File.read(path).sub(
-        "\n  quality:\n    name: quality\n    runs-on: ubuntu-latest\n    steps:\n      - name: Check out repository\n        uses: actions/checkout@0000000000000000000000000000000000000001\n      - name: Test trusted PR scope classifier\n        run: >-\n          python3 .github/scripts/pr-scope.py\n          --repo-root .\n          --policy .github/merge-gate-policy.json\n          --self-test\n",
-        "\n"
-      )
+      body = File.read(path).sub(/\n  quality:\n.*?(?=\n  postgres:)/m, "\n")
       write(root, '.github/workflows/ci.yml', body)
       assert_includes verify(root).join('\n'), 'quality'
     end
@@ -499,8 +619,8 @@ class MergeGateVerifierTest < Minitest::Test
       path = File.join(root, '.github/workflows/ci.yml')
       original = File.read(path)
       body = original.sub(
-        "name: quality\n    runs-on:",
-        "name: quality\n    if: ${{ always() && github.actor != 'nobody' }}\n    runs-on:"
+        "  quality:\n    name: quality\n    needs: [quality-fast, quality-integration-0, quality-integration-1, quality-integration-2, quality-integration-3, quality-bin-doc, quality-contracts]\n    if: ${{ always() }}",
+        "  quality:\n    name: quality\n    needs: [quality-fast, quality-integration-0, quality-integration-1, quality-integration-2, quality-integration-3, quality-bin-doc, quality-contracts]\n    if: ${{ always() && github.actor != 'nobody' }}"
       )
       refute_equal original, body
       write(root, '.github/workflows/ci.yml', body)
@@ -508,17 +628,53 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
-  def test_required_job_unconditional_always_is_allowed
+  def test_quality_aggregate_dependency_removal_is_rejected
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/ci.yml')
       original = File.read(path)
       body = original.sub(
-        "name: quality\n    runs-on:",
-        "name: quality\n    if: ${{ always() }}\n    runs-on:"
+        'needs: [quality-fast, quality-integration-0, quality-integration-1, quality-integration-2, quality-integration-3, quality-bin-doc, quality-contracts]',
+        'needs: [quality-fast, quality-integration-0, quality-integration-1, quality-integration-2, quality-bin-doc, quality-contracts]'
       )
       refute_equal original, body
       write(root, '.github/workflows/ci.yml', body)
-      assert_empty verify(root)
+      assert_includes verify(root).join('\n'), 'must depend on every parallel quality component'
+    end
+  end
+
+  def test_quality_component_command_removal_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/ci.yml')
+      original = File.read(path)
+      body = original.sub('python3 .github/scripts/run-integration-shard.py 2 4', 'echo omitted')
+      refute_equal original, body
+      write(root, '.github/workflows/ci.yml', body)
+      assert_includes verify(root).join('\n'), 'is missing quality obligations'
+    end
+  end
+
+  def test_quality_aggregate_result_binding_removal_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/ci.yml')
+      original = File.read(path)
+      body = original.sub(
+        'INTEGRATION_3_RESULT: ${{ needs.quality-integration-3.result }}',
+        'INTEGRATION_3_RESULT: success'
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/ci.yml', body)
+      assert_includes verify(root).join('\n'), 'must bind every component result exactly'
+    end
+  end
+
+  def test_quality_integration_shard_exact_cover_guard_is_required
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/scripts/run-integration-shard.py')
+      original = File.read(path)
+      body = original.sub('integration shard partition is not an exact one-to-one cover', 'weakened')
+      refute_equal original, body
+      write(root, '.github/scripts/run-integration-shard.py', body)
+      assert_includes verify(root).join('\n'), 'missing fail-closed shard contract'
     end
   end
 
@@ -675,7 +831,10 @@ class MergeGateVerifierTest < Minitest::Test
   def test_aggregate_producer_must_use_always
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/ci.yml')
-      body = File.read(path).sub('if: ${{ always() }}', 'if: success()')
+      body = File.read(path).sub(
+        "  postgresql-merge-gate:\n    name: postgresql\n    if: ${{ always() }}",
+        "  postgresql-merge-gate:\n    name: postgresql\n    if: success()"
+      )
       write(root, '.github/workflows/ci.yml', body)
       assert_includes verify(root).join('\n'), 'must use if:'
     end
@@ -769,7 +928,10 @@ class MergeGateVerifierTest < Minitest::Test
   def test_aggregate_producer_shape_is_bounded
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/ci.yml')
-      body = File.read(path).sub('timeout-minutes: 5', 'timeout-minutes: 30')
+      body = File.read(path).sub(
+        "  postgresql-merge-gate:\n    name: postgresql\n    if: ${{ always() }}\n    needs: [postgres]\n    runs-on: ubuntu-latest\n    timeout-minutes: 5",
+        "  postgresql-merge-gate:\n    name: postgresql\n    if: ${{ always() }}\n    needs: [postgres]\n    runs-on: ubuntu-latest\n    timeout-minutes: 30"
+      )
       write(root, '.github/workflows/ci.yml', body)
       assert_includes verify(root).join('\n'), 'ubuntu-latest with timeout-minutes: 5'
     end

@@ -304,6 +304,11 @@ module MergeGateVerifier
   CAMPAIGN_ROUTE_CHECKOUT_STEP = 'trusted-base'
   M5_CONFORMANCE_DEEP_JOB = 'conformance-deep'
   M5_CONFORMANCE_CONTEXT_JOB = 'conformance-campaign'
+  QUALITY_WORKFLOW = '.github/workflows/ci.yml'
+  QUALITY_AGGREGATE_JOB = 'quality'
+  QUALITY_INTEGRATION_SHARD_SCRIPT = '.github/scripts/run-integration-shard.py'
+  QUALITY_INTEGRATION_JOBS = %w[quality-integration-0 quality-integration-1 quality-integration-2 quality-integration-3].freeze
+  QUALITY_COMPONENT_JOBS = (%w[quality-fast quality-bin-doc quality-contracts] + QUALITY_INTEGRATION_JOBS).freeze
   PR_SCOPE_GLOBAL_DIRECT_PROOF_PATHS = [
     PR_SCOPE_SCRIPT,
     '.github/merge-gate-policy.json',
@@ -641,6 +646,143 @@ module MergeGateVerifier
 
     violations
   end
+
+  def quality_parallel_contract(root:, policy:, producer_summary:)
+    violations = []
+    workflow = producer_summary.fetch('workflow_docs')[QUALITY_WORKFLOW]
+    unless workflow.is_a?(Hash) && workflow['jobs'].is_a?(Hash)
+      return ["#{QUALITY_WORKFLOW} must declare parallel quality jobs"]
+    end
+    jobs = workflow['jobs']
+
+    component_specs = {
+      'quality-fast' => {
+        'name' => 'quality-fast-internal',
+        'tokens' => [
+          'actions/workflows/fast-branch.yml/runs?event=push&head_sha=$EXPECTED_SHA&per_page=100',
+          'git diff --check',
+          'cargo fmt --all -- --check',
+          'cargo clippy --workspace --all-targets --all-features --',
+          'cargo clippy -p oxide-batch-xtask --all-targets --all-features --message-format=json --'
+        ]
+      },
+      'quality-bin-doc' => {
+        'name' => 'quality-bin-doc-internal',
+        'tokens' => [
+          'cargo test --workspace --all-features --bins',
+          'cargo test --workspace --all-features --doc'
+        ]
+      },
+      'quality-contracts' => {
+        'name' => 'quality-contracts-internal',
+        'tokens' => [
+          'cargo check -p oxide-batch --no-default-features',
+          'cargo check -p oxide-batch-cli --no-default-features --all-targets',
+          'cargo doc --workspace --all-features --no-deps',
+          'cargo run --package oxide-batch-xtask -- deps',
+          'cargo run --package oxide-batch-xtask -- surface',
+          'cargo run --package oxide-batch-xtask -- release-crates'
+        ]
+      }
+    }
+
+    QUALITY_INTEGRATION_JOBS.each_with_index do |job_id, index|
+      component_specs[job_id] = {
+        'name' => "quality-integration-#{index}-internal",
+        'tokens' => ["python3 #{QUALITY_INTEGRATION_SHARD_SCRIPT} #{index} 4"]
+      }
+    end
+
+    component_specs.each do |job_id, spec|
+      job = jobs[job_id]
+      unless job.is_a?(Hash)
+        violations << "#{QUALITY_WORKFLOW} is missing internal quality component #{job_id}"
+        next
+      end
+      unless job_policy(policy, QUALITY_WORKFLOW, job_id).first == 'advisory'
+        violations << "#{QUALITY_WORKFLOW}##{job_id} must remain advisory/internal"
+      end
+      unless job['name'] == spec['name']
+        violations << "#{QUALITY_WORKFLOW}##{job_id} must keep internal context name #{spec['name']}"
+      end
+      expected_if = "${{ github.event.pull_request.draft == false }}"
+      unless normalized_shell(job['if']) == normalized_shell(expected_if)
+        violations << "#{QUALITY_WORKFLOW}##{job_id} must run on every ready pull request"
+      end
+      unless normalize_needs(job).empty?
+        violations << "#{QUALITY_WORKFLOW}##{job_id} must start independently without serial needs"
+      end
+      body = Array(job['steps']).filter_map { |step| step.is_a?(Hash) ? step['run'] : nil }.join("\n")
+      missing = spec['tokens'].reject { |token| body.include?(token) }
+      unless missing.empty?
+        violations << "#{QUALITY_WORKFLOW}##{job_id} is missing quality obligations: #{missing.join(', ')}"
+      end
+    end
+
+    shard_script = Pathname(root).join(QUALITY_INTEGRATION_SHARD_SCRIPT)
+    if shard_script.file?
+      shard_body = shard_script.read
+      shard_tokens = [
+        '"cargo", "metadata", "--no-deps", "--format-version", "1"',
+        '"test" not in target.get("kind", [])',
+        'integration target names must be workspace-unique before name-based sharding',
+        'integration shard partition is not an exact one-to-one cover',
+        'command = ["cargo", "test", "--workspace", "--all-features"]',
+        'command.extend(["--test", name])'
+      ]
+      missing = shard_tokens.reject { |token| shard_body.include?(token) }
+      unless missing.empty?
+        violations << "#{QUALITY_INTEGRATION_SHARD_SCRIPT} is missing fail-closed shard contract: #{missing.join(', ')}"
+      end
+    else
+      violations << "#{QUALITY_INTEGRATION_SHARD_SCRIPT} is missing"
+    end
+
+    aggregate = jobs[QUALITY_AGGREGATE_JOB]
+    unless aggregate.is_a?(Hash)
+      return violations + ["#{QUALITY_WORKFLOW} must declare required #{QUALITY_AGGREGATE_JOB} aggregate"]
+    end
+    unless job_policy(policy, QUALITY_WORKFLOW, QUALITY_AGGREGATE_JOB).first == 'required'
+      violations << "#{QUALITY_WORKFLOW}##{QUALITY_AGGREGATE_JOB} must remain required"
+    end
+    violations << "#{QUALITY_WORKFLOW}##{QUALITY_AGGREGATE_JOB} must emit context quality" unless aggregate['name'] == 'quality'
+    violations << "#{QUALITY_WORKFLOW}##{QUALITY_AGGREGATE_JOB} must use unconditional always()" unless always_condition?(aggregate['if'])
+    unless normalize_needs(aggregate).sort == QUALITY_COMPONENT_JOBS.sort
+      violations << "#{QUALITY_WORKFLOW}##{QUALITY_AGGREGATE_JOB} must depend on every parallel quality component"
+    end
+
+    result_step = Array(aggregate['steps']).find do |step|
+      step.is_a?(Hash) && step['name'] == 'Require all quality components'
+    end
+    unless result_step.is_a?(Hash)
+      violations << "#{QUALITY_WORKFLOW}##{QUALITY_AGGREGATE_JOB} must fail closed over component results"
+      return violations
+    end
+    expected_env = {
+      'FAST_RESULT' => "${{ needs.quality-fast.result }}",
+      'INTEGRATION_0_RESULT' => "${{ needs.quality-integration-0.result }}",
+      'INTEGRATION_1_RESULT' => "${{ needs.quality-integration-1.result }}",
+      'INTEGRATION_2_RESULT' => "${{ needs.quality-integration-2.result }}",
+      'INTEGRATION_3_RESULT' => "${{ needs.quality-integration-3.result }}",
+      'BIN_DOC_RESULT' => "${{ needs.quality-bin-doc.result }}",
+      'CONTRACTS_RESULT' => "${{ needs.quality-contracts.result }}"
+    }
+    unless result_step['env'] == expected_env
+      violations << "#{QUALITY_WORKFLOW}##{QUALITY_AGGREGATE_JOB} must bind every component result exactly"
+    end
+    result_body = result_step['run'].to_s
+    required_tokens = expected_env.keys.map { |key| "\"$#{key}\"" } + [
+      'if [ "$result" != "success" ]; then',
+      'exit 1'
+    ]
+    missing = required_tokens.reject { |token| result_body.include?(token) }
+    unless missing.empty?
+      violations << "#{QUALITY_WORKFLOW}##{QUALITY_AGGREGATE_JOB} is missing fail-closed result checks: #{missing.join(', ')}"
+    end
+
+    violations
+  end
+
   EVALUATOR_SCRIPT = '.github/scripts/evaluate-aggregate-run.rb'
   AGGREGATE_PRODUCER_PERMISSIONS = {'actions' => 'read', 'contents' => 'read'}.freeze
   TOKEN_ENV_EXPR = /\A\$\{\{\s*github\.token\s*\}\}\z/
@@ -876,6 +1018,7 @@ module MergeGateVerifier
     violations.concat(pr_scope_contract(root: root, policy: policy, producer_summary: producer_summary))
     violations.concat(campaign_orchestrator_contract(root: root, policy: policy, producer_summary: producer_summary))
     violations.concat(m5_conformance_routing_contract(policy: policy, producer_summary: producer_summary))
+    violations.concat(quality_parallel_contract(root: root, policy: policy, producer_summary: producer_summary))
     violations.concat(post_main_contract(policy: policy, producer_summary: producer_summary))
 
     required_contexts = producer_summary.fetch('required_contexts') + aggregates.map { |gate| gate['context'] }
