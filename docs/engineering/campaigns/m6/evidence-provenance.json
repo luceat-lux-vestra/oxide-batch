@@ -2,8 +2,8 @@
   "note": "M6 retained reports are the exact extracted bytes of the successful GitHub Actions artifacts named below. The producer execution commit is the pull-request merge ref recorded inside each report; the branch head is recorded separately.",
   "binding": {
     "remote_verification": "The run, attempt, producing job, artifact digest, and extracted report bytes were checked against the GitHub Actions API at retention time.",
-    "local_verification": "cargo xtask evidence checks retained report blobs, producer commits, campaign semantic closures, matrix coverage, report pass status, and the recorded remote checks.",
-    "campaign_semantics": "Each campaign report records the object identities of the canonical semantic closure it executed; those identities must remain unchanged in this tree."
+    "local_verification": "cargo xtask evidence checks retained report blobs, producer/report identity, matrix coverage, report pass status, recorded remote checks, and execution-manifest integrity. cargo xtask evidence-freshness separately compares the recorded campaign semantic objects with current HEAD.",
+    "campaign_semantics": "Each campaign report records the object identities of the canonical semantic closure it executed. Those identities remain immutable historical execution facts; freshness is a separate current-HEAD property checked before new-tree evidence is claimed or promoted."
   },
   "campaigns": {
     "declared": [
