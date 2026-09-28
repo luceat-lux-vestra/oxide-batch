@@ -29,7 +29,7 @@ class MergeGateVerifierTest < Minitest::Test
       FileUtils.mkdir_p(File.join(root, '.github/workflows'))
       FileUtils.mkdir_p(File.join(root, '.github/scripts'))
       policy = {
-        'schema_version' => 4,
+        'schema_version' => 5,
         'ruleset' => {'id' => 7, 'name' => 'Protect main'},
         'workflow_defaults' => [
           {'pattern' => '.github/workflows/ci.yml', 'classification' => 'required'},
@@ -85,6 +85,12 @@ class MergeGateVerifierTest < Minitest::Test
           'campaign_semantics_glob' => 'tests/fixtures/**/campaign-semantics.json',
           'retained_evidence_policy' => 'docs/engineering/retained-evidence-policy.json',
           'global_campaign_paths' => ['Cargo.lock'],
+          'global_direct_proof_paths' => [
+            '.github/scripts/pr-scope.py',
+            '.github/merge-gate-policy.json',
+            '.github/workflows/campaign-orchestrator.yml',
+            'docs/engineering/retained-evidence-policy.json'
+          ],
           'trusted_tree_contract' => 'exact-git-base-sha'
         },
         'post_main' => {
@@ -248,6 +254,30 @@ class MergeGateVerifierTest < Minitest::Test
     with_repo do |root, _policy|
       FileUtils.rm(File.join(root, '.github/scripts/pr-scope.py'))
       assert_includes verify(root).join('\n'), 'classifier .github/scripts/pr-scope.py is missing'
+    end
+  end
+
+  def test_pr_scope_global_direct_proof_path_removal_is_rejected
+    with_repo do |root, policy|
+      policy['pr_scope']['global_direct_proof_paths'].delete('.github/workflows/campaign-orchestrator.yml')
+      write_json(root, '.github/merge-gate-policy.json', policy)
+      assert_includes verify(root).join('\n'), 'global_direct_proof_paths must exactly match canonical routing control-plane paths'
+    end
+  end
+
+  def test_pr_scope_global_direct_proof_path_extra_is_rejected
+    with_repo do |root, policy|
+      policy['pr_scope']['global_direct_proof_paths'] << '.github/workflows/ci.yml'
+      write_json(root, '.github/merge-gate-policy.json', policy)
+      assert_includes verify(root).join('\n'), 'global_direct_proof_paths must exactly match canonical routing control-plane paths'
+    end
+  end
+
+  def test_pr_scope_global_direct_proof_overlap_is_rejected
+    with_repo do |root, policy|
+      policy['pr_scope']['global_campaign_paths'] << '.github/scripts/pr-scope.py'
+      write_json(root, '.github/merge-gate-policy.json', policy)
+      assert_includes verify(root).join('\n'), 'global_direct_proof_paths must not overlap global_campaign_paths'
     end
   end
 
