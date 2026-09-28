@@ -768,8 +768,8 @@ class MergeGateVerifierTest < Minitest::Test
       path = File.join(root, '.github/workflows/pr-labeler.yml')
       original = File.read(path)
       body = original.sub(
-        "            steps:\n              - name: Evaluate base-trusted repository merge authority",
-        "            steps:\n              - uses: actions/checkout@0000000000000000000000000000000000000001\n              - name: Evaluate base-trusted repository merge authority"
+        "    steps:\n      - name: Evaluate base-trusted repository merge authority",
+        "    steps:\n      - uses: actions/checkout@0000000000000000000000000000000000000001\n      - name: Evaluate base-trusted repository merge authority"
       )
       refute_equal original, body
       write(root, '.github/workflows/pr-labeler.yml', body)
@@ -847,7 +847,10 @@ class MergeGateVerifierTest < Minitest::Test
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/pr-labeler.yml')
       original = File.read(path)
-      body = original.sub("                  echo 'linked_pr.get(\"number\") == pr_number_int'\n", '')
+      body = original.sub(
+        'linked_pr.get("number") == pr_number_int',
+        'linked PR identity binding removed'
+      )
       refute_equal original, body
       write(root, '.github/workflows/pr-labeler.yml', body)
       assert_includes verify(root).join("\n"), 'is missing fail-closed contract tokens'
