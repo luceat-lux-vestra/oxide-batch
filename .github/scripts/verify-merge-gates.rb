@@ -297,6 +297,7 @@ module MergeGateVerifier
   PR_SCOPE_TRUST_CONTRACT = 'exact-git-base-sha'
   PR_SCOPE_SEMANTICS_GLOB = 'tests/fixtures/**/campaign-semantics.json'
   PR_SCOPE_RETAINED_POLICY = 'docs/engineering/retained-evidence-policy.json'
+  CAMPAIGN_ORCHESTRATOR_WORKFLOW = '.github/workflows/campaign-orchestrator.yml'
 
   def normalized_shell(command)
     command.to_s.split.join(' ')
@@ -340,6 +341,88 @@ module MergeGateVerifier
     end
 
     violations
+  end
+
+  def workflow_event?(doc, name)
+    present, = event_config(doc, name)
+    present
+  end
+
+  def campaign_orchestrator_contract(root:, policy:, producer_summary:)
+    violations = []
+    workflow_docs = producer_summary.fetch('workflow_docs')
+    orchestrator = workflow_docs[CAMPAIGN_ORCHESTRATOR_WORKFLOW]
+    unless orchestrator.is_a?(Hash)
+      return ["campaign orchestrator #{CAMPAIGN_ORCHESTRATOR_WORKFLOW} is missing"]
+    end
+
+    unless pr_trigger?(orchestrator)
+      violations << "#{CAMPAIGN_ORCHESTRATOR_WORKFLOW} must be pull_request-triggered"
+    end
+    if pull_request_target_trigger?(orchestrator)
+      violations << "#{CAMPAIGN_ORCHESTRATOR_WORKFLOW} must not use pull_request_target"
+    end
+    unless orchestrator['permissions'] == {'contents' => 'read'}
+      violations << "#{CAMPAIGN_ORCHESTRATOR_WORKFLOW} must keep top-level permissions at contents: read"
+    end
+
+    retained_path = policy.dig('pr_scope', 'retained_evidence_policy')
+    retained = retained_path && JSON.parse(File.read(Pathname(root).join(retained_path)))
+    producers = retained ? retained.fetch('artifact_producers', []).map { |entry| entry.fetch('workflow') }.uniq : []
+
+    expected = producers.select do |workflow|
+      doc = workflow_docs[workflow]
+      jobs = doc.is_a?(Hash) ? doc['jobs'] : nil
+      next false unless jobs.is_a?(Hash)
+      jobs.keys.all? { |job_id| job_policy(policy, workflow, job_id.to_s).first == 'advisory' }
+    end.sort
+
+    jobs = orchestrator['jobs']
+    unless jobs.is_a?(Hash)
+      return violations + ["#{CAMPAIGN_ORCHESTRATOR_WORKFLOW} must declare jobs"]
+    end
+
+    calls = []
+    jobs.each do |job_id, job|
+      unless job.is_a?(Hash) && job['uses'].is_a?(String)
+        violations << "#{CAMPAIGN_ORCHESTRATOR_WORKFLOW} job #{job_id} must be a reusable-workflow call"
+        next
+      end
+      unless job['if'].to_s.gsub(/\s+/, '') == '${{github.event.pull_request.draft==false}}'
+        violations << "#{CAMPAIGN_ORCHESTRATOR_WORKFLOW} job #{job_id} must skip draft pull requests"
+      end
+      uses = job['uses']
+      unless uses.start_with?('./.github/workflows/')
+        violations << "#{CAMPAIGN_ORCHESTRATOR_WORKFLOW} job #{job_id} must call a local checked-in workflow"
+        next
+      end
+      calls << uses.delete_prefix('./')
+    end
+
+    duplicates = calls.group_by(&:itself).select { |_workflow, entries| entries.length > 1 }.keys
+    violations << "campaign orchestrator duplicates producers: #{duplicates.sort.join(', ')}" unless duplicates.empty?
+
+    missing = expected - calls
+    extra = calls - expected
+    violations << "campaign orchestrator misses advisory producers: #{missing.join(', ')}" unless missing.empty?
+    violations << "campaign orchestrator calls non-advisory/unknown producers: #{extra.join(', ')}" unless extra.empty?
+
+    expected.each do |workflow|
+      doc = workflow_docs[workflow]
+      unless workflow_event?(doc, 'workflow_call')
+        violations << "advisory campaign producer #{workflow} must expose workflow_call"
+      end
+      unless workflow_event?(doc, 'workflow_dispatch')
+        violations << "advisory campaign producer #{workflow} must retain workflow_dispatch"
+      end
+      if pr_trigger?(doc)
+        violations << "advisory campaign producer #{workflow} must not trigger directly on pull_request"
+      end
+    end
+
+    violations
+  rescue Errno::ENOENT, JSON::ParserError, KeyError => e
+    ["campaign orchestrator contract could not be evaluated: #{e.message}"]
   end
 
   EVALUATOR_SCRIPT = '.github/scripts/evaluate-aggregate-run.rb'
@@ -575,6 +658,7 @@ module MergeGateVerifier
     violations.concat(aggregate_violations)
 
     violations.concat(pr_scope_contract(root: root, policy: policy, producer_summary: producer_summary))
+    violations.concat(campaign_orchestrator_contract(root: root, policy: policy, producer_summary: producer_summary))
     violations.concat(post_main_contract(policy: policy, producer_summary: producer_summary))
 
     required_contexts = producer_summary.fetch('required_contexts') + aggregates.map { |gate| gate['context'] }

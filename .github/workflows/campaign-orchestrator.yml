@@ -1,0 +1,59 @@
+name: Campaign Orchestrator
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: campaign-orchestrator-${{ github.ref }}
+  cancel-in-progress: true
+
+# Advisory M5/M6 producers are called from one PR workflow so the next
+# migration can make execution impact-aware at one trusted routing boundary.
+# Required M5 Conformance intentionally remains an independent required
+# workflow until its required-context migration is performed.
+jobs:
+  m5_cancellation:
+    if: ${{ github.event.pull_request.draft == false }}
+    uses: ./.github/workflows/m5-cancellation.yml
+
+  m5_crash_restore:
+    if: ${{ github.event.pull_request.draft == false }}
+    uses: ./.github/workflows/m5-crash-restore.yml
+
+  m5_performance:
+    if: ${{ github.event.pull_request.draft == false }}
+    uses: ./.github/workflows/m5-performance.yml
+
+  m5_resource_bounds:
+    if: ${{ github.event.pull_request.draft == false }}
+    uses: ./.github/workflows/m5-resource-bounds.yml
+
+  m5_security:
+    if: ${{ github.event.pull_request.draft == false }}
+    uses: ./.github/workflows/m5-security.yml
+
+  m5_soak:
+    if: ${{ github.event.pull_request.draft == false }}
+    uses: ./.github/workflows/m5-soak.yml
+
+  m5_upgrade:
+    if: ${{ github.event.pull_request.draft == false }}
+    uses: ./.github/workflows/m5-upgrade.yml
+
+  m6_conformance:
+    if: ${{ github.event.pull_request.draft == false }}
+    uses: ./.github/workflows/m6-conformance.yml
+
+  m6_gate_b:
+    if: ${{ github.event.pull_request.draft == false }}
+    uses: ./.github/workflows/m6-gate-b.yml
+
+  m6_gate_h:
+    if: ${{ github.event.pull_request.draft == false }}
+    uses: ./.github/workflows/m6-gate-h.yml

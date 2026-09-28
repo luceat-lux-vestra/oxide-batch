@@ -33,6 +33,7 @@ class MergeGateVerifierTest < Minitest::Test
         'ruleset' => {'id' => 7, 'name' => 'Protect main'},
         'workflow_defaults' => [
           {'pattern' => '.github/workflows/ci.yml', 'classification' => 'required'},
+          {'pattern' => '.github/workflows/campaign-orchestrator.yml', 'classification' => 'advisory'},
           {'pattern' => '.github/workflows/m5-*.yml', 'classification' => 'advisory'},
           {'pattern' => '.github/workflows/deep-*.yml', 'classification' => 'advisory'}
         ],
@@ -165,6 +166,34 @@ class MergeGateVerifierTest < Minitest::Test
                 env:
                   GITHUB_TOKEN: ${{ github.token }}
                 run: ruby .github/scripts/evaluate-aggregate-run.rb postgresql-conformance
+      YAML
+      write_json(root, 'docs/engineering/retained-evidence-policy.json', {
+        'artifact_producers' => [
+          {'workflow' => '.github/workflows/m5-conformance.yml'},
+          {'workflow' => '.github/workflows/m5-soak.yml'}
+        ]
+      })
+      write(root, '.github/workflows/m5-soak.yml', <<~YAML)
+        name: M5 Soak
+        on:
+          workflow_call:
+          workflow_dispatch:
+        jobs:
+          soak-campaign:
+            name: soak
+            runs-on: ubuntu-latest
+      YAML
+      write(root, '.github/workflows/campaign-orchestrator.yml', <<~YAML)
+        name: Campaign Orchestrator
+        on:
+          pull_request:
+            branches: [main]
+        permissions:
+          contents: read
+        jobs:
+          m5_soak:
+            if: ${{ github.event.pull_request.draft == false }}
+            uses: ./.github/workflows/m5-soak.yml
       YAML
       write(root, '.github/workflows/deep-soak.yml', <<~YAML)
         name: Deep
@@ -610,6 +639,38 @@ class MergeGateVerifierTest < Minitest::Test
             runs-on: ubuntu-latest
       YAML
       assert_includes verify(root).join('\n'), 'aggregate context postgresql collides with PR jobs'
+    end
+  end
+
+  def test_campaign_orchestrator_missing_advisory_producer_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/campaign-orchestrator.yml')
+      body = File.read(path).sub(/  m5_soak:\n(?:    .*\n){2}/, '')
+      write(root, '.github/workflows/campaign-orchestrator.yml', body)
+      assert_includes verify(root).join('\n'), 'misses advisory producers'
+    end
+  end
+
+  def test_advisory_campaign_direct_pr_trigger_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/m5-soak.yml')
+      body = File.read(path).sub("  workflow_call:\n", "  pull_request:\n")
+      write(root, '.github/workflows/m5-soak.yml', body)
+      assert_includes verify(root).join('\n'), 'must expose workflow_call'
+      assert_includes verify(root).join('\n'), 'must not trigger directly on pull_request'
+    end
+  end
+
+  def test_campaign_orchestrator_unknown_call_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/campaign-orchestrator.yml')
+      body = File.read(path) + <<~YAML
+          unknown:
+            if: ${{ github.event.pull_request.draft == false }}
+            uses: ./.github/workflows/deep-soak.yml
+      YAML
+      write(root, '.github/workflows/campaign-orchestrator.yml', body)
+      assert_includes verify(root).join('\n'), 'calls non-advisory/unknown producers'
     end
   end
 

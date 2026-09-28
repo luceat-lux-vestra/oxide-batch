@@ -195,3 +195,19 @@ or unscanned.
 The nine Rust PostgreSQL child jobs continue to run as aggregate members; only their direct ruleset surface is replaced. The two conformance contexts continue to run and remain directly required as independent evidence authority.
 
 #233 may compose this verifier for scheduled hardening drift auditing. Advisory Rust CodeQL remains outside direct merge authority until a separate explicit policy migration promotes it.
+
+## Advisory campaign orchestration
+
+Advisory retained-evidence campaigns are PR-triggered only through
+`.github/workflows/campaign-orchestrator.yml`. Their individual producer
+workflows remain manually dispatchable and reusable via `workflow_call`, but
+must not independently subscribe to `pull_request`.
+
+The orchestrator inventory is not a hand-maintained campaign list. The
+merge-gate verifier derives the retained artifact producers from
+`docs/engineering/retained-evidence-policy.json`, excludes producers that own
+required jobs (currently M5 Conformance), and requires the orchestrator's local
+reusable-workflow calls to match the remaining advisory producer set exactly.
+Missing, duplicate, unknown, directly PR-triggered, or non-reusable advisory
+producers fail closed.
+

@@ -30,6 +30,10 @@
       "classification": "advisory"
     },
     {
+      "pattern": ".github/workflows/campaign-orchestrator.yml",
+      "classification": "advisory"
+    },
+    {
       "pattern": ".github/workflows/m5-*.yml",
       "classification": "advisory"
     },
