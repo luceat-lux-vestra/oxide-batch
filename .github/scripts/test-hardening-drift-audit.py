@@ -90,7 +90,6 @@ class RunnerTests(unittest.TestCase):
             "release-negative-contract",
             "retained-evidence-policy",
             "retained-evidence-provenance",
-            "retained-evidence-freshness",
         }
         self.assertEqual(expected, {control for control, _ in RUNNER.STATIC_CHECKS})
 
