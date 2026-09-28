@@ -369,22 +369,83 @@ class MergeGateVerifierTest < Minitest::Test
                     --trusted-base-sha "$BASE_SHA"
                   echo '.direct_proof_campaign_workflows'
                   echo "direct_workflows=$direct_workflows" >> "$GITHUB_OUTPUT"
-          conformance-deep:
-            name: deep-postgres-${{ matrix.postgres }}-conformance-campaign
+          conformance-shard-15:
+            name: deep-postgres-15-conformance-shard-${{ matrix.shard }}
             needs: route
             if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-conformance.yml')))) }}
             runs-on: ubuntu-latest
             strategy:
               matrix:
-                postgres: ["15", "18"]
+                shard: [0, 1]
             services:
               postgres:
                 image: postgres:15
             steps:
-              - run: echo deep
+              - run: ./tests/fixtures/conformance/verify-ci-contract.sh .github/workflows/m5-conformance.yml
+              - run: ./tests/fixtures/conformance/run-ci-campaign.sh 15 ${{ matrix.shard }} 2
+              - uses: actions/upload-artifact@0000000000000000000000000000000000000003
+                with:
+                  name: conformance-shard-postgres-15-${{ matrix.shard }}
+                  path: target/m5-campaigns/conformance-shard-${{ matrix.shard }}.json
+                  if-no-files-found: error
+          conformance-shard-18:
+            name: deep-postgres-18-conformance-shard-${{ matrix.shard }}
+            needs: route
+            if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-conformance.yml')))) }}
+            runs-on: ubuntu-latest
+            strategy:
+              matrix:
+                shard: [0, 1]
+            services:
+              postgres:
+                image: postgres:18
+            steps:
+              - run: ./tests/fixtures/conformance/verify-ci-contract.sh .github/workflows/m5-conformance.yml
+              - run: ./tests/fixtures/conformance/run-ci-campaign.sh 18 ${{ matrix.shard }} 2
+              - uses: actions/upload-artifact@0000000000000000000000000000000000000003
+                with:
+                  name: conformance-shard-postgres-18-${{ matrix.shard }}
+                  path: target/m5-campaigns/conformance-shard-${{ matrix.shard }}.json
+                  if-no-files-found: error
+          conformance-deep-15:
+            name: deep-postgres-15-conformance-campaign
+            needs: [route, conformance-shard-15]
+            if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-conformance.yml')))) }}
+            runs-on: ubuntu-latest
+            steps:
+              - run: ./tests/fixtures/conformance/verify-ci-contract.sh .github/workflows/m5-conformance.yml
+              - uses: actions/download-artifact@0000000000000000000000000000000000000004
+                with:
+                  pattern: conformance-shard-postgres-15-*
+                  path: target/m5-campaign-shards
+                  merge-multiple: true
+              - run: bash ./tests/fixtures/conformance/merge-ci-campaign.sh 15 2 target/m5-campaign-shards
+              - uses: actions/upload-artifact@0000000000000000000000000000000000000003
+                with:
+                  name: conformance-campaign-postgres-15
+                  path: target/m5-campaigns/conformance-campaign.json
+                  if-no-files-found: error
+          conformance-deep-18:
+            name: deep-postgres-18-conformance-campaign
+            needs: [route, conformance-shard-18]
+            if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-conformance.yml')))) }}
+            runs-on: ubuntu-latest
+            steps:
+              - run: ./tests/fixtures/conformance/verify-ci-contract.sh .github/workflows/m5-conformance.yml
+              - uses: actions/download-artifact@0000000000000000000000000000000000000004
+                with:
+                  pattern: conformance-shard-postgres-18-*
+                  path: target/m5-campaign-shards
+                  merge-multiple: true
+              - run: bash ./tests/fixtures/conformance/merge-ci-campaign.sh 18 2 target/m5-campaign-shards
+              - uses: actions/upload-artifact@0000000000000000000000000000000000000003
+                with:
+                  name: conformance-campaign-postgres-18
+                  path: target/m5-campaigns/conformance-campaign.json
+                  if-no-files-found: error
           conformance-campaign:
             name: postgres-${{ matrix.postgres }}-conformance-campaign
-            needs: [route, conformance-deep]
+            needs: [route, conformance-deep-15, conformance-deep-18]
             if: ${{ always() }}
             runs-on: ubuntu-latest
             strategy:
@@ -392,12 +453,19 @@ class MergeGateVerifierTest < Minitest::Test
                 postgres: ["15", "18"]
             steps:
               - name: Emit required conformance context
+                env:
+                  POSTGRES: ${{ matrix.postgres }}
+                  DEEP_15_RESULT: ${{ needs.conformance-deep-15.result }}
+                  DEEP_18_RESULT: ${{ needs.conformance-deep-18.result }}
                 run: |
                   ROUTE_RESULT=x
                   CLASSIFICATION_OUTCOME=x
                   DIRECT_REQUIRED=x
-                  DEEP_RESULT=x
                   echo "M5 conformance is deferred until the pull request is ready for review"
+                  case "$POSTGRES" in
+                    15) DEEP_RESULT="$DEEP_15_RESULT" ;;
+                    18) DEEP_RESULT="$DEEP_18_RESULT" ;;
+                  esac
                   if [[ "$DEEP_RESULT" != "success" ]]; then exit 1; fi
                   if [[ "$DEEP_RESULT" != "skipped" ]]; then exit 1; fi
           postgresql-conformance-merge-gate:
@@ -1193,10 +1261,49 @@ class MergeGateVerifierTest < Minitest::Test
       write(root, '.github/workflows/m5-conformance.yml', body)
       assert_includes(
         verify(root).join('\n'),
-        'deep job must run for manual/direct proof and fail closed on routing ambiguity'
+        'conformance-shard-15 must run for manual/direct proof and fail closed on routing ambiguity'
       )
     end
   end
+  def test_m5_conformance_shard_matrix_weakening_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/m5-conformance.yml')
+      original = File.read(path)
+      body = original.sub('shard: [0, 1]', 'shard: [0]')
+      refute_equal original, body
+      write(root, '.github/workflows/m5-conformance.yml', body)
+      assert_includes verify(root).join("\n"), 'must retain the exact two-way shard matrix [0, 1]'
+    end
+  end
+
+  def test_m5_conformance_canonical_merge_command_removal_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/m5-conformance.yml')
+      original = File.read(path)
+      body = original.sub(
+        'bash ./tests/fixtures/conformance/merge-ci-campaign.sh 15 2 target/m5-campaign-shards',
+        'echo weakened'
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/m5-conformance.yml', body)
+      assert_includes verify(root).join("\n"), 'conformance-deep-15 is missing canonical merge commands'
+    end
+  end
+
+  def test_m5_conformance_emitter_pg_binding_removal_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/m5-conformance.yml')
+      original = File.read(path)
+      body = original.sub(
+        'DEEP_15_RESULT: ${{ needs.conformance-deep-15.result }}',
+        'DEEP_15_RESULT: success'
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/m5-conformance.yml', body)
+      assert_includes verify(root).join("\n"), 'context emitter must bind DEEP_15_RESULT'
+    end
+  end
+
   def test_m5_conformance_required_context_emitter_services_are_rejected
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/m5-conformance.yml')
