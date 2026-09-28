@@ -647,7 +647,7 @@ class MergeGateVerifierTest < Minitest::Test
       path = File.join(root, '.github/workflows/campaign-orchestrator.yml')
       block = "  m5_soak:\n    if: ${{ github.event.pull_request.draft == false }}\n    uses: ./.github/workflows/m5-soak.yml\n"
       original = File.read(path)
-      body = original.sub(block, '')
+      body = original.sub("jobs:\n#{block}", "jobs: {}\n")
       refute_equal original, body
       write(root, '.github/workflows/campaign-orchestrator.yml', body)
       assert_includes verify(root).join('\n'), 'misses advisory producers'
