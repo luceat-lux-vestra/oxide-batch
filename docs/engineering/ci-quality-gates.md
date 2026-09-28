@@ -51,14 +51,14 @@ The scheduled supply-chain workflow creates or updates one owned security issue
 when its advisory, license, ban, or source gate fails. The issue is an
 operational notification and never converts a failed gate into success.
 
-GitHub CodeQL **default setup is the repository's single CodeQL authority**. It
-analyzes GitHub Actions and Rust with GitHub-managed `build-mode: none`; no
-checked-in advanced-setup CodeQL workflow may coexist with it. `Analyze
-(actions)` remains merge-required because it is an established always-present
-managed producer. `Analyze (rust)` is initially advisory: it must be present on
-pull requests and `main`, but it is not added to the live ruleset until repeated
-runs establish producer reliability. Issue #233's periodic hardening drift audit
-is the next review point for promotion to required status.
+Checked-in CodeQL **advanced setup is the repository's single CodeQL authority**.
+`.github/workflows/codeql.yml` analyzes GitHub Actions and Rust with pinned
+CodeQL Action bytes and `build-mode: none`. `Analyze (actions)` remains
+merge-required; `Analyze (rust)` remains advisory. The workflow runs on pull
+requests, weekly schedule, and explicit manual dispatch only. It deliberately
+has no `push: main` trigger because the exact PR HEAD is already the merge-time
+authority. GitHub CodeQL default setup must remain disabled while this workflow
+is active, otherwise duplicate configurations and post-merge analysis return.
 
 Rust CodeQL is an additional static security signal, not a replacement for the
 existing controls. Clippy enforces Rust correctness/lint policy; `cargo deny`
