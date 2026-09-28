@@ -205,7 +205,7 @@ jobs:
           merge-multiple: true
 
       - name: Merge PostgreSQL 15 canonical conformance report
-        run: ./tests/fixtures/conformance/merge-ci-campaign.sh 15 2 target/m5-campaign-shards
+        run: bash ./tests/fixtures/conformance/merge-ci-campaign.sh 15 2 target/m5-campaign-shards
 
       - name: Retain the PostgreSQL 15 canonical campaign report
         if: ${{ always() }}
@@ -241,7 +241,7 @@ jobs:
           merge-multiple: true
 
       - name: Merge PostgreSQL 18 canonical conformance report
-        run: ./tests/fixtures/conformance/merge-ci-campaign.sh 18 2 target/m5-campaign-shards
+        run: bash ./tests/fixtures/conformance/merge-ci-campaign.sh 18 2 target/m5-campaign-shards
 
       - name: Retain the PostgreSQL 18 canonical campaign report
         if: ${{ always() }}
