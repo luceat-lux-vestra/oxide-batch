@@ -1,9 +1,9 @@
 {
   "document": "How CI executes the M5 conformance campaign",
-  "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow is a thin provisioning and call layer, and its contract-check step fails closed when the workflow drifts from these values. Only the dedicated conformance workflow is in this campaign's semantic closure, so unrelated quality or build changes in ci.yml do not invalidate retained conformance evidence.",
+  "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow owns both fail-closed pull-request routing and the PostgreSQL-backed deep execution. Required PR contexts are emitted by lightweight jobs when direct proof is not required; routing ambiguity selects the deep campaign rather than suppressing it.",
   "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script — an added trigger, a job-level permission override, a widened matrix, a changed command, an appended line — moves the identity and fails the contract check, whether or not every literal field below still happens to read true. The literal fields exist for a readable diagnostic, not as the boundary. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
   "workflow_path": ".github/workflows/m5-conformance.yml",
-  "workflow_git_blob": "9db50911eb5c7d5e4e3b3e783d0ce309d777534a",
+  "workflow_git_blob": "62d9ad4d1964ef488415d4810d78833309acea7b",
   "workflow_name": "M5 Conformance",
   "triggers": {
     "pull_request": [
@@ -69,5 +69,14 @@
   "artifact_name": "conformance-campaign-postgres-{major}",
   "artifact_retention": "30 days, on success and on failure alike, because what a failed conformance campaign is mostly worth reading for is which accepted row, or which selected target, it lost",
   "timeout_minutes": 55,
-  "timeout_note": "The campaign's execution envelope is 30 selected test targets, each run in full, plus the workspace documentation tests as a separate obligation — not one bounded workload, so its ceiling is the widest of the M5 campaigns. Still a ceiling: a campaign that stopped making progress must fail rather than occupy a runner."
+  "timeout_note": "The campaign's execution envelope is 30 selected test targets, each run in full, plus the workspace documentation tests as a separate obligation — not one bounded workload, so its ceiling is the widest of the M5 campaigns. Still a ceiling: a campaign that stopped making progress must fail rather than occupy a runner.",
+  "pr_routing": {
+    "trusted_classifier": ".github/scripts/pr-scope.py from the exact pull request base SHA",
+    "direct_set": "direct_proof_campaign_workflows",
+    "route_job": "route",
+    "deep_job": "conformance-deep",
+    "required_context_job": "conformance-campaign",
+    "failure_mode": "trusted checkout, API, metadata, classifier, parser, output, or route-job ambiguity requires deep execution",
+    "no_direct_mode": "emit the PostgreSQL 15/18 required contexts without provisioning PostgreSQL services"
+  }
 }
