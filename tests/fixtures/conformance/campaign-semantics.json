@@ -12,20 +12,23 @@
         "crates/oxide-batch-plan/src",
         "crates/oxide-batch-repository/src",
         "crates/oxide-batch-cli/src"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "spike source": {
       "why": "The M0 architecture and M6 item-hot-path spikes are workspace members `cargo test --workspace --all-features --doc` covers, so a failing rustdoc example there fails the campaign's documentation-test obligation even though the campaign does not run either spike's own test targets.",
       "paths": [
         "spikes/m0-architecture/src",
         "spikes/m6-item-hot-path/src"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "migrations": {
       "why": "The durable schema the accepted scope's PostgreSQL-backed scenarios migrate to before they run.",
       "paths": [
         "crates/oxide-batch/migrations"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "campaign implementation": {
       "why": "The exact test targets the accepted-scope document's 133 assignments name — the execution envelope — plus the shared support modules those targets compile against. A workspace test file not listed here is outside the envelope: it is not selected, so it is neither run by the campaign nor able to affect its result, including every other M5 campaign's own reconciliation test. A test inside a listed target that is not itself an assigned scenario is a different case: it still runs, because selected targets run in full, and its own source is covered by the same target file being listed.",
@@ -68,7 +71,8 @@
         "crates/oxide-batch/tests/fixtures/LIFE-DEFINITION-001",
         "crates/oxide-batch-cli/tests/operator_cli.rs",
         "crates/oxide-batch-cli/tests/support"
-      ]
+      ],
+      "pr_proof": "direct"
     },
     "cargo manifests": {
       "why": "Feature selection, dependency ranges, and which targets `cargo metadata` reports at all. A campaign built with different features, or resolving its required targets against a different metadata graph, is a different campaign. Every workspace member's manifest is listed, including the spikes and xtask: `cargo metadata` resolves the whole workspace at once, so a malformed manifest anywhere prevents the producer from resolving its target set.",
@@ -82,27 +86,31 @@
         "spikes/m0-architecture/Cargo.toml",
         "spikes/m6-item-hot-path/Cargo.toml",
         "xtask/Cargo.toml"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "dependency resolution": {
       "why": "The campaign-scoped resolved package graph derived from Cargo.lock for the exact workspace package roots this campaign executes, including the workspace rustdoc obligation. Unrelated lock movement does not change this sidecar; a reachable resolved package/version/source/checksum change does.",
       "paths": [
         "tests/fixtures/conformance/dependency-closure.json"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "toolchain and build configuration": {
       "why": "The compiler the whole workspace is built with, and the cargo configuration it is built under.",
       "paths": [
         "rust-toolchain.toml",
         ".cargo/config.toml"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "campaign fixtures": {
       "why": "The declared denominator — the accepted M0-M4 ledger disposition, the 42-row scope, and the 133 scenario assignments — and this closure itself. The producer derives its required-target set from this document, so a change to it can change which test targets the campaign runs as well as which scenarios it requires from them.",
       "paths": [
         "tests/fixtures/conformance/accepted-scope.json",
         "tests/fixtures/conformance/campaign-semantics.json"
-      ]
+      ],
+      "pr_proof": "direct"
     },
     "conformance execution contract": {
       "why": "How CI actually runs the campaign: the supported matrix, the database it is given, the command, and the environment. The dedicated workflow is included with them, and its contract-check step fails closed if the workflow drifts from the contract. An unrelated CI job in ci.yml does not invalidate retained conformance evidence, while any change to the dedicated conformance workflow does.",
@@ -111,7 +119,8 @@
         "tests/fixtures/conformance/run-ci-campaign.sh",
         "tests/fixtures/conformance/verify-ci-contract.sh",
         ".github/workflows/m5-conformance.yml"
-      ]
+      ],
+      "pr_proof": "direct"
     },
     "independent verifier": {
       "why": "The program that decides whether a report proved what it owed and whether retained evidence is still what it says. Its verdicts are part of the campaign result, so a report produced under a different verifier is a result under a different standard. Listed as the specific files that implement it, matching the soak, cancellation, and performance campaigns' own closures, rather than the whole `xtask/src` directory: `main.rs` dispatches the command, `conformance.rs` derives the required-target set and reconciles the suite against it, `evidence.rs` is the permanent offline verifier, and `suite.rs` is the target-running and libtest-parsing mechanics every M5 runner shares.",
@@ -121,7 +130,8 @@
         "xtask/src/evidence.rs",
         "xtask/src/suite.rs",
         "xtask/src/dependency_closure.rs"
-      ]
+      ],
+      "pr_proof": "direct"
     }
   },
   "dependency_roots": [
@@ -157,5 +167,6 @@
       "package": "oxide-batch-xtask",
       "kind": "run"
     }
-  ]
+  ],
+  "pr_proof_rule": "Categories marked direct define executable proof machinery and require same-PR campaign execution when changed. Categories marked stale-only still invalidate current retained-evidence freshness, but ordinary product/runtime/dependency changes rely on bounded Final CI and are refreshed by later deep/scheduled/release campaign execution."
 }

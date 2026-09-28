@@ -9,19 +9,22 @@
         "crates/oxide-batch/src",
         "crates/oxide-batch-core/src",
         "crates/oxide-batch-plan/src"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "repository source": {
       "why": "The PostgreSQL adapter the campaign runs through. The connection and checkout observations are readings of this.",
       "paths": [
         "crates/oxide-batch-repository/src"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "migrations": {
       "why": "The durable schema the run migrates to before it starts. A different schema is a different durable record, and every correctness obligation is stated over that record.",
       "paths": [
         "crates/oxide-batch/migrations"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "cargo manifests": {
       "why": "Feature selection and dependency ranges. A campaign built with different features is a different campaign.",
@@ -32,27 +35,31 @@
         "crates/oxide-batch-plan/Cargo.toml",
         "crates/oxide-batch-repository/Cargo.toml",
         "xtask/Cargo.toml"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "dependency resolution": {
       "why": "The campaign-scoped resolved package graph derived from Cargo.lock for the exact workspace package roots this campaign executes. Unrelated workspace lock movement does not change this sidecar; a reachable resolved package/version/source/checksum change does.",
       "paths": [
         "tests/fixtures/soak/dependency-closure.json"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "toolchain and build configuration": {
       "why": "The compiler the whole thing is built with and the cargo configuration it is built under.",
       "paths": [
         "rust-toolchain.toml",
         ".cargo/config.toml"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "campaign implementation": {
       "why": "The report itself and the mechanics it observes through.",
       "paths": [
         "crates/oxide-batch/tests/postgres_soak.rs",
         "crates/oxide-batch/tests/soak"
-      ]
+      ],
+      "pr_proof": "direct"
     },
     "campaign fixtures": {
       "why": "The declared denominator — the window, the workload, the obligations, the rules — and this closure itself. The rate vectors belong here rather than beside either implementation: they are the statement of what the memory statistic is, and the report and the verifier are each held to them separately. A change to them changes what both are required to mean, which is exactly what this closure is for.",
@@ -60,7 +67,8 @@
         "tests/fixtures/soak/campaign-scope.json",
         "tests/fixtures/soak/campaign-semantics.json",
         "tests/fixtures/soak/rate-vectors.json"
-      ]
+      ],
+      "pr_proof": "direct"
     },
     "soak execution contract": {
       "why": "How CI actually runs the campaign: the supported matrix, the database it is given, the command, and the environment. The dedicated workflow is included with them, and its contract-check step fails closed if the workflow drifts from the contract. An unrelated CI job in ci.yml does not invalidate retained evidence, while any change to the dedicated soak workflow does.",
@@ -69,7 +77,8 @@
         "tests/fixtures/soak/run-ci-campaign.sh",
         "tests/fixtures/soak/verify-ci-contract.sh",
         ".github/workflows/m5-soak.yml"
-      ]
+      ],
+      "pr_proof": "direct"
     },
     "independent verifier": {
       "why": "The program that decides whether a report proved what it owed and whether retained evidence is still what it says. Its verdicts are part of the campaign result, so a report produced under a different verifier is a result under a different standard. The whole binary is listed, including its entry point and the recomputation module: an earlier version named only two of its five files, which would have let the recomputation itself change without invalidating anything.",
@@ -80,7 +89,8 @@
         "xtask/src/evidence.rs",
         "xtask/src/suite.rs",
         "xtask/src/dependency_closure.rs"
-      ]
+      ],
+      "pr_proof": "direct"
     }
   },
   "dependency_roots": [
@@ -92,5 +102,6 @@
       "package": "oxide-batch-xtask",
       "kind": "run"
     }
-  ]
+  ],
+  "pr_proof_rule": "Categories marked direct define executable proof machinery and require same-PR campaign execution when changed. Categories marked stale-only still invalidate current retained-evidence freshness, but ordinary product/runtime/dependency changes rely on bounded Final CI and are refreshed by later deep/scheduled/release campaign execution."
 }

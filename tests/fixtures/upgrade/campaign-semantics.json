@@ -11,13 +11,15 @@
         "crates/oxide-batch-core/src",
         "crates/oxide-batch-plan/src",
         "crates/oxide-batch-repository/src"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "migrations": {
       "why": "The immutable migration set every report installs a prior schema from and upgrades through. Schema 1 and schema 2 are the schema this set produced when it was the whole set, not a fixture wearing an older number, and the upgrade path under test is the real remaining chain.",
       "paths": [
         "crates/oxide-batch/migrations"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "campaign implementation": {
       "why": "The exact test targets the committed scope document's reports name, plus the shared support module those targets compile against — which also carries the pinned SCHEMA2_RUNTIME_REVISION the rejection report builds its historical runtime from. A workspace test file not listed here is outside the campaign: it is not selected, so it is neither run nor able to affect the campaign's result.",
@@ -26,7 +28,8 @@
         "crates/oxide-batch/tests/postgres_schema_rejection.rs",
         "crates/oxide-batch/tests/postgres_upgrade_rollback.rs",
         "crates/oxide-batch/tests/upgrade"
-      ]
+      ],
+      "pr_proof": "direct"
     },
     "cargo manifests": {
       "why": "Feature selection and dependency ranges for every crate the campaign builds and runs. A campaign built with different features is a different campaign.",
@@ -37,20 +40,23 @@
         "crates/oxide-batch-plan/Cargo.toml",
         "crates/oxide-batch-repository/Cargo.toml",
         "xtask/Cargo.toml"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "dependency resolution": {
       "why": "The campaign-scoped resolved package graph derived from Cargo.lock for the exact workspace package roots this campaign executes. Unrelated workspace lock movement does not change this sidecar; a reachable resolved package/version/source/checksum change does.",
       "paths": [
         "tests/fixtures/upgrade/dependency-closure.json"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "toolchain and build configuration": {
       "why": "The compiler the campaign, and the historical schema-2 runtime, are built with, and the cargo configuration they are built under.",
       "paths": [
         "rust-toolchain.toml",
         ".cargo/config.toml"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "campaign fixtures": {
       "why": "The declared denominator — the three prior-schema sources, the three reports, the eight schema paths, and the two pinned historical runtime revisions (schema 2 and schema 3) — and this closure itself. The producer derives what it runs and what each report must observe from this document, and the historical-schema seed scripts are the committed fixtures a source schema is populated with before the upgrade under test runs.",
@@ -62,7 +68,8 @@
         "tests/fixtures/upgrade/schema-3/seed.sql",
         "tests/fixtures/upgrade/schema-2-runtime/probe.rs",
         "tests/fixtures/upgrade/schema-3-runtime/probe.rs"
-      ]
+      ],
+      "pr_proof": "direct"
     },
     "upgrade execution contract": {
       "why": "How CI actually runs the campaign: the supported matrix, the database and maintenance connection it is given, the command, the environment, and the full-history checkout the historical schema-2 runtime worktree requires. The dedicated workflow is included with them, and its contract-check step fails closed if the workflow drifts from the contract. An unrelated CI job in ci.yml does not invalidate retained upgrade evidence, while any change to the dedicated upgrade workflow does.",
@@ -71,7 +78,8 @@
         "tests/fixtures/upgrade/run-ci-campaign.sh",
         "tests/fixtures/upgrade/verify-ci-contract.sh",
         ".github/workflows/m5-upgrade.yml"
-      ]
+      ],
+      "pr_proof": "direct"
     },
     "independent verifier": {
       "why": "The program that decides whether a run proved what it owed and whether retained evidence is still what it says. Its verdicts are part of the campaign result, so a report produced under a different verifier is a result under a different standard. Listed as the specific files that implement it, matching the soak, cancellation, performance, conformance, and crash-restore campaigns' own closures: `main.rs` dispatches the command, `upgrade.rs` runs the scope and reconciles the observations against it, `evidence.rs` is the permanent offline verifier, and `suite.rs` is the target-running and libtest-parsing mechanics every M5 runner shares.",
@@ -81,7 +89,8 @@
         "xtask/src/evidence.rs",
         "xtask/src/suite.rs",
         "xtask/src/dependency_closure.rs"
-      ]
+      ],
+      "pr_proof": "direct"
     }
   },
   "dependency_roots": [
@@ -93,5 +102,6 @@
       "package": "oxide-batch-xtask",
       "kind": "run"
     }
-  ]
+  ],
+  "pr_proof_rule": "Categories marked direct define executable proof machinery and require same-PR campaign execution when changed. Categories marked stale-only still invalidate current retained-evidence freshness, but ordinary product/runtime/dependency changes rely on bounded Final CI and are refreshed by later deep/scheduled/release campaign execution."
 }

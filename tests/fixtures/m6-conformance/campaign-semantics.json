@@ -11,14 +11,16 @@
         "crates/oxide-batch-plan/src",
         "crates/oxide-batch-repository/src",
         "crates/oxide-batch-test/src"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "M6 test targets": {
       "why": "The full integration-test trees contain the fixed target denominator declared by xtask/src/m6_conformance.rs; each selected target runs in full and ignored or empty targets fail closed.",
       "paths": [
         "crates/oxide-batch/tests",
         "crates/oxide-batch-test/tests"
-      ]
+      ],
+      "pr_proof": "direct"
     },
     "cargo and toolchain": {
       "why": "Feature selection, the campaign-scoped resolved dependency graph, compiler, and cargo configuration are part of the reproducible test environment.",
@@ -32,7 +34,8 @@
         "rust-toolchain.toml",
         ".cargo/config.toml",
         "xtask/Cargo.toml"
-      ]
+      ],
+      "pr_proof": "stale-only"
     },
     "campaign execution": {
       "why": "The matrix workflow, its contract, script, and scope document are the exact execution envelope used to produce retained reports.",
@@ -42,7 +45,8 @@
         "tests/fixtures/m6-conformance/run-ci-campaign.sh",
         "tests/fixtures/m6-conformance/verify-ci-contract.sh",
         ".github/workflows/m6-conformance.yml"
-      ]
+      ],
+      "pr_proof": "direct"
     },
     "independent verifier": {
       "why": "These files dispatch the command, run and manifest the denominator, and verify retained provenance and report closure.",
@@ -52,13 +56,15 @@
         "xtask/src/evidence.rs",
         "xtask/src/suite.rs",
         "xtask/src/dependency_closure.rs"
-      ]
+      ],
+      "pr_proof": "direct"
     },
     "dependency resolution": {
       "why": "The campaign-scoped resolved package graph derived from Cargo.lock for the exact workspace package roots this campaign executes. Unrelated workspace lock movement does not change this sidecar; a reachable resolved package/version/source/checksum change does.",
       "paths": [
         "tests/fixtures/m6-conformance/dependency-closure.json"
-      ]
+      ],
+      "pr_proof": "stale-only"
     }
   },
   "dependency_roots": [
@@ -74,5 +80,6 @@
       "package": "oxide-batch-xtask",
       "kind": "run"
     }
-  ]
+  ],
+  "pr_proof_rule": "Categories marked direct define executable proof machinery and require same-PR campaign execution when changed. Categories marked stale-only still invalidate current retained-evidence freshness, but ordinary product/runtime/dependency changes rely on bounded Final CI and are refreshed by later deep/scheduled/release campaign execution."
 }
