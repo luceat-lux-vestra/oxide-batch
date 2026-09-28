@@ -553,9 +553,9 @@ fn run_evidence_check() -> bool {
             if verification.violations.is_empty() {
                 eprintln!(
                     "{} retained report(s) across {directories} are byte-identical to what was \
-                     recorded, name the run and the producer commit they came from, cover the \
-                     required matrix, passed with no violations, and describe the campaign this \
-                     tree still runs",
+                     recorded, name the run and producer they came from, cover the required \
+                     matrix, passed with no violations, and carry internally consistent execution \
+                     manifests",
                     verification.reports,
                 );
                 return true;
