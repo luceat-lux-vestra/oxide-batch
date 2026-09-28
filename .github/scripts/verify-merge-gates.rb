@@ -229,7 +229,7 @@ module MergeGateVerifier
             violations << "required workflow #{workflow} can suppress #{event_name} via path filters"
           end
         end
-        if job.is_a?(Hash) && job.key?('if')
+        if job.is_a?(Hash) && job.key?('if') && !always_condition?(job['if'])
           violations << "required job #{workflow}##{job_id} has an if condition and is not guaranteed to emit"
         end
 
