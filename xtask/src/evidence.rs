@@ -564,10 +564,7 @@ fn verify_unique<'a>(
 /// identities, agree with provenance about the execution tree, and represent
 /// every declared campaign. Exact object equality with current HEAD belongs to
 /// [`verify_semantics`] and is intentionally not checked here.
-fn verify_manifest_integrity(
-    document: &Value,
-    reports: &[(String, Value)],
-) -> Vec<String> {
+fn verify_manifest_integrity(document: &Value, reports: &[(String, Value)]) -> Vec<String> {
     let mut violations = Vec::new();
     let campaigns = match campaign_closures(document) {
         Ok(campaigns) => campaigns,
@@ -1394,9 +1391,8 @@ mod tests {
         let violations = super::verify_manifest_integrity(&document, &reports);
         assert!(
             violations.iter().any(|violation| {
-                violation.contains(
-                    "records a malformed git object identity for xtask/src/evidence.rs",
-                )
+                violation
+                    .contains("records a malformed git object identity for xtask/src/evidence.rs")
             }),
             "{violations:?}",
         );
